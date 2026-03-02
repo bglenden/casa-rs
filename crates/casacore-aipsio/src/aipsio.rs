@@ -201,7 +201,8 @@ use ndarray::{ArrayD, IxDyn};
 use thiserror::Error;
 
 use crate::{
-    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    ArrayValue, ByteOrder, Complex32, Complex64, PrimitiveType, RecordField, RecordValue,
+    ScalarValue, Value,
 };
 
 pub type AipsIoObjectResult<T> = Result<T, AipsIoObjectError>;
@@ -296,6 +297,7 @@ pub enum AipsIoObjectError {
 /// matching casacore's `AipsIO` behavior.
 pub struct AipsIo {
     inner: Option<Box<dyn AipsIoStream>>,
+    byte_order: ByteOrder,
     swput: i32,
     swget: i32,
     level: usize,
@@ -309,19 +311,40 @@ pub struct AipsIo {
 }
 
 impl AipsIo {
-    /// Construct a stream-backed `AipsIo` with read/write access.
+    /// Construct a stream-backed `AipsIo` with read/write access (big-endian).
     pub fn new_read_write<S: Read + Write + Seek + Any>(inner: S) -> Self {
-        Self::with_access(Box::new(inner), true, true, true)
+        Self::with_access(Box::new(inner), true, true, true, ByteOrder::BigEndian)
     }
 
-    /// Construct a stream-backed `AipsIo` with read-only access.
+    /// Construct a stream-backed `AipsIo` with read-only access (big-endian).
     pub fn new_read_only<S: Read + Write + Seek + Any>(inner: S) -> Self {
-        Self::with_access(Box::new(inner), true, false, true)
+        Self::with_access(Box::new(inner), true, false, true, ByteOrder::BigEndian)
     }
 
-    /// Construct a stream-backed `AipsIo` with write-only access.
+    /// Construct a stream-backed `AipsIo` with write-only access (big-endian).
     pub fn new_write_only<S: Read + Write + Seek + Any>(inner: S) -> Self {
-        Self::with_access(Box::new(inner), false, true, true)
+        Self::with_access(Box::new(inner), false, true, true, ByteOrder::BigEndian)
+    }
+
+    /// Construct with read-only access and explicit byte order.
+    pub fn new_read_only_with_order<S: Read + Write + Seek + Any>(
+        inner: S,
+        order: ByteOrder,
+    ) -> Self {
+        Self::with_access(Box::new(inner), true, false, true, order)
+    }
+
+    /// Construct with write-only access and explicit byte order.
+    pub fn new_write_only_with_order<S: Read + Write + Seek + Any>(
+        inner: S,
+        order: ByteOrder,
+    ) -> Self {
+        Self::with_access(Box::new(inner), false, true, true, order)
+    }
+
+    /// Return the byte order used for encoding/decoding.
+    pub fn byte_order(&self) -> ByteOrder {
+        self.byte_order
     }
 
     /// Consume and return the underlying stream if still open.
@@ -515,32 +538,38 @@ impl AipsIo {
 
     pub fn put_i16(&mut self, value: i16) -> AipsIoObjectResult<()> {
         self.test_put()?;
-        self.write_counted(&value.to_be_bytes())
+        let bytes = self.encode_i16(value);
+        self.write_counted(&bytes)
     }
 
     pub fn put_u16(&mut self, value: u16) -> AipsIoObjectResult<()> {
         self.test_put()?;
-        self.write_counted(&value.to_be_bytes())
+        let bytes = self.encode_u16(value);
+        self.write_counted(&bytes)
     }
 
     pub fn put_i32(&mut self, value: i32) -> AipsIoObjectResult<()> {
         self.test_put()?;
-        self.write_counted(&value.to_be_bytes())
+        let bytes = self.encode_i32(value);
+        self.write_counted(&bytes)
     }
 
     pub fn put_u32(&mut self, value: u32) -> AipsIoObjectResult<()> {
         self.test_put()?;
-        self.write_counted(&value.to_be_bytes())
+        let bytes = self.encode_u32(value);
+        self.write_counted(&bytes)
     }
 
     pub fn put_i64(&mut self, value: i64) -> AipsIoObjectResult<()> {
         self.test_put()?;
-        self.write_counted(&value.to_be_bytes())
+        let bytes = self.encode_i64(value);
+        self.write_counted(&bytes)
     }
 
     pub fn put_u64(&mut self, value: u64) -> AipsIoObjectResult<()> {
         self.test_put()?;
-        self.write_counted(&value.to_be_bytes())
+        let bytes = self.encode_u64(value);
+        self.write_counted(&bytes)
     }
 
     pub fn put_f32(&mut self, value: f32) -> AipsIoObjectResult<()> {
@@ -742,42 +771,42 @@ impl AipsIo {
         self.test_get()?;
         let mut buf = [0_u8; 2];
         self.read_counted(&mut buf)?;
-        Ok(i16::from_be_bytes(buf))
+        Ok(self.decode_i16(buf))
     }
 
     pub fn get_u16(&mut self) -> AipsIoObjectResult<u16> {
         self.test_get()?;
         let mut buf = [0_u8; 2];
         self.read_counted(&mut buf)?;
-        Ok(u16::from_be_bytes(buf))
+        Ok(self.decode_u16(buf))
     }
 
     pub fn get_i32(&mut self) -> AipsIoObjectResult<i32> {
         self.test_get()?;
         let mut buf = [0_u8; 4];
         self.read_counted(&mut buf)?;
-        Ok(i32::from_be_bytes(buf))
+        Ok(self.decode_i32(buf))
     }
 
     pub fn get_u32(&mut self) -> AipsIoObjectResult<u32> {
         self.test_get()?;
         let mut buf = [0_u8; 4];
         self.read_counted(&mut buf)?;
-        Ok(u32::from_be_bytes(buf))
+        Ok(self.decode_u32(buf))
     }
 
     pub fn get_i64(&mut self) -> AipsIoObjectResult<i64> {
         self.test_get()?;
         let mut buf = [0_u8; 8];
         self.read_counted(&mut buf)?;
-        Ok(i64::from_be_bytes(buf))
+        Ok(self.decode_i64(buf))
     }
 
     pub fn get_u64(&mut self) -> AipsIoObjectResult<u64> {
         self.test_get()?;
         let mut buf = [0_u8; 8];
         self.read_counted(&mut buf)?;
-        Ok(u64::from_be_bytes(buf))
+        Ok(self.decode_u64(buf))
     }
 
     pub fn get_f32(&mut self) -> AipsIoObjectResult<f32> {
@@ -1297,9 +1326,11 @@ impl AipsIo {
         readable: bool,
         writable: bool,
         seekable: bool,
+        byte_order: ByteOrder,
     ) -> Self {
         Self {
             inner: Some(inner),
+            byte_order,
             swput: if writable { 0 } else { -1 },
             swget: if readable { 0 } else { -1 },
             level: 0,
@@ -1315,6 +1346,79 @@ impl AipsIo {
 
     fn inner_mut(&mut self) -> AipsIoObjectResult<&mut dyn AipsIoStream> {
         self.inner.as_deref_mut().ok_or(AipsIoObjectError::NotOpen)
+    }
+
+    fn encode_i16(&self, v: i16) -> [u8; 2] {
+        match self.byte_order {
+            ByteOrder::BigEndian => v.to_be_bytes(),
+            ByteOrder::LittleEndian => v.to_le_bytes(),
+        }
+    }
+    fn encode_u16(&self, v: u16) -> [u8; 2] {
+        match self.byte_order {
+            ByteOrder::BigEndian => v.to_be_bytes(),
+            ByteOrder::LittleEndian => v.to_le_bytes(),
+        }
+    }
+    fn encode_i32(&self, v: i32) -> [u8; 4] {
+        match self.byte_order {
+            ByteOrder::BigEndian => v.to_be_bytes(),
+            ByteOrder::LittleEndian => v.to_le_bytes(),
+        }
+    }
+    fn encode_u32(&self, v: u32) -> [u8; 4] {
+        match self.byte_order {
+            ByteOrder::BigEndian => v.to_be_bytes(),
+            ByteOrder::LittleEndian => v.to_le_bytes(),
+        }
+    }
+    fn encode_i64(&self, v: i64) -> [u8; 8] {
+        match self.byte_order {
+            ByteOrder::BigEndian => v.to_be_bytes(),
+            ByteOrder::LittleEndian => v.to_le_bytes(),
+        }
+    }
+    fn encode_u64(&self, v: u64) -> [u8; 8] {
+        match self.byte_order {
+            ByteOrder::BigEndian => v.to_be_bytes(),
+            ByteOrder::LittleEndian => v.to_le_bytes(),
+        }
+    }
+    fn decode_i16(&self, b: [u8; 2]) -> i16 {
+        match self.byte_order {
+            ByteOrder::BigEndian => i16::from_be_bytes(b),
+            ByteOrder::LittleEndian => i16::from_le_bytes(b),
+        }
+    }
+    fn decode_u16(&self, b: [u8; 2]) -> u16 {
+        match self.byte_order {
+            ByteOrder::BigEndian => u16::from_be_bytes(b),
+            ByteOrder::LittleEndian => u16::from_le_bytes(b),
+        }
+    }
+    fn decode_i32(&self, b: [u8; 4]) -> i32 {
+        match self.byte_order {
+            ByteOrder::BigEndian => i32::from_be_bytes(b),
+            ByteOrder::LittleEndian => i32::from_le_bytes(b),
+        }
+    }
+    fn decode_u32(&self, b: [u8; 4]) -> u32 {
+        match self.byte_order {
+            ByteOrder::BigEndian => u32::from_be_bytes(b),
+            ByteOrder::LittleEndian => u32::from_le_bytes(b),
+        }
+    }
+    fn decode_i64(&self, b: [u8; 8]) -> i64 {
+        match self.byte_order {
+            ByteOrder::BigEndian => i64::from_be_bytes(b),
+            ByteOrder::LittleEndian => i64::from_le_bytes(b),
+        }
+    }
+    fn decode_u64(&self, b: [u8; 8]) -> u64 {
+        match self.byte_order {
+            ByteOrder::BigEndian => u64::from_be_bytes(b),
+            ByteOrder::LittleEndian => u64::from_le_bytes(b),
+        }
     }
 
     fn ensure_level(&mut self) {
@@ -1373,8 +1477,9 @@ impl AipsIo {
     }
 
     fn write_u32_raw(&mut self, value: u32) -> AipsIoObjectResult<()> {
+        let bytes = self.encode_u32(value);
         let inner = self.inner_mut()?;
-        inner.write_all(&value.to_be_bytes())?;
+        inner.write_all(&bytes)?;
         Ok(())
     }
 }
@@ -1384,7 +1489,13 @@ impl AipsIo {
     pub fn open<P: AsRef<Path>>(path: P, option: AipsOpenOption) -> AipsIoObjectResult<Self> {
         let path = path.as_ref();
         let (file, readable, writable, delete_on_close) = open_file_with_option(path, option)?;
-        let mut io = Self::with_access(Box::new(file), readable, writable, true);
+        let mut io = Self::with_access(
+            Box::new(file),
+            readable,
+            writable,
+            true,
+            ByteOrder::BigEndian,
+        );
         if option == AipsOpenOption::Append {
             let inner = io.inner_mut()?;
             inner.seek(SeekFrom::End(0))?;

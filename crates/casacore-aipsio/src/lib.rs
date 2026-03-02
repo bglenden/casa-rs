@@ -31,6 +31,46 @@ pub enum ByteOrder {
     LittleEndian,
 }
 
+/// Detect byte order from a raw AipsIO header buffer.
+///
+/// Examines the first 8 bytes after the magic to determine whether the
+/// object-length field makes sense in big-endian or little-endian.
+/// This mirrors the logic used in C++ casacore SSM to pick CanonicalIO vs
+/// LECanonicalIO.
+pub fn detect_aipsio_byte_order(data: &[u8]) -> Result<ByteOrder, AipsIoError> {
+    const MAGIC: u32 = 0xBEBE_BEBE;
+    if data.len() < 8 {
+        return Err(AipsIoError::Other(
+            "buffer too short for AipsIO header".into(),
+        ));
+    }
+    let magic = u32::from_be_bytes(data[0..4].try_into().unwrap());
+    if magic != MAGIC {
+        let magic_le = u32::from_le_bytes(data[0..4].try_into().unwrap());
+        if magic_le != MAGIC {
+            return Err(AipsIoError::Other(format!(
+                "AipsIO magic not found: got {magic:#010x}"
+            )));
+        }
+    }
+    // The object-length field follows the magic. In a valid file it should be
+    // a reasonable value (< 1 GiB). Try both byte orders.
+    let obj_len_be = u32::from_be_bytes(data[4..8].try_into().unwrap());
+    let obj_len_le = u32::from_le_bytes(data[4..8].try_into().unwrap());
+    const MAX_REASONABLE_LEN: u32 = 1 << 30; // 1 GiB
+    let be_ok = obj_len_be > 0 && obj_len_be < MAX_REASONABLE_LEN;
+    let le_ok = obj_len_le > 0 && obj_len_le < MAX_REASONABLE_LEN;
+    match (be_ok, le_ok) {
+        (true, false) => Ok(ByteOrder::BigEndian),
+        (false, true) => Ok(ByteOrder::LittleEndian),
+        // Both look reasonable — default to BE (canonical).
+        (true, true) => Ok(ByteOrder::BigEndian),
+        (false, false) => Err(AipsIoError::Other(format!(
+            "cannot determine byte order: obj_len BE={obj_len_be}, LE={obj_len_le}"
+        ))),
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AipsIoError {
     #[error("i/o error: {0}")]
@@ -45,6 +85,8 @@ pub enum AipsIoError {
     UnsupportedArrayRank(usize),
     #[error("unsupported value kind for primitive AipsIO codec: {0:?}")]
     UnsupportedValueKind(ValueKind),
+    #[error("{0}")]
+    Other(String),
 }
 
 pub struct AipsWriter<W> {
