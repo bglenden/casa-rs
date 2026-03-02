@@ -1,0 +1,20 @@
+[package]
+name = "casacore-test-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casacore-aipsio = { path = "../casacore-aipsio" }
+casacore-types = { path = "../casacore-types" }
+ndarray.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+cc = "1.1"
+pkg-config = "0.3"

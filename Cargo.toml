@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/casacore-types",
+    "crates/casacore-aipsio",
+    "crates/casacore-tables",
+    "crates/casacore-test-support",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+ndarray = "0.17"
+num-complex = "0.4"
+thiserror = "2.0"
+
+[workspace.lints.rust]
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+suspicious = "deny"

@@ -1,0 +1,1162 @@
+#[cfg(has_casacore_cpp)]
+use std::ffi::CStr;
+
+use casacore_aipsio::{
+    AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64, ScalarValue, TypeTag,
+    Value,
+};
+#[cfg(has_casacore_cpp)]
+use casacore_aipsio::{PrimitiveType, ValueRank};
+use ndarray::{ArrayD, IxDyn};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum AipsIoCrossError {
+    #[error("C++ casacore backend is unavailable (pkg-config casacore not found at build time)")]
+    CppUnavailable,
+    #[error("unsupported value for primitive AipsIO cross-check: {0}")]
+    UnsupportedValue(&'static str),
+    #[error("value has no primitive type tag")]
+    MissingTypeTag,
+    #[error("rust backend error during {stage}: {message}")]
+    RustBackend {
+        stage: &'static str,
+        message: String,
+    },
+    #[error("cpp backend error during {stage}: {message}")]
+    CppBackend {
+        stage: &'static str,
+        message: String,
+    },
+    #[error("wire mismatch for {label} with {byte_order:?}")]
+    WireMismatch {
+        label: String,
+        byte_order: ByteOrder,
+    },
+    #[error("decode mismatch for {path} ({label}) with {byte_order:?}")]
+    DecodeMismatch {
+        path: &'static str,
+        label: String,
+        byte_order: ByteOrder,
+    },
+}
+
+pub trait AipsIoBackend {
+    fn name(&self) -> &'static str;
+
+    fn encode_value(&self, value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, String>;
+
+    fn decode_value(
+        &self,
+        bytes: &[u8],
+        type_tag: TypeTag,
+        byte_order: ByteOrder,
+    ) -> Result<Value, String>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RustBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CppBackend;
+
+impl RustBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl CppBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl AipsIoBackend for RustBackend {
+    fn name(&self) -> &'static str {
+        "rust"
+    }
+
+    fn encode_value(&self, value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, String> {
+        let mut bytes = Vec::new();
+        let mut writer = AipsWriter::with_byte_order(&mut bytes, byte_order);
+        writer
+            .write_value(value)
+            .map_err(|err| format!("write_value failed: {err}"))?;
+        Ok(bytes)
+    }
+
+    fn decode_value(
+        &self,
+        bytes: &[u8],
+        type_tag: TypeTag,
+        byte_order: ByteOrder,
+    ) -> Result<Value, String> {
+        let mut reader = AipsReader::with_byte_order(bytes, byte_order);
+        reader
+            .read_value(type_tag)
+            .map_err(|err| format!("read_value failed: {err}"))
+    }
+}
+
+impl AipsIoBackend for CppBackend {
+    fn name(&self) -> &'static str {
+        "cpp"
+    }
+
+    fn encode_value(&self, value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, String> {
+        #[cfg(has_casacore_cpp)]
+        {
+            cpp_encode_value(value, byte_order)
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            let _ = (value, byte_order);
+            Err("casacore C++ backend unavailable".to_string())
+        }
+    }
+
+    fn decode_value(
+        &self,
+        bytes: &[u8],
+        type_tag: TypeTag,
+        byte_order: ByteOrder,
+    ) -> Result<Value, String> {
+        #[cfg(has_casacore_cpp)]
+        {
+            cpp_decode_value(bytes, type_tag, byte_order)
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            let _ = (bytes, type_tag, byte_order);
+            Err("casacore C++ backend unavailable".to_string())
+        }
+    }
+}
+
+pub fn cpp_backend_available() -> bool {
+    cfg!(has_casacore_cpp)
+}
+
+pub fn primitive_cross_check_values() -> Vec<Value> {
+    vec![
+        Value::Scalar(ScalarValue::Bool(true)),
+        Value::Scalar(ScalarValue::Int16(-1234)),
+        Value::Scalar(ScalarValue::Int32(-1_234_567)),
+        Value::Scalar(ScalarValue::Int64(-9_876_543_210)),
+        Value::Scalar(ScalarValue::Float32(3.5)),
+        Value::Scalar(ScalarValue::Float64(-10.25)),
+        Value::Scalar(ScalarValue::Complex32(Complex32 { re: 1.5, im: -2.25 })),
+        Value::Scalar(ScalarValue::Complex64(Complex64 { re: 0.5, im: -0.75 })),
+        Value::Scalar(ScalarValue::String("alpha".to_string())),
+        Value::Array(ArrayValue::from_bool_vec(vec![true, false, true])),
+        Value::Array(ArrayValue::from_i16_vec(vec![1, -2, 3])),
+        Value::Array(ArrayValue::from_i32_vec(vec![10, -20, 30, -40])),
+        Value::Array(ArrayValue::from_i64_vec(vec![100, -200, 300, -400])),
+        Value::Array(ArrayValue::from_f32_vec(vec![1.0, -2.5, 3.25])),
+        Value::Array(ArrayValue::from_f64_vec(vec![1.0, -2.5, 3.25, -4.125])),
+        Value::Array(ArrayValue::from_complex32_vec(vec![
+            Complex32 { re: 1.0, im: 2.0 },
+            Complex32 { re: -3.0, im: -4.0 },
+        ])),
+        Value::Array(ArrayValue::from_complex64_vec(vec![
+            Complex64 { re: 1.0, im: 2.0 },
+            Complex64 { re: -3.0, im: -4.5 },
+        ])),
+        Value::Array(ArrayValue::from_string_vec(vec![
+            "a".to_string(),
+            "bc".to_string(),
+            "def".to_string(),
+        ])),
+        Value::Array(ArrayValue::from_string_vec(vec![])),
+        Value::Array(ArrayValue::Int32(
+            ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![0, 1, 2, 3, 4, 5]).expect("shape"),
+        )),
+        Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(
+                IxDyn(&[2, 2, 2]),
+                vec![0.0, 1.0, 10.0, 11.0, 100.0, 101.0, 110.0, 111.0],
+            )
+            .expect("shape"),
+        )),
+        Value::Array(ArrayValue::String(
+            ArrayD::from_shape_vec(
+                IxDyn(&[2, 2]),
+                vec![
+                    "r0c0".to_string(),
+                    "r0c1".to_string(),
+                    "r1c0".to_string(),
+                    "r1c1".to_string(),
+                ],
+            )
+            .expect("shape"),
+        )),
+    ]
+}
+
+#[derive(Debug, Clone)]
+struct PreparedPrimitiveCase {
+    wire_value: Value,
+    expected_value: Value,
+    original_shape: Option<Vec<usize>>,
+}
+
+fn prepare_primitive_case(value: &Value) -> Result<PreparedPrimitiveCase, AipsIoCrossError> {
+    match value {
+        Value::Scalar(_) => Ok(PreparedPrimitiveCase {
+            wire_value: value.clone(),
+            expected_value: value.clone(),
+            original_shape: None,
+        }),
+        Value::Array(array) => {
+            if array.ndim() <= 1 {
+                Ok(PreparedPrimitiveCase {
+                    wire_value: value.clone(),
+                    expected_value: value.clone(),
+                    original_shape: None,
+                })
+            } else {
+                Ok(PreparedPrimitiveCase {
+                    wire_value: Value::Array(flatten_array_value_fortran(array)),
+                    expected_value: value.clone(),
+                    original_shape: Some(array.shape().to_vec()),
+                })
+            }
+        }
+        Value::Record(_) => Err(AipsIoCrossError::UnsupportedValue(
+            "record values are not part of primitive AipsIO cross-checks",
+        )),
+    }
+}
+
+fn restore_decoded_shape(
+    decoded: Value,
+    original_shape: Option<&[usize]>,
+) -> Result<Value, AipsIoCrossError> {
+    let Some(shape) = original_shape else {
+        return Ok(decoded);
+    };
+    match decoded {
+        Value::Array(array) => Ok(Value::Array(reshape_array_value_from_fortran(
+            array, shape,
+        )?)),
+        _ => Err(AipsIoCrossError::UnsupportedValue(
+            "decoded value was expected to be an array",
+        )),
+    }
+}
+
+fn flatten_array_value_fortran(array: &ArrayValue) -> ArrayValue {
+    match array {
+        ArrayValue::Bool(values) => ArrayValue::from_bool_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::Int16(values) => ArrayValue::from_i16_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::Int32(values) => ArrayValue::from_i32_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::Int64(values) => ArrayValue::from_i64_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::Float32(values) => ArrayValue::from_f32_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::Float64(values) => ArrayValue::from_f64_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::Complex32(values) => {
+            ArrayValue::from_complex32_vec(flatten_ndarray_fortran(values))
+        }
+        ArrayValue::Complex64(values) => {
+            ArrayValue::from_complex64_vec(flatten_ndarray_fortran(values))
+        }
+        ArrayValue::String(values) => ArrayValue::from_string_vec(flatten_ndarray_fortran(values)),
+    }
+}
+
+fn reshape_array_value_from_fortran(
+    array: ArrayValue,
+    shape: &[usize],
+) -> Result<ArrayValue, AipsIoCrossError> {
+    match array {
+        ArrayValue::Bool(values) => Ok(ArrayValue::Bool(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::Int16(values) => Ok(ArrayValue::Int16(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::Int32(values) => Ok(ArrayValue::Int32(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::Int64(values) => Ok(ArrayValue::Int64(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::Float32(values) => Ok(ArrayValue::Float32(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::Float64(values) => Ok(ArrayValue::Float64(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::Complex32(values) => Ok(ArrayValue::Complex32(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::Complex64(values) => Ok(ArrayValue::Complex64(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::String(values) => Ok(ArrayValue::String(reshape_from_fortran(
+            &values.iter().cloned().collect::<Vec<_>>(),
+            shape,
+        )?)),
+    }
+}
+
+fn flatten_ndarray_fortran<T: Clone>(array: &ArrayD<T>) -> Vec<T> {
+    let shape = array.shape();
+    let mut out = Vec::with_capacity(array.len());
+    for linear in 0..array.len() {
+        let idx = unravel_fortran_index(linear, shape);
+        out.push(array[IxDyn(&idx)].clone());
+    }
+    out
+}
+
+fn reshape_from_fortran<T: Clone>(
+    fortran_values: &[T],
+    shape: &[usize],
+) -> Result<ArrayD<T>, AipsIoCrossError> {
+    let expected_len = shape.iter().try_fold(1usize, |acc, &dim| {
+        acc.checked_mul(dim)
+            .ok_or(AipsIoCrossError::UnsupportedValue("array shape overflow"))
+    })?;
+
+    if expected_len != fortran_values.len() {
+        return Err(AipsIoCrossError::UnsupportedValue(
+            "decoded array length does not match expected shape",
+        ));
+    }
+
+    let mut c_values = Vec::with_capacity(expected_len);
+    for c_linear in 0..expected_len {
+        let idx = unravel_c_index(c_linear, shape);
+        let f_linear = ravel_fortran_index(&idx, shape);
+        c_values.push(fortran_values[f_linear].clone());
+    }
+
+    ArrayD::from_shape_vec(IxDyn(shape), c_values)
+        .map_err(|_| AipsIoCrossError::UnsupportedValue("failed to reshape decoded array"))
+}
+
+fn unravel_fortran_index(mut linear: usize, shape: &[usize]) -> Vec<usize> {
+    let mut idx = Vec::with_capacity(shape.len());
+    for &dim in shape {
+        idx.push(linear % dim);
+        linear /= dim;
+    }
+    idx
+}
+
+fn unravel_c_index(mut linear: usize, shape: &[usize]) -> Vec<usize> {
+    let mut idx = vec![0usize; shape.len()];
+    for axis in (0..shape.len()).rev() {
+        let dim = shape[axis];
+        idx[axis] = linear % dim;
+        linear /= dim;
+    }
+    idx
+}
+
+fn ravel_fortran_index(idx: &[usize], shape: &[usize]) -> usize {
+    let mut stride = 1usize;
+    let mut linear = 0usize;
+    for (axis, &value) in idx.iter().enumerate() {
+        linear += value * stride;
+        stride *= shape[axis];
+    }
+    linear
+}
+
+pub fn run_aipsio_cross_matrix(values: &[Value]) -> Result<(), AipsIoCrossError> {
+    run_aipsio_cross_matrix_with_orders(values, &[ByteOrder::BigEndian, ByteOrder::LittleEndian])
+}
+
+pub fn run_aipsio_cross_matrix_with_orders(
+    values: &[Value],
+    byte_orders: &[ByteOrder],
+) -> Result<(), AipsIoCrossError> {
+    if !cpp_backend_available() {
+        return Err(AipsIoCrossError::CppUnavailable);
+    }
+
+    let rust = RustBackend::new();
+    let cpp = CppBackend::new();
+
+    for value in values {
+        let case = prepare_primitive_case(value)?;
+        let label = format!("{value:?}");
+        let type_tag = case
+            .wire_value
+            .type_tag()
+            .ok_or(AipsIoCrossError::MissingTypeTag)?;
+
+        for &byte_order in byte_orders {
+            let rust_wire = rust
+                .encode_value(&case.wire_value, byte_order)
+                .map_err(|message| AipsIoCrossError::RustBackend {
+                    stage: "encode",
+                    message,
+                })?;
+            let cpp_wire = cpp
+                .encode_value(&case.wire_value, byte_order)
+                .map_err(|message| AipsIoCrossError::CppBackend {
+                    stage: "encode",
+                    message,
+                })?;
+
+            if rust_wire != cpp_wire {
+                return Err(AipsIoCrossError::WireMismatch { label, byte_order });
+            }
+
+            let rr = rust
+                .decode_value(&rust_wire, type_tag, byte_order)
+                .map_err(|message| AipsIoCrossError::RustBackend {
+                    stage: "decode rust->rust",
+                    message,
+                })
+                .and_then(|value| restore_decoded_shape(value, case.original_shape.as_deref()))?;
+            let rc = cpp
+                .decode_value(&rust_wire, type_tag, byte_order)
+                .map_err(|message| AipsIoCrossError::CppBackend {
+                    stage: "decode rust->cpp",
+                    message,
+                })
+                .and_then(|value| restore_decoded_shape(value, case.original_shape.as_deref()))?;
+            let cr = rust
+                .decode_value(&cpp_wire, type_tag, byte_order)
+                .map_err(|message| AipsIoCrossError::RustBackend {
+                    stage: "decode cpp->rust",
+                    message,
+                })
+                .and_then(|value| restore_decoded_shape(value, case.original_shape.as_deref()))?;
+            let cc = cpp
+                .decode_value(&cpp_wire, type_tag, byte_order)
+                .map_err(|message| AipsIoCrossError::CppBackend {
+                    stage: "decode cpp->cpp",
+                    message,
+                })
+                .and_then(|value| restore_decoded_shape(value, case.original_shape.as_deref()))?;
+
+            if rr != case.expected_value {
+                return Err(AipsIoCrossError::DecodeMismatch {
+                    path: "rust->rust",
+                    label: format!("{value:?}"),
+                    byte_order,
+                });
+            }
+            if rc != case.expected_value {
+                return Err(AipsIoCrossError::DecodeMismatch {
+                    path: "rust->cpp",
+                    label: format!("{value:?}"),
+                    byte_order,
+                });
+            }
+            if cr != case.expected_value {
+                return Err(AipsIoCrossError::DecodeMismatch {
+                    path: "cpp->rust",
+                    label: format!("{value:?}"),
+                    byte_order,
+                });
+            }
+            if cc != case.expected_value {
+                return Err(AipsIoCrossError::DecodeMismatch {
+                    path: "cpp->cpp",
+                    label: format!("{value:?}"),
+                    byte_order,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(has_casacore_cpp)]
+#[derive(Debug)]
+struct FfiPayload {
+    primitive: PrimitiveType,
+    is_array: bool,
+    payload: Vec<u8>,
+    offsets: Vec<u32>,
+}
+
+#[cfg(has_casacore_cpp)]
+fn primitive_to_tag(primitive: PrimitiveType) -> u8 {
+    match primitive {
+        PrimitiveType::Bool => 0,
+        PrimitiveType::Int16 => 1,
+        PrimitiveType::Int32 => 2,
+        PrimitiveType::Int64 => 3,
+        PrimitiveType::Float32 => 4,
+        PrimitiveType::Float64 => 5,
+        PrimitiveType::Complex32 => 6,
+        PrimitiveType::Complex64 => 7,
+        PrimitiveType::String => 8,
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+fn byte_order_to_tag(byte_order: ByteOrder) -> u8 {
+    match byte_order {
+        ByteOrder::BigEndian => 0,
+        ByteOrder::LittleEndian => 1,
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+fn value_to_payload(value: &Value) -> Result<FfiPayload, AipsIoCrossError> {
+    match value {
+        Value::Scalar(s) => Ok(match s {
+            ScalarValue::Bool(v) => FfiPayload {
+                primitive: PrimitiveType::Bool,
+                is_array: false,
+                payload: vec![u8::from(*v)],
+                offsets: vec![],
+            },
+            ScalarValue::Int16(v) => FfiPayload {
+                primitive: PrimitiveType::Int16,
+                is_array: false,
+                payload: v.to_le_bytes().to_vec(),
+                offsets: vec![],
+            },
+            ScalarValue::Int32(v) => FfiPayload {
+                primitive: PrimitiveType::Int32,
+                is_array: false,
+                payload: v.to_le_bytes().to_vec(),
+                offsets: vec![],
+            },
+            ScalarValue::Int64(v) => FfiPayload {
+                primitive: PrimitiveType::Int64,
+                is_array: false,
+                payload: v.to_le_bytes().to_vec(),
+                offsets: vec![],
+            },
+            ScalarValue::Float32(v) => FfiPayload {
+                primitive: PrimitiveType::Float32,
+                is_array: false,
+                payload: v.to_bits().to_le_bytes().to_vec(),
+                offsets: vec![],
+            },
+            ScalarValue::Float64(v) => FfiPayload {
+                primitive: PrimitiveType::Float64,
+                is_array: false,
+                payload: v.to_bits().to_le_bytes().to_vec(),
+                offsets: vec![],
+            },
+            ScalarValue::Complex32(v) => {
+                let mut payload = Vec::with_capacity(8);
+                payload.extend_from_slice(&v.re.to_bits().to_le_bytes());
+                payload.extend_from_slice(&v.im.to_bits().to_le_bytes());
+                FfiPayload {
+                    primitive: PrimitiveType::Complex32,
+                    is_array: false,
+                    payload,
+                    offsets: vec![],
+                }
+            }
+            ScalarValue::Complex64(v) => {
+                let mut payload = Vec::with_capacity(16);
+                payload.extend_from_slice(&v.re.to_bits().to_le_bytes());
+                payload.extend_from_slice(&v.im.to_bits().to_le_bytes());
+                FfiPayload {
+                    primitive: PrimitiveType::Complex64,
+                    is_array: false,
+                    payload,
+                    offsets: vec![],
+                }
+            }
+            ScalarValue::String(v) => FfiPayload {
+                primitive: PrimitiveType::String,
+                is_array: false,
+                payload: v.as_bytes().to_vec(),
+                offsets: vec![0, v.len() as u32],
+            },
+        }),
+        Value::Array(arr) => {
+            if arr.ndim() != 1 {
+                return Err(AipsIoCrossError::UnsupportedValue(
+                    "cross-check supports rank-1 arrays only",
+                ));
+            }
+
+            Ok(match arr {
+                ArrayValue::Bool(values) => FfiPayload {
+                    primitive: PrimitiveType::Bool,
+                    is_array: true,
+                    payload: values.iter().map(|v| u8::from(*v)).collect(),
+                    offsets: vec![],
+                },
+                ArrayValue::Int16(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 2);
+                    for value in values {
+                        payload.extend_from_slice(&value.to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::Int16,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::Int32(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 4);
+                    for value in values {
+                        payload.extend_from_slice(&value.to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::Int32,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::Int64(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 8);
+                    for value in values {
+                        payload.extend_from_slice(&value.to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::Int64,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::Float32(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 4);
+                    for value in values {
+                        payload.extend_from_slice(&value.to_bits().to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::Float32,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::Float64(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 8);
+                    for value in values {
+                        payload.extend_from_slice(&value.to_bits().to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::Float64,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::Complex32(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 8);
+                    for value in values {
+                        payload.extend_from_slice(&value.re.to_bits().to_le_bytes());
+                        payload.extend_from_slice(&value.im.to_bits().to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::Complex32,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::Complex64(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 16);
+                    for value in values {
+                        payload.extend_from_slice(&value.re.to_bits().to_le_bytes());
+                        payload.extend_from_slice(&value.im.to_bits().to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::Complex64,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::String(values) => {
+                    let mut payload = Vec::new();
+                    let mut offsets = Vec::with_capacity(values.len() + 1);
+                    offsets.push(0);
+                    let mut cumulative = 0_u32;
+                    for value in values {
+                        payload.extend_from_slice(value.as_bytes());
+                        cumulative = cumulative.checked_add(value.len() as u32).ok_or(
+                            AipsIoCrossError::UnsupportedValue("string payload too large"),
+                        )?;
+                        offsets.push(cumulative);
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::String,
+                        is_array: true,
+                        payload,
+                        offsets,
+                    }
+                }
+            })
+        }
+        Value::Record(_) => Err(AipsIoCrossError::UnsupportedValue(
+            "record values are not part of primitive AipsIO cross-checks",
+        )),
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+fn read_u16_le(data: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([data[offset], data[offset + 1]])
+}
+
+#[cfg(has_casacore_cpp)]
+fn read_u32_le(data: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
+}
+
+#[cfg(has_casacore_cpp)]
+fn read_u64_le(data: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+        data[offset + 4],
+        data[offset + 5],
+        data[offset + 6],
+        data[offset + 7],
+    ])
+}
+
+#[cfg(has_casacore_cpp)]
+fn payload_to_value(
+    primitive: PrimitiveType,
+    is_array: bool,
+    payload: &[u8],
+    offsets: &[u32],
+) -> Result<Value, String> {
+    if is_array {
+        let array = match primitive {
+            PrimitiveType::Bool => {
+                ArrayValue::from_bool_vec(payload.iter().map(|b| *b != 0).collect())
+            }
+            PrimitiveType::Int16 => {
+                if payload.len() % 2 != 0 {
+                    return Err("invalid int16 payload length".to_string());
+                }
+                let values = (0..payload.len() / 2)
+                    .map(|i| i16::from_le_bytes([payload[2 * i], payload[2 * i + 1]]))
+                    .collect();
+                ArrayValue::from_i16_vec(values)
+            }
+            PrimitiveType::Int32 => {
+                if payload.len() % 4 != 0 {
+                    return Err("invalid int32 payload length".to_string());
+                }
+                let values = (0..payload.len() / 4)
+                    .map(|i| {
+                        i32::from_le_bytes([
+                            payload[4 * i],
+                            payload[4 * i + 1],
+                            payload[4 * i + 2],
+                            payload[4 * i + 3],
+                        ])
+                    })
+                    .collect();
+                ArrayValue::from_i32_vec(values)
+            }
+            PrimitiveType::Int64 => {
+                if payload.len() % 8 != 0 {
+                    return Err("invalid int64 payload length".to_string());
+                }
+                let values = (0..payload.len() / 8)
+                    .map(|i| {
+                        i64::from_le_bytes([
+                            payload[8 * i],
+                            payload[8 * i + 1],
+                            payload[8 * i + 2],
+                            payload[8 * i + 3],
+                            payload[8 * i + 4],
+                            payload[8 * i + 5],
+                            payload[8 * i + 6],
+                            payload[8 * i + 7],
+                        ])
+                    })
+                    .collect();
+                ArrayValue::from_i64_vec(values)
+            }
+            PrimitiveType::Float32 => {
+                if payload.len() % 4 != 0 {
+                    return Err("invalid float32 payload length".to_string());
+                }
+                let values = (0..payload.len() / 4)
+                    .map(|i| {
+                        f32::from_bits(u32::from_le_bytes([
+                            payload[4 * i],
+                            payload[4 * i + 1],
+                            payload[4 * i + 2],
+                            payload[4 * i + 3],
+                        ]))
+                    })
+                    .collect();
+                ArrayValue::from_f32_vec(values)
+            }
+            PrimitiveType::Float64 => {
+                if payload.len() % 8 != 0 {
+                    return Err("invalid float64 payload length".to_string());
+                }
+                let values = (0..payload.len() / 8)
+                    .map(|i| {
+                        f64::from_bits(u64::from_le_bytes([
+                            payload[8 * i],
+                            payload[8 * i + 1],
+                            payload[8 * i + 2],
+                            payload[8 * i + 3],
+                            payload[8 * i + 4],
+                            payload[8 * i + 5],
+                            payload[8 * i + 6],
+                            payload[8 * i + 7],
+                        ]))
+                    })
+                    .collect();
+                ArrayValue::from_f64_vec(values)
+            }
+            PrimitiveType::Complex32 => {
+                if payload.len() % 8 != 0 {
+                    return Err("invalid complex32 payload length".to_string());
+                }
+                let values = (0..payload.len() / 8)
+                    .map(|i| {
+                        let re = f32::from_bits(u32::from_le_bytes([
+                            payload[8 * i],
+                            payload[8 * i + 1],
+                            payload[8 * i + 2],
+                            payload[8 * i + 3],
+                        ]));
+                        let im = f32::from_bits(u32::from_le_bytes([
+                            payload[8 * i + 4],
+                            payload[8 * i + 5],
+                            payload[8 * i + 6],
+                            payload[8 * i + 7],
+                        ]));
+                        Complex32 { re, im }
+                    })
+                    .collect();
+                ArrayValue::from_complex32_vec(values)
+            }
+            PrimitiveType::Complex64 => {
+                if payload.len() % 16 != 0 {
+                    return Err("invalid complex64 payload length".to_string());
+                }
+                let values = (0..payload.len() / 16)
+                    .map(|i| {
+                        let re = f64::from_bits(u64::from_le_bytes([
+                            payload[16 * i],
+                            payload[16 * i + 1],
+                            payload[16 * i + 2],
+                            payload[16 * i + 3],
+                            payload[16 * i + 4],
+                            payload[16 * i + 5],
+                            payload[16 * i + 6],
+                            payload[16 * i + 7],
+                        ]));
+                        let im = f64::from_bits(u64::from_le_bytes([
+                            payload[16 * i + 8],
+                            payload[16 * i + 9],
+                            payload[16 * i + 10],
+                            payload[16 * i + 11],
+                            payload[16 * i + 12],
+                            payload[16 * i + 13],
+                            payload[16 * i + 14],
+                            payload[16 * i + 15],
+                        ]));
+                        Complex64 { re, im }
+                    })
+                    .collect();
+                ArrayValue::from_complex64_vec(values)
+            }
+            PrimitiveType::String => {
+                if offsets.is_empty() || offsets[0] != 0 {
+                    return Err("invalid string offsets".to_string());
+                }
+                let mut values = Vec::with_capacity(offsets.len().saturating_sub(1));
+                for i in 0..offsets.len() - 1 {
+                    let start = offsets[i] as usize;
+                    let end = offsets[i + 1] as usize;
+                    if start > end || end > payload.len() {
+                        return Err("invalid string offset range".to_string());
+                    }
+                    let s = String::from_utf8(payload[start..end].to_vec())
+                        .map_err(|e| format!("invalid utf8 in string array: {e}"))?;
+                    values.push(s);
+                }
+                ArrayValue::from_string_vec(values)
+            }
+        };
+        Ok(Value::Array(array))
+    } else {
+        let scalar = match primitive {
+            PrimitiveType::Bool => {
+                if payload.len() != 1 {
+                    return Err("bool scalar payload length must be 1".to_string());
+                }
+                ScalarValue::Bool(payload[0] != 0)
+            }
+            PrimitiveType::Int16 => {
+                if payload.len() != 2 {
+                    return Err("int16 scalar payload length must be 2".to_string());
+                }
+                ScalarValue::Int16(read_u16_le(payload, 0) as i16)
+            }
+            PrimitiveType::Int32 => {
+                if payload.len() != 4 {
+                    return Err("int32 scalar payload length must be 4".to_string());
+                }
+                ScalarValue::Int32(read_u32_le(payload, 0) as i32)
+            }
+            PrimitiveType::Int64 => {
+                if payload.len() != 8 {
+                    return Err("int64 scalar payload length must be 8".to_string());
+                }
+                ScalarValue::Int64(read_u64_le(payload, 0) as i64)
+            }
+            PrimitiveType::Float32 => {
+                if payload.len() != 4 {
+                    return Err("float32 scalar payload length must be 4".to_string());
+                }
+                ScalarValue::Float32(f32::from_bits(read_u32_le(payload, 0)))
+            }
+            PrimitiveType::Float64 => {
+                if payload.len() != 8 {
+                    return Err("float64 scalar payload length must be 8".to_string());
+                }
+                ScalarValue::Float64(f64::from_bits(read_u64_le(payload, 0)))
+            }
+            PrimitiveType::Complex32 => {
+                if payload.len() != 8 {
+                    return Err("complex32 scalar payload length must be 8".to_string());
+                }
+                ScalarValue::Complex32(Complex32 {
+                    re: f32::from_bits(read_u32_le(payload, 0)),
+                    im: f32::from_bits(read_u32_le(payload, 4)),
+                })
+            }
+            PrimitiveType::Complex64 => {
+                if payload.len() != 16 {
+                    return Err("complex64 scalar payload length must be 16".to_string());
+                }
+                ScalarValue::Complex64(Complex64 {
+                    re: f64::from_bits(read_u64_le(payload, 0)),
+                    im: f64::from_bits(read_u64_le(payload, 8)),
+                })
+            }
+            PrimitiveType::String => {
+                let text = String::from_utf8(payload.to_vec())
+                    .map_err(|e| format!("invalid utf8 in scalar string: {e}"))?;
+                ScalarValue::String(text)
+            }
+        };
+        Ok(Value::Scalar(scalar))
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+unsafe extern "C" {
+    fn casacore_cpp_aipsio_encode(
+        primitive: u8,
+        is_array: u8,
+        byte_order: u8,
+        payload_ptr: *const u8,
+        payload_len: usize,
+        offsets_ptr: *const u32,
+        offsets_len: usize,
+        out_wire_ptr: *mut *mut u8,
+        out_wire_len: *mut usize,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    fn casacore_cpp_aipsio_decode(
+        primitive: u8,
+        is_array: u8,
+        byte_order: u8,
+        wire_ptr: *const u8,
+        wire_len: usize,
+        out_payload_ptr: *mut *mut u8,
+        out_payload_len: *mut usize,
+        out_offsets_ptr: *mut *mut u32,
+        out_offsets_len: *mut usize,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    fn casacore_cpp_aipsio_free_bytes(ptr: *mut u8);
+    fn casacore_cpp_aipsio_free_offsets(ptr: *mut u32);
+    fn casacore_cpp_aipsio_free_error(ptr: *mut std::ffi::c_char);
+}
+
+#[cfg(has_casacore_cpp)]
+fn copy_ffi_bytes(ptr: *mut u8, len: usize) -> Vec<u8> {
+    if len == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+fn copy_ffi_offsets(ptr: *mut u32, len: usize) -> Vec<u32> {
+    if len == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+fn cpp_encode_value(value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, String> {
+    let ffi = value_to_payload(value).map_err(|e| e.to_string())?;
+    let primitive = primitive_to_tag(ffi.primitive);
+    let is_array = u8::from(ffi.is_array);
+    let byte_order = byte_order_to_tag(byte_order);
+
+    let mut out_ptr: *mut u8 = std::ptr::null_mut();
+    let mut out_len: usize = 0;
+    let mut out_err: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let status = unsafe {
+        casacore_cpp_aipsio_encode(
+            primitive,
+            is_array,
+            byte_order,
+            ffi.payload.as_ptr(),
+            ffi.payload.len(),
+            ffi.offsets.as_ptr(),
+            ffi.offsets.len(),
+            &mut out_ptr,
+            &mut out_len,
+            &mut out_err,
+        )
+    };
+
+    if status != 0 {
+        let err = if out_err.is_null() {
+            "unknown C++ encode error".to_string()
+        } else {
+            let msg = unsafe { CStr::from_ptr(out_err).to_string_lossy().into_owned() };
+            unsafe { casacore_cpp_aipsio_free_error(out_err) };
+            msg
+        };
+        return Err(err);
+    }
+
+    let out = copy_ffi_bytes(out_ptr, out_len);
+    unsafe { casacore_cpp_aipsio_free_bytes(out_ptr) };
+    Ok(out)
+}
+
+#[cfg(has_casacore_cpp)]
+fn cpp_decode_value(
+    bytes: &[u8],
+    type_tag: TypeTag,
+    byte_order: ByteOrder,
+) -> Result<Value, String> {
+    let primitive = primitive_to_tag(type_tag.primitive);
+    let is_array = u8::from(matches!(type_tag.rank, ValueRank::Array));
+    let byte_order = byte_order_to_tag(byte_order);
+
+    let mut out_payload_ptr: *mut u8 = std::ptr::null_mut();
+    let mut out_payload_len: usize = 0;
+    let mut out_offsets_ptr: *mut u32 = std::ptr::null_mut();
+    let mut out_offsets_len: usize = 0;
+    let mut out_err: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let status = unsafe {
+        casacore_cpp_aipsio_decode(
+            primitive,
+            is_array,
+            byte_order,
+            bytes.as_ptr(),
+            bytes.len(),
+            &mut out_payload_ptr,
+            &mut out_payload_len,
+            &mut out_offsets_ptr,
+            &mut out_offsets_len,
+            &mut out_err,
+        )
+    };
+
+    if status != 0 {
+        let err = if out_err.is_null() {
+            "unknown C++ decode error".to_string()
+        } else {
+            let msg = unsafe { CStr::from_ptr(out_err).to_string_lossy().into_owned() };
+            unsafe { casacore_cpp_aipsio_free_error(out_err) };
+            msg
+        };
+        return Err(err);
+    }
+
+    let payload = copy_ffi_bytes(out_payload_ptr, out_payload_len);
+    let offsets = copy_ffi_offsets(out_offsets_ptr, out_offsets_len);
+    unsafe {
+        casacore_cpp_aipsio_free_bytes(out_payload_ptr);
+        casacore_cpp_aipsio_free_offsets(out_offsets_ptr);
+    }
+
+    payload_to_value(type_tag.primitive, is_array != 0, &payload, &offsets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primitive_case_set_is_non_empty() {
+        let values = primitive_cross_check_values();
+        assert!(!values.is_empty());
+        assert!(values.iter().all(|v| v.type_tag().is_some()));
+    }
+
+    #[test]
+    fn multidimensional_cases_use_fortran_linearization() {
+        let original = Value::Array(ArrayValue::Int32(
+            ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![0, 1, 2, 3, 4, 5]).expect("shape"),
+        ));
+
+        let case = prepare_primitive_case(&original).expect("prepare case");
+        let Value::Array(ArrayValue::Int32(flattened)) = case.wire_value.clone() else {
+            panic!("expected int32 array wire case");
+        };
+        let flattened_vec: Vec<i32> = flattened.iter().copied().collect();
+        assert_eq!(flattened_vec, vec![0, 3, 1, 4, 2, 5]);
+
+        let restored = restore_decoded_shape(case.wire_value, case.original_shape.as_deref())
+            .expect("restore");
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn rust_backend_round_trip_for_primitive_cases() {
+        let backend = RustBackend::new();
+        for value in primitive_cross_check_values() {
+            let case = prepare_primitive_case(&value).expect("case should be supported");
+            let tag = case.wire_value.type_tag().expect("primitive case has tag");
+            for order in [ByteOrder::BigEndian, ByteOrder::LittleEndian] {
+                let wire = backend
+                    .encode_value(&case.wire_value, order)
+                    .expect("rust encode should succeed");
+                let decoded = backend
+                    .decode_value(&wire, tag, order)
+                    .expect("rust decode should succeed");
+                let decoded = restore_decoded_shape(decoded, case.original_shape.as_deref())
+                    .expect("restore decoded shape");
+                assert_eq!(decoded, case.expected_value);
+            }
+        }
+    }
+}
