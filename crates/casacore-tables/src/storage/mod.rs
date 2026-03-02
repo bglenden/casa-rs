@@ -6,6 +6,7 @@ pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod table_control;
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -52,6 +53,7 @@ impl From<SchemaError> for StorageError {
 pub(crate) struct StorageSnapshot {
     pub(crate) rows: Vec<RecordValue>,
     pub(crate) keywords: RecordValue,
+    pub(crate) column_keywords: HashMap<String, RecordValue>,
     pub(crate) schema: Option<TableSchema>,
 }
 
@@ -86,6 +88,13 @@ impl StorageManager for CompositeStorage {
         let table_dat = read_table_dat(&control_path)?;
         let schema = table_dat.to_table_schema()?;
         let keywords = table_dat.table_desc.table_keywords.clone();
+        let column_keywords: HashMap<String, RecordValue> = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .filter(|c| !c.keywords.fields().is_empty())
+            .map(|c| (c.col_name.clone(), c.keywords.clone()))
+            .collect();
         let nrrow = table_dat.nrrow as usize;
 
         let mut rows: Vec<RecordValue> = (0..nrrow).map(|_| RecordValue::default()).collect();
@@ -137,6 +146,7 @@ impl StorageManager for CompositeStorage {
         Ok(StorageSnapshot {
             rows,
             keywords,
+            column_keywords,
             schema: Some(schema),
         })
     }
@@ -167,6 +177,7 @@ impl StorageManager for CompositeStorage {
                 let table_dat = TableDatContents::from_snapshot(
                     schema,
                     &snapshot.keywords,
+                    &snapshot.column_keywords,
                     nrrow,
                     &dm_type_name,
                     &dm_data,
@@ -181,6 +192,7 @@ impl StorageManager for CompositeStorage {
                 let table_dat_tmp = TableDatContents::from_snapshot(
                     schema,
                     &snapshot.keywords,
+                    &snapshot.column_keywords,
                     nrrow,
                     "StandardStMan",
                     &[],
@@ -194,6 +206,7 @@ impl StorageManager for CompositeStorage {
                 let table_dat = TableDatContents::from_snapshot(
                     schema,
                     &snapshot.keywords,
+                    &snapshot.column_keywords,
                     nrrow,
                     &dm_type_name,
                     &dm_data,

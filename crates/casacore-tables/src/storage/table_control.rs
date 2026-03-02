@@ -693,6 +693,7 @@ impl TableDatContents {
     pub(crate) fn from_snapshot(
         schema: &TableSchema,
         keywords: &RecordValue,
+        column_keywords: &std::collections::HashMap<String, RecordValue>,
         nrrow: u64,
         dm_type_name: &str,
         dm_data: &[u8],
@@ -700,7 +701,13 @@ impl TableDatContents {
         let columns: Vec<ColumnDescContents> = schema
             .columns()
             .iter()
-            .map(ColumnDescContents::from_column_schema)
+            .map(|col| {
+                let mut desc = ColumnDescContents::from_column_schema(col);
+                if let Some(kw) = column_keywords.get(col.name()) {
+                    desc.keywords = kw.clone();
+                }
+                desc
+            })
             .collect();
 
         let plain_columns: Vec<PlainColumnEntry> = columns

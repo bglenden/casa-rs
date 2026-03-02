@@ -292,6 +292,7 @@ impl Table {
             inner: TableImpl::with_rows_keywords_and_schema(
                 rows,
                 RecordValue::default(),
+                std::collections::HashMap::new(),
                 Some(schema),
             ),
         };
@@ -306,6 +307,7 @@ impl Table {
             inner: TableImpl::with_rows_keywords_and_schema(
                 snapshot.rows,
                 snapshot.keywords,
+                snapshot.column_keywords,
                 snapshot.schema,
             ),
         };
@@ -318,6 +320,7 @@ impl Table {
         let snapshot = StorageSnapshot {
             rows: self.inner.rows().to_vec(),
             keywords: self.inner.keywords().clone(),
+            column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
         };
         let storage = CompositeStorage;
@@ -708,6 +711,14 @@ impl Table {
 
     pub fn keywords_mut(&mut self) -> &mut RecordValue {
         self.inner.keywords_mut()
+    }
+
+    pub fn column_keywords(&self, column: &str) -> Option<&RecordValue> {
+        self.inner.column_keywords(column)
+    }
+
+    pub fn set_column_keywords(&mut self, column: impl Into<String>, keywords: RecordValue) {
+        self.inner.set_column_keywords(column.into(), keywords);
     }
 
     fn require_column(&self, column: &str) -> Result<(), TableError> {

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use casacore_types::RecordValue;
 
 use crate::schema::TableSchema;
@@ -6,6 +8,7 @@ use crate::schema::TableSchema;
 pub(crate) struct TableImpl {
     rows: Vec<RecordValue>,
     keywords: RecordValue,
+    column_keywords: HashMap<String, RecordValue>,
     schema: Option<TableSchema>,
 }
 
@@ -18,6 +21,7 @@ impl TableImpl {
         Self {
             rows,
             keywords: RecordValue::default(),
+            column_keywords: HashMap::new(),
             schema: None,
         }
     }
@@ -25,11 +29,13 @@ impl TableImpl {
     pub(crate) fn with_rows_keywords_and_schema(
         rows: Vec<RecordValue>,
         keywords: RecordValue,
+        column_keywords: HashMap<String, RecordValue>,
         schema: Option<TableSchema>,
     ) -> Self {
         Self {
             rows,
             keywords,
+            column_keywords,
             schema,
         }
     }
@@ -60,6 +66,18 @@ impl TableImpl {
 
     pub(crate) fn keywords_mut(&mut self) -> &mut RecordValue {
         &mut self.keywords
+    }
+
+    pub(crate) fn column_keywords(&self, column: &str) -> Option<&RecordValue> {
+        self.column_keywords.get(column)
+    }
+
+    pub(crate) fn set_column_keywords(&mut self, column: String, keywords: RecordValue) {
+        self.column_keywords.insert(column, keywords);
+    }
+
+    pub(crate) fn all_column_keywords(&self) -> &HashMap<String, RecordValue> {
+        &self.column_keywords
     }
 
     pub(crate) fn schema(&self) -> Option<&TableSchema> {

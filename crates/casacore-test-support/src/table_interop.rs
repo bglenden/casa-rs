@@ -255,6 +255,11 @@ fn build_table_from_fixture(fixture: &TableFixture) -> Result<Table, TableError>
         ));
     }
 
+    // Copy column keywords
+    for (col_name, kw) in &fixture.column_keywords {
+        table.set_column_keywords(col_name.clone(), kw.clone());
+    }
+
     Ok(table)
 }
 
@@ -322,6 +327,37 @@ fn compare_table_to_fixture(table: &Table, fixture: &TableFixture) -> Result<(),
             }
             None => {
                 return Err(format!("table keyword \"{}\" missing", field.name));
+            }
+        }
+    }
+
+    // Compare column keywords
+    for (col_name, expected_kw) in &fixture.column_keywords {
+        let actual_kw = table.column_keywords(col_name);
+        match actual_kw {
+            Some(actual) => {
+                for field in expected_kw.fields() {
+                    let actual_val = actual.get(&field.name);
+                    match actual_val {
+                        Some(a) => {
+                            if !values_equal(&field.value, a) {
+                                return Err(format!(
+                                    "column keyword \"{col_name}\".\"{}\": expected {:?}, found {:?}",
+                                    field.name, field.value, a
+                                ));
+                            }
+                        }
+                        None => {
+                            return Err(format!(
+                                "column keyword \"{col_name}\".\"{}\" missing",
+                                field.name
+                            ));
+                        }
+                    }
+                }
+            }
+            None => {
+                return Err(format!("column keywords missing for column \"{col_name}\""));
             }
         }
     }
