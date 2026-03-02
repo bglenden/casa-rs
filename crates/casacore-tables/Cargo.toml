@@ -11,4 +11,6 @@ workspace = true
 [dependencies]
 casacore-aipsio = { path = "../casacore-aipsio" }
 casacore-types = { path = "../casacore-types" }
+ndarray.workspace = true
+num-complex.workspace = true
 thiserror.workspace = true

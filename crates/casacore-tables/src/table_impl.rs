@@ -4,7 +4,7 @@ use crate::schema::TableSchema;
 
 #[derive(Debug, Default)]
 pub(crate) struct TableImpl {
-    records: Vec<RecordValue>,
+    rows: Vec<RecordValue>,
     keywords: RecordValue,
     schema: Option<TableSchema>,
 }
@@ -14,44 +14,44 @@ impl TableImpl {
         Self::default()
     }
 
-    pub(crate) fn from_records(records: Vec<RecordValue>) -> Self {
+    pub(crate) fn from_rows(rows: Vec<RecordValue>) -> Self {
         Self {
-            records,
+            rows,
             keywords: RecordValue::default(),
             schema: None,
         }
     }
 
-    pub(crate) fn with_records_keywords_and_schema(
-        records: Vec<RecordValue>,
+    pub(crate) fn with_rows_keywords_and_schema(
+        rows: Vec<RecordValue>,
         keywords: RecordValue,
         schema: Option<TableSchema>,
     ) -> Self {
         Self {
-            records,
+            rows,
             keywords,
             schema,
         }
     }
 
-    pub(crate) fn push_record(&mut self, record: RecordValue) {
-        self.records.push(record);
+    pub(crate) fn add_row(&mut self, row: RecordValue) {
+        self.rows.push(row);
     }
 
-    pub(crate) fn records(&self) -> &[RecordValue] {
-        &self.records
+    pub(crate) fn rows(&self) -> &[RecordValue] {
+        &self.rows
     }
 
     pub(crate) fn row_count(&self) -> usize {
-        self.records.len()
+        self.rows.len()
     }
 
     pub(crate) fn row(&self, row_index: usize) -> Option<&RecordValue> {
-        self.records.get(row_index)
+        self.rows.get(row_index)
     }
 
     pub(crate) fn row_mut(&mut self, row_index: usize) -> Option<&mut RecordValue> {
-        self.records.get_mut(row_index)
+        self.rows.get_mut(row_index)
     }
 
     pub(crate) fn keywords(&self) -> &RecordValue {

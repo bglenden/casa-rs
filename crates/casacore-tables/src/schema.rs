@@ -1,3 +1,4 @@
+use casacore_types::PrimitiveType;
 use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -33,14 +34,16 @@ pub enum ColumnType {
 pub struct ColumnSchema {
     name: String,
     column_type: ColumnType,
+    data_type: Option<PrimitiveType>,
     options: ColumnOptions,
 }
 
 impl ColumnSchema {
-    pub fn scalar(name: impl Into<String>) -> Self {
+    pub fn scalar(name: impl Into<String>, data_type: PrimitiveType) -> Self {
         Self {
             name: name.into(),
             column_type: ColumnType::Scalar,
+            data_type: Some(data_type),
             options: ColumnOptions::default(),
         }
     }
@@ -49,22 +52,33 @@ impl ColumnSchema {
         Self {
             name: name.into(),
             column_type: ColumnType::Record,
+            data_type: None,
             options: ColumnOptions::default(),
         }
     }
 
-    pub fn array_fixed(name: impl Into<String>, shape: Vec<usize>) -> Self {
+    pub fn array_fixed(
+        name: impl Into<String>,
+        data_type: PrimitiveType,
+        shape: Vec<usize>,
+    ) -> Self {
         Self {
             name: name.into(),
             column_type: ColumnType::Array(ArrayShapeContract::Fixed { shape }),
+            data_type: Some(data_type),
             options: ColumnOptions::default(),
         }
     }
 
-    pub fn array_variable(name: impl Into<String>, ndim: Option<usize>) -> Self {
+    pub fn array_variable(
+        name: impl Into<String>,
+        data_type: PrimitiveType,
+        ndim: Option<usize>,
+    ) -> Self {
         Self {
             name: name.into(),
             column_type: ColumnType::Array(ArrayShapeContract::Variable { ndim }),
+            data_type: Some(data_type),
             options: ColumnOptions::default(),
         }
     }
@@ -81,6 +95,10 @@ impl ColumnSchema {
 
     pub fn column_type(&self) -> &ColumnType {
         &self.column_type
+    }
+
+    pub fn data_type(&self) -> Option<PrimitiveType> {
+        self.data_type
     }
 
     pub fn options(&self) -> ColumnOptions {
@@ -137,20 +155,26 @@ impl TableSchema {
 
 #[cfg(test)]
 mod tests {
+    use casacore_types::PrimitiveType;
+
     use super::{ColumnOptions, ColumnSchema, SchemaError, TableSchema};
 
     #[test]
     fn schema_rejects_duplicate_columns() {
-        let schema = TableSchema::new(vec![ColumnSchema::scalar("id"), ColumnSchema::scalar("id")]);
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ]);
         assert_eq!(schema, Err(SchemaError::DuplicateColumn("id".to_string())));
     }
 
     #[test]
     fn direct_requires_fixed_array_shape() {
-        let column = ColumnSchema::array_variable("data", Some(2)).with_options(ColumnOptions {
-            direct: true,
-            undefined: false,
-        });
+        let column = ColumnSchema::array_variable("data", PrimitiveType::Float32, Some(2))
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            });
         assert_eq!(
             column,
             Err(SchemaError::DirectRequiresFixedShape("data".to_string()))

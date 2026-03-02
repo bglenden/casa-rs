@@ -9,6 +9,6 @@ pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };
 pub use table::{
-    ColumnCellIter, ColumnCellRef, RecordColumnCell, RecordColumnIter, RowRange, Table, TableError,
-    TableOptions,
+    ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, RecordColumnCell,
+    RecordColumnIter, RowRange, Table, TableError, TableOptions,
 };

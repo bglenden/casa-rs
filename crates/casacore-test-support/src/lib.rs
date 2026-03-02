@@ -1,3 +1,5 @@
+pub mod table_interop;
+
 #[cfg(has_casacore_cpp)]
 use std::ffi::CStr;
 
@@ -1078,6 +1080,56 @@ fn payload_to_value(
 
 #[cfg(has_casacore_cpp)]
 unsafe extern "C" {
+    fn cpp_table_write_scalar_primitives(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_scalar_primitives(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_fixed_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_fixed_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_scalar_primitives(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_scalar_primitives(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_fixed_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_fixed_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
+
     fn casacore_cpp_aipsio_encode(
         primitive: u8,
         is_array: u8,
@@ -1269,4 +1321,112 @@ mod tests {
             }
         }
     }
+}
+
+// ===== Safe wrappers for C++ table shim =====
+
+/// Fixture identifiers for C++ table operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CppTableFixture {
+    ScalarPrimitives,
+    FixedArray,
+    Keywords,
+    SsmScalarPrimitives,
+    SsmFixedArray,
+    SsmKeywords,
+}
+
+/// Write a table fixture using C++ casacore. Returns an error string on failure.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Result<(), String> {
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        match fixture {
+            CppTableFixture::ScalarPrimitives => {
+                cpp_table_write_scalar_primitives(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::FixedArray => cpp_table_write_fixed_array(c_path.as_ptr(), &mut error),
+            CppTableFixture::Keywords => cpp_table_write_keywords(c_path.as_ptr(), &mut error),
+            CppTableFixture::SsmScalarPrimitives => {
+                cpp_table_write_ssm_scalar_primitives(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmFixedArray => {
+                cpp_table_write_ssm_fixed_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmKeywords => {
+                cpp_table_write_ssm_keywords(c_path.as_ptr(), &mut error)
+            }
+        }
+    };
+
+    if rc != 0 {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        return Err(msg);
+    }
+    Ok(())
+}
+
+/// Verify a table fixture using C++ casacore. Returns an error string on failure.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Result<(), String> {
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        match fixture {
+            CppTableFixture::ScalarPrimitives => {
+                cpp_table_verify_scalar_primitives(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::FixedArray => {
+                cpp_table_verify_fixed_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::Keywords => cpp_table_verify_keywords(c_path.as_ptr(), &mut error),
+            CppTableFixture::SsmScalarPrimitives => {
+                cpp_table_verify_ssm_scalar_primitives(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmFixedArray => {
+                cpp_table_verify_ssm_fixed_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmKeywords => {
+                cpp_table_verify_ssm_keywords(c_path.as_ptr(), &mut error)
+            }
+        }
+    };
+
+    if rc != 0 {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        return Err(msg);
+    }
+    Ok(())
+}
+
+/// Stubs for when C++ is unavailable.
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_table_write(_fixture: CppTableFixture, _path: &std::path::Path) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_table_verify(_fixture: CppTableFixture, _path: &std::path::Path) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
 }

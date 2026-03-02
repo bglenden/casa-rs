@@ -16,12 +16,13 @@ fn main() {
     build.cpp(true);
     build.flag_if_supported("-std=c++17");
     build.file("src/cpp/casacore_cpp_aipsio_shim.cpp");
+    build.file("src/cpp/casacore_cpp_table_shim.cpp");
 
     for include in &casacore.include_paths {
         build.include(include);
     }
 
-    build.compile("casacore_cpp_aipsio_shim");
+    build.compile("casacore_cpp_shims");
 
     for path in &casacore.link_paths {
         println!("cargo:rustc-link-search=native={}", path.display());

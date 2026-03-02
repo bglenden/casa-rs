@@ -1,22 +1,39 @@
 use std::path::{Path, PathBuf};
 
-use casacore_types::{ArrayValue, RecordValue, Value, ValueKind};
+use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value, ValueKind};
 use thiserror::Error;
 
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
-use crate::storage::{StManAipsIoStorage, StorageManager, StorageSnapshot};
+use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot};
 use crate::table_impl::TableImpl;
+
+/// Which data manager to use when writing table data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DataManagerKind {
+    /// StManAipsIO: simple whole-column AipsIO streaming.
+    #[default]
+    StManAipsIO,
+    /// StandardStMan: bucket-based storage (the C++ casacore default).
+    StandardStMan,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableOptions {
     pub path: PathBuf,
+    pub data_manager: DataManagerKind,
 }
 
 impl TableOptions {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
+            data_manager: DataManagerKind::default(),
         }
+    }
+
+    pub fn with_data_manager(mut self, kind: DataManagerKind) -> Self {
+        self.data_manager = kind;
+        self
     }
 }
 
@@ -98,7 +115,7 @@ pub struct RecordColumnCell {
 }
 
 pub struct ColumnCellIter<'a> {
-    records: &'a [RecordValue],
+    row_data: &'a [RecordValue],
     column: &'a str,
     rows: RowRangeIter,
 }
@@ -109,13 +126,13 @@ impl<'a> Iterator for ColumnCellIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         self.rows.next().map(|row_index| ColumnCellRef {
             row_index,
-            value: self.records[row_index].get(self.column),
+            value: self.row_data[row_index].get(self.column),
         })
     }
 }
 
 pub struct RecordColumnIter<'a> {
-    records: &'a [RecordValue],
+    row_data: &'a [RecordValue],
     column: &'a str,
     rows: RowRangeIter,
     default_missing: bool,
@@ -126,7 +143,7 @@ impl<'a> Iterator for RecordColumnIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.rows.next().map(|row_index| {
-            let value = match self.records[row_index].get(self.column) {
+            let value = match self.row_data[row_index].get(self.column) {
                 Some(Value::Record(record)) => record.clone(),
                 Some(_) => unreachable!("record iterator was prevalidated"),
                 None => {
@@ -139,6 +156,20 @@ impl<'a> Iterator for RecordColumnIter<'a> {
             };
             RecordColumnCell { row_index, value }
         })
+    }
+}
+
+pub struct ColumnChunkIter<'a> {
+    inner: ColumnCellIter<'a>,
+    chunk_size: usize,
+}
+
+impl<'a> Iterator for ColumnChunkIter<'a> {
+    type Item = Vec<ColumnCellRef<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let chunk: Vec<_> = self.inner.by_ref().take(self.chunk_size).collect();
+        if chunk.is_empty() { None } else { Some(chunk) }
     }
 }
 
@@ -247,19 +278,19 @@ impl Table {
         Self { inner }
     }
 
-    pub fn from_records(records: Vec<RecordValue>) -> Self {
+    pub fn from_rows(rows: Vec<RecordValue>) -> Self {
         Self {
-            inner: TableImpl::from_records(records),
+            inner: TableImpl::from_rows(rows),
         }
     }
 
-    pub fn from_records_with_schema(
-        records: Vec<RecordValue>,
+    pub fn from_rows_with_schema(
+        rows: Vec<RecordValue>,
         schema: TableSchema,
     ) -> Result<Self, TableError> {
         let table = Self {
-            inner: TableImpl::with_records_keywords_and_schema(
-                records,
+            inner: TableImpl::with_rows_keywords_and_schema(
+                rows,
                 RecordValue::default(),
                 Some(schema),
             ),
@@ -269,10 +300,10 @@ impl Table {
     }
 
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
-        let storage = StManAipsIoStorage;
+        let storage = CompositeStorage;
         let snapshot = storage.load(&options.path)?;
         let table = Self {
-            inner: TableImpl::with_records_keywords_and_schema(
+            inner: TableImpl::with_rows_keywords_and_schema(
                 snapshot.rows,
                 snapshot.keywords,
                 snapshot.schema,
@@ -285,12 +316,12 @@ impl Table {
     pub fn save(&self, options: TableOptions) -> Result<(), TableError> {
         self.validate()?;
         let snapshot = StorageSnapshot {
-            rows: self.inner.records().to_vec(),
+            rows: self.inner.rows().to_vec(),
             keywords: self.inner.keywords().clone(),
             schema: self.inner.schema().cloned(),
         };
-        let storage = StManAipsIoStorage;
-        storage.save(&options.path, &snapshot)?;
+        let storage = CompositeStorage;
+        storage.save(&options.path, &snapshot, options.data_manager)?;
         Ok(())
     }
 
@@ -317,7 +348,7 @@ impl Table {
             return Ok(());
         };
 
-        for (row_index, row) in self.records().iter().enumerate() {
+        for (row_index, row) in self.rows().iter().enumerate() {
             validate_row_against_schema(row_index, row, schema)?;
         }
         Ok(())
@@ -327,15 +358,15 @@ impl Table {
         self.inner.row_count()
     }
 
-    pub fn records(&self) -> &[RecordValue] {
-        self.inner.records()
+    pub fn rows(&self) -> &[RecordValue] {
+        self.inner.rows()
     }
 
-    pub fn push_record(&mut self, record: RecordValue) -> Result<(), TableError> {
+    pub fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
         if let Some(schema) = self.schema() {
-            validate_row_against_schema(self.row_count(), &record, schema)?;
+            validate_row_against_schema(self.row_count(), &row, schema)?;
         }
-        self.inner.push_record(record);
+        self.inner.add_row(row);
         Ok(())
     }
 
@@ -363,7 +394,7 @@ impl Table {
         self.require_column(column)?;
         row_range.validate(self.row_count())?;
         Ok(ColumnCellIter {
-            records: self.records(),
+            row_data: self.rows(),
             column,
             rows: row_range.iter(),
         })
@@ -452,7 +483,7 @@ impl Table {
         };
 
         for row_index in row_range.iter() {
-            match self.records()[row_index].get(column) {
+            match self.rows()[row_index].get(column) {
                 Some(Value::Record(_)) => {}
                 Some(value) => {
                     return Err(TableError::ColumnTypeMismatch {
@@ -474,7 +505,7 @@ impl Table {
         }
 
         Ok(RecordColumnIter {
-            records: self.records(),
+            row_data: self.rows(),
             column,
             rows: row_range.iter(),
             default_missing,
@@ -596,11 +627,79 @@ impl Table {
         Ok(())
     }
 
+    /// Returns all cell values for `column` as an allocated `Vec`.
+    ///
+    /// This materializes the entire column into memory. For large tables,
+    /// prefer [`get_column`] or [`iter_column_chunks`] which stream lazily.
     pub fn column_cells(&self, column: &str) -> Vec<Option<&Value>> {
-        self.records()
+        self.rows()
             .iter()
             .map(|record| record.get(column))
             .collect()
+    }
+
+    /// Returns a chunked iterator over a column's cells.
+    ///
+    /// Each iteration yields a `Vec<ColumnCellRef>` of up to `chunk_size` rows.
+    /// This avoids materializing the entire column at once while still allowing
+    /// batch processing.
+    pub fn iter_column_chunks<'a>(
+        &'a self,
+        column: &'a str,
+        row_range: RowRange,
+        chunk_size: usize,
+    ) -> Result<ColumnChunkIter<'a>, TableError> {
+        let inner = self.get_column_range(column, row_range)?;
+        Ok(ColumnChunkIter {
+            inner,
+            chunk_size: chunk_size.max(1),
+        })
+    }
+
+    /// Returns a reference to the array value in a cell without cloning.
+    ///
+    /// Use ndarray's slicing on the returned `ArrayValue` for sub-array access.
+    pub fn get_array_cell(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<&ArrayValue, TableError> {
+        self.require_row(row_index)?;
+        match self.cell(row_index, column) {
+            Some(Value::Array(array)) => Ok(array),
+            Some(value) => Err(TableError::ColumnTypeMismatch {
+                row_index,
+                column: column.to_string(),
+                expected: "array",
+                found: value.kind(),
+            }),
+            None => Err(TableError::ColumnNotFound {
+                row_index,
+                column: column.to_string(),
+            }),
+        }
+    }
+
+    /// Returns a reference to the scalar value in a cell without cloning.
+    pub fn get_scalar_cell(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<&ScalarValue, TableError> {
+        self.require_row(row_index)?;
+        match self.cell(row_index, column) {
+            Some(Value::Scalar(scalar)) => Ok(scalar),
+            Some(value) => Err(TableError::ColumnTypeMismatch {
+                row_index,
+                column: column.to_string(),
+                expected: "scalar",
+                found: value.kind(),
+            }),
+            None => Err(TableError::ColumnNotFound {
+                row_index,
+                column: column.to_string(),
+            }),
+        }
     }
 
     pub fn keywords(&self) -> &RecordValue {
@@ -746,14 +845,16 @@ fn validate_array_contract(
 mod tests {
     use std::path::PathBuf;
 
-    use casacore_types::{Array2, ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+    use casacore_types::{
+        Array2, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    };
 
     use crate::schema::{ColumnSchema, TableSchema};
 
     use super::{RowRange, Table, TableError, TableOptions};
 
     #[test]
-    fn table_keeps_records_in_order() {
+    fn table_keeps_rows_in_order() {
         let first = RecordValue::new(vec![RecordField::new(
             "id",
             Value::Scalar(ScalarValue::Int32(1)),
@@ -763,9 +864,9 @@ mod tests {
             Value::Scalar(ScalarValue::Int32(2)),
         )]);
 
-        let table = Table::from_records(vec![first.clone(), second.clone()]);
+        let table = Table::from_rows(vec![first.clone(), second.clone()]);
         assert_eq!(table.row_count(), 2);
-        assert_eq!(table.records(), &[first, second]);
+        assert_eq!(table.rows(), &[first, second]);
     }
 
     #[test]
@@ -778,7 +879,7 @@ mod tests {
             RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
             RecordField::new("name", Value::Scalar(ScalarValue::String("b".to_string()))),
         ]);
-        let mut table = Table::from_records(vec![first.clone(), second.clone()]);
+        let mut table = Table::from_rows(vec![first.clone(), second.clone()]);
 
         assert_eq!(table.row(0), Some(&first));
         assert_eq!(
@@ -810,7 +911,7 @@ mod tests {
 
     #[test]
     fn column_range_iteration_supports_stride() {
-        let records = (0..6)
+        let rows = (0..6)
             .map(|value| {
                 RecordValue::new(vec![RecordField::new(
                     "id",
@@ -818,7 +919,7 @@ mod tests {
                 )])
             })
             .collect();
-        let table = Table::from_records(records);
+        let table = Table::from_rows(rows);
 
         let cells: Vec<(usize, Option<Value>)> = table
             .get_column_range("id", RowRange::with_stride(1, 6, 2))
@@ -837,7 +938,7 @@ mod tests {
 
     #[test]
     fn column_range_rejects_invalid_ranges() {
-        let table = Table::from_records(vec![RecordValue::new(vec![RecordField::new(
+        let table = Table::from_rows(vec![RecordValue::new(vec![RecordField::new(
             "id",
             Value::Scalar(ScalarValue::Int32(1)),
         )])]);
@@ -865,7 +966,7 @@ mod tests {
             TableSchema::new(vec![ColumnSchema::record("meta")]).expect("create record schema");
         let mut table = Table::with_schema(schema);
         table
-            .push_record(RecordValue::new(vec![]))
+            .add_row(RecordValue::new(vec![]))
             .expect("missing record cell should be valid");
 
         assert_eq!(table.record_cell(0, "meta"), Ok(RecordValue::default()));
@@ -874,7 +975,7 @@ mod tests {
 
     #[test]
     fn record_cell_requires_present_value_without_schema() {
-        let table = Table::from_records(vec![RecordValue::new(vec![])]);
+        let table = Table::from_rows(vec![RecordValue::new(vec![])]);
         assert_eq!(
             table.record_cell(0, "meta"),
             Err(TableError::ColumnNotFound {
@@ -886,11 +987,11 @@ mod tests {
 
     #[test]
     fn record_cell_rejects_non_record_schema_column() {
-        let schema =
-            TableSchema::new(vec![ColumnSchema::scalar("id")]).expect("create scalar schema");
+        let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)])
+            .expect("create scalar schema");
         let mut table = Table::with_schema(schema);
         table
-            .push_record(RecordValue::new(vec![RecordField::new(
+            .add_row(RecordValue::new(vec![RecordField::new(
                 "id",
                 Value::Scalar(ScalarValue::Int32(7)),
             )]))
@@ -917,7 +1018,7 @@ mod tests {
             "flag",
             Value::Scalar(ScalarValue::Bool(false)),
         )]);
-        let records = vec![
+        let rows = vec![
             RecordValue::new(vec![RecordField::new("meta", Value::Record(first.clone()))]),
             RecordValue::new(vec![]),
             RecordValue::new(vec![RecordField::new(
@@ -925,7 +1026,7 @@ mod tests {
                 Value::Record(second.clone()),
             )]),
         ];
-        let table = Table::from_records_with_schema(records, schema).expect("schema-valid rows");
+        let table = Table::from_rows_with_schema(rows, schema).expect("schema-valid rows");
 
         let cells: Vec<(usize, RecordValue)> = table
             .get_record_column_range("meta", RowRange::new(0, 3))
@@ -945,7 +1046,7 @@ mod tests {
             "meta",
             Value::Record(RecordValue::default()),
         )]);
-        let table = Table::from_records(vec![record, RecordValue::new(vec![])]);
+        let table = Table::from_rows(vec![record, RecordValue::new(vec![])]);
 
         assert_eq!(
             table.get_record_column("meta").map(|iter| iter.count()),
@@ -958,7 +1059,7 @@ mod tests {
 
     #[test]
     fn record_column_range_rejects_non_record_cells() {
-        let table = Table::from_records(vec![
+        let table = Table::from_rows(vec![
             RecordValue::new(vec![RecordField::new(
                 "meta",
                 Value::Record(RecordValue::default()),
@@ -986,7 +1087,7 @@ mod tests {
             TableSchema::new(vec![ColumnSchema::record("meta")]).expect("create record schema");
         let mut table = Table::with_schema(schema);
         table
-            .push_record(RecordValue::new(vec![]))
+            .add_row(RecordValue::new(vec![]))
             .expect("push schema-compliant row");
         let payload = RecordValue::new(vec![RecordField::new(
             "code",
@@ -1001,7 +1102,7 @@ mod tests {
 
     #[test]
     fn put_column_range_streams_values_without_column_vecs() {
-        let mut table = Table::from_records(vec![
+        let mut table = Table::from_rows(vec![
             RecordValue::new(vec![RecordField::new(
                 "name",
                 Value::Scalar(ScalarValue::String("a".to_string())),
@@ -1050,7 +1151,7 @@ mod tests {
 
     #[test]
     fn put_column_range_checks_value_count() {
-        let mut table = Table::from_records(vec![
+        let mut table = Table::from_rows(vec![
             RecordValue::new(vec![RecordField::new(
                 "name",
                 Value::Scalar(ScalarValue::String("a".to_string())),
@@ -1080,7 +1181,7 @@ mod tests {
             })
         );
 
-        let mut table = Table::from_records(vec![
+        let mut table = Table::from_rows(vec![
             RecordValue::new(vec![RecordField::new(
                 "name",
                 Value::Scalar(ScalarValue::String("a".to_string())),
@@ -1109,11 +1210,15 @@ mod tests {
 
     #[test]
     fn fixed_array_schema_enforces_defined_shape() {
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed("data", vec![2])])
-            .expect("create schema");
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Int32,
+            vec![2],
+        )])
+        .expect("create schema");
         let mut table = Table::with_schema(schema);
 
-        let missing = table.push_record(RecordValue::new(vec![]));
+        let missing = table.add_row(RecordValue::new(vec![]));
         assert_eq!(
             missing,
             Err(TableError::SchemaColumnMissing {
@@ -1123,13 +1228,13 @@ mod tests {
         );
 
         table
-            .push_record(RecordValue::new(vec![RecordField::new(
+            .add_row(RecordValue::new(vec![RecordField::new(
                 "data",
                 Value::Array(ArrayValue::from_i32_vec(vec![1, 2])),
             )]))
             .expect("push valid fixed-shape row");
 
-        let wrong_shape = table.push_record(RecordValue::new(vec![RecordField::new(
+        let wrong_shape = table.add_row(RecordValue::new(vec![RecordField::new(
             "data",
             Value::Array(ArrayValue::from_i32_vec(vec![3])),
         )]));
@@ -1146,16 +1251,20 @@ mod tests {
 
     #[test]
     fn variable_array_schema_allows_undefined_and_checks_ndim() {
-        let schema = TableSchema::new(vec![ColumnSchema::array_variable("payload", Some(1))])
-            .expect("schema");
+        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+            "payload",
+            PrimitiveType::Int32,
+            Some(1),
+        )])
+        .expect("schema");
         let mut table = Table::with_schema(schema);
 
         table
-            .push_record(RecordValue::new(vec![]))
+            .add_row(RecordValue::new(vec![]))
             .expect("undefined variable-shape cell should be allowed");
 
         table
-            .push_record(RecordValue::new(vec![RecordField::new(
+            .add_row(RecordValue::new(vec![RecordField::new(
                 "payload",
                 Value::Array(ArrayValue::from_i32_vec(vec![1, 2, 3])),
             )]))
@@ -1179,13 +1288,13 @@ mod tests {
     #[test]
     fn table_schema_round_trips_through_disk_storage() {
         let schema = TableSchema::new(vec![
-            ColumnSchema::scalar("id"),
-            ColumnSchema::array_fixed("data", vec![2]),
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
         ])
         .expect("schema");
         let mut table = Table::with_schema(schema.clone());
         table
-            .push_record(RecordValue::new(vec![
+            .add_row(RecordValue::new(vec![
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(42))),
                 RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))),
             ]))
@@ -1219,10 +1328,16 @@ mod tests {
 
     #[test]
     fn table_keywords_round_trip_through_disk_storage() {
-        let mut table = Table::from_records(vec![RecordValue::new(vec![RecordField::new(
-            "id",
-            Value::Scalar(ScalarValue::Int32(42)),
-        )])]);
+        let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)])
+            .expect("schema");
+        let mut table = Table::from_rows_with_schema(
+            vec![RecordValue::new(vec![RecordField::new(
+                "id",
+                Value::Scalar(ScalarValue::Int32(42)),
+            )])],
+            schema,
+        )
+        .expect("create table");
         table.keywords_mut().push(RecordField::new(
             "observer",
             Value::Scalar(ScalarValue::String("rust-test".to_string())),
@@ -1247,6 +1362,125 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+
+    #[test]
+    fn iter_column_chunks_batches_rows() {
+        let rows: Vec<RecordValue> = (0..7)
+            .map(|v| {
+                RecordValue::new(vec![RecordField::new(
+                    "id",
+                    Value::Scalar(ScalarValue::Int32(v)),
+                )])
+            })
+            .collect();
+        let table = Table::from_rows(rows);
+
+        let chunks: Vec<Vec<(usize, i32)>> = table
+            .iter_column_chunks("id", RowRange::new(0, 7), 3)
+            .expect("chunk iter")
+            .map(|chunk| {
+                chunk
+                    .into_iter()
+                    .map(|cell| {
+                        let v = match cell.value {
+                            Some(Value::Scalar(ScalarValue::Int32(n))) => n,
+                            _ => panic!("expected i32"),
+                        };
+                        (cell.row_index, *v)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        assert_eq!(
+            chunks,
+            vec![
+                vec![(0, 0), (1, 1), (2, 2)],
+                vec![(3, 3), (4, 4), (5, 5)],
+                vec![(6, 6)],
+            ]
+        );
+    }
+
+    #[test]
+    fn iter_column_chunks_with_stride() {
+        let rows: Vec<RecordValue> = (0..6)
+            .map(|v| {
+                RecordValue::new(vec![RecordField::new(
+                    "id",
+                    Value::Scalar(ScalarValue::Int32(v)),
+                )])
+            })
+            .collect();
+        let table = Table::from_rows(rows);
+
+        let chunks: Vec<Vec<usize>> = table
+            .iter_column_chunks("id", RowRange::with_stride(0, 6, 2), 2)
+            .expect("chunk iter")
+            .map(|chunk| chunk.into_iter().map(|cell| cell.row_index).collect())
+            .collect();
+
+        assert_eq!(chunks, vec![vec![0, 2], vec![4]]);
+    }
+
+    #[test]
+    fn get_array_cell_returns_borrow() {
+        let array = ArrayValue::from_f64_vec(vec![1.0, 2.0, 3.0]);
+        let table = Table::from_rows(vec![RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(array.clone()),
+        )])]);
+
+        let borrowed = table.get_array_cell(0, "data").expect("get array cell");
+        assert_eq!(borrowed, &array);
+    }
+
+    #[test]
+    fn get_array_cell_rejects_non_array() {
+        let table = Table::from_rows(vec![RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(42)),
+        )])]);
+
+        assert!(matches!(
+            table.get_array_cell(0, "id"),
+            Err(TableError::ColumnTypeMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn get_array_cell_rejects_missing() {
+        let table = Table::from_rows(vec![RecordValue::new(vec![])]);
+
+        assert!(matches!(
+            table.get_array_cell(0, "data"),
+            Err(TableError::ColumnNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn get_scalar_cell_returns_borrow() {
+        let table = Table::from_rows(vec![RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(42)),
+        )])]);
+
+        let borrowed = table.get_scalar_cell(0, "id").expect("get scalar cell");
+        assert_eq!(borrowed, &ScalarValue::Int32(42));
+    }
+
+    #[test]
+    fn get_scalar_cell_rejects_non_scalar() {
+        let table = Table::from_rows(vec![RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::from_i32_vec(vec![1, 2])),
+        )])]);
+
+        assert!(matches!(
+            table.get_scalar_cell(0, "data"),
+            Err(TableError::ColumnTypeMismatch { .. })
+        ));
     }
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
