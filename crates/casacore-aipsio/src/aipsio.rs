@@ -1053,6 +1053,9 @@ impl AipsIo {
     fn put_scalar_value(&mut self, value: &ScalarValue) -> AipsIoObjectResult<()> {
         match value {
             ScalarValue::Bool(v) => self.put_bool(*v),
+            ScalarValue::UInt8(v) => self.put_u8(*v),
+            ScalarValue::UInt16(v) => self.put_u16(*v),
+            ScalarValue::UInt32(v) => self.put_u32(*v),
             ScalarValue::Int16(v) => self.put_i16(*v),
             ScalarValue::Int32(v) => self.put_i32(*v),
             ScalarValue::Int64(v) => self.put_i64(*v),
@@ -1067,6 +1070,9 @@ impl AipsIo {
     fn get_scalar_value(&mut self, primitive: PrimitiveType) -> AipsIoObjectResult<ScalarValue> {
         match primitive {
             PrimitiveType::Bool => Ok(ScalarValue::Bool(self.get_bool()?)),
+            PrimitiveType::UInt8 => Ok(ScalarValue::UInt8(self.get_u8()?)),
+            PrimitiveType::UInt16 => Ok(ScalarValue::UInt16(self.get_u16()?)),
+            PrimitiveType::UInt32 => Ok(ScalarValue::UInt32(self.get_u32()?)),
             PrimitiveType::Int16 => Ok(ScalarValue::Int16(self.get_i16()?)),
             PrimitiveType::Int32 => Ok(ScalarValue::Int32(self.get_i32()?)),
             PrimitiveType::Int64 => Ok(ScalarValue::Int64(self.get_i64()?)),
@@ -1093,6 +1099,30 @@ impl AipsIo {
                 } else {
                     let packed: Vec<bool> = values.iter().copied().collect();
                     self.put_bool_slice(&packed, false)
+                }
+            }
+            ArrayValue::UInt8(values) => {
+                if let Some(slice) = values.as_slice_memory_order() {
+                    self.put_u8_slice(slice, false)
+                } else {
+                    let packed: Vec<u8> = values.iter().copied().collect();
+                    self.put_u8_slice(&packed, false)
+                }
+            }
+            ArrayValue::UInt16(values) => {
+                if let Some(slice) = values.as_slice_memory_order() {
+                    self.put_u16_slice(slice, false)
+                } else {
+                    let packed: Vec<u16> = values.iter().copied().collect();
+                    self.put_u16_slice(&packed, false)
+                }
+            }
+            ArrayValue::UInt32(values) => {
+                if let Some(slice) = values.as_slice_memory_order() {
+                    self.put_u32_slice(slice, false)
+                } else {
+                    let packed: Vec<u32> = values.iter().copied().collect();
+                    self.put_u32_slice(&packed, false)
                 }
             }
             ArrayValue::Int16(values) => {
@@ -1181,6 +1211,21 @@ impl AipsIo {
                 let mut values = vec![false; element_count];
                 self.get_bool_into(&mut values)?;
                 Ok(ArrayValue::Bool(array_from_shape_vec(&shape, values)?))
+            }
+            PrimitiveType::UInt8 => {
+                let mut values = vec![0_u8; element_count];
+                self.get_u8_into(&mut values)?;
+                Ok(ArrayValue::UInt8(array_from_shape_vec(&shape, values)?))
+            }
+            PrimitiveType::UInt16 => {
+                let mut values = vec![0_u16; element_count];
+                self.get_u16_into(&mut values)?;
+                Ok(ArrayValue::UInt16(array_from_shape_vec(&shape, values)?))
+            }
+            PrimitiveType::UInt32 => {
+                let mut values = vec![0_u32; element_count];
+                self.get_u32_into(&mut values)?;
+                Ok(ArrayValue::UInt32(array_from_shape_vec(&shape, values)?))
             }
             PrimitiveType::Int16 => {
                 let mut values = vec![0_i16; element_count];
@@ -1449,6 +1494,9 @@ fn primitive_type_tag(primitive: PrimitiveType) -> u8 {
         PrimitiveType::Complex32 => 6,
         PrimitiveType::Complex64 => 7,
         PrimitiveType::String => 8,
+        PrimitiveType::UInt8 => 9,
+        PrimitiveType::UInt16 => 10,
+        PrimitiveType::UInt32 => 11,
     }
 }
 
@@ -1463,6 +1511,9 @@ fn primitive_type_from_tag(tag: u8) -> AipsIoObjectResult<PrimitiveType> {
         6 => Ok(PrimitiveType::Complex32),
         7 => Ok(PrimitiveType::Complex64),
         8 => Ok(PrimitiveType::String),
+        9 => Ok(PrimitiveType::UInt8),
+        10 => Ok(PrimitiveType::UInt16),
+        11 => Ok(PrimitiveType::UInt32),
         _ => Err(AipsIoObjectError::InvalidPrimitiveTypeTag(tag)),
     }
 }

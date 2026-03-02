@@ -6,6 +6,9 @@ pub use ndarray::{Array2, Array3};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
     Bool,
+    UInt8,
+    UInt16,
+    UInt32,
     Int16,
     Int32,
     Int64,
@@ -20,6 +23,9 @@ impl PrimitiveType {
     pub fn fixed_width_bytes(self) -> Option<usize> {
         match self {
             Self::Bool => Some(1),
+            Self::UInt8 => Some(1),
+            Self::UInt16 => Some(2),
+            Self::UInt32 => Some(4),
             Self::Int16 => Some(2),
             Self::Int32 => Some(4),
             Self::Int64 => Some(8),
@@ -70,6 +76,9 @@ pub enum ValueKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScalarValue {
     Bool(bool),
+    UInt8(u8),
+    UInt16(u16),
+    UInt32(u32),
     Int16(i16),
     Int32(i32),
     Int64(i64),
@@ -84,6 +93,9 @@ impl ScalarValue {
     pub fn primitive_type(&self) -> PrimitiveType {
         match self {
             Self::Bool(_) => PrimitiveType::Bool,
+            Self::UInt8(_) => PrimitiveType::UInt8,
+            Self::UInt16(_) => PrimitiveType::UInt16,
+            Self::UInt32(_) => PrimitiveType::UInt32,
             Self::Int16(_) => PrimitiveType::Int16,
             Self::Int32(_) => PrimitiveType::Int32,
             Self::Int64(_) => PrimitiveType::Int64,
@@ -103,6 +115,9 @@ impl ScalarValue {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArrayValue {
     Bool(ArrayD<bool>),
+    UInt8(ArrayD<u8>),
+    UInt16(ArrayD<u16>),
+    UInt32(ArrayD<u32>),
     Int16(ArrayD<i16>),
     Int32(ArrayD<i32>),
     Int64(ArrayD<i64>),
@@ -117,6 +132,9 @@ impl ArrayValue {
     pub fn primitive_type(&self) -> PrimitiveType {
         match self {
             Self::Bool(_) => PrimitiveType::Bool,
+            Self::UInt8(_) => PrimitiveType::UInt8,
+            Self::UInt16(_) => PrimitiveType::UInt16,
+            Self::UInt32(_) => PrimitiveType::UInt32,
             Self::Int16(_) => PrimitiveType::Int16,
             Self::Int32(_) => PrimitiveType::Int32,
             Self::Int64(_) => PrimitiveType::Int64,
@@ -135,6 +153,9 @@ impl ArrayValue {
     pub fn len(&self) -> usize {
         match self {
             Self::Bool(v) => v.len(),
+            Self::UInt8(v) => v.len(),
+            Self::UInt16(v) => v.len(),
+            Self::UInt32(v) => v.len(),
             Self::Int16(v) => v.len(),
             Self::Int32(v) => v.len(),
             Self::Int64(v) => v.len(),
@@ -153,6 +174,9 @@ impl ArrayValue {
     pub fn ndim(&self) -> usize {
         match self {
             Self::Bool(v) => v.ndim(),
+            Self::UInt8(v) => v.ndim(),
+            Self::UInt16(v) => v.ndim(),
+            Self::UInt32(v) => v.ndim(),
             Self::Int16(v) => v.ndim(),
             Self::Int32(v) => v.ndim(),
             Self::Int64(v) => v.ndim(),
@@ -167,6 +191,9 @@ impl ArrayValue {
     pub fn shape(&self) -> &[usize] {
         match self {
             Self::Bool(v) => v.shape(),
+            Self::UInt8(v) => v.shape(),
+            Self::UInt16(v) => v.shape(),
+            Self::UInt32(v) => v.shape(),
             Self::Int16(v) => v.shape(),
             Self::Int32(v) => v.shape(),
             Self::Int64(v) => v.shape(),
@@ -180,6 +207,18 @@ impl ArrayValue {
 
     pub fn from_bool_vec(values: Vec<bool>) -> Self {
         Self::Bool(Array1::from_vec(values).into_dyn())
+    }
+
+    pub fn from_u8_vec(values: Vec<u8>) -> Self {
+        Self::UInt8(Array1::from_vec(values).into_dyn())
+    }
+
+    pub fn from_u16_vec(values: Vec<u16>) -> Self {
+        Self::UInt16(Array1::from_vec(values).into_dyn())
+    }
+
+    pub fn from_u32_vec(values: Vec<u32>) -> Self {
+        Self::UInt32(Array1::from_vec(values).into_dyn())
     }
 
     pub fn from_i16_vec(values: Vec<i16>) -> Self {
@@ -244,6 +283,10 @@ impl RecordValue {
         &self.fields
     }
 
+    pub fn fields_mut(&mut self) -> &mut [RecordField] {
+        &mut self.fields
+    }
+
     pub fn into_fields(self) -> Vec<RecordField> {
         self.fields
     }
@@ -265,6 +308,22 @@ impl RecordValue {
             .iter()
             .find(|field| field.name == name)
             .map(|field| &field.value)
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Value> {
+        self.fields
+            .iter_mut()
+            .find(|field| field.name == name)
+            .map(|field| &mut field.value)
+    }
+
+    pub fn upsert(&mut self, name: impl Into<String>, value: Value) {
+        let name = name.into();
+        if let Some(existing) = self.fields.iter_mut().find(|field| field.name == name) {
+            existing.value = value;
+            return;
+        }
+        self.fields.push(RecordField::new(name, value));
     }
 }
 
@@ -320,8 +379,8 @@ impl From<RecordValue> for Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-        ValueKind, ValueRank,
+        ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, TypeTag,
+        Value, ValueKind, ValueRank,
     };
     use ndarray::{Array, IxDyn};
 
@@ -342,6 +401,15 @@ mod tests {
         assert_eq!(tag.rank, ValueRank::Array);
         assert_eq!(array.ndim(), 1);
         assert_eq!(array.shape(), &[3]);
+    }
+
+    #[test]
+    fn unsigned_scalar_and_array_type_tags_are_supported() {
+        let scalar = ScalarValue::UInt32(7);
+        assert_eq!(scalar.type_tag(), TypeTag::scalar(PrimitiveType::UInt32));
+
+        let array = ArrayValue::from_u8_vec(vec![1, 2, 3]);
+        assert_eq!(array.type_tag(), TypeTag::array(PrimitiveType::UInt8));
     }
 
     #[test]

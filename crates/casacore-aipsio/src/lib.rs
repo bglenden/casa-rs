@@ -82,6 +82,29 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    pub fn write_u8(&mut self, value: u8) -> AipsIoResult<()> {
+        self.inner.write_all(&[value])?;
+        Ok(())
+    }
+
+    pub fn write_u16(&mut self, value: u16) -> AipsIoResult<()> {
+        let bytes = match self.byte_order {
+            ByteOrder::BigEndian => value.to_be_bytes(),
+            ByteOrder::LittleEndian => value.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)?;
+        Ok(())
+    }
+
+    pub fn write_u32(&mut self, value: u32) -> AipsIoResult<()> {
+        let bytes = match self.byte_order {
+            ByteOrder::BigEndian => value.to_be_bytes(),
+            ByteOrder::LittleEndian => value.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)?;
+        Ok(())
+    }
+
     pub fn write_i16(&mut self, value: i16) -> AipsIoResult<()> {
         let bytes = match self.byte_order {
             ByteOrder::BigEndian => value.to_be_bytes(),
@@ -152,6 +175,9 @@ impl<W: Write> AipsWriter<W> {
     pub fn write_scalar(&mut self, value: &ScalarValue) -> AipsIoResult<()> {
         match value {
             ScalarValue::Bool(v) => self.write_bool(*v),
+            ScalarValue::UInt8(v) => self.write_u8(*v),
+            ScalarValue::UInt16(v) => self.write_u16(*v),
+            ScalarValue::UInt32(v) => self.write_u32(*v),
             ScalarValue::Int16(v) => self.write_i16(*v),
             ScalarValue::Int32(v) => self.write_i32(*v),
             ScalarValue::Int64(v) => self.write_i64(*v),
@@ -178,6 +204,9 @@ impl<W: Write> AipsWriter<W> {
 
         match value {
             ArrayValue::Bool(values) => values.iter().try_for_each(|v| self.write_bool(*v)),
+            ArrayValue::UInt8(values) => values.iter().try_for_each(|v| self.write_u8(*v)),
+            ArrayValue::UInt16(values) => values.iter().try_for_each(|v| self.write_u16(*v)),
+            ArrayValue::UInt32(values) => values.iter().try_for_each(|v| self.write_u32(*v)),
             ArrayValue::Int16(values) => values.iter().try_for_each(|v| self.write_i16(*v)),
             ArrayValue::Int32(values) => values.iter().try_for_each(|v| self.write_i32(*v)),
             ArrayValue::Int64(values) => values.iter().try_for_each(|v| self.write_i64(*v)),
@@ -199,15 +228,6 @@ impl<W: Write> AipsWriter<W> {
             Value::Array(v) => self.write_array(v),
             Value::Record(_) => Err(AipsIoError::UnsupportedValueKind(ValueKind::Record)),
         }
-    }
-
-    fn write_u32(&mut self, value: u32) -> AipsIoResult<()> {
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => value.to_be_bytes(),
-            ByteOrder::LittleEndian => value.to_le_bytes(),
-        };
-        self.inner.write_all(&bytes)?;
-        Ok(())
     }
 }
 
@@ -249,6 +269,28 @@ impl<R: Read> AipsReader<R> {
             1 => Ok(true),
             value => Err(AipsIoError::InvalidBoolean(value)),
         }
+    }
+
+    pub fn read_u8(&mut self) -> AipsIoResult<u8> {
+        let mut buf = [0_u8; 1];
+        self.inner.read_exact(&mut buf)?;
+        Ok(buf[0])
+    }
+
+    pub fn read_u16(&mut self) -> AipsIoResult<u16> {
+        let bytes = self.read_exact_array::<2>()?;
+        Ok(match self.byte_order {
+            ByteOrder::BigEndian => u16::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => u16::from_le_bytes(bytes),
+        })
+    }
+
+    pub fn read_u32(&mut self) -> AipsIoResult<u32> {
+        let bytes = self.read_exact_array::<4>()?;
+        Ok(match self.byte_order {
+            ByteOrder::BigEndian => u32::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
+        })
     }
 
     pub fn read_i16(&mut self) -> AipsIoResult<i16> {
@@ -307,6 +349,9 @@ impl<R: Read> AipsReader<R> {
     pub fn read_scalar(&mut self, primitive: PrimitiveType) -> AipsIoResult<ScalarValue> {
         match primitive {
             PrimitiveType::Bool => Ok(ScalarValue::Bool(self.read_bool()?)),
+            PrimitiveType::UInt8 => Ok(ScalarValue::UInt8(self.read_u8()?)),
+            PrimitiveType::UInt16 => Ok(ScalarValue::UInt16(self.read_u16()?)),
+            PrimitiveType::UInt32 => Ok(ScalarValue::UInt32(self.read_u32()?)),
             PrimitiveType::Int16 => Ok(ScalarValue::Int16(self.read_i16()?)),
             PrimitiveType::Int32 => Ok(ScalarValue::Int32(self.read_i32()?)),
             PrimitiveType::Int64 => Ok(ScalarValue::Int64(self.read_i64()?)),
@@ -328,6 +373,18 @@ impl<R: Read> AipsReader<R> {
                 .map(|_| self.read_bool())
                 .collect::<AipsIoResult<Vec<_>>>()
                 .map(ArrayValue::from_bool_vec),
+            PrimitiveType::UInt8 => (0..len)
+                .map(|_| self.read_u8())
+                .collect::<AipsIoResult<Vec<_>>>()
+                .map(ArrayValue::from_u8_vec),
+            PrimitiveType::UInt16 => (0..len)
+                .map(|_| self.read_u16())
+                .collect::<AipsIoResult<Vec<_>>>()
+                .map(ArrayValue::from_u16_vec),
+            PrimitiveType::UInt32 => (0..len)
+                .map(|_| self.read_u32())
+                .collect::<AipsIoResult<Vec<_>>>()
+                .map(ArrayValue::from_u32_vec),
             PrimitiveType::Int16 => (0..len)
                 .map(|_| self.read_i16())
                 .collect::<AipsIoResult<Vec<_>>>()
@@ -368,14 +425,6 @@ impl<R: Read> AipsReader<R> {
             ValueRank::Scalar => self.read_scalar(type_tag.primitive).map(Value::Scalar),
             ValueRank::Array => self.read_array(type_tag.primitive).map(Value::Array),
         }
-    }
-
-    fn read_u32(&mut self) -> AipsIoResult<u32> {
-        let bytes = self.read_exact_array::<4>()?;
-        Ok(match self.byte_order {
-            ByteOrder::BigEndian => u32::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
-        })
     }
 
     fn read_u64(&mut self) -> AipsIoResult<u64> {

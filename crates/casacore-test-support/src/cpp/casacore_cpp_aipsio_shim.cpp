@@ -27,6 +27,9 @@ enum PrimitiveTag : std::uint8_t {
     TAG_COMPLEX32 = 6,
     TAG_COMPLEX64 = 7,
     TAG_STRING = 8,
+    TAG_UINT8 = 9,
+    TAG_UINT16 = 10,
+    TAG_UINT32 = 11,
 };
 
 enum ByteOrderTag : std::uint8_t {
@@ -142,6 +145,12 @@ std::size_t elem_width(std::uint8_t primitive) {
     switch (primitive) {
     case TAG_BOOL:
         return 1;
+    case TAG_UINT8:
+        return 1;
+    case TAG_UINT16:
+        return 2;
+    case TAG_UINT32:
+        return 4;
     case TAG_INT16:
         return 2;
     case TAG_INT32:
@@ -244,6 +253,24 @@ extern "C" int casacore_cpp_aipsio_encode(
                     casacore::uChar b = payload_ptr[i] ? 1 : 0;
                     type_io->write(1, &b);
                 }
+            } else if (primitive == TAG_UINT8) {
+                std::vector<casacore::uChar> values(n);
+                for (std::size_t i = 0; i < n; ++i) {
+                    values[i] = static_cast<casacore::uChar>(payload_ptr[i]);
+                }
+                type_io->write(n, values.data());
+            } else if (primitive == TAG_UINT16) {
+                std::vector<casacore::uShort> values(n);
+                for (std::size_t i = 0; i < n; ++i) {
+                    values[i] = static_cast<casacore::uShort>(read_u16_le(payload_ptr + i * 2));
+                }
+                type_io->write(n, values.data());
+            } else if (primitive == TAG_UINT32) {
+                std::vector<casacore::uInt> values(n);
+                for (std::size_t i = 0; i < n; ++i) {
+                    values[i] = static_cast<casacore::uInt>(read_u32_le(payload_ptr + i * 4));
+                }
+                type_io->write(n, values.data());
             } else if (primitive == TAG_INT16) {
                 std::vector<casacore::Short> values(n);
                 for (std::size_t i = 0; i < n; ++i) {
@@ -316,6 +343,24 @@ extern "C" int casacore_cpp_aipsio_encode(
                 }
                 casacore::uChar b = payload_ptr[0] ? 1 : 0;
                 type_io->write(1, &b);
+            } else if (primitive == TAG_UINT8) {
+                if (payload_len != 1) {
+                    throw std::runtime_error("uint8 scalar payload must be 1 byte");
+                }
+                casacore::uChar value = static_cast<casacore::uChar>(payload_ptr[0]);
+                type_io->write(1, &value);
+            } else if (primitive == TAG_UINT16) {
+                if (payload_len != 2) {
+                    throw std::runtime_error("uint16 scalar payload must be 2 bytes");
+                }
+                casacore::uShort value = static_cast<casacore::uShort>(read_u16_le(payload_ptr));
+                type_io->write(1, &value);
+            } else if (primitive == TAG_UINT32) {
+                if (payload_len != 4) {
+                    throw std::runtime_error("uint32 scalar payload must be 4 bytes");
+                }
+                casacore::uInt value = static_cast<casacore::uInt>(read_u32_le(payload_ptr));
+                type_io->write(1, &value);
             } else if (primitive == TAG_INT16) {
                 if (payload_len != 2) {
                     throw std::runtime_error("int16 scalar payload must be 2 bytes");
@@ -412,6 +457,27 @@ extern "C" int casacore_cpp_aipsio_decode(
                     type_io->read(1, &b);
                     payload[i] = (b != 0) ? 1 : 0;
                 }
+            } else if (primitive == TAG_UINT8) {
+                std::vector<casacore::uChar> values(n);
+                type_io->read(n, values.data());
+                payload.reserve(n);
+                for (casacore::uChar value : values) {
+                    payload.push_back(static_cast<std::uint8_t>(value));
+                }
+            } else if (primitive == TAG_UINT16) {
+                std::vector<casacore::uShort> values(n);
+                type_io->read(n, values.data());
+                payload.reserve(n * 2);
+                for (casacore::uShort value : values) {
+                    push_u16_le(payload, static_cast<std::uint16_t>(value));
+                }
+            } else if (primitive == TAG_UINT32) {
+                std::vector<casacore::uInt> values(n);
+                type_io->read(n, values.data());
+                payload.reserve(n * 4);
+                for (casacore::uInt value : values) {
+                    push_u32_le(payload, static_cast<std::uint32_t>(value));
+                }
             } else if (primitive == TAG_INT16) {
                 std::vector<casacore::Short> values(n);
                 type_io->read(n, values.data());
@@ -484,6 +550,18 @@ extern "C" int casacore_cpp_aipsio_decode(
                 casacore::uChar value = 0;
                 type_io->read(1, &value);
                 payload.push_back((value != 0) ? 1 : 0);
+            } else if (primitive == TAG_UINT8) {
+                casacore::uChar value = 0;
+                type_io->read(1, &value);
+                payload.push_back(static_cast<std::uint8_t>(value));
+            } else if (primitive == TAG_UINT16) {
+                casacore::uShort value = 0;
+                type_io->read(1, &value);
+                push_u16_le(payload, static_cast<std::uint16_t>(value));
+            } else if (primitive == TAG_UINT32) {
+                casacore::uInt value = 0;
+                type_io->read(1, &value);
+                push_u32_le(payload, static_cast<std::uint32_t>(value));
             } else if (primitive == TAG_INT16) {
                 casacore::Short value = 0;
                 type_io->read(1, &value);

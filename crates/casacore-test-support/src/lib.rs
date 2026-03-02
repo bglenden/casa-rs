@@ -249,6 +249,9 @@ fn restore_decoded_shape(
 fn flatten_array_value_fortran(array: &ArrayValue) -> ArrayValue {
     match array {
         ArrayValue::Bool(values) => ArrayValue::from_bool_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::UInt8(values) => ArrayValue::from_u8_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::UInt16(values) => ArrayValue::from_u16_vec(flatten_ndarray_fortran(values)),
+        ArrayValue::UInt32(values) => ArrayValue::from_u32_vec(flatten_ndarray_fortran(values)),
         ArrayValue::Int16(values) => ArrayValue::from_i16_vec(flatten_ndarray_fortran(values)),
         ArrayValue::Int32(values) => ArrayValue::from_i32_vec(flatten_ndarray_fortran(values)),
         ArrayValue::Int64(values) => ArrayValue::from_i64_vec(flatten_ndarray_fortran(values)),
@@ -270,6 +273,18 @@ fn reshape_array_value_from_fortran(
 ) -> Result<ArrayValue, AipsIoCrossError> {
     match array {
         ArrayValue::Bool(values) => Ok(ArrayValue::Bool(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::UInt8(values) => Ok(ArrayValue::UInt8(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::UInt16(values) => Ok(ArrayValue::UInt16(reshape_from_fortran(
+            &values.iter().copied().collect::<Vec<_>>(),
+            shape,
+        )?)),
+        ArrayValue::UInt32(values) => Ok(ArrayValue::UInt32(reshape_from_fortran(
             &values.iter().copied().collect::<Vec<_>>(),
             shape,
         )?)),
@@ -498,6 +513,9 @@ fn primitive_to_tag(primitive: PrimitiveType) -> u8 {
         PrimitiveType::Complex32 => 6,
         PrimitiveType::Complex64 => 7,
         PrimitiveType::String => 8,
+        PrimitiveType::UInt8 => 9,
+        PrimitiveType::UInt16 => 10,
+        PrimitiveType::UInt32 => 11,
     }
 }
 
@@ -517,6 +535,24 @@ fn value_to_payload(value: &Value) -> Result<FfiPayload, AipsIoCrossError> {
                 primitive: PrimitiveType::Bool,
                 is_array: false,
                 payload: vec![u8::from(*v)],
+                offsets: vec![],
+            },
+            ScalarValue::UInt8(v) => FfiPayload {
+                primitive: PrimitiveType::UInt8,
+                is_array: false,
+                payload: vec![*v],
+                offsets: vec![],
+            },
+            ScalarValue::UInt16(v) => FfiPayload {
+                primitive: PrimitiveType::UInt16,
+                is_array: false,
+                payload: v.to_le_bytes().to_vec(),
+                offsets: vec![],
+            },
+            ScalarValue::UInt32(v) => FfiPayload {
+                primitive: PrimitiveType::UInt32,
+                is_array: false,
+                payload: v.to_le_bytes().to_vec(),
                 offsets: vec![],
             },
             ScalarValue::Int16(v) => FfiPayload {
@@ -592,6 +628,36 @@ fn value_to_payload(value: &Value) -> Result<FfiPayload, AipsIoCrossError> {
                     payload: values.iter().map(|v| u8::from(*v)).collect(),
                     offsets: vec![],
                 },
+                ArrayValue::UInt8(values) => FfiPayload {
+                    primitive: PrimitiveType::UInt8,
+                    is_array: true,
+                    payload: values.iter().copied().collect(),
+                    offsets: vec![],
+                },
+                ArrayValue::UInt16(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 2);
+                    for value in values {
+                        payload.extend_from_slice(&value.to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::UInt16,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
+                ArrayValue::UInt32(values) => {
+                    let mut payload = Vec::with_capacity(values.len() * 4);
+                    for value in values {
+                        payload.extend_from_slice(&value.to_le_bytes());
+                    }
+                    FfiPayload {
+                        primitive: PrimitiveType::UInt32,
+                        is_array: true,
+                        payload,
+                        offsets: vec![],
+                    }
+                }
                 ArrayValue::Int16(values) => {
                     let mut payload = Vec::with_capacity(values.len() * 2);
                     for value in values {
@@ -745,6 +811,32 @@ fn payload_to_value(
         let array = match primitive {
             PrimitiveType::Bool => {
                 ArrayValue::from_bool_vec(payload.iter().map(|b| *b != 0).collect())
+            }
+            PrimitiveType::UInt8 => ArrayValue::from_u8_vec(payload.to_vec()),
+            PrimitiveType::UInt16 => {
+                if payload.len() % 2 != 0 {
+                    return Err("invalid uint16 payload length".to_string());
+                }
+                let values = (0..payload.len() / 2)
+                    .map(|i| u16::from_le_bytes([payload[2 * i], payload[2 * i + 1]]))
+                    .collect();
+                ArrayValue::from_u16_vec(values)
+            }
+            PrimitiveType::UInt32 => {
+                if payload.len() % 4 != 0 {
+                    return Err("invalid uint32 payload length".to_string());
+                }
+                let values = (0..payload.len() / 4)
+                    .map(|i| {
+                        u32::from_le_bytes([
+                            payload[4 * i],
+                            payload[4 * i + 1],
+                            payload[4 * i + 2],
+                            payload[4 * i + 3],
+                        ])
+                    })
+                    .collect();
+                ArrayValue::from_u32_vec(values)
             }
             PrimitiveType::Int16 => {
                 if payload.len() % 2 != 0 {
@@ -907,6 +999,24 @@ fn payload_to_value(
                     return Err("bool scalar payload length must be 1".to_string());
                 }
                 ScalarValue::Bool(payload[0] != 0)
+            }
+            PrimitiveType::UInt8 => {
+                if payload.len() != 1 {
+                    return Err("uint8 scalar payload length must be 1".to_string());
+                }
+                ScalarValue::UInt8(payload[0])
+            }
+            PrimitiveType::UInt16 => {
+                if payload.len() != 2 {
+                    return Err("uint16 scalar payload length must be 2".to_string());
+                }
+                ScalarValue::UInt16(read_u16_le(payload, 0))
+            }
+            PrimitiveType::UInt32 => {
+                if payload.len() != 4 {
+                    return Err("uint32 scalar payload length must be 4".to_string());
+                }
+                ScalarValue::UInt32(read_u32_le(payload, 0))
             }
             PrimitiveType::Int16 => {
                 if payload.len() != 2 {
