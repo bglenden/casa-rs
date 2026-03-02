@@ -1,5 +1,5 @@
-pub mod schema;
-pub mod table;
+mod schema;
+mod table;
 mod table_impl;
 
 pub(crate) mod aipsio;

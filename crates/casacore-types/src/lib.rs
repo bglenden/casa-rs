@@ -1,7 +1,7 @@
 pub use num_complex::{Complex32, Complex64};
 
-use ndarray::{Array1, ArrayD};
-pub use ndarray::{Array2, Array3};
+use ndarray::Array1;
+pub use ndarray::{Array2, Array3, ArrayD};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {

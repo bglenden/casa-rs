@@ -19,8 +19,8 @@ pub enum DataManagerKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableOptions {
-    pub path: PathBuf,
-    pub data_manager: DataManagerKind,
+    path: PathBuf,
+    data_manager: DataManagerKind,
 }
 
 impl TableOptions {
@@ -34,6 +34,14 @@ impl TableOptions {
     pub fn with_data_manager(mut self, kind: DataManagerKind) -> Self {
         self.data_manager = kind;
         self
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn data_manager(&self) -> DataManagerKind {
+        self.data_manager
     }
 }
 

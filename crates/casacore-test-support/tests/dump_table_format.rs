@@ -5,6 +5,11 @@ use casacore_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value
 
 #[test]
 fn dump_scalar_primitives_comparison() {
+    if !casacore_test_support::cpp_backend_available() {
+        eprintln!("skipping: C++ backend unavailable");
+        return;
+    }
+
     let cpp_dir = tempfile::tempdir().unwrap();
     let cpp_path = cpp_dir.path().join("cpp_table");
 
@@ -102,6 +107,11 @@ fn dump_scalar_primitives_comparison() {
 
 #[test]
 fn dump_fixed_array_comparison() {
+    if !casacore_test_support::cpp_backend_available() {
+        eprintln!("skipping: C++ backend unavailable");
+        return;
+    }
+
     let cpp_dir = tempfile::tempdir().unwrap();
     let cpp_path = cpp_dir.path().join("cpp_table");
     casacore_test_support::cpp_table_write(CppTableFixture::FixedArray, &cpp_path)
