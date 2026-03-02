@@ -52,10 +52,20 @@ let metadata = Value::Record(RecordValue::new(vec![
 ]));
 ```
 
-## Demo Program
+## Demo Programs
 
-Rust equivalent of casacore C++ `tAipsIO`:
+Each crate that wraps a C++ casacore module includes a Rust demo program
+equivalent to the corresponding C++ test/demo. These demos:
 
-```bash
-cargo run -p casacore-aipsio --example t_aipsio
-```
+- Show idiomatic Rust usage of the crate's public API.
+- Include the essential C++ source as comments for comparison.
+- Are runnable via `cargo run -p <crate> --example <name>`.
+
+| Crate | Demo | C++ original | Run |
+|---|---|---|---|
+| `casacore-aipsio` | `t_aipsio` | `tAipsIO.cc` | `cargo run -p casacore-aipsio --example t_aipsio` |
+| `casacore-tables` | `t_table` | `tTable.cc` | `cargo run -p casacore-tables --example t_table` |
+
+Demo source lives in each crate's `examples/` directory. The demo logic
+is in a `demo` module within the crate, so `cargo doc` renders it alongside
+the API docs.

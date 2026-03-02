@@ -641,7 +641,7 @@ impl Table {
     /// Returns all cell values for `column` as an allocated `Vec`.
     ///
     /// This materializes the entire column into memory. For large tables,
-    /// prefer [`get_column`] or [`iter_column_chunks`] which stream lazily.
+    /// prefer [`Table::get_column`] or [`Table::iter_column_chunks`] which stream lazily.
     pub fn column_cells(&self, column: &str) -> Vec<Option<&Value>> {
         self.rows()
             .iter()

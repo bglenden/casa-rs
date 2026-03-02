@@ -1,3 +1,15 @@
+//! Foundation value types for casacore-compatible data structures.
+//!
+//! This crate defines the scalar, array, and record value model shared by all
+//! `casacore-*` crates. Key types:
+//!
+//! - [`ScalarValue`] — a single typed value (bool, integer, float, complex, or string).
+//! - [`ArrayValue`] — an N-dimensional array backed by [`ndarray::ArrayD`].
+//! - [`RecordValue`] — an ordered collection of named [`Value`] fields.
+//! - [`Value`] — the top-level enum unifying scalars, arrays, and records.
+//!
+//! Type metadata is captured by [`PrimitiveType`] and [`TypeTag`].
+
 pub use num_complex::{Complex32, Complex64};
 
 use ndarray::Array1;
