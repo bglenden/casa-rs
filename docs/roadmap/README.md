@@ -40,6 +40,22 @@ that only the relevant wave needs to be in context during implementation.
 
 ---
 
+## Wave workflow
+
+Before coding begins on a wave:
+
+1. **Read the wave file** — load only the relevant `wave-NN-*.md` spec.
+2. **Explore the codebase** — study the C++ reference headers and the
+   existing Rust code that the wave will touch or extend.
+3. **Create a detailed implementation plan** — break the wave's scope items
+   into concrete, ordered steps: which files to modify, what types/traits to
+   add, how tests will be structured, etc. Get user approval before writing
+   code.
+4. **Implement** — work through the plan, running tests incrementally.
+5. **Close out** — pass the closeout gate below, then commit and push.
+
+---
+
 ## Wave closeout gate
 
 Every wave must pass ALL of the following before commit/push:
