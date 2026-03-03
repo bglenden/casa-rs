@@ -50,6 +50,7 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     demo_column_iteration(&mut out)?;
     demo_schema_mutation(&mut out)?;
     demo_ref_tables(&mut out)?;
+    demo_sorting_and_iteration(&mut out)?;
     #[cfg(unix)]
     demo_locking(&mut out)?;
 
@@ -484,6 +485,56 @@ fn demo_ref_tables(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Sorting and grouped iteration ──────────────────────────────────────
+
+fn demo_sorting_and_iteration(out: &mut String) -> Result<(), TableError> {
+    use crate::SortOrder;
+
+    // C++ (Table.h):
+    //   Table sorted = tab.sort("ae", Sort::Descending);
+    //   TableIterator iter(tab, "ab");
+    //   while (!iter.pastEnd()) { Table t = iter.table(); iter.next(); }
+
+    appendln(out, "--- Sorting and table iteration ---");
+
+    let mut table = build_demo_table()?;
+
+    // Sort by "ab" (Int32) ascending.
+    {
+        let sorted = table.sort(&[("ab", SortOrder::Ascending)])?;
+        appendln(out, &format!("sort(ab ASC): {} rows", sorted.row_count()));
+        let first = sorted.cell(0, "ab")?;
+        appendln(out, &format!("  first row ab = {first:?}"));
+        let last = sorted.cell(sorted.row_count() - 1, "ab")?;
+        appendln(out, &format!("  last  row ab = {last:?}"));
+    }
+
+    // Sort by "ae" (Float64) descending.
+    {
+        let sorted = table.sort(&[("ae", SortOrder::Descending)])?;
+        appendln(out, &format!("sort(ae DESC): {} rows", sorted.row_count()));
+        let first = sorted.cell(0, "ae")?;
+        appendln(out, &format!("  first row ae = {first:?}"));
+    }
+
+    // Grouped iteration by "ab".
+    {
+        let groups: Vec<crate::TableGroup> = table
+            .iter_groups(&[("ab", SortOrder::Ascending)])?
+            .collect();
+        appendln(
+            out,
+            &format!("iter_groups(ab ASC): {} groups", groups.len()),
+        );
+        if let Some(g) = groups.first() {
+            appendln(out, &format!("  first group: {} rows", g.row_indices.len()));
+        }
+    }
+
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Table locking ──────────────────────────────────────────────────────
 
 #[cfg(unix)]
@@ -615,6 +666,7 @@ mod tests {
         assert!(output.contains("--- Column iteration patterns"));
         assert!(output.contains("--- Schema mutation"));
         assert!(output.contains("--- Reference tables"));
+        assert!(output.contains("--- Sorting and table iteration"));
         #[cfg(unix)]
         assert!(output.contains("--- Table locking"));
         assert!(output.ends_with("end\n"));

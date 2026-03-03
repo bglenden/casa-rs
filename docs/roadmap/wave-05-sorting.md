@@ -22,3 +22,21 @@ by key columns) is the casacore pattern for processing data in chunks.
 - Iterate by single key, verify group boundaries.
 - Iterate by composite key.
 - 2×2: Rust sorts → C++ reads sorted RefTable; C++ sorts → Rust reads.
+
+## Lessons learned
+
+- **Sorted RefTables reuse the existing RefTable format.** A sorted view is
+  just a `RefTable` with a permuted `row_map` and `row_order = false`. No new
+  on-disk format was needed — the Wave 4 persistence format handles both
+  selections and sorts.
+
+- **`ScalarValue` cannot implement `Ord` or `PartialOrd`.** Floats lack `Ord`
+  and complex types have no total order. A dedicated `sort_cmp()` method using
+  `f32::total_cmp()` / `f64::total_cmp()` is the cleanest approach, returning
+  `Option<Ordering>` to signal unsortable types.
+
+- **`TableIterator` borrows `&Table` (immutably) and yields owned groups.**
+  C++ `TableIterator::table()` returns a sub-RefTable, but in Rust this
+  would require multiple simultaneous mutable borrows of the parent. Yielding
+  `TableGroup { keys, row_indices }` avoids borrow conflicts and implements
+  the standard `Iterator` trait naturally.

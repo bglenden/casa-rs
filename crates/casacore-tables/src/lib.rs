@@ -28,6 +28,9 @@
 //! |------|------|
 //! | [`Table`] | Create, query, and persist a table |
 //! | [`RefTable`] | A view over a parent table's rows and/or columns |
+//! | [`SortOrder`] | Ascending or descending sort direction |
+//! | [`TableGroup`] | A group of rows with equal key values |
+//! | [`TableIterator`] | Iterate groups of rows by key columns |
 //! | [`TableSchema`] | Declare column names, types, and array shapes |
 //! | [`ColumnSchema`] | Schema for a single column |
 //! | [`TableOptions`] | Bundle a filesystem path with a storage-manager choice |
@@ -76,6 +79,30 @@
 //! A `RefTable` can be [saved](RefTable::save) to disk in C++-compatible
 //! format. When reopened via [`Table::open`], the view is materialized
 //! (the parent is loaded and referenced rows extracted).
+//!
+//! # Sorting and grouped iteration
+//!
+//! [`Table::sort`] returns a [`RefTable`] with rows reordered by one or
+//! more key columns. [`Table::iter_groups`] groups rows by equal key
+//! values, yielding [`TableGroup`] values (C++ equivalent:
+//! `TableIterator`).
+//!
+//! ```rust
+//! # use casacore_tables::{Table, TableSchema, ColumnSchema, SortOrder};
+//! # use casacore_types::*;
+//! # let schema = TableSchema::new(vec![
+//! #     ColumnSchema::scalar("id", PrimitiveType::Int32),
+//! # ]).unwrap();
+//! # let mut table = Table::with_schema(schema);
+//! # for i in [3, 1, 2] {
+//! #     table.add_row(RecordValue::new(vec![
+//! #         RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+//! #     ])).unwrap();
+//! # }
+//! // Sort ascending by id:
+//! let sorted = table.sort(&[("id", SortOrder::Ascending)]).unwrap();
+//! assert_eq!(sorted.row_count(), 3);
+//! ```
 //!
 //! # Table locking (Unix)
 //!
@@ -141,6 +168,7 @@
 
 mod ref_table;
 mod schema;
+mod sorting;
 mod table;
 mod table_impl;
 
@@ -155,7 +183,8 @@ pub use ref_table::RefTable;
 pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };
+pub use sorting::{TableGroup, TableIterator};
 pub use table::{
     ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    RecordColumnCell, RecordColumnIter, RowRange, Table, TableError, TableOptions,
+    RecordColumnCell, RecordColumnIter, RowRange, SortOrder, Table, TableError, TableOptions,
 };

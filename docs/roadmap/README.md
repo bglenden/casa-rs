@@ -17,7 +17,7 @@ that only the relevant wave needs to be in context during implementation.
 | 2 | [Schema mutation & row ops](wave-02-schema-mutation.md) | **DONE** | Add/remove/rename columns, delete rows |
 | 3 | [Table locking](wave-03-locking.md) | **DONE** | File-based multi-process locking (`TableLock`) |
 | 4 | [Reference tables & selections](wave-04-ref-tables.md) | **DONE** | Row/column views without copying (`RefTable`) |
-| 5 | [Sorting & table iteration](wave-05-sorting.md) | Not started | Sort by key columns, grouped sub-table iteration |
+| 5 | [Sorting & table iteration](wave-05-sorting.md) | **DONE** | Sort by key columns, grouped sub-table iteration |
 | 6 | [Table concatenation & copy](wave-06-concat-copy.md) | Not started | Virtual concatenation, deep copy with DM conversion |
 | 7 | [Column indexing](wave-07-indexing.md) | Not started | In-memory index for fast scalar column lookups |
 | 8 | [Memory tables](wave-08-memory-tables.md) | Not started | Non-persistent in-memory tables (`MemoryStMan`) |

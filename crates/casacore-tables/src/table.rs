@@ -72,6 +72,23 @@ impl EndianFormat {
     }
 }
 
+/// Sort order for table sorting operations.
+///
+/// Specifies whether a sort key column should be sorted in ascending (smallest
+/// first) or descending (largest first) order. Multiple columns with different
+/// orders can be combined in a single sort.
+///
+/// # C++ equivalent
+///
+/// `Sort::Order`: `Sort::Ascending` (−1) and `Sort::Descending` (1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    /// Sort in ascending order (smallest first).
+    Ascending,
+    /// Sort in descending order (largest first).
+    Descending,
+}
+
 /// Which data manager to use when writing table data.
 ///
 /// This choice is recorded in the table descriptor on disk so that C++ casacore
@@ -475,6 +492,21 @@ pub enum TableError {
     /// A reference table requires the parent to have been saved to disk.
     #[error("parent table has no disk path; save it first")]
     ParentNotSaved,
+    /// A sort key column contains non-scalar values.
+    ///
+    /// Only scalar columns can be used as sort keys, matching C++ casacore's
+    /// runtime check in `BaseTable::sort`.
+    #[error("column \"{column}\" is not a scalar column; only scalar columns can be sort keys")]
+    SortKeyNotScalar { column: String },
+    /// A sort key column contains values without a total order.
+    ///
+    /// Complex32 and Complex64 columns have no natural total ordering and
+    /// cannot be used as sort keys.
+    #[error("column \"{column}\" contains unsortable values (Complex types have no total order)")]
+    SortKeyUnsortable { column: String },
+    /// No sort key columns were specified.
+    #[error("at least one sort key column is required")]
+    SortNoKeys,
 }
 
 impl From<crate::storage::StorageError> for TableError {
@@ -1000,6 +1032,91 @@ impl Table {
         F: Fn(&RecordValue) -> bool,
     {
         crate::RefTable::from_predicate(self, predicate)
+    }
+
+    // -----------------------------------------------------------------------
+    // Sorting
+    // -----------------------------------------------------------------------
+
+    /// Sorts the table by the given key columns, returning a [`RefTable`]
+    /// with the rows in the new order.
+    ///
+    /// The result is an indirect sort: no data is moved, only the row
+    /// index permutation changes. The returned [`RefTable`] has
+    /// `row_order = false` (not in original ascending order).
+    ///
+    /// Only scalar columns with a total ordering can be sort keys.
+    /// Complex columns are rejected. This matches C++ `Table::sort`.
+    ///
+    /// # Errors
+    ///
+    /// - [`TableError::SortNoKeys`] if `keys` is empty
+    /// - [`TableError::SortKeyNotScalar`] if a key column is non-scalar
+    /// - [`TableError::SortKeyUnsortable`] if a key column is Complex
+    /// - [`TableError::UnknownColumn`] if a key column is not in schema
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::sort(columnNames, sortOrders)`.
+    ///
+    /// [`RefTable`]: crate::RefTable
+    pub fn sort(&mut self, keys: &[(&str, SortOrder)]) -> Result<crate::RefTable<'_>, TableError> {
+        let permutation = crate::sorting::argsort(self, keys)?;
+        crate::RefTable::from_rows(self, permutation)
+    }
+
+    /// Sorts the table by a single column using a custom comparison function.
+    ///
+    /// The closure receives two [`Value`] references from the specified column
+    /// and must return an [`Ordering`]. This is the Rust analogue of passing
+    /// a `BaseCompare` object to C++ `Table::sort`.
+    ///
+    /// [`Ordering`]: std::cmp::Ordering
+    pub fn sort_by<F>(
+        &mut self,
+        column: &str,
+        compare: F,
+    ) -> Result<crate::RefTable<'_>, TableError>
+    where
+        F: Fn(&Value, &Value) -> std::cmp::Ordering,
+    {
+        let n = self.row_count();
+        let mut indices: Vec<usize> = (0..n).collect();
+
+        indices.sort_by(|&a, &b| {
+            let va = self.cell(a, column);
+            let vb = self.cell(b, column);
+            match (va, vb) {
+                (Some(a), Some(b)) => compare(a, b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+
+        crate::RefTable::from_rows(self, indices)
+    }
+
+    /// Returns an iterator that groups rows by equal values in the key columns.
+    ///
+    /// The table is first sorted by the key columns, then consecutive rows
+    /// with equal key values are collected into [`TableGroup`] values.
+    /// Each group contains the shared key values and the parent-table row
+    /// indices for that group.
+    ///
+    /// Unlike [`sort`](Table::sort), this borrows the table immutably because
+    /// it yields owned data rather than a mutable view.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `casacore::TableIterator`.
+    ///
+    /// [`TableGroup`]: crate::TableGroup
+    pub fn iter_groups(
+        &self,
+        keys: &[(&str, SortOrder)],
+    ) -> Result<crate::sorting::TableIterator<'_>, TableError> {
+        crate::sorting::TableIterator::new(self, keys)
     }
 
     /// Returns the attached schema, if any.

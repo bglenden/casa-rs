@@ -15,6 +15,7 @@
 #include <casacore/tables/DataMan/StManAipsIO.h>
 #include <casacore/tables/DataMan/StandardStMan.h>
 #include <casacore/tables/Tables/TableLock.h>
+#include <casacore/casa/Utilities/Sort.h>
 #include <casacore/casa/Arrays/Array.h>
 #include <casacore/casa/Arrays/IPosition.h>
 
@@ -670,6 +671,63 @@ void verify_ref_table_impl(const std::string& dir) {
         throw std::runtime_error("ref row 1 name mismatch: got '" + name1 + "'");
 }
 
+// ===== SortedRefTable fixture =====
+// Parent table: 5 rows (id: Int, name: String, value: Float).
+// Sorted descending by "id", saved as RefTable at dir/sorted.tbl.
+
+void write_sorted_ref_table_impl(const std::string& dir) {
+    std::string parentPath = dir + "/parent.tbl";
+    {
+        casacore::TableDesc td("", casacore::TableDesc::Scratch);
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("id"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::String>("name"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Float>("value"));
+
+        casacore::SetupNewTable setup(parentPath, td, casacore::Table::New);
+        casacore::Table parent(setup, 5);
+        casacore::ScalarColumn<casacore::Int> colId(parent, "id");
+        casacore::ScalarColumn<casacore::String> colName(parent, "name");
+        casacore::ScalarColumn<casacore::Float> colValue(parent, "value");
+
+        colId.put(0, 30); colName.put(0, "charlie"); colValue.put(0, 3.0f);
+        colId.put(1, 10); colName.put(1, "alpha");   colValue.put(1, 1.0f);
+        colId.put(2, 50); colName.put(2, "echo");    colValue.put(2, 5.0f);
+        colId.put(3, 20); colName.put(3, "bravo");   colValue.put(3, 2.0f);
+        colId.put(4, 40); colName.put(4, "delta");   colValue.put(4, 4.0f);
+
+        parent.flush();
+    }
+
+    casacore::Table parent(parentPath, casacore::Table::Old);
+
+    // Sort descending by id.
+    casacore::Table sorted = parent.sort("id", casacore::Sort::Descending);
+
+    std::string sortedPath = dir + "/sorted.tbl";
+    sorted.rename(sortedPath, casacore::Table::New);
+    sorted.flush();
+}
+
+void verify_sorted_ref_table_impl(const std::string& dir) {
+    std::string sortedPath = dir + "/sorted.tbl";
+    casacore::Table table(sortedPath, casacore::Table::Old);
+
+    if (table.nrow() != 5)
+        throw std::runtime_error(
+            "expected 5 rows in sorted table, got " + std::to_string(table.nrow()));
+
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+
+    // Should be in descending order: 50, 40, 30, 20, 10.
+    int expected[] = {50, 40, 30, 20, 10};
+    for (int i = 0; i < 5; i++) {
+        if (colId(i) != expected[i])
+            throw std::runtime_error(
+                "row " + std::to_string(i) + " id mismatch: expected " +
+                std::to_string(expected[i]) + ", got " + std::to_string(colId(i)));
+    }
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -921,6 +979,32 @@ int32_t cpp_table_verify_ref_table(const char* path, char** out_error) {
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in verify_ref_table");
+        return -1;
+    }
+}
+
+int32_t cpp_table_write_sorted_ref_table(const char* path, char** out_error) {
+    try {
+        write_sorted_ref_table_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_sorted_ref_table");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_sorted_ref_table(const char* path, char** out_error) {
+    try {
+        verify_sorted_ref_table_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_sorted_ref_table");
         return -1;
     }
 }

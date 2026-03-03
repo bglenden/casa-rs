@@ -294,6 +294,39 @@ impl ScalarValue {
     pub fn type_tag(&self) -> TypeTag {
         TypeTag::scalar(self.primitive_type())
     }
+
+    /// Compares two scalar values for sorting purposes.
+    ///
+    /// Returns `Some(Ordering)` for all types with a total order: booleans,
+    /// integers, and strings use their natural [`Ord`] ordering; floats use
+    /// [`f32::total_cmp`] / [`f64::total_cmp`] for IEEE-correct ordering
+    /// (including NaN).
+    ///
+    /// Returns `None` for [`Complex32`] and [`Complex64`] (which have no
+    /// natural total order) or when the two values have different types.
+    ///
+    /// C++ casacore rejects complex columns as sort keys at runtime; this
+    /// method mirrors that constraint.
+    pub fn sort_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Bool(a), Self::Bool(b)) => Some(a.cmp(b)),
+            (Self::UInt8(a), Self::UInt8(b)) => Some(a.cmp(b)),
+            (Self::UInt16(a), Self::UInt16(b)) => Some(a.cmp(b)),
+            (Self::UInt32(a), Self::UInt32(b)) => Some(a.cmp(b)),
+            (Self::Int16(a), Self::Int16(b)) => Some(a.cmp(b)),
+            (Self::Int32(a), Self::Int32(b)) => Some(a.cmp(b)),
+            (Self::Int64(a), Self::Int64(b)) => Some(a.cmp(b)),
+            (Self::Float32(a), Self::Float32(b)) => Some(a.total_cmp(b)),
+            (Self::Float64(a), Self::Float64(b)) => Some(a.total_cmp(b)),
+            (Self::String(a), Self::String(b)) => Some(a.cmp(b)),
+            // Complex types have no total order.
+            (Self::Complex32(_), Self::Complex32(_)) | (Self::Complex64(_), Self::Complex64(_)) => {
+                None
+            }
+            // Type mismatch.
+            _ => None,
+        }
+    }
 }
 
 /// An N-dimensional typed array value.
@@ -911,5 +944,107 @@ mod tests {
             Some(&Value::Scalar(ScalarValue::Int32(7)))
         );
         assert!(!record.rename_field("missing", "x"));
+    }
+
+    #[test]
+    fn sort_cmp_integers() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            ScalarValue::Int32(1).sort_cmp(&ScalarValue::Int32(2)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            ScalarValue::Int32(5).sort_cmp(&ScalarValue::Int32(5)),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            ScalarValue::Int32(9).sort_cmp(&ScalarValue::Int32(3)),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            ScalarValue::UInt8(0).sort_cmp(&ScalarValue::UInt8(255)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            ScalarValue::Int64(-1).sort_cmp(&ScalarValue::Int64(1)),
+            Some(Ordering::Less)
+        );
+    }
+
+    #[test]
+    fn sort_cmp_floats_total_ordering() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            ScalarValue::Float64(1.0).sort_cmp(&ScalarValue::Float64(2.0)),
+            Some(Ordering::Less)
+        );
+        // NaN sorts after all other values with total_cmp.
+        assert_eq!(
+            ScalarValue::Float64(f64::NAN).sort_cmp(&ScalarValue::Float64(f64::INFINITY)),
+            Some(Ordering::Greater)
+        );
+        // -0.0 < +0.0 with total_cmp.
+        assert_eq!(
+            ScalarValue::Float64(-0.0).sort_cmp(&ScalarValue::Float64(0.0)),
+            Some(Ordering::Less)
+        );
+        // Float32 works too.
+        assert_eq!(
+            ScalarValue::Float32(f32::NAN).sort_cmp(&ScalarValue::Float32(1.0)),
+            Some(Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn sort_cmp_strings() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            ScalarValue::String("alpha".into()).sort_cmp(&ScalarValue::String("beta".into())),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            ScalarValue::String("z".into()).sort_cmp(&ScalarValue::String("a".into())),
+            Some(Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn sort_cmp_booleans() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            ScalarValue::Bool(false).sort_cmp(&ScalarValue::Bool(true)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            ScalarValue::Bool(true).sort_cmp(&ScalarValue::Bool(true)),
+            Some(Ordering::Equal)
+        );
+    }
+
+    #[test]
+    fn sort_cmp_complex_returns_none() {
+        use super::Complex32;
+        assert_eq!(
+            ScalarValue::Complex32(Complex32 { re: 1.0, im: 0.0 })
+                .sort_cmp(&ScalarValue::Complex32(Complex32 { re: 2.0, im: 0.0 })),
+            None
+        );
+        assert_eq!(
+            ScalarValue::Complex64(Complex64 { re: 1.0, im: 0.0 })
+                .sort_cmp(&ScalarValue::Complex64(Complex64 { re: 2.0, im: 0.0 })),
+            None
+        );
+    }
+
+    #[test]
+    fn sort_cmp_type_mismatch_returns_none() {
+        assert_eq!(
+            ScalarValue::Int32(1).sort_cmp(&ScalarValue::Float64(1.0)),
+            None
+        );
+        assert_eq!(
+            ScalarValue::String("a".into()).sort_cmp(&ScalarValue::Int32(1)),
+            None
+        );
     }
 }
