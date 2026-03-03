@@ -11,12 +11,16 @@ use crate::CppTableFixture;
 pub enum ManagerKind {
     StManAipsIO,
     StandardStMan,
+    TiledColumnStMan,
+    TiledShapeStMan,
+    TiledCellStMan,
 }
 
 /// A complete table fixture: schema, rows, table keywords, and column keywords.
 ///
 /// Column keywords are stored as `(column_name, RecordValue)` pairs.
 /// `cpp_fixture` maps this to the C++ shim fixture enum for interop tests.
+/// `tile_shape` is used for tiled storage managers.
 #[derive(Debug, Clone)]
 pub struct TableFixture {
     pub schema: TableSchema,
@@ -24,6 +28,7 @@ pub struct TableFixture {
     pub table_keywords: RecordValue,
     pub column_keywords: Vec<(String, RecordValue)>,
     pub cpp_fixture: Option<CppTableFixture>,
+    pub tile_shape: Option<Vec<usize>>,
 }
 
 /// Result of one cell in the 2x2 interop matrix.
@@ -34,6 +39,42 @@ pub struct MatrixCellResult {
     pub error: Option<String>,
 }
 
+/// Map a `ManagerKind` to `casacore_tables::DataManagerKind`.
+fn to_dm_kind(manager: ManagerKind) -> casacore_tables::DataManagerKind {
+    match manager {
+        ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
+        ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
+        ManagerKind::TiledColumnStMan => casacore_tables::DataManagerKind::TiledColumnStMan,
+        ManagerKind::TiledShapeStMan => casacore_tables::DataManagerKind::TiledShapeStMan,
+        ManagerKind::TiledCellStMan => casacore_tables::DataManagerKind::TiledCellStMan,
+    }
+}
+
+/// Build `TableOptions` for saving with the given manager, dir, and fixture tile shape.
+fn save_opts(fixture: &TableFixture, manager: ManagerKind, dir: &Path) -> TableOptions {
+    let mut opts = TableOptions::new(dir).with_data_manager(to_dm_kind(manager));
+    if let Some(ref ts) = fixture.tile_shape {
+        opts = opts.with_tile_shape(ts.clone());
+    }
+    opts
+}
+
+/// Build `TableOptions` for saving with explicit endian format.
+fn save_opts_endian(
+    fixture: &TableFixture,
+    manager: ManagerKind,
+    dir: &Path,
+    endian: EndianFormat,
+) -> TableOptions {
+    let mut opts = TableOptions::new(dir)
+        .with_data_manager(to_dm_kind(manager))
+        .with_endian_format(endian);
+    if let Some(ref ts) = fixture.tile_shape {
+        opts = opts.with_tile_shape(ts.clone());
+    }
+    opts
+}
+
 /// Write a table from the fixture using Rust, then read it back and compare.
 pub fn rust_write_rust_read(
     fixture: &TableFixture,
@@ -41,12 +82,8 @@ pub fn rust_write_rust_read(
     dir: &Path,
 ) -> Result<(), String> {
     let table = build_table_from_fixture(fixture).map_err(|e| format!("build table: {e}"))?;
-    let dm_kind = match manager {
-        ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
-        ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
-    };
     table
-        .save(TableOptions::new(dir).with_data_manager(dm_kind))
+        .save(save_opts(fixture, manager, dir))
         .map_err(|e| format!("save: {e}"))?;
 
     let reopened = Table::open(TableOptions::new(dir)).map_err(|e| format!("open: {e}"))?;
@@ -190,14 +227,7 @@ fn run_rr_with_endian(
         }
     };
 
-    let dm_kind = match manager {
-        ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
-        ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
-    };
-    let opts = TableOptions::new(&table_path)
-        .with_data_manager(dm_kind)
-        .with_endian_format(endian);
-    if let Err(e) = table.save(opts) {
+    if let Err(e) = table.save(save_opts_endian(fixture, manager, &table_path, endian)) {
         return MatrixCellResult {
             label: leak_label(label),
             passed: false,
@@ -255,14 +285,7 @@ fn run_rc_with_endian(
         }
     };
 
-    let dm_kind = match manager {
-        ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
-        ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
-    };
-    let opts = TableOptions::new(&table_path)
-        .with_data_manager(dm_kind)
-        .with_endian_format(endian);
-    if let Err(e) = table.save(opts) {
+    if let Err(e) = table.save(save_opts_endian(fixture, manager, &table_path, endian)) {
         return MatrixCellResult {
             label: leak_label(label),
             passed: false,
@@ -385,12 +408,7 @@ fn run_rc(
         }
     };
 
-    let dm_kind = match manager {
-        ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
-        ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
-    };
-    let opts = TableOptions::new(&table_path).with_data_manager(dm_kind);
-    if let Err(e) = table.save(opts) {
+    if let Err(e) = table.save(save_opts(fixture, manager, &table_path)) {
         return MatrixCellResult {
             label: "RC",
             passed: false,

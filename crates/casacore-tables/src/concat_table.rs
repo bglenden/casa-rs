@@ -290,6 +290,7 @@ impl ConcatTable {
             &snapshot,
             opts.data_manager(),
             opts.endian_format().is_big_endian(),
+            opts.tile_shape(),
         )?;
         Ok(())
     }

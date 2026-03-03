@@ -6,6 +6,7 @@ pub(crate) mod data_type;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod table_control;
+pub(crate) mod tiled_stman;
 
 use std::collections::HashMap;
 use std::fs;
@@ -72,6 +73,7 @@ pub(crate) trait StorageManager {
         snapshot: &StorageSnapshot,
         dm_kind: crate::table::DataManagerKind,
         big_endian: bool,
+        tile_shape: Option<&[usize]>,
     ) -> Result<(), StorageError>;
 }
 
@@ -106,6 +108,7 @@ impl StorageManager for CompositeStorage {
         snapshot: &StorageSnapshot,
         dm_kind: crate::table::DataManagerKind,
         big_endian: bool,
+        tile_shape: Option<&[usize]>,
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
@@ -174,6 +177,39 @@ impl StorageManager for CompositeStorage {
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
             }
+            DataManagerKind::TiledColumnStMan
+            | DataManagerKind::TiledShapeStMan
+            | DataManagerKind::TiledCellStMan => {
+                dm_type_name = match dm_kind {
+                    DataManagerKind::TiledColumnStMan => "TiledColumnStMan",
+                    DataManagerKind::TiledShapeStMan => "TiledShapeStMan",
+                    DataManagerKind::TiledCellStMan => "TiledCellStMan",
+                    _ => unreachable!(),
+                }
+                .to_string();
+                dm_data = Vec::new(); // Tiled managers write empty DM blobs.
+                let table_dat = TableDatContents::from_snapshot(
+                    schema,
+                    &snapshot.keywords,
+                    &snapshot.column_keywords,
+                    nrrow,
+                    &dm_type_name,
+                    &dm_data,
+                    big_endian,
+                );
+                let control_path = table_path.join(TABLE_CONTROL_FILE);
+                write_table_dat(&control_path, &table_dat)?;
+                // Write tiled data to table.f0 header + table.f0_TSM* data files.
+                tiled_stman::save_tiled_columns(
+                    table_path,
+                    0, // dm_seq_nr
+                    &dm_type_name,
+                    &table_dat.table_desc.columns,
+                    &snapshot.rows,
+                    big_endian,
+                    tile_shape,
+                )?;
+            }
         }
 
         let info_path = table_path.join(TABLE_INFO_FILE);
@@ -235,6 +271,16 @@ impl CompositeStorage {
                     load_ssm_columns(
                         &data_path,
                         &dm.data,
+                        &table_dat.table_desc.columns,
+                        &bound_cols,
+                        &mut rows,
+                        nrrow,
+                    )?;
+                }
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" => {
+                    tiled_stman::load_tiled_columns(
+                        table_path,
+                        dm,
                         &table_dat.table_desc.columns,
                         &bound_cols,
                         &mut rows,

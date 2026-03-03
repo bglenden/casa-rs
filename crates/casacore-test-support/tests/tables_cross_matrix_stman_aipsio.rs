@@ -57,6 +57,7 @@ fn scalar_primitives_fixture() -> TableFixture {
         table_keywords,
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::ScalarPrimitives),
+        tile_shape: None,
     }
 }
 
@@ -110,6 +111,7 @@ fn fixed_array_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::FixedArray),
+        tile_shape: None,
     }
 }
 
@@ -142,6 +144,7 @@ fn keywords_fixture() -> TableFixture {
         table_keywords,
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::Keywords),
+        tile_shape: None,
     }
 }
 
@@ -223,6 +226,7 @@ fn all_numeric_scalars_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: None,
+        tile_shape: None,
     }
 }
 
@@ -272,6 +276,7 @@ fn complex_scalars_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: None,
+        tile_shape: None,
     }
 }
 
@@ -371,6 +376,7 @@ fn typed_arrays_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: None,
+        tile_shape: None,
     }
 }
 
@@ -423,6 +429,7 @@ fn column_keywords_fixture() -> TableFixture {
         table_keywords,
         column_keywords,
         cpp_fixture: None,
+        tile_shape: None,
     }
 }
 

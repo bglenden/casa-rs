@@ -56,6 +56,7 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     #[cfg(unix)]
     demo_locking(&mut out)?;
     demo_memory_tables(&mut out)?;
+    demo_tiled_storage(&mut out)?;
 
     appendln(&mut out, "end");
     Ok(out)
@@ -897,6 +898,186 @@ fn demo_memory_tables(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Tiled storage managers ──────────────────────────────────────────
+
+fn demo_tiled_storage(out: &mut String) -> Result<(), TableError> {
+    use ndarray::ShapeBuilder;
+
+    // C++ (tTiledColumnStMan.cc):
+    //   TiledColumnStMan sm1("TiledData", IPosition(3, 2, 3, 2));
+    //   td.addColumn(ArrayColumnDesc<Float>("data", IPosition(2,2,3),
+    //                ColumnDesc::FixedShape));
+
+    appendln(out, "--- Tiled storage managers ---");
+
+    // ── TiledColumnStMan ──
+    // Fixed-shape Float32 [2,3] array column, 4 rows, tile shape [2,3,2].
+    {
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Float32,
+            vec![2, 3],
+        )])?;
+
+        let nelem = 6usize; // 2*3
+        let nrow = 4usize;
+        let mut rows = Vec::with_capacity(nrow);
+        for i in 0..nrow {
+            let base = (i * nelem) as f32;
+            let data: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
+            let arr = ndarray::Array::from_shape_vec(IxDyn(&[2, 3]).f(), data).unwrap();
+            rows.push(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(arr)),
+            )]));
+        }
+        let table = Table::from_rows_with_schema(rows, schema)?;
+
+        let dir = temp_dir("tTable_demo_tiled_col");
+        table.save(
+            TableOptions::new(&dir)
+                .with_data_manager(DataManagerKind::TiledColumnStMan)
+                .with_tile_shape(vec![2, 3, 2]),
+        )?;
+
+        let reopened = Table::open(TableOptions::new(&dir))?;
+        appendln(
+            out,
+            &format!("TiledColumnStMan: {} rows", reopened.row_count()),
+        );
+
+        let mut ok = true;
+        for i in 0..nrow {
+            let arr = reopened.get_array_cell(i, "data")?;
+            let base = (i * nelem) as f32;
+            let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
+            let expected_arr =
+                ndarray::Array::from_shape_vec(IxDyn(&[2, 3]).f(), expected).unwrap();
+            if let ArrayValue::Float32(actual) = &*arr {
+                if *actual != expected_arr {
+                    appendln(out, &format!("  MISMATCH row {i}"));
+                    ok = false;
+                }
+            }
+        }
+        appendln(out, &format!("  all cells match: {ok}"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── TiledShapeStMan ──
+    // Variable-shape Float32, 4 rows: rows 0,3 are [2,3], rows 1,2 are [3,2].
+    {
+        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+            "data",
+            PrimitiveType::Float32,
+            Some(2),
+        )])?;
+
+        let shapes = vec![vec![2, 3], vec![3, 2], vec![3, 2], vec![2, 3]];
+        let mut rows = Vec::with_capacity(4);
+        for (i, shape) in shapes.iter().enumerate() {
+            let nelem: usize = shape.iter().product();
+            let base = (i * 10) as f32;
+            let data: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
+            let arr = ndarray::Array::from_shape_vec(IxDyn(shape).f(), data).unwrap();
+            rows.push(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(arr)),
+            )]));
+        }
+        let table = Table::from_rows_with_schema(rows, schema)?;
+
+        let dir = temp_dir("tTable_demo_tiled_shape");
+        table.save(
+            TableOptions::new(&dir)
+                .with_data_manager(DataManagerKind::TiledShapeStMan)
+                .with_tile_shape(vec![2, 3, 2]),
+        )?;
+
+        let reopened = Table::open(TableOptions::new(&dir))?;
+        appendln(
+            out,
+            &format!("TiledShapeStMan: {} rows", reopened.row_count()),
+        );
+
+        let mut ok = true;
+        for (i, shape) in shapes.iter().enumerate() {
+            let arr = reopened.get_array_cell(i, "data")?;
+            let nelem: usize = shape.iter().product();
+            let base = (i * 10) as f32;
+            let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
+            let expected_arr =
+                ndarray::Array::from_shape_vec(IxDyn(shape).f(), expected).unwrap();
+            if let ArrayValue::Float32(actual) = &*arr {
+                if *actual != expected_arr {
+                    appendln(out, &format!("  MISMATCH row {i}"));
+                    ok = false;
+                }
+            }
+        }
+        appendln(out, &format!("  all cells match: {ok}"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── TiledCellStMan ──
+    // Variable-shape Float32, 3 rows with unique shapes per row.
+    {
+        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+            "data",
+            PrimitiveType::Float32,
+            Some(2),
+        )])?;
+
+        let shapes = vec![vec![2, 3], vec![4, 2], vec![3, 3]];
+        let mut rows = Vec::with_capacity(3);
+        for (i, shape) in shapes.iter().enumerate() {
+            let nelem: usize = shape.iter().product();
+            let base = (i * 10) as f32;
+            let data: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
+            let arr = ndarray::Array::from_shape_vec(IxDyn(shape).f(), data).unwrap();
+            rows.push(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(arr)),
+            )]));
+        }
+        let table = Table::from_rows_with_schema(rows, schema)?;
+
+        let dir = temp_dir("tTable_demo_tiled_cell");
+        table.save(
+            TableOptions::new(&dir)
+                .with_data_manager(DataManagerKind::TiledCellStMan)
+                .with_tile_shape(vec![4, 4]),
+        )?;
+
+        let reopened = Table::open(TableOptions::new(&dir))?;
+        appendln(
+            out,
+            &format!("TiledCellStMan: {} rows", reopened.row_count()),
+        );
+
+        let mut ok = true;
+        for (i, shape) in shapes.iter().enumerate() {
+            let arr = reopened.get_array_cell(i, "data")?;
+            let nelem: usize = shape.iter().product();
+            let base = (i * 10) as f32;
+            let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
+            let expected_arr =
+                ndarray::Array::from_shape_vec(IxDyn(shape).f(), expected).unwrap();
+            if let ArrayValue::Float32(actual) = &*arr {
+                if *actual != expected_arr {
+                    appendln(out, &format!("  MISMATCH row {i}"));
+                    ok = false;
+                }
+            }
+        }
+        appendln(out, &format!("  all cells match: {ok}"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn appendln(out: &mut String, line: &str) {
@@ -933,6 +1114,7 @@ mod tests {
         #[cfg(unix)]
         assert!(output.contains("--- Table locking"));
         assert!(output.contains("--- Memory tables"));
+        assert!(output.contains("--- Tiled storage managers"));
         assert!(output.ends_with("end\n"));
     }
 }

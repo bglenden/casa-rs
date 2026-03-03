@@ -5,8 +5,9 @@ use std::path::Path;
 
 use casacore_aipsio::{AipsIo, AipsOpenOption};
 use casacore_types::{
-    Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::StorageError;
 use super::data_type::{
@@ -552,7 +553,7 @@ fn read_plain_column(io: &mut AipsIo, is_array: bool) -> Result<PlainColumnEntry
 // IPosition helpers
 // ---------------------------------------------------------------------------
 
-fn read_iposition(io: &mut AipsIo) -> Result<Vec<i32>, StorageError> {
+pub(crate) fn read_iposition(io: &mut AipsIo) -> Result<Vec<i32>, StorageError> {
     let _version = io.getstart("IPosition")?;
     let n = io.get_u32()?;
     let mut values = vec![0i32; n as usize];
@@ -564,6 +565,70 @@ fn read_iposition(io: &mut AipsIo) -> Result<Vec<i32>, StorageError> {
 // ---------------------------------------------------------------------------
 // TableRecord / RecordDesc helpers
 // ---------------------------------------------------------------------------
+
+/// Read a C++ `Record` (serialized as `"RecordRep"`) from AipsIO.
+///
+/// This is the format used by `TSMCube::values_p` in tiled storage managers.
+/// Structurally identical to `TableRecord` but uses a different AipsIO type name.
+pub(crate) fn read_record_rep(io: &mut AipsIo) -> Result<RecordValue, StorageError> {
+    let _version = io.getstart("RecordRep")?;
+    let desc = read_record_desc(io)?;
+    let _record_type = io.get_i32()?;
+    let mut fields = Vec::with_capacity(desc.len());
+    for (name, field_type) in &desc {
+        let value = read_record_field_value(io, *field_type)?;
+        fields.push(RecordField::new(name.clone(), value));
+    }
+    io.getend()?;
+    Ok(RecordValue::new(fields))
+}
+
+/// Read a C++ `Record` object.
+///
+/// C++ `RecordRep::putRecord` writes a single `"Record"` v1 envelope containing
+/// `RecordDesc`, `recordType` (Int), then the raw field data. There is no nested
+/// `"RecordRep"` envelope — that name is only used in `TableRecord` context.
+///
+/// The TSMCube `values` field uses this format (`ios << values_p` in TSMCube.cc).
+pub(crate) fn read_record(io: &mut AipsIo) -> Result<RecordValue, StorageError> {
+    let _version = io.getstart("Record")?;
+    let desc = read_record_desc(io)?;
+    let _record_type = io.get_i32()?;
+    let mut fields = Vec::with_capacity(desc.len());
+    for (name, field_type) in &desc {
+        let value = read_record_field_value(io, *field_type)?;
+        fields.push(RecordField::new(name.clone(), value));
+    }
+    io.getend()?;
+    Ok(RecordValue::new(fields))
+}
+
+/// Write a C++ `Record` object.
+///
+/// Writes: `putstart("Record", 1)`, `RecordDesc`, `recordType`, field data, `putend()`.
+/// This matches C++ `RecordRep::putRecord`.
+pub(crate) fn write_record(io: &mut AipsIo, record: &RecordValue) -> Result<(), StorageError> {
+    io.putstart("Record", 1)?;
+    write_record_desc(io, record)?;
+    io.put_i32(1)?; // recordType = RecordInterface::Variable
+    for field in record.fields() {
+        write_record_field_value(io, &field.value)?;
+    }
+    io.putend()?;
+    Ok(())
+}
+
+/// Write a C++ `Record` (serialized as `"RecordRep"`) to AipsIO.
+pub(crate) fn write_record_rep(io: &mut AipsIo, record: &RecordValue) -> Result<(), StorageError> {
+    io.putstart("RecordRep", 1)?;
+    write_record_desc(io, record)?;
+    io.put_i32(1)?; // recordType = RecordInterface::Variable
+    for field in record.fields() {
+        write_record_field_value(io, &field.value)?;
+    }
+    io.putend()?;
+    Ok(())
+}
 
 fn read_table_record(io: &mut AipsIo) -> Result<RecordValue, StorageError> {
     let _version = io.getstart("TableRecord")?;
@@ -634,10 +699,205 @@ fn read_record_field_value(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Valu
             let record = read_table_record(io)?;
             Ok(Value::Record(record))
         }
+        // Array types — used in hypercolumn definitions and cube metadata.
+        CasacoreDataType::TpArrayBool
+        | CasacoreDataType::TpArrayUChar
+        | CasacoreDataType::TpArrayShort
+        | CasacoreDataType::TpArrayUShort
+        | CasacoreDataType::TpArrayInt
+        | CasacoreDataType::TpArrayUInt
+        | CasacoreDataType::TpArrayFloat
+        | CasacoreDataType::TpArrayDouble
+        | CasacoreDataType::TpArrayComplex
+        | CasacoreDataType::TpArrayDComplex
+        | CasacoreDataType::TpArrayString
+        | CasacoreDataType::TpArrayInt64 => read_array_record_field(io, dt),
         _ => Err(StorageError::FormatMismatch(format!(
             "unsupported record field type: {dt:?}"
         ))),
     }
+}
+
+/// Read an array-typed record field from AipsIO.
+///
+/// C++ RecordRep uses type-specific names: `"Array<String>"`, `"Array<float>"`, etc.
+/// The reader peeks the actual type name and uses it for `getstart`.
+fn read_array_record_field(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Value, StorageError> {
+    // C++ writes different type names depending on the element type.
+    // Peek the actual type name and use it for getstart.
+    let type_name = io.get_next_type()?;
+    let version = io.getstart(&type_name)?;
+    let ndim = io.get_u32()? as usize;
+
+    if ndim == 0 {
+        io.getend()?;
+        // Return a zero-element array of the appropriate type.
+        return match dt {
+            CasacoreDataType::TpArrayString => Ok(Value::Array(ArrayValue::String(
+                ArrayD::from_shape_vec(IxDyn(&[0]).f(), vec![]).unwrap(),
+            ))),
+            _ => Ok(Value::Array(ArrayValue::Float32(
+                ArrayD::from_shape_vec(IxDyn(&[0]).f(), vec![]).unwrap(),
+            ))),
+        };
+    }
+
+    // Older versions (< 3) include an origin before the shape.
+    if version < 3 {
+        for _ in 0..ndim {
+            let _origin = io.get_i32()?;
+        }
+    }
+
+    // Shape: ndim × u32 (NOT an IPosition AipsIO object).
+    let mut shape = Vec::with_capacity(ndim);
+    for _ in 0..ndim {
+        shape.push(io.get_u32()? as usize);
+    }
+    let nelem: usize = shape.iter().product();
+
+    let av = match dt {
+        CasacoreDataType::TpArrayBool => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![false; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_bool()?;
+            }
+            ArrayValue::Bool(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayUChar => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0u8; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_u8()?;
+            }
+            ArrayValue::UInt8(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayShort => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0i16; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_i16()?;
+            }
+            ArrayValue::Int16(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayUShort => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0u16; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_u16()?;
+            }
+            ArrayValue::UInt16(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayInt => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0i32; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_i32()?;
+            }
+            ArrayValue::Int32(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayUInt => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0u32; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_u32()?;
+            }
+            ArrayValue::UInt32(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayFloat => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0f32; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_f32()?;
+            }
+            ArrayValue::Float32(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayDouble => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0f64; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_f64()?;
+            }
+            ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayComplex => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![Complex32::new(0.0, 0.0); count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_complex32()?;
+            }
+            ArrayValue::Complex32(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayDComplex => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![Complex64::new(0.0, 0.0); count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_complex64()?;
+            }
+            ArrayValue::Complex64(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayString => {
+            let count = io.get_u32()? as usize;
+            let mut vals = Vec::with_capacity(count.min(nelem));
+            for _ in 0..count.min(nelem) {
+                vals.push(io.get_string()?);
+            }
+            ArrayValue::String(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        CasacoreDataType::TpArrayInt64 => {
+            let count = io.get_u32()? as usize;
+            let mut vals = vec![0i64; count.min(nelem)];
+            for v in vals.iter_mut() {
+                *v = io.get_i64()?;
+            }
+            ArrayValue::Int64(
+                ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
+                    .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
+            )
+        }
+        _ => {
+            return Err(StorageError::FormatMismatch(format!(
+                "unsupported array record field type: {dt:?}"
+            )));
+        }
+    };
+
+    io.getend()?;
+    Ok(Value::Array(av))
 }
 
 fn is_array_data_type(dt: CasacoreDataType) -> bool {
@@ -926,7 +1186,7 @@ fn write_column_set(io: &mut AipsIo, contents: &TableDatContents) -> Result<(), 
     Ok(())
 }
 
-fn write_iposition(io: &mut AipsIo, values: &[i32]) -> Result<(), StorageError> {
+pub(crate) fn write_iposition(io: &mut AipsIo, values: &[i32]) -> Result<(), StorageError> {
     io.putstart("IPosition", 1)?;
     io.put_u32(values.len() as u32)?;
     io.put_i32_slice(values, false)?;
@@ -960,6 +1220,12 @@ fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), Storag
             if let Value::Record(sub) = &field.value {
                 write_record_desc(io, sub)?;
             }
+        } else if is_array_data_type(dt) {
+            // Array field: write IPosition shape.
+            if let Value::Array(av) = &field.value {
+                let shape: Vec<i32> = av.shape().iter().map(|&d| d as i32).collect();
+                write_iposition(io, &shape)?;
+            }
         }
 
         io.put_string("")?; // comment
@@ -988,10 +1254,119 @@ fn write_record_field_value(io: &mut AipsIo, value: &Value) -> Result<(), Storag
         Value::Record(record) => {
             write_table_record(io, record)?;
         }
-        Value::Array(_) => {
-            return Err(StorageError::FormatMismatch(
-                "array values in keywords not yet supported".to_string(),
-            ));
+        Value::Array(av) => {
+            write_array_record_field(io, av)?;
+        }
+    }
+    Ok(())
+}
+
+/// Write an array-typed record field to AipsIO.
+///
+/// C++ serializes `Array<T>` as: `"Array"` v3 → Int ndim → IPosition shape → count + data.
+fn write_array_record_field(io: &mut AipsIo, av: &ArrayValue) -> Result<(), StorageError> {
+    // C++ RecordRep uses type-specific AipsIO names for arrays.
+    let type_name = match av {
+        ArrayValue::Bool(_) => "Array<void>",
+        ArrayValue::UInt8(_) => "Array<uChar>",
+        ArrayValue::Int16(_) => "Array<short>",
+        ArrayValue::UInt16(_) => "Array<short>",
+        ArrayValue::Int32(_) => "Array<Int>",
+        ArrayValue::UInt32(_) => "Array<uInt>",
+        ArrayValue::Int64(_) => "Array<Int64>",
+        ArrayValue::Float32(_) => "Array<float>",
+        ArrayValue::Float64(_) => "Array<double>",
+        ArrayValue::Complex32(_) => "Array<void>",
+        ArrayValue::Complex64(_) => "Array<void>",
+        ArrayValue::String(_) => "Array<String>",
+    };
+    io.putstart(type_name, 3)?;
+
+    // Write ndim as u32, then shape as ndim × u32 (NOT as IPosition).
+    let ndim = av.ndim() as u32;
+    io.put_u32(ndim)?;
+    if ndim > 0 {
+        for &d in av.shape() {
+            io.put_u32(d as u32)?;
+        }
+        let nelem = av.len() as u32;
+        io.put_u32(nelem)?;
+        match av {
+            ArrayValue::String(a) => {
+                for s in a.as_slice_memory_order().unwrap_or(&[]) {
+                    io.put_string(s)?;
+                }
+            }
+            _ => {
+                write_array_elements(io, av)?;
+            }
+        }
+    }
+
+    io.putend()?;
+    Ok(())
+}
+
+/// Write array elements in memory (Fortran) order for non-string arrays.
+fn write_array_elements(io: &mut AipsIo, av: &ArrayValue) -> Result<(), StorageError> {
+    match av {
+        ArrayValue::Bool(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_bool(v)?;
+            }
+        }
+        ArrayValue::UInt8(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_u8(v)?;
+            }
+        }
+        ArrayValue::Int16(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_i16(v)?;
+            }
+        }
+        ArrayValue::UInt16(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_u16(v)?;
+            }
+        }
+        ArrayValue::Int32(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_i32(v)?;
+            }
+        }
+        ArrayValue::UInt32(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_u32(v)?;
+            }
+        }
+        ArrayValue::Float32(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_f32(v)?;
+            }
+        }
+        ArrayValue::Float64(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_f64(v)?;
+            }
+        }
+        ArrayValue::Int64(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_i64(v)?;
+            }
+        }
+        ArrayValue::Complex32(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_complex32(v)?;
+            }
+        }
+        ArrayValue::Complex64(a) => {
+            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
+                io.put_complex64(v)?;
+            }
+        }
+        ArrayValue::String(_) => {
+            unreachable!("string arrays handled separately")
         }
     }
     Ok(())
