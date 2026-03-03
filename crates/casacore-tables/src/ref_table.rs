@@ -114,6 +114,49 @@ impl<'a> RefTable<'a> {
         })
     }
 
+    /// Creates a new RefTable from a parent table, row indices, and column names.
+    ///
+    /// This combines row selection and column projection into a single view.
+    /// Used by TaQL SELECT execution to produce projected results.
+    pub(crate) fn from_rows_and_columns(
+        parent: &'a mut Table,
+        row_map: Vec<usize>,
+        columns: &[String],
+    ) -> Result<Self, TableError> {
+        let count = parent.row_count();
+        for &idx in &row_map {
+            if idx >= count {
+                return Err(TableError::RowIndexOutOfRange { index: idx, count });
+            }
+        }
+
+        // Validate column names exist in schema
+        if let Some(schema) = parent.schema() {
+            for name in columns {
+                if !schema.columns().iter().any(|c| c.name() == name) {
+                    return Err(TableError::UnknownColumn {
+                        name: name.to_string(),
+                    });
+                }
+            }
+        }
+
+        let column_names: Vec<String> = columns.to_vec();
+        let column_name_map: Vec<(String, String)> = column_names
+            .iter()
+            .map(|n| (n.clone(), n.clone()))
+            .collect();
+        let row_order = row_map.windows(2).all(|w| w[0] < w[1]);
+
+        Ok(Self {
+            parent,
+            row_map,
+            column_names,
+            column_name_map,
+            row_order,
+        })
+    }
+
     /// Creates a new RefTable from a parent table and a predicate.
     pub(crate) fn from_predicate<F>(parent: &'a mut Table, predicate: F) -> Self
     where

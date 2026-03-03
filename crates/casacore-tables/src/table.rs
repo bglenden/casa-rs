@@ -585,6 +585,12 @@ pub enum TableError {
     /// [`crate::ColumnsIndex::lookup_unique`] found more than one matching row.
     #[error("index lookup_unique found {count} matching rows; expected at most 1")]
     IndexNotUnique { count: usize },
+    /// A TaQL query error occurred.
+    ///
+    /// Wraps [`crate::taql::TaqlError`] for convenience when using the
+    /// [`Table::query`] or [`Table::execute_taql`] methods.
+    #[error("TaQL error: {0}")]
+    Taql(String),
 }
 
 impl From<crate::storage::StorageError> for TableError {
@@ -2049,6 +2055,75 @@ impl Table {
         }
         self.inner.insert_row(index, row);
         Ok(())
+    }
+
+    // ── TaQL query methods ──────────────────────────────────────────
+
+    /// Executes a TaQL SELECT query and returns a [`RefTable`](crate::RefTable) view.
+    ///
+    /// This is a convenience method that parses the query, executes it, and
+    /// wraps the result in a [`RefTable`](crate::RefTable). Only SELECT statements are accepted;
+    /// for UPDATE/INSERT/DELETE use [`execute_taql`](Table::execute_taql).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError::Taql`] if the query is invalid or execution fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use casacore_tables::{Table, TableSchema, ColumnSchema};
+    /// # use casacore_types::*;
+    /// # let schema = TableSchema::new(vec![
+    /// #     ColumnSchema::scalar("id", PrimitiveType::Int32),
+    /// #     ColumnSchema::scalar("flux", PrimitiveType::Float64),
+    /// # ]).unwrap();
+    /// # let mut table = Table::with_schema(schema);
+    /// # for i in 0..5 {
+    /// #     table.add_row(RecordValue::new(vec![
+    /// #         RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+    /// #         RecordField::new("flux", Value::Scalar(ScalarValue::Float64(i as f64))),
+    /// #     ])).unwrap();
+    /// # }
+    /// let view = table.query("SELECT * WHERE flux > 2.0").unwrap();
+    /// assert_eq!(view.row_count(), 2);
+    /// ```
+    ///
+    /// C++ equivalent: `tableCommand()` with a SELECT query.
+    pub fn query(&mut self, taql: &str) -> Result<crate::RefTable<'_>, TableError> {
+        let stmt = crate::taql::parse(taql).map_err(|e| TableError::Taql(e.to_string()))?;
+        let result =
+            crate::taql::execute(&stmt, self).map_err(|e| TableError::Taql(e.to_string()))?;
+        match result {
+            crate::taql::TaqlResult::Select {
+                row_indices,
+                columns,
+            } => {
+                if columns.is_empty() {
+                    crate::RefTable::from_rows(self, row_indices)
+                } else {
+                    crate::RefTable::from_rows_and_columns(self, row_indices, &columns)
+                }
+            }
+            _ => Err(TableError::Taql(
+                "Table::query() only supports SELECT statements; use execute_taql() for mutations"
+                    .to_string(),
+            )),
+        }
+    }
+
+    /// Executes any TaQL statement (SELECT, UPDATE, INSERT, DELETE).
+    ///
+    /// Returns a [`TaqlResult`](crate::taql::TaqlResult) describing the outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError::Taql`] if the query is invalid or execution fails.
+    ///
+    /// C++ equivalent: `tableCommand()`.
+    pub fn execute_taql(&mut self, taql: &str) -> Result<crate::taql::TaqlResult, TableError> {
+        let stmt = crate::taql::parse(taql).map_err(|e| TableError::Taql(e.to_string()))?;
+        crate::taql::execute(&stmt, self).map_err(|e| TableError::Taql(e.to_string()))
     }
 
     fn require_column(&self, column: &str) -> Result<(), TableError> {
