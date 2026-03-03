@@ -35,8 +35,10 @@ version = "0.1.0"
 dependencies = [
  "casacore-aipsio",
  "casacore-types",
+ "libc",
  "ndarray",
  "num-complex",
+ "tempfile",
  "thiserror",
 ]
 

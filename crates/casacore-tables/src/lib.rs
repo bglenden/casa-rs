@@ -33,6 +33,9 @@
 //! | [`DataManagerKind`] | Choose between `StManAipsIO` and `StandardStMan` |
 //! | [`EndianFormat`] | Choose big-endian, little-endian, or host byte order |
 //! | [`RowRange`] | Select a contiguous or strided subset of rows |
+//! | [`LockMode`] | Choose a locking strategy (permanent, user, auto, none) |
+//! | [`LockOptions`] | Bundle lock mode with inspection interval |
+//! | [`LockType`] | Distinguish read vs. write locks |
 //! | [`TableError`] | All errors from table operations |
 //!
 //! # Storage managers
@@ -47,6 +50,21 @@
 //! - [`DataManagerKind::StandardStMan`] — data is partitioned into
 //!   fixed-size buckets. This is the default storage manager in C++ casacore
 //!   and provides more efficient random access for large tables.
+//!
+//! # Table locking (Unix)
+//!
+//! When multiple processes share a table on disk, file-based locking
+//! prevents data corruption. Open a table with [`Table::open_with_lock`]
+//! and a [`LockOptions`] to enable locking. The lock file (`table.lock`)
+//! uses the same binary format as C++ casacore, so Rust and C++ processes
+//! can safely share tables.
+//!
+//! Available lock modes (see [`LockMode`]):
+//!
+//! - **`PermanentLocking`** — acquire on open, hold until close.
+//! - **`UserLocking`** — explicit [`Table::lock`] / [`Table::unlock`] calls.
+//! - **`AutoLocking`** — acquire before operations, release periodically.
+//! - **`NoLocking`** — no lock file (the default, for single-process use).
 //!
 //! # Typical workflow
 //!
@@ -100,10 +118,12 @@ mod table;
 mod table_impl;
 
 pub(crate) mod aipsio;
+pub(crate) mod lock;
 pub(crate) mod storage;
 
 pub mod demo;
 
+pub use lock::{LockMode, LockOptions, LockType};
 pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };

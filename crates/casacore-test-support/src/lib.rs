@@ -1141,6 +1141,14 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_table_write_with_lock(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_with_lock(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
 
     fn casacore_cpp_aipsio_encode(
@@ -1353,6 +1361,9 @@ pub enum CppTableFixture {
     MutationRemovedRows,
     /// Verify-only: scalar_primitives + extra(Float32, 42.0) column (any DM).
     MutationAddedColumn,
+    /// Lock interop: table with (id: Int, name: String), created with
+    /// PermanentLocking to produce a `table.lock` file with sync data.
+    LockFile,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1378,6 +1389,7 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             CppTableFixture::SsmKeywords => {
                 cpp_table_write_ssm_keywords(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::LockFile => cpp_table_write_with_lock(c_path.as_ptr(), &mut error),
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
             | CppTableFixture::MutationAddedColumn => {
@@ -1435,6 +1447,7 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             CppTableFixture::MutationAddedColumn => {
                 cpp_table_verify_mutation_added_column(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::LockFile => cpp_table_verify_with_lock(c_path.as_ptr(), &mut error),
         }
     };
 

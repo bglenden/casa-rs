@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value, ValueKind};
 use thiserror::Error;
 
+#[cfg(unix)]
+use crate::lock::LockFile;
+use crate::lock::SyncData;
+use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot};
 use crate::table_impl::TableImpl;
@@ -447,6 +451,18 @@ pub enum TableError {
     /// An I/O or storage-manager error occurred during [`Table::open`] or [`Table::save`].
     #[error("storage error: {0}")]
     Storage(String),
+    /// A lock could not be acquired within the allowed attempts.
+    ///
+    /// C++ equivalent: lock failure in `TableLockData::makeLock`.
+    #[error("lock acquisition failed on \"{path}\": {message}")]
+    LockFailed { path: String, message: String },
+    /// A locking operation was attempted but the table has no lock state
+    /// (opened without locking or created in-memory).
+    #[error("table is not opened with locking; cannot {operation}")]
+    NotLocked { operation: String },
+    /// A lock-file I/O error occurred.
+    #[error("lock I/O error on \"{path}\": {message}")]
+    LockIo { path: String, message: String },
 }
 
 impl From<crate::storage::StorageError> for TableError {
@@ -513,9 +529,36 @@ impl From<SchemaError> for TableError {
 /// let table = Table::from_rows(vec![row]);
 /// assert_eq!(table.row_count(), 1);
 /// ```
+/// Internal lock state held by a [`Table`] when opened with locking.
+///
+/// Stores the open file descriptor (via [`LockFile`]), synchronization
+/// counters, and the options needed to re-save and re-load the table on
+/// lock transitions.
+#[cfg(unix)]
+struct LockState {
+    path: PathBuf,
+    lock_file: LockFile,
+    sync_data: SyncData,
+    options: LockOptions,
+    data_manager: DataManagerKind,
+    endian_format: EndianFormat,
+}
+
+#[cfg(unix)]
+impl std::fmt::Debug for LockState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LockState")
+            .field("path", &self.path)
+            .field("mode", &self.options.mode)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Table {
     inner: TableImpl,
+    #[cfg(unix)]
+    lock_state: Option<LockState>,
 }
 
 impl Table {
@@ -523,6 +566,8 @@ impl Table {
     pub fn new() -> Self {
         Self {
             inner: TableImpl::new(),
+            #[cfg(unix)]
+            lock_state: None,
         }
     }
 
@@ -533,7 +578,11 @@ impl Table {
     pub fn with_schema(schema: TableSchema) -> Self {
         let mut inner = TableImpl::new();
         inner.set_schema(Some(schema));
-        Self { inner }
+        Self {
+            inner,
+            #[cfg(unix)]
+            lock_state: None,
+        }
     }
 
     /// Creates a table from an existing `Vec` of rows without schema validation.
@@ -543,6 +592,8 @@ impl Table {
     pub fn from_rows(rows: Vec<RecordValue>) -> Self {
         Self {
             inner: TableImpl::from_rows(rows),
+            #[cfg(unix)]
+            lock_state: None,
         }
     }
 
@@ -561,6 +612,8 @@ impl Table {
                 std::collections::HashMap::new(),
                 Some(schema),
             ),
+            #[cfg(unix)]
+            lock_state: None,
         };
         table.validate()?;
         Ok(table)
@@ -583,6 +636,8 @@ impl Table {
                 snapshot.column_keywords,
                 snapshot.schema,
             ),
+            #[cfg(unix)]
+            lock_state: None,
         };
         table.validate()?;
         Ok(table)
@@ -613,6 +668,263 @@ impl Table {
             options.endian_format.is_big_endian(),
         )?;
         Ok(())
+    }
+
+    /// Opens an existing table from disk with locking.
+    ///
+    /// Behaves like [`open`](Table::open) but also creates or opens the
+    /// `table.lock` file and acquires a lock according to the given
+    /// [`LockOptions`].
+    ///
+    /// - [`LockMode::PermanentLocking`]: acquires a write lock immediately;
+    ///   fails if unavailable.
+    /// - [`LockMode::PermanentLockingWait`]: acquires a write lock, waiting
+    ///   indefinitely.
+    /// - [`LockMode::AutoLocking`]: acquires a read lock immediately.
+    /// - [`LockMode::UserLocking`]: no lock is acquired until
+    ///   [`lock()`](Table::lock) is called.
+    /// - [`LockMode::NoLocking`]: equivalent to [`open()`](Table::open).
+    ///
+    /// C++ equivalent: `Table(name, TableLock(...), Table::Old)`.
+    #[cfg(unix)]
+    pub fn open_with_lock(
+        options: TableOptions,
+        lock_opts: LockOptions,
+    ) -> Result<Self, TableError> {
+        if lock_opts.mode == LockMode::NoLocking {
+            return Self::open(options);
+        }
+
+        let storage = CompositeStorage;
+        let snapshot = storage.load(&options.path)?;
+        let mut table = Self {
+            inner: TableImpl::with_rows_keywords_and_schema(
+                snapshot.rows,
+                snapshot.keywords,
+                snapshot.column_keywords,
+                snapshot.schema,
+            ),
+            lock_state: None,
+        };
+        table.validate()?;
+
+        let perm = matches!(
+            lock_opts.mode,
+            LockMode::PermanentLocking | LockMode::PermanentLockingWait
+        );
+        let mut lock_file =
+            LockFile::create_or_open(&options.path, false, lock_opts.inspection_interval, perm)
+                .map_err(|e| TableError::LockIo {
+                    path: options.path.display().to_string(),
+                    message: e.to_string(),
+                })?;
+
+        // Acquire initial lock based on mode.
+        match lock_opts.mode {
+            LockMode::PermanentLocking => {
+                if !lock_file
+                    .acquire(LockType::Write, 1)
+                    .map_err(|e| TableError::LockIo {
+                        path: options.path.display().to_string(),
+                        message: e.to_string(),
+                    })?
+                {
+                    return Err(TableError::LockFailed {
+                        path: options.path.display().to_string(),
+                        message: "table is locked by another process".into(),
+                    });
+                }
+            }
+            LockMode::PermanentLockingWait => {
+                if !lock_file
+                    .acquire(LockType::Write, 0)
+                    .map_err(|e| TableError::LockIo {
+                        path: options.path.display().to_string(),
+                        message: e.to_string(),
+                    })?
+                {
+                    return Err(TableError::LockFailed {
+                        path: options.path.display().to_string(),
+                        message: "could not acquire permanent lock".into(),
+                    });
+                }
+            }
+            LockMode::AutoLocking => {
+                let _ = lock_file.acquire(LockType::Read, 1);
+            }
+            LockMode::UserLocking | LockMode::NoLocking => {}
+        }
+
+        // Read sync data if available.
+        let sync_data = lock_file
+            .read_sync_data()
+            .map_err(|e| TableError::LockIo {
+                path: options.path.display().to_string(),
+                message: e.to_string(),
+            })?
+            .unwrap_or_else(SyncData::new);
+
+        table.lock_state = Some(LockState {
+            path: options.path.clone(),
+            lock_file,
+            sync_data,
+            options: lock_opts,
+            data_manager: options.data_manager,
+            endian_format: options.endian_format,
+        });
+
+        Ok(table)
+    }
+
+    /// Acquires a lock on the table.
+    ///
+    /// Re-reads the table data from disk if another process modified it
+    /// since the last lock was held.
+    ///
+    /// `nattempts`: number of lock attempts. 0 means wait indefinitely,
+    /// 1 means try once without waiting.
+    ///
+    /// Returns `true` if the lock was acquired, `false` if it could not
+    /// be acquired within the given attempts.
+    ///
+    /// C++ equivalent: `Table::lock(type, nattempts)`.
+    #[cfg(unix)]
+    pub fn lock(&mut self, lock_type: LockType, nattempts: u32) -> Result<bool, TableError> {
+        let state = self
+            .lock_state
+            .as_mut()
+            .ok_or_else(|| TableError::NotLocked {
+                operation: "lock".into(),
+            })?;
+
+        let acquired =
+            state
+                .lock_file
+                .acquire(lock_type, nattempts)
+                .map_err(|e| TableError::LockIo {
+                    path: state.path.display().to_string(),
+                    message: e.to_string(),
+                })?;
+
+        if acquired {
+            // Read sync data and check if we need to reload.
+            if let Some(new_sync) =
+                state
+                    .lock_file
+                    .read_sync_data()
+                    .map_err(|e| TableError::LockIo {
+                        path: state.path.display().to_string(),
+                        message: e.to_string(),
+                    })?
+            {
+                if state.sync_data.needs_reload(&new_sync) {
+                    // Another process modified the table — reload.
+                    let storage = CompositeStorage;
+                    let snapshot = storage.load(&state.path).map_err(|e| TableError::LockIo {
+                        path: state.path.display().to_string(),
+                        message: e.to_string(),
+                    })?;
+                    self.inner.replace_from_snapshot(
+                        snapshot.rows,
+                        snapshot.keywords,
+                        snapshot.column_keywords,
+                        snapshot.schema,
+                    );
+                    // Update our stored sync data.
+                    if let Some(s) = self.lock_state.as_mut() {
+                        s.sync_data = new_sync;
+                    }
+                }
+            }
+        }
+
+        Ok(acquired)
+    }
+
+    /// Releases the current lock.
+    ///
+    /// If a write lock was held, the table is flushed to disk first and
+    /// sync data is updated in the lock file.
+    ///
+    /// C++ equivalent: `Table::unlock()`.
+    #[cfg(unix)]
+    pub fn unlock(&mut self) -> Result<(), TableError> {
+        // Extract the info we need before borrowing self for save/schema.
+        let (is_write_locked, save_opts) = {
+            let state = self
+                .lock_state
+                .as_ref()
+                .ok_or_else(|| TableError::NotLocked {
+                    operation: "unlock".into(),
+                })?;
+            let wl = state.lock_file.has_lock(LockType::Write);
+            let opts = TableOptions::new(&state.path)
+                .with_data_manager(state.data_manager)
+                .with_endian_format(state.endian_format);
+            (wl, opts)
+        };
+
+        // If write-locked, flush data to disk.
+        if is_write_locked {
+            self.save(save_opts)?;
+
+            // Gather sync info from immutable borrows.
+            let nrrow = self.row_count() as u64;
+            let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
+
+            // Now borrow lock_state mutably for sync data update.
+            let state = self.lock_state.as_mut().expect("lock_state present");
+            state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
+
+            state
+                .lock_file
+                .write_sync_data(&state.sync_data)
+                .map_err(|e| TableError::LockIo {
+                    path: state.path.display().to_string(),
+                    message: e.to_string(),
+                })?;
+        }
+
+        let state = self.lock_state.as_mut().expect("lock_state present");
+        state.lock_file.release().map_err(|e| TableError::LockIo {
+            path: state.path.display().to_string(),
+            message: e.to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    /// Returns `true` if the given lock type is currently held.
+    ///
+    /// Returns `false` if the table was not opened with locking.
+    ///
+    /// C++ equivalent: `Table::hasLock(type)`.
+    #[cfg(unix)]
+    pub fn has_lock(&self, lock_type: LockType) -> bool {
+        self.lock_state
+            .as_ref()
+            .map(|s| s.lock_file.has_lock(lock_type))
+            .unwrap_or(false)
+    }
+
+    /// Tests if the table is opened by another process.
+    ///
+    /// Checks the in-use indicator in the lock file. Returns `false` if the
+    /// table was not opened with locking.
+    ///
+    /// C++ equivalent: `Table::isMultiUsed()`.
+    #[cfg(unix)]
+    pub fn is_multi_used(&self) -> bool {
+        self.lock_state
+            .as_ref()
+            .map(|s| s.lock_file.is_multi_used())
+            .unwrap_or(false)
+    }
+
+    /// Returns the lock options, if locking is active.
+    #[cfg(unix)]
+    pub fn lock_options(&self) -> Option<&LockOptions> {
+        self.lock_state.as_ref().map(|s| &s.options)
     }
 
     /// Returns the attached schema, if any.
@@ -2554,5 +2866,188 @@ mod tests {
             Value::Scalar(ScalarValue::String("only name".into())),
         )]);
         assert!(table.insert_row(0, bad_row).is_err());
+    }
+
+    // ---- Locking integration tests ----
+
+    #[cfg(unix)]
+    mod lock_tests {
+        use super::*;
+        use crate::lock::{LockMode, LockOptions, LockType};
+
+        fn build_test_table_on_disk(dir: &std::path::Path, dm: DataManagerKind) -> TableOptions {
+            let schema = TableSchema::new(vec![
+                ColumnSchema::scalar("id", PrimitiveType::Int32),
+                ColumnSchema::scalar("name", PrimitiveType::String),
+            ])
+            .unwrap();
+            let mut table = Table::with_schema(schema);
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("alice".into()))),
+                ]))
+                .unwrap();
+            let opts = TableOptions::new(dir.join("test.tbl")).with_data_manager(dm);
+            table.save(opts.clone()).unwrap();
+            opts
+        }
+
+        #[test]
+        fn open_with_permanent_lock_acquires_immediately() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::PermanentLocking);
+
+            let table = Table::open_with_lock(opts, lock_opts).unwrap();
+            assert!(table.has_lock(LockType::Write));
+            assert!(!table.has_lock(LockType::Read));
+            assert_eq!(table.row_count(), 1);
+        }
+
+        #[test]
+        fn open_with_user_lock_has_no_lock_until_explicit() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::UserLocking);
+
+            let mut table = Table::open_with_lock(opts, lock_opts).unwrap();
+            assert!(!table.has_lock(LockType::Write));
+            assert!(!table.has_lock(LockType::Read));
+
+            // Acquire write lock explicitly.
+            assert!(table.lock(LockType::Write, 1).unwrap());
+            assert!(table.has_lock(LockType::Write));
+        }
+
+        #[test]
+        fn lock_unlock_cycle_user_mode() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::UserLocking);
+
+            let mut table = Table::open_with_lock(opts, lock_opts).unwrap();
+            assert!(table.lock(LockType::Write, 1).unwrap());
+            assert!(table.has_lock(LockType::Write));
+
+            table.unlock().unwrap();
+            assert!(!table.has_lock(LockType::Write));
+        }
+
+        #[test]
+        fn unlock_flushes_write_to_disk() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::UserLocking);
+
+            let mut table = Table::open_with_lock(opts.clone(), lock_opts).unwrap();
+            assert!(table.lock(LockType::Write, 1).unwrap());
+
+            // Add a row while holding the write lock.
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                ]))
+                .unwrap();
+
+            // Unlock should flush to disk.
+            table.unlock().unwrap();
+
+            // Reopen without locking and verify.
+            let reopened = Table::open(opts).unwrap();
+            assert_eq!(reopened.row_count(), 2);
+        }
+
+        #[test]
+        fn lock_reloads_after_external_modification() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::UserLocking);
+
+            // Open table A with locking, acquire and release.
+            let mut table_a = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+            assert!(table_a.lock(LockType::Write, 1).unwrap());
+            table_a.unlock().unwrap();
+
+            // Simulate another process: open with locking, modify, unlock.
+            {
+                let mut table_b = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+                assert!(table_b.lock(LockType::Write, 1).unwrap());
+                table_b
+                    .add_row(RecordValue::new(vec![
+                        RecordField::new("id", Value::Scalar(ScalarValue::Int32(99))),
+                        RecordField::new(
+                            "name",
+                            Value::Scalar(ScalarValue::String("external".into())),
+                        ),
+                    ]))
+                    .unwrap();
+                table_b.unlock().unwrap();
+                // table_b dropped here, releasing lock file fd.
+            }
+
+            // Re-acquire the lock on table_a — should reload.
+            assert!(table_a.lock(LockType::Write, 1).unwrap());
+            assert_eq!(table_a.row_count(), 2);
+        }
+
+        #[test]
+        fn no_lock_backward_compat() {
+            // Existing open()/save() API works unchanged.
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let table = Table::open(opts).unwrap();
+            assert_eq!(table.row_count(), 1);
+            // has_lock returns false for non-locked tables.
+            assert!(!table.has_lock(LockType::Write));
+        }
+
+        #[test]
+        fn lock_file_created_on_disk() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::PermanentLocking);
+
+            let _table = Table::open_with_lock(opts, lock_opts).unwrap();
+            let lock_path = tmp.path().join("test.tbl").join("table.lock");
+            assert!(lock_path.exists(), "table.lock should be created");
+        }
+
+        #[test]
+        fn lock_on_non_locked_table_errors() {
+            let table = Table::new();
+            let mut table = table;
+            let result = table.lock(LockType::Write, 1);
+            assert!(matches!(result, Err(TableError::NotLocked { .. })));
+        }
+
+        #[test]
+        fn permanent_lock_round_trip_both_dms() {
+            for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+                let tmp = tempfile::TempDir::new().unwrap();
+                let opts = build_test_table_on_disk(tmp.path(), dm);
+                let lock_opts = LockOptions::new(LockMode::PermanentLocking);
+
+                let mut table = Table::open_with_lock(opts.clone(), lock_opts).unwrap();
+                assert!(table.has_lock(LockType::Write));
+                assert_eq!(table.row_count(), 1);
+
+                // Add a row while permanently locked.
+                table
+                    .add_row(RecordValue::new(vec![
+                        RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                        RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                    ]))
+                    .unwrap();
+
+                // Unlock (flushes), then drop releases the lock.
+                table.unlock().unwrap();
+
+                // Reopen and verify.
+                let reopened = Table::open(opts).unwrap();
+                assert_eq!(reopened.row_count(), 2);
+            }
+        }
     }
 }

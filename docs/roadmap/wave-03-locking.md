@@ -28,3 +28,17 @@ astronomy pipelines (e.g. one process writes visibilities, another reads).
 - Two-process test: writer holds lock, reader waits, then reads after unlock.
 - Lock file format matches C++ (interop both directions).
 - Auto-locking mode smoke test.
+
+## Lessons learned
+
+1. **fcntl locks are per-process, not per-fd.** Two `Table` instances in the
+   same process cannot contend for fcntl locks. Single-process tests exercise
+   the sync data mechanism (reload on `modify_counter` change) but not actual
+   lock contention. Real contention tests require `std::process::Command` to
+   spawn child processes.
+
+2. **`create: true` truncates the lock file.** `LockFile::create_or_open`
+   with `create: true` uses `O_CREAT | O_TRUNC`, wiping existing sync data.
+   `open_with_lock` must pass `create: false` so that existing lock files
+   (written by another Table instance or process) are preserved. The
+   `!path.exists()` guard in `create_or_open` still creates when needed.

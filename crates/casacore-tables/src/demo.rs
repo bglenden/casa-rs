@@ -49,6 +49,8 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     appendln(&mut out, "");
     demo_column_iteration(&mut out)?;
     demo_schema_mutation(&mut out)?;
+    #[cfg(unix)]
+    demo_locking(&mut out)?;
 
     appendln(&mut out, "end");
     Ok(out)
@@ -404,6 +406,107 @@ fn demo_schema_mutation(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Table locking ──────────────────────────────────────────────────────
+
+#[cfg(unix)]
+fn demo_locking(out: &mut String) -> Result<(), TableError> {
+    use crate::{LockMode, LockOptions, LockType};
+
+    // C++ (Table.h):
+    //   Table tab("path", TableLock(TableLock::PermanentLocking));
+    //   ...
+    //   tab.lock(FileLocker::Write);
+    //   tab.unlock();
+
+    appendln(out, "--- Table locking ---");
+
+    // Save a table to disk first so we can open it with locking.
+    let dir = temp_dir("tTable_demo_locking");
+    let table = build_demo_table()?;
+    table.save(TableOptions::new(&dir))?;
+
+    // PermanentLocking: lock on open, hold until close.
+    {
+        let perm = Table::open_with_lock(
+            TableOptions::new(&dir),
+            LockOptions::new(LockMode::PermanentLocking),
+        )?;
+        appendln(
+            out,
+            &format!(
+                "permanent lock: has_write={}, rows={}",
+                perm.has_lock(LockType::Write),
+                perm.row_count()
+            ),
+        );
+        // Lock released on drop.
+    }
+
+    // UserLocking: explicit lock/unlock.
+    {
+        let mut user = Table::open_with_lock(
+            TableOptions::new(&dir),
+            LockOptions::new(LockMode::UserLocking),
+        )?;
+        appendln(
+            out,
+            &format!(
+                "user lock (before): has_write={}",
+                user.has_lock(LockType::Write)
+            ),
+        );
+
+        user.lock(LockType::Write, 1)?;
+        appendln(
+            out,
+            &format!(
+                "user lock (after lock): has_write={}",
+                user.has_lock(LockType::Write)
+            ),
+        );
+
+        // Modify while locked.
+        user.add_row(RecordValue::new(vec![
+            RecordField::new("ab", Value::Scalar(ScalarValue::Int32(999))),
+            RecordField::new("ad", Value::Scalar(ScalarValue::UInt32(0))),
+            RecordField::new(
+                "ag",
+                Value::Scalar(ScalarValue::Complex64(Complex64::new(0.0, 0.0))),
+            ),
+            RecordField::new("ae", Value::Scalar(ScalarValue::Float32(0.0))),
+            RecordField::new("af", Value::Scalar(ScalarValue::String("locked".into()))),
+            RecordField::new(
+                "arr1",
+                Value::Array(ArrayValue::Float32(
+                    Array::from_shape_vec(IxDyn(&[2, 3, 4]), vec![0.0f32; 24]).unwrap(),
+                )),
+            ),
+        ]))?;
+
+        // Unlock flushes to disk.
+        user.unlock()?;
+        appendln(
+            out,
+            &format!(
+                "user lock (after unlock): has_write={}, rows={}",
+                user.has_lock(LockType::Write),
+                user.row_count()
+            ),
+        );
+    }
+
+    // Reopen and verify the row written under lock was persisted.
+    let reopened = Table::open(TableOptions::new(&dir))?;
+    appendln(
+        out,
+        &format!("reopened after locking demo: {} rows", reopened.row_count()),
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn appendln(out: &mut String, line: &str) {
@@ -433,6 +536,8 @@ mod tests {
         assert!(output.contains("--- StandardStMan-LE round-trip"));
         assert!(output.contains("--- Column iteration patterns"));
         assert!(output.contains("--- Schema mutation"));
+        #[cfg(unix)]
+        assert!(output.contains("--- Table locking"));
         assert!(output.ends_with("end\n"));
     }
 }

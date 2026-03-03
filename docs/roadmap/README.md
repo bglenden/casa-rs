@@ -15,7 +15,7 @@ that only the relevant wave needs to be in context during implementation.
 | 0 | Foundation | **DONE** | Types, table CRUD, two storage managers, AipsIO, demos, docs |
 | 1 | [Endian support](wave-01-endian.md) | **DONE** | Full big/little/local endian read/write for all storage managers |
 | 2 | [Schema mutation & row ops](wave-02-schema-mutation.md) | **DONE** | Add/remove/rename columns, delete rows |
-| 3 | [Table locking](wave-03-locking.md) | Not started | File-based multi-process locking (`TableLock`) |
+| 3 | [Table locking](wave-03-locking.md) | **DONE** | File-based multi-process locking (`TableLock`) |
 | 4 | [Reference tables & selections](wave-04-ref-tables.md) | Not started | Row/column views without copying (`RefTable`) |
 | 5 | [Sorting & table iteration](wave-05-sorting.md) | Not started | Sort by key columns, grouped sub-table iteration |
 | 6 | [Table concatenation & copy](wave-06-concat-copy.md) | Not started | Virtual concatenation, deep copy with DM conversion |
@@ -111,3 +111,7 @@ Every wave must pass ALL of the following before commit/push:
 - **Foundational type changes propagate upward — do them first.** Bottom-up
   ordering (e.g. `RecordValue` before `TableSchema` before `Table`) avoids
   rework.
+
+- **fcntl locks are per-process — use child processes for contention tests.**
+  Two `Table` instances in one process share fcntl state and cannot contend.
+  Use `std::process::Command` and a helper binary for real lock contention.

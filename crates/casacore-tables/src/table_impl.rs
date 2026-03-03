@@ -110,4 +110,21 @@ impl TableImpl {
     pub(crate) fn set_schema(&mut self, schema: Option<TableSchema>) {
         self.schema = schema;
     }
+
+    /// Replace all inner state from a storage snapshot.
+    ///
+    /// Used by `Table::lock()` when sync data indicates another process
+    /// modified the table and a full reload is needed.
+    pub(crate) fn replace_from_snapshot(
+        &mut self,
+        rows: Vec<RecordValue>,
+        keywords: RecordValue,
+        column_keywords: HashMap<String, RecordValue>,
+        schema: Option<TableSchema>,
+    ) {
+        self.rows = rows;
+        self.keywords = keywords;
+        self.column_keywords = column_keywords;
+        self.schema = schema;
+    }
 }

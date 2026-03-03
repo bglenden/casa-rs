@@ -14,6 +14,7 @@
 #include <casacore/tables/Tables/TableRecord.h>
 #include <casacore/tables/DataMan/StManAipsIO.h>
 #include <casacore/tables/DataMan/StandardStMan.h>
+#include <casacore/tables/Tables/TableLock.h>
 #include <casacore/casa/Arrays/Array.h>
 #include <casacore/casa/Arrays/IPosition.h>
 
@@ -546,6 +547,58 @@ void verify_mutation_added_column_impl(const std::string& path) {
     }
 }
 
+// ===== lock file interop fixture =====
+// Schema: col_id(Int), col_name(String)
+// 1 row: (42, "from_cpp")
+// Table is created/opened with PermanentLocking to produce a table.lock
+// file with sync data.
+
+void write_with_lock_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("id"));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::String>("name"));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StManAipsIO stman;
+    setup.bindAll(stman);
+
+    // Create with PermanentLocking — this creates a table.lock file.
+    casacore::Table table(setup, casacore::TableLock(casacore::TableLock::PermanentLocking), 1);
+
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+    casacore::ScalarColumn<casacore::String> colName(table, "name");
+    colId.put(0, 42);
+    colName.put(0, "from_cpp");
+
+    // Flush writes sync data to lock file, then table destructor releases lock.
+    table.flush();
+}
+
+void verify_with_lock_impl(const std::string& path) {
+    // Open with PermanentLocking — reads the lock file and sync data.
+    casacore::Table table(path,
+                          casacore::TableLock(casacore::TableLock::PermanentLocking),
+                          casacore::Table::Old);
+
+    if (table.nrow() < 1) {
+        throw std::runtime_error("expected at least 1 row, got " +
+                                 std::to_string(table.nrow()));
+    }
+
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+    casacore::ScalarColumn<casacore::String> colName(table, "name");
+
+    // Check first row (written by whichever side — Rust or C++).
+    if (colId(0) != 42)
+        throw std::runtime_error("row 0 id mismatch: expected 42, got " +
+                                 std::to_string(colId(0)));
+    // Accept either "from_cpp" or "from_rust" — we just verify the lock
+    // file was readable and the table data is intact.
+    casacore::String name = colName(0);
+    if (name != "from_cpp" && name != "from_rust")
+        throw std::runtime_error("row 0 name mismatch: got '" + name + "'");
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -743,6 +796,34 @@ int32_t cpp_table_verify_mutation_added_column(const char* path, char** out_erro
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in verify_mutation_added_column");
+        return -1;
+    }
+}
+
+// --- Lock file interop C ABI wrappers ---
+
+int32_t cpp_table_write_with_lock(const char* path, char** out_error) {
+    try {
+        write_with_lock_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_with_lock");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_with_lock(const char* path, char** out_error) {
+    try {
+        verify_with_lock_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_with_lock");
         return -1;
     }
 }
