@@ -1182,6 +1182,19 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
+    fn cpp_table_write_columns_index_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_columns_index_time_lookups"]
+    fn ffi_columns_index_time_lookups(
+        path: *const std::ffi::c_char,
+        key_value: i32,
+        nqueries: u64,
+        out_elapsed_ns: *mut u64,
+        out_match_count: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
 
     fn casacore_cpp_aipsio_encode(
         primitive: u8,
@@ -1413,6 +1426,10 @@ pub enum CppTableFixture {
     /// manager. The path argument is a directory containing `original.tbl/`
     /// and `copy.tbl/`.
     DeepCopy,
+    /// ColumnsIndex interop: table with `antenna_id` (Int32), 50 rows,
+    /// value = `row_index % 10`. Used to verify `ColumnsIndex` lookups on
+    /// C++-written data.
+    ColumnsIndex,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1447,6 +1464,9 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
                 cpp_table_write_concat_table(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::DeepCopy => cpp_table_write_deep_copy(c_path.as_ptr(), &mut error),
+            CppTableFixture::ColumnsIndex => {
+                cpp_table_write_columns_index_fixture(c_path.as_ptr(), &mut error)
+            }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
             | CppTableFixture::MutationAddedColumn => {
@@ -1513,6 +1533,12 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
                 cpp_table_verify_concat_table(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::DeepCopy => cpp_table_verify_deep_copy(c_path.as_ptr(), &mut error),
+            CppTableFixture::ColumnsIndex => {
+                return Err(
+                    "ColumnsIndex fixture has no C++ verify (Rust does the verification)"
+                        .to_string(),
+                );
+            }
         }
     };
 
@@ -1529,6 +1555,62 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
         return Err(msg);
     }
     Ok(())
+}
+
+/// Times `nqueries` exact `ColumnsIndex` lookups for `key_value` on the `"id"`
+/// column of the table at `path` using the C++ casacore implementation.
+///
+/// Returns `(elapsed_ns, match_count)` where `elapsed_ns` is the total wall
+/// time for all queries and `match_count` is the number of rows returned by
+/// the last lookup.
+///
+/// Use this alongside the Rust `ColumnsIndex` to compare performance.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_columns_index_time_lookups(
+    path: &std::path::Path,
+    key_value: i32,
+    nqueries: u64,
+) -> Result<(u64, u64), String> {
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut elapsed_ns: u64 = 0;
+    let mut match_count: u64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        ffi_columns_index_time_lookups(
+            c_path.as_ptr(),
+            key_value,
+            nqueries,
+            &mut elapsed_ns,
+            &mut match_count,
+            &mut error,
+        )
+    };
+
+    if rc != 0 {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        return Err(msg);
+    }
+    Ok((elapsed_ns, match_count))
+}
+
+/// Stub for when C++ is unavailable.
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_columns_index_time_lookups(
+    _path: &std::path::Path,
+    _key_value: i32,
+    _nqueries: u64,
+) -> Result<(u64, u64), String> {
+    Err("C++ casacore backend unavailable".to_string())
 }
 
 /// Stubs for when C++ is unavailable.

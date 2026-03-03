@@ -15,6 +15,8 @@
 #include <casacore/tables/DataMan/StManAipsIO.h>
 #include <casacore/tables/DataMan/StandardStMan.h>
 #include <casacore/tables/Tables/TableLock.h>
+#include <casacore/tables/Tables/ColumnsIndex.h>
+#include <casacore/casa/Containers/RecordField.h>
 #include <casacore/casa/Utilities/Sort.h>
 #include <casacore/tables/Tables/ConcatTable.h>
 #include <casacore/tables/Tables/TableCopy.h>
@@ -22,6 +24,7 @@
 #include <casacore/casa/Arrays/IPosition.h>
 #include <casacore/casa/Containers/Block.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -851,6 +854,54 @@ void verify_deep_copy_impl(const std::string& dir) {
     }
 }
 
+// ===== ColumnsIndex fixture =====
+// Schema: antenna_id (Int32), 50 rows, value = row_index % 10.
+// Matches the Rust-side fixture used in the indexing demo and interop tests.
+
+void write_columns_index_fixture_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("antenna_id"));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StandardStMan stman;
+    setup.bindAll(stman);
+
+    casacore::Table tab(setup, 50);
+    casacore::ScalarColumn<casacore::Int> col(tab, "antenna_id");
+    for (casacore::Int i = 0; i < 50; i++) {
+        col.put(i, i % 10);
+    }
+}
+
+// ===== ColumnsIndex timing helper =====
+// Opens an existing table at `path`, builds a ColumnsIndex on the "id" column,
+// runs `nqueries` exact lookups for `key_value`, and returns elapsed time.
+// `out_match_count` receives the number of matching rows from the last lookup.
+
+void cpp_columns_index_time_lookups_impl(
+    const std::string& path,
+    int32_t key_value,
+    uint64_t nqueries,
+    uint64_t* out_elapsed_ns,
+    uint64_t* out_match_count)
+{
+    casacore::Table tab(path, casacore::Table::Old);
+    casacore::ColumnsIndex idx(tab, casacore::String("id"));
+    casacore::RecordFieldPtr<casacore::Int> keyFld(idx.accessKey(), "id");
+
+    auto t0 = std::chrono::steady_clock::now();
+    casacore::RowNumbers rows;
+    for (uint64_t q = 0; q < nqueries; q++) {
+        *keyFld = key_value;
+        rows = idx.getRowNumbers();
+    }
+    auto t1 = std::chrono::steady_clock::now();
+
+    *out_elapsed_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    *out_match_count = rows.nelements();
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -1186,6 +1237,40 @@ int32_t cpp_table_verify_deep_copy(const char* path, char** out_error) {
 
 void cpp_table_free_error(char* ptr) {
     std::free(ptr);
+}
+
+int32_t cpp_table_write_columns_index_fixture(const char* path, char** out_error) {
+    try {
+        write_columns_index_fixture_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_columns_index_fixture");
+        return -1;
+    }
+}
+
+int32_t cpp_columns_index_time_lookups(
+    const char* path,
+    int32_t key_value,
+    uint64_t nqueries,
+    uint64_t* out_elapsed_ns,
+    uint64_t* out_match_count,
+    char** out_error)
+{
+    try {
+        cpp_columns_index_time_lookups_impl(
+            path, key_value, nqueries, out_elapsed_ns, out_match_count);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_columns_index_time_lookups");
+        return -1;
+    }
 }
 
 } // extern "C"

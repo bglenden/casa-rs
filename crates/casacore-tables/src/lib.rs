@@ -222,6 +222,7 @@
 //! ```
 
 mod concat_table;
+mod indexing;
 mod ref_table;
 mod schema;
 mod sorting;
@@ -235,6 +236,7 @@ pub(crate) mod storage;
 pub mod demo;
 
 pub use concat_table::ConcatTable;
+pub use indexing::ColumnsIndex;
 pub use lock::{LockMode, LockOptions, LockType};
 pub use ref_table::RefTable;
 pub use schema::{
