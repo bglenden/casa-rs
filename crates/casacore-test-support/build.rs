@@ -16,8 +16,12 @@ fn main() {
     let mut build = cc::Build::new();
     build.cpp(true);
     build.flag_if_supported("-std=c++17");
+    build.include("src/cpp");
     build.file("src/cpp/casacore_cpp_aipsio_shim.cpp");
-    build.file("src/cpp/casacore_cpp_table_shim.cpp");
+    build.file("src/cpp/casacore_cpp_table_aipsio.cpp");
+    build.file("src/cpp/casacore_cpp_table_ssm.cpp");
+    build.file("src/cpp/casacore_cpp_table_misc.cpp");
+    build.file("src/cpp/casacore_cpp_table_ism.cpp");
 
     for include in &casacore.include_paths {
         build.include(include);

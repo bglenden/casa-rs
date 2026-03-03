@@ -3,6 +3,7 @@
 
 pub(crate) mod canonical;
 pub(crate) mod data_type;
+pub(crate) mod incremental_stman;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod table_control;
@@ -17,6 +18,7 @@ use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
 
+use self::incremental_stman::{read_ism_file, write_ism_file};
 use self::standard_stman::{read_ssm_file, write_ssm_file};
 use self::stman_aipsio::{StManColumnInfo, extract_row_value, read_stman_file, write_stman_file};
 pub(crate) use self::table_control::RefTableDatContents;
@@ -174,6 +176,37 @@ impl StorageManager for CompositeStorage {
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
             }
+            DataManagerKind::IncrementalStMan => {
+                dm_type_name = "IncrementalStMan".to_string();
+                // Write ISM data file first (it returns the DM blob)
+                let table_dat_tmp = TableDatContents::from_snapshot(
+                    schema,
+                    &snapshot.keywords,
+                    &snapshot.column_keywords,
+                    nrrow,
+                    "IncrementalStMan",
+                    &[],
+                    big_endian,
+                );
+                dm_data = write_ism_file(
+                    &data_path,
+                    &table_dat_tmp.table_desc.columns,
+                    &snapshot.rows,
+                    big_endian,
+                )?;
+                // Re-create table_dat with the actual DM blob
+                let table_dat = TableDatContents::from_snapshot(
+                    schema,
+                    &snapshot.keywords,
+                    &snapshot.column_keywords,
+                    nrrow,
+                    &dm_type_name,
+                    &dm_data,
+                    big_endian,
+                );
+                let control_path = table_path.join(TABLE_CONTROL_FILE);
+                write_table_dat(&control_path, &table_dat)?;
+            }
         }
 
         let info_path = table_path.join(TABLE_INFO_FILE);
@@ -233,6 +266,19 @@ impl CompositeStorage {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
                     load_ssm_columns(
+                        &data_path,
+                        &dm.data,
+                        &table_dat.table_desc.columns,
+                        &bound_cols,
+                        &mut rows,
+                        nrrow,
+                    )?;
+                }
+                "IncrementalStMan" => {
+                    if !data_path.is_file() {
+                        return Err(StorageError::MissingDataFile(data_path));
+                    }
+                    load_ism_columns(
                         &data_path,
                         &dm.data,
                         &table_dat.table_desc.columns,
@@ -473,6 +519,41 @@ fn load_ssm_columns(
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "SSM returned column '{col_name}' not in descriptor"
+                ))
+            })?;
+
+        for (row_idx, row) in rows.iter_mut().enumerate() {
+            let value = extract_row_value(raw_data, col_desc, row_idx, nrrow)?;
+            row.push(RecordField::new(col_name.clone(), value));
+        }
+    }
+
+    Ok(())
+}
+
+/// Load columns from an IncrementalStMan data file into row records.
+fn load_ism_columns(
+    data_path: &Path,
+    dm_blob: &[u8],
+    all_col_descs: &[table_control::ColumnDescContents],
+    bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    rows: &mut [RecordValue],
+    nrrow: usize,
+) -> Result<(), StorageError> {
+    let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
+        .iter()
+        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .collect();
+
+    let ism_columns = read_ism_file(data_path, dm_blob, &col_descs, nrrow)?;
+
+    for (col_name, raw_data) in &ism_columns {
+        let col_desc = col_descs
+            .iter()
+            .find(|c| c.col_name == *col_name)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "ISM returned column '{col_name}' not in descriptor"
                 ))
             })?;
 

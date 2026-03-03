@@ -123,7 +123,7 @@ pub enum TableKind {
 ///
 /// This choice is recorded in the table descriptor on disk so that C++ casacore
 /// can select the correct storage-manager plugin when reopening the table.
-/// Both variants produce files that are binary-compatible with upstream casacore.
+/// All variants produce files that are binary-compatible with upstream casacore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DataManagerKind {
     /// Simple whole-column AipsIO streaming (legacy format).
@@ -140,6 +140,14 @@ pub enum DataManagerKind {
     /// random access and in-place updates. This is the storage manager used
     /// by default when creating tables with C++ casacore.
     StandardStMan,
+    /// Delta-compression storage manager (C++ `IncrementalStMan` / `ISMBase`).
+    ///
+    /// Stores column values only when they change from the previous row,
+    /// making it extremely space-efficient for slowly-changing columns
+    /// such as `ANTENNA1`, `FEED_ID`, or `SCAN_NUMBER` in a
+    /// MeasurementSet. Along with `StandardStMan`, ISM is one of the two
+    /// most commonly used storage managers in real radio astronomy data.
+    IncrementalStMan,
 }
 
 /// Configuration for opening or saving a [`Table`] to disk.
@@ -158,6 +166,10 @@ pub enum DataManagerKind {
 /// let opts = TableOptions::new("/tmp/my_table")
 ///     .with_data_manager(DataManagerKind::StandardStMan)
 ///     .with_endian_format(EndianFormat::BigEndian);
+///
+/// // Use IncrementalStMan for slowly-changing columns:
+/// let ism_opts = TableOptions::new("/tmp/my_ism_table")
+///     .with_data_manager(DataManagerKind::IncrementalStMan);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableOptions {
@@ -2947,6 +2959,87 @@ mod tests {
             .expect("save BE");
         let reopened = Table::open(TableOptions::new(&root)).expect("open BE");
         verify_endian_test_table(&reopened);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn ism_le_round_trip() {
+        let table = build_endian_test_table();
+        let root = unique_test_dir("ism_le_rt");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::IncrementalStMan)
+                    .with_endian_format(EndianFormat::LittleEndian),
+            )
+            .expect("save LE");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open LE");
+        verify_endian_test_table(&reopened);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn ism_be_round_trip() {
+        let table = build_endian_test_table();
+        let root = unique_test_dir("ism_be_rt");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::IncrementalStMan)
+                    .with_endian_format(EndianFormat::BigEndian),
+            )
+            .expect("save BE");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open BE");
+        verify_endian_test_table(&reopened);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    /// Test ISM delta compression: values that repeat across consecutive rows.
+    #[test]
+    fn ism_slowly_changing() {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("SCAN_NUMBER", PrimitiveType::Int32),
+            ColumnSchema::scalar("FLAG", PrimitiveType::Bool),
+        ])
+        .unwrap();
+
+        let scans = [0, 0, 0, 1, 1, 1, 1, 2, 2, 2];
+        let flags = [
+            true, true, true, true, true, false, false, false, true, true,
+        ];
+
+        let rows: Vec<RecordValue> = scans
+            .iter()
+            .zip(flags.iter())
+            .map(|(&s, &f)| {
+                RecordValue::new(vec![
+                    RecordField::new("SCAN_NUMBER", Value::Scalar(ScalarValue::Int32(s))),
+                    RecordField::new("FLAG", Value::Scalar(ScalarValue::Bool(f))),
+                ])
+            })
+            .collect();
+
+        let table = Table::from_rows_with_schema(rows, schema).unwrap();
+        let root = unique_test_dir("ism_slowly_changing");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(DataManagerKind::IncrementalStMan))
+            .expect("save ISM");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("reopen");
+        assert_eq!(reopened.row_count(), 10);
+        for (i, (&expected_scan, &expected_flag)) in scans.iter().zip(flags.iter()).enumerate() {
+            let scan = reopened.get_scalar_cell(i, "SCAN_NUMBER").unwrap();
+            assert_eq!(
+                *scan,
+                ScalarValue::Int32(expected_scan),
+                "row {i} SCAN_NUMBER"
+            );
+            let flag = reopened.get_scalar_cell(i, "FLAG").unwrap();
+            assert_eq!(*flag, ScalarValue::Bool(expected_flag), "row {i} FLAG");
+        }
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
 

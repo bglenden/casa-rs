@@ -47,6 +47,20 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
         Some(EndianFormat::LittleEndian),
     )?;
     appendln(&mut out, "");
+    round_trip(
+        &mut out,
+        "IncrementalStMan",
+        DataManagerKind::IncrementalStMan,
+        None,
+    )?;
+    appendln(&mut out, "");
+    round_trip(
+        &mut out,
+        "IncrementalStMan-LE",
+        DataManagerKind::IncrementalStMan,
+        Some(EndianFormat::LittleEndian),
+    )?;
+    appendln(&mut out, "");
     demo_column_iteration(&mut out)?;
     demo_schema_mutation(&mut out)?;
     demo_ref_tables(&mut out)?;
@@ -924,6 +938,8 @@ mod tests {
         assert!(output.contains("--- StManAipsIO round-trip"));
         assert!(output.contains("--- StandardStMan round-trip"));
         assert!(output.contains("--- StandardStMan-LE round-trip"));
+        assert!(output.contains("--- IncrementalStMan round-trip"));
+        assert!(output.contains("--- IncrementalStMan-LE round-trip"));
         assert!(output.contains("--- Column iteration patterns"));
         assert!(output.contains("--- Schema mutation"));
         assert!(output.contains("--- Reference tables"));

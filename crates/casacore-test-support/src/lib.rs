@@ -1196,6 +1196,31 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    fn cpp_table_write_ism_scalar_primitives(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ism_scalar_primitives(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ism_slowly_changing(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ism_slowly_changing(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ism_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ism_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn casacore_cpp_aipsio_encode(
         primitive: u8,
         is_array: u8,
@@ -1430,6 +1455,16 @@ pub enum CppTableFixture {
     /// value = `row_index % 10`. Used to verify `ColumnsIndex` lookups on
     /// C++-written data.
     ColumnsIndex,
+    /// ISM scalar primitives: same schema as `SsmScalarPrimitives` (Bool, Int,
+    /// Double, String) but stored with `IncrementalStMan`.
+    IsmScalarPrimitives,
+    /// ISM slowly changing: table with `SCAN_NUMBER` (Int) and `FLAG` (Bool),
+    /// 10 rows where values repeat across multiple consecutive rows, exercising
+    /// the ISM delta-compression semantics.
+    IsmSlowlyChanging,
+    /// ISM complex scalars: table with `col_c32` (Complex) and `col_c64`
+    /// (DComplex), 3 rows, stored with `IncrementalStMan`.
+    IsmComplexScalars,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1466,6 +1501,15 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             CppTableFixture::DeepCopy => cpp_table_write_deep_copy(c_path.as_ptr(), &mut error),
             CppTableFixture::ColumnsIndex => {
                 cpp_table_write_columns_index_fixture(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmScalarPrimitives => {
+                cpp_table_write_ism_scalar_primitives(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmSlowlyChanging => {
+                cpp_table_write_ism_slowly_changing(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmComplexScalars => {
+                cpp_table_write_ism_complex_scalars(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -1533,6 +1577,15 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
                 cpp_table_verify_concat_table(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::DeepCopy => cpp_table_verify_deep_copy(c_path.as_ptr(), &mut error),
+            CppTableFixture::IsmScalarPrimitives => {
+                cpp_table_verify_ism_scalar_primitives(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmSlowlyChanging => {
+                cpp_table_verify_ism_slowly_changing(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmComplexScalars => {
+                cpp_table_verify_ism_complex_scalars(c_path.as_ptr(), &mut error)
+            }
             CppTableFixture::ColumnsIndex => {
                 return Err(
                     "ColumnsIndex fixture has no C++ verify (Rust does the verification)"
