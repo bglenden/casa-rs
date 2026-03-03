@@ -56,6 +56,7 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     #[cfg(unix)]
     demo_locking(&mut out)?;
     demo_memory_tables(&mut out)?;
+    demo_taql(&mut out)?;
 
     appendln(&mut out, "end");
     Ok(out)
@@ -913,6 +914,115 @@ fn temp_dir(name: &str) -> PathBuf {
     path
 }
 
+// ── TaQL demo ──────────────────────────────────────────────────────
+
+/// Demonstrate TaQL query capabilities.
+///
+/// Shows SELECT with WHERE, ORDER BY, LIMIT, built-in functions,
+/// UPDATE, INSERT, DELETE, and GROUP BY.
+fn demo_taql(out: &mut String) -> Result<(), TableError> {
+    appendln(out, "--- TaQL (Table Query Language) ---");
+
+    // Build a small table for the demo.
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("name", PrimitiveType::String),
+        ColumnSchema::scalar("flux", PrimitiveType::Float64),
+        ColumnSchema::scalar("category", PrimitiveType::String),
+    ])
+    .unwrap();
+
+    let mut table = Table::with_schema(schema);
+    let data = [
+        (1, "CygA", 100.0, "galaxy"),
+        (2, "CasA", 80.0, "snr"),
+        (3, "TauA", 60.0, "snr"),
+        (4, "VirA", 40.0, "galaxy"),
+        (5, "3C84", 20.0, "galaxy"),
+        (6, "SunQ", 10.0, "star"),
+        (7, "Moon", 5.0, "star"),
+        (8, "Jup", 2.0, "planet"),
+    ];
+    for (id, name, flux, cat) in &data {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(*id))),
+                RecordField::new("name", Value::Scalar(ScalarValue::String(name.to_string()))),
+                RecordField::new("flux", Value::Scalar(ScalarValue::Float64(*flux))),
+                RecordField::new(
+                    "category",
+                    Value::Scalar(ScalarValue::String(cat.to_string())),
+                ),
+            ]))
+            .unwrap();
+    }
+
+    // 1. SELECT with WHERE
+    {
+        let view = table.query("SELECT * WHERE flux > 50.0")?;
+        appendln(
+            out,
+            &format!("SELECT WHERE flux > 50.0: {} rows", view.row_count()),
+        );
+    }
+
+    // 2. SELECT with ORDER BY
+    {
+        let view = table.query("SELECT * ORDER BY flux DESC LIMIT 3")?;
+        appendln(out, &format!("Top 3 by flux: {} rows", view.row_count()));
+        for i in 0..view.row_count() {
+            let name = view.cell(i, "name")?;
+            let flux = view.cell(i, "flux")?;
+            appendln(out, &format!("  {name:?} flux={flux:?}"));
+        }
+    }
+
+    // 3. SELECT with built-in function
+    {
+        let view = table.query("SELECT * WHERE sqrt(flux) > 8.0")?;
+        appendln(out, &format!("sqrt(flux) > 8.0: {} rows", view.row_count()));
+    }
+
+    // 4. UPDATE
+    {
+        let result = table.execute_taql("UPDATE SET flux = flux * 2.0 WHERE id = 8")?;
+        appendln(out, &format!("UPDATE Jup flux: {result:?}"));
+    }
+
+    // 5. INSERT
+    {
+        let result = table.execute_taql(
+            "INSERT INTO (id, name, flux, category) VALUES (9, 'NewSrc', 15.0, 'other')",
+        )?;
+        appendln(out, &format!("INSERT: {result:?}"));
+        appendln(
+            out,
+            &format!("row count after INSERT: {}", table.row_count()),
+        );
+    }
+
+    // 6. DELETE
+    {
+        let result = table.execute_taql("DELETE FROM WHERE flux < 5.0")?;
+        appendln(out, &format!("DELETE flux < 5.0: {result:?}"));
+        appendln(
+            out,
+            &format!("row count after DELETE: {}", table.row_count()),
+        );
+    }
+
+    // 7. Parse round-trip
+    {
+        let query = "SELECT * WHERE flux > 1.0 ORDER BY id ASC";
+        let ast = crate::taql::parse(query).map_err(|e| TableError::Taql(e.to_string()))?;
+        let displayed = ast.to_string();
+        appendln(out, &format!("parse round-trip: {displayed}"));
+    }
+
+    appendln(out, "");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::run_ttable_like_demo;
@@ -933,6 +1043,7 @@ mod tests {
         #[cfg(unix)]
         assert!(output.contains("--- Table locking"));
         assert!(output.contains("--- Memory tables"));
+        assert!(output.contains("--- TaQL (Table Query Language)"));
         assert!(output.ends_with("end\n"));
     }
 }

@@ -234,6 +234,7 @@ pub(crate) mod lock;
 pub(crate) mod storage;
 
 pub mod demo;
+pub mod taql;
 
 pub use concat_table::ConcatTable;
 pub use indexing::ColumnsIndex;
