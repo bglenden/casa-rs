@@ -144,7 +144,7 @@ impl LockFile {
 
         // Acquire in-use read lock (byte 1, length 1 or 2 for permanent).
         let use_len = if perm_locking { 2 } else { 1 };
-        let _ = fcntl_lock(fd, libc::F_SETLK, libc::F_RDLCK.into(), 1, use_len);
+        let _ = fcntl_lock(fd, libc::F_SETLK, libc::F_RDLCK as i32, 1, use_len);
 
         // Read any existing request list to clear stale state.
         lf.read_request_count().ok();
@@ -161,9 +161,9 @@ impl LockFile {
     /// Returns `true` if the lock was acquired, `false` if it failed
     /// after all attempts.
     pub fn acquire(&mut self, lock_type: LockType, nattempts: u32) -> io::Result<bool> {
-        let flock_type: i32 = match lock_type {
-            LockType::Read => libc::F_RDLCK.into(),
-            LockType::Write => libc::F_WRLCK.into(),
+        let flock_type = match lock_type {
+            LockType::Read => libc::F_RDLCK as i32,
+            LockType::Write => libc::F_WRLCK as i32,
         };
 
         // Try once without waiting.
@@ -221,7 +221,7 @@ impl LockFile {
         if !self.read_locked && !self.write_locked {
             return Ok(false);
         }
-        fcntl_lock(self.fd, libc::F_SETLK, libc::F_UNLCK.into(), 0, 1)?;
+        fcntl_lock(self.fd, libc::F_SETLK, libc::F_UNLCK as i32, 0, 1)?;
         self.read_locked = false;
         self.write_locked = false;
         Ok(true)
@@ -315,7 +315,7 @@ impl LockFile {
     /// another process has the file open.
     pub fn is_multi_used(&self) -> bool {
         // Try a non-blocking write lock on byte 1.
-        !fcntl_lock(self.fd, libc::F_SETLK, libc::F_WRLCK.into(), 1, 1).unwrap_or(true)
+        !fcntl_lock(self.fd, libc::F_SETLK, libc::F_WRLCK as i32, 1, 1).unwrap_or(true)
     }
 
     // --- Private helpers ---
