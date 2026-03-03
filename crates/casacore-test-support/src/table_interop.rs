@@ -11,6 +11,7 @@ use crate::CppTableFixture;
 pub enum ManagerKind {
     StManAipsIO,
     StandardStMan,
+    IncrementalStMan,
 }
 
 /// A complete table fixture: schema, rows, table keywords, and column keywords.
@@ -44,6 +45,7 @@ pub fn rust_write_rust_read(
     let dm_kind = match manager {
         ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
         ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
+        ManagerKind::IncrementalStMan => casacore_tables::DataManagerKind::IncrementalStMan,
     };
     table
         .save(TableOptions::new(dir).with_data_manager(dm_kind))
@@ -193,6 +195,7 @@ fn run_rr_with_endian(
     let dm_kind = match manager {
         ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
         ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
+        ManagerKind::IncrementalStMan => casacore_tables::DataManagerKind::IncrementalStMan,
     };
     let opts = TableOptions::new(&table_path)
         .with_data_manager(dm_kind)
@@ -258,6 +261,7 @@ fn run_rc_with_endian(
     let dm_kind = match manager {
         ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
         ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
+        ManagerKind::IncrementalStMan => casacore_tables::DataManagerKind::IncrementalStMan,
     };
     let opts = TableOptions::new(&table_path)
         .with_data_manager(dm_kind)
@@ -388,6 +392,7 @@ fn run_rc(
     let dm_kind = match manager {
         ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
         ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
+        ManagerKind::IncrementalStMan => casacore_tables::DataManagerKind::IncrementalStMan,
     };
     let opts = TableOptions::new(&table_path).with_data_manager(dm_kind);
     if let Err(e) = table.save(opts) {
