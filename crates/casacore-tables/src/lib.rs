@@ -1,22 +1,94 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read and write casacore-compatible tables.
 //!
-//! This crate provides a Rust API for creating, persisting, and reopening
-//! tables in the casacore on-disk format. Tables written by this crate can
-//! be read by C++ casacore and vice versa.
+//! This crate is the Rust implementation of the **Casacore Table Data System
+//! (CTDS)**. It provides a native Rust API for creating, reading, writing, and
+//! persisting tables in the casacore on-disk format. Tables written by this
+//! crate can be read by C++ casacore and vice versa; the binary layout of both
+//! supported storage managers is preserved exactly.
+//!
+//! # What is a casacore table?
+//!
+//! A casacore table is a rectangular data structure: a sequence of rows, each
+//! of which is a record (a map from column name to typed value). In addition,
+//! a table carries table-level keywords and per-column keywords — both stored
+//! as [`casacore_types::RecordValue`] maps. From C++ casacore's `Tables.h`:
+//!
+//! > "Tables are the fundamental storage mechanism. A table consists of rows
+//! > and columns with keyword/value pairs. Cells can contain scalars, direct
+//! > arrays, or indirect arrays."
+//!
+//! Supported cell types mirror the C++ standard set: `Bool`, `Int32`,
+//! `Int64`, `Float32`, `Float64`, `Complex`, `DComplex`, and `String`, plus
+//! n-dimensional arrays of each scalar type.
 //!
 //! # Key types
 //!
-//! - [`Table`] — the main entry point for creating and querying tables.
-//! - [`TableSchema`] / [`ColumnSchema`] — define column names, types, and shapes.
-//! - [`TableOptions`] — configure the path and storage manager for persistence.
-//! - [`DataManagerKind`] — choose between `StManAipsIO` and `StandardStMan`.
+//! | Type | Role |
+//! |------|------|
+//! | [`Table`] | Create, query, and persist a table |
+//! | [`TableSchema`] | Declare column names, types, and array shapes |
+//! | [`ColumnSchema`] | Schema for a single column |
+//! | [`TableOptions`] | Bundle a filesystem path with a storage-manager choice |
+//! | [`DataManagerKind`] | Choose between `StManAipsIO` and `StandardStMan` |
+//! | [`RowRange`] | Select a contiguous or strided subset of rows |
+//! | [`TableError`] | All errors from table operations |
+//!
+//! # Storage managers
+//!
+//! This crate supports two on-disk formats, both interoperable with C++
+//! casacore:
+//!
+//! - [`DataManagerKind::StManAipsIO`] — each column is written as a single
+//!   flat AipsIO stream. This is the simplest layout and the crate default.
+//!   It is compatible with older versions of casacore.
+//!
+//! - [`DataManagerKind::StandardStMan`] — data is partitioned into
+//!   fixed-size buckets. This is the default storage manager in C++ casacore
+//!   and provides more efficient random access for large tables.
+//!
+//! # Typical workflow
+//!
+//! ```rust,no_run
+//! use casacore_tables::{
+//!     Table, TableOptions, TableSchema, ColumnSchema, DataManagerKind,
+//! };
+//! use casacore_types::{PrimitiveType, RecordValue, RecordField, Value, ScalarValue};
+//!
+//! // 1. Define the schema.
+//! let schema = TableSchema::new(vec![
+//!     ColumnSchema::scalar("id",   PrimitiveType::Int32),
+//!     ColumnSchema::scalar("flux", PrimitiveType::Float64),
+//! ]).expect("valid schema");
+//!
+//! // 2. Build a table and add rows.
+//! let mut table = Table::with_schema(schema);
+//! table.add_row(RecordValue::new(vec![
+//!     RecordField::new("id",   Value::Scalar(ScalarValue::Int32(1))),
+//!     RecordField::new("flux", Value::Scalar(ScalarValue::Float64(3.14))),
+//! ])).expect("schema-compliant row");
+//!
+//! // 3. Persist to disk.
+//! table.save(TableOptions::new("/tmp/my_table")).expect("save");
+//!
+//! // 4. Reopen (e.g. in a different process or after C++ casacore wrote it).
+//! let reopened = Table::open(TableOptions::new("/tmp/my_table")).expect("open");
+//! assert_eq!(reopened.row_count(), 1);
+//! ```
+//!
+//! # Relationship to C++ casacore
+//!
+//! In C++ casacore the same functionality is split across `Table`,
+//! `ScalarColumn<T>`, `ArrayColumn<T>`, and `TableRecord`. The Rust [`Table`]
+//! type unifies all of these into a single, dynamically typed interface.
+//! Column type safety is enforced at runtime by the accessor methods rather
+//! than through compile-time generics.
 //!
 //! # Demo program
 //!
 //! A runnable demo (Rust equivalent of the C++ `tTable` test program) is
-//! included. Each crate in the workspace follows the same convention: demo
-//! logic lives in a [`demo`] module, and a thin example binary drives it.
+//! included. Demo logic lives in the [`demo`] module; a thin example binary
+//! drives it:
 //!
 //! ```bash
 //! cargo run -p casacore-tables --example t_table

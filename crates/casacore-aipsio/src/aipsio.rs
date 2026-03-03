@@ -213,8 +213,14 @@ const VALUE_KIND_SCALAR: u8 = 0;
 const VALUE_KIND_ARRAY: u8 = 1;
 const VALUE_KIND_RECORD: u8 = 2;
 
-/// Object-safe stream trait used by [`AipsIo`].
+/// Object-safe byte stream used as the backing store for [`AipsIo`].
+///
+/// Any type implementing `Read + Write + Seek + Any` automatically satisfies
+/// this trait. In practice the two common implementors are `std::io::Cursor<Vec<u8>>`
+/// (in-memory) and `std::fs::File` (file-backed). The `into_any` method
+/// enables downcasting back to the concrete type via [`AipsIo::into_inner_typed`].
 pub trait AipsIoStream: Read + Write + Seek + Any {
+    /// Convert the boxed stream into a `Box<dyn Any>` for downcasting.
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
@@ -224,22 +230,27 @@ impl<T: Read + Write + Seek + Any> AipsIoStream for T {
     }
 }
 
-/// File open mode matching casacore `ByteIO::OpenOption`.
+/// File open mode for [`AipsIo`], matching casacore `ByteIO::OpenOption`.
+///
+/// Passed to [`AipsIo::open`] and [`AipsIo::open_file`] to control how the
+/// underlying file is opened. The semantics mirror the C++ `ByteIO::OpenOption`
+/// enum. Note that `Append` does not use OS append-only writes; AipsIO needs
+/// random-write access so it can back-patch object-length headers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AipsOpenOption {
-    /// Open an existing file for reading (`putstart` is not allowed).
+    /// Open an existing file for reading only (`putstart` is not allowed).
     Old,
-    /// Create or truncate a file for read/write.
+    /// Create or truncate a file for read/write access.
     New,
-    /// Create a new file for read/write and fail if it already exists.
+    /// Create a new file for read/write access; fails if the file already exists.
     NewNoReplace,
-    /// Create/truncate a temporary-like file that is deleted on close.
+    /// Create/truncate a temporary file for read/write access; deleted on close.
     Scratch,
-    /// Open an existing file and delete it on close.
+    /// Open an existing file for read/write access and delete it on close.
     Delete,
-    /// Open an existing file for read/write updates.
+    /// Open an existing file for in-place read/write updates.
     Update,
-    /// Open for appending (created if missing).
+    /// Open or create a file for read/write access, seeking to the end once on open.
     Append,
 }
 
@@ -250,62 +261,138 @@ struct FileState {
     delete_on_close: bool,
 }
 
+/// Errors from [`AipsIo`] object-framing operations.
+///
+/// These cover three broad categories:
+///
+/// - **Framing / state** — calling put/get methods in the wrong order or when
+///   the stream is not open.
+/// - **Type / format** — magic values missing, type-string mismatch on
+///   [`AipsIo::getstart`], unrecognised wire tags.
+/// - **Bounds / shape** — reading past the end of an object, or array shapes
+///   that cannot be represented on the current platform.
+///
+/// I/O and UTF-8 errors from the underlying stream are wrapped and propagated
+/// transparently.
 #[derive(Debug, Error)]
 pub enum AipsIoObjectError {
+    /// A low-level I/O error from the underlying stream.
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+    /// The stream contained a byte sequence that is not valid UTF-8 when
+    /// decoding a string field.
     #[error("utf-8 decode error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
+    /// [`AipsIo::putstart`] was called when the stream is not open or is
+    /// read-only.
     #[error("AipsIO::putstart: not open or not writable")]
     PutStartUnavailable,
+    /// [`AipsIo::get_next_type`] was called when the stream is not open or is
+    /// write-only.
     #[error("AipsIO::getNextType: not opened or not readable")]
     GetNextTypeUnavailable,
+    /// A scalar or array put method was called outside a
+    /// [`putstart`](AipsIo::putstart)/[`putend`](AipsIo::putend) block.
     #[error("AipsIO: no putstart done")]
     NoPutStart,
+    /// A scalar or array get method was called outside a
+    /// [`getstart`](AipsIo::getstart)/[`getend`](AipsIo::getend) block.
     #[error("AipsIO: no getstart done")]
     NoGetStart,
+    /// Reading would exceed the declared length of the current object.
     #[error("AipsIO: read beyond end of object")]
     ReadBeyondEndOfObject,
+    /// [`AipsIo::get_next_type`] did not find the expected top-level magic
+    /// value (`0xbebebebe`) at the current stream position.
     #[error("AipsIO::getNextType: no magic value found")]
     NoMagicValueFound,
+    /// [`AipsIo::getstart`] found a different object type than the caller
+    /// expected.
     #[error("AipsIO::getstart: found object type {found}, expected {expected}")]
     ObjectTypeMismatch { found: String, expected: String },
+    /// [`AipsIo::getend`] detected that not all bytes of the object were
+    /// consumed.
     #[error("AipsIO::getend: part of object not read")]
     IncompleteObjectRead,
+    /// [`AipsIo::setpos`] was called while inside an object
+    /// (nesting level > 0).
     #[error("AipsIO::setpos cannot be done while accessing objects")]
     SetPosWhileAccessingObjects,
+    /// [`AipsIo::open_file`] was called on an instance that already has an
+    /// open stream.
     #[error("AipsIO: already open")]
     AlreadyOpen,
+    /// A method requiring an open stream was called after the stream was
+    /// closed.
     #[error("AipsIO: not open")]
     NotOpen,
+    /// [`AipsIo::into_inner_typed`] was called with a concrete type that does
+    /// not match the actual underlying stream type.
     #[error("AipsIO: underlying stream type mismatch (expected {expected})")]
     StreamTypeMismatch { expected: &'static str },
+    /// An object-length or count value overflowed a `u32`.
     #[error("AipsIO length overflow")]
     LengthOverflow,
+    /// The wire-encoded value-kind tag byte did not match any known variant.
     #[error("invalid value kind tag {0}")]
     InvalidValueKindTag(u8),
+    /// The wire-encoded primitive-type tag byte did not match any known variant.
     #[error("invalid primitive type tag {0}")]
     InvalidPrimitiveTypeTag(u8),
+    /// An array dimension read from the stream cannot be converted to
+    /// `usize` on this platform.
     #[error("array dimension {0} cannot be represented on this platform")]
     DimensionOverflow(u64),
+    /// The product of the array shape dimensions does not match the number of
+    /// elements in the payload.
     #[error("invalid array shape {shape:?} for payload length {len}")]
     InvalidArrayShape { shape: Vec<usize>, len: usize },
 }
 
 /// Stateful AipsIO object reader/writer over an arbitrary seekable stream.
 ///
-/// The stream maintains object nesting levels and enforces object boundaries,
-/// matching casacore's `AipsIO` behavior.
+/// This is the Rust equivalent of C++ `casacore::AipsIO`. It wraps any
+/// [`AipsIoStream`] (file, in-memory cursor, etc.) and provides:
+///
+/// - object boundaries with type-checking and versioning via
+///   [`putstart`](Self::putstart)/[`putend`](Self::putend) and
+///   [`getstart`](Self::getstart)/[`getend`](Self::getend);
+/// - strongly-typed scalar and linear-array codecs;
+/// - a dynamic [`Value`] codec that includes recursive records
+///   and N-D arrays.
+///
+/// # Usage pattern
+///
+/// ```rust
+/// use casacore_aipsio::AipsIo;
+/// use std::io::Cursor;
+///
+/// let mut io = AipsIo::new_read_write(Cursor::new(Vec::<u8>::new()));
+/// io.putstart("MyObject", 1).unwrap();
+/// io.put_i32(42).unwrap();
+/// io.putend().unwrap();
+/// ```
+///
+/// See the [module-level documentation](super) for a full description of
+/// the wire format, error model, and C++ mapping.
 pub struct AipsIo {
     inner: Option<Box<dyn AipsIoStream>>,
     byte_order: ByteOrder,
+    /// Write switch: -1 = write not available, 0 = idle, 1 = inside object.
     swput: i32,
+    /// Read switch: -1 = read not available, 0 = idle, 1 = inside object.
     swget: i32,
+    /// Current object nesting depth (0 = between top-level objects).
     level: usize,
+    /// Bytes written at each nesting level; back-patched by `putend`.
     objlen: Vec<u32>,
+    /// Total declared length at each nesting level; checked by `getend`.
     objtln: Vec<u32>,
+    /// Stream offset of the length slot for each nesting level.
     objptr: Vec<u64>,
+    /// Whether `get_next_type` has already read and cached the next type name.
     has_cached_type: bool,
+    /// Cached type name from the most recent `get_next_type` call.
     object_type: String,
     seekable: bool,
     file_state: Option<FileState>,
@@ -395,11 +482,19 @@ impl AipsIo {
         self.file_state.as_ref().map(|state| state.option)
     }
 
+    /// Return the current byte offset in the underlying stream.
+    ///
+    /// Mirrors C++ `AipsIO::getpos`. May be called at any nesting level.
     pub fn getpos(&mut self) -> AipsIoObjectResult<u64> {
         let inner = self.inner_mut()?;
         Ok(inner.stream_position()?)
     }
 
+    /// Seek to the given byte offset in the underlying stream.
+    ///
+    /// Mirrors C++ `AipsIO::setpos`. Returns
+    /// [`SetPosWhileAccessingObjects`](AipsIoObjectError::SetPosWhileAccessingObjects)
+    /// if called while inside an object (nesting level > 0).
     pub fn setpos(&mut self, offset: u64) -> AipsIoObjectResult<u64> {
         if self.level != 0 {
             return Err(AipsIoObjectError::SetPosWhileAccessingObjects);
@@ -520,77 +615,93 @@ impl AipsIo {
         Ok(len)
     }
 
+    /// Write a boolean value in canonical format (1 byte: `0` or `1`).
+    ///
+    /// Must be called inside a [`putstart`](Self::putstart)/[`putend`](Self::putend) block.
     pub fn put_bool(&mut self, value: bool) -> AipsIoObjectResult<()> {
         self.put_u8(u8::from(value))
     }
 
-    /// Put one signed 8-bit integer value.
+    /// Write a signed 8-bit integer value in canonical format (1 byte).
     ///
-    /// Other scalar put functions follow the same semantics.
+    /// Must be called inside a [`putstart`](Self::putstart)/[`putend`](Self::putend)
+    /// block. All other scalar `put_*` methods follow the same semantics.
     pub fn put_i8(&mut self, value: i8) -> AipsIoObjectResult<()> {
         self.test_put()?;
         self.write_counted(&[value as u8])
     }
 
+    /// Write an unsigned 8-bit integer value (1 byte). See [`put_i8`](Self::put_i8).
     pub fn put_u8(&mut self, value: u8) -> AipsIoObjectResult<()> {
         self.test_put()?;
         self.write_counted(&[value])
     }
 
+    /// Write a signed 16-bit integer in canonical byte order (2 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_i16(&mut self, value: i16) -> AipsIoObjectResult<()> {
         self.test_put()?;
         let bytes = self.encode_i16(value);
         self.write_counted(&bytes)
     }
 
+    /// Write an unsigned 16-bit integer in canonical byte order (2 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_u16(&mut self, value: u16) -> AipsIoObjectResult<()> {
         self.test_put()?;
         let bytes = self.encode_u16(value);
         self.write_counted(&bytes)
     }
 
+    /// Write a signed 32-bit integer in canonical byte order (4 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_i32(&mut self, value: i32) -> AipsIoObjectResult<()> {
         self.test_put()?;
         let bytes = self.encode_i32(value);
         self.write_counted(&bytes)
     }
 
+    /// Write an unsigned 32-bit integer in canonical byte order (4 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_u32(&mut self, value: u32) -> AipsIoObjectResult<()> {
         self.test_put()?;
         let bytes = self.encode_u32(value);
         self.write_counted(&bytes)
     }
 
+    /// Write a signed 64-bit integer in canonical byte order (8 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_i64(&mut self, value: i64) -> AipsIoObjectResult<()> {
         self.test_put()?;
         let bytes = self.encode_i64(value);
         self.write_counted(&bytes)
     }
 
+    /// Write an unsigned 64-bit integer in canonical byte order (8 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_u64(&mut self, value: u64) -> AipsIoObjectResult<()> {
         self.test_put()?;
         let bytes = self.encode_u64(value);
         self.write_counted(&bytes)
     }
 
+    /// Write a 32-bit float as its IEEE 754 bit pattern (4 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_f32(&mut self, value: f32) -> AipsIoObjectResult<()> {
         self.put_u32(value.to_bits())
     }
 
+    /// Write a 64-bit float as its IEEE 754 bit pattern (8 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_f64(&mut self, value: f64) -> AipsIoObjectResult<()> {
         self.put_u64(value.to_bits())
     }
 
+    /// Write a 32-bit complex number as two consecutive `f32` values (8 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_complex32(&mut self, value: Complex32) -> AipsIoObjectResult<()> {
         self.put_f32(value.re)?;
         self.put_f32(value.im)
     }
 
+    /// Write a 64-bit complex number as two consecutive `f64` values (16 bytes). See [`put_i8`](Self::put_i8).
     pub fn put_complex64(&mut self, value: Complex64) -> AipsIoObjectResult<()> {
         self.put_f64(value.re)?;
         self.put_f64(value.im)
     }
 
+    /// Write a UTF-8 string, prefixed by its byte length as a `u32`. See [`put_i8`](Self::put_i8).
     pub fn put_string(&mut self, value: &str) -> AipsIoObjectResult<()> {
         let len = u32::try_from(value.len()).map_err(|_| AipsIoObjectError::LengthOverflow)?;
         self.put_u32(len)?;
@@ -598,6 +709,13 @@ impl AipsIo {
         self.write_counted(value.as_bytes())
     }
 
+    /// Write a slice of boolean values, bit-packed into bytes (1 bit per element).
+    ///
+    /// When `put_nr` is `true`, the element count is written first as a `u32`,
+    /// matching the C++ `AipsIO::put(uInt, const Bool*)` overload. Pass
+    /// `put_nr = false` when the count is tracked externally (e.g. inside
+    /// [`put_array_value`](Self::put_value) where shape is stored separately).
+    /// All other `put_*_slice` methods follow these same semantics.
     pub fn put_bool_slice(&mut self, values: &[bool], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -607,10 +725,10 @@ impl AipsIo {
         self.write_counted(&packed)
     }
 
-    /// Put an array of signed 8-bit integer values.
+    /// Write a slice of signed 8-bit integer values.
     ///
-    /// When `put_nr` is true, the value count is written first.
-    /// Other array put functions follow the same semantics.
+    /// When `put_nr` is `true`, the element count is written first as a `u32`.
+    /// See [`put_bool_slice`](Self::put_bool_slice) for details.
     pub fn put_i8_slice(&mut self, values: &[i8], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -621,6 +739,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of unsigned 8-bit integer values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_u8_slice(&mut self, values: &[u8], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -629,6 +748,7 @@ impl AipsIo {
         self.write_counted(values)
     }
 
+    /// Write a slice of signed 16-bit integer values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_i16_slice(&mut self, values: &[i16], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -639,6 +759,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of unsigned 16-bit integer values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_u16_slice(&mut self, values: &[u16], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -649,6 +770,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of signed 32-bit integer values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_i32_slice(&mut self, values: &[i32], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -659,6 +781,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of unsigned 32-bit integer values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_u32_slice(&mut self, values: &[u32], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -669,6 +792,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of signed 64-bit integer values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_i64_slice(&mut self, values: &[i64], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -679,6 +803,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of unsigned 64-bit integer values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_u64_slice(&mut self, values: &[u64], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -689,6 +814,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of 32-bit float values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_f32_slice(&mut self, values: &[f32], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -699,6 +825,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of 64-bit float values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_f64_slice(&mut self, values: &[f64], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -709,6 +836,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of 32-bit complex values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_complex32_slice(
         &mut self,
         values: &[Complex32],
@@ -723,6 +851,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of 64-bit complex values. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_complex64_slice(
         &mut self,
         values: &[Complex64],
@@ -737,6 +866,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Write a slice of UTF-8 strings, each prefixed by its byte length. See [`put_bool_slice`](Self::put_bool_slice).
     pub fn put_string_slice(&mut self, values: &[String], put_nr: bool) -> AipsIoObjectResult<()> {
         if put_nr {
             self.put_u32(values.len() as u32)?;
@@ -747,13 +877,17 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read a boolean value in canonical format (1 byte; any non-zero value is `true`).
+    ///
+    /// Must be called inside a [`getstart`](Self::getstart)/[`getend`](Self::getend) block.
     pub fn get_bool(&mut self) -> AipsIoObjectResult<bool> {
         Ok(self.get_u8()? != 0)
     }
 
-    /// Get one signed 8-bit integer value.
+    /// Read a signed 8-bit integer value (1 byte).
     ///
-    /// Other scalar get functions follow the same semantics.
+    /// Must be called inside a [`getstart`](Self::getstart)/[`getend`](Self::getend)
+    /// block. All other scalar `get_*` methods follow the same semantics.
     pub fn get_i8(&mut self) -> AipsIoObjectResult<i8> {
         self.test_get()?;
         let mut buf = [0_u8; 1];
@@ -761,6 +895,7 @@ impl AipsIo {
         Ok(buf[0] as i8)
     }
 
+    /// Read an unsigned 8-bit integer value (1 byte). See [`get_i8`](Self::get_i8).
     pub fn get_u8(&mut self) -> AipsIoObjectResult<u8> {
         self.test_get()?;
         let mut buf = [0_u8; 1];
@@ -768,6 +903,7 @@ impl AipsIo {
         Ok(buf[0])
     }
 
+    /// Read a signed 16-bit integer in canonical byte order (2 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_i16(&mut self) -> AipsIoObjectResult<i16> {
         self.test_get()?;
         let mut buf = [0_u8; 2];
@@ -775,6 +911,7 @@ impl AipsIo {
         Ok(self.decode_i16(buf))
     }
 
+    /// Read an unsigned 16-bit integer in canonical byte order (2 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_u16(&mut self) -> AipsIoObjectResult<u16> {
         self.test_get()?;
         let mut buf = [0_u8; 2];
@@ -782,6 +919,7 @@ impl AipsIo {
         Ok(self.decode_u16(buf))
     }
 
+    /// Read a signed 32-bit integer in canonical byte order (4 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_i32(&mut self) -> AipsIoObjectResult<i32> {
         self.test_get()?;
         let mut buf = [0_u8; 4];
@@ -789,6 +927,7 @@ impl AipsIo {
         Ok(self.decode_i32(buf))
     }
 
+    /// Read an unsigned 32-bit integer in canonical byte order (4 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_u32(&mut self) -> AipsIoObjectResult<u32> {
         self.test_get()?;
         let mut buf = [0_u8; 4];
@@ -796,6 +935,7 @@ impl AipsIo {
         Ok(self.decode_u32(buf))
     }
 
+    /// Read a signed 64-bit integer in canonical byte order (8 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_i64(&mut self) -> AipsIoObjectResult<i64> {
         self.test_get()?;
         let mut buf = [0_u8; 8];
@@ -803,6 +943,7 @@ impl AipsIo {
         Ok(self.decode_i64(buf))
     }
 
+    /// Read an unsigned 64-bit integer in canonical byte order (8 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_u64(&mut self) -> AipsIoObjectResult<u64> {
         self.test_get()?;
         let mut buf = [0_u8; 8];
@@ -810,26 +951,31 @@ impl AipsIo {
         Ok(self.decode_u64(buf))
     }
 
+    /// Read a 32-bit float from its IEEE 754 bit pattern (4 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_f32(&mut self) -> AipsIoObjectResult<f32> {
         Ok(f32::from_bits(self.get_u32()?))
     }
 
+    /// Read a 64-bit float from its IEEE 754 bit pattern (8 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_f64(&mut self) -> AipsIoObjectResult<f64> {
         Ok(f64::from_bits(self.get_u64()?))
     }
 
+    /// Read a 32-bit complex number as two consecutive `f32` values (8 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_complex32(&mut self) -> AipsIoObjectResult<Complex32> {
         let re = self.get_f32()?;
         let im = self.get_f32()?;
         Ok(Complex32::new(re, im))
     }
 
+    /// Read a 64-bit complex number as two consecutive `f64` values (16 bytes). See [`get_i8`](Self::get_i8).
     pub fn get_complex64(&mut self) -> AipsIoObjectResult<Complex64> {
         let re = self.get_f64()?;
         let im = self.get_f64()?;
         Ok(Complex64::new(re, im))
     }
 
+    /// Read a length-prefixed UTF-8 string. See [`get_i8`](Self::get_i8).
     pub fn get_string(&mut self) -> AipsIoObjectResult<String> {
         let len = self.get_u32()? as usize;
         self.test_get()?;
@@ -838,6 +984,12 @@ impl AipsIo {
         Ok(String::from_utf8(buf)?)
     }
 
+    /// Read exactly `values.len()` boolean values into the provided slice.
+    ///
+    /// Booleans are stored bit-packed (1 bit per element). The caller must
+    /// supply a slice of exactly the right length; no count prefix is read.
+    /// This mirrors C++ `AipsIO::get(uInt, Bool*)`. All other `get_*_into`
+    /// methods follow the same caller-supplies-length semantics.
     pub fn get_bool_into(&mut self, values: &mut [bool]) -> AipsIoObjectResult<()> {
         self.test_get()?;
         let mut packed = vec![0_u8; values.len().div_ceil(8)];
@@ -846,9 +998,9 @@ impl AipsIo {
         Ok(())
     }
 
-    /// Read `values.len()` signed 8-bit values into the provided slice.
+    /// Read exactly `values.len()` signed 8-bit values into the provided slice.
     ///
-    /// Other `*_into` array readers follow the same semantics.
+    /// See [`get_bool_into`](Self::get_bool_into) for details.
     pub fn get_i8_into(&mut self, values: &mut [i8]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_i8()?;
@@ -856,11 +1008,13 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` unsigned 8-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u8_into(&mut self, values: &mut [u8]) -> AipsIoObjectResult<()> {
         self.test_get()?;
         self.read_counted(values)
     }
 
+    /// Read exactly `values.len()` signed 16-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i16_into(&mut self, values: &mut [i16]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_i16()?;
@@ -868,6 +1022,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` unsigned 16-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u16_into(&mut self, values: &mut [u16]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_u16()?;
@@ -875,6 +1030,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` signed 32-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i32_into(&mut self, values: &mut [i32]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_i32()?;
@@ -882,6 +1038,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` unsigned 32-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u32_into(&mut self, values: &mut [u32]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_u32()?;
@@ -889,6 +1046,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` signed 64-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i64_into(&mut self, values: &mut [i64]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_i64()?;
@@ -896,6 +1054,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` unsigned 64-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u64_into(&mut self, values: &mut [u64]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_u64()?;
@@ -903,6 +1062,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` 32-bit float values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_f32_into(&mut self, values: &mut [f32]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_f32()?;
@@ -910,6 +1070,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` 64-bit float values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_f64_into(&mut self, values: &mut [f64]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_f64()?;
@@ -917,6 +1078,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` 32-bit complex values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_complex32_into(&mut self, values: &mut [Complex32]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_complex32()?;
@@ -924,6 +1086,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` 64-bit complex values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_complex64_into(&mut self, values: &mut [Complex64]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_complex64()?;
@@ -931,6 +1094,7 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read exactly `values.len()` UTF-8 strings into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_string_into(&mut self, values: &mut [String]) -> AipsIoObjectResult<()> {
         for value in values {
             *value = self.get_string()?;
@@ -938,6 +1102,12 @@ impl AipsIo {
         Ok(())
     }
 
+    /// Read a count-prefixed boolean array into a newly allocated `Vec<bool>`.
+    ///
+    /// Reads a `u32` element count, allocates, and fills using
+    /// [`get_bool_into`](Self::get_bool_into). This is the Rust equivalent of
+    /// C++ `AipsIO::getnew(uInt*, Bool**)`. All other `getnew_*` methods
+    /// follow the same read-count-then-allocate semantics.
     pub fn getnew_bool(&mut self) -> AipsIoObjectResult<Vec<bool>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![false; nrv];
@@ -945,9 +1115,9 @@ impl AipsIo {
         Ok(out)
     }
 
-    /// Read an array of signed 8-bit values that was written with `put_nr=true`.
+    /// Read a count-prefixed signed 8-bit array into a newly allocated `Vec<i8>`.
     ///
-    /// Other `getnew_*` functions follow the same semantics.
+    /// See [`getnew_bool`](Self::getnew_bool) for details.
     pub fn getnew_i8(&mut self) -> AipsIoObjectResult<Vec<i8>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_i8; nrv];
@@ -955,6 +1125,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed unsigned 8-bit array into a newly allocated `Vec<u8>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_u8(&mut self) -> AipsIoObjectResult<Vec<u8>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_u8; nrv];
@@ -962,6 +1133,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed signed 16-bit array into a newly allocated `Vec<i16>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_i16(&mut self) -> AipsIoObjectResult<Vec<i16>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_i16; nrv];
@@ -969,6 +1141,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed unsigned 16-bit array into a newly allocated `Vec<u16>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_u16(&mut self) -> AipsIoObjectResult<Vec<u16>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_u16; nrv];
@@ -976,6 +1149,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed signed 32-bit array into a newly allocated `Vec<i32>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_i32(&mut self) -> AipsIoObjectResult<Vec<i32>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_i32; nrv];
@@ -983,6 +1157,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed unsigned 32-bit array into a newly allocated `Vec<u32>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_u32(&mut self) -> AipsIoObjectResult<Vec<u32>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_u32; nrv];
@@ -990,6 +1165,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed signed 64-bit array into a newly allocated `Vec<i64>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_i64(&mut self) -> AipsIoObjectResult<Vec<i64>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_i64; nrv];
@@ -997,6 +1173,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed unsigned 64-bit array into a newly allocated `Vec<u64>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_u64(&mut self) -> AipsIoObjectResult<Vec<u64>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_u64; nrv];
@@ -1004,6 +1181,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed 32-bit float array into a newly allocated `Vec<f32>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_f32(&mut self) -> AipsIoObjectResult<Vec<f32>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_f32; nrv];
@@ -1011,6 +1189,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed 64-bit float array into a newly allocated `Vec<f64>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_f64(&mut self) -> AipsIoObjectResult<Vec<f64>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![0_f64; nrv];
@@ -1018,6 +1197,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed 32-bit complex array into a newly allocated `Vec<Complex32>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_complex32(&mut self) -> AipsIoObjectResult<Vec<Complex32>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![Complex32::new(0.0, 0.0); nrv];
@@ -1025,6 +1205,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed 64-bit complex array into a newly allocated `Vec<Complex64>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_complex64(&mut self) -> AipsIoObjectResult<Vec<Complex64>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![Complex64::new(0.0, 0.0); nrv];
@@ -1032,6 +1213,7 @@ impl AipsIo {
         Ok(out)
     }
 
+    /// Read a count-prefixed string array into a newly allocated `Vec<String>`. See [`getnew_bool`](Self::getnew_bool).
     pub fn getnew_string(&mut self) -> AipsIoObjectResult<Vec<String>> {
         let nrv = self.get_u32()? as usize;
         let mut out = vec![String::new(); nrv];

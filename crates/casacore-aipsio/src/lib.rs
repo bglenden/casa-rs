@@ -1,14 +1,38 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Rust AipsIO support.
+//! Rust implementation of casacore AipsIO persistent-object I/O.
 //!
-//! This crate exposes two layers:
-//! - `AipsWriter` / `AipsReader`: primitive scalar/array codec utilities.
-//! - [`aipsio`]: full AipsIO object framing API (`putstart/getstart/...`).
+//! This crate provides two complementary layers:
 //!
-//! For object-persistent interoperability similar to casacore C++ `AipsIO`,
-//! prefer the [`aipsio::AipsIo`] API.
-//! Detailed `AipsIo` behavior and C++ mapping notes are in the
-//! [`aipsio`] module-level rustdoc.
+//! - **Primitive codec** — [`AipsWriter`] and [`AipsReader`] encode and decode
+//!   the casacore scalar/array wire format (big-endian by default, matching C++
+//!   `CanonicalIO`). These are lower-level building blocks used by the framing
+//!   layer.
+//!
+//! - **Object framing** — the [`aipsio`] module exposes [`aipsio::AipsIo`],
+//!   which adds type-checked object headers (`putstart`/`putend`,
+//!   `getstart`/`getend`), nesting, and version numbers, matching the C++
+//!   `AipsIO` class.
+//!
+//! # Quick start
+//!
+//! For read/write interoperability with casacore `.table` or `.image` files,
+//! use [`aipsio::AipsIo`]:
+//!
+//! ```rust
+//! use casacore_aipsio::AipsIo;
+//! use std::io::Cursor;
+//!
+//! let mut io = AipsIo::new_read_write(Cursor::new(Vec::<u8>::new()));
+//! io.putstart("MyObject", 1).unwrap();
+//! io.put_i32(42).unwrap();
+//! io.putend().unwrap();
+//! ```
+//!
+//! For lower-level encoding without object headers, use [`AipsWriter`] /
+//! [`AipsReader`] directly.
+//!
+//! Detailed behavior and C++ mapping notes are in the [`aipsio`] module-level
+//! rustdoc.
 
 use std::io::{Read, Write};
 
@@ -25,10 +49,19 @@ pub use aipsio::{AipsIo, AipsIoObjectError, AipsIoObjectResult, AipsIoStream, Ai
 
 pub type AipsIoResult<T> = Result<T, AipsIoError>;
 
+/// Byte order used when encoding or decoding multi-byte numeric values.
+///
+/// The casacore canonical format is big-endian (`CanonicalIO` in C++). Little-
+/// endian support (`LECanonicalIO`) exists for files written on little-endian
+/// systems; use [`detect_aipsio_byte_order`] to determine which to use when
+/// the byte order is not known in advance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ByteOrder {
+    /// Big-endian byte order — the canonical casacore wire format. This is the
+    /// default.
     #[default]
     BigEndian,
+    /// Little-endian byte order, used by casacore `LECanonicalIO`.
     LittleEndian,
 }
 
@@ -72,24 +105,49 @@ pub fn detect_aipsio_byte_order(data: &[u8]) -> Result<ByteOrder, AipsIoError> {
     }
 }
 
+/// Errors from [`AipsWriter`] and [`AipsReader`] primitive codec operations.
+///
+/// These are the lower-level errors that do not involve object framing. For
+/// object-framing errors see [`aipsio::AipsIoObjectError`].
 #[derive(Debug, Error)]
 pub enum AipsIoError {
+    /// A low-level I/O error from the underlying stream.
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+    /// The stream contained bytes that are not valid UTF-8 when decoding a
+    /// string field.
     #[error("utf-8 decode error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
+    /// A boolean field contained a byte value other than `0` or `1`.
     #[error("invalid boolean value {0}; expected 0 or 1")]
     InvalidBoolean(u8),
+    /// A string or array length exceeded the `u32` limit used in the wire
+    /// format.
     #[error("length {0} exceeds maximum supported length")]
     LengthTooLarge(usize),
+    /// [`AipsWriter::write_array`] was called with an array of rank != 1; the
+    /// primitive codec only supports rank-1 (linear) arrays.
     #[error("unsupported array rank {0}; primitive AipsIO currently supports rank-1 arrays only")]
     UnsupportedArrayRank(usize),
+    /// [`AipsWriter::write_value`] was called with a [`Value`] variant that the
+    /// primitive codec does not support (currently `Record`).
     #[error("unsupported value kind for primitive AipsIO codec: {0:?}")]
     UnsupportedValueKind(ValueKind),
+    /// A catch-all error for miscellaneous string-described failures.
     #[error("{0}")]
     Other(String),
 }
 
+/// Streaming writer for casacore primitive values in canonical wire format.
+///
+/// `AipsWriter` is a lower-level building block used by [`aipsio::AipsIo`].
+/// It encodes individual scalars and arrays without any object-framing
+/// headers; callers that need type-checked, versioned object persistence
+/// should use [`aipsio::AipsIo`] instead.
+///
+/// All multi-byte integers and floats are encoded in the byte order chosen at
+/// construction time. The casacore canonical format is big-endian, which is
+/// the default (see [`ByteOrder::BigEndian`]).
 pub struct AipsWriter<W> {
     inner: W,
     byte_order: ByteOrder,
@@ -109,27 +167,32 @@ impl<W: Write> AipsWriter<W> {
         Self { inner, byte_order }
     }
 
+    /// Return the byte order this writer uses for encoding.
     pub fn byte_order(&self) -> ByteOrder {
         self.byte_order
     }
 
+    /// Consume the writer and return the underlying stream.
     pub fn into_inner(self) -> W {
         self.inner
     }
 
-    /// Write one boolean value (1 byte).
+    /// Write a boolean value as a single byte (`0` for `false`, `1` for `true`).
     ///
-    /// Other scalar write methods follow the same pattern.
+    /// All other `write_*` scalar methods follow the same pattern: encode the
+    /// value in the configured byte order and write it to the stream.
     pub fn write_bool(&mut self, value: bool) -> AipsIoResult<()> {
         self.inner.write_all(&[u8::from(value)])?;
         Ok(())
     }
 
+    /// Write an unsigned 8-bit integer (1 byte). See [`write_bool`](Self::write_bool).
     pub fn write_u8(&mut self, value: u8) -> AipsIoResult<()> {
         self.inner.write_all(&[value])?;
         Ok(())
     }
 
+    /// Write an unsigned 16-bit integer in canonical byte order (2 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_u16(&mut self, value: u16) -> AipsIoResult<()> {
         let bytes = match self.byte_order {
             ByteOrder::BigEndian => value.to_be_bytes(),
@@ -139,6 +202,7 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write an unsigned 32-bit integer in canonical byte order (4 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_u32(&mut self, value: u32) -> AipsIoResult<()> {
         let bytes = match self.byte_order {
             ByteOrder::BigEndian => value.to_be_bytes(),
@@ -148,6 +212,7 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write a signed 16-bit integer in canonical byte order (2 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_i16(&mut self, value: i16) -> AipsIoResult<()> {
         let bytes = match self.byte_order {
             ByteOrder::BigEndian => value.to_be_bytes(),
@@ -157,6 +222,7 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write a signed 32-bit integer in canonical byte order (4 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_i32(&mut self, value: i32) -> AipsIoResult<()> {
         let bytes = match self.byte_order {
             ByteOrder::BigEndian => value.to_be_bytes(),
@@ -166,6 +232,7 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write a signed 64-bit integer in canonical byte order (8 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_i64(&mut self, value: i64) -> AipsIoResult<()> {
         let bytes = match self.byte_order {
             ByteOrder::BigEndian => value.to_be_bytes(),
@@ -175,6 +242,7 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write a 32-bit float as its IEEE 754 bit pattern (4 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_f32(&mut self, value: f32) -> AipsIoResult<()> {
         let bits = value.to_bits();
         let bytes = match self.byte_order {
@@ -185,6 +253,7 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write a 64-bit float as its IEEE 754 bit pattern (8 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_f64(&mut self, value: f64) -> AipsIoResult<()> {
         let bits = value.to_bits();
         let bytes = match self.byte_order {
@@ -195,18 +264,21 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write a 32-bit complex number as two consecutive `f32` values (8 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_complex32(&mut self, value: Complex32) -> AipsIoResult<()> {
         self.write_f32(value.re)?;
         self.write_f32(value.im)?;
         Ok(())
     }
 
+    /// Write a 64-bit complex number as two consecutive `f64` values (16 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_complex64(&mut self, value: Complex64) -> AipsIoResult<()> {
         self.write_f64(value.re)?;
         self.write_f64(value.im)?;
         Ok(())
     }
 
+    /// Write a UTF-8 string as a `u32` byte length followed by the UTF-8 bytes. See [`write_bool`](Self::write_bool).
     pub fn write_string(&mut self, value: &str) -> AipsIoResult<()> {
         let len_u32 =
             u32::try_from(value.len()).map_err(|_| AipsIoError::LengthTooLarge(value.len()))?;
@@ -215,6 +287,7 @@ impl<W: Write> AipsWriter<W> {
         Ok(())
     }
 
+    /// Write a dynamically-typed scalar value by dispatching on its variant.
     pub fn write_scalar(&mut self, value: &ScalarValue) -> AipsIoResult<()> {
         match value {
             ScalarValue::Bool(v) => self.write_bool(*v),
@@ -265,6 +338,10 @@ impl<W: Write> AipsWriter<W> {
         }
     }
 
+    /// Write a dynamically-typed value (scalar or rank-1 array); records are not supported.
+    ///
+    /// Returns [`AipsIoError::UnsupportedValueKind`] if `value` is a
+    /// `Value::Record`.
     pub fn write_value(&mut self, value: &Value) -> AipsIoResult<()> {
         match value {
             Value::Scalar(v) => self.write_scalar(v),
@@ -274,6 +351,16 @@ impl<W: Write> AipsWriter<W> {
     }
 }
 
+/// Streaming reader for casacore primitive values in canonical wire format.
+///
+/// `AipsReader` is the read-side counterpart to [`AipsWriter`]. It decodes
+/// individual scalars and arrays without any object-framing interpretation;
+/// callers that need type-checked, versioned object persistence should use
+/// [`aipsio::AipsIo`] instead.
+///
+/// The byte order must match the byte order used by the writer that produced
+/// the stream. Use [`ByteOrder::BigEndian`] (the default) for files written
+/// by standard casacore tools.
 pub struct AipsReader<R> {
     inner: R,
     byte_order: ByteOrder,
@@ -293,17 +380,21 @@ impl<R: Read> AipsReader<R> {
         Self { inner, byte_order }
     }
 
+    /// Return the byte order this reader uses for decoding.
     pub fn byte_order(&self) -> ByteOrder {
         self.byte_order
     }
 
+    /// Consume the reader and return the underlying stream.
     pub fn into_inner(self) -> R {
         self.inner
     }
 
-    /// Read one boolean value.
+    /// Read a boolean value from a single byte (`0` → `false`, `1` → `true`).
     ///
-    /// Other scalar read methods follow the same pattern.
+    /// Returns [`AipsIoError::InvalidBoolean`] for any byte value other than
+    /// `0` or `1`. All other `read_*` scalar methods follow the same pattern:
+    /// read the encoded bytes and decode them using the configured byte order.
     pub fn read_bool(&mut self) -> AipsIoResult<bool> {
         let mut buf = [0_u8; 1];
         self.inner.read_exact(&mut buf)?;
@@ -314,12 +405,14 @@ impl<R: Read> AipsReader<R> {
         }
     }
 
+    /// Read an unsigned 8-bit integer (1 byte). See [`read_bool`](Self::read_bool).
     pub fn read_u8(&mut self) -> AipsIoResult<u8> {
         let mut buf = [0_u8; 1];
         self.inner.read_exact(&mut buf)?;
         Ok(buf[0])
     }
 
+    /// Read an unsigned 16-bit integer in canonical byte order (2 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_u16(&mut self) -> AipsIoResult<u16> {
         let bytes = self.read_exact_array::<2>()?;
         Ok(match self.byte_order {
@@ -328,6 +421,7 @@ impl<R: Read> AipsReader<R> {
         })
     }
 
+    /// Read an unsigned 32-bit integer in canonical byte order (4 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_u32(&mut self) -> AipsIoResult<u32> {
         let bytes = self.read_exact_array::<4>()?;
         Ok(match self.byte_order {
@@ -336,6 +430,7 @@ impl<R: Read> AipsReader<R> {
         })
     }
 
+    /// Read a signed 16-bit integer in canonical byte order (2 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_i16(&mut self) -> AipsIoResult<i16> {
         let bytes = self.read_exact_array::<2>()?;
         Ok(match self.byte_order {
@@ -344,6 +439,7 @@ impl<R: Read> AipsReader<R> {
         })
     }
 
+    /// Read a signed 32-bit integer in canonical byte order (4 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_i32(&mut self) -> AipsIoResult<i32> {
         let bytes = self.read_exact_array::<4>()?;
         Ok(match self.byte_order {
@@ -352,6 +448,7 @@ impl<R: Read> AipsReader<R> {
         })
     }
 
+    /// Read a signed 64-bit integer in canonical byte order (8 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_i64(&mut self) -> AipsIoResult<i64> {
         let bytes = self.read_exact_array::<8>()?;
         Ok(match self.byte_order {
@@ -360,28 +457,33 @@ impl<R: Read> AipsReader<R> {
         })
     }
 
+    /// Read a 32-bit float from its IEEE 754 bit pattern (4 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_f32(&mut self) -> AipsIoResult<f32> {
         let bits = self.read_u32()?;
         Ok(f32::from_bits(bits))
     }
 
+    /// Read a 64-bit float from its IEEE 754 bit pattern (8 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_f64(&mut self) -> AipsIoResult<f64> {
         let bits = self.read_u64()?;
         Ok(f64::from_bits(bits))
     }
 
+    /// Read a 32-bit complex number as two consecutive `f32` values (8 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_complex32(&mut self) -> AipsIoResult<Complex32> {
         let re = self.read_f32()?;
         let im = self.read_f32()?;
         Ok(Complex32 { re, im })
     }
 
+    /// Read a 64-bit complex number as two consecutive `f64` values (16 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_complex64(&mut self) -> AipsIoResult<Complex64> {
         let re = self.read_f64()?;
         let im = self.read_f64()?;
         Ok(Complex64 { re, im })
     }
 
+    /// Read a length-prefixed UTF-8 string (4-byte `u32` length then UTF-8 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_string(&mut self) -> AipsIoResult<String> {
         let len = self.read_u32()? as usize;
         let mut bytes = vec![0_u8; len];
@@ -389,6 +491,7 @@ impl<R: Read> AipsReader<R> {
         Ok(String::from_utf8(bytes)?)
     }
 
+    /// Read a scalar value for the given primitive type by dispatching on the variant.
     pub fn read_scalar(&mut self, primitive: PrimitiveType) -> AipsIoResult<ScalarValue> {
         match primitive {
             PrimitiveType::Bool => Ok(ScalarValue::Bool(self.read_bool()?)),
@@ -463,6 +566,7 @@ impl<R: Read> AipsReader<R> {
         }
     }
 
+    /// Read a dynamically-typed value (scalar or rank-1 array) using the supplied [`TypeTag`].
     pub fn read_value(&mut self, type_tag: TypeTag) -> AipsIoResult<Value> {
         match type_tag.rank {
             ValueRank::Scalar => self.read_scalar(type_tag.primitive).map(Value::Scalar),

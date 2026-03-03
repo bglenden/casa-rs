@@ -21,6 +21,10 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - Prefer red/green development: add failing regression test first.
 - C++-dependent tests must skip cleanly when `pkg-config casacore` is missing.
 - If C++ has a demo for a supported module, provide a Rust equivalent demo.
+- When implementing new casacore-c++ functionality, document all public types and
+  methods at a level comparable to the C++ doxygen in the corresponding .h files.
+  Use `///` for items and `//!` for modules. Reference the C++ class/function names
+  so users can cross-reference.
 
 ## Quality Gates
 

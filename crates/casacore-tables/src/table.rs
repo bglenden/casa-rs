@@ -9,15 +9,44 @@ use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot};
 use crate::table_impl::TableImpl;
 
 /// Which data manager to use when writing table data.
+///
+/// This choice is recorded in the table descriptor on disk so that C++ casacore
+/// can select the correct storage-manager plugin when reopening the table.
+/// Both variants produce files that are binary-compatible with upstream casacore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DataManagerKind {
-    /// StManAipsIO: simple whole-column AipsIO streaming.
+    /// Simple whole-column AipsIO streaming (legacy format).
+    ///
+    /// Each column is stored as a single flat AipsIO stream. This is the
+    /// simplest on-disk layout and is compatible with older versions of
+    /// casacore. It is the default for this crate because it requires no
+    /// extra configuration and produces self-contained files.
     #[default]
     StManAipsIO,
-    /// StandardStMan: bucket-based storage (the C++ casacore default).
+    /// Bucket-based storage (the default in C++ casacore).
+    ///
+    /// Data is partitioned into fixed-size buckets, which allows efficient
+    /// random access and in-place updates. This is the storage manager used
+    /// by default when creating tables with C++ casacore.
     StandardStMan,
 }
 
+/// Configuration for opening or saving a [`Table`] to disk.
+///
+/// `TableOptions` bundles the filesystem path with the choice of storage
+/// manager. In C++ casacore this information is passed directly to the
+/// `Table(name, option)` constructor. Here it is factored out into a
+/// separate builder so that callers can construct options independently of
+/// the table itself.
+///
+/// # Example
+///
+/// ```rust
+/// use casacore_tables::{TableOptions, DataManagerKind};
+///
+/// let opts = TableOptions::new("/tmp/my_table")
+///     .with_data_manager(DataManagerKind::StandardStMan);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableOptions {
     path: PathBuf,
@@ -25,6 +54,7 @@ pub struct TableOptions {
 }
 
 impl TableOptions {
+    /// Creates options targeting `path` with the default data manager ([`DataManagerKind::StManAipsIO`]).
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
@@ -32,20 +62,45 @@ impl TableOptions {
         }
     }
 
+    /// Overrides the data manager, returning the updated options.
     pub fn with_data_manager(mut self, kind: DataManagerKind) -> Self {
         self.data_manager = kind;
         self
     }
 
+    /// Returns the filesystem path for this table.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Returns the data manager that will be used when saving.
     pub fn data_manager(&self) -> DataManagerKind {
         self.data_manager
     }
 }
 
+/// A contiguous, optionally strided range of row indices.
+///
+/// `RowRange` selects which rows participate in a column read or write
+/// operation. It is the row-axis analogue of C++ casacore's `Slicer`.
+///
+/// # Semantics
+///
+/// The range is half-open: rows are selected from `start` (inclusive) to
+/// `end` (exclusive) stepping by `stride`. For example, `RowRange::with_stride(0, 6, 2)`
+/// selects rows 0, 2, and 4.
+///
+/// # Example
+///
+/// ```rust
+/// use casacore_tables::RowRange;
+///
+/// // Every row in a 10-row table:
+/// let all = RowRange::new(0, 10);
+///
+/// // Every other row:
+/// let evens = RowRange::with_stride(0, 10, 2);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowRange {
     start: usize,
@@ -54,6 +109,7 @@ pub struct RowRange {
 }
 
 impl RowRange {
+    /// Creates a contiguous range `[start, end)` with stride 1.
     pub const fn new(start: usize, end: usize) -> Self {
         Self {
             start,
@@ -62,18 +118,22 @@ impl RowRange {
         }
     }
 
+    /// Creates a strided range `[start, end)` stepping by `stride`.
     pub const fn with_stride(start: usize, end: usize, stride: usize) -> Self {
         Self { start, end, stride }
     }
 
+    /// Returns the first row index (inclusive).
     pub const fn start(&self) -> usize {
         self.start
     }
 
+    /// Returns the past-the-end row index (exclusive).
     pub const fn end(&self) -> usize {
         self.end
     }
 
+    /// Returns the step between successive selected rows.
     pub const fn stride(&self) -> usize {
         self.stride
     }
@@ -111,18 +171,38 @@ impl RowRange {
     }
 }
 
+/// A borrowed reference to a single cell value together with its row index.
+///
+/// `ColumnCellRef` is the item type yielded by [`ColumnCellIter`] and
+/// [`ColumnChunkIter`]. The `value` field is `None` when the cell is absent
+/// from the row (possible for columns that allow undefined cells).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColumnCellRef<'a> {
+    /// Zero-based index of the row from which this cell was read.
     pub row_index: usize,
+    /// The cell value, or `None` if the cell is absent for this row.
     pub value: Option<&'a Value>,
 }
 
+/// An owned record cell value together with its row index.
+///
+/// `RecordColumnCell` is the item type yielded by [`RecordColumnIter`]. Unlike
+/// [`ColumnCellRef`], the value is always present: missing record cells are
+/// substituted with an empty [`RecordValue`] when the column schema permits
+/// absent cells.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordColumnCell {
+    /// Zero-based index of the row from which this cell was read.
     pub row_index: usize,
+    /// The record value for this row (never absent; defaults to empty record).
     pub value: RecordValue,
 }
 
+/// An iterator over cells in a single column, yielding one [`ColumnCellRef`] per row.
+///
+/// Obtain a `ColumnCellIter` via [`Table::get_column`] or [`Table::get_column_range`].
+/// The iterator borrows the table's row data and does not allocate per cell.
+/// For batch processing, see [`ColumnChunkIter`] via [`Table::iter_column_chunks`].
 pub struct ColumnCellIter<'a> {
     row_data: &'a [RecordValue],
     column: &'a str,
@@ -140,6 +220,12 @@ impl<'a> Iterator for ColumnCellIter<'a> {
     }
 }
 
+/// An iterator over cells in a record column, yielding one [`RecordColumnCell`] per row.
+///
+/// Obtain a `RecordColumnIter` via [`Table::get_record_column`] or
+/// [`Table::get_record_column_range`]. When a [`TableSchema`] is attached and
+/// the column is typed as [`crate::schema::ColumnType::Record`], rows whose
+/// record cell is absent yield an empty [`RecordValue`] rather than an error.
 pub struct RecordColumnIter<'a> {
     row_data: &'a [RecordValue],
     column: &'a str,
@@ -168,6 +254,16 @@ impl<'a> Iterator for RecordColumnIter<'a> {
     }
 }
 
+/// An iterator that yields column cells in fixed-size batches.
+///
+/// Each call to `next` returns a `Vec<ColumnCellRef>` containing up to
+/// `chunk_size` cells. The final chunk may be smaller if the remaining row
+/// count is not a multiple of `chunk_size`. An empty table (or an exhausted
+/// range) causes `next` to return `None` immediately.
+///
+/// Obtain a `ColumnChunkIter` via [`Table::iter_column_chunks`]. This iterator
+/// is useful for processing columns in memory-bounded passes without
+/// materializing the entire column at once.
 pub struct ColumnChunkIter<'a> {
     inner: ColumnCellIter<'a>,
     chunk_size: usize,
@@ -202,28 +298,38 @@ impl Iterator for RowRangeIter {
     }
 }
 
+/// Errors that can occur when reading or writing a [`Table`].
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TableError {
+    /// A row index exceeded the number of rows in the table.
     #[error("row index {row_index} is out of bounds for table with {row_count} rows")]
     RowOutOfBounds { row_index: usize, row_count: usize },
+    /// A [`RowRange`] had `start > end` or `end > row_count`.
     #[error("row range [{start}, {end}) is invalid for table with {row_count} rows")]
     InvalidRowRange {
         start: usize,
         end: usize,
         row_count: usize,
     },
+    /// A [`RowRange`] stride was zero, which would produce an infinite loop.
     #[error("row stride must be >= 1, got {stride}")]
     InvalidRowStride { stride: usize },
+    /// The requested column was absent from the row (and no schema default applies).
     #[error("column \"{column}\" not found in row {row_index}")]
     ColumnNotFound { row_index: usize, column: String },
+    /// The column name is not declared in the attached [`TableSchema`].
     #[error("column \"{column}\" does not exist in schema")]
     SchemaColumnUnknown { column: String },
+    /// A record-specific operation was attempted on a non-record schema column.
     #[error("column \"{column}\" is not a record column in schema")]
     SchemaColumnNotRecord { column: String },
+    /// A required column (non-optional per schema) was absent from a row.
     #[error("schema column \"{column}\" is missing in row {row_index}")]
     SchemaColumnMissing { row_index: usize, column: String },
+    /// A row contained a column name that is not declared in the schema.
     #[error("row {row_index} contains unknown column \"{column}\" not present in schema")]
     RowContainsUnknownColumn { row_index: usize, column: String },
+    /// A cell held a value of the wrong type for its schema column.
     #[error(
         "row {row_index} column \"{column}\" has unexpected type {found:?}; expected {expected}"
     )]
@@ -233,6 +339,7 @@ pub enum TableError {
         expected: &'static str,
         found: ValueKind,
     },
+    /// An array cell had a shape that did not match the schema's fixed shape.
     #[error("row {row_index} column \"{column}\" has shape {found:?}; expected {expected:?}")]
     ArrayShapeMismatch {
         row_index: usize,
@@ -240,6 +347,7 @@ pub enum TableError {
         expected: Vec<usize>,
         found: Vec<usize>,
     },
+    /// An array cell had a number of dimensions that did not match the schema.
     #[error("row {row_index} column \"{column}\" has ndim {found}; expected {expected}")]
     ArrayNdimMismatch {
         row_index: usize,
@@ -247,12 +355,16 @@ pub enum TableError {
         expected: usize,
         found: usize,
     },
+    /// [`Table::put_column`] or [`Table::put_column_range`] received fewer values than rows.
     #[error("column write received too few values: expected {expected}, provided {provided}")]
     ColumnWriteTooFewValues { expected: usize, provided: usize },
+    /// [`Table::put_column`] or [`Table::put_column_range`] received more values than rows.
     #[error("column write received too many values: expected {expected}")]
     ColumnWriteTooManyValues { expected: usize },
+    /// A [`SchemaError`][crate::schema::SchemaError] was encountered during validation.
     #[error("schema error: {0}")]
     Schema(String),
+    /// An I/O or storage-manager error occurred during [`Table::open`] or [`Table::save`].
     #[error("storage error: {0}")]
     Storage(String),
 }
@@ -269,30 +381,95 @@ impl From<SchemaError> for TableError {
     }
 }
 
+/// The primary in-memory representation of a casacore table.
+///
+/// A casacore table is a rectangular data structure: a sequence of rows, each
+/// of which is a record (map from column name to value). In addition to row
+/// data, a table carries table-level keywords, per-column keywords, and an
+/// optional [`TableSchema`] that constrains cell types and array shapes.
+///
+/// # Relationship to C++ casacore
+///
+/// In C++ casacore the same functionality is split across several classes:
+///
+/// | C++ class | Role |
+/// |-----------|------|
+/// | `Table` | Open/save; row count and keywords |
+/// | `ScalarColumn<T>` | Read/write typed scalar columns |
+/// | `ArrayColumn<T>` | Read/write typed array columns |
+/// | `TableRecord` | Keyword records |
+///
+/// The Rust `Table` type unifies all of these into a single, dynamically
+/// typed interface. Column type safety is enforced at runtime by the methods
+/// ([`get_scalar_cell`][Table::get_scalar_cell],
+/// [`get_array_cell`][Table::get_array_cell], etc.) rather than through
+/// compile-time generics.
+///
+/// # Construction
+///
+/// | Method | When to use |
+/// |--------|-------------|
+/// | [`Table::new`] | Empty table, no schema |
+/// | [`Table::with_schema`] | Empty table with a column schema |
+/// | [`Table::from_rows`] | Pre-built rows, no schema |
+/// | [`Table::from_rows_with_schema`] | Pre-built rows validated against a schema |
+///
+/// # Persistence
+///
+/// Use [`Table::save`] with a [`TableOptions`] to write to disk, and
+/// [`Table::open`] to read back. The on-disk format is binary-compatible with
+/// C++ casacore for both [`DataManagerKind::StManAipsIO`] and
+/// [`DataManagerKind::StandardStMan`].
+///
+/// # Example
+///
+/// ```rust
+/// use casacore_tables::{Table, TableOptions, RowRange};
+/// use casacore_types::{RecordValue, RecordField, Value, ScalarValue};
+///
+/// let row = RecordValue::new(vec![
+///     RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+/// ]);
+/// let table = Table::from_rows(vec![row]);
+/// assert_eq!(table.row_count(), 1);
+/// ```
 #[derive(Debug, Default)]
 pub struct Table {
     inner: TableImpl,
 }
 
 impl Table {
+    /// Creates a new, empty table with no rows, no schema, and no keywords.
     pub fn new() -> Self {
         Self {
             inner: TableImpl::new(),
         }
     }
 
+    /// Creates a new, empty table with the given schema but no rows.
+    ///
+    /// Rows added later via [`add_row`][Table::add_row] will be validated
+    /// against this schema.
     pub fn with_schema(schema: TableSchema) -> Self {
         let mut inner = TableImpl::new();
         inner.set_schema(Some(schema));
         Self { inner }
     }
 
+    /// Creates a table from an existing `Vec` of rows without schema validation.
+    ///
+    /// This is a low-cost constructor: the `Vec` is moved in directly. No
+    /// schema is attached, so any column structure is accepted.
     pub fn from_rows(rows: Vec<RecordValue>) -> Self {
         Self {
             inner: TableImpl::from_rows(rows),
         }
     }
 
+    /// Creates a table from an existing `Vec` of rows, validated against `schema`.
+    ///
+    /// Returns [`TableError`] if any row violates the schema. On success, the
+    /// schema is stored and future mutations are also validated.
     pub fn from_rows_with_schema(
         rows: Vec<RecordValue>,
         schema: TableSchema,
@@ -309,6 +486,13 @@ impl Table {
         Ok(table)
     }
 
+    /// Opens an existing table from disk.
+    ///
+    /// Reads all rows, keywords, column keywords, and schema from the directory
+    /// identified by `options.path()`. After loading, the table is validated
+    /// against its schema (if one was persisted). Returns [`TableError::Storage`]
+    /// if the directory cannot be read, or a schema error if the on-disk data
+    /// violates the stored schema.
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
         let storage = CompositeStorage;
         let snapshot = storage.load(&options.path)?;
@@ -324,6 +508,15 @@ impl Table {
         Ok(table)
     }
 
+    /// Saves the table to disk.
+    ///
+    /// Validates the table against its schema (if any), then writes all rows,
+    /// keywords, column keywords, and schema to the directory specified by
+    /// `options.path()`. The data manager format is determined by
+    /// `options.data_manager()`. The directory need not exist beforehand;
+    /// the storage layer creates it.
+    ///
+    /// Returns [`TableError::Storage`] on I/O failure.
     pub fn save(&self, options: TableOptions) -> Result<(), TableError> {
         self.validate()?;
         let snapshot = StorageSnapshot {
@@ -337,10 +530,19 @@ impl Table {
         Ok(())
     }
 
+    /// Returns the attached schema, if any.
+    ///
+    /// When a schema is present, all row and cell mutations are validated
+    /// against it. Returns `None` for schema-free tables.
     pub fn schema(&self) -> Option<&TableSchema> {
         self.inner.schema()
     }
 
+    /// Attaches or replaces the schema, validating all existing rows.
+    ///
+    /// If the new schema is incompatible with any existing row the schema is
+    /// not updated and the original is restored. Returns the first
+    /// [`TableError`] encountered during validation.
     pub fn set_schema(&mut self, schema: TableSchema) -> Result<(), TableError> {
         let previous = self.inner.schema().cloned();
         self.inner.set_schema(Some(schema));
@@ -351,10 +553,19 @@ impl Table {
         Ok(())
     }
 
+    /// Removes the attached schema, disabling per-mutation validation.
+    ///
+    /// Existing row data is preserved unchanged.
     pub fn clear_schema(&mut self) {
         self.inner.set_schema(None);
     }
 
+    /// Validates all rows against the attached schema.
+    ///
+    /// Returns `Ok(())` immediately when no schema is attached. Otherwise,
+    /// checks every cell in every row and returns the first [`TableError`]
+    /// encountered. This is called automatically by [`save`][Table::save],
+    /// [`open`][Table::open], and schema-setting methods.
     pub fn validate(&self) -> Result<(), TableError> {
         let Some(schema) = self.schema() else {
             return Ok(());
@@ -366,14 +577,21 @@ impl Table {
         Ok(())
     }
 
+    /// Returns the number of rows in the table.
     pub fn row_count(&self) -> usize {
         self.inner.row_count()
     }
 
+    /// Returns a slice over all rows in insertion order.
     pub fn rows(&self) -> &[RecordValue] {
         self.inner.rows()
     }
 
+    /// Appends a row to the table.
+    ///
+    /// If a schema is attached, the row is validated before insertion.
+    /// Returns [`TableError`] if the row violates the schema; the table is
+    /// left unchanged in that case.
     pub fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
         if let Some(schema) = self.schema() {
             validate_row_against_schema(self.row_count(), &row, schema)?;
@@ -382,22 +600,44 @@ impl Table {
         Ok(())
     }
 
+    /// Returns a shared reference to the row at `row_index`, or `None` if out of bounds.
     pub fn row(&self, row_index: usize) -> Option<&RecordValue> {
         self.inner.row(row_index)
     }
 
+    /// Returns an exclusive reference to the row at `row_index`, or `None` if out of bounds.
+    ///
+    /// Direct mutation through this reference bypasses schema validation.
+    /// Use [`set_cell`][Table::set_cell] or [`add_row`][Table::add_row] for
+    /// validated writes.
     pub fn row_mut(&mut self, row_index: usize) -> Option<&mut RecordValue> {
         self.inner.row_mut(row_index)
     }
 
+    /// Returns a reference to the value at `(row_index, column)`, or `None` if absent.
+    ///
+    /// Returns `None` both when `row_index` is out of bounds and when the
+    /// column is simply absent from the row. Use [`get_scalar_cell`][Table::get_scalar_cell]
+    /// or [`get_array_cell`][Table::get_array_cell] for type-checked access with
+    /// descriptive errors.
     pub fn cell(&self, row_index: usize, column: &str) -> Option<&Value> {
         self.row(row_index).and_then(|row| row.get(column))
     }
 
+    /// Returns an iterator over every cell in `column`, covering all rows.
+    ///
+    /// This is a shorthand for `get_column_range(column, RowRange::new(0, row_count()))`.
+    /// Returns [`TableError::SchemaColumnUnknown`] if a schema is attached and
+    /// `column` is not declared in it.
     pub fn get_column<'a>(&'a self, column: &'a str) -> Result<ColumnCellIter<'a>, TableError> {
         self.get_column_range(column, RowRange::new(0, self.row_count()))
     }
 
+    /// Returns an iterator over the cells in `column` within `row_range`.
+    ///
+    /// The iterator borrows the table's row data and yields one
+    /// [`ColumnCellRef`] per selected row. Returns [`TableError`] if the
+    /// column is unknown or the range is invalid.
     pub fn get_column_range<'a>(
         &'a self,
         column: &'a str,
@@ -412,6 +652,14 @@ impl Table {
         })
     }
 
+    /// Returns the record value at `(row_index, column)`.
+    ///
+    /// When a schema is attached and the column is declared as a record column,
+    /// a missing cell is treated as an empty [`RecordValue`]. Without a schema,
+    /// an absent cell returns [`TableError::ColumnNotFound`].
+    ///
+    /// Returns [`TableError::SchemaColumnNotRecord`] if the schema declares the
+    /// column with a non-record type.
     pub fn record_cell(&self, row_index: usize, column: &str) -> Result<RecordValue, TableError> {
         self.require_row(row_index)?;
         if let Some(schema) = self.schema() {
@@ -453,6 +701,10 @@ impl Table {
         }
     }
 
+    /// Writes a record value to `(row_index, column)`.
+    ///
+    /// This is a convenience wrapper around [`set_cell`][Table::set_cell] that
+    /// wraps `value` in [`Value::Record`].
     pub fn set_record_cell(
         &mut self,
         row_index: usize,
@@ -462,6 +714,9 @@ impl Table {
         self.set_cell(row_index, column, Value::Record(value))
     }
 
+    /// Returns an iterator over every record cell in `column`, covering all rows.
+    ///
+    /// Shorthand for `get_record_column_range(column, RowRange::new(0, row_count()))`.
     pub fn get_record_column<'a>(
         &'a self,
         column: &'a str,
@@ -469,6 +724,12 @@ impl Table {
         self.get_record_column_range(column, RowRange::new(0, self.row_count()))
     }
 
+    /// Returns an iterator over the record cells in `column` within `row_range`.
+    ///
+    /// Each item is a [`RecordColumnCell`] whose `value` is always populated:
+    /// absent cells are defaulted to an empty [`RecordValue`] when the schema
+    /// permits it. Returns [`TableError`] if the column is unknown, not a
+    /// record column, or a cell has the wrong type.
     pub fn get_record_column_range<'a>(
         &'a self,
         column: &'a str,
@@ -524,6 +785,11 @@ impl Table {
         })
     }
 
+    /// Writes values from an iterator into `column` for all rows.
+    ///
+    /// Shorthand for `put_column_range(column, RowRange::new(0, row_count()), values)`.
+    /// Returns the number of cells written, or [`TableError`] if the value
+    /// count does not match the row count.
     pub fn put_column<I>(&mut self, column: &str, values: I) -> Result<usize, TableError>
     where
         I: IntoIterator<Item = Value>,
@@ -531,6 +797,12 @@ impl Table {
         self.put_column_range(column, RowRange::new(0, self.row_count()), values)
     }
 
+    /// Writes values from an iterator into `column` for the rows in `row_range`.
+    ///
+    /// The iterator must produce exactly as many values as there are rows in
+    /// `row_range`; otherwise [`TableError::ColumnWriteTooFewValues`] or
+    /// [`TableError::ColumnWriteTooManyValues`] is returned. Returns the
+    /// number of cells written on success.
     pub fn put_column_range<I>(
         &mut self,
         column: &str,
@@ -560,6 +832,12 @@ impl Table {
         Ok(provided)
     }
 
+    /// Returns `true` if the cell at `(row_index, column)` is considered defined.
+    ///
+    /// A cell is defined if a value is present in the row. For record columns
+    /// with a schema, a missing cell is still considered defined because it
+    /// defaults to an empty record. Returns [`TableError`] if `row_index` is
+    /// out of bounds or the column is unknown per the schema.
     pub fn is_cell_defined(&self, row_index: usize, column: &str) -> Result<bool, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
@@ -577,6 +855,10 @@ impl Table {
         Ok(false)
     }
 
+    /// Returns the shape of the array at `(row_index, column)`, or `None` if absent.
+    ///
+    /// Returns [`TableError::ColumnTypeMismatch`] if the cell is present but
+    /// is not an array value.
     pub fn array_shape(
         &self,
         row_index: usize,
@@ -596,6 +878,15 @@ impl Table {
         }
     }
 
+    /// Writes `value` to the cell at `(row_index, column)`.
+    ///
+    /// When a schema is attached the value is validated against the column
+    /// schema before writing; new column names are allowed only if they are
+    /// declared in the schema. Without a schema the column must already exist
+    /// in the row (use [`add_row`][Table::add_row] to populate new rows first).
+    ///
+    /// Returns [`TableError`] if the row is out of bounds, the column is
+    /// unknown per the schema, or the value violates the column type/shape.
     pub fn set_cell(
         &mut self,
         row_index: usize,
@@ -714,18 +1005,31 @@ impl Table {
         }
     }
 
+    /// Returns the table-level keyword record.
+    ///
+    /// Keywords are arbitrary key/value pairs attached to the table as a whole.
+    /// They correspond to the `TableRecord` stored in C++ casacore's `Table`
+    /// object and are persisted alongside the row data.
     pub fn keywords(&self) -> &RecordValue {
         self.inner.keywords()
     }
 
+    /// Returns a mutable reference to the table-level keyword record.
+    ///
+    /// Use this to insert or update table-level keywords before saving.
     pub fn keywords_mut(&mut self) -> &mut RecordValue {
         self.inner.keywords_mut()
     }
 
+    /// Returns the keyword record for `column`, or `None` if no keywords have been set.
+    ///
+    /// Per-column keywords correspond to the `TableRecord` stored in C++
+    /// casacore's `ROTableColumn::keywordSet()`.
     pub fn column_keywords(&self, column: &str) -> Option<&RecordValue> {
         self.inner.column_keywords(column)
     }
 
+    /// Sets the keyword record for `column`, replacing any existing keywords.
     pub fn set_column_keywords(&mut self, column: impl Into<String>, keywords: RecordValue) {
         self.inner.set_column_keywords(column.into(), keywords);
     }
