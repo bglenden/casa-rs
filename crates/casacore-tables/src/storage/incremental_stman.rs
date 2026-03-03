@@ -665,9 +665,7 @@ fn read_ism_string(
             pos += 4;
 
             let s = String::from_utf8(data[pos..pos + str_len].to_vec())
-                .map_err(|e| {
-                    StorageError::FormatMismatch(format!("ISM string not UTF-8: {e}"))
-                })?;
+                .map_err(|e| StorageError::FormatMismatch(format!("ISM string not UTF-8: {e}")))?;
             pos += str_len;
             strings.push(s);
         }
@@ -1143,9 +1141,10 @@ fn values_to_column_raw_array(
                 if let Value::Array(ArrayValue::Complex32(arr)) = v {
                     flat.extend(arr.t().iter());
                 } else {
-                    flat.extend(
-                        std::iter::repeat_n(casacore_types::Complex32::new(0.0, 0.0), nrelem),
-                    );
+                    flat.extend(std::iter::repeat_n(
+                        casacore_types::Complex32::new(0.0, 0.0),
+                        nrelem,
+                    ));
                 }
             }
             Ok(ColumnRawData::Complex32(flat))
@@ -1156,9 +1155,10 @@ fn values_to_column_raw_array(
                 if let Value::Array(ArrayValue::Complex64(arr)) = v {
                     flat.extend(arr.t().iter());
                 } else {
-                    flat.extend(
-                        std::iter::repeat_n(casacore_types::Complex64::new(0.0, 0.0), nrelem),
-                    );
+                    flat.extend(std::iter::repeat_n(
+                        casacore_types::Complex64::new(0.0, 0.0),
+                        nrelem,
+                    ));
                 }
             }
             Ok(ColumnRawData::Complex64(flat))

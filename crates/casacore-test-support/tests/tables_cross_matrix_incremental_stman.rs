@@ -5,7 +5,9 @@ use casacore_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
     run_table_cross_matrix,
 };
-use casacore_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casacore_types::{
+    Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
 
 fn ism_scalar_primitives_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
@@ -197,6 +199,75 @@ fn ism_all_numeric_scalars_fixture() -> TableFixture {
 fn ism_all_numeric_scalars_rr() {
     let fixture = ism_all_numeric_scalars_fixture();
     assert_matrix_results(&run_table_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
+}
+
+// Complex scalar 2x2 cross-matrix (Complex32 + Complex64).
+
+fn ism_complex_scalars_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("col_c32", PrimitiveType::Complex32),
+        ColumnSchema::scalar("col_c64", PrimitiveType::Complex64),
+    ])
+    .expect("schema");
+
+    let rows = vec![
+        RecordValue::new(vec![
+            RecordField::new(
+                "col_c32",
+                Value::Scalar(ScalarValue::Complex32(Complex32::new(1.0, 2.0))),
+            ),
+            RecordField::new(
+                "col_c64",
+                Value::Scalar(ScalarValue::Complex64(Complex64::new(3.0, 4.0))),
+            ),
+        ]),
+        RecordValue::new(vec![
+            RecordField::new(
+                "col_c32",
+                Value::Scalar(ScalarValue::Complex32(Complex32::new(0.0, 0.0))),
+            ),
+            RecordField::new(
+                "col_c64",
+                Value::Scalar(ScalarValue::Complex64(Complex64::new(0.0, 0.0))),
+            ),
+        ]),
+        RecordValue::new(vec![
+            RecordField::new(
+                "col_c32",
+                Value::Scalar(ScalarValue::Complex32(Complex32::new(-5.5, 7.25))),
+            ),
+            RecordField::new(
+                "col_c64",
+                Value::Scalar(ScalarValue::Complex64(Complex64::new(-1e10, 1e-10))),
+            ),
+        ]),
+    ];
+
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::IsmComplexScalars),
+    }
+}
+
+#[test]
+fn ism_complex_scalars_cross_matrix() {
+    let fixture = ism_complex_scalars_fixture();
+    assert_matrix_results(&run_full_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
+}
+
+#[test]
+fn ism_complex_scalars_endian_cross_matrix() {
+    let fixture = ism_complex_scalars_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
         &fixture,
         ManagerKind::IncrementalStMan,
     ));

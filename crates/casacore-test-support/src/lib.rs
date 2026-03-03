@@ -1212,6 +1212,14 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_table_write_ism_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ism_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
 
     fn casacore_cpp_aipsio_encode(
         primitive: u8,
@@ -1454,6 +1462,9 @@ pub enum CppTableFixture {
     /// 10 rows where values repeat across multiple consecutive rows, exercising
     /// the ISM delta-compression semantics.
     IsmSlowlyChanging,
+    /// ISM complex scalars: table with `col_c32` (Complex) and `col_c64`
+    /// (DComplex), 3 rows, stored with `IncrementalStMan`.
+    IsmComplexScalars,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1496,6 +1507,9 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             }
             CppTableFixture::IsmSlowlyChanging => {
                 cpp_table_write_ism_slowly_changing(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmComplexScalars => {
+                cpp_table_write_ism_complex_scalars(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -1568,6 +1582,9 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             }
             CppTableFixture::IsmSlowlyChanging => {
                 cpp_table_verify_ism_slowly_changing(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmComplexScalars => {
+                cpp_table_verify_ism_complex_scalars(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::ColumnsIndex => {
                 return Err(
