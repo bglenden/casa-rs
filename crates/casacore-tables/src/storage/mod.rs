@@ -19,7 +19,11 @@ use crate::schema::{SchemaError, TableSchema};
 
 use self::standard_stman::{read_ssm_file, write_ssm_file};
 use self::stman_aipsio::{StManColumnInfo, extract_row_value, read_stman_file, write_stman_file};
-use self::table_control::{TableDatContents, read_table_dat, write_table_dat};
+pub(crate) use self::table_control::RefTableDatContents;
+
+use self::table_control::{
+    TableDatContents, TableDatResult, read_table_dat_dispatch, write_ref_table_dat, write_table_dat,
+};
 
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
@@ -88,73 +92,10 @@ impl StorageManager for CompositeStorage {
             return Err(StorageError::MissingControlFile(control_path));
         }
 
-        let table_dat = read_table_dat(&control_path)?;
-        let schema = table_dat.to_table_schema()?;
-        let keywords = table_dat.table_desc.table_keywords.clone();
-        let column_keywords: HashMap<String, RecordValue> = table_dat
-            .table_desc
-            .columns
-            .iter()
-            .filter(|c| !c.keywords.fields().is_empty())
-            .map(|c| (c.col_name.clone(), c.keywords.clone()))
-            .collect();
-        let nrrow = table_dat.nrrow as usize;
-
-        let mut rows: Vec<RecordValue> = (0..nrrow).map(|_| RecordValue::default()).collect();
-
-        for dm in &table_dat.column_set.data_managers {
-            let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
-
-            // Collect column descriptors bound to this DM
-            let bound_cols: Vec<(usize, &_)> = table_dat
-                .column_set
-                .columns
-                .iter()
-                .enumerate()
-                .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
-                .collect();
-
-            match dm.type_name.as_str() {
-                "StManAipsIO" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
-                    }
-                    // StManAipsIO always uses canonical (big-endian) AipsIO.
-                    // C++ AipsIO::open(filename) hardcodes CanonicalIO.
-                    load_stman_aipsio_columns(
-                        &data_path,
-                        &table_dat.table_desc.columns,
-                        &bound_cols,
-                        &mut rows,
-                        nrrow,
-                        ByteOrder::BigEndian,
-                    )?;
-                }
-                "StandardStMan" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
-                    }
-                    load_ssm_columns(
-                        &data_path,
-                        &dm.data,
-                        &table_dat.table_desc.columns,
-                        &bound_cols,
-                        &mut rows,
-                        nrrow,
-                    )?;
-                }
-                other => {
-                    return Err(StorageError::UnsupportedDataManager(other.to_string()));
-                }
-            }
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => self.load_plain_table(table_path, &table_dat),
+            TableDatResult::Ref(ref_dat) => self.load_ref_table(table_path, &ref_dat),
         }
-
-        Ok(StorageSnapshot {
-            rows,
-            keywords,
-            column_keywords,
-            schema: Some(schema),
-        })
     }
 
     fn save(
@@ -240,6 +181,181 @@ impl StorageManager for CompositeStorage {
     }
 }
 
+impl CompositeStorage {
+    /// Load a PlainTable from table.dat contents and data files.
+    fn load_plain_table(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+    ) -> Result<StorageSnapshot, StorageError> {
+        let schema = table_dat.to_table_schema()?;
+        let keywords = table_dat.table_desc.table_keywords.clone();
+        let column_keywords: HashMap<String, RecordValue> = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .filter(|c| !c.keywords.fields().is_empty())
+            .map(|c| (c.col_name.clone(), c.keywords.clone()))
+            .collect();
+        let nrrow = table_dat.nrrow as usize;
+
+        let mut rows: Vec<RecordValue> = (0..nrrow).map(|_| RecordValue::default()).collect();
+
+        for dm in &table_dat.column_set.data_managers {
+            let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+
+            let bound_cols: Vec<(usize, &_)> = table_dat
+                .column_set
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+                .collect();
+
+            match dm.type_name.as_str() {
+                "StManAipsIO" => {
+                    if !data_path.is_file() {
+                        return Err(StorageError::MissingDataFile(data_path));
+                    }
+                    load_stman_aipsio_columns(
+                        &data_path,
+                        &table_dat.table_desc.columns,
+                        &bound_cols,
+                        &mut rows,
+                        nrrow,
+                        ByteOrder::BigEndian,
+                    )?;
+                }
+                "StandardStMan" => {
+                    if !data_path.is_file() {
+                        return Err(StorageError::MissingDataFile(data_path));
+                    }
+                    load_ssm_columns(
+                        &data_path,
+                        &dm.data,
+                        &table_dat.table_desc.columns,
+                        &bound_cols,
+                        &mut rows,
+                        nrrow,
+                    )?;
+                }
+                other => {
+                    return Err(StorageError::UnsupportedDataManager(other.to_string()));
+                }
+            }
+        }
+
+        Ok(StorageSnapshot {
+            rows,
+            keywords,
+            column_keywords,
+            schema: Some(schema),
+        })
+    }
+
+    /// Load a RefTable by opening the parent and extracting referenced rows.
+    fn load_ref_table(
+        &self,
+        table_path: &Path,
+        ref_dat: &RefTableDatContents,
+    ) -> Result<StorageSnapshot, StorageError> {
+        // Resolve parent path using C++ addDirectory convention:
+        //  - Leading "./" means: take parent directory of ref table, then append
+        //  - Leading "././" means: the path is inside the ref table directory
+        //  - Otherwise: use as-is (absolute or plain relative)
+        let parent_path = add_directory(&ref_dat.parent_relative_path, table_path)?;
+
+        // Recursively load the parent table.
+        let parent = self.load(&parent_path)?;
+
+        // Validate that the parent hasn't shrunk.
+        if ref_dat.parent_nrrow > parent.rows.len() as u64 {
+            return Err(StorageError::FormatMismatch(format!(
+                "parent table has {} rows but RefTable expects at least {}",
+                parent.rows.len(),
+                ref_dat.parent_nrrow
+            )));
+        }
+
+        // Extract referenced rows.
+        let mut rows = Vec::with_capacity(ref_dat.row_map.len());
+        for &parent_row in &ref_dat.row_map {
+            let idx = parent_row as usize;
+            if idx >= parent.rows.len() {
+                return Err(StorageError::FormatMismatch(format!(
+                    "RefTable references parent row {idx} but parent has {} rows",
+                    parent.rows.len()
+                )));
+            }
+            // Apply column projection if the view uses a subset of columns.
+            if ref_dat.column_names.len() < parent.rows[idx].fields().len() {
+                let mut projected = RecordValue::default();
+                for view_col in &ref_dat.column_names {
+                    // Resolve view column name to parent column name.
+                    let parent_col = ref_dat
+                        .column_name_map
+                        .iter()
+                        .find(|(v, _)| v == view_col)
+                        .map(|(_, p)| p.as_str())
+                        .unwrap_or(view_col.as_str());
+                    if let Some(val) = parent.rows[idx].get(parent_col) {
+                        projected.push(RecordField::new(view_col.clone(), val.clone()));
+                    }
+                }
+                rows.push(projected);
+            } else {
+                rows.push(parent.rows[idx].clone());
+            }
+        }
+
+        // Build projected schema if applicable.
+        let schema = parent.schema.and_then(|s| {
+            if ref_dat.column_names.len() < s.columns().len() {
+                let cols: Vec<_> = ref_dat
+                    .column_names
+                    .iter()
+                    .filter_map(|name| {
+                        let parent_name = ref_dat
+                            .column_name_map
+                            .iter()
+                            .find(|(v, _)| v == name)
+                            .map(|(_, p)| p.as_str())
+                            .unwrap_or(name.as_str());
+                        s.columns()
+                            .iter()
+                            .find(|c| c.name() == parent_name)
+                            .cloned()
+                    })
+                    .collect();
+                crate::schema::TableSchema::new(cols).ok()
+            } else {
+                Some(s)
+            }
+        });
+
+        Ok(StorageSnapshot {
+            rows,
+            keywords: parent.keywords,
+            column_keywords: parent.column_keywords,
+            schema,
+        })
+    }
+
+    /// Save a RefTable to disk (table.dat only, no data files).
+    pub(crate) fn save_ref_table(
+        &self,
+        table_path: &Path,
+        contents: &RefTableDatContents,
+    ) -> Result<(), StorageError> {
+        fs::create_dir_all(table_path)?;
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        write_ref_table_dat(&control_path, contents)?;
+        let info_path = table_path.join(TABLE_INFO_FILE);
+        fs::write(&info_path, "Type = \nSubType = \n")?;
+        Ok(())
+    }
+}
+
 /// Load columns from a StManAipsIO data file into row records.
 fn load_stman_aipsio_columns(
     data_path: &Path,
@@ -316,4 +432,47 @@ fn load_ssm_columns(
     }
 
     Ok(())
+}
+
+/// Resolve a stored relative path using the C++ `Path::addDirectory` convention.
+///
+/// - `"./name"` → `parent_dir(ref_table_path) / name`
+/// - `"././name"` → `ref_table_path / name`
+/// - absolute or plain → used as-is
+fn add_directory(relative: &str, ref_table_path: &Path) -> Result<PathBuf, StorageError> {
+    let mut name = relative;
+    let mut stripped_count = 0usize;
+
+    // Strip leading "./" segments, counting how many were removed.
+    while name.len() >= 2 && name.starts_with("./") {
+        name = &name[2..];
+        stripped_count += 1;
+    }
+
+    if stripped_count == 0 {
+        // No "./" prefix — use as-is (absolute or plain relative).
+        let p = PathBuf::from(relative);
+        if p.is_absolute() {
+            return Ok(p);
+        }
+        // Plain relative: resolve relative to ref table's parent directory.
+        return Ok(ref_table_path
+            .parent()
+            .unwrap_or(ref_table_path)
+            .join(relative));
+    }
+
+    if stripped_count == 1 {
+        // "./" was removed → add parent directory of ref_table_path.
+        let dir = ref_table_path.parent().ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "cannot get parent directory of '{}'",
+                ref_table_path.display()
+            ))
+        })?;
+        return Ok(dir.join(name));
+    }
+
+    // "././" or more → add the ref table path itself (subtable inside it).
+    Ok(ref_table_path.join(name))
 }

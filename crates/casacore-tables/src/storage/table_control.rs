@@ -17,6 +17,33 @@ use super::data_type::{
 // Parsed structures
 // ---------------------------------------------------------------------------
 
+/// Result of reading table.dat — dispatches on the table type marker.
+#[derive(Debug, Clone)]
+pub(crate) enum TableDatResult {
+    Plain(TableDatContents),
+    Ref(RefTableDatContents),
+}
+
+/// Contents of a RefTable's table.dat (no TableDesc/ColumnSet — just
+/// the parent path, column name map, and row number vector).
+#[derive(Debug, Clone)]
+pub(crate) struct RefTableDatContents {
+    pub nrrow: u64,
+    pub big_endian: bool,
+    /// Relative path from this table's directory to the root (parent) table.
+    pub parent_relative_path: String,
+    /// Column name mapping: (view_name, parent_name) pairs.
+    pub column_name_map: Vec<(String, String)>,
+    /// Ordered column names in this view.
+    pub column_names: Vec<String>,
+    /// Row count of the parent table at the time this RefTable was saved.
+    pub parent_nrrow: u64,
+    /// True if row numbers are in ascending order.
+    pub row_order: bool,
+    /// Maps RefTable row i → parent row row_map[i].
+    pub row_map: Vec<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TableDatContents {
     pub nrrow: u64,
@@ -80,7 +107,8 @@ pub(crate) struct PlainColumnEntry {
 // Read path
 // ---------------------------------------------------------------------------
 
-pub(crate) fn read_table_dat(path: &Path) -> Result<TableDatContents, StorageError> {
+/// Read table.dat and dispatch based on the table type marker.
+pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, StorageError> {
     let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
     let table_version = io.getstart("Table")?;
 
@@ -93,21 +121,142 @@ pub(crate) fn read_table_dat(path: &Path) -> Result<TableDatContents, StorageErr
     let format = io.get_u32()?;
     let big_endian = format == 0;
 
-    let _table_type = io.get_string()?; // "PlainTable"
+    let table_type = io.get_string()?;
 
-    let table_desc = read_table_desc(&mut io)?;
-    let ncol = table_desc.columns.len();
-    let col_is_array: Vec<bool> = table_desc.columns.iter().map(|c| c.is_array).collect();
-    let column_set = read_column_set(&mut io, table_version, ncol, &col_is_array)?;
+    match table_type.as_str() {
+        "PlainTable" => {
+            let table_desc = read_table_desc(&mut io)?;
+            let ncol = table_desc.columns.len();
+            let col_is_array: Vec<bool> = table_desc.columns.iter().map(|c| c.is_array).collect();
+            let column_set = read_column_set(&mut io, table_version, ncol, &col_is_array)?;
+
+            io.getend()?;
+            io.close()?;
+
+            Ok(TableDatResult::Plain(TableDatContents {
+                nrrow,
+                big_endian,
+                table_desc,
+                column_set,
+            }))
+        }
+        "RefTable" => {
+            let ref_contents = read_ref_table_payload(&mut io, nrrow, big_endian)?;
+            io.getend()?;
+            io.close()?;
+            Ok(TableDatResult::Ref(ref_contents))
+        }
+        other => Err(StorageError::FormatMismatch(format!(
+            "unsupported table type: {other}"
+        ))),
+    }
+}
+
+/// Read table.dat assuming it contains a PlainTable (backward-compat wrapper).
+pub(crate) fn read_table_dat(path: &Path) -> Result<TableDatContents, StorageError> {
+    match read_table_dat_dispatch(path)? {
+        TableDatResult::Plain(contents) => Ok(contents),
+        TableDatResult::Ref(_) => Err(StorageError::FormatMismatch(
+            "expected PlainTable but found RefTable".to_string(),
+        )),
+    }
+}
+
+/// Read the AipsIO "RefTable" object payload from inside the "Table" envelope.
+fn read_ref_table_payload(
+    io: &mut AipsIo,
+    nrrow: u64,
+    big_endian: bool,
+) -> Result<RefTableDatContents, StorageError> {
+    let version = io.getstart("RefTable")?;
+    if version > 3 {
+        return Err(StorageError::FormatMismatch(format!(
+            "unsupported RefTable version: {version}"
+        )));
+    }
+
+    // Parent table relative path.
+    let parent_relative_path = io.get_string()?;
+
+    // Column name map: C++ serializes std::map<String, String> as a
+    // "SimpleOrderedMap" AipsIO object with a default value, count, old incr,
+    // then (key, value) pairs.
+    let _som_version = io.getstart("SimpleOrderedMap")?;
+    let _default_value = io.get_string()?; // old default value (unused)
+    let map_count = io.get_u32()? as usize;
+    let _old_incr = io.get_u32()?; // old increment (unused)
+    let mut column_name_map = Vec::with_capacity(map_count);
+    for _ in 0..map_count {
+        let view_name = io.get_string()?;
+        let parent_name = io.get_string()?;
+        column_name_map.push((view_name, parent_name));
+    }
+    io.getend()?;
+
+    // Column names (version > 1 only).
+    // C++ writes Vector<String> as an "Array" AipsIO object (version 3):
+    //   ndim(u32), shape[ndim](u32...), count(u32), then strings.
+    let column_names = if version > 1 {
+        let _array_version = io.getstart("Array")?;
+        let ndim = io.get_u32()?;
+        let mut _shape = Vec::with_capacity(ndim as usize);
+        for _ in 0..ndim {
+            _shape.push(io.get_u32()?);
+        }
+        let n = io.get_u32()? as usize;
+        let mut names = Vec::with_capacity(n);
+        for _ in 0..n {
+            names.push(io.get_string()?);
+        }
+        io.getend()?;
+        names
+    } else {
+        // Version 1: derive from map keys.
+        column_name_map.iter().map(|(k, _)| k.clone()).collect()
+    };
+
+    // Parent row count and row-order flag.
+    let (parent_nrrow, row_order, ref_nrrow) = if version > 2 {
+        let pnr = io.get_u64()?;
+        let ro = io.get_bool()?;
+        let rnr = io.get_u64()?;
+        (pnr, ro, rnr)
+    } else {
+        let pnr = io.get_u32()? as u64;
+        let ro = io.get_bool()?;
+        let rnr = io.get_u32()? as u64;
+        (pnr, ro, rnr)
+    };
+
+    // Row number vector (chunked at 2^20 per read, no count prefix).
+    let max_chunk: u64 = 1 << 20;
+    let mut row_map = vec![0u64; ref_nrrow as usize];
+    let mut done: u64 = 0;
+    while done < ref_nrrow {
+        let todo = std::cmp::min(ref_nrrow - done, max_chunk) as usize;
+        if version > 2 {
+            io.get_u64_into(&mut row_map[done as usize..done as usize + todo])?;
+        } else {
+            let mut buf32 = vec![0u32; todo];
+            io.get_u32_into(&mut buf32)?;
+            for (i, &v) in buf32.iter().enumerate() {
+                row_map[done as usize + i] = v as u64;
+            }
+        }
+        done += todo as u64;
+    }
 
     io.getend()?;
-    io.close()?;
 
-    Ok(TableDatContents {
+    Ok(RefTableDatContents {
         nrrow,
         big_endian,
-        table_desc,
-        column_set,
+        parent_relative_path,
+        column_name_map,
+        column_names,
+        parent_nrrow,
+        row_order,
+        row_map,
     })
 }
 
@@ -464,6 +613,78 @@ pub(crate) fn write_table_dat(
     write_column_set(&mut io, contents)?;
 
     io.putend()?;
+    io.close()?;
+    Ok(())
+}
+
+/// Write a RefTable table.dat file.
+pub(crate) fn write_ref_table_dat(
+    path: &Path,
+    contents: &RefTableDatContents,
+) -> Result<(), StorageError> {
+    let mut io = AipsIo::open(path, AipsOpenOption::New)?;
+
+    // Table envelope — version 2 (nrrow as u32).
+    io.putstart("Table", 2)?;
+    io.put_u32(contents.nrrow as u32)?;
+    io.put_u32(if contents.big_endian { 0 } else { 1 })?;
+    io.put_string("RefTable")?;
+
+    // RefTable payload — version 2 (32-bit row numbers).
+    io.putstart("RefTable", 2)?;
+
+    // Parent table relative path.
+    io.put_string(&contents.parent_relative_path)?;
+
+    // Column name map: C++ serializes std::map<String, String> as a
+    // "SimpleOrderedMap" AipsIO object.
+    io.putstart("SimpleOrderedMap", 1)?;
+    io.put_string("")?; // old default value (unused)
+    io.put_u32(contents.column_name_map.len() as u32)?;
+    io.put_u32(1)?; // old increment (unused)
+    for (view_name, parent_name) in &contents.column_name_map {
+        io.put_string(view_name)?;
+        io.put_string(parent_name)?;
+    }
+    io.putend()?;
+
+    // Column names (version > 1): C++ writes as an "Array" AipsIO object (v3).
+    // Format: ndim(u32), shape[ndim](u32...), count(u32), then strings.
+    io.putstart("Array", 3)?;
+    io.put_u32(1)?; // ndim = 1 (Vector)
+    io.put_u32(contents.column_names.len() as u32)?; // shape[0]
+    io.put_u32(contents.column_names.len() as u32)?; // element count
+    for name in &contents.column_names {
+        io.put_string(name)?;
+    }
+    io.putend()?;
+
+    // Parent row count at save time.
+    io.put_u32(contents.parent_nrrow as u32)?;
+
+    // Row order flag.
+    io.put_bool(contents.row_order)?;
+
+    // This RefTable's row count.
+    io.put_u32(contents.nrrow as u32)?;
+
+    // Row number vector (chunked at 2^20, no count prefix).
+    let max_chunk: usize = 1 << 20;
+    let mut done: usize = 0;
+    let total = contents.row_map.len();
+    while done < total {
+        let todo = std::cmp::min(total - done, max_chunk);
+        let chunk32: Vec<u32> = contents.row_map[done..done + todo]
+            .iter()
+            .map(|&r| r as u32)
+            .collect();
+        io.put_u32_slice(&chunk32, false)?;
+        done += todo;
+    }
+
+    io.putend()?; // RefTable
+
+    io.putend()?; // Table
     io.close()?;
     Ok(())
 }

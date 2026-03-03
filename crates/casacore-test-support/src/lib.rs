@@ -1149,6 +1149,14 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_table_write_ref_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ref_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
 
     fn casacore_cpp_aipsio_encode(
@@ -1364,6 +1372,10 @@ pub enum CppTableFixture {
     /// Lock interop: table with (id: Int, name: String), created with
     /// PermanentLocking to produce a `table.lock` file with sync data.
     LockFile,
+    /// RefTable interop: parent table with 3 rows (id: Int, name: String)
+    /// and a RefTable selecting rows 0 and 2. The path argument is a
+    /// directory containing `parent.tbl/` and `ref.tbl/`.
+    RefTable,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1390,6 +1402,7 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
                 cpp_table_write_ssm_keywords(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::LockFile => cpp_table_write_with_lock(c_path.as_ptr(), &mut error),
+            CppTableFixture::RefTable => cpp_table_write_ref_table(c_path.as_ptr(), &mut error),
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
             | CppTableFixture::MutationAddedColumn => {
@@ -1448,6 +1461,7 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
                 cpp_table_verify_mutation_added_column(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::LockFile => cpp_table_verify_with_lock(c_path.as_ptr(), &mut error),
+            CppTableFixture::RefTable => cpp_table_verify_ref_table(c_path.as_ptr(), &mut error),
         }
     };
 

@@ -49,6 +49,7 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     appendln(&mut out, "");
     demo_column_iteration(&mut out)?;
     demo_schema_mutation(&mut out)?;
+    demo_ref_tables(&mut out)?;
     #[cfg(unix)]
     demo_locking(&mut out)?;
 
@@ -406,6 +407,83 @@ fn demo_schema_mutation(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Reference tables (views) ──────────────────────────────────────────
+
+fn demo_ref_tables(out: &mut String) -> Result<(), TableError> {
+    appendln(out, "--- Reference tables ---");
+
+    let mut table = build_demo_table()?;
+
+    // select_rows: pick specific rows by index.
+    let view = table.select_rows(&[0, 2, 4])?;
+    appendln(
+        out,
+        &format!("select_rows([0,2,4]): {} rows", view.row_count()),
+    );
+
+    // Read through the view.
+    let ab = view.cell(0, "ab")?;
+    appendln(out, &format!("  view row 0, ab = {ab:?}"));
+    let ab = view.cell(1, "ab")?;
+    appendln(out, &format!("  view row 1, ab = {ab:?}"));
+    drop(view);
+
+    // select_columns: pick specific columns.
+    let view = table.select_columns(&["ab", "af"])?;
+    appendln(
+        out,
+        &format!(
+            "select_columns([\"ab\",\"af\"]): {} cols, {} rows",
+            view.column_names().len(),
+            view.row_count()
+        ),
+    );
+    drop(view);
+
+    // select: filter rows with a predicate.
+    let view = table.select(|row| {
+        row.get("ab")
+            .map(|v| matches!(v, Value::Scalar(ScalarValue::Int32(i)) if *i >= 5))
+            .unwrap_or(false)
+    });
+    appendln(out, &format!("select(ab >= 5): {} rows", view.row_count()));
+    drop(view);
+
+    // Write-through: modify parent via view.
+    {
+        let mut view = table.select_rows(&[0])?;
+        view.set_cell(
+            0,
+            "af",
+            Value::Scalar(ScalarValue::String("modified".into())),
+        )?;
+    }
+    let af = table.cell(0, "af").unwrap();
+    appendln(out, &format!("write-through: row 0 af = {af:?}"));
+
+    // Save and reopen round-trip.
+    let dir = temp_dir("tTable_demo_reftable");
+    let parent_path = dir.join("parent.tbl");
+    let ref_path = dir.join("ref.tbl");
+
+    table.save(TableOptions::new(&parent_path))?;
+    table.set_path(&parent_path);
+
+    let view = table.select_rows(&[1, 3, 5])?;
+    view.save(TableOptions::new(&ref_path))?;
+    drop(view);
+
+    let reopened = Table::open(TableOptions::new(&ref_path))?;
+    appendln(
+        out,
+        &format!("save+reopen ref table: {} rows", reopened.row_count()),
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Table locking ──────────────────────────────────────────────────────
 
 #[cfg(unix)]
@@ -536,6 +614,7 @@ mod tests {
         assert!(output.contains("--- StandardStMan-LE round-trip"));
         assert!(output.contains("--- Column iteration patterns"));
         assert!(output.contains("--- Schema mutation"));
+        assert!(output.contains("--- Reference tables"));
         #[cfg(unix)]
         assert!(output.contains("--- Table locking"));
         assert!(output.ends_with("end\n"));

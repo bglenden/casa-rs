@@ -16,7 +16,7 @@ that only the relevant wave needs to be in context during implementation.
 | 1 | [Endian support](wave-01-endian.md) | **DONE** | Full big/little/local endian read/write for all storage managers |
 | 2 | [Schema mutation & row ops](wave-02-schema-mutation.md) | **DONE** | Add/remove/rename columns, delete rows |
 | 3 | [Table locking](wave-03-locking.md) | **DONE** | File-based multi-process locking (`TableLock`) |
-| 4 | [Reference tables & selections](wave-04-ref-tables.md) | Not started | Row/column views without copying (`RefTable`) |
+| 4 | [Reference tables & selections](wave-04-ref-tables.md) | **DONE** | Row/column views without copying (`RefTable`) |
 | 5 | [Sorting & table iteration](wave-05-sorting.md) | Not started | Sort by key columns, grouped sub-table iteration |
 | 6 | [Table concatenation & copy](wave-06-concat-copy.md) | Not started | Virtual concatenation, deep copy with DM conversion |
 | 7 | [Column indexing](wave-07-indexing.md) | Not started | In-memory index for fast scalar column lookups |
@@ -115,3 +115,12 @@ Every wave must pass ALL of the following before commit/push:
 - **fcntl locks are per-process — use child processes for contention tests.**
   Two `Table` instances in one process share fcntl state and cannot contend.
   Use `std::process::Command` and a helper binary for real lock contention.
+
+- **C++ AipsIO wraps standard containers in object headers.** `std::map`
+  becomes `"SimpleOrderedMap"`, `Vector<T>` becomes `"Array"` (not `"Block"`).
+  Each has extra legacy fields. Always trace `operator<<`/`operator>>` in the
+  C++ source rather than guessing the wire format.
+
+- **C++ path conventions (`stripDirectory`/`addDirectory`) are not POSIX.**
+  They use `"./"` and `"././"` prefixes with specific semantics. Match these
+  conventions exactly for ref table path interop.

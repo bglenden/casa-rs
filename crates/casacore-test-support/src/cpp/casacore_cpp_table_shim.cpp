@@ -599,6 +599,77 @@ void verify_with_lock_impl(const std::string& path) {
         throw std::runtime_error("row 0 name mismatch: got '" + name + "'");
 }
 
+// ===== RefTable fixture =====
+// Parent table: 3 rows (id: Int, name: String).
+// RefTable selects rows 0 and 2.
+// The C++ write creates both parent.tbl and ref.tbl inside the given dir.
+// The C++ verify opens ref.tbl and checks row count and cell values.
+
+void write_ref_table_impl(const std::string& dir) {
+    // Create parent table at dir/parent.tbl
+    std::string parentPath = dir + "/parent.tbl";
+    {
+        casacore::TableDesc td("", casacore::TableDesc::Scratch);
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("id"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::String>("name"));
+
+        casacore::SetupNewTable setup(parentPath, td, casacore::Table::New);
+        casacore::Table parent(setup, 3);
+        casacore::ScalarColumn<casacore::Int> colId(parent, "id");
+        casacore::ScalarColumn<casacore::String> colName(parent, "name");
+
+        colId.put(0, 10);
+        colName.put(0, "alpha");
+        colId.put(1, 20);
+        colName.put(1, "beta");
+        colId.put(2, 30);
+        colName.put(2, "gamma");
+
+        parent.flush();
+    }
+
+    // Re-open parent to create a RefTable
+    casacore::Table parent(parentPath, casacore::Table::Old);
+
+    // Select rows 0 and 2
+    casacore::Vector<casacore::rownr_t> rows(2);
+    rows(0) = 0;
+    rows(1) = 2;
+
+    casacore::Table refTable = parent(rows);
+
+    // Save the RefTable
+    std::string refPath = dir + "/ref.tbl";
+    refTable.rename(refPath, casacore::Table::New);
+    refTable.flush();
+}
+
+void verify_ref_table_impl(const std::string& dir) {
+    std::string refPath = dir + "/ref.tbl";
+    casacore::Table table(refPath, casacore::Table::Old);
+
+    if (table.nrow() != 2)
+        throw std::runtime_error(
+            "expected 2 rows in ref table, got " + std::to_string(table.nrow()));
+
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+    casacore::ScalarColumn<casacore::String> colName(table, "name");
+
+    // Row 0 of the RefTable → parent row 0
+    if (colId(0) != 10)
+        throw std::runtime_error("ref row 0 id mismatch: got " + std::to_string(colId(0)));
+    casacore::String name0 = colName(0);
+    if (name0 != "alpha" && name0 != "from_rust_0")
+        throw std::runtime_error("ref row 0 name mismatch: got '" + name0 + "'");
+
+    // Row 1 of the RefTable → parent row 2
+    if (colId(1) != 30)
+        throw std::runtime_error("ref row 1 id mismatch: got " + std::to_string(colId(1)));
+    casacore::String name1 = colName(1);
+    if (name1 != "gamma" && name1 != "from_rust_2")
+        throw std::runtime_error("ref row 1 name mismatch: got '" + name1 + "'");
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -824,6 +895,32 @@ int32_t cpp_table_verify_with_lock(const char* path, char** out_error) {
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in verify_with_lock");
+        return -1;
+    }
+}
+
+int32_t cpp_table_write_ref_table(const char* path, char** out_error) {
+    try {
+        write_ref_table_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_ref_table");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_ref_table(const char* path, char** out_error) {
+    try {
+        verify_ref_table_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_ref_table");
         return -1;
     }
 }

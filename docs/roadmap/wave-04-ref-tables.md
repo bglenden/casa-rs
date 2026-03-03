@@ -28,3 +28,22 @@ This is the foundation for TaQL results and efficient data subsetting.
 - Modify through view, verify parent updated.
 - Save/reopen reference table.
 - 2×2: Rust creates RefTable → C++ reads; C++ creates RefTable → Rust reads.
+
+## Lessons learned
+
+- **C++ AipsIO serialization wraps containers in object headers.** `std::map`
+  serializes as `SimpleOrderedMap` with extra legacy fields (default value,
+  incr). `Vector<T>` serializes as `"Array"` with ndim/shape/count, not the
+  simpler `"Block"` format. Always check the actual `operator<<` / `operator>>`
+  implementations in the C++ source rather than assuming bare data.
+
+- **C++ path conventions are non-trivial.** `Path::stripDirectory` and
+  `Path::addDirectory` use a `"./"` / `"././"` prefix convention, not standard
+  POSIX relative paths. The `"./"` prefix signals "same parent directory as the
+  ref table", while `"././"` means "inside the ref table directory". Both sides
+  must use the same convention for interop to work.
+
+- **`Table::save()` takes `&self`, so it cannot set `source_path`.**
+  After saving an in-memory table, call `set_path()` explicitly before
+  creating a `RefTable` that will be saved to disk. Alternatively, re-open
+  the table (which sets `source_path` automatically).

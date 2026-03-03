@@ -27,6 +27,7 @@
 //! | Type | Role |
 //! |------|------|
 //! | [`Table`] | Create, query, and persist a table |
+//! | [`RefTable`] | A view over a parent table's rows and/or columns |
 //! | [`TableSchema`] | Declare column names, types, and array shapes |
 //! | [`ColumnSchema`] | Schema for a single column |
 //! | [`TableOptions`] | Bundle a filesystem path with a storage-manager choice |
@@ -50,6 +51,31 @@
 //! - [`DataManagerKind::StandardStMan`] — data is partitioned into
 //!   fixed-size buckets. This is the default storage manager in C++ casacore
 //!   and provides more efficient random access for large tables.
+//!
+//! # Reference tables (views)
+//!
+//! A [`RefTable`] is a lightweight view over a parent [`Table`], selecting
+//! specific rows and/or columns without copying data. All cell reads and
+//! writes pass through to the parent.
+//!
+//! ```rust
+//! # use casacore_tables::{Table, TableSchema, ColumnSchema};
+//! # use casacore_types::*;
+//! # let schema = TableSchema::new(vec![
+//! #     ColumnSchema::scalar("id", PrimitiveType::Int32),
+//! # ]).unwrap();
+//! # let mut table = Table::with_schema(schema);
+//! # table.add_row(RecordValue::new(vec![RecordField::new("id", Value::Scalar(ScalarValue::Int32(0)))])).unwrap();
+//! # table.add_row(RecordValue::new(vec![RecordField::new("id", Value::Scalar(ScalarValue::Int32(1)))])).unwrap();
+//! # table.add_row(RecordValue::new(vec![RecordField::new("id", Value::Scalar(ScalarValue::Int32(2)))])).unwrap();
+//! // Select rows by index, by column name, or by predicate:
+//! let view = table.select_rows(&[0, 2]).unwrap();
+//! assert_eq!(view.row_count(), 2);
+//! ```
+//!
+//! A `RefTable` can be [saved](RefTable::save) to disk in C++-compatible
+//! format. When reopened via [`Table::open`], the view is materialized
+//! (the parent is loaded and referenced rows extracted).
 //!
 //! # Table locking (Unix)
 //!
@@ -113,6 +139,7 @@
 //! cargo run -p casacore-tables --example t_table
 //! ```
 
+mod ref_table;
 mod schema;
 mod table;
 mod table_impl;
@@ -124,6 +151,7 @@ pub(crate) mod storage;
 pub mod demo;
 
 pub use lock::{LockMode, LockOptions, LockType};
+pub use ref_table::RefTable;
 pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };

@@ -463,6 +463,18 @@ pub enum TableError {
     /// A lock-file I/O error occurred.
     #[error("lock I/O error on \"{path}\": {message}")]
     LockIo { path: String, message: String },
+    /// A row index in a selection is out of range.
+    #[error("row index {index} out of range (table has {count} rows)")]
+    RowIndexOutOfRange { index: usize, count: usize },
+    /// A column name in a selection does not exist.
+    #[error("unknown column \"{name}\" in selection")]
+    UnknownColumn { name: String },
+    /// A reference table's parent could not be found.
+    #[error("parent table not found at \"{path}\": {message}")]
+    ParentTableNotFound { path: String, message: String },
+    /// A reference table requires the parent to have been saved to disk.
+    #[error("parent table has no disk path; save it first")]
+    ParentNotSaved,
 }
 
 impl From<crate::storage::StorageError> for TableError {
@@ -557,6 +569,8 @@ impl std::fmt::Debug for LockState {
 #[derive(Debug, Default)]
 pub struct Table {
     inner: TableImpl,
+    /// Filesystem path this table was last opened from or saved to.
+    source_path: Option<PathBuf>,
     #[cfg(unix)]
     lock_state: Option<LockState>,
 }
@@ -566,6 +580,7 @@ impl Table {
     pub fn new() -> Self {
         Self {
             inner: TableImpl::new(),
+            source_path: None,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -580,6 +595,7 @@ impl Table {
         inner.set_schema(Some(schema));
         Self {
             inner,
+            source_path: None,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -592,6 +608,7 @@ impl Table {
     pub fn from_rows(rows: Vec<RecordValue>) -> Self {
         Self {
             inner: TableImpl::from_rows(rows),
+            source_path: None,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -612,6 +629,7 @@ impl Table {
                 std::collections::HashMap::new(),
                 Some(schema),
             ),
+            source_path: None,
             #[cfg(unix)]
             lock_state: None,
         };
@@ -626,6 +644,10 @@ impl Table {
     /// against its schema (if one was persisted). Returns [`TableError::Storage`]
     /// if the directory cannot be read, or a schema error if the on-disk data
     /// violates the stored schema.
+    ///
+    /// If the on-disk table is a reference table (`RefTable` type marker), the
+    /// parent table is opened automatically and the referenced rows are
+    /// materialized into this table.
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
         let storage = CompositeStorage;
         let snapshot = storage.load(&options.path)?;
@@ -636,6 +658,7 @@ impl Table {
                 snapshot.column_keywords,
                 snapshot.schema,
             ),
+            source_path: Some(options.path.clone()),
             #[cfg(unix)]
             lock_state: None,
         };
@@ -668,6 +691,22 @@ impl Table {
             options.endian_format.is_big_endian(),
         )?;
         Ok(())
+    }
+
+    /// Returns the filesystem path this table was opened from or saved to,
+    /// if any. In-memory tables that have never been persisted return `None`.
+    pub fn path(&self) -> Option<&Path> {
+        self.source_path.as_deref()
+    }
+
+    /// Sets the source path for this table.
+    ///
+    /// Normally set automatically by [`open`](Table::open) and
+    /// [`save`](Table::save). You can call this explicitly before creating
+    /// a [`RefTable`](crate::RefTable) that saves to disk, if the table
+    /// was constructed in-memory but you want to establish a parent path.
+    pub fn set_path(&mut self, path: impl AsRef<Path>) {
+        self.source_path = Some(path.as_ref().to_path_buf());
     }
 
     /// Opens an existing table from disk with locking.
@@ -704,6 +743,7 @@ impl Table {
                 snapshot.column_keywords,
                 snapshot.schema,
             ),
+            source_path: Some(options.path.clone()),
             lock_state: None,
         };
         table.validate()?;
@@ -925,6 +965,41 @@ impl Table {
     #[cfg(unix)]
     pub fn lock_options(&self) -> Option<&LockOptions> {
         self.lock_state.as_ref().map(|s| &s.options)
+    }
+
+    // -----------------------------------------------------------------------
+    // Selection (RefTable creation)
+    // -----------------------------------------------------------------------
+
+    /// Creates a reference table containing only the specified rows.
+    ///
+    /// Row indices are validated against `row_count()`. The returned
+    /// [`RefTable`](crate::RefTable) borrows `self` mutably; drop it to
+    /// regain access to the parent.
+    ///
+    /// C++ equivalent: constructing a `RefTable` from a `Vector<rownr_t>`.
+    pub fn select_rows(&mut self, indices: &[usize]) -> Result<crate::RefTable<'_>, TableError> {
+        crate::RefTable::from_rows(self, indices.to_vec())
+    }
+
+    /// Creates a reference table containing only the named columns.
+    ///
+    /// All rows are included. Column names are validated against the schema.
+    ///
+    /// C++ equivalent: constructing a `RefTable` from a `Vector<String>`.
+    pub fn select_columns(&mut self, names: &[&str]) -> Result<crate::RefTable<'_>, TableError> {
+        crate::RefTable::from_columns(self, names)
+    }
+
+    /// Creates a reference table containing rows that satisfy `predicate`.
+    ///
+    /// Iterates all rows, calling `predicate` on each. Rows for which the
+    /// closure returns `true` are included in the view.
+    pub fn select<F>(&mut self, predicate: F) -> crate::RefTable<'_>
+    where
+        F: Fn(&RecordValue) -> bool,
+    {
+        crate::RefTable::from_predicate(self, predicate)
     }
 
     /// Returns the attached schema, if any.
