@@ -54,6 +54,7 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     demo_concat_and_copy(&mut out)?;
     #[cfg(unix)]
     demo_locking(&mut out)?;
+    demo_memory_tables(&mut out)?;
 
     appendln(&mut out, "end");
     Ok(out)
@@ -741,6 +742,99 @@ fn demo_locking(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Memory tables ──────────────────────────────────────────────────────
+
+fn demo_memory_tables(out: &mut String) -> Result<(), TableError> {
+    use crate::SortOrder;
+
+    // C++ (tMemoryTable.cc):
+    //   SetupNewTable aNewTab("tmtest", td, Table::New);
+    //   aTable = Table(aNewTab, Table::Memory, 10);
+
+    appendln(out, "--- Memory tables ---");
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("name", PrimitiveType::String),
+    ])?;
+
+    let mut mem = Table::with_schema_memory(schema);
+    for i in 0..5 {
+        mem.add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+            RecordField::new(
+                "name",
+                Value::Scalar(ScalarValue::String(format!("row_{i}"))),
+            ),
+        ]))?;
+    }
+    appendln(
+        out,
+        &format!(
+            "memory table: {} rows, kind={:?}",
+            mem.row_count(),
+            mem.table_kind()
+        ),
+    );
+    appendln(out, &format!("  is_memory={}", mem.is_memory()));
+
+    // Add keywords.
+    mem.keywords_mut().push(RecordField::new(
+        "origin",
+        Value::Scalar(ScalarValue::String("in-memory".into())),
+    ));
+
+    // Locking is a no-op.
+    #[cfg(unix)]
+    {
+        use crate::LockType;
+        appendln(
+            out,
+            &format!("  has_lock(Write)={}", mem.has_lock(LockType::Write)),
+        );
+        assert!(mem.lock(LockType::Write, 1)?);
+        mem.unlock()?;
+        appendln(out, "  lock/unlock succeeded (no-op)");
+    }
+
+    // Sort works on memory tables.
+    {
+        let sorted = mem.sort(&[("id", SortOrder::Descending)])?;
+        let first = sorted.cell(0, "id")?;
+        appendln(out, &format!("  sort(id DESC) first={first:?}"));
+    }
+
+    // Materialize to disk.
+    let dir = temp_dir("tTable_demo_memory");
+    mem.save(TableOptions::new(&dir))?;
+    let reopened = Table::open(TableOptions::new(&dir))?;
+    appendln(
+        out,
+        &format!(
+            "  save+reopen: {} rows, is_memory={}",
+            reopened.row_count(),
+            reopened.is_memory()
+        ),
+    );
+    let kw = reopened.keywords().get("origin");
+    appendln(out, &format!("  keyword origin={kw:?}"));
+
+    // Copy plain table to memory.
+    let mem2 = reopened.to_memory();
+    appendln(
+        out,
+        &format!(
+            "  to_memory: {} rows, is_memory={}",
+            mem2.row_count(),
+            mem2.is_memory()
+        ),
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn appendln(out: &mut String, line: &str) {
@@ -775,6 +869,7 @@ mod tests {
         assert!(output.contains("--- Table concatenation and copy"));
         #[cfg(unix)]
         assert!(output.contains("--- Table locking"));
+        assert!(output.contains("--- Memory tables"));
         assert!(output.ends_with("end\n"));
     }
 }

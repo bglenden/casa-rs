@@ -34,6 +34,7 @@
 //! | [`TableIterator`] | Iterate groups of rows by key columns |
 //! | [`TableSchema`] | Declare column names, types, and array shapes |
 //! | [`ColumnSchema`] | Schema for a single column |
+//! | [`TableKind`] | Distinguish plain (disk-backed) from memory (transient) tables |
 //! | [`TableOptions`] | Bundle a filesystem path with a storage-manager choice |
 //! | [`DataManagerKind`] | Choose between `StManAipsIO` and `StandardStMan` |
 //! | [`EndianFormat`] | Choose big-endian, little-endian, or host byte order |
@@ -144,6 +145,35 @@
 //! - **`AutoLocking`** — acquire before operations, release periodically.
 //! - **`NoLocking`** — no lock file (the default, for single-process use).
 //!
+//! # Memory tables
+//!
+//! A memory table ([`TableKind::Memory`]) holds all data in process memory
+//! and is deleted when dropped. Locking is a no-op (always writable).
+//! Memory tables support all the same operations as plain tables: row
+//! and column CRUD, keywords, sorting, selection, and grouped iteration.
+//!
+//! Use [`Table::new_memory`] or [`Table::with_schema_memory`] to create
+//! one. Call [`Table::save`] to materialize a memory table to disk
+//! (producing a regular plain table). Use [`Table::to_memory`] to create
+//! a transient copy of any existing table.
+//!
+//! ```rust
+//! use casacore_tables::{Table, TableSchema, ColumnSchema, TableKind};
+//! use casacore_types::*;
+//!
+//! let schema = TableSchema::new(vec![
+//!     ColumnSchema::scalar("id", PrimitiveType::Int32),
+//! ]).unwrap();
+//! let mut table = Table::with_schema_memory(schema);
+//! table.add_row(RecordValue::new(vec![
+//!     RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+//! ])).unwrap();
+//! assert!(table.is_memory());
+//! assert_eq!(table.row_count(), 1);
+//! ```
+//!
+//! C++ equivalent: `MemoryTable`, `MemoryStMan`.
+//!
 //! # Typical workflow
 //!
 //! ```rust,no_run
@@ -213,5 +243,6 @@ pub use schema::{
 pub use sorting::{TableGroup, TableIterator};
 pub use table::{
     ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    RecordColumnCell, RecordColumnIter, RowRange, SortOrder, Table, TableError, TableOptions,
+    RecordColumnCell, RecordColumnIter, RowRange, SortOrder, Table, TableError, TableKind,
+    TableOptions,
 };

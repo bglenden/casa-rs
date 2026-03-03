@@ -20,7 +20,7 @@ that only the relevant wave needs to be in context during implementation.
 | 5 | [Sorting & table iteration](wave-05-sorting.md) | **DONE** | Sort by key columns, grouped sub-table iteration |
 | 6 | [Table concatenation & copy](wave-06-concat-copy.md) | **DONE** | Virtual concatenation, deep copy with DM conversion |
 | 7 | [Column indexing](wave-07-indexing.md) | Not started | In-memory index for fast scalar column lookups |
-| 8 | [Memory tables](wave-08-memory-tables.md) | Not started | Non-persistent in-memory tables (`MemoryStMan`) |
+| 8 | [Memory tables](wave-08-memory-tables.md) | **DONE** | Non-persistent in-memory tables (`MemoryStMan`) |
 | 9 | [TaQL](wave-09-taql.md) | Not started | Table Query Language: SELECT, WHERE, JOIN, GROUP BY, etc. |
 | 10 | [Tiled storage managers](wave-10-tiled-stman.md) | Not started | Hypercube tiling for efficient N-D array access |
 | 11 | [Incremental storage manager](wave-11-incremental-stman.md) | Not started | Delta-compression for slowly-changing columns |
@@ -132,3 +132,8 @@ Every wave must pass ALL of the following before commit/push:
 - **Shared path helpers avoid duplication.** `strip_directory` and
   `add_directory` are needed by both `RefTable` and `ConcatTable`. Moving them
   to `storage/mod.rs` as `pub(crate)` prevents code duplication.
+
+- **Not every C++ class needs a Rust struct.** C++ `MemoryStMan` exists
+  because the columnar storage architecture requires a concrete `DataManager`
+  subclass. In Rust, `TableImpl` already stores everything in-memory as
+  `Vec<RecordValue>`, so a `TableKind` enum and thin API layer suffice.

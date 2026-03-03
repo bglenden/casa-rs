@@ -89,6 +89,36 @@ pub enum SortOrder {
     Descending,
 }
 
+/// The kind of table: plain (disk-backed) or memory (transient).
+///
+/// In C++ casacore this corresponds to `Table::TableType`. A
+/// [`Plain`](TableKind::Plain) table can be loaded from and saved to disk
+/// with any [`DataManagerKind`]. A [`Memory`](TableKind::Memory) table
+/// holds all data exclusively in process memory; it is deleted when
+/// dropped.
+///
+/// Memory tables can be materialized to disk via [`Table::save`], which
+/// writes a plain table that is byte-identical to one created directly.
+///
+/// # C++ equivalent
+///
+/// `Table::Plain` and `Table::Memory`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableKind {
+    /// A regular table, backed by (or destined for) disk storage.
+    #[default]
+    Plain,
+    /// A transient in-memory table.
+    ///
+    /// All data is lost when the table is dropped. Locking is a no-op:
+    /// [`has_lock`](Table::has_lock) always returns `true`, and
+    /// [`lock`](Table::lock) / [`unlock`](Table::unlock) succeed without
+    /// doing any I/O.
+    ///
+    /// C++ equivalent: `Table::Memory` / `MemoryTable`.
+    Memory,
+}
+
 /// Which data manager to use when writing table data.
 ///
 /// This choice is recorded in the table descriptor on disk so that C++ casacore
@@ -622,6 +652,8 @@ pub struct Table {
     inner: TableImpl,
     /// Filesystem path this table was last opened from or saved to.
     source_path: Option<PathBuf>,
+    /// Whether this is a plain (disk-backed) or memory (transient) table.
+    kind: TableKind,
     #[cfg(unix)]
     lock_state: Option<LockState>,
 }
@@ -632,6 +664,7 @@ impl Table {
         Self {
             inner: TableImpl::new(),
             source_path: None,
+            kind: TableKind::Plain,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -647,6 +680,7 @@ impl Table {
         Self {
             inner,
             source_path: None,
+            kind: TableKind::Plain,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -660,6 +694,7 @@ impl Table {
         Self {
             inner: TableImpl::from_rows(rows),
             source_path: None,
+            kind: TableKind::Plain,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -681,11 +716,133 @@ impl Table {
                 Some(schema),
             ),
             source_path: None,
+            kind: TableKind::Plain,
             #[cfg(unix)]
             lock_state: None,
         };
         table.validate()?;
         Ok(table)
+    }
+
+    // -----------------------------------------------------------------------
+    // Memory-table constructors
+    // -----------------------------------------------------------------------
+
+    /// Creates a new, empty memory table with no rows and no schema.
+    ///
+    /// The table is transient: all data is lost when it is dropped. Locking
+    /// operations are no-ops. Use [`save`](Table::save) to materialize the
+    /// data to disk as a plain table.
+    ///
+    /// C++ equivalent: constructing a `Table` with `Table::Memory`.
+    pub fn new_memory() -> Self {
+        Self {
+            inner: TableImpl::new(),
+            source_path: None,
+            kind: TableKind::Memory,
+            #[cfg(unix)]
+            lock_state: None,
+        }
+    }
+
+    /// Creates a new memory table with the given schema but no rows.
+    ///
+    /// Rows added via [`add_row`](Table::add_row) will be validated against
+    /// the schema. The table is transient: all data is lost when dropped.
+    ///
+    /// C++ equivalent: constructing a `Table` with `Table::Memory` and a
+    /// `SetupNewTable` containing a `TableDesc`.
+    pub fn with_schema_memory(schema: TableSchema) -> Self {
+        let mut inner = TableImpl::new();
+        inner.set_schema(Some(schema));
+        Self {
+            inner,
+            source_path: None,
+            kind: TableKind::Memory,
+            #[cfg(unix)]
+            lock_state: None,
+        }
+    }
+
+    /// Creates a memory table from pre-built rows without schema validation.
+    ///
+    /// The `Vec` is moved in directly. The table is transient.
+    pub fn from_rows_memory(rows: Vec<RecordValue>) -> Self {
+        Self {
+            inner: TableImpl::from_rows(rows),
+            source_path: None,
+            kind: TableKind::Memory,
+            #[cfg(unix)]
+            lock_state: None,
+        }
+    }
+
+    /// Creates a memory table from rows validated against a schema.
+    ///
+    /// Returns [`TableError`] if any row violates the schema. On success the
+    /// schema is stored and future mutations are validated. The table is
+    /// transient.
+    pub fn from_rows_with_schema_memory(
+        rows: Vec<RecordValue>,
+        schema: TableSchema,
+    ) -> Result<Self, TableError> {
+        let table = Self {
+            inner: TableImpl::with_rows_keywords_and_schema(
+                rows,
+                RecordValue::default(),
+                std::collections::HashMap::new(),
+                Some(schema),
+            ),
+            source_path: None,
+            kind: TableKind::Memory,
+            #[cfg(unix)]
+            lock_state: None,
+        };
+        table.validate()?;
+        Ok(table)
+    }
+
+    // -----------------------------------------------------------------------
+    // Table kind and memory conversion
+    // -----------------------------------------------------------------------
+
+    /// Returns the kind of this table (plain or memory).
+    ///
+    /// C++ equivalent: `Table::tableType()`.
+    pub fn table_kind(&self) -> TableKind {
+        self.kind
+    }
+
+    /// Returns `true` if this is a transient in-memory table.
+    ///
+    /// Equivalent to `self.table_kind() == TableKind::Memory`.
+    pub fn is_memory(&self) -> bool {
+        self.kind == TableKind::Memory
+    }
+
+    /// Creates an in-memory copy of this table.
+    ///
+    /// All rows, keywords, column keywords, and schema are cloned into a
+    /// new table with [`TableKind::Memory`]. The source path and lock state
+    /// are not copied.
+    ///
+    /// This can be called on any table (plain or memory). Calling it on a
+    /// memory table produces an independent clone.
+    ///
+    /// C++ equivalent: `Table::copyToMemoryTable`.
+    pub fn to_memory(&self) -> Self {
+        Self {
+            inner: TableImpl::with_rows_keywords_and_schema(
+                self.inner.rows().to_vec(),
+                self.inner.keywords().clone(),
+                self.inner.all_column_keywords().clone(),
+                self.inner.schema().cloned(),
+            ),
+            source_path: None,
+            kind: TableKind::Memory,
+            #[cfg(unix)]
+            lock_state: None,
+        }
     }
 
     /// Opens an existing table from disk.
@@ -710,6 +867,7 @@ impl Table {
                 snapshot.schema,
             ),
             source_path: Some(options.path.clone()),
+            kind: TableKind::Plain,
             #[cfg(unix)]
             lock_state: None,
         };
@@ -795,6 +953,7 @@ impl Table {
                 snapshot.schema,
             ),
             source_path: Some(options.path.clone()),
+            kind: TableKind::Plain,
             lock_state: None,
         };
         table.validate()?;
@@ -881,6 +1040,11 @@ impl Table {
     /// C++ equivalent: `Table::lock(type, nattempts)`.
     #[cfg(unix)]
     pub fn lock(&mut self, lock_type: LockType, nattempts: u32) -> Result<bool, TableError> {
+        // Memory tables always succeed — no file-based locking needed.
+        // C++ equivalent: MemoryTable::lock() returns True.
+        if self.kind == TableKind::Memory {
+            return Ok(true);
+        }
         let state = self
             .lock_state
             .as_mut()
@@ -940,6 +1104,11 @@ impl Table {
     /// C++ equivalent: `Table::unlock()`.
     #[cfg(unix)]
     pub fn unlock(&mut self) -> Result<(), TableError> {
+        // Memory tables have no lock to release.
+        // C++ equivalent: MemoryTable::unlock() is a no-op.
+        if self.kind == TableKind::Memory {
+            return Ok(());
+        }
         // Extract the info we need before borrowing self for save/schema.
         let (is_write_locked, save_opts) = {
             let state = self
@@ -992,6 +1161,11 @@ impl Table {
     /// C++ equivalent: `Table::hasLock(type)`.
     #[cfg(unix)]
     pub fn has_lock(&self, lock_type: LockType) -> bool {
+        // Memory tables always report holding the lock.
+        // C++ equivalent: MemoryTable::hasLock() returns True.
+        if self.kind == TableKind::Memory {
+            return true;
+        }
         self.lock_state
             .as_ref()
             .map(|s| s.lock_file.has_lock(lock_type))
@@ -1006,6 +1180,11 @@ impl Table {
     /// C++ equivalent: `Table::isMultiUsed()`.
     #[cfg(unix)]
     pub fn is_multi_used(&self) -> bool {
+        // Memory tables are never shared with another process.
+        // C++ equivalent: MemoryTable::isMultiUsed() returns False.
+        if self.kind == TableKind::Memory {
+            return false;
+        }
         self.lock_state
             .as_ref()
             .map(|s| s.lock_file.is_multi_used())
@@ -3317,5 +3496,255 @@ mod tests {
                 assert_eq!(reopened.row_count(), 2);
             }
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Memory table tests
+    // -------------------------------------------------------------------
+
+    fn memory_schema() -> TableSchema {
+        TableSchema::new(vec![
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::scalar("name", PrimitiveType::String),
+        ])
+        .unwrap()
+    }
+
+    fn memory_row(id: i32, name: &str) -> RecordValue {
+        RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+            RecordField::new("name", Value::Scalar(ScalarValue::String(name.into()))),
+        ])
+    }
+
+    #[test]
+    fn new_memory_creates_transient_table() {
+        let table = Table::new_memory();
+        assert!(table.is_memory());
+        assert_eq!(table.table_kind(), super::TableKind::Memory);
+        assert_eq!(table.row_count(), 0);
+        assert!(table.path().is_none());
+    }
+
+    #[test]
+    fn with_schema_memory_validates_rows() {
+        let mut table = Table::with_schema_memory(memory_schema());
+        assert!(table.is_memory());
+        table.add_row(memory_row(1, "alice")).unwrap();
+        assert_eq!(table.row_count(), 1);
+    }
+
+    #[test]
+    fn from_rows_memory_basic() {
+        let rows = vec![memory_row(1, "a"), memory_row(2, "b")];
+        let table = Table::from_rows_memory(rows);
+        assert!(table.is_memory());
+        assert_eq!(table.row_count(), 2);
+    }
+
+    #[test]
+    fn from_rows_with_schema_memory_validates() {
+        let rows = vec![memory_row(1, "a")];
+        let table = Table::from_rows_with_schema_memory(rows, memory_schema()).unwrap();
+        assert!(table.is_memory());
+        assert_eq!(table.row_count(), 1);
+    }
+
+    #[test]
+    fn memory_table_full_crud_cycle() {
+        let mut table = Table::with_schema_memory(memory_schema());
+        // add_row
+        table.add_row(memory_row(1, "alice")).unwrap();
+        table.add_row(memory_row(2, "bob")).unwrap();
+        assert_eq!(table.row_count(), 2);
+
+        // set_cell
+        table
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("ALICE".into())),
+            )
+            .unwrap();
+        assert_eq!(
+            table.cell(0, "name"),
+            Some(&Value::Scalar(ScalarValue::String("ALICE".into())))
+        );
+
+        // remove_rows
+        table.remove_rows(&[1]).unwrap();
+        assert_eq!(table.row_count(), 1);
+
+        // add_column
+        table
+            .add_column(
+                ColumnSchema::scalar("score", PrimitiveType::Float64),
+                Some(Value::Scalar(ScalarValue::Float64(0.0))),
+            )
+            .unwrap();
+        assert!(table.schema().unwrap().contains_column("score"));
+
+        // remove_column
+        table.remove_column("score").unwrap();
+        assert!(!table.schema().unwrap().contains_column("score"));
+    }
+
+    #[test]
+    fn memory_table_save_materializes_to_disk() {
+        let mut table = Table::with_schema_memory(memory_schema());
+        table.add_row(memory_row(42, "test")).unwrap();
+        table.keywords_mut().push(RecordField::new(
+            "origin",
+            Value::Scalar(ScalarValue::String("memory".into())),
+        ));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("materialized.tbl");
+        table.save(TableOptions::new(&path)).unwrap();
+
+        // Reopen as a plain table.
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        assert!(!reopened.is_memory());
+        assert_eq!(reopened.row_count(), 1);
+        assert_eq!(
+            reopened.cell(0, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(42)))
+        );
+        assert_eq!(
+            reopened.keywords().get("origin"),
+            Some(&Value::Scalar(ScalarValue::String("memory".into())))
+        );
+    }
+
+    #[test]
+    fn memory_table_save_with_both_data_managers() {
+        for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+            let mut table = Table::with_schema_memory(memory_schema());
+            table.add_row(memory_row(1, "a")).unwrap();
+
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join(format!("test_{dm:?}.tbl"));
+            table
+                .save(TableOptions::new(&path).with_data_manager(dm))
+                .unwrap();
+
+            let reopened = Table::open(TableOptions::new(&path)).unwrap();
+            assert_eq!(reopened.row_count(), 1);
+        }
+    }
+
+    #[test]
+    fn to_memory_copies_all_data() {
+        let mut plain = Table::with_schema(memory_schema());
+        plain.add_row(memory_row(1, "orig")).unwrap();
+        plain.keywords_mut().push(RecordField::new(
+            "key",
+            Value::Scalar(ScalarValue::Int32(99)),
+        ));
+
+        let mem = plain.to_memory();
+        assert!(mem.is_memory());
+        assert!(mem.path().is_none());
+        assert_eq!(mem.row_count(), 1);
+        assert_eq!(
+            mem.cell(0, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(1)))
+        );
+        assert_eq!(
+            mem.keywords().get("key"),
+            Some(&Value::Scalar(ScalarValue::Int32(99)))
+        );
+        assert!(mem.schema().is_some());
+    }
+
+    #[test]
+    fn to_memory_from_disk_table() {
+        let mut table = Table::with_schema(memory_schema());
+        table.add_row(memory_row(5, "disk")).unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("source.tbl");
+        table.save(TableOptions::new(&path)).unwrap();
+
+        let disk = Table::open(TableOptions::new(&path)).unwrap();
+        let mem = disk.to_memory();
+        assert!(mem.is_memory());
+        assert!(mem.path().is_none());
+        assert_eq!(mem.row_count(), 1);
+    }
+
+    #[test]
+    fn memory_table_sort_and_select() {
+        let mut table = Table::with_schema_memory(memory_schema());
+        for (id, name) in [(3, "c"), (1, "a"), (2, "b")] {
+            table.add_row(memory_row(id, name)).unwrap();
+        }
+
+        // Sort.
+        let sorted = table.sort(&[("id", super::SortOrder::Ascending)]).unwrap();
+        assert_eq!(sorted.row_count(), 3);
+        assert_eq!(
+            sorted.cell(0, "id").unwrap(),
+            &Value::Scalar(ScalarValue::Int32(1))
+        );
+        drop(sorted);
+
+        // Select by predicate.
+        let view = table.select(
+            |row| matches!(row.get("id"), Some(Value::Scalar(ScalarValue::Int32(i))) if *i >= 2),
+        );
+        assert_eq!(view.row_count(), 2);
+    }
+
+    #[test]
+    fn memory_table_iter_groups() {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("group", PrimitiveType::String),
+            ColumnSchema::scalar("val", PrimitiveType::Int32),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema_memory(schema);
+        for (g, v) in [("a", 1), ("b", 2), ("a", 3)] {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("group", Value::Scalar(ScalarValue::String(g.into()))),
+                    RecordField::new("val", Value::Scalar(ScalarValue::Int32(v))),
+                ]))
+                .unwrap();
+        }
+
+        let groups: Vec<_> = table
+            .iter_groups(&[("group", super::SortOrder::Ascending)])
+            .unwrap()
+            .collect();
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn memory_table_lock_is_noop() {
+        use crate::lock::LockType;
+
+        let table = Table::new_memory();
+        assert!(table.has_lock(LockType::Write));
+        assert!(table.has_lock(LockType::Read));
+        assert!(!table.is_multi_used());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn memory_table_lock_unlock_succeed() {
+        use crate::lock::LockType;
+
+        let mut table = Table::new_memory();
+        assert!(table.lock(LockType::Write, 1).unwrap());
+        table.unlock().unwrap();
+    }
+
+    #[test]
+    fn plain_table_kind_is_default() {
+        let table = Table::new();
+        assert!(!table.is_memory());
+        assert_eq!(table.table_kind(), super::TableKind::Plain);
     }
 }
