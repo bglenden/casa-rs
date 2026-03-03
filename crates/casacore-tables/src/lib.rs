@@ -31,6 +31,7 @@
 //! | [`ColumnSchema`] | Schema for a single column |
 //! | [`TableOptions`] | Bundle a filesystem path with a storage-manager choice |
 //! | [`DataManagerKind`] | Choose between `StManAipsIO` and `StandardStMan` |
+//! | [`EndianFormat`] | Choose big-endian, little-endian, or host byte order |
 //! | [`RowRange`] | Select a contiguous or strided subset of rows |
 //! | [`TableError`] | All errors from table operations |
 //!
@@ -107,6 +108,6 @@ pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };
 pub use table::{
-    ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, RecordColumnCell,
-    RecordColumnIter, RowRange, Table, TableError, TableOptions,
+    ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
+    RecordColumnCell, RecordColumnIter, RowRange, Table, TableError, TableOptions,
 };

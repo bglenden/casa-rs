@@ -61,6 +61,18 @@ impl TableImpl {
         self.rows.get_mut(row_index)
     }
 
+    pub(crate) fn rows_mut(&mut self) -> &mut [RecordValue] {
+        &mut self.rows
+    }
+
+    pub(crate) fn remove_row(&mut self, index: usize) -> RecordValue {
+        self.rows.remove(index)
+    }
+
+    pub(crate) fn insert_row(&mut self, index: usize, row: RecordValue) {
+        self.rows.insert(index, row);
+    }
+
     pub(crate) fn keywords(&self) -> &RecordValue {
         &self.keywords
     }
@@ -79,6 +91,16 @@ impl TableImpl {
 
     pub(crate) fn all_column_keywords(&self) -> &HashMap<String, RecordValue> {
         &self.column_keywords
+    }
+
+    pub(crate) fn remove_column_keywords(&mut self, column: &str) -> Option<RecordValue> {
+        self.column_keywords.remove(column)
+    }
+
+    pub(crate) fn rename_column_keywords(&mut self, old: &str, new: String) {
+        if let Some(kw) = self.column_keywords.remove(old) {
+            self.column_keywords.insert(new, kw);
+        }
     }
 
     pub(crate) fn schema(&self) -> Option<&TableSchema> {

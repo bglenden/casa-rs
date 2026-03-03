@@ -30,3 +30,26 @@ a FLAG column to a MeasurementSet) and delete rows (e.g. flagged data).
 - Rename column, verify accessible by new name after reopen.
 - Delete rows, verify remaining data correct after reopen.
 - 2×2: Rust modifies schema → C++ reads; C++ modifies schema → Rust reads.
+
+## Lessons learned
+
+1. **Full-rewrite `save()` simplifies mutations — for now.** Because `save()`
+   serializes the entire in-memory snapshot, schema and row mutations are
+   purely in-memory operations with zero storage layer changes. This was the
+   right trade-off for Wave 2, but it assumes the entire table fits in memory.
+   Future waves or real-world large tables will likely need incremental or
+   streaming persistence, at which point mutations will need storage-layer
+   support.
+
+2. **RC tests matter even when the format hasn't changed.** RC tests validate
+   that in-memory structures are correct before serialization. RR round-trips
+   can silently agree on a wrong encoding; RC forces correctness against C++.
+
+3. **The `CppTableFixture` pattern extends to verify-only fixtures.** Mutation
+   fixtures only need a C++ verify function (no write side), since the
+   mutations originate in Rust.
+
+4. **Foundational type changes propagate upward — do them first.**
+   `RecordValue::remove()` and `rename_field()` had to land before
+   `TableSchema` or `Table` could implement their mutation methods. Bottom-up
+   ordering avoided rework.

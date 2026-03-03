@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::path::Path;
 
-use casacore_tables::{Table, TableError, TableOptions, TableSchema};
+use casacore_tables::{EndianFormat, Table, TableError, TableOptions, TableSchema};
 use casacore_types::{RecordValue, Value};
 
 use crate::CppTableFixture;
@@ -121,6 +121,173 @@ pub fn run_full_cross_matrix(
     }
 
     results
+}
+
+/// Run the endian-aware cross-matrix: RR-BE, RR-LE, and (when C++ is available)
+/// RC-BE and RC-LE.
+///
+/// StManAipsIO always stores data in big-endian, but the table.dat endian
+/// marker still varies. StandardStMan stores bucket data in the requested
+/// endian. In both cases C++ casacore should read the table transparently.
+pub fn run_endian_cross_matrix(
+    fixture: &TableFixture,
+    manager: ManagerKind,
+) -> Vec<MatrixCellResult> {
+    let mut results = Vec::with_capacity(4);
+
+    results.push(run_rr_with_endian(
+        fixture,
+        manager,
+        EndianFormat::BigEndian,
+    ));
+    results.push(run_rr_with_endian(
+        fixture,
+        manager,
+        EndianFormat::LittleEndian,
+    ));
+
+    if crate::cpp_backend_available() {
+        if let Some(cpp_fix) = fixture.cpp_fixture {
+            results.push(run_rc_with_endian(
+                fixture,
+                manager,
+                cpp_fix,
+                EndianFormat::BigEndian,
+            ));
+            results.push(run_rc_with_endian(
+                fixture,
+                manager,
+                cpp_fix,
+                EndianFormat::LittleEndian,
+            ));
+        }
+    }
+
+    results
+}
+
+fn run_rr_with_endian(
+    fixture: &TableFixture,
+    manager: ManagerKind,
+    endian: EndianFormat,
+) -> MatrixCellResult {
+    let label = match endian {
+        EndianFormat::BigEndian => "RR-BE",
+        EndianFormat::LittleEndian => "RR-LE",
+        EndianFormat::LocalEndian => "RR-Local",
+    };
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let table_path = dir.path().join("rr_endian_table");
+
+    let table = match build_table_from_fixture(fixture) {
+        Ok(t) => t,
+        Err(e) => {
+            return MatrixCellResult {
+                label: leak_label(label),
+                passed: false,
+                error: Some(format!("build table: {e}")),
+            };
+        }
+    };
+
+    let dm_kind = match manager {
+        ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
+        ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
+    };
+    let opts = TableOptions::new(&table_path)
+        .with_data_manager(dm_kind)
+        .with_endian_format(endian);
+    if let Err(e) = table.save(opts) {
+        return MatrixCellResult {
+            label: leak_label(label),
+            passed: false,
+            error: Some(format!("save: {e}")),
+        };
+    }
+
+    let reopened = match Table::open(TableOptions::new(&table_path)) {
+        Ok(t) => t,
+        Err(e) => {
+            return MatrixCellResult {
+                label: leak_label(label),
+                passed: false,
+                error: Some(format!("open: {e}")),
+            };
+        }
+    };
+
+    match compare_table_to_fixture(&reopened, fixture) {
+        Ok(()) => MatrixCellResult {
+            label: leak_label(label),
+            passed: true,
+            error: None,
+        },
+        Err(msg) => MatrixCellResult {
+            label: leak_label(label),
+            passed: false,
+            error: Some(msg),
+        },
+    }
+}
+
+fn run_rc_with_endian(
+    fixture: &TableFixture,
+    manager: ManagerKind,
+    cpp_fix: CppTableFixture,
+    endian: EndianFormat,
+) -> MatrixCellResult {
+    let label = match endian {
+        EndianFormat::BigEndian => "RC-BE",
+        EndianFormat::LittleEndian => "RC-LE",
+        EndianFormat::LocalEndian => "RC-Local",
+    };
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let table_path = dir.path().join("rc_endian_table");
+
+    let table = match build_table_from_fixture(fixture) {
+        Ok(t) => t,
+        Err(e) => {
+            return MatrixCellResult {
+                label: leak_label(label),
+                passed: false,
+                error: Some(format!("build table: {e}")),
+            };
+        }
+    };
+
+    let dm_kind = match manager {
+        ManagerKind::StManAipsIO => casacore_tables::DataManagerKind::StManAipsIO,
+        ManagerKind::StandardStMan => casacore_tables::DataManagerKind::StandardStMan,
+    };
+    let opts = TableOptions::new(&table_path)
+        .with_data_manager(dm_kind)
+        .with_endian_format(endian);
+    if let Err(e) = table.save(opts) {
+        return MatrixCellResult {
+            label: leak_label(label),
+            passed: false,
+            error: Some(format!("Rust save: {e}")),
+        };
+    }
+
+    match crate::cpp_table_verify(cpp_fix, &table_path) {
+        Ok(()) => MatrixCellResult {
+            label: leak_label(label),
+            passed: true,
+            error: None,
+        },
+        Err(msg) => MatrixCellResult {
+            label: leak_label(label),
+            passed: false,
+            error: Some(format!("C++ verify failed: {msg}")),
+        },
+    }
+}
+
+/// Leak a short string to get a `&'static str` for `MatrixCellResult::label`.
+/// These are only test labels, so the tiny leak is harmless.
+fn leak_label(s: &str) -> &'static str {
+    Box::leak(s.to_string().into_boxed_str())
 }
 
 fn run_rr(fixture: &TableFixture, manager: ManagerKind) -> MatrixCellResult {

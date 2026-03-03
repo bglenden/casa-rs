@@ -13,8 +13,8 @@ that only the relevant wave needs to be in context during implementation.
 | Wave | Name | Status | Summary |
 |------|------|--------|---------|
 | 0 | Foundation | **DONE** | Types, table CRUD, two storage managers, AipsIO, demos, docs |
-| 1 | [Endian support](wave-01-endian.md) | Not started | Full big/little/local endian read/write for all storage managers |
-| 2 | [Schema mutation & row ops](wave-02-schema-mutation.md) | Not started | Add/remove/rename columns, delete rows |
+| 1 | [Endian support](wave-01-endian.md) | **DONE** | Full big/little/local endian read/write for all storage managers |
+| 2 | [Schema mutation & row ops](wave-02-schema-mutation.md) | **DONE** | Add/remove/rename columns, delete rows |
 | 3 | [Table locking](wave-03-locking.md) | Not started | File-based multi-process locking (`TableLock`) |
 | 4 | [Reference tables & selections](wave-04-ref-tables.md) | Not started | Row/column views without copying (`RefTable`) |
 | 5 | [Sorting & table iteration](wave-05-sorting.md) | Not started | Sort by key columns, grouped sub-table iteration |
@@ -84,3 +84,30 @@ Every wave must pass ALL of the following before commit/push:
 - Demo program updated or added if the wave adds user-visible workflow changes
 - Wave status updated in this roadmap file
 - Single focused commit with descriptive message, then push
+- **Lessons learned** section added to the wave spec file
+
+---
+
+## Cross-wave lessons
+
+- **C++ casacore is the ground truth** for all persistent data structures and
+  calculations. Docs are incomplete; always survey the actual C++ source before
+  implementing.
+
+- **Cross-matrix (RC) tests are vital.** Rust-Rust round-trips can silently
+  agree on a wrong encoding. RC (Rust-write, C++-read) forces written bytes to
+  match what C++ expects. Always include RC tests for any format change.
+
+- **Wave closeout should include writing lessons learned** into the wave spec
+  file and updating this section if the lesson generalizes.
+
+- **RC tests matter even when the serialization format hasn't changed.** They
+  validate in-memory structures before serialization; RR round-trips can
+  silently agree on a wrong encoding.
+
+- **`CppTableFixture` supports verify-only fixtures.** Rust-originated
+  mutations only need a C++ verify function (no write side).
+
+- **Foundational type changes propagate upward — do them first.** Bottom-up
+  ordering (e.g. `RecordValue` before `TableSchema` before `Table`) avoids
+  rework.

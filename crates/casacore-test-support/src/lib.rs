@@ -1129,6 +1129,18 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_table_verify_mutation_removed_column(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_mutation_removed_rows(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_mutation_added_column(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
 
     fn casacore_cpp_aipsio_encode(
@@ -1335,6 +1347,12 @@ pub enum CppTableFixture {
     SsmScalarPrimitives,
     SsmFixedArray,
     SsmKeywords,
+    /// Verify-only: scalar_primitives with col_str removed (any DM).
+    MutationRemovedColumn,
+    /// Verify-only: scalar_primitives with row 1 removed (any DM).
+    MutationRemovedRows,
+    /// Verify-only: scalar_primitives + extra(Float32, 42.0) column (any DM).
+    MutationAddedColumn,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1359,6 +1377,11 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             }
             CppTableFixture::SsmKeywords => {
                 cpp_table_write_ssm_keywords(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MutationRemovedColumn
+            | CppTableFixture::MutationRemovedRows
+            | CppTableFixture::MutationAddedColumn => {
+                return Err("mutation fixtures are verify-only (no C++ write)".to_string());
             }
         }
     };
@@ -1402,6 +1425,15 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             }
             CppTableFixture::SsmKeywords => {
                 cpp_table_verify_ssm_keywords(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MutationRemovedColumn => {
+                cpp_table_verify_mutation_removed_column(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MutationRemovedRows => {
+                cpp_table_verify_mutation_removed_rows(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MutationAddedColumn => {
+                cpp_table_verify_mutation_added_column(c_path.as_ptr(), &mut error)
             }
         }
     };

@@ -1669,16 +1669,26 @@ impl AipsIo {
 
 impl AipsIo {
     /// Open a file-backed `AipsIo` using a casacore-like open mode.
+    ///
+    /// The byte order defaults to [`ByteOrder::BigEndian`] (canonical).
+    /// Use [`open_with_order`](Self::open_with_order) to specify a different
+    /// byte order.
     pub fn open<P: AsRef<Path>>(path: P, option: AipsOpenOption) -> AipsIoObjectResult<Self> {
+        Self::open_with_order(path, option, ByteOrder::BigEndian)
+    }
+
+    /// Open a file-backed `AipsIo` with an explicit byte order.
+    ///
+    /// This is identical to [`open`](Self::open) except that the caller
+    /// specifies the byte order for multi-byte value encoding.
+    pub fn open_with_order<P: AsRef<Path>>(
+        path: P,
+        option: AipsOpenOption,
+        byte_order: ByteOrder,
+    ) -> AipsIoObjectResult<Self> {
         let path = path.as_ref();
         let (file, readable, writable, delete_on_close) = open_file_with_option(path, option)?;
-        let mut io = Self::with_access(
-            Box::new(file),
-            readable,
-            writable,
-            true,
-            ByteOrder::BigEndian,
-        );
+        let mut io = Self::with_access(Box::new(file), readable, writable, true, byte_order);
         if option == AipsOpenOption::Append {
             let inner = io.inner_mut()?;
             inner.seek(SeekFrom::End(0))?;

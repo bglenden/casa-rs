@@ -697,6 +697,28 @@ impl RecordValue {
         }
         self.fields.push(RecordField::new(name, value));
     }
+
+    /// Remove the first field named `name`, returning its value.
+    ///
+    /// Returns `None` if no field with that name exists. Cf. C++
+    /// `RecordInterface::removeField`.
+    pub fn remove(&mut self, name: &str) -> Option<Value> {
+        let pos = self.fields.iter().position(|f| f.name == name)?;
+        Some(self.fields.remove(pos).value)
+    }
+
+    /// Rename the first field named `old_name` to `new_name`.
+    ///
+    /// Returns `true` if the field was found and renamed, `false` if no
+    /// field with `old_name` exists. Cf. C++ `RecordInterface::renameField`.
+    pub fn rename_field(&mut self, old_name: &str, new_name: impl Into<String>) -> bool {
+        if let Some(field) = self.fields.iter_mut().find(|f| f.name == old_name) {
+            field.name = new_name.into();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl From<Vec<RecordField>> for RecordValue {
@@ -851,5 +873,43 @@ mod tests {
                     .into_dyn(),
             )))
         );
+    }
+
+    #[test]
+    fn record_remove_returns_value() {
+        let mut record = RecordValue::new(vec![
+            RecordField::new("a", Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new("b", Value::Scalar(ScalarValue::Int32(2))),
+        ]);
+        let removed = record.remove("a");
+        assert_eq!(removed, Some(Value::Scalar(ScalarValue::Int32(1))));
+        assert_eq!(record.len(), 1);
+        assert!(record.get("a").is_none());
+        assert!(record.get("b").is_some());
+    }
+
+    #[test]
+    fn record_remove_missing_returns_none() {
+        let mut record = RecordValue::new(vec![RecordField::new(
+            "a",
+            Value::Scalar(ScalarValue::Int32(1)),
+        )]);
+        assert_eq!(record.remove("z"), None);
+        assert_eq!(record.len(), 1);
+    }
+
+    #[test]
+    fn record_rename_field() {
+        let mut record = RecordValue::new(vec![
+            RecordField::new("old", Value::Scalar(ScalarValue::Int32(7))),
+            RecordField::new("other", Value::Scalar(ScalarValue::Int32(8))),
+        ]);
+        assert!(record.rename_field("old", "new"));
+        assert!(record.get("old").is_none());
+        assert_eq!(
+            record.get("new"),
+            Some(&Value::Scalar(ScalarValue::Int32(7)))
+        );
+        assert!(!record.rename_field("missing", "x"));
     }
 }

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use casacore_tables::{ColumnSchema, TableSchema};
+use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casacore_test_support::CppTableFixture;
 use casacore_test_support::table_interop::{
-    ManagerKind, TableFixture, run_full_cross_matrix, run_table_cross_matrix,
+    ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
+    run_table_cross_matrix,
 };
 use casacore_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
@@ -466,4 +467,155 @@ fn ssm_column_keywords_cross_matrix() {
         &fixture,
         ManagerKind::StandardStMan,
     ));
+}
+
+// --- Explicit big-endian / little-endian cross-matrix tests ---
+//
+// These exercise the endian-aware write path: Rust writes the table in an
+// explicit endian format, then Rust reads it back (RR-BE, RR-LE) and, when
+// C++ casacore is available, C++ verifies the table (RC-BE, RC-LE).
+
+#[test]
+fn ssm_scalar_primitives_endian_cross_matrix() {
+    let fixture = ssm_scalar_primitives_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+#[test]
+fn ssm_fixed_array_endian_cross_matrix() {
+    let fixture = ssm_fixed_array_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+#[test]
+fn ssm_keywords_endian_cross_matrix() {
+    let fixture = ssm_keywords_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+#[test]
+fn ssm_all_numeric_scalars_endian_cross_matrix() {
+    let fixture = ssm_all_numeric_scalars_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+#[test]
+fn ssm_complex_scalars_endian_cross_matrix() {
+    let fixture = ssm_complex_scalars_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+#[test]
+fn ssm_typed_arrays_endian_cross_matrix() {
+    let fixture = ssm_typed_arrays_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+#[test]
+fn ssm_column_keywords_endian_cross_matrix() {
+    let fixture = ssm_column_keywords_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+// --- Post-mutation RR + RC tests ---
+
+fn save_and_verify_mutation(
+    table: &Table,
+    dm: casacore_tables::DataManagerKind,
+    cpp_fixture: CppTableFixture,
+    label: &str,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(label);
+    table
+        .save(TableOptions::new(&path).with_data_manager(dm))
+        .unwrap();
+
+    // RR: Rust reopen
+    let reopened = Table::open(TableOptions::new(&path)).unwrap();
+    assert_eq!(
+        reopened.row_count(),
+        table.row_count(),
+        "{label}: row count mismatch after RR"
+    );
+
+    // RC: C++ verify (skipped when C++ unavailable)
+    if casacore_test_support::cpp_backend_available() {
+        casacore_test_support::cpp_table_verify(cpp_fixture, &path)
+            .unwrap_or_else(|e| panic!("{label}: C++ verify failed: {e}"));
+    }
+}
+
+#[test]
+fn mutation_add_column_ssm() {
+    let fixture = ssm_scalar_primitives_fixture();
+    let mut table =
+        Table::from_rows_with_schema(fixture.rows.clone(), fixture.schema.clone()).unwrap();
+    table
+        .add_column(
+            ColumnSchema::scalar("extra", PrimitiveType::Float32),
+            Some(Value::Scalar(ScalarValue::Float32(42.0))),
+        )
+        .unwrap();
+
+    assert_eq!(table.schema().unwrap().columns().len(), 5);
+    save_and_verify_mutation(
+        &table,
+        casacore_tables::DataManagerKind::StandardStMan,
+        CppTableFixture::MutationAddedColumn,
+        "mutation_add_col_ssm",
+    );
+}
+
+#[test]
+fn mutation_remove_column_ssm() {
+    let fixture = ssm_scalar_primitives_fixture();
+    let mut table =
+        Table::from_rows_with_schema(fixture.rows.clone(), fixture.schema.clone()).unwrap();
+    table.remove_column("col_str").unwrap();
+
+    assert_eq!(table.schema().unwrap().columns().len(), 3);
+    save_and_verify_mutation(
+        &table,
+        casacore_tables::DataManagerKind::StandardStMan,
+        CppTableFixture::MutationRemovedColumn,
+        "mutation_rm_col_ssm",
+    );
+}
+
+#[test]
+fn mutation_remove_rows_ssm() {
+    let fixture = ssm_scalar_primitives_fixture();
+    let mut table =
+        Table::from_rows_with_schema(fixture.rows.clone(), fixture.schema.clone()).unwrap();
+    table.remove_rows(&[1]).unwrap();
+
+    assert_eq!(table.row_count(), 2);
+    save_and_verify_mutation(
+        &table,
+        casacore_tables::DataManagerKind::StandardStMan,
+        CppTableFixture::MutationRemovedRows,
+        "mutation_rm_rows_ssm",
+    );
 }

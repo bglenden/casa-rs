@@ -16,3 +16,11 @@
 - Write slowly-changing column, verify compression ratio.
 - Mixed storage managers in one table.
 - 2×2: Full interop both directions.
+
+## Notes from earlier waves
+
+- Each storage manager has its own byte-order rules. C++ `ISMBase` does check
+  `asBigEndian()` (unlike StManAipsIO which ignores it). Survey `ISMBase` and
+  `ISMColumn` to determine exactly which fields are always-BE vs table-endian.
+- The C++ shim FFI doesn't currently support endian parameters; consider adding
+  that if endian-aware CR tests are needed.

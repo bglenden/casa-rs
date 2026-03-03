@@ -17,7 +17,8 @@ use casacore_types::{
 use ndarray::{Array, IxDyn};
 
 use crate::{
-    ColumnSchema, DataManagerKind, RowRange, Table, TableError, TableOptions, TableSchema,
+    ColumnSchema, DataManagerKind, EndianFormat, RowRange, Table, TableError, TableOptions,
+    TableSchema,
 };
 
 /// Run the full table demo (Rust equivalent of C++ `tTable`).
@@ -28,11 +29,26 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     appendln(&mut out, "=== Table Demo (cf. casacore tTable.cc) ===");
     appendln(&mut out, "");
 
-    round_trip(&mut out, "StManAipsIO", DataManagerKind::StManAipsIO)?;
+    round_trip(&mut out, "StManAipsIO", DataManagerKind::StManAipsIO, None)?;
     appendln(&mut out, "");
-    round_trip(&mut out, "StandardStMan", DataManagerKind::StandardStMan)?;
+    round_trip(
+        &mut out,
+        "StandardStMan",
+        DataManagerKind::StandardStMan,
+        None,
+    )?;
+    appendln(&mut out, "");
+    // Explicit little-endian round-trip (StandardStMan respects the setting;
+    // StManAipsIO always writes canonical big-endian AipsIO).
+    round_trip(
+        &mut out,
+        "StandardStMan-LE",
+        DataManagerKind::StandardStMan,
+        Some(EndianFormat::LittleEndian),
+    )?;
     appendln(&mut out, "");
     demo_column_iteration(&mut out)?;
+    demo_schema_mutation(&mut out)?;
 
     appendln(&mut out, "end");
     Ok(out)
@@ -128,14 +144,22 @@ fn build_demo_table() -> Result<Table, TableError> {
 
 // ── Round-trip: save → reopen → verify ───────────────────────────────
 
-fn round_trip(out: &mut String, label: &str, dm_kind: DataManagerKind) -> Result<(), TableError> {
+fn round_trip(
+    out: &mut String,
+    label: &str,
+    dm_kind: DataManagerKind,
+    endian: Option<EndianFormat>,
+) -> Result<(), TableError> {
     appendln(out, &format!("--- {label} round-trip (10 rows) ---"));
 
     let table = build_demo_table()?;
 
     // Save to a temp directory.
     let dir = temp_dir(&format!("tTable_demo_{label}"));
-    let opts = TableOptions::new(&dir).with_data_manager(dm_kind);
+    let mut opts = TableOptions::new(&dir).with_data_manager(dm_kind);
+    if let Some(ef) = endian {
+        opts = opts.with_endian_format(ef);
+    }
     table.save(opts)?;
 
     // C++ (tTable.cc, function b()):
@@ -277,6 +301,109 @@ fn demo_column_iteration(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Schema mutation ──────────────────────────────────────────────────
+
+fn demo_schema_mutation(out: &mut String) -> Result<(), TableError> {
+    appendln(out, "--- Schema mutation ---");
+
+    // C++ (Table.h):
+    //   tab.addColumn(ScalarColumnDesc<float>("weight"));
+    //   tab.removeColumn("ae");
+    //   tab.renameColumn("newab", "ab");
+    //   tab.removeRow(0);
+
+    let mut table = build_demo_table()?;
+    appendln(
+        out,
+        &format!(
+            "before: {} columns, {} rows",
+            table.schema().unwrap().columns().len(),
+            table.row_count()
+        ),
+    );
+
+    // Add a column with a default value.
+    table.add_column(
+        ColumnSchema::scalar("weight", PrimitiveType::Float32),
+        Some(Value::Scalar(ScalarValue::Float32(1.0))),
+    )?;
+    appendln(
+        out,
+        &format!(
+            "after add_column: {} columns",
+            table.schema().unwrap().columns().len()
+        ),
+    );
+
+    // Remove a column.
+    table.remove_column("ae")?;
+    appendln(
+        out,
+        &format!(
+            "after remove_column(\"ae\"): {} columns",
+            table.schema().unwrap().columns().len()
+        ),
+    );
+
+    // Rename a column.
+    table.rename_column("ab", "index")?;
+    let has_index = table.schema().unwrap().contains_column("index");
+    let has_ab = table.schema().unwrap().contains_column("ab");
+    appendln(
+        out,
+        &format!("after rename_column: has \"index\"={has_index}, has \"ab\"={has_ab}"),
+    );
+
+    // Remove rows.
+    table.remove_rows(&[0, 5])?;
+    appendln(
+        out,
+        &format!("after remove_rows([0,5]): {} rows", table.row_count()),
+    );
+
+    // Insert a row.
+    table.insert_row(
+        0,
+        RecordValue::new(vec![
+            RecordField::new("index", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("ad", Value::Scalar(ScalarValue::UInt32(0))),
+            RecordField::new(
+                "ag",
+                Value::Scalar(ScalarValue::Complex64(Complex64::new(0.0, 0.0))),
+            ),
+            RecordField::new("af", Value::Scalar(ScalarValue::String("inserted".into()))),
+            RecordField::new(
+                "arr1",
+                Value::Array(ArrayValue::Float32(
+                    Array::from_shape_vec(IxDyn(&[2, 3, 4]), vec![0.0f32; 24]).unwrap(),
+                )),
+            ),
+            RecordField::new("weight", Value::Scalar(ScalarValue::Float32(0.5))),
+        ]),
+    )?;
+    appendln(
+        out,
+        &format!("after insert_row(0): {} rows", table.row_count()),
+    );
+
+    // Save and reopen to verify persistence.
+    let dir = temp_dir("tTable_demo_mutation");
+    table.save(TableOptions::new(&dir))?;
+    let reopened = Table::open(TableOptions::new(&dir))?;
+    appendln(
+        out,
+        &format!(
+            "reopened: {} columns, {} rows",
+            reopened.schema().unwrap().columns().len(),
+            reopened.row_count()
+        ),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn appendln(out: &mut String, line: &str) {
@@ -303,7 +430,9 @@ mod tests {
         assert!(output.contains("=== Table Demo"));
         assert!(output.contains("--- StManAipsIO round-trip"));
         assert!(output.contains("--- StandardStMan round-trip"));
+        assert!(output.contains("--- StandardStMan-LE round-trip"));
         assert!(output.contains("--- Column iteration patterns"));
+        assert!(output.contains("--- Schema mutation"));
         assert!(output.ends_with("end\n"));
     }
 }

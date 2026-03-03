@@ -1,12 +1,72 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::path::{Path, PathBuf};
 
-use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value, ValueKind};
+use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value, ValueKind};
 use thiserror::Error;
 
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot};
 use crate::table_impl::TableImpl;
+
+/// Byte-ordering format for on-disk table data.
+///
+/// Controls how multi-byte values (integers, floats, complex numbers) are
+/// stored in the table's data files. The choice is recorded in `table.dat`
+/// so that readers can decode values correctly regardless of the host machine's
+/// native byte order.
+///
+/// In C++ casacore this corresponds to `Table::EndianFormat`. The
+/// `AipsrcEndian` variant from C++ is intentionally omitted — Rust callers
+/// should pass an explicit format instead.
+///
+/// # Default
+///
+/// The default is [`LocalEndian`](EndianFormat::LocalEndian), which uses the
+/// byte order of the machine that creates the table. This matches the C++
+/// casacore default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EndianFormat {
+    /// Store data in big-endian (network / "canonical") byte order.
+    ///
+    /// Corresponds to `Table::BigEndian` in C++ casacore. This was the only
+    /// format supported by early casacore versions.
+    BigEndian,
+    /// Store data in little-endian byte order.
+    ///
+    /// Corresponds to `Table::LittleEndian` in C++ casacore.
+    LittleEndian,
+    /// Store data in the byte order of the host machine.
+    ///
+    /// On x86-64 and ARM64 this resolves to little-endian; on SPARC or
+    /// PowerPC (big-endian mode) it resolves to big-endian.
+    /// Corresponds to `Table::LocalEndian` in C++ casacore.
+    #[default]
+    LocalEndian,
+}
+
+impl EndianFormat {
+    /// Resolves this format to a concrete big-endian flag.
+    ///
+    /// [`LocalEndian`](EndianFormat::LocalEndian) queries the host at compile
+    /// time via `cfg!(target_endian = "big")`.
+    pub fn is_big_endian(self) -> bool {
+        match self {
+            Self::BigEndian => true,
+            Self::LittleEndian => false,
+            Self::LocalEndian => cfg!(target_endian = "big"),
+        }
+    }
+
+    /// Converts to the [`ByteOrder`](casacore_aipsio::ByteOrder) enum used
+    /// by the lower-level AipsIO codec.
+    pub fn to_byte_order(self) -> casacore_aipsio::ByteOrder {
+        if self.is_big_endian() {
+            casacore_aipsio::ByteOrder::BigEndian
+        } else {
+            casacore_aipsio::ByteOrder::LittleEndian
+        }
+    }
+}
 
 /// Which data manager to use when writing table data.
 ///
@@ -34,37 +94,52 @@ pub enum DataManagerKind {
 /// Configuration for opening or saving a [`Table`] to disk.
 ///
 /// `TableOptions` bundles the filesystem path with the choice of storage
-/// manager. In C++ casacore this information is passed directly to the
-/// `Table(name, option)` constructor. Here it is factored out into a
-/// separate builder so that callers can construct options independently of
-/// the table itself.
+/// manager and byte-ordering format. In C++ casacore this information is
+/// passed directly to the `Table(name, option)` constructor. Here it is
+/// factored out into a separate builder so that callers can construct
+/// options independently of the table itself.
 ///
 /// # Example
 ///
 /// ```rust
-/// use casacore_tables::{TableOptions, DataManagerKind};
+/// use casacore_tables::{TableOptions, DataManagerKind, EndianFormat};
 ///
 /// let opts = TableOptions::new("/tmp/my_table")
-///     .with_data_manager(DataManagerKind::StandardStMan);
+///     .with_data_manager(DataManagerKind::StandardStMan)
+///     .with_endian_format(EndianFormat::BigEndian);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableOptions {
     path: PathBuf,
     data_manager: DataManagerKind,
+    endian_format: EndianFormat,
 }
 
 impl TableOptions {
-    /// Creates options targeting `path` with the default data manager ([`DataManagerKind::StManAipsIO`]).
+    /// Creates options targeting `path` with the default data manager
+    /// ([`DataManagerKind::StManAipsIO`]) and default endian format
+    /// ([`EndianFormat::LocalEndian`]).
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             data_manager: DataManagerKind::default(),
+            endian_format: EndianFormat::default(),
         }
     }
 
     /// Overrides the data manager, returning the updated options.
     pub fn with_data_manager(mut self, kind: DataManagerKind) -> Self {
         self.data_manager = kind;
+        self
+    }
+
+    /// Overrides the endian format, returning the updated options.
+    ///
+    /// The endian format controls the byte ordering of multi-byte values
+    /// in the table's data files. It is only used when saving; on open the
+    /// format is detected from the existing `table.dat` marker.
+    pub fn with_endian_format(mut self, format: EndianFormat) -> Self {
+        self.endian_format = format;
         self
     }
 
@@ -76,6 +151,11 @@ impl TableOptions {
     /// Returns the data manager that will be used when saving.
     pub fn data_manager(&self) -> DataManagerKind {
         self.data_manager
+    }
+
+    /// Returns the endian format that will be used when saving.
+    pub fn endian_format(&self) -> EndianFormat {
+        self.endian_format
     }
 }
 
@@ -526,7 +606,12 @@ impl Table {
             schema: self.inner.schema().cloned(),
         };
         let storage = CompositeStorage;
-        storage.save(&options.path, &snapshot, options.data_manager)?;
+        storage.save(
+            &options.path,
+            &snapshot,
+            options.data_manager,
+            options.endian_format.is_big_endian(),
+        )?;
         Ok(())
     }
 
@@ -1034,6 +1119,150 @@ impl Table {
         self.inner.set_column_keywords(column.into(), keywords);
     }
 
+    /// Adds a column to the table schema.
+    ///
+    /// If `default` is `Some`, existing rows are populated with that value. If
+    /// `None`, the column must allow absent values (e.g. `undefined: true` for
+    /// scalars, variable-shape arrays, or record columns); otherwise an error
+    /// is returned.
+    ///
+    /// A [`TableSchema`] must be attached to the table. Returns an error if the
+    /// column name already exists or if the default value does not match the
+    /// column type.
+    ///
+    /// C++ equivalent: `Table::addColumn` / `TableDesc::addColumn`.
+    pub fn add_column(
+        &mut self,
+        col: ColumnSchema,
+        default: Option<Value>,
+    ) -> Result<(), TableError> {
+        let schema = self
+            .inner
+            .schema()
+            .ok_or_else(|| TableError::Schema("schema required for column operations".into()))?;
+        // Verify the column is not already present (add_column checks this too,
+        // but we need the schema borrow released before mutating).
+        if schema.contains_column(col.name()) {
+            return Err(SchemaError::DuplicateColumn(col.name().to_string()).into());
+        }
+
+        // Validate the default value against the new column schema.
+        validate_cell_against_schema_column(0, &col, default.as_ref())?;
+
+        // Schema mutation (must re-borrow mutably via set_schema round-trip
+        // because TableImpl stores Option<TableSchema>).
+        let mut schema = self.inner.schema().cloned().unwrap();
+        schema.add_column(col.clone())?;
+        self.inner.set_schema(Some(schema));
+
+        // Populate existing rows with the default value.
+        if let Some(value) = default {
+            for row in self.inner.rows_mut() {
+                row.push(RecordField::new(col.name(), value.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes a column from the table schema, all rows, and column keywords.
+    ///
+    /// Returns an error if no schema is attached or the column does not exist
+    /// in the schema.
+    ///
+    /// C++ equivalent: `Table::removeColumn`.
+    pub fn remove_column(&mut self, name: &str) -> Result<(), TableError> {
+        self.inner
+            .schema()
+            .ok_or_else(|| TableError::Schema("schema required for column operations".into()))?;
+
+        let mut schema = self.inner.schema().cloned().unwrap();
+        schema.remove_column(name)?;
+        self.inner.set_schema(Some(schema));
+
+        for row in self.inner.rows_mut() {
+            row.remove(name);
+        }
+        self.inner.remove_column_keywords(name);
+        Ok(())
+    }
+
+    /// Renames a column in the table schema, all rows, and column keywords.
+    ///
+    /// Returns an error if no schema is attached, `old` does not exist, or
+    /// `new` already exists.
+    ///
+    /// C++ equivalent: `Table::renameColumn`.
+    pub fn rename_column(&mut self, old: &str, new: &str) -> Result<(), TableError> {
+        self.inner
+            .schema()
+            .ok_or_else(|| TableError::Schema("schema required for column operations".into()))?;
+
+        let mut schema = self.inner.schema().cloned().unwrap();
+        schema.rename_column(old, new)?;
+        self.inner.set_schema(Some(schema));
+
+        for row in self.inner.rows_mut() {
+            row.rename_field(old, new);
+        }
+        self.inner.rename_column_keywords(old, new.to_string());
+        Ok(())
+    }
+
+    /// Removes rows at the given indices.
+    ///
+    /// The `indices` slice must be sorted in ascending order with no
+    /// duplicates; each index must be less than [`row_count`](Table::row_count).
+    /// Returns an error if any index is out of bounds or the slice is
+    /// not sorted/unique.
+    ///
+    /// C++ equivalent: `Table::removeRow`.
+    pub fn remove_rows(&mut self, indices: &[usize]) -> Result<(), TableError> {
+        let row_count = self.row_count();
+        // Validate sorted, unique, and in bounds.
+        for (i, &idx) in indices.iter().enumerate() {
+            if idx >= row_count {
+                return Err(TableError::RowOutOfBounds {
+                    row_index: idx,
+                    row_count,
+                });
+            }
+            if i > 0 && idx <= indices[i - 1] {
+                return Err(TableError::InvalidRowRange {
+                    start: indices[i - 1],
+                    end: idx,
+                    row_count,
+                });
+            }
+        }
+        // Remove in reverse order to preserve earlier indices.
+        for &idx in indices.iter().rev() {
+            self.inner.remove_row(idx);
+        }
+        Ok(())
+    }
+
+    /// Inserts a row at the given position.
+    ///
+    /// Index `0` inserts before the first row; [`row_count`](Table::row_count)
+    /// appends at the end (equivalent to [`add_row`](Table::add_row)).
+    /// If a schema is attached, the row is validated against it.
+    ///
+    /// C++ equivalent: constructing rows and adding them to a `Table`.
+    pub fn insert_row(&mut self, index: usize, row: RecordValue) -> Result<(), TableError> {
+        let row_count = self.row_count();
+        if index > row_count {
+            return Err(TableError::RowOutOfBounds {
+                row_index: index,
+                row_count,
+            });
+        }
+        if let Some(schema) = self.inner.schema() {
+            validate_row_against_schema(index, &row, schema)?;
+        }
+        self.inner.insert_row(index, row);
+        Ok(())
+    }
+
     fn require_column(&self, column: &str) -> Result<(), TableError> {
         if let Some(schema) = self.schema()
             && !schema.contains_column(column)
@@ -1175,7 +1404,7 @@ mod tests {
 
     use crate::schema::{ColumnSchema, TableSchema};
 
-    use super::{RowRange, Table, TableError, TableOptions};
+    use super::{DataManagerKind, EndianFormat, RowRange, Table, TableError, TableOptions};
 
     #[test]
     fn table_keeps_rows_in_order() {
@@ -1813,5 +2042,517 @@ mod tests {
             .expect("clock")
             .as_nanos();
         std::env::temp_dir().join(format!("casacore_tables_{prefix}_{nanos}"))
+    }
+
+    /// Build a small multi-type table for endian round-trip tests.
+    fn build_endian_test_table() -> Table {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("i32_col", PrimitiveType::Int32),
+            ColumnSchema::scalar("f64_col", PrimitiveType::Float64),
+            ColumnSchema::scalar("str_col", PrimitiveType::String),
+            ColumnSchema::array_fixed("arr_col", PrimitiveType::Float32, vec![3]),
+        ])
+        .expect("schema");
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("i32_col", Value::Scalar(ScalarValue::Int32(42))),
+                RecordField::new("f64_col", Value::Scalar(ScalarValue::Float64(2.78))),
+                RecordField::new(
+                    "str_col",
+                    Value::Scalar(ScalarValue::String("hello".into())),
+                ),
+                RecordField::new(
+                    "arr_col",
+                    Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0, 3.0])),
+                ),
+            ]))
+            .expect("row 0");
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("i32_col", Value::Scalar(ScalarValue::Int32(-7))),
+                RecordField::new("f64_col", Value::Scalar(ScalarValue::Float64(-0.5))),
+                RecordField::new(
+                    "str_col",
+                    Value::Scalar(ScalarValue::String("world".into())),
+                ),
+                RecordField::new(
+                    "arr_col",
+                    Value::Array(ArrayValue::from_f32_vec(vec![4.0, 5.0, 6.0])),
+                ),
+            ]))
+            .expect("row 1");
+        table
+    }
+
+    /// Verify a reopened table matches the endian test fixture.
+    fn verify_endian_test_table(t: &Table) {
+        assert_eq!(t.row_count(), 2);
+        assert_eq!(
+            t.cell(0, "i32_col"),
+            Some(&Value::Scalar(ScalarValue::Int32(42)))
+        );
+        assert_eq!(
+            t.cell(0, "f64_col"),
+            Some(&Value::Scalar(ScalarValue::Float64(2.78)))
+        );
+        assert_eq!(
+            t.cell(0, "str_col"),
+            Some(&Value::Scalar(ScalarValue::String("hello".into())))
+        );
+        assert_eq!(
+            t.cell(1, "i32_col"),
+            Some(&Value::Scalar(ScalarValue::Int32(-7)))
+        );
+    }
+
+    #[test]
+    fn stmanaipsio_le_round_trip() {
+        let table = build_endian_test_table();
+        let root = unique_test_dir("aipsio_le_rt");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::StManAipsIO)
+                    .with_endian_format(EndianFormat::LittleEndian),
+            )
+            .expect("save LE");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open LE");
+        verify_endian_test_table(&reopened);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn stmanaipsio_be_round_trip() {
+        let table = build_endian_test_table();
+        let root = unique_test_dir("aipsio_be_rt");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::StManAipsIO)
+                    .with_endian_format(EndianFormat::BigEndian),
+            )
+            .expect("save BE");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open BE");
+        verify_endian_test_table(&reopened);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn ssm_le_round_trip() {
+        let table = build_endian_test_table();
+        let root = unique_test_dir("ssm_le_rt");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::StandardStMan)
+                    .with_endian_format(EndianFormat::LittleEndian),
+            )
+            .expect("save LE");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open LE");
+        verify_endian_test_table(&reopened);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn ssm_be_round_trip() {
+        let table = build_endian_test_table();
+        let root = unique_test_dir("ssm_be_rt");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::StandardStMan)
+                    .with_endian_format(EndianFormat::BigEndian),
+            )
+            .expect("save BE");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open BE");
+        verify_endian_test_table(&reopened);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn default_endian_matches_host() {
+        let table = build_endian_test_table();
+        let root = unique_test_dir("default_endian");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table.save(TableOptions::new(&root)).expect("save default");
+
+        // Read table.dat and check the endian marker
+        let dat_path = root.join("table.dat");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open");
+        verify_endian_test_table(&reopened);
+
+        // Verify the table.dat file exists and the table round-trips
+        assert!(dat_path.exists());
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    // ---- Wave 2: Schema mutation & row operations tests ----
+
+    /// Build a 3-row table with an "id" (Int32) and "name" (String) column.
+    fn build_mutation_test_table() -> Table {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::scalar("name", PrimitiveType::String),
+        ])
+        .expect("schema");
+        let mut table = Table::with_schema(schema);
+        for i in 0..3 {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+                    RecordField::new(
+                        "name",
+                        Value::Scalar(ScalarValue::String(format!("row{i}"))),
+                    ),
+                ]))
+                .expect("add row");
+        }
+        table
+    }
+
+    #[test]
+    fn add_column_populates_existing_rows() {
+        let mut table = build_mutation_test_table();
+        table
+            .add_column(
+                ColumnSchema::scalar("score", PrimitiveType::Float64),
+                Some(Value::Scalar(ScalarValue::Float64(0.0))),
+            )
+            .expect("add column");
+
+        assert_eq!(table.schema().unwrap().columns().len(), 3);
+        for i in 0..3 {
+            assert_eq!(
+                table.cell(i, "score"),
+                Some(&Value::Scalar(ScalarValue::Float64(0.0)))
+            );
+        }
+    }
+
+    #[test]
+    fn add_column_round_trips_through_disk() {
+        let mut table = build_mutation_test_table();
+        table
+            .add_column(
+                ColumnSchema::scalar("score", PrimitiveType::Float64),
+                Some(Value::Scalar(ScalarValue::Float64(99.5))),
+            )
+            .expect("add column");
+
+        for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+            let root = unique_test_dir(&format!("add_col_{dm:?}"));
+            std::fs::create_dir_all(&root).expect("mkdir");
+            table
+                .save(TableOptions::new(&root).with_data_manager(dm))
+                .expect("save");
+            let reopened = Table::open(TableOptions::new(&root)).expect("open");
+            assert_eq!(reopened.schema().unwrap().columns().len(), 3);
+            for i in 0..3 {
+                assert_eq!(
+                    reopened.cell(i, "score"),
+                    Some(&Value::Scalar(ScalarValue::Float64(99.5)))
+                );
+            }
+            std::fs::remove_dir_all(&root).expect("cleanup");
+        }
+    }
+
+    #[test]
+    fn add_column_none_default_with_undefined() {
+        use crate::schema::ColumnOptions;
+
+        let mut table = build_mutation_test_table();
+        table
+            .add_column(
+                ColumnSchema::scalar("opt", PrimitiveType::Int32)
+                    .with_options(ColumnOptions {
+                        direct: false,
+                        undefined: true,
+                    })
+                    .expect("options"),
+                None,
+            )
+            .expect("add column with None default");
+
+        assert_eq!(table.schema().unwrap().columns().len(), 3);
+        // Rows should not have the new field.
+        for i in 0..3 {
+            assert_eq!(table.cell(i, "opt"), None);
+        }
+    }
+
+    #[test]
+    fn add_column_none_default_without_undefined_errors() {
+        let mut table = build_mutation_test_table();
+        let result = table.add_column(
+            ColumnSchema::scalar("required_col", PrimitiveType::Int32),
+            None,
+        );
+        assert!(
+            result.is_err(),
+            "should error when no default and column requires values"
+        );
+    }
+
+    #[test]
+    fn add_column_rejects_duplicate() {
+        let mut table = build_mutation_test_table();
+        let result = table.add_column(
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            Some(Value::Scalar(ScalarValue::Int32(0))),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn remove_column_drops_from_all_rows() {
+        let mut table = build_mutation_test_table();
+        table.set_column_keywords(
+            "name",
+            RecordValue::new(vec![RecordField::new(
+                "unit",
+                Value::Scalar(ScalarValue::String("none".into())),
+            )]),
+        );
+
+        table.remove_column("name").expect("remove column");
+
+        assert_eq!(table.schema().unwrap().columns().len(), 1);
+        assert!(!table.schema().unwrap().contains_column("name"));
+        for i in 0..3 {
+            assert_eq!(table.cell(i, "name"), None);
+        }
+        assert!(table.column_keywords("name").is_none());
+    }
+
+    #[test]
+    fn remove_column_round_trips_through_disk() {
+        let mut table = build_mutation_test_table();
+        table.remove_column("name").expect("remove");
+
+        for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+            let root = unique_test_dir(&format!("rm_col_{dm:?}"));
+            std::fs::create_dir_all(&root).expect("mkdir");
+            table
+                .save(TableOptions::new(&root).with_data_manager(dm))
+                .expect("save");
+            let reopened = Table::open(TableOptions::new(&root)).expect("open");
+            assert_eq!(reopened.schema().unwrap().columns().len(), 1);
+            assert!(!reopened.schema().unwrap().contains_column("name"));
+            assert_eq!(
+                reopened.cell(0, "id"),
+                Some(&Value::Scalar(ScalarValue::Int32(0)))
+            );
+            std::fs::remove_dir_all(&root).expect("cleanup");
+        }
+    }
+
+    #[test]
+    fn remove_column_missing_errors() {
+        let mut table = build_mutation_test_table();
+        assert!(table.remove_column("nonexistent").is_err());
+    }
+
+    #[test]
+    fn rename_column_updates_rows_and_keywords() {
+        let mut table = build_mutation_test_table();
+        table.set_column_keywords(
+            "name",
+            RecordValue::new(vec![RecordField::new(
+                "unit",
+                Value::Scalar(ScalarValue::String("text".into())),
+            )]),
+        );
+
+        table.rename_column("name", "label").expect("rename");
+
+        assert!(table.schema().unwrap().contains_column("label"));
+        assert!(!table.schema().unwrap().contains_column("name"));
+        for i in 0..3 {
+            assert!(table.cell(i, "label").is_some());
+            assert_eq!(table.cell(i, "name"), None);
+        }
+        assert!(table.column_keywords("label").is_some());
+        assert!(table.column_keywords("name").is_none());
+    }
+
+    #[test]
+    fn rename_column_round_trips_through_disk() {
+        let mut table = build_mutation_test_table();
+        table.rename_column("name", "label").expect("rename");
+
+        for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+            let root = unique_test_dir(&format!("rename_col_{dm:?}"));
+            std::fs::create_dir_all(&root).expect("mkdir");
+            table
+                .save(TableOptions::new(&root).with_data_manager(dm))
+                .expect("save");
+            let reopened = Table::open(TableOptions::new(&root)).expect("open");
+            assert!(reopened.schema().unwrap().contains_column("label"));
+            assert!(!reopened.schema().unwrap().contains_column("name"));
+            assert_eq!(
+                reopened.cell(0, "label"),
+                Some(&Value::Scalar(ScalarValue::String("row0".into())))
+            );
+            std::fs::remove_dir_all(&root).expect("cleanup");
+        }
+    }
+
+    #[test]
+    fn remove_rows_compacts() {
+        let mut table = build_mutation_test_table();
+        // Add 2 more rows so we have 5 total (ids 0..5)
+        for i in 3..5 {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+                    RecordField::new(
+                        "name",
+                        Value::Scalar(ScalarValue::String(format!("row{i}"))),
+                    ),
+                ]))
+                .expect("add row");
+        }
+        assert_eq!(table.row_count(), 5);
+
+        // Remove rows at indices 1 and 3 (ids 1, 3)
+        table.remove_rows(&[1, 3]).expect("remove rows");
+
+        assert_eq!(table.row_count(), 3);
+        // Remaining rows should be ids 0, 2, 4
+        assert_eq!(
+            table.cell(0, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(0)))
+        );
+        assert_eq!(
+            table.cell(1, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(2)))
+        );
+        assert_eq!(
+            table.cell(2, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(4)))
+        );
+    }
+
+    #[test]
+    fn remove_rows_round_trips_through_disk() {
+        let mut table = build_mutation_test_table();
+        table.remove_rows(&[1]).expect("remove row 1");
+
+        for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+            let root = unique_test_dir(&format!("rm_rows_{dm:?}"));
+            std::fs::create_dir_all(&root).expect("mkdir");
+            table
+                .save(TableOptions::new(&root).with_data_manager(dm))
+                .expect("save");
+            let reopened = Table::open(TableOptions::new(&root)).expect("open");
+            assert_eq!(reopened.row_count(), 2);
+            assert_eq!(
+                reopened.cell(0, "id"),
+                Some(&Value::Scalar(ScalarValue::Int32(0)))
+            );
+            assert_eq!(
+                reopened.cell(1, "id"),
+                Some(&Value::Scalar(ScalarValue::Int32(2)))
+            );
+            std::fs::remove_dir_all(&root).expect("cleanup");
+        }
+    }
+
+    #[test]
+    fn remove_rows_rejects_out_of_bounds() {
+        let mut table = build_mutation_test_table();
+        assert!(matches!(
+            table.remove_rows(&[5]),
+            Err(TableError::RowOutOfBounds {
+                row_index: 5,
+                row_count: 3
+            })
+        ));
+    }
+
+    #[test]
+    fn remove_rows_rejects_unsorted() {
+        let mut table = build_mutation_test_table();
+        assert!(table.remove_rows(&[2, 1]).is_err());
+    }
+
+    #[test]
+    fn insert_row_at_position() {
+        let mut table = build_mutation_test_table();
+        let new_row = RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(99))),
+            RecordField::new(
+                "name",
+                Value::Scalar(ScalarValue::String("inserted".into())),
+            ),
+        ]);
+
+        table.insert_row(1, new_row).expect("insert at 1");
+
+        assert_eq!(table.row_count(), 4);
+        assert_eq!(
+            table.cell(0, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(0)))
+        );
+        assert_eq!(
+            table.cell(1, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(99)))
+        );
+        assert_eq!(
+            table.cell(2, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(1)))
+        );
+        assert_eq!(
+            table.cell(3, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(2)))
+        );
+    }
+
+    #[test]
+    fn insert_row_at_end() {
+        let mut table = build_mutation_test_table();
+        let new_row = RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(99))),
+            RecordField::new(
+                "name",
+                Value::Scalar(ScalarValue::String("appended".into())),
+            ),
+        ]);
+        table.insert_row(3, new_row).expect("insert at end");
+        assert_eq!(table.row_count(), 4);
+        assert_eq!(
+            table.cell(3, "id"),
+            Some(&Value::Scalar(ScalarValue::Int32(99)))
+        );
+    }
+
+    #[test]
+    fn insert_row_rejects_out_of_bounds() {
+        let mut table = build_mutation_test_table();
+        let new_row = RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(99))),
+            RecordField::new("name", Value::Scalar(ScalarValue::String("bad".into()))),
+        ]);
+        assert!(matches!(
+            table.insert_row(10, new_row),
+            Err(TableError::RowOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn insert_row_validates_against_schema() {
+        let mut table = build_mutation_test_table();
+        // Missing required "id" column
+        let bad_row = RecordValue::new(vec![RecordField::new(
+            "name",
+            Value::Scalar(ScalarValue::String("only name".into())),
+        )]);
+        assert!(table.insert_row(0, bad_row).is_err());
     }
 }

@@ -698,6 +698,7 @@ impl TableDatContents {
         nrrow: u64,
         dm_type_name: &str,
         dm_data: &[u8],
+        big_endian: bool,
     ) -> Self {
         let columns: Vec<ColumnDescContents> = schema
             .columns()
@@ -722,7 +723,7 @@ impl TableDatContents {
 
         TableDatContents {
             nrrow,
-            big_endian: true,
+            big_endian,
             table_desc: TableDescContents {
                 name: String::new(),
                 version: String::new(),

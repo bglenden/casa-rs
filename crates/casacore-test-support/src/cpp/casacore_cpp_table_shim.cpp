@@ -475,6 +475,77 @@ void verify_ssm_keywords_impl(const std::string& path) {
         throw std::runtime_error("keyword 'version' mismatch");
 }
 
+// ===== Mutation verify fixtures =====
+// These verify tables written by Rust after in-memory mutations.
+// Only verify functions needed (RC = Rust write, C++ read).
+
+// --- remove_column: scalar_primitives with col_str removed ---
+// Schema: col_bool(Bool), col_i32(Int), col_f64(Double)
+// 3 rows, same values as scalar_primitives minus col_str. No keywords.
+
+void verify_mutation_removed_column_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 3)
+        throw std::runtime_error("expected 3 rows, got " + std::to_string(table.nrow()));
+
+    // Verify col_str is absent
+    if (table.tableDesc().isColumn("col_str"))
+        throw std::runtime_error("col_str should have been removed");
+
+    casacore::ScalarColumn<casacore::Bool> colBool(table, "col_bool");
+    casacore::ScalarColumn<casacore::Int> colI32(table, "col_i32");
+    casacore::ScalarColumn<casacore::Double> colF64(table, "col_f64");
+
+    if (colBool(0) != casacore::True) throw std::runtime_error("row 0 col_bool");
+    if (colI32(0) != 42) throw std::runtime_error("row 0 col_i32");
+    if (colF64(0) != 1.5) throw std::runtime_error("row 0 col_f64");
+    if (colI32(1) != -7) throw std::runtime_error("row 1 col_i32");
+    if (colI32(2) != 0) throw std::runtime_error("row 2 col_i32");
+}
+
+// --- remove_rows: scalar_primitives with row 1 removed ---
+// Schema: col_bool(Bool), col_i32(Int), col_f64(Double), col_str(String)
+// 2 rows: original rows 0 and 2. No keywords.
+
+void verify_mutation_removed_rows_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 2)
+        throw std::runtime_error("expected 2 rows, got " + std::to_string(table.nrow()));
+
+    casacore::ScalarColumn<casacore::Int> colI32(table, "col_i32");
+    casacore::ScalarColumn<casacore::String> colStr(table, "col_str");
+
+    // Row 0 = original row 0
+    if (colI32(0) != 42) throw std::runtime_error("row 0 col_i32");
+    if (colStr(0) != "hello") throw std::runtime_error("row 0 col_str");
+    // Row 1 = original row 2
+    if (colI32(1) != 0) throw std::runtime_error("row 1 col_i32");
+    if (colStr(1) != "") throw std::runtime_error("row 1 col_str");
+}
+
+// --- add_column: scalar_primitives + extra(Float, 42.0) ---
+// Schema: col_bool(Bool), col_i32(Int), col_f64(Double), col_str(String), extra(Float)
+// 3 rows, same values as scalar_primitives + extra=42.0 in all rows. No keywords.
+
+void verify_mutation_added_column_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 3)
+        throw std::runtime_error("expected 3 rows, got " + std::to_string(table.nrow()));
+
+    if (!table.tableDesc().isColumn("extra"))
+        throw std::runtime_error("extra column missing");
+
+    casacore::ScalarColumn<casacore::Int> colI32(table, "col_i32");
+    casacore::ScalarColumn<casacore::Float> colExtra(table, "extra");
+
+    if (colI32(0) != 42) throw std::runtime_error("row 0 col_i32");
+    if (colI32(1) != -7) throw std::runtime_error("row 1 col_i32");
+    for (casacore::uInt i = 0; i < 3; ++i) {
+        if (colExtra(i) != 42.0f)
+            throw std::runtime_error("row " + std::to_string(i) + " extra mismatch");
+    }
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -631,6 +702,47 @@ int32_t cpp_table_verify_ssm_keywords(const char* path, char** out_error) {
         return -1;
     } catch (...) {
         *out_error = make_error("unknown non-std::exception in verify_ssm_keywords");
+        return -1;
+    }
+}
+
+// --- Mutation verify C ABI wrappers ---
+
+int32_t cpp_table_verify_mutation_removed_column(const char* path, char** out_error) {
+    try {
+        verify_mutation_removed_column_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_mutation_removed_column");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_mutation_removed_rows(const char* path, char** out_error) {
+    try {
+        verify_mutation_removed_rows_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_mutation_removed_rows");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_mutation_added_column(const char* path, char** out_error) {
+    try {
+        verify_mutation_added_column_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_mutation_added_column");
         return -1;
     }
 }

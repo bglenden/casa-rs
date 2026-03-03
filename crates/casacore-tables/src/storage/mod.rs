@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casacore_aipsio::ByteOrder;
 use casacore_types::{RecordField, RecordValue};
 use thiserror::Error;
 
@@ -65,6 +66,7 @@ pub(crate) trait StorageManager {
         table_path: &Path,
         snapshot: &StorageSnapshot,
         dm_kind: crate::table::DataManagerKind,
+        big_endian: bool,
     ) -> Result<(), StorageError>;
 }
 
@@ -117,12 +119,15 @@ impl StorageManager for CompositeStorage {
                     if !data_path.is_file() {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
+                    // StManAipsIO always uses canonical (big-endian) AipsIO.
+                    // C++ AipsIO::open(filename) hardcodes CanonicalIO.
                     load_stman_aipsio_columns(
                         &data_path,
                         &table_dat.table_desc.columns,
                         &bound_cols,
                         &mut rows,
                         nrrow,
+                        ByteOrder::BigEndian,
                     )?;
                 }
                 "StandardStMan" => {
@@ -157,6 +162,7 @@ impl StorageManager for CompositeStorage {
         table_path: &Path,
         snapshot: &StorageSnapshot,
         dm_kind: crate::table::DataManagerKind,
+        big_endian: bool,
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
@@ -182,10 +188,17 @@ impl StorageManager for CompositeStorage {
                     nrrow,
                     &dm_type_name,
                     &dm_data,
+                    big_endian,
                 );
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
-                write_stman_file(&data_path, &table_dat.table_desc.columns, &snapshot.rows)?;
+                // StManAipsIO always uses canonical (big-endian) AipsIO.
+                write_stman_file(
+                    &data_path,
+                    &table_dat.table_desc.columns,
+                    &snapshot.rows,
+                    ByteOrder::BigEndian,
+                )?;
             }
             DataManagerKind::StandardStMan => {
                 dm_type_name = "StandardStMan".to_string();
@@ -197,11 +210,13 @@ impl StorageManager for CompositeStorage {
                     nrrow,
                     "StandardStMan",
                     &[],
+                    big_endian,
                 );
                 dm_data = write_ssm_file(
                     &data_path,
                     &table_dat_tmp.table_desc.columns,
                     &snapshot.rows,
+                    big_endian,
                 )?;
                 // Re-create table_dat with the actual DM blob
                 let table_dat = TableDatContents::from_snapshot(
@@ -211,6 +226,7 @@ impl StorageManager for CompositeStorage {
                     nrrow,
                     &dm_type_name,
                     &dm_data,
+                    big_endian,
                 );
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
@@ -231,6 +247,7 @@ fn load_stman_aipsio_columns(
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
     rows: &mut [RecordValue],
     nrrow: usize,
+    byte_order: ByteOrder,
 ) -> Result<(), StorageError> {
     // Build column info for the StManAipsIO reader using the bound columns
     let col_info: Vec<StManColumnInfo> = bound_cols
@@ -249,7 +266,7 @@ fn load_stman_aipsio_columns(
         })
         .collect();
 
-    let stman_data = read_stman_file(data_path, &col_info)?;
+    let stman_data = read_stman_file(data_path, &col_info, byte_order)?;
 
     for (stman_col_idx, (desc_idx, _)) in bound_cols.iter().enumerate() {
         if stman_col_idx >= stman_data.columns.len() {

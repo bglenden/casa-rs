@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casacore_aipsio::{AipsIo, AipsOpenOption};
+use casacore_aipsio::{AipsIo, AipsOpenOption, ByteOrder};
 use casacore_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
@@ -59,8 +59,9 @@ pub(crate) struct StManColumnInfo {
 pub(crate) fn read_stman_file(
     path: &Path,
     col_info: &[StManColumnInfo],
+    byte_order: ByteOrder,
 ) -> Result<StManAipsIOFile, StorageError> {
-    let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
+    let mut io = AipsIo::open_with_order(path, AipsOpenOption::Old, byte_order)?;
 
     let version = io.getstart("StManAipsIO")?;
 
@@ -470,11 +471,12 @@ pub(crate) fn write_stman_file(
     path: &Path,
     columns: &[ColumnDescContents],
     rows: &[casacore_types::RecordValue],
+    byte_order: ByteOrder,
 ) -> Result<(), StorageError> {
     let nrrow = rows.len() as u32;
     let ncol = columns.len() as u32;
 
-    let mut io = AipsIo::open(path, AipsOpenOption::New)?;
+    let mut io = AipsIo::open_with_order(path, AipsOpenOption::New, byte_order)?;
     io.putstart("StManAipsIO", 2)?;
 
     // C++ casacore writes an empty stmanName for StManAipsIO v2

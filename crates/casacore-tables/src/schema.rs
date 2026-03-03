@@ -29,6 +29,13 @@ pub enum SchemaError {
     /// Cf. C++ `ColumnDesc::Undefined`, which is only meaningful for scalar columns.
     #[error("column \"{0}\" uses Undefined but is not scalar")]
     UndefinedOnlyForScalar(String),
+
+    /// A column with the given name does not exist in the schema.
+    ///
+    /// Returned by [`TableSchema::remove_column`] and [`TableSchema::rename_column`]
+    /// when the specified column is not found.
+    #[error("column \"{0}\" not found in schema")]
+    ColumnNotFound(String),
 }
 
 /// Storage and behaviour flags for a single column.
@@ -298,6 +305,51 @@ impl TableSchema {
     pub fn contains_column(&self, name: &str) -> bool {
         self.column(name).is_some()
     }
+
+    /// Add a column to the schema.
+    ///
+    /// Returns [`SchemaError::DuplicateColumn`] if a column with the same
+    /// name already exists. Validates the column's options before inserting.
+    /// Cf. C++ `TableDesc::addColumn`.
+    pub fn add_column(&mut self, col: ColumnSchema) -> Result<(), SchemaError> {
+        if self.contains_column(col.name()) {
+            return Err(SchemaError::DuplicateColumn(col.name().to_string()));
+        }
+        col.validate_options()?;
+        self.columns.push(col);
+        Ok(())
+    }
+
+    /// Remove a column by name, returning the removed [`ColumnSchema`].
+    ///
+    /// Returns [`SchemaError::ColumnNotFound`] if no column with the given
+    /// name exists. Cf. C++ `TableDesc::removeColumn`.
+    pub fn remove_column(&mut self, name: &str) -> Result<ColumnSchema, SchemaError> {
+        let pos = self
+            .columns
+            .iter()
+            .position(|c| c.name == name)
+            .ok_or_else(|| SchemaError::ColumnNotFound(name.to_string()))?;
+        Ok(self.columns.remove(pos))
+    }
+
+    /// Rename a column.
+    ///
+    /// Returns [`SchemaError::ColumnNotFound`] if `old` does not exist, or
+    /// [`SchemaError::DuplicateColumn`] if `new` already exists.
+    /// Cf. C++ `TableDesc::renameColumn`.
+    pub fn rename_column(&mut self, old: &str, new: &str) -> Result<(), SchemaError> {
+        if self.contains_column(new) {
+            return Err(SchemaError::DuplicateColumn(new.to_string()));
+        }
+        let col = self
+            .columns
+            .iter_mut()
+            .find(|c| c.name == old)
+            .ok_or_else(|| SchemaError::ColumnNotFound(old.to_string()))?;
+        col.name = new.to_string();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +390,65 @@ mod tests {
             column,
             Err(SchemaError::UndefinedOnlyForScalar("meta".to_string()))
         );
+    }
+
+    #[test]
+    fn add_column_to_existing_schema() {
+        let mut schema = TableSchema::new(vec![ColumnSchema::scalar("a", PrimitiveType::Int32)])
+            .expect("valid schema");
+        schema
+            .add_column(ColumnSchema::scalar("b", PrimitiveType::Float64))
+            .expect("add succeeds");
+        assert_eq!(schema.columns().len(), 2);
+        assert!(schema.contains_column("b"));
+    }
+
+    #[test]
+    fn add_column_rejects_duplicate() {
+        let mut schema = TableSchema::new(vec![ColumnSchema::scalar("a", PrimitiveType::Int32)])
+            .expect("valid schema");
+        let result = schema.add_column(ColumnSchema::scalar("a", PrimitiveType::Float64));
+        assert_eq!(result, Err(SchemaError::DuplicateColumn("a".to_string())));
+    }
+
+    #[test]
+    fn remove_column_from_schema() {
+        let mut schema = TableSchema::new(vec![
+            ColumnSchema::scalar("a", PrimitiveType::Int32),
+            ColumnSchema::scalar("b", PrimitiveType::Float64),
+        ])
+        .expect("valid schema");
+        let removed = schema.remove_column("a").expect("remove succeeds");
+        assert_eq!(removed.name(), "a");
+        assert_eq!(schema.columns().len(), 1);
+        assert!(!schema.contains_column("a"));
+    }
+
+    #[test]
+    fn remove_column_missing_errors() {
+        let mut schema = TableSchema::new(vec![ColumnSchema::scalar("a", PrimitiveType::Int32)])
+            .expect("valid schema");
+        let result = schema.remove_column("z");
+        assert_eq!(result, Err(SchemaError::ColumnNotFound("z".to_string())));
+    }
+
+    #[test]
+    fn rename_column_in_schema() {
+        let mut schema = TableSchema::new(vec![ColumnSchema::scalar("old", PrimitiveType::Int32)])
+            .expect("valid schema");
+        schema.rename_column("old", "new").expect("rename succeeds");
+        assert!(!schema.contains_column("old"));
+        assert!(schema.contains_column("new"));
+    }
+
+    #[test]
+    fn rename_column_to_existing_name_errors() {
+        let mut schema = TableSchema::new(vec![
+            ColumnSchema::scalar("a", PrimitiveType::Int32),
+            ColumnSchema::scalar("b", PrimitiveType::Float64),
+        ])
+        .expect("valid schema");
+        let result = schema.rename_column("a", "b");
+        assert_eq!(result, Err(SchemaError::DuplicateColumn("b".to_string())));
     }
 }

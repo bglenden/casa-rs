@@ -4,16 +4,20 @@
 //! On-disk format: `table.fN` file with 512-byte AipsIO header at offset 0,
 //! followed by fixed-size buckets at offset 512+.
 //!
-//! The SSM file header and index data use in-memory AipsIO which may use
-//! native byte order (little-endian on modern machines). The DM data blob
-//! from `table.dat` always uses big-endian AipsIO (file-based). Bucket
-//! data byte order is indicated by the `big_endian` flag in the SSM header.
+//! The SSM file header and index data use in-memory AipsIO whose byte order
+//! matches the table's endian setting (BE for BE tables, LE for LE tables).
+//! The DM data blob from `table.dat` always uses big-endian AipsIO
+//! (file-based). Bucket column data byte order is indicated by the
+//! `big_endian` flag in the SSM header. String bucket metadata (freeLink,
+//! usedLength, nDeleted, nextBucket) and index bucket chain pointers always
+//! use canonical (big-endian) encoding regardless of the table's endian
+//! setting.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use casacore_aipsio::AipsIo;
+use casacore_aipsio::{AipsIo, ByteOrder};
 
 use super::StorageError;
 use super::canonical::{
@@ -21,8 +25,9 @@ use super::canonical::{
     read_f32_slice_le, read_f64_be, read_f64_le, read_f64_slice_be, read_f64_slice_le,
     read_i16_slice_be, read_i16_slice_le, read_i32_be, read_i32_slice_be, read_i32_slice_le,
     read_i64_slice_be, read_i64_slice_le, read_u16_slice_be, read_u16_slice_le, read_u32_slice_be,
-    read_u32_slice_le, write_bool_bits, write_f32_be, write_f64_be, write_i16_be, write_i32_be,
-    write_i64_be, write_u16_be, write_u32_be,
+    read_u32_slice_le, write_bool_bits, write_f32_be, write_f32_le, write_f64_be, write_f64_le,
+    write_i16_be, write_i16_le, write_i32_be, write_i32_le, write_i64_be, write_i64_le,
+    write_u16_be, write_u16_le, write_u32_be, write_u32_le,
 };
 use super::data_type::CasacoreDataType;
 use super::stman_aipsio::ColumnRawData;
@@ -35,23 +40,16 @@ const AIPSIO_MAGIC: u32 = 0xbebebebe;
 // Byte-order-aware buffer reader for in-memory AipsIO parsing
 // ---------------------------------------------------------------------------
 
-/// Whether in-memory AipsIO data uses big- or little-endian encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IoByteOrder {
-    Big,
-    Little,
-}
-
 /// Minimal reader for AipsIO-framed data in either byte order.
 struct AipsIoBuf<'a> {
     data: &'a [u8],
     pos: usize,
-    order: IoByteOrder,
+    order: ByteOrder,
     level: usize,
 }
 
 impl<'a> AipsIoBuf<'a> {
-    fn new(data: &'a [u8], order: IoByteOrder) -> Self {
+    fn new(data: &'a [u8], order: ByteOrder) -> Self {
         Self {
             data,
             pos: 0,
@@ -74,26 +72,26 @@ impl<'a> AipsIoBuf<'a> {
     fn read_u32(&mut self) -> Result<u32, StorageError> {
         let b = self.read_bytes(4)?;
         Ok(match self.order {
-            IoByteOrder::Big => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
-            IoByteOrder::Little => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::BigEndian => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::LittleEndian => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
         })
     }
 
     fn read_i32(&mut self) -> Result<i32, StorageError> {
         let b = self.read_bytes(4)?;
         Ok(match self.order {
-            IoByteOrder::Big => i32::from_be_bytes([b[0], b[1], b[2], b[3]]),
-            IoByteOrder::Little => i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::BigEndian => i32::from_be_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::LittleEndian => i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
         })
     }
 
     fn read_u64(&mut self) -> Result<u64, StorageError> {
         let b = self.read_bytes(8)?;
         Ok(match self.order {
-            IoByteOrder::Big => {
+            ByteOrder::BigEndian => {
                 u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
             }
-            IoByteOrder::Little => {
+            ByteOrder::LittleEndian => {
                 u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
             }
         })
@@ -166,7 +164,7 @@ impl<'a> AipsIoBuf<'a> {
 
 /// Detect the byte order of in-memory AipsIO data.
 /// Returns the byte order by checking the object length field after the magic.
-fn detect_aipsio_byte_order(data: &[u8]) -> Result<IoByteOrder, StorageError> {
+fn detect_aipsio_byte_order(data: &[u8]) -> Result<ByteOrder, StorageError> {
     if data.len() < 8 {
         return Err(StorageError::FormatMismatch(
             "SSM data too short for byte order detection".to_string(),
@@ -182,11 +180,11 @@ fn detect_aipsio_byte_order(data: &[u8]) -> Result<IoByteOrder, StorageError> {
     let le_ok = le_len > 0 && le_len < 4096;
 
     match (be_ok, le_ok) {
-        (true, false) => Ok(IoByteOrder::Big),
-        (false, true) => Ok(IoByteOrder::Little),
+        (true, false) => Ok(ByteOrder::BigEndian),
+        (false, true) => Ok(ByteOrder::LittleEndian),
         (true, true) => {
-            // Both look valid — prefer native (little-endian on modern machines)
-            Ok(IoByteOrder::Little)
+            // Both look valid — prefer canonical (big-endian) when ambiguous
+            Ok(ByteOrder::BigEndian)
         }
         (false, false) => Err(StorageError::FormatMismatch(format!(
             "SSM: cannot detect byte order (be_len={be_len}, le_len={le_len})"
@@ -217,7 +215,7 @@ struct SsmHeader {
     nr_indices: u32,
     big_endian: bool,
     /// Byte order used by in-memory AipsIO (header + indices).
-    io_order: IoByteOrder,
+    io_order: ByteOrder,
 }
 
 #[derive(Debug, Clone)]
@@ -511,7 +509,9 @@ fn read_ssm_string(
         remaining -= chunk;
 
         if remaining > 0 {
-            let next_bucket = read_i32_canonical(&bucket[12..16], header.big_endian);
+            // String bucket metadata (nextBucket) is always canonical (BE)
+            // per C++ CanonicalConversion in SSMStringHandler.
+            let next_bucket = read_i32_be(&bucket[12..16]);
             if next_bucket < 0 {
                 return Err(StorageError::FormatMismatch(
                     "SSM string chain ended prematurely".to_string(),
@@ -921,6 +921,7 @@ pub(crate) fn write_ssm_file(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
     rows: &[casacore_types::RecordValue],
+    big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = rows.len();
     let ncol = col_descs.len();
@@ -1022,6 +1023,7 @@ pub(crate) fn write_ssm_file(
                 value,
                 &mut string_buckets,
                 bucket_size as usize,
+                big_endian,
             );
         }
     }
@@ -1035,13 +1037,14 @@ pub(crate) fn write_ssm_file(
         bucket_number.push(i as u32);
     }
 
-    // 6. Serialize the SSMIndex to bytes (LE AipsIO)
+    // 6. Serialize the SSMIndex to bytes (byte order matches table endian)
     let index_data = serialize_ssm_index(
         nr_data_buckets as u32,
         rows_per_bucket,
         ncol as i32,
         &last_row,
         &bucket_number,
+        big_endian,
     );
 
     // 7. Write the index into index buckets
@@ -1064,7 +1067,7 @@ pub(crate) fn write_ssm_file(
     let first_idx_bucket = (nr_data_buckets + nr_string_buckets) as i32;
     let nr_buckets = nr_data_buckets + nr_string_buckets + nr_idx_buckets;
 
-    // 8. Write the 512-byte header (BE AipsIO framing, v3 with LE bucket data)
+    // 8. Write the 512-byte header (BE AipsIO framing, v3)
     let header_buf = serialize_ssm_header(
         bucket_size,
         nr_buckets as u32,
@@ -1076,6 +1079,7 @@ pub(crate) fn write_ssm_file(
         first_string_bucket,
         index_data.len() as u32,
         1, // nr_indices (single index for all columns)
+        big_endian,
     );
 
     // 9. Assemble the file
@@ -1118,7 +1122,7 @@ pub(crate) fn write_ssm_file(
     Ok(dm_blob)
 }
 
-/// Write a single cell value into a data bucket using canonical (BE) format.
+/// Write a single cell value into a data bucket using the specified byte order.
 #[allow(clippy::too_many_arguments)]
 fn write_cell_to_bucket(
     bucket: &mut [u8],
@@ -1129,6 +1133,7 @@ fn write_cell_to_bucket(
     value: Option<&casacore_types::Value>,
     string_buckets: &mut Vec<Vec<u8>>,
     bucket_size: usize,
+    big_endian: bool,
 ) {
     use casacore_types::{ScalarValue, Value};
 
@@ -1144,8 +1149,8 @@ fn write_cell_to_bucket(
             write_bool_bits(&mut bucket[byte_offset..], sub_bit, &bools);
         }
         CasacoreDataType::TpString => {
-            // String reference: 3 canonical (BE) ints (bucket_nr, offset, length)
-            // Short strings (<=8 bytes) stored inline
+            // String reference: 3 ints (bucket_nr, offset, length) in bucket byte order.
+            // Short strings (<=8 bytes) stored inline. String bucket metadata stays BE.
             let ref_offset = col_offset + row_in_bucket * 12;
             let s = match value {
                 Some(Value::Scalar(ScalarValue::String(s))) => s.as_str(),
@@ -1156,14 +1161,24 @@ fn write_cell_to_bucket(
                 // Inline: write string bytes at ref_offset, then zeros, then length at +8
                 bucket[ref_offset..ref_offset + s.len()].copy_from_slice(s.as_bytes());
                 // Zero remaining bytes in the 12-byte slot (already zeroed)
-                write_i32_be(&mut bucket[ref_offset + 8..], len);
+                if big_endian {
+                    write_i32_be(&mut bucket[ref_offset + 8..], len);
+                } else {
+                    write_i32_le(&mut bucket[ref_offset + 8..], len);
+                }
             } else {
                 // Store in string bucket
                 let (sb_nr, sb_offset) =
                     allocate_string_in_bucket(string_buckets, s.as_bytes(), bucket_size);
-                write_i32_be(&mut bucket[ref_offset..], sb_nr as i32);
-                write_i32_be(&mut bucket[ref_offset + 4..], sb_offset as i32);
-                write_i32_be(&mut bucket[ref_offset + 8..], len);
+                if big_endian {
+                    write_i32_be(&mut bucket[ref_offset..], sb_nr as i32);
+                    write_i32_be(&mut bucket[ref_offset + 4..], sb_offset as i32);
+                    write_i32_be(&mut bucket[ref_offset + 8..], len);
+                } else {
+                    write_i32_le(&mut bucket[ref_offset..], sb_nr as i32);
+                    write_i32_le(&mut bucket[ref_offset + 4..], sb_offset as i32);
+                    write_i32_le(&mut bucket[ref_offset + 8..], len);
+                }
             }
         }
         _ => {
@@ -1171,17 +1186,24 @@ fn write_cell_to_bucket(
             let (elem_bytes, _) = canonical_element_size(data_type);
             let bytes_per_row = elem_bytes * nrelem;
             let data_start = col_offset + row_in_bucket * bytes_per_row;
-            write_value_canonical(&mut bucket[data_start..], data_type, nrelem, value);
+            write_value_canonical(
+                &mut bucket[data_start..],
+                data_type,
+                nrelem,
+                value,
+                big_endian,
+            );
         }
     }
 }
 
-/// Write a scalar or array value in canonical (big-endian) format.
+/// Write a scalar or array value in the specified byte order.
 fn write_value_canonical(
     dst: &mut [u8],
     data_type: CasacoreDataType,
     nrelem: usize,
     value: Option<&casacore_types::Value>,
+    big_endian: bool,
 ) {
     use casacore_types::{ArrayValue, ScalarValue, Value};
 
@@ -1198,14 +1220,22 @@ fn write_value_canonical(
                 Some(Value::Scalar(ScalarValue::Int16(v))) => *v,
                 _ => 0,
             };
-            write_i16_be(dst, v);
+            if big_endian {
+                write_i16_be(dst, v);
+            } else {
+                write_i16_le(dst, v);
+            }
         }
         CasacoreDataType::TpUShort => {
             let v = match value {
                 Some(Value::Scalar(ScalarValue::UInt16(v))) => *v,
                 _ => 0,
             };
-            write_u16_be(dst, v);
+            if big_endian {
+                write_u16_be(dst, v);
+            } else {
+                write_u16_le(dst, v);
+            }
         }
         CasacoreDataType::TpInt => {
             if nrelem == 1 {
@@ -1213,10 +1243,18 @@ fn write_value_canonical(
                     Some(Value::Scalar(ScalarValue::Int32(v))) => *v,
                     _ => 0,
                 };
-                write_i32_be(dst, v);
+                if big_endian {
+                    write_i32_be(dst, v);
+                } else {
+                    write_i32_le(dst, v);
+                }
             } else if let Some(Value::Array(ArrayValue::Int32(arr))) = value {
                 for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    write_i32_be(&mut dst[i * 4..], v);
+                    if big_endian {
+                        write_i32_be(&mut dst[i * 4..], v);
+                    } else {
+                        write_i32_le(&mut dst[i * 4..], v);
+                    }
                 }
             }
         }
@@ -1225,7 +1263,11 @@ fn write_value_canonical(
                 Some(Value::Scalar(ScalarValue::UInt32(v))) => *v,
                 _ => 0,
             };
-            write_u32_be(dst, v);
+            if big_endian {
+                write_u32_be(dst, v);
+            } else {
+                write_u32_le(dst, v);
+            }
         }
         CasacoreDataType::TpFloat => {
             if nrelem == 1 {
@@ -1233,10 +1275,18 @@ fn write_value_canonical(
                     Some(Value::Scalar(ScalarValue::Float32(v))) => *v,
                     _ => 0.0,
                 };
-                write_f32_be(dst, v);
+                if big_endian {
+                    write_f32_be(dst, v);
+                } else {
+                    write_f32_le(dst, v);
+                }
             } else if let Some(Value::Array(ArrayValue::Float32(arr))) = value {
                 for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    write_f32_be(&mut dst[i * 4..], v);
+                    if big_endian {
+                        write_f32_be(&mut dst[i * 4..], v);
+                    } else {
+                        write_f32_le(&mut dst[i * 4..], v);
+                    }
                 }
             }
         }
@@ -1246,10 +1296,18 @@ fn write_value_canonical(
                     Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
                     _ => 0.0,
                 };
-                write_f64_be(dst, v);
+                if big_endian {
+                    write_f64_be(dst, v);
+                } else {
+                    write_f64_le(dst, v);
+                }
             } else if let Some(Value::Array(ArrayValue::Float64(arr))) = value {
                 for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    write_f64_be(&mut dst[i * 8..], v);
+                    if big_endian {
+                        write_f64_be(&mut dst[i * 8..], v);
+                    } else {
+                        write_f64_le(&mut dst[i * 8..], v);
+                    }
                 }
             }
         }
@@ -1258,7 +1316,11 @@ fn write_value_canonical(
                 Some(Value::Scalar(ScalarValue::Int64(v))) => *v,
                 _ => 0,
             };
-            write_i64_be(dst, v);
+            if big_endian {
+                write_i64_be(dst, v);
+            } else {
+                write_i64_le(dst, v);
+            }
         }
         CasacoreDataType::TpComplex => {
             if nrelem == 1 {
@@ -1266,12 +1328,22 @@ fn write_value_canonical(
                     Some(Value::Scalar(ScalarValue::Complex32(c))) => (c.re, c.im),
                     _ => (0.0, 0.0),
                 };
-                write_f32_be(dst, re);
-                write_f32_be(&mut dst[4..], im);
+                if big_endian {
+                    write_f32_be(dst, re);
+                    write_f32_be(&mut dst[4..], im);
+                } else {
+                    write_f32_le(dst, re);
+                    write_f32_le(&mut dst[4..], im);
+                }
             } else if let Some(Value::Array(ArrayValue::Complex32(arr))) = value {
                 for (i, c) in arr.t().iter().enumerate().take(nrelem) {
-                    write_f32_be(&mut dst[i * 8..], c.re);
-                    write_f32_be(&mut dst[i * 8 + 4..], c.im);
+                    if big_endian {
+                        write_f32_be(&mut dst[i * 8..], c.re);
+                        write_f32_be(&mut dst[i * 8 + 4..], c.im);
+                    } else {
+                        write_f32_le(&mut dst[i * 8..], c.re);
+                        write_f32_le(&mut dst[i * 8 + 4..], c.im);
+                    }
                 }
             }
         }
@@ -1281,12 +1353,22 @@ fn write_value_canonical(
                     Some(Value::Scalar(ScalarValue::Complex64(c))) => (c.re, c.im),
                     _ => (0.0, 0.0),
                 };
-                write_f64_be(dst, re);
-                write_f64_be(&mut dst[8..], im);
+                if big_endian {
+                    write_f64_be(dst, re);
+                    write_f64_be(&mut dst[8..], im);
+                } else {
+                    write_f64_le(dst, re);
+                    write_f64_le(&mut dst[8..], im);
+                }
             } else if let Some(Value::Array(ArrayValue::Complex64(arr))) = value {
                 for (i, c) in arr.t().iter().enumerate().take(nrelem) {
-                    write_f64_be(&mut dst[i * 16..], c.re);
-                    write_f64_be(&mut dst[i * 16 + 8..], c.im);
+                    if big_endian {
+                        write_f64_be(&mut dst[i * 16..], c.re);
+                        write_f64_be(&mut dst[i * 16 + 8..], c.im);
+                    } else {
+                        write_f64_le(&mut dst[i * 16..], c.re);
+                        write_f64_le(&mut dst[i * 16 + 8..], c.im);
+                    }
                 }
             }
         }
@@ -1336,9 +1418,11 @@ fn allocate_string_in_bucket(
 
 /// Serialize the SSM header into a 512-byte buffer.
 ///
-/// The AipsIO framing uses big-endian (canonical) byte order because C++
-/// casacore reads SSM files through `CanonicalIO`. The `asBigEndian = false`
-/// flag inside the header controls only bucket data byte order.
+/// The AipsIO framing byte order matches the table's endian setting:
+/// `CanonicalIO` (big-endian) for BE tables, `LECanonicalIO` (little-endian)
+/// for LE tables. C++ casacore creates the corresponding TypeIO based on
+/// `asBigEndian()` when reading this header. The `asBigEndian` flag inside
+/// the header controls bucket data byte order.
 #[allow(clippy::too_many_arguments)]
 fn serialize_ssm_header(
     bucket_size: u32,
@@ -1351,11 +1435,18 @@ fn serialize_ssm_header(
     last_string_bucket: i32,
     index_length: u32,
     nr_indices: u32,
+    big_endian: bool,
 ) -> Vec<u8> {
-    // AipsIO framing is always canonical (big-endian) for file-based I/O
-    let mut buf = AipsIoWriteBuf::new(IoByteOrder::Big);
+    // AipsIO framing uses the table's byte order (C++ creates CanonicalIO or
+    // LECanonicalIO based on asBigEndian()).
+    let io_order = if big_endian {
+        ByteOrder::BigEndian
+    } else {
+        ByteOrder::LittleEndian
+    };
+    let mut buf = AipsIoWriteBuf::new(io_order);
     buf.putstart("StandardStMan", 3);
-    buf.put_bool(true); // asBigEndian = true (canonical/BE bucket data)
+    buf.put_bool(big_endian);
     buf.put_u32(bucket_size);
     buf.put_u32(nr_buckets);
     buf.put_u32(0); // persCacheSize
@@ -1375,15 +1466,21 @@ fn serialize_ssm_header(
     header
 }
 
-/// Serialize SSMIndex to bytes using canonical (big-endian) AipsIO.
+/// Serialize SSMIndex to bytes using the table's byte order for AipsIO framing.
 fn serialize_ssm_index(
     n_used: u32,
     rows_per_bucket: u32,
     nr_columns: i32,
     last_row: &[u64],
     bucket_number: &[u32],
+    big_endian: bool,
 ) -> Vec<u8> {
-    let mut buf = AipsIoWriteBuf::new(IoByteOrder::Big);
+    let io_order = if big_endian {
+        ByteOrder::BigEndian
+    } else {
+        ByteOrder::LittleEndian
+    };
+    let mut buf = AipsIoWriteBuf::new(io_order);
     // SSMIndex is a top-level object (level 0 → has magic)
     buf.putstart("SSMIndex", 2);
     buf.put_u32(n_used);
@@ -1450,14 +1547,14 @@ fn write_block_u32(io: &mut AipsIo, values: &[u32]) -> Result<(), StorageError> 
 /// Minimal writer for in-memory AipsIO in the given byte order.
 struct AipsIoWriteBuf {
     data: Vec<u8>,
-    order: IoByteOrder,
+    order: ByteOrder,
     /// Stack of obj_len placeholder positions for putend backpatching.
     len_positions: Vec<usize>,
     level: usize,
 }
 
 impl AipsIoWriteBuf {
-    fn new(order: IoByteOrder) -> Self {
+    fn new(order: ByteOrder) -> Self {
         Self {
             data: Vec::new(),
             order,
@@ -1476,22 +1573,22 @@ impl AipsIoWriteBuf {
 
     fn put_u32(&mut self, val: u32) {
         match self.order {
-            IoByteOrder::Big => self.data.extend_from_slice(&val.to_be_bytes()),
-            IoByteOrder::Little => self.data.extend_from_slice(&val.to_le_bytes()),
+            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
+            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
         }
     }
 
     fn put_i32(&mut self, val: i32) {
         match self.order {
-            IoByteOrder::Big => self.data.extend_from_slice(&val.to_be_bytes()),
-            IoByteOrder::Little => self.data.extend_from_slice(&val.to_le_bytes()),
+            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
+            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
         }
     }
 
     fn put_u64(&mut self, val: u64) {
         match self.order {
-            IoByteOrder::Big => self.data.extend_from_slice(&val.to_be_bytes()),
-            IoByteOrder::Little => self.data.extend_from_slice(&val.to_le_bytes()),
+            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
+            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
         }
     }
 
@@ -1533,8 +1630,8 @@ impl AipsIoWriteBuf {
             // obj_len includes everything from the obj_len field to here
             let obj_len = (self.data.len() - pos) as u32;
             let bytes = match self.order {
-                IoByteOrder::Big => obj_len.to_be_bytes(),
-                IoByteOrder::Little => obj_len.to_le_bytes(),
+                ByteOrder::BigEndian => obj_len.to_be_bytes(),
+                ByteOrder::LittleEndian => obj_len.to_le_bytes(),
             };
             self.data[pos..pos + 4].copy_from_slice(&bytes);
         }
