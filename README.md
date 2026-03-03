@@ -6,10 +6,16 @@ This README is for API users. Contributor/developer policy is in `AGENTS.md`.
 
 ## Public API Crates
 
-- `casacore-types`: scalar/array/record value model.
-- `casacore-tables`: table-facing API crate (current facade is intentionally small).
+- [`casacore-types`](target/doc/casacore_types/index.html): scalar/array/record value model.
+- [`casacore-tables`](target/doc/casacore_tables/index.html): table-facing API crate (current facade is intentionally small).
 
 `casacore-aipsio` is primarily an internal implementation crate used by table internals.
+
+Build and browse the full API docs with:
+
+```bash
+cargo doc --workspace --no-deps --open
+```
 
 ## Current User-Facing Capabilities
 
@@ -24,17 +30,6 @@ From this repository workspace:
 ```bash
 cargo test --workspace
 ```
-
-Build API docs:
-
-```bash
-cargo doc --workspace --no-deps
-```
-
-Then open:
-
-- `target/doc/casacore_types/index.html`
-- `target/doc/casacore_tables/index.html`
 
 ## Minimal Example (`casacore-types`)
 
@@ -69,3 +64,8 @@ equivalent to the corresponding C++ test/demo. These demos:
 Demo source lives in each crate's `examples/` directory. The demo logic
 is in a `demo` module within the crate, so `cargo doc` renders it alongside
 the API docs.
+
+## License
+
+Licensed under the [GNU Lesser General Public License v3.0 or later](COPYING.LESSER)
+(SPDX: `LGPL-3.0-or-later`).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 //! StandardStMan (SSM) bucket-based storage manager reader/writer.
 //!
 //! On-disk format: `table.fN` file with 512-byte AipsIO header at offset 0,

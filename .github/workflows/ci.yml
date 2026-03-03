@@ -16,6 +16,16 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Check SPDX license headers
+        run: |
+          bad=$(find crates -name '*.rs' -print0 \
+              | xargs -0 grep -rL 'SPDX-License-Identifier' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Files missing SPDX-License-Identifier header:"
+            echo "$bad"
+            exit 1
+          fi
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -25,8 +35,10 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
-      - name: Run AipsIO demo example
-        run: cargo run -p casacore-aipsio --example t_aipsio
+      - name: Run demo examples
+        run: |
+          cargo run -p casacore-aipsio --example t_aipsio
+          cargo run -p casacore-tables --example t_table
 
   coverage:
     runs-on: ubuntu-latest

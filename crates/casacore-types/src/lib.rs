@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 //! Foundation value types for casacore-compatible data structures.
 //!
 //! This crate defines the scalar, array, and record value model shared by all

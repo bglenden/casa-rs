@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 use std::path::{Path, PathBuf};
 
 use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value, ValueKind};

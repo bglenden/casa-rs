@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 //! Demo helpers and runnable outputs for `casacore-aipsio`.
 //!
 //! This module intentionally keeps demonstration code outside the core

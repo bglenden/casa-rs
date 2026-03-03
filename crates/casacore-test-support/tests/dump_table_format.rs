@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 // Temporary diagnostic test to compare C++ vs Rust table binary output.
 use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casacore_test_support::CppTableFixture;

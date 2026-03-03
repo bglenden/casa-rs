@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 //! AipsIO object stream API.
 //!
 //! This module mirrors casacore C++ `AipsIO` object-framing semantics:

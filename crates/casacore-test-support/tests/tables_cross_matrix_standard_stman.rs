@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 use casacore_tables::{ColumnSchema, TableSchema};
 use casacore_test_support::CppTableFixture;
 use casacore_test_support::table_interop::{

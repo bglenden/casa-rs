@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read and write casacore-compatible tables.
 //!
 //! This crate provides a Rust API for creating, persisting, and reopening

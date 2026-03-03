@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical (big-endian) byte conversion for StandardStMan bucket data.
 //!
 //! SSM stores scalar data directly in bucket byte arrays using canonical

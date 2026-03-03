@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 //! Demo helpers and runnable outputs for `casacore-tables`.
 //!
 //! This module mirrors the C++ casacore `tTable.cc` test program. It
