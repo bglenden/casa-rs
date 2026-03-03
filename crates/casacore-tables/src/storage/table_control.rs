@@ -22,6 +22,23 @@ use super::data_type::{
 pub(crate) enum TableDatResult {
     Plain(TableDatContents),
     Ref(RefTableDatContents),
+    Concat(ConcatTableDatContents),
+}
+
+/// Contents of a ConcatTable's table.dat (no TableDesc/ColumnSet — just
+/// the list of constituent table paths and subtable names to concatenate).
+///
+/// # C++ equivalent
+///
+/// The AipsIO payload inside `ConcatTable::writeConcatTable`.
+#[derive(Debug, Clone)]
+pub(crate) struct ConcatTableDatContents {
+    pub nrrow: u64,
+    pub big_endian: bool,
+    /// Relative paths from this table's directory to each constituent table.
+    pub table_paths: Vec<String>,
+    /// Names of subtables to concatenate (usually empty for basic use).
+    pub sub_table_names: Vec<String>,
 }
 
 /// Contents of a RefTable's table.dat (no TableDesc/ColumnSet — just
@@ -146,6 +163,12 @@ pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, Sto
             io.close()?;
             Ok(TableDatResult::Ref(ref_contents))
         }
+        "ConcatTable" => {
+            let concat_contents = read_concat_table_payload(&mut io, nrrow, big_endian)?;
+            io.getend()?;
+            io.close()?;
+            Ok(TableDatResult::Concat(concat_contents))
+        }
         other => Err(StorageError::FormatMismatch(format!(
             "unsupported table type: {other}"
         ))),
@@ -158,6 +181,9 @@ pub(crate) fn read_table_dat(path: &Path) -> Result<TableDatContents, StorageErr
         TableDatResult::Plain(contents) => Ok(contents),
         TableDatResult::Ref(_) => Err(StorageError::FormatMismatch(
             "expected PlainTable but found RefTable".to_string(),
+        )),
+        TableDatResult::Concat(_) => Err(StorageError::FormatMismatch(
+            "expected PlainTable but found ConcatTable".to_string(),
         )),
     }
 }
@@ -257,6 +283,46 @@ fn read_ref_table_payload(
         parent_nrrow,
         row_order,
         row_map,
+    })
+}
+
+/// Read the AipsIO "ConcatTable" object payload from inside the "Table" envelope.
+fn read_concat_table_payload(
+    io: &mut AipsIo,
+    nrrow: u64,
+    big_endian: bool,
+) -> Result<ConcatTableDatContents, StorageError> {
+    let version = io.getstart("ConcatTable")?;
+    if version > 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "unsupported ConcatTable version: {version}"
+        )));
+    }
+
+    // Number of constituent tables.
+    let ntable = io.get_u32()? as usize;
+    let mut table_paths = Vec::with_capacity(ntable);
+    for _ in 0..ntable {
+        table_paths.push(io.get_string()?);
+    }
+
+    // Block<String> subtable names: C++ serializes via operator<<(AipsIO, Block<String>)
+    // which wraps in an AipsIO "Block" object envelope (version 1).
+    let _block_version = io.getstart("Block")?;
+    let nsub = io.get_u32()? as usize;
+    let mut sub_table_names = Vec::with_capacity(nsub);
+    for _ in 0..nsub {
+        sub_table_names.push(io.get_string()?);
+    }
+    io.getend()?; // Block
+
+    io.getend()?; // ConcatTable
+
+    Ok(ConcatTableDatContents {
+        nrrow,
+        big_endian,
+        table_paths,
+        sub_table_names,
     })
 }
 
@@ -683,6 +749,56 @@ pub(crate) fn write_ref_table_dat(
     }
 
     io.putend()?; // RefTable
+
+    io.putend()?; // Table
+    io.close()?;
+    Ok(())
+}
+
+/// Write table.dat for a ConcatTable.
+///
+/// Binary layout matches C++ `ConcatTable::writeConcatTable`:
+/// ```text
+/// putstart("Table", 2)
+///   nrrow (u32), endian (u32), "ConcatTable" (String)
+///   putstart("ConcatTable", 0)
+///     ntable (u32), table_path[0..ntable] (String each)
+///     putstart("Block", 1)                 // Block<String> subtable names
+///       count (u32), sub_table_name[0..count] (String each)
+///     putend()
+///   putend()
+/// putend()
+/// ```
+pub(crate) fn write_concat_table_dat(
+    path: &Path,
+    contents: &ConcatTableDatContents,
+) -> Result<(), StorageError> {
+    let mut io = AipsIo::open(path, AipsOpenOption::New)?;
+
+    // Table envelope — version 2 (nrrow as u32).
+    io.putstart("Table", 2)?;
+    io.put_u32(contents.nrrow as u32)?;
+    io.put_u32(if contents.big_endian { 0 } else { 1 })?;
+    io.put_string("ConcatTable")?;
+
+    // ConcatTable payload — version 0.
+    io.putstart("ConcatTable", 0)?;
+
+    // Number of constituent tables and their relative paths.
+    io.put_u32(contents.table_paths.len() as u32)?;
+    for table_path in &contents.table_paths {
+        io.put_string(table_path)?;
+    }
+
+    // Block<String> subtable names: C++ serializes as "Block" AipsIO object (v1).
+    io.putstart("Block", 1)?;
+    io.put_u32(contents.sub_table_names.len() as u32)?;
+    for name in &contents.sub_table_names {
+        io.put_string(name)?;
+    }
+    io.putend()?; // Block
+
+    io.putend()?; // ConcatTable
 
     io.putend()?; // Table
     io.close()?;

@@ -22,7 +22,8 @@ use self::stman_aipsio::{StManColumnInfo, extract_row_value, read_stman_file, wr
 pub(crate) use self::table_control::RefTableDatContents;
 
 use self::table_control::{
-    TableDatContents, TableDatResult, read_table_dat_dispatch, write_ref_table_dat, write_table_dat,
+    TableDatContents, TableDatResult, read_table_dat_dispatch, write_concat_table_dat,
+    write_ref_table_dat, write_table_dat,
 };
 
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
@@ -95,6 +96,7 @@ impl StorageManager for CompositeStorage {
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(table_dat) => self.load_plain_table(table_path, &table_dat),
             TableDatResult::Ref(ref_dat) => self.load_ref_table(table_path, &ref_dat),
+            TableDatResult::Concat(concat_dat) => self.load_concat_table(table_path, &concat_dat),
         }
     }
 
@@ -354,6 +356,55 @@ impl CompositeStorage {
         fs::write(&info_path, "Type = \nSubType = \n")?;
         Ok(())
     }
+
+    /// Load a ConcatTable by opening all constituent tables and collecting rows.
+    ///
+    /// Materializes the concatenation: all rows from all constituent tables
+    /// are collected into a single `StorageSnapshot`. Keywords and schema
+    /// come from the first constituent table.
+    fn load_concat_table(
+        &self,
+        table_path: &Path,
+        concat_dat: &table_control::ConcatTableDatContents,
+    ) -> Result<StorageSnapshot, StorageError> {
+        let mut all_rows = Vec::new();
+        let mut schema = None;
+        let mut keywords = RecordValue::default();
+        let mut column_keywords = HashMap::new();
+
+        for (i, rel_path) in concat_dat.table_paths.iter().enumerate() {
+            let abs_path = add_directory(rel_path, table_path)?;
+            let sub_snapshot = self.load(&abs_path)?;
+
+            if i == 0 {
+                schema = sub_snapshot.schema;
+                keywords = sub_snapshot.keywords;
+                column_keywords = sub_snapshot.column_keywords;
+            }
+            all_rows.extend(sub_snapshot.rows);
+        }
+
+        Ok(StorageSnapshot {
+            rows: all_rows,
+            keywords,
+            column_keywords,
+            schema,
+        })
+    }
+
+    /// Save a ConcatTable to disk (table.dat + table.info only, no data files).
+    pub(crate) fn save_concat_table(
+        &self,
+        table_path: &Path,
+        contents: &table_control::ConcatTableDatContents,
+    ) -> Result<(), StorageError> {
+        fs::create_dir_all(table_path)?;
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        write_concat_table_dat(&control_path, contents)?;
+        let info_path = table_path.join(TABLE_INFO_FILE);
+        fs::write(&info_path, "Type = \nSubType = \n")?;
+        Ok(())
+    }
 }
 
 /// Load columns from a StManAipsIO data file into row records.
@@ -434,12 +485,49 @@ fn load_ssm_columns(
     Ok(())
 }
 
+/// Compute a relative path using the C++ `Path::stripDirectory` convention.
+///
+/// Given `target_path` (the table being referenced) and `from_path` (the table
+/// that contains the reference), produces a relative path string that
+/// [`add_directory`] can invert.
+///
+/// Convention:
+/// - If target is a sibling (same parent directory): `"./name"`
+/// - If target is inside the from directory: `"././name"`
+/// - Otherwise: absolute path as fallback
+pub(crate) fn strip_directory(target_path: &Path, from_path: &Path) -> String {
+    let target_abs = std::path::absolute(target_path).unwrap_or_else(|_| target_path.to_path_buf());
+    let from_abs = std::path::absolute(from_path).unwrap_or_else(|_| from_path.to_path_buf());
+
+    // Check if target is inside the from directory (././ convention).
+    let from_dir_prefix = format!("{}/", from_abs.display());
+    let target_str = format!("{}", target_abs.display());
+    if target_str.starts_with(&from_dir_prefix) {
+        let remainder = &target_str[from_dir_prefix.len()..];
+        return format!("././{remainder}");
+    }
+
+    // Check if they share the same parent directory (./ convention).
+    if let (Some(from_parent), Some(target_parent)) = (from_abs.parent(), target_abs.parent()) {
+        if from_parent == target_parent {
+            let name = target_abs.file_name().unwrap_or_default().to_string_lossy();
+            return format!("./{name}");
+        }
+    }
+
+    // Fallback: absolute path.
+    target_abs.to_string_lossy().to_string()
+}
+
 /// Resolve a stored relative path using the C++ `Path::addDirectory` convention.
 ///
 /// - `"./name"` → `parent_dir(ref_table_path) / name`
 /// - `"././name"` → `ref_table_path / name`
 /// - absolute or plain → used as-is
-fn add_directory(relative: &str, ref_table_path: &Path) -> Result<PathBuf, StorageError> {
+pub(crate) fn add_directory(
+    relative: &str,
+    ref_table_path: &Path,
+) -> Result<PathBuf, StorageError> {
     let mut name = relative;
     let mut stripped_count = 0usize;
 

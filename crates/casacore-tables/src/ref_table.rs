@@ -14,7 +14,7 @@ use std::path::Path;
 use casacore_types::{RecordValue, Value};
 
 use crate::schema::{ColumnSchema, TableSchema};
-use crate::storage::{CompositeStorage, RefTableDatContents};
+use crate::storage::{CompositeStorage, RefTableDatContents, strip_directory};
 use crate::table::{Table, TableError};
 
 /// A view over a parent [`Table`]'s rows and/or columns.
@@ -269,39 +269,6 @@ impl<'a> RefTable<'a> {
             name: name.to_string(),
         })
     }
-}
-
-/// Compute a relative path using the C++ `Path::stripDirectory` convention.
-///
-/// Given `parent_path` (the parent table) and `ref_path` (the ref table being
-/// saved), produces a relative path string that C++ `addDirectory` can invert.
-///
-/// Convention:
-/// - If parent is a sibling (same parent directory): `"./name"`
-/// - If parent is inside the ref table directory: `"././name"`
-/// - Otherwise: absolute path as fallback
-fn strip_directory(parent_path: &Path, ref_path: &Path) -> String {
-    let parent_abs = std::path::absolute(parent_path).unwrap_or_else(|_| parent_path.to_path_buf());
-    let ref_abs = std::path::absolute(ref_path).unwrap_or_else(|_| ref_path.to_path_buf());
-
-    // Check if parent is inside the ref table directory (././ convention).
-    let ref_dir_prefix = format!("{}/", ref_abs.display());
-    let parent_str = format!("{}", parent_abs.display());
-    if parent_str.starts_with(&ref_dir_prefix) {
-        let remainder = &parent_str[ref_dir_prefix.len()..];
-        return format!("././{remainder}");
-    }
-
-    // Check if they share the same parent directory (./ convention).
-    if let (Some(ref_parent), Some(parent_parent)) = (ref_abs.parent(), parent_abs.parent()) {
-        if ref_parent == parent_parent {
-            let name = parent_abs.file_name().unwrap_or_default().to_string_lossy();
-            return format!("./{name}");
-        }
-    }
-
-    // Fallback: absolute path.
-    parent_abs.to_string_lossy().to_string()
 }
 
 #[cfg(test)]

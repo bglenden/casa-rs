@@ -18,7 +18,7 @@ that only the relevant wave needs to be in context during implementation.
 | 3 | [Table locking](wave-03-locking.md) | **DONE** | File-based multi-process locking (`TableLock`) |
 | 4 | [Reference tables & selections](wave-04-ref-tables.md) | **DONE** | Row/column views without copying (`RefTable`) |
 | 5 | [Sorting & table iteration](wave-05-sorting.md) | **DONE** | Sort by key columns, grouped sub-table iteration |
-| 6 | [Table concatenation & copy](wave-06-concat-copy.md) | Not started | Virtual concatenation, deep copy with DM conversion |
+| 6 | [Table concatenation & copy](wave-06-concat-copy.md) | **DONE** | Virtual concatenation, deep copy with DM conversion |
 | 7 | [Column indexing](wave-07-indexing.md) | Not started | In-memory index for fast scalar column lookups |
 | 8 | [Memory tables](wave-08-memory-tables.md) | Not started | Non-persistent in-memory tables (`MemoryStMan`) |
 | 9 | [TaQL](wave-09-taql.md) | Not started | Table Query Language: SELECT, WHERE, JOIN, GROUP BY, etc. |
@@ -124,3 +124,11 @@ Every wave must pass ALL of the following before commit/push:
 - **C++ path conventions (`stripDirectory`/`addDirectory`) are not POSIX.**
   They use `"./"` and `"././"` prefixes with specific semantics. Match these
   conventions exactly for ref table path interop.
+
+- **C++ `Block<String>` serialization wraps in an AipsIO "Block" envelope.**
+  `Block<String>` is serialized with `putstart("Block", 1)`, then a `u32`
+  count, then each string. Not flat. ConcatTable uses this for subtable names.
+
+- **Shared path helpers avoid duplication.** `strip_directory` and
+  `add_directory` are needed by both `RefTable` and `ConcatTable`. Moving them
+  to `storage/mod.rs` as `pub(crate)` prevents code duplication.

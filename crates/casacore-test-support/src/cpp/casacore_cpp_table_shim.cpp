@@ -16,8 +16,11 @@
 #include <casacore/tables/DataMan/StandardStMan.h>
 #include <casacore/tables/Tables/TableLock.h>
 #include <casacore/casa/Utilities/Sort.h>
+#include <casacore/tables/Tables/ConcatTable.h>
+#include <casacore/tables/Tables/TableCopy.h>
 #include <casacore/casa/Arrays/Array.h>
 #include <casacore/casa/Arrays/IPosition.h>
+#include <casacore/casa/Containers/Block.h>
 
 #include <cstdint>
 #include <cstdlib>
@@ -728,6 +731,126 @@ void verify_sorted_ref_table_impl(const std::string& dir) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ConcatTable fixture: two 3-row tables concatenated.
+// ---------------------------------------------------------------------------
+
+void write_concat_table_impl(const std::string& dir) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("id"));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::String>("name"));
+
+    // Part 0: ids 1, 2, 3.
+    std::string part0Path = dir + "/part0.tbl";
+    {
+        casacore::SetupNewTable newtab(part0Path, td, casacore::Table::New);
+        casacore::Table table(newtab, 3);
+        casacore::ScalarColumn<casacore::Int> colId(table, "id");
+        casacore::ScalarColumn<casacore::String> colName(table, "name");
+        colId.put(0, 1); colName.put(0, "alpha");
+        colId.put(1, 2); colName.put(1, "bravo");
+        colId.put(2, 3); colName.put(2, "charlie");
+    }
+
+    // Part 1: ids 4, 5, 6.
+    std::string part1Path = dir + "/part1.tbl";
+    {
+        casacore::SetupNewTable newtab(part1Path, td, casacore::Table::New);
+        casacore::Table table(newtab, 3);
+        casacore::ScalarColumn<casacore::Int> colId(table, "id");
+        casacore::ScalarColumn<casacore::String> colName(table, "name");
+        colId.put(0, 4); colName.put(0, "delta");
+        colId.put(1, 5); colName.put(1, "echo");
+        colId.put(2, 6); colName.put(2, "foxtrot");
+    }
+
+    // Concat: part0 + part1.
+    casacore::Block<casacore::String> tableNames(2);
+    tableNames[0] = part0Path;
+    tableNames[1] = part1Path;
+    casacore::Block<casacore::String> subTableNames;
+    casacore::ConcatTable concatTable(tableNames, subTableNames, "",
+        casacore::Table::Old, casacore::TableLock(),
+        casacore::TSMOption());
+    std::string concatPath = dir + "/concat.tbl";
+    concatTable.rename(concatPath, casacore::Table::New);
+}
+
+void verify_concat_table_impl(const std::string& dir) {
+    std::string concatPath = dir + "/concat.tbl";
+    casacore::Table table(concatPath, casacore::Table::Old);
+
+    if (table.nrow() != 6)
+        throw std::runtime_error(
+            "expected 6 rows, got " + std::to_string(table.nrow()));
+
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+    int expected[] = {1, 2, 3, 4, 5, 6};
+    for (int i = 0; i < 6; i++) {
+        if (colId(i) != expected[i])
+            throw std::runtime_error(
+                "row " + std::to_string(i) + " id mismatch: expected " +
+                std::to_string(expected[i]) + ", got " + std::to_string(colId(i)));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Deep copy fixture: copy with DM conversion (StManAipsIO → StandardStMan).
+// ---------------------------------------------------------------------------
+
+void write_deep_copy_impl(const std::string& dir) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("id"));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::String>("name"));
+
+    // Original table with StManAipsIO (default).
+    std::string originalPath = dir + "/original.tbl";
+    {
+        casacore::SetupNewTable newtab(originalPath, td, casacore::Table::New);
+        casacore::Table table(newtab, 5);
+        casacore::ScalarColumn<casacore::Int> colId(table, "id");
+        casacore::ScalarColumn<casacore::String> colName(table, "name");
+        for (int i = 0; i < 5; i++) {
+            colId.put(i, (i + 1) * 10);
+            colName.put(i, "item_" + std::to_string(i));
+        }
+    }
+
+    // Deep copy to StandardStMan.
+    std::string copyPath = dir + "/copy.tbl";
+    {
+        casacore::Table original(originalPath, casacore::Table::Old);
+        casacore::Record dminfo;
+        casacore::Table newTable = casacore::TableCopy::makeEmptyTable(
+            copyPath, dminfo, original, casacore::Table::New,
+            casacore::Table::LittleEndian, casacore::True);
+        casacore::TableCopy::copyRows(newTable, original);
+    }
+}
+
+void verify_deep_copy_impl(const std::string& dir) {
+    std::string copyPath = dir + "/copy.tbl";
+    casacore::Table table(copyPath, casacore::Table::Old);
+
+    if (table.nrow() != 5)
+        throw std::runtime_error(
+            "expected 5 rows, got " + std::to_string(table.nrow()));
+
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+    casacore::ScalarColumn<casacore::String> colName(table, "name");
+    for (int i = 0; i < 5; i++) {
+        int expectedId = (i + 1) * 10;
+        if (colId(i) != expectedId)
+            throw std::runtime_error(
+                "row " + std::to_string(i) + " id mismatch: expected " +
+                std::to_string(expectedId) + ", got " + std::to_string(colId(i)));
+        casacore::String expectedName = "item_" + std::to_string(i);
+        if (colName(i) != expectedName)
+            throw std::runtime_error(
+                "row " + std::to_string(i) + " name mismatch");
+    }
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -1005,6 +1128,58 @@ int32_t cpp_table_verify_sorted_ref_table(const char* path, char** out_error) {
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in verify_sorted_ref_table");
+        return -1;
+    }
+}
+
+int32_t cpp_table_write_concat_table(const char* path, char** out_error) {
+    try {
+        write_concat_table_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_concat_table");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_concat_table(const char* path, char** out_error) {
+    try {
+        verify_concat_table_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_concat_table");
+        return -1;
+    }
+}
+
+int32_t cpp_table_write_deep_copy(const char* path, char** out_error) {
+    try {
+        write_deep_copy_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_deep_copy");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_deep_copy(const char* path, char** out_error) {
+    try {
+        verify_deep_copy_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_deep_copy");
         return -1;
     }
 }

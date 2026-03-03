@@ -27,6 +27,7 @@
 //! | Type | Role |
 //! |------|------|
 //! | [`Table`] | Create, query, and persist a table |
+//! | [`ConcatTable`] | A read-only virtual concatenation of tables |
 //! | [`RefTable`] | A view over a parent table's rows and/or columns |
 //! | [`SortOrder`] | Ascending or descending sort direction |
 //! | [`TableGroup`] | A group of rows with equal key values |
@@ -104,6 +105,30 @@
 //! assert_eq!(sorted.row_count(), 3);
 //! ```
 //!
+//! # Table concatenation and copy
+//!
+//! [`Table::concat`] virtually combines multiple tables with the same
+//! schema into a single [`ConcatTable`] view without copying data.
+//! [`Table::deep_copy`] saves all rows with a (possibly different)
+//! storage manager, and [`Table::shallow_copy`] saves schema and
+//! keywords with zero rows.
+//!
+//! ```rust,no_run
+//! # use casacore_tables::{Table, TableOptions, DataManagerKind};
+//! // Concatenate two tables:
+//! let t1 = Table::open(TableOptions::new("/tmp/part1")).unwrap();
+//! let t2 = Table::open(TableOptions::new("/tmp/part2")).unwrap();
+//! let concat = Table::concat(vec![t1, t2]).unwrap();
+//! assert_eq!(concat.row_count(), 10); // combined rows
+//!
+//! // Deep copy with storage manager conversion:
+//! let table = Table::open(TableOptions::new("/tmp/original")).unwrap();
+//! table.deep_copy(
+//!     TableOptions::new("/tmp/copy")
+//!         .with_data_manager(DataManagerKind::StandardStMan),
+//! ).unwrap();
+//! ```
+//!
 //! # Table locking (Unix)
 //!
 //! When multiple processes share a table on disk, file-based locking
@@ -166,6 +191,7 @@
 //! cargo run -p casacore-tables --example t_table
 //! ```
 
+mod concat_table;
 mod ref_table;
 mod schema;
 mod sorting;
@@ -178,6 +204,7 @@ pub(crate) mod storage;
 
 pub mod demo;
 
+pub use concat_table::ConcatTable;
 pub use lock::{LockMode, LockOptions, LockType};
 pub use ref_table::RefTable;
 pub use schema::{

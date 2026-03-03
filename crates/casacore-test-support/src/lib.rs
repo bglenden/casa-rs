@@ -1165,6 +1165,22 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_table_write_concat_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_concat_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_deep_copy(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_deep_copy(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
 
     fn casacore_cpp_aipsio_encode(
@@ -1389,6 +1405,14 @@ pub enum CppTableFixture {
     /// RefTable. The path argument is a directory containing `parent.tbl/`
     /// and `sorted.tbl/`.
     SortedRefTable,
+    /// ConcatTable interop: two 3-row tables (id: Int, name: String) concatenated
+    /// as a ConcatTable. The path argument is a directory containing `part0.tbl/`,
+    /// `part1.tbl/`, and `concat.tbl/`.
+    ConcatTable,
+    /// Deep copy interop: a 5-row table deep-copied to a different storage
+    /// manager. The path argument is a directory containing `original.tbl/`
+    /// and `copy.tbl/`.
+    DeepCopy,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1419,6 +1443,10 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             CppTableFixture::SortedRefTable => {
                 cpp_table_write_sorted_ref_table(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::ConcatTable => {
+                cpp_table_write_concat_table(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::DeepCopy => cpp_table_write_deep_copy(c_path.as_ptr(), &mut error),
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
             | CppTableFixture::MutationAddedColumn => {
@@ -1481,6 +1509,10 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             CppTableFixture::SortedRefTable => {
                 cpp_table_verify_sorted_ref_table(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::ConcatTable => {
+                cpp_table_verify_concat_table(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::DeepCopy => cpp_table_verify_deep_copy(c_path.as_ptr(), &mut error),
         }
     };
 

@@ -507,6 +507,25 @@ pub enum TableError {
     /// No sort key columns were specified.
     #[error("at least one sort key column is required")]
     SortNoKeys,
+    /// The tables in a concatenation have incompatible schemas.
+    ///
+    /// All tables passed to [`Table::concat`] must have identical schemas
+    /// (same column names, types, and array shapes).
+    ///
+    /// C++ equivalent: `ConcatTable` constructor's schema check.
+    #[error("concat table schema mismatch: {message}")]
+    SchemaMismatch { message: String },
+    /// A concatenation was attempted with zero tables.
+    ///
+    /// [`Table::concat`] requires at least one table.
+    #[error("concat requires at least one table")]
+    ConcatEmpty,
+    /// A constituent table in a concatenation has no disk path.
+    ///
+    /// All constituent tables must be saved to disk before the `ConcatTable`
+    /// can be persisted, since the on-disk format stores relative paths.
+    #[error("constituent table {index} has no disk path; save it first")]
+    ConstituentNotSaved { index: usize },
 }
 
 impl From<crate::storage::StorageError> for TableError {
@@ -1117,6 +1136,63 @@ impl Table {
         keys: &[(&str, SortOrder)],
     ) -> Result<crate::sorting::TableIterator<'_>, TableError> {
         crate::sorting::TableIterator::new(self, keys)
+    }
+
+    /// Creates a [`crate::ConcatTable`] from two or more tables with the same schema.
+    ///
+    /// The resulting virtual table has a row count equal to the sum of all
+    /// constituent tables. Row reads dispatch to the correct underlying table
+    /// via binary search on cumulative row offsets. No data is copied.
+    ///
+    /// All tables must have identical schemas. Returns
+    /// [`TableError::SchemaMismatch`] if they differ, or
+    /// [`TableError::ConcatEmpty`] if the vector is empty.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ConcatTable(Block<Table>(...), Block<String>(), "")`.
+    pub fn concat(tables: Vec<Table>) -> Result<crate::ConcatTable, TableError> {
+        crate::ConcatTable::new(tables)
+    }
+
+    /// Creates a deep copy of this table at the given path.
+    ///
+    /// All rows, keywords, column keywords, and schema are written to a new
+    /// table directory. The storage manager can differ from the source table,
+    /// enabling format migration (e.g. `StManAipsIO` to `StandardStMan`).
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::deepCopy` via `TableCopy::makeEmptyTable` +
+    /// `TableCopy::copyRows`.
+    pub fn deep_copy(&self, opts: TableOptions) -> Result<(), TableError> {
+        self.save(opts)
+    }
+
+    /// Creates a shallow copy of this table at the given path.
+    ///
+    /// Copies schema, table keywords, and column keywords but **no row data**.
+    /// The resulting table has the same structure but zero rows.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableCopy::makeEmptyTable(name, ..., noRows=True)`.
+    pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
+        self.validate()?;
+        let snapshot = StorageSnapshot {
+            rows: Vec::new(),
+            keywords: self.inner.keywords().clone(),
+            column_keywords: self.inner.all_column_keywords().clone(),
+            schema: self.inner.schema().cloned(),
+        };
+        let storage = CompositeStorage;
+        storage.save(
+            &opts.path,
+            &snapshot,
+            opts.data_manager,
+            opts.endian_format.is_big_endian(),
+        )?;
+        Ok(())
     }
 
     /// Returns the attached schema, if any.

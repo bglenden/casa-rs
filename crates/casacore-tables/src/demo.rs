@@ -51,6 +51,7 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     demo_schema_mutation(&mut out)?;
     demo_ref_tables(&mut out)?;
     demo_sorting_and_iteration(&mut out)?;
+    demo_concat_and_copy(&mut out)?;
     #[cfg(unix)]
     demo_locking(&mut out)?;
 
@@ -535,6 +536,110 @@ fn demo_sorting_and_iteration(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Table concatenation and copy ──────────────────────────────────────
+
+fn demo_concat_and_copy(out: &mut String) -> Result<(), TableError> {
+    use crate::ConcatTable;
+
+    // C++ (Table.h):
+    //   Table concat(Block<Table>({t1, t2}), Block<String>(), "");
+    //   Table::deepCopy("copy", Table::New, True);
+
+    appendln(out, "--- Table concatenation and copy ---");
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("name", PrimitiveType::String),
+    ])?;
+
+    // Build two small tables.
+    let mut t1 = Table::with_schema(schema.clone());
+    for i in 0..3 {
+        t1.add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+            RecordField::new("name", Value::Scalar(ScalarValue::String(format!("a{i}")))),
+        ]))?;
+    }
+
+    let mut t2 = Table::with_schema(schema);
+    for i in 3..6 {
+        t2.add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+            RecordField::new("name", Value::Scalar(ScalarValue::String(format!("b{i}")))),
+        ]))?;
+    }
+
+    // Concatenate.
+    let concat: ConcatTable = Table::concat(vec![t1, t2])?;
+    appendln(
+        out,
+        &format!(
+            "concat: {} rows from {} tables",
+            concat.row_count(),
+            concat.table_count()
+        ),
+    );
+
+    // Verify row access spans the boundary.
+    let r2 = concat.row(2).expect("row 2 exists");
+    let r3 = concat.row(3).expect("row 3 exists");
+    appendln(
+        out,
+        &format!(
+            "  row 2 id={:?}, row 3 id={:?}",
+            r2.get("id").unwrap(),
+            r3.get("id").unwrap()
+        ),
+    );
+
+    // Save concat table and reopen (materializes).
+    let dir = temp_dir("tTable_demo_concat");
+    let part0 = dir.join("part0.tbl");
+    let part1 = dir.join("part1.tbl");
+    let concat_path = dir.join("concat.tbl");
+
+    // Save constituents first (required for ConcatTable::save).
+    concat.tables()[0].save(TableOptions::new(&part0))?;
+    concat.tables()[1].save(TableOptions::new(&part1))?;
+
+    // Create a fresh concat from saved tables.
+    let t1 = Table::open(TableOptions::new(&part0))?;
+    let t2 = Table::open(TableOptions::new(&part1))?;
+    let concat = Table::concat(vec![t1, t2])?;
+    concat.save(TableOptions::new(&concat_path))?;
+
+    let reopened = Table::open(TableOptions::new(&concat_path))?;
+    appendln(
+        out,
+        &format!("concat save+reopen: {} rows", reopened.row_count()),
+    );
+
+    // Deep copy with DM conversion (StManAipsIO → StandardStMan).
+    let copy_path = dir.join("deep_copy.tbl");
+    reopened.deep_copy(
+        TableOptions::new(&copy_path).with_data_manager(DataManagerKind::StandardStMan),
+    )?;
+    let deep = Table::open(TableOptions::new(&copy_path))?;
+    appendln(out, &format!("deep copy: {} rows", deep.row_count()));
+
+    // Shallow copy (zero rows, schema preserved).
+    let shallow_path = dir.join("shallow.tbl");
+    reopened.shallow_copy(TableOptions::new(&shallow_path))?;
+    let shallow = Table::open(TableOptions::new(&shallow_path))?;
+    appendln(
+        out,
+        &format!(
+            "shallow copy: {} rows, {} cols",
+            shallow.row_count(),
+            shallow.schema().unwrap().columns().len()
+        ),
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Table locking ──────────────────────────────────────────────────────
 
 #[cfg(unix)]
@@ -667,6 +772,7 @@ mod tests {
         assert!(output.contains("--- Schema mutation"));
         assert!(output.contains("--- Reference tables"));
         assert!(output.contains("--- Sorting and table iteration"));
+        assert!(output.contains("--- Table concatenation and copy"));
         #[cfg(unix)]
         assert!(output.contains("--- Table locking"));
         assert!(output.ends_with("end\n"));
