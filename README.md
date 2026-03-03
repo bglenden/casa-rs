@@ -4,18 +4,16 @@ Rust foundations for casacore-compatible persistent data structures.
 
 This README is for API users. Contributor/developer policy is in `AGENTS.md`.
 
-## Public API Crates
+## API Documentation
 
-- [`casacore-types`](https://bglenden.github.io/casa-rs/casacore_types/): scalar/array/record value model.
-- [`casacore-tables`](https://bglenden.github.io/casa-rs/casacore_tables/): table-facing API crate (current facade is intentionally small).
+[**Browse the API docs**](https://bglenden.github.io/casa-rs/)
+
+Public API crates:
+
+- `casacore-types`: scalar/array/record value model.
+- `casacore-tables`: table-facing API crate (current facade is intentionally small).
 
 `casacore-aipsio` is primarily an internal implementation crate used by table internals.
-
-Build and browse the full API docs with:
-
-```bash
-cargo doc --workspace --no-deps --open
-```
 
 ## Current User-Facing Capabilities
 
