@@ -507,6 +507,23 @@ pub enum TableError {
     /// No sort key columns were specified.
     #[error("at least one sort key column is required")]
     SortNoKeys,
+    /// No columns were supplied to [`crate::ColumnsIndex::new`].
+    #[error("at least one column is required to build a ColumnsIndex")]
+    IndexNoColumns,
+    /// A column is non-scalar (array/record) and cannot be indexed.
+    ///
+    /// Only scalar columns can serve as index keys, matching C++ casacore's
+    /// `ColumnsIndex` restriction.
+    #[error("column \"{column}\" is not a scalar column; only scalar columns can be indexed")]
+    IndexColumnNotScalar { column: String },
+    /// A column has an unsortable type (Complex32/Complex64) and cannot be indexed.
+    ///
+    /// Complex types have no total order and therefore cannot be used as index keys.
+    #[error("column \"{column}\" contains unsortable values (Complex types have no total order)")]
+    IndexColumnUnsortable { column: String },
+    /// [`crate::ColumnsIndex::lookup_unique`] found more than one matching row.
+    #[error("index lookup_unique found {count} matching rows; expected at most 1")]
+    IndexNotUnique { count: usize },
 }
 
 impl From<crate::storage::StorageError> for TableError {

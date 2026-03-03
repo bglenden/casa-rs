@@ -17,8 +17,8 @@ use casacore_types::{
 use ndarray::{Array, IxDyn};
 
 use crate::{
-    ColumnSchema, DataManagerKind, EndianFormat, RowRange, Table, TableError, TableOptions,
-    TableSchema,
+    ColumnSchema, ColumnsIndex, DataManagerKind, EndianFormat, RowRange, Table, TableError,
+    TableOptions, TableSchema,
 };
 
 /// Run the full table demo (Rust equivalent of C++ `tTable`).
@@ -51,6 +51,7 @@ pub fn run_ttable_like_demo() -> Result<String, TableError> {
     demo_schema_mutation(&mut out)?;
     demo_ref_tables(&mut out)?;
     demo_sorting_and_iteration(&mut out)?;
+    demo_indexing(&mut out)?;
     #[cfg(unix)]
     demo_locking(&mut out)?;
 
@@ -535,6 +536,67 @@ fn demo_sorting_and_iteration(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ── Column indexing ───────────────────────────────────────────────────
+
+fn demo_indexing(out: &mut String) -> Result<(), TableError> {
+    // C++ (ColumnsIndex.h):
+    //   ColumnsIndex idx(tab, "antenna_id");
+    //   RecordFieldPtr<Int> key(idx.accessKey(), "antenna_id");
+    //   *key = 3;
+    //   Vector<uInt> rows = idx.getRowNumbers();
+
+    appendln(out, "--- Column indexing ---");
+
+    // Build a 50-row table with an antenna_id column (values 0..=9 cycling).
+    let schema = TableSchema::new(vec![ColumnSchema::scalar(
+        "antenna_id",
+        PrimitiveType::Int32,
+    )])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    for i in 0..50i32 {
+        table.add_row(RecordValue::new(vec![RecordField::new(
+            "antenna_id",
+            Value::Scalar(ScalarValue::Int32(i % 10)),
+        )]))?;
+    }
+    appendln(out, &format!("table rows: {}", table.row_count()));
+
+    // Build index on antenna_id.
+    let idx = ColumnsIndex::new(&table, &["antenna_id"])?;
+    appendln(out, &format!("index columns: {:?}", idx.column_names()));
+    appendln(out, &format!("index is_unique: {}", idx.is_unique()));
+
+    // Exact lookup: antenna_id == 3 → 5 matching rows.
+    let rows = idx.lookup(&[("antenna_id", &ScalarValue::Int32(3))]);
+    appendln(out, &format!("lookup(antenna_id=3): {} rows", rows.len()));
+
+    // Range query: antenna_id in [2, 4] inclusive.
+    let range_rows = idx.lookup_range(
+        &[("antenna_id", &ScalarValue::Int32(2))],
+        &[("antenna_id", &ScalarValue::Int32(4))],
+        true,
+        true,
+    );
+    appendln(
+        out,
+        &format!("lookup_range([2,4] incl): {} rows", range_rows.len()),
+    );
+
+    // unique lookup on a non-unique index returns IndexNotUnique error.
+    let unique_result = idx.lookup_unique(&[("antenna_id", &ScalarValue::Int32(5))]);
+    appendln(
+        out,
+        &format!(
+            "lookup_unique(antenna_id=5) is_err: {}",
+            unique_result.is_err()
+        ),
+    );
+
+    appendln(out, "");
+    Ok(())
+}
+
 // ── Table locking ──────────────────────────────────────────────────────
 
 #[cfg(unix)]
@@ -667,6 +729,7 @@ mod tests {
         assert!(output.contains("--- Schema mutation"));
         assert!(output.contains("--- Reference tables"));
         assert!(output.contains("--- Sorting and table iteration"));
+        assert!(output.contains("--- Column indexing"));
         #[cfg(unix)]
         assert!(output.contains("--- Table locking"));
         assert!(output.ends_with("end\n"));

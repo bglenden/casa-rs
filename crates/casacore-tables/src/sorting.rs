@@ -171,7 +171,7 @@ pub(crate) fn argsort(table: &Table, keys: &[(&str, SortOrder)]) -> Result<Vec<u
 /// Validates that a column can be used as a sort key.
 ///
 /// A sort key column must be scalar and must not be a Complex type.
-fn validate_sort_column(table: &Table, col_name: &str) -> Result<(), TableError> {
+pub(crate) fn validate_sort_column(table: &Table, col_name: &str) -> Result<(), TableError> {
     // Use schema if available for authoritative type info.
     if let Some(schema) = table.schema() {
         let col = schema
