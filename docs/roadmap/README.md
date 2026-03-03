@@ -26,6 +26,9 @@ that only the relevant wave needs to be in context during implementation.
 | 11 | [Incremental storage manager](wave-11-incremental-stman.md) | Not started | Delta-compression for slowly-changing columns |
 | 12 | [Virtual column engines](wave-12-virtual-columns.md) | Not started | Computed columns, scaling/compression engines |
 
+> **When a wave is completed**, update its Status cell in the table above
+> from "Not started" to "**DONE**" as part of the closeout commit.
+
 ## Deferred (add when real usage requires)
 
 | Area | Rationale |
