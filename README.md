@@ -6,8 +6,8 @@ This README is for API users. Contributor/developer policy is in `AGENTS.md`.
 
 ## Public API Crates
 
-- [`casacore-types`](target/doc/casacore_types/index.html): scalar/array/record value model.
-- [`casacore-tables`](target/doc/casacore_tables/index.html): table-facing API crate (current facade is intentionally small).
+- [`casacore-types`](https://bglenden.github.io/casa-rs/casacore_types/): scalar/array/record value model.
+- [`casacore-tables`](https://bglenden.github.io/casa-rs/casacore_tables/): table-facing API crate (current facade is intentionally small).
 
 `casacore-aipsio` is primarily an internal implementation crate used by table internals.
 
