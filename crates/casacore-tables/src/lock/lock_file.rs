@@ -3,6 +3,10 @@
 //!
 //! Handles `fcntl`-based byte-range locking, request-list I/O, and sync-data
 //! I/O on a casacore `table.lock` file.
+
+// libc::F_RDLCK et al. are i16 on macOS but i32 on Linux; the `as i32` casts
+// are necessary on macOS but flagged as unnecessary on Linux.
+#![allow(clippy::unnecessary_cast)]
 //!
 //! # C++ reference
 //!
