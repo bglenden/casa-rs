@@ -1,18 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Multi-process lock contention integration tests.
 //!
-//! These tests use the `lock_helper` example binary to verify that
+//! These tests use the `lock_helper` helper binary to verify that
 //! fcntl-based table locking works correctly across OS processes.
 //! Because fcntl locks are per-process (not per-fd), single-process
 //! tests cannot exercise true contention.
 #![cfg(unix)]
-// These tests spawn a separate helper binary and communicate via signal files.
-// They require the helper to be pre-built:
-//   cargo build --example lock_helper -p casacore-tables
-// Run them explicitly:
-//   cargo test --test lock_multiprocess
-// They are ignored by default to avoid stalling `cargo test --workspace`
-// when the helper binary is missing or when lock behavior causes hangs.
+// These tests spawn a helper binary and communicate via signal files.
+// The helper is a package bin target (`src/bin/lock_helper.rs`), so Cargo
+// builds it for tests and exposes `CARGO_BIN_EXE_lock_helper`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,29 +19,10 @@ use std::time::Duration;
 use casacore_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
 use casacore_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
-/// Locate the pre-built lock_helper example binary.
-///
-/// The binary must be built before running these tests. Use:
-///   `cargo test --workspace --examples`
-/// or:
-///   `cargo build --example lock_helper -p casacore-tables`
-///
-/// We intentionally do NOT invoke `cargo build` here because that
-/// deadlocks: `cargo test` already holds the cargo build lock, so a
-/// nested `cargo build` blocks forever waiting for that same lock.
+/// Locate the test-built lock_helper binary.
 fn helper_binary() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop(); // casacore-tables -> crates
-    path.pop(); // crates -> repo root
-    path.push("target");
-    path.push("debug");
-    path.push("examples");
-    path.push("lock_helper");
-    assert!(
-        path.exists(),
-        "lock_helper binary not found at {path:?}. \
-         Build it first: cargo build --example lock_helper -p casacore-tables"
-    );
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_lock_helper"));
+    assert!(path.exists(), "lock_helper binary not found at {path:?}");
     path
 }
 
@@ -85,7 +62,6 @@ fn wait_for_file(path: &Path, timeout: Duration) -> bool {
 }
 
 #[test]
-#[ignore]
 fn write_lock_contention_across_processes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
@@ -145,7 +121,6 @@ fn write_lock_contention_across_processes() {
 }
 
 #[test]
-#[ignore]
 fn cross_process_write_then_read() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
@@ -187,7 +162,6 @@ fn cross_process_write_then_read() {
 }
 
 #[test]
-#[ignore]
 fn sequential_writes_from_multiple_processes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());

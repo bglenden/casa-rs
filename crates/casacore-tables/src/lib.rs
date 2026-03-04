@@ -153,8 +153,10 @@
 //!
 //! - **`PermanentLocking`** — acquire on open, hold until close.
 //! - **`UserLocking`** — explicit [`Table::lock`] / [`Table::unlock`] calls.
-//! - **`AutoLocking`** — acquire before operations, release periodically.
-//! - **`NoLocking`** — no lock file (the default, for single-process use).
+//! - **`AutoLocking`** — open with a read lock; mutating operations acquire
+//!   temporary write locks automatically.
+//! - **`NoLocking`** — no lock file (the default, for single-process use;
+//!   unsafe for concurrent writers).
 //!
 //! # Memory tables
 //!

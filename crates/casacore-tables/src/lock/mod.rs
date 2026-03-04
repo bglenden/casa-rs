@@ -35,9 +35,10 @@ pub enum LockMode {
     /// C++ equivalent: `TableLock::PermanentLockingWait`.
     PermanentLockingWait,
 
-    /// The system manages lock acquire/release. The lock is checked for
-    /// contention at a configurable inspection interval (default 5 seconds)
-    /// and released when other processes need access.
+    /// The system manages lock acquisition for read/write operations.
+    ///
+    /// The table is opened with a read lock; mutating operations acquire a
+    /// temporary write lock as needed and release it on completion.
     ///
     /// C++ equivalent: `TableLock::AutoLocking`.
     AutoLocking,
@@ -113,7 +114,7 @@ pub struct LockOptions {
     /// The locking mode. See [`LockMode`] for details.
     pub mode: LockMode,
     /// Inspection interval in seconds for [`LockMode::AutoLocking`].
-    /// Default: 5.0 seconds. Ignored for other modes.
+    /// Default: 5.0 seconds.
     pub inspection_interval: f64,
 }
 

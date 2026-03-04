@@ -308,7 +308,9 @@ impl LockFile {
     /// Returns `true` if the given lock type is currently held.
     pub fn has_lock(&self, lock_type: LockType) -> bool {
         match lock_type {
-            LockType::Read => self.read_locked,
+            // Match casacore C++ FileLocker::hasLock behavior: a write lock
+            // implies read capability for this process.
+            LockType::Read => self.read_locked || self.write_locked,
             LockType::Write => self.write_locked,
         }
     }
@@ -334,9 +336,7 @@ impl LockFile {
             }
             LockType::Write => {
                 self.write_locked = locked;
-                if locked {
-                    self.read_locked = false;
-                }
+                self.read_locked = locked;
             }
         }
     }
@@ -525,7 +525,7 @@ mod tests {
         assert!(!lf.has_lock(LockType::Write));
         assert!(lf.acquire(LockType::Write, 1).unwrap());
         assert!(lf.has_lock(LockType::Write));
-        assert!(!lf.has_lock(LockType::Read));
+        assert!(lf.has_lock(LockType::Read));
 
         assert!(lf.release().unwrap());
         assert!(!lf.has_lock(LockType::Write));

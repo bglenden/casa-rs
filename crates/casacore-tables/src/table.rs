@@ -2022,7 +2022,8 @@ impl Table {
     ///   fails if unavailable.
     /// - [`LockMode::PermanentLockingWait`]: acquires a write lock, waiting
     ///   indefinitely.
-    /// - [`LockMode::AutoLocking`]: acquires a read lock immediately.
+    /// - [`LockMode::AutoLocking`]: acquires a read lock immediately; write
+    ///   operations temporarily acquire/release a write lock.
     /// - [`LockMode::UserLocking`]: no lock is acquired until
     ///   [`lock()`](Table::lock) is called.
     /// - [`LockMode::NoLocking`]: equivalent to [`open()`](Table::open).
@@ -2220,6 +2221,8 @@ impl Table {
     /// If a write lock was held, the table is flushed to disk first and
     /// sync data is updated in the lock file.
     ///
+    /// In permanent locking modes, this is a no-op (lock is held until close).
+    ///
     /// C++ equivalent: `Table::unlock()`.
     #[cfg(unix)]
     pub fn unlock(&mut self) -> Result<(), TableError> {
@@ -2229,7 +2232,7 @@ impl Table {
             return Ok(());
         }
         // Extract the info we need before borrowing self for save/schema.
-        let (is_write_locked, save_opts) = {
+        let (is_write_locked, save_opts, mode) = {
             let state = self
                 .lock_state
                 .as_ref()
@@ -2240,8 +2243,15 @@ impl Table {
             let opts = TableOptions::new(&state.path)
                 .with_data_manager(state.data_manager)
                 .with_endian_format(state.endian_format);
-            (wl, opts)
+            (wl, opts, state.options.mode)
         };
+
+        if matches!(
+            mode,
+            LockMode::PermanentLocking | LockMode::PermanentLockingWait
+        ) {
+            return Ok(());
+        }
 
         // If write-locked, flush data to disk.
         if is_write_locked {
@@ -2796,13 +2806,17 @@ impl Table {
     /// not updated and the original is restored. Returns the first
     /// [`TableError`] encountered during validation.
     pub fn set_schema(&mut self, schema: TableSchema) -> Result<(), TableError> {
-        let previous = self.inner.schema().cloned();
-        self.inner.set_schema(Some(schema));
-        if let Err(err) = self.validate() {
-            self.inner.set_schema(previous);
-            return Err(err);
-        }
-        Ok(())
+        let auto_unlock = self.begin_write_operation("set_schema")?;
+        let result = (|| {
+            let previous = self.inner.schema().cloned();
+            self.inner.set_schema(Some(schema));
+            if let Err(err) = self.validate() {
+                self.inner.set_schema(previous);
+                return Err(err);
+            }
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Removes the attached schema, disabling per-mutation validation.
@@ -2845,11 +2859,15 @@ impl Table {
     /// Returns [`TableError`] if the row violates the schema; the table is
     /// left unchanged in that case.
     pub fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
-        if let Some(schema) = self.schema() {
-            validate_row_against_schema(self.row_count(), &row, schema)?;
-        }
-        self.inner.add_row(row);
-        Ok(())
+        let auto_unlock = self.begin_write_operation("add_row")?;
+        let result = (|| {
+            if let Some(schema) = self.schema() {
+                validate_row_against_schema(self.row_count(), &row, schema)?;
+            }
+            self.inner.add_row(row);
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Returns a shared reference to the row at `row_index`, or `None` if out of bounds.
@@ -3064,24 +3082,28 @@ impl Table {
     where
         I: IntoIterator<Item = Value>,
     {
-        self.require_column(column)?;
-        row_range.validate(self.row_count())?;
+        let auto_unlock = self.begin_write_operation("put_column_range")?;
+        let result = (|| {
+            self.require_column(column)?;
+            row_range.validate(self.row_count())?;
 
-        let expected = row_range.len();
-        let row_iter = row_range.iter();
-        let mut value_iter = values.into_iter();
-        let mut provided = 0usize;
-        for row_index in row_iter {
-            let Some(value) = value_iter.next() else {
-                return Err(TableError::ColumnWriteTooFewValues { expected, provided });
-            };
-            self.set_cell(row_index, column, value)?;
-            provided += 1;
-        }
-        if value_iter.next().is_some() {
-            return Err(TableError::ColumnWriteTooManyValues { expected });
-        }
-        Ok(provided)
+            let expected = row_range.len();
+            let row_iter = row_range.iter();
+            let mut value_iter = values.into_iter();
+            let mut provided = 0usize;
+            for row_index in row_iter {
+                let Some(value) = value_iter.next() else {
+                    return Err(TableError::ColumnWriteTooFewValues { expected, provided });
+                };
+                self.set_cell_impl(row_index, column, value)?;
+                provided += 1;
+            }
+            if value_iter.next().is_some() {
+                return Err(TableError::ColumnWriteTooManyValues { expected });
+            }
+            Ok(provided)
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Returns `true` if the cell at `(row_index, column)` is considered defined.
@@ -3140,6 +3162,17 @@ impl Table {
     /// Returns [`TableError`] if the row is out of bounds, the column is
     /// unknown per the schema, or the value violates the column type/shape.
     pub fn set_cell(
+        &mut self,
+        row_index: usize,
+        column: &str,
+        value: Value,
+    ) -> Result<(), TableError> {
+        let auto_unlock = self.begin_write_operation("set_cell")?;
+        let result = self.set_cell_impl(row_index, column, value);
+        self.finish_write_operation(auto_unlock, result)
+    }
+
+    fn set_cell_impl(
         &mut self,
         row_index: usize,
         column: &str,
@@ -3303,32 +3336,35 @@ impl Table {
         col: ColumnSchema,
         default: Option<Value>,
     ) -> Result<(), TableError> {
-        let schema = self
-            .inner
-            .schema()
-            .ok_or_else(|| TableError::Schema("schema required for column operations".into()))?;
-        // Verify the column is not already present (add_column checks this too,
-        // but we need the schema borrow released before mutating).
-        if schema.contains_column(col.name()) {
-            return Err(SchemaError::DuplicateColumn(col.name().to_string()).into());
-        }
-
-        // Validate the default value against the new column schema.
-        validate_cell_against_schema_column(0, &col, default.as_ref())?;
-
-        // Schema mutation (must re-borrow mutably via set_schema round-trip
-        // because TableImpl stores Option<TableSchema>).
-        let mut schema = self.inner.schema().cloned().unwrap();
-        schema.add_column(col.clone())?;
-        self.inner.set_schema(Some(schema));
-
-        // Populate existing rows with the default value.
-        if let Some(value) = default {
-            for row in self.inner.rows_mut() {
-                row.push(RecordField::new(col.name(), value.clone()));
+        let auto_unlock = self.begin_write_operation("add_column")?;
+        let result = (|| {
+            let schema = self.inner.schema().ok_or_else(|| {
+                TableError::Schema("schema required for column operations".into())
+            })?;
+            // Verify the column is not already present (add_column checks this too,
+            // but we need the schema borrow released before mutating).
+            if schema.contains_column(col.name()) {
+                return Err(SchemaError::DuplicateColumn(col.name().to_string()).into());
             }
-        }
-        Ok(())
+
+            // Validate the default value against the new column schema.
+            validate_cell_against_schema_column(0, &col, default.as_ref())?;
+
+            // Schema mutation (must re-borrow mutably via set_schema round-trip
+            // because TableImpl stores Option<TableSchema>).
+            let mut schema = self.inner.schema().cloned().unwrap();
+            schema.add_column(col.clone())?;
+            self.inner.set_schema(Some(schema));
+
+            // Populate existing rows with the default value.
+            if let Some(value) = default {
+                for row in self.inner.rows_mut() {
+                    row.push(RecordField::new(col.name(), value.clone()));
+                }
+            }
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Removes a column from the table schema, all rows, and column keywords.
@@ -3338,19 +3374,23 @@ impl Table {
     ///
     /// C++ equivalent: `Table::removeColumn`.
     pub fn remove_column(&mut self, name: &str) -> Result<(), TableError> {
-        self.inner
-            .schema()
-            .ok_or_else(|| TableError::Schema("schema required for column operations".into()))?;
+        let auto_unlock = self.begin_write_operation("remove_column")?;
+        let result = (|| {
+            self.inner.schema().ok_or_else(|| {
+                TableError::Schema("schema required for column operations".into())
+            })?;
 
-        let mut schema = self.inner.schema().cloned().unwrap();
-        schema.remove_column(name)?;
-        self.inner.set_schema(Some(schema));
+            let mut schema = self.inner.schema().cloned().unwrap();
+            schema.remove_column(name)?;
+            self.inner.set_schema(Some(schema));
 
-        for row in self.inner.rows_mut() {
-            row.remove(name);
-        }
-        self.inner.remove_column_keywords(name);
-        Ok(())
+            for row in self.inner.rows_mut() {
+                row.remove(name);
+            }
+            self.inner.remove_column_keywords(name);
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Renames a column in the table schema, all rows, and column keywords.
@@ -3360,19 +3400,23 @@ impl Table {
     ///
     /// C++ equivalent: `Table::renameColumn`.
     pub fn rename_column(&mut self, old: &str, new: &str) -> Result<(), TableError> {
-        self.inner
-            .schema()
-            .ok_or_else(|| TableError::Schema("schema required for column operations".into()))?;
+        let auto_unlock = self.begin_write_operation("rename_column")?;
+        let result = (|| {
+            self.inner.schema().ok_or_else(|| {
+                TableError::Schema("schema required for column operations".into())
+            })?;
 
-        let mut schema = self.inner.schema().cloned().unwrap();
-        schema.rename_column(old, new)?;
-        self.inner.set_schema(Some(schema));
+            let mut schema = self.inner.schema().cloned().unwrap();
+            schema.rename_column(old, new)?;
+            self.inner.set_schema(Some(schema));
 
-        for row in self.inner.rows_mut() {
-            row.rename_field(old, new);
-        }
-        self.inner.rename_column_keywords(old, new.to_string());
-        Ok(())
+            for row in self.inner.rows_mut() {
+                row.rename_field(old, new);
+            }
+            self.inner.rename_column_keywords(old, new.to_string());
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Removes rows at the given indices.
@@ -3384,28 +3428,32 @@ impl Table {
     ///
     /// C++ equivalent: `Table::removeRow`.
     pub fn remove_rows(&mut self, indices: &[usize]) -> Result<(), TableError> {
-        let row_count = self.row_count();
-        // Validate sorted, unique, and in bounds.
-        for (i, &idx) in indices.iter().enumerate() {
-            if idx >= row_count {
-                return Err(TableError::RowOutOfBounds {
-                    row_index: idx,
-                    row_count,
-                });
+        let auto_unlock = self.begin_write_operation("remove_rows")?;
+        let result = (|| {
+            let row_count = self.row_count();
+            // Validate sorted, unique, and in bounds.
+            for (i, &idx) in indices.iter().enumerate() {
+                if idx >= row_count {
+                    return Err(TableError::RowOutOfBounds {
+                        row_index: idx,
+                        row_count,
+                    });
+                }
+                if i > 0 && idx <= indices[i - 1] {
+                    return Err(TableError::InvalidRowRange {
+                        start: indices[i - 1],
+                        end: idx,
+                        row_count,
+                    });
+                }
             }
-            if i > 0 && idx <= indices[i - 1] {
-                return Err(TableError::InvalidRowRange {
-                    start: indices[i - 1],
-                    end: idx,
-                    row_count,
-                });
+            // Remove in reverse order to preserve earlier indices.
+            for &idx in indices.iter().rev() {
+                self.inner.remove_row(idx);
             }
-        }
-        // Remove in reverse order to preserve earlier indices.
-        for &idx in indices.iter().rev() {
-            self.inner.remove_row(idx);
-        }
-        Ok(())
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Inserts a row at the given position.
@@ -3416,18 +3464,22 @@ impl Table {
     ///
     /// C++ equivalent: constructing rows and adding them to a `Table`.
     pub fn insert_row(&mut self, index: usize, row: RecordValue) -> Result<(), TableError> {
-        let row_count = self.row_count();
-        if index > row_count {
-            return Err(TableError::RowOutOfBounds {
-                row_index: index,
-                row_count,
-            });
-        }
-        if let Some(schema) = self.inner.schema() {
-            validate_row_against_schema(index, &row, schema)?;
-        }
-        self.inner.insert_row(index, row);
-        Ok(())
+        let auto_unlock = self.begin_write_operation("insert_row")?;
+        let result = (|| {
+            let row_count = self.row_count();
+            if index > row_count {
+                return Err(TableError::RowOutOfBounds {
+                    row_index: index,
+                    row_count,
+                });
+            }
+            if let Some(schema) = self.inner.schema() {
+                validate_row_against_schema(index, &row, schema)?;
+            }
+            self.inner.insert_row(index, row);
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     // ── TaQL query methods ──────────────────────────────────────────
@@ -3563,6 +3615,98 @@ impl Table {
         crate::taql::execute(&stmt, self).map_err(|e| TableError::Taql(e.to_string()))
     }
 
+    #[cfg(unix)]
+    fn begin_write_operation(&mut self, operation: &str) -> Result<bool, TableError> {
+        if self.kind == TableKind::Memory {
+            return Ok(false);
+        }
+
+        let Some(state) = self.lock_state.as_mut() else {
+            return Ok(false);
+        };
+
+        match state.options.mode {
+            LockMode::NoLocking => Ok(false),
+            LockMode::UserLocking => {
+                if state.lock_file.has_lock(LockType::Write) {
+                    Ok(false)
+                } else {
+                    Err(TableError::LockFailed {
+                        path: state.path.display().to_string(),
+                        message: format!(
+                            "{operation} requires a write lock when using UserLocking"
+                        ),
+                    })
+                }
+            }
+            LockMode::PermanentLocking | LockMode::PermanentLockingWait => {
+                if state.lock_file.has_lock(LockType::Write) {
+                    Ok(false)
+                } else {
+                    Err(TableError::LockFailed {
+                        path: state.path.display().to_string(),
+                        message: format!(
+                            "{operation} requires the permanent write lock to be held"
+                        ),
+                    })
+                }
+            }
+            LockMode::AutoLocking => {
+                if state.lock_file.has_lock(LockType::Write) {
+                    return Ok(false);
+                }
+
+                let acquired = state.lock_file.acquire(LockType::Write, 0).map_err(|e| {
+                    TableError::LockIo {
+                        path: state.path.display().to_string(),
+                        message: e.to_string(),
+                    }
+                })?;
+                if acquired {
+                    Ok(true)
+                } else {
+                    Err(TableError::LockFailed {
+                        path: state.path.display().to_string(),
+                        message: format!("could not acquire temporary write lock for {operation}"),
+                    })
+                }
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn begin_write_operation(&mut self, _operation: &str) -> Result<bool, TableError> {
+        Ok(false)
+    }
+
+    #[cfg(unix)]
+    fn finish_write_operation<R>(
+        &mut self,
+        auto_unlock: bool,
+        result: Result<R, TableError>,
+    ) -> Result<R, TableError> {
+        if !auto_unlock {
+            return result;
+        }
+
+        let unlock_result = self.unlock();
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(unlock_err)) => Err(unlock_err),
+            (Err(op_err), Ok(())) => Err(op_err),
+            (Err(op_err), Err(_unlock_err)) => Err(op_err),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn finish_write_operation<R>(
+        &mut self,
+        _auto_unlock: bool,
+        result: Result<R, TableError>,
+    ) -> Result<R, TableError> {
+        result
+    }
+
     fn require_column(&self, column: &str) -> Result<(), TableError> {
         if let Some(schema) = self.schema()
             && !schema.contains_column(column)
@@ -3582,6 +3726,40 @@ impl Table {
                 row_index,
                 row_count: self.row_count(),
             })
+        }
+    }
+}
+
+impl Drop for Table {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            if self.kind == TableKind::Memory {
+                return;
+            }
+
+            let Some(state) = self.lock_state.as_ref() else {
+                return;
+            };
+            if !state.lock_file.has_lock(LockType::Write) {
+                return;
+            }
+
+            // Persist pending writes and sync metadata before the lock file is
+            // dropped (which releases any held lock).
+            let save_opts = TableOptions::new(&state.path)
+                .with_data_manager(state.data_manager)
+                .with_endian_format(state.endian_format);
+            if self.save(save_opts).is_err() {
+                return;
+            }
+
+            let nrrow = self.row_count() as u64;
+            let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
+            if let Some(state) = self.lock_state.as_mut() {
+                state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
+                let _ = state.lock_file.write_sync_data(&state.sync_data);
+            }
         }
     }
 }
@@ -5094,7 +5272,7 @@ mod tests {
 
             let table = Table::open_with_lock(opts, lock_opts).unwrap();
             assert!(table.has_lock(LockType::Write));
-            assert!(!table.has_lock(LockType::Read));
+            assert!(table.has_lock(LockType::Read));
             assert_eq!(table.row_count(), 1);
         }
 
@@ -5111,6 +5289,7 @@ mod tests {
             // Acquire write lock explicitly.
             assert!(table.lock(LockType::Write, 1).unwrap());
             assert!(table.has_lock(LockType::Write));
+            assert!(table.has_lock(LockType::Read));
         }
 
         #[test]
@@ -5125,6 +5304,51 @@ mod tests {
 
             table.unlock().unwrap();
             assert!(!table.has_lock(LockType::Write));
+        }
+
+        #[test]
+        fn user_locking_write_requires_explicit_write_lock() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::UserLocking);
+
+            let mut table = Table::open_with_lock(opts, lock_opts).unwrap();
+            let err = table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                ]))
+                .unwrap_err();
+            assert!(matches!(err, TableError::LockFailed { .. }));
+
+            assert!(table.lock(LockType::Write, 1).unwrap());
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                ]))
+                .unwrap();
+            table.unlock().unwrap();
+        }
+
+        #[test]
+        fn auto_locking_write_ops_acquire_write_lock_automatically() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let lock_opts = LockOptions::new(LockMode::AutoLocking);
+
+            let mut table = Table::open_with_lock(opts.clone(), lock_opts).unwrap();
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                ]))
+                .unwrap();
+
+            assert_eq!(table.row_count(), 2);
+            assert!(!table.has_lock(LockType::Write));
+            let reopened = Table::open(opts).unwrap();
+            assert_eq!(reopened.row_count(), 2);
         }
 
         #[test]
@@ -5234,8 +5458,12 @@ mod tests {
                     ]))
                     .unwrap();
 
-                // Unlock (flushes), then drop releases the lock.
+                // Unlock is a no-op in permanent mode; lock stays held.
                 table.unlock().unwrap();
+                assert!(table.has_lock(LockType::Write));
+
+                // Drop closes and flushes.
+                drop(table);
 
                 // Reopen and verify.
                 let reopened = Table::open(opts).unwrap();
