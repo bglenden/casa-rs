@@ -13,7 +13,7 @@ use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casacore_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 // ===================== ForwardColumnEngine =====================
 
@@ -428,8 +428,8 @@ fn rr_scaled_complex() {
         .bind_scaled_complex_column(
             "virtual_col",
             "stored_col",
-            Complex64::new(0.5, 0.0),
-            Complex64::new(1.0, 0.0),
+            Complex64::new(0.5, 0.25),
+            Complex64::new(1.0, 2.0),
         )
         .unwrap();
     table.save(TableOptions::new(&tbl_path)).unwrap();
@@ -452,17 +452,21 @@ fn rr_scaled_complex() {
         }
     }
 
-    // Verify virtual column: complex(re_stored * 0.5 + 1.0, im_stored * 0.0 + 0.0).
-    // With scale=(0.5, 0.0) and offset=(1.0, 0.0):
+    // Verify virtual column with nonzero imaginary scale/offset.
+    // scale=(0.5, 0.25), offset=(1.0, 2.0).
+    // Stored [2,2] array: axis 0 splits re/im via index_axis.
     //   re_virtual = re_stored * 0.5 + 1.0
-    //   im_virtual = im_stored * 0.0 + 0.0 = 0.0
-    // Row 0: stored [10, 20, 30, 40] → Complex32[(10*0.5+1, 0), (30*0.5+1, 0)] = [(6, 0), (16, 0)]
-    // Row 1: stored [50, 60, 70, 80] → [(26, 0), (36, 0)]
-    // Row 2: stored [2, 4, 6, 8] → [(2, 0), (4, 0)]
+    //   im_virtual = im_stored * 0.25 + 2.0
+    // Row 0: stored [10,20,30,40] → re=[10,20], im=[30,40]
+    //   → [(6.0, 9.5), (11.0, 12.0)]
+    // Row 1: stored [50,60,70,80] → re=[50,60], im=[70,80]
+    //   → [(26.0, 19.5), (31.0, 22.0)]
+    // Row 2: stored [2,4,6,8] → re=[2,4], im=[6,8]
+    //   → [(2.0, 3.5), (3.0, 4.0)]
     let expected: [[(f32, f32); 2]; 3] = [
-        [(6.0, 0.0), (16.0, 0.0)],
-        [(26.0, 0.0), (36.0, 0.0)],
-        [(2.0, 0.0), (4.0, 0.0)],
+        [(6.0, 9.5), (11.0, 12.0)],
+        [(26.0, 19.5), (31.0, 22.0)],
+        [(2.0, 3.5), (3.0, 4.0)],
     ];
     for (i, exp_row) in expected.iter().enumerate() {
         match reopened.cell(i, "virtual_col").expect("cell exists") {
@@ -479,6 +483,348 @@ fn rr_scaled_complex() {
                 }
             }
             other => panic!("virtual_col row {i}: expected Complex32 array, got {other:?}"),
+        }
+    }
+}
+
+// ===================== Additional RR-only tests =====================
+
+/// RR: Forward column engine with Float32 arrays.
+#[test]
+fn rr_forward_column_arrays() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let base_path = dir.path().join("base.tbl");
+    let fwd_path = dir.path().join("fwd.tbl");
+
+    let base_schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 3],
+    )])
+    .unwrap();
+    let mut base = Table::with_schema(base_schema);
+    let arrays: [Vec<f32>; 3] = [
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
+        vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    ];
+    for arr in &arrays {
+        base.add_row(RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::Float32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 3]).f(), arr.clone()).unwrap(),
+            )),
+        )]))
+        .unwrap();
+    }
+    base.save(TableOptions::new(&base_path)).unwrap();
+
+    let fwd_schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 3],
+    )])
+    .unwrap();
+    let mut fwd = Table::with_schema(fwd_schema);
+    for _ in 0..3 {
+        fwd.add_row(RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::Float32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 3]).f(), vec![0.0; 6]).unwrap(),
+            )),
+        )]))
+        .unwrap();
+    }
+    fwd.bind_forward_column("data", &base_path).unwrap();
+    fwd.save(TableOptions::new(&fwd_path)).unwrap();
+
+    let reopened = Table::open(TableOptions::new(&fwd_path)).expect("reopen");
+    assert_eq!(reopened.row_count(), 3);
+    assert!(reopened.is_virtual_column("data"));
+    for (i, exp) in arrays.iter().enumerate() {
+        match reopened.cell(i, "data").expect("cell") {
+            Value::Array(ArrayValue::Float32(arr)) => {
+                assert_eq!(arr.shape(), &[2, 3], "row {i} shape");
+                // Compare in memory order (Fortran) to match how data was created.
+                let got: Vec<f32> = arr.as_slice_memory_order().unwrap().to_vec();
+                assert_eq!(got, *exp, "row {i} data mismatch");
+            }
+            other => panic!("row {i}: expected Float32 array, got {other:?}"),
+        }
+    }
+}
+
+/// RR: Forward column engine with multiple scalar types.
+#[test]
+fn rr_forward_column_multi_type() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let base_path = dir.path().join("base.tbl");
+    let fwd_path = dir.path().join("fwd.tbl");
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("col_i32", PrimitiveType::Int32),
+        ColumnSchema::scalar("col_str", PrimitiveType::String),
+        ColumnSchema::scalar("col_f64", PrimitiveType::Float64),
+    ])
+    .unwrap();
+
+    let rows = vec![
+        RecordValue::new(vec![
+            RecordField::new("col_i32", Value::Scalar(ScalarValue::Int32(42))),
+            RecordField::new(
+                "col_str",
+                Value::Scalar(ScalarValue::String("hello".to_string())),
+            ),
+            RecordField::new("col_f64", Value::Scalar(ScalarValue::Float64(3.125))),
+        ]),
+        RecordValue::new(vec![
+            RecordField::new("col_i32", Value::Scalar(ScalarValue::Int32(-7))),
+            RecordField::new(
+                "col_str",
+                Value::Scalar(ScalarValue::String("world".to_string())),
+            ),
+            RecordField::new("col_f64", Value::Scalar(ScalarValue::Float64(-99.5))),
+        ]),
+        RecordValue::new(vec![
+            RecordField::new("col_i32", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("col_str", Value::Scalar(ScalarValue::String(String::new()))),
+            RecordField::new("col_f64", Value::Scalar(ScalarValue::Float64(0.0))),
+        ]),
+    ];
+
+    let mut base = Table::with_schema(schema.clone());
+    for row in &rows {
+        base.add_row(row.clone()).unwrap();
+    }
+    base.save(TableOptions::new(&base_path)).unwrap();
+
+    let mut fwd = Table::with_schema(schema);
+    for row in &rows {
+        fwd.add_row(row.clone()).unwrap();
+    }
+    for col in ["col_i32", "col_str", "col_f64"] {
+        fwd.bind_forward_column(col, &base_path).unwrap();
+    }
+    fwd.save(TableOptions::new(&fwd_path)).unwrap();
+
+    let reopened = Table::open(TableOptions::new(&fwd_path)).expect("reopen");
+    assert_eq!(reopened.row_count(), 3);
+    for col in ["col_i32", "col_str", "col_f64"] {
+        assert!(reopened.is_virtual_column(col), "{col} should be virtual");
+    }
+
+    // Verify values.
+    let expected_i32 = [42, -7, 0];
+    let expected_str = ["hello", "world", ""];
+    let expected_f64 = [3.125, -99.5, 0.0];
+    for i in 0..3 {
+        match reopened.cell(i, "col_i32").expect("cell") {
+            Value::Scalar(ScalarValue::Int32(v)) => {
+                assert_eq!(*v, expected_i32[i], "row {i} i32")
+            }
+            other => panic!("row {i}: expected Int32, got {other:?}"),
+        }
+        match reopened.cell(i, "col_str").expect("cell") {
+            Value::Scalar(ScalarValue::String(v)) => {
+                assert_eq!(v, expected_str[i], "row {i} str")
+            }
+            other => panic!("row {i}: expected String, got {other:?}"),
+        }
+        match reopened.cell(i, "col_f64").expect("cell") {
+            Value::Scalar(ScalarValue::Float64(v)) => {
+                assert!((*v - expected_f64[i]).abs() < 1e-10, "row {i} f64")
+            }
+            other => panic!("row {i}: expected Float64, got {other:?}"),
+        }
+    }
+}
+
+/// RR: ScaledArrayEngine with Float32 stored → Float64 virtual.
+#[test]
+fn rr_scaled_array_float_to_float() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let tbl_path = dir.path().join("scaled_f2f.tbl");
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("stored_col", PrimitiveType::Float32, vec![3]),
+        ColumnSchema::array_fixed("virtual_col", PrimitiveType::Float64, vec![3]),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+
+    let stored_data: [[f32; 3]; 3] = [[1.0, 2.0, 3.0], [10.0, 20.0, 30.0], [0.0, -5.0, 100.0]];
+    for arr in &stored_data {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new(
+                    "stored_col",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(IxDyn(&[3]), arr.to_vec()).unwrap(),
+                    )),
+                ),
+                RecordField::new(
+                    "virtual_col",
+                    Value::Array(ArrayValue::Float64(
+                        ArrayD::from_shape_vec(IxDyn(&[3]), vec![0.0; 3]).unwrap(),
+                    )),
+                ),
+            ]))
+            .unwrap();
+    }
+    table
+        .bind_scaled_array_column("virtual_col", "stored_col", 0.1, 5.0)
+        .unwrap();
+    table.save(TableOptions::new(&tbl_path)).unwrap();
+
+    let reopened = Table::open(TableOptions::new(&tbl_path)).expect("reopen");
+    assert_eq!(reopened.row_count(), 3);
+    assert!(reopened.is_virtual_column("virtual_col"));
+
+    // virtual = stored * 0.1 + 5.0
+    let expected: [[f64; 3]; 3] = [[5.1, 5.2, 5.3], [6.0, 7.0, 8.0], [5.0, 4.5, 15.0]];
+    for (i, exp) in expected.iter().enumerate() {
+        match reopened.cell(i, "virtual_col").expect("cell") {
+            Value::Array(ArrayValue::Float64(arr)) => {
+                let flat: Vec<f64> = arr.iter().copied().collect();
+                for (j, (&got, &want)) in flat.iter().zip(exp.iter()).enumerate() {
+                    assert!(
+                        (got - want).abs() < 1e-5,
+                        "row {i} elem {j}: expected {want}, got {got}"
+                    );
+                }
+            }
+            other => panic!("row {i}: expected Float64 array, got {other:?}"),
+        }
+    }
+}
+
+/// RR: Forward column with Bool scalar type.
+#[test]
+fn rr_forward_column_bool() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let base_path = dir.path().join("base.tbl");
+    let fwd_path = dir.path().join("fwd.tbl");
+
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("flag", PrimitiveType::Bool)]).unwrap();
+
+    let mut base = Table::with_schema(schema.clone());
+    for v in [true, false, true] {
+        base.add_row(RecordValue::new(vec![RecordField::new(
+            "flag",
+            Value::Scalar(ScalarValue::Bool(v)),
+        )]))
+        .unwrap();
+    }
+    base.save(TableOptions::new(&base_path)).unwrap();
+
+    let mut fwd = Table::with_schema(schema);
+    for _ in 0..3 {
+        fwd.add_row(RecordValue::new(vec![RecordField::new(
+            "flag",
+            Value::Scalar(ScalarValue::Bool(false)),
+        )]))
+        .unwrap();
+    }
+    fwd.bind_forward_column("flag", &base_path).unwrap();
+    fwd.save(TableOptions::new(&fwd_path)).unwrap();
+
+    let reopened = Table::open(TableOptions::new(&fwd_path)).expect("reopen");
+    assert_eq!(reopened.row_count(), 3);
+    assert!(reopened.is_virtual_column("flag"));
+
+    let expected = [true, false, true];
+    for (i, &exp) in expected.iter().enumerate() {
+        match reopened.cell(i, "flag").expect("cell") {
+            Value::Scalar(ScalarValue::Bool(v)) => {
+                assert_eq!(*v, exp, "row {i}: expected {exp}, got {v}");
+            }
+            other => panic!("row {i}: expected Bool, got {other:?}"),
+        }
+    }
+}
+
+/// RR: ScaledComplexData with nonzero imaginary scale/offset and 3 virtual elements.
+#[test]
+fn rr_scaled_complex_nonzero_imag() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let tbl_path = dir.path().join("scaled_cx_imag.tbl");
+
+    // stored_col: Int16 [2,3] → virtual_col: Complex32 [3]
+    // scale=(1.0, 0.5), offset=(0.0, 1.0)
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("stored_col", PrimitiveType::Int16, vec![2, 3]),
+        ColumnSchema::array_fixed("virtual_col", PrimitiveType::Complex32, vec![3]),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+
+    // Stored [2,3] arrays: axis 0 = [re, im], axis 1 = elements.
+    // Row 0: re=[1,2,3], im=[10,20,30]
+    // Row 1: re=[4,5,6], im=[40,50,60]
+    // Row 2: re=[0,0,0], im=[0,0,0]
+    let stored_data: [[i16; 6]; 3] = [
+        [1, 2, 3, 10, 20, 30],
+        [4, 5, 6, 40, 50, 60],
+        [0, 0, 0, 0, 0, 0],
+    ];
+    for arr in &stored_data {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new(
+                    "stored_col",
+                    Value::Array(ArrayValue::Int16(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 3]), arr.to_vec()).unwrap(),
+                    )),
+                ),
+                RecordField::new(
+                    "virtual_col",
+                    Value::Array(ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(IxDyn(&[3]), vec![Complex32::new(0.0, 0.0); 3])
+                            .unwrap(),
+                    )),
+                ),
+            ]))
+            .unwrap();
+    }
+    table
+        .bind_scaled_complex_column(
+            "virtual_col",
+            "stored_col",
+            Complex64::new(1.0, 0.5),
+            Complex64::new(0.0, 1.0),
+        )
+        .unwrap();
+    table.save(TableOptions::new(&tbl_path)).unwrap();
+
+    let reopened = Table::open(TableOptions::new(&tbl_path)).expect("reopen");
+    assert_eq!(reopened.row_count(), 3);
+    assert!(reopened.is_virtual_column("virtual_col"));
+
+    // re_virtual = re_stored * 1.0 + 0.0 = re_stored
+    // im_virtual = im_stored * 0.5 + 1.0
+    // Row 0: re=[1,2,3], im=[10*0.5+1, 20*0.5+1, 30*0.5+1] = [6, 11, 16]
+    // Row 1: re=[4,5,6], im=[40*0.5+1, 50*0.5+1, 60*0.5+1] = [21, 26, 31]
+    // Row 2: re=[0,0,0], im=[0*0.5+1, 0*0.5+1, 0*0.5+1] = [1, 1, 1]
+    let expected: [[(f32, f32); 3]; 3] = [
+        [(1.0, 6.0), (2.0, 11.0), (3.0, 16.0)],
+        [(4.0, 21.0), (5.0, 26.0), (6.0, 31.0)],
+        [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)],
+    ];
+    for (i, exp_row) in expected.iter().enumerate() {
+        match reopened.cell(i, "virtual_col").expect("cell") {
+            Value::Array(ArrayValue::Complex32(arr)) => {
+                assert_eq!(arr.shape(), &[3], "virtual_col row {i} shape");
+                let flat: Vec<Complex32> = arr.iter().copied().collect();
+                for (j, (got, &(want_re, want_im))) in flat.iter().zip(exp_row.iter()).enumerate() {
+                    assert!(
+                        (got.re - want_re).abs() < 1e-5 && (got.im - want_im).abs() < 1e-5,
+                        "row {i} elem {j}: expected ({want_re},{want_im}), got ({},{})",
+                        got.re,
+                        got.im
+                    );
+                }
+            }
+            other => panic!("row {i}: expected Complex32 array, got {other:?}"),
         }
     }
 }

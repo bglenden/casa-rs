@@ -32,7 +32,7 @@
 use casacore_types::{
     Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{ArrayD, Axis, IxDyn};
 
 use super::StorageError;
 use super::table_control::{ColumnDescContents, PlainColumnEntry};
@@ -318,19 +318,18 @@ fn apply_complex_scale_offset(
     let virtual_shape: Vec<usize> = stored_shape[1..].to_vec();
     let n_elements: usize = virtual_shape.iter().product();
 
-    // Extract the stored array as a flat Vec.  The array may be in
-    // Fortran order (first dimension contiguous) so `as_slice()` can
-    // fail; collect via iterator which always works.
-    let flat: Vec<f64> = stored_arr.iter().copied().collect();
+    // Split the stored [2, ...] array into real and imaginary views using
+    // index_axis.  This correctly handles both C-order and Fortran-order
+    // memory layouts — unlike flat iteration which depends on traversal order.
+    let re_view = stored_arr.index_axis(Axis(0), 0); // shape [d0, d1, ...]
+    let im_view = stored_arr.index_axis(Axis(0), 1); // shape [d0, d1, ...]
 
-    // In Fortran-order (ndarray default for casacore), the first dimension is
-    // contiguous: elements are [re_0, im_0, re_1, im_1, ...].
     match target_type {
         PrimitiveType::Complex32 => {
             let mut complex_data = Vec::with_capacity(n_elements);
-            for i in 0..n_elements {
-                let re = flat[i * 2] * scale.re + offset.re;
-                let im = flat[i * 2 + 1] * scale.im + offset.im;
+            for (&re_stored, &im_stored) in re_view.iter().zip(im_view.iter()) {
+                let re = re_stored * scale.re + offset.re;
+                let im = im_stored * scale.im + offset.im;
                 complex_data.push(Complex32::new(re as f32, im as f32));
             }
             let arr = ArrayD::from_shape_vec(IxDyn(&virtual_shape), complex_data).map_err(|e| {
@@ -340,9 +339,9 @@ fn apply_complex_scale_offset(
         }
         PrimitiveType::Complex64 => {
             let mut complex_data = Vec::with_capacity(n_elements);
-            for i in 0..n_elements {
-                let re = flat[i * 2] * scale.re + offset.re;
-                let im = flat[i * 2 + 1] * scale.im + offset.im;
+            for (&re_stored, &im_stored) in re_view.iter().zip(im_view.iter()) {
+                let re = re_stored * scale.re + offset.re;
+                let im = im_stored * scale.im + offset.im;
                 complex_data.push(Complex64::new(re, im));
             }
             let arr = ArrayD::from_shape_vec(IxDyn(&virtual_shape), complex_data).map_err(|e| {
