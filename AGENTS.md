@@ -26,6 +26,12 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   Use `///` for items and `//!` for modules. Reference the C++ class/function names
   so users can cross-reference.
 
+## Merge Policy
+
+- Squash-on-merge into main: one commit per wave/PR.
+- During development, commit freely (checkpoints, incremental progress).
+- Use `git merge --squash` locally or "Squash and merge" on GitHub PRs.
+
 ## Quality Gates
 
 - `cargo fmt --all -- --check`
