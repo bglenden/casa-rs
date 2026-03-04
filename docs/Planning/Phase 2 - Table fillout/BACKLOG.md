@@ -19,41 +19,6 @@ wave implementation documents.
 
 Items from the completion plan's fixture families that remain incomplete.
 
-### 1.1 Variable-Shape Arrays in StManAipsIO and StandardStMan
-
-**Status:** IMPLEMENT
-
-**C++ behaviour:** `StManAipsIO` and `StandardStMan` both support
-variable-shape array columns via indirect storage. Each cell stores a
-shape header followed by flat data. Cells may have different shapes or
-be absent (undefined).
-
-**Rust current state:** Variable-shape arrays work in `TiledShapeStMan`
-and `TiledCellStMan` (full 2x2 interop). `StManAipsIO` and
-`StandardStMan` have no variable-shape read or write path — the storage
-code falls through to scalar extraction, producing silently wrong output.
-
-**Work required:**
-- `stman_aipsio.rs`: Add indirect-array read path (per-row shape header
-  + flat Fortran-order data). Add matching write path.
-- `standard_stman.rs`: Add indirect-array bucket handling (variable-length
-  records in SSM string/indirect buckets). Add matching write path.
-- Both: handle undefined (absent) cells for variable-shape columns.
-
-**Files to modify:**
-- `crates/casacore-tables/src/storage/stman_aipsio.rs`
-- `crates/casacore-tables/src/storage/standard_stman.rs`
-
-**Tests:**
-- New `CppTableFixture` variants: `VariableArray` (AipsIO),
-  `SsmVariableArray` (SSM).
-- C++ shim write/verify functions for each.
-- Full 2x2 cross-matrix for both managers.
-- Endian cross-matrix.
-- Edge cases: empty array cell, zero-length axis, 1-D and N-D shapes.
-
----
-
 ### 1.2 Scalar Record Columns On-Disk
 
 **Status:** IMPLEMENT
