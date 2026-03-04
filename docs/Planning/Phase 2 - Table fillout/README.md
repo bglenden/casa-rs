@@ -8,13 +8,12 @@ file when rules conflict.
 Close remaining Tables interoperability gaps from `BACKLOG.md` using small,
 auditable waves.
 
-## Status board
+## Status source of truth
 
-| Wave | Backlog | Topic | Status | File |
-|---|---|---|---|---|
-| 1 | 1.1 | Variable-shape arrays (AipsIO + SSM) | TAKEN | [Wave 1](Wave 1 - Variable-shape arrays in StManAipsIO and StandardStMan - TAKEN.md) |
-
-Update this table on create/take/block/finish.
+Wave file names are the only status source of truth:
+- `Wave N - <name>.md` => planned
+- `Wave N - <name> - TAKEN.md` => in progress
+- `Wave N - <name> - FINISHED.md` => closed
 
 ## Wave lifecycle
 
