@@ -256,7 +256,7 @@ pub use schema::{
 };
 pub use sorting::{TableGroup, TableIterator};
 pub use table::{
-    ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
+    ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
     RecordColumnCell, RecordColumnIter, RowRange, SortOrder, Table, TableError, TableKind,
     TableOptions,
 };

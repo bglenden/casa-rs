@@ -8,6 +8,8 @@ pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod table_control;
 pub(crate) mod tiled_stman;
+pub(crate) mod virtual_bitflags;
+pub(crate) mod virtual_compress;
 pub(crate) mod virtual_engine;
 pub(crate) mod virtual_forward;
 pub(crate) mod virtual_scaled_array;
@@ -295,11 +297,13 @@ impl StorageManager for CompositeStorage {
             }
             DataManagerKind::TiledColumnStMan
             | DataManagerKind::TiledShapeStMan
-            | DataManagerKind::TiledCellStMan => {
+            | DataManagerKind::TiledCellStMan
+            | DataManagerKind::TiledDataStMan => {
                 dm_type_name = match dm_kind {
                     DataManagerKind::TiledColumnStMan => "TiledColumnStMan",
                     DataManagerKind::TiledShapeStMan => "TiledShapeStMan",
                     DataManagerKind::TiledCellStMan => "TiledCellStMan",
+                    DataManagerKind::TiledDataStMan => "TiledDataStMan",
                     _ => unreachable!(),
                 }
                 .to_string();
@@ -417,7 +421,7 @@ impl CompositeStorage {
                         nrrow,
                     )?;
                 }
-                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" => {
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
                     tiled_stman::load_tiled_columns(
                         table_path,
                         dm,
@@ -630,6 +634,275 @@ impl CompositeStorage {
         write_concat_table_dat(&control_path, contents)?;
         let info_path = table_path.join(TABLE_INFO_FILE);
         fs::write(&info_path, "Type = \nSubType = \n")?;
+        Ok(())
+    }
+
+    /// Save with per-column DM bindings.
+    ///
+    /// Columns listed in `bindings` use their specified DM; all other columns
+    /// use the default DM from `dm_kind`. Each DM group writes its own data
+    /// file (`table.f0`, `table.f1`, ...) and gets a separate entry in `table.dat`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn save_with_bindings(
+        &self,
+        table_path: &Path,
+        snapshot: &StorageSnapshot,
+        default_dm: crate::table::DataManagerKind,
+        big_endian: bool,
+        default_tile_shape: Option<&[usize]>,
+        bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
+    ) -> Result<(), StorageError> {
+        use crate::table::DataManagerKind;
+
+        fs::create_dir_all(table_path)?;
+
+        let schema = snapshot.schema.as_ref().ok_or_else(|| {
+            StorageError::FormatMismatch("cannot save without schema".to_string())
+        })?;
+
+        let nrrow = snapshot.rows.len() as u64;
+        let has_virtual = !snapshot.virtual_bindings.is_empty();
+
+        // Group columns by DM kind. Columns in `bindings` get their own DM;
+        // everything else goes into the default DM.
+        struct DmGroup {
+            dm_kind: DataManagerKind,
+            dm_type_name: String,
+            seq_nr: u32,
+            col_names: Vec<String>,
+            tile_shape: Option<Vec<usize>>,
+        }
+
+        let mut groups: Vec<DmGroup> = Vec::new();
+
+        // Default DM group (seq_nr 0).
+        let default_type_name = match default_dm {
+            DataManagerKind::StManAipsIO => "StManAipsIO",
+            DataManagerKind::StandardStMan => "StandardStMan",
+            DataManagerKind::IncrementalStMan => "IncrementalStMan",
+            DataManagerKind::TiledColumnStMan => "TiledColumnStMan",
+            DataManagerKind::TiledShapeStMan => "TiledShapeStMan",
+            DataManagerKind::TiledCellStMan => "TiledCellStMan",
+            DataManagerKind::TiledDataStMan => "TiledDataStMan",
+        };
+        groups.push(DmGroup {
+            dm_kind: default_dm,
+            dm_type_name: default_type_name.to_string(),
+            seq_nr: 0,
+            col_names: Vec::new(),
+            tile_shape: default_tile_shape.map(|s| s.to_vec()),
+        });
+
+        // Collect virtual column names for filtering.
+        let virtual_col_names: HashSet<&str> = snapshot
+            .virtual_columns
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+
+        // Build additional DM groups from bindings, then assign columns.
+        let mut binding_seq_map: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut next_seq = 1u32;
+
+        for col in schema.columns() {
+            let col_name = col.name();
+            if virtual_col_names.contains(col_name) {
+                continue; // Virtual columns don't get stored DM entries.
+            }
+            if let Some(binding) = bindings.get(col_name) {
+                let group_key = format!("{:?}", binding.data_manager);
+                let group_idx = if let Some(&idx) = binding_seq_map.get(&group_key) {
+                    idx
+                } else {
+                    let dm_type = match binding.data_manager {
+                        DataManagerKind::StManAipsIO => "StManAipsIO",
+                        DataManagerKind::StandardStMan => "StandardStMan",
+                        DataManagerKind::IncrementalStMan => "IncrementalStMan",
+                        DataManagerKind::TiledColumnStMan => "TiledColumnStMan",
+                        DataManagerKind::TiledShapeStMan => "TiledShapeStMan",
+                        DataManagerKind::TiledCellStMan => "TiledCellStMan",
+                        DataManagerKind::TiledDataStMan => "TiledDataStMan",
+                    };
+                    let idx = groups.len();
+                    groups.push(DmGroup {
+                        dm_kind: binding.data_manager,
+                        dm_type_name: dm_type.to_string(),
+                        seq_nr: next_seq,
+                        col_names: Vec::new(),
+                        tile_shape: binding.tile_shape.clone(),
+                    });
+                    next_seq += 1;
+                    binding_seq_map.insert(group_key, idx);
+                    idx
+                };
+                groups[group_idx].col_names.push(col_name.to_string());
+            } else {
+                groups[0].col_names.push(col_name.to_string());
+            }
+        }
+
+        // Build a combined table.dat with all DM entries.
+        // For now, use from_snapshot for the first DM and add extra DM entries manually.
+        // This is a simplified approach: we write each group's data separately.
+
+        // First, build a complete table_dat with all DMs.
+        let mut dm_entries = Vec::new();
+        let mut col_dm_map: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+
+        for group in &groups {
+            dm_entries.push(table_control::DataManagerEntry {
+                type_name: group.dm_type_name.clone(),
+                seq_nr: group.seq_nr,
+                data: Vec::new(), // Will be filled in for SSM/ISM.
+            });
+            for col_name in &group.col_names {
+                col_dm_map.insert(col_name.clone(), group.seq_nr);
+            }
+        }
+
+        // Build initial table_dat (using from_snapshot but overriding DM entries).
+        let mut table_dat = if has_virtual {
+            TableDatContents::from_snapshot_with_virtual(
+                schema,
+                &snapshot.keywords,
+                &snapshot.column_keywords,
+                nrrow,
+                &groups[0].dm_type_name,
+                &[],
+                big_endian,
+                &snapshot.virtual_bindings,
+                table_path,
+            )
+        } else {
+            TableDatContents::from_snapshot(
+                schema,
+                &snapshot.keywords,
+                &snapshot.column_keywords,
+                nrrow,
+                &groups[0].dm_type_name,
+                &[],
+                big_endian,
+            )
+        };
+
+        // Override DM entries with our multi-DM setup.
+        // Preserve any virtual DM entries that from_snapshot_with_virtual added.
+        let virtual_dm_entries: Vec<_> = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .filter(|e| e.seq_nr > 0 && is_virtual_engine(&e.type_name))
+            .cloned()
+            .collect();
+
+        table_dat.column_set.data_managers = dm_entries;
+        table_dat
+            .column_set
+            .data_managers
+            .extend(virtual_dm_entries);
+        table_dat.column_set.seq_count = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .map(|e| e.seq_nr + 1)
+            .max()
+            .unwrap_or(1);
+
+        // Update each PlainColumnEntry's dm_seq_nr.
+        for pc in &mut table_dat.column_set.columns {
+            if let Some(&seq) = col_dm_map.get(&pc.original_name) {
+                pc.dm_seq_nr = seq;
+            }
+        }
+
+        // Write data files per group.
+        for group in &groups {
+            if group.col_names.is_empty() {
+                continue;
+            }
+            let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, group.seq_nr));
+
+            // Filter rows and col_descs to only this group's columns.
+            let group_col_set: HashSet<&str> = group.col_names.iter().map(|s| s.as_str()).collect();
+            let group_rows: Vec<RecordValue> = snapshot
+                .rows
+                .iter()
+                .map(|row| {
+                    let fields: Vec<_> = row
+                        .fields()
+                        .iter()
+                        .filter(|f| group_col_set.contains(f.name.as_str()))
+                        .cloned()
+                        .collect();
+                    RecordValue::new(fields)
+                })
+                .collect();
+            let group_col_descs: Vec<_> = table_dat
+                .table_desc
+                .columns
+                .iter()
+                .filter(|c| group_col_set.contains(c.col_name.as_str()))
+                .cloned()
+                .collect();
+
+            match group.dm_kind {
+                DataManagerKind::StManAipsIO => {
+                    write_stman_file(
+                        &data_path,
+                        &group_col_descs,
+                        &group_rows,
+                        ByteOrder::BigEndian,
+                    )?;
+                }
+                DataManagerKind::StandardStMan => {
+                    let dm_data =
+                        write_ssm_file(&data_path, &group_col_descs, &group_rows, big_endian)?;
+                    // Update the DM blob in the table_dat.
+                    if let Some(entry) = table_dat
+                        .column_set
+                        .data_managers
+                        .iter_mut()
+                        .find(|e| e.seq_nr == group.seq_nr)
+                    {
+                        entry.data = dm_data;
+                    }
+                }
+                DataManagerKind::IncrementalStMan => {
+                    let dm_data =
+                        write_ism_file(&data_path, &group_col_descs, &group_rows, big_endian)?;
+                    if let Some(entry) = table_dat
+                        .column_set
+                        .data_managers
+                        .iter_mut()
+                        .find(|e| e.seq_nr == group.seq_nr)
+                    {
+                        entry.data = dm_data;
+                    }
+                }
+                DataManagerKind::TiledColumnStMan
+                | DataManagerKind::TiledShapeStMan
+                | DataManagerKind::TiledCellStMan
+                | DataManagerKind::TiledDataStMan => {
+                    tiled_stman::save_tiled_columns(
+                        table_path,
+                        group.seq_nr,
+                        &group.dm_type_name,
+                        &group_col_descs,
+                        &group_rows,
+                        big_endian,
+                        group.tile_shape.as_deref(),
+                    )?;
+                }
+            }
+        }
+
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        write_table_dat(&control_path, &table_dat)?;
+        let info_path = table_path.join(TABLE_INFO_FILE);
+        fs::write(&info_path, "Type = \nSubType = \n")?;
+
         Ok(())
     }
 }

@@ -65,9 +65,16 @@ pub(crate) trait VirtualColumnEngine: fmt::Debug {
 /// Returns `Some(engine)` for supported virtual engine types, `None` otherwise.
 /// Uses prefix matching for parameterized engines like `ScaledArrayEngine<...>`.
 pub(crate) fn lookup_engine(type_name: &str) -> Option<Box<dyn VirtualColumnEngine>> {
+    use super::virtual_compress::{
+        CompressComplexEngine, CompressComplexVariant, CompressFloatEngine,
+    };
     use super::virtual_scaled_array::{ScaledColumnEngine, ScaledVariant};
     if type_name == "ForwardColumnEngine" {
         Some(Box::new(super::virtual_forward::ForwardColumnEngine))
+    } else if type_name == "ForwardColumnIndexedRowEngine" {
+        Some(Box::new(
+            super::virtual_forward::ForwardColumnIndexedRowEngine,
+        ))
     } else if type_name.starts_with("ScaledArrayEngine") {
         Some(Box::new(ScaledColumnEngine {
             variant: ScaledVariant::Array,
@@ -75,6 +82,18 @@ pub(crate) fn lookup_engine(type_name: &str) -> Option<Box<dyn VirtualColumnEngi
     } else if type_name.starts_with("ScaledComplexData") {
         Some(Box::new(ScaledColumnEngine {
             variant: ScaledVariant::ComplexData,
+        }))
+    } else if type_name.starts_with("BitFlagsEngine") {
+        Some(Box::new(super::virtual_bitflags::BitFlagsEngine))
+    } else if type_name == "CompressFloat" {
+        Some(Box::new(CompressFloatEngine))
+    } else if type_name == "CompressComplex" {
+        Some(Box::new(CompressComplexEngine {
+            variant: CompressComplexVariant::Standard,
+        }))
+    } else if type_name == "CompressComplexSD" {
+        Some(Box::new(CompressComplexEngine {
+            variant: CompressComplexVariant::SingleDish,
         }))
     } else {
         None
@@ -84,8 +103,13 @@ pub(crate) fn lookup_engine(type_name: &str) -> Option<Box<dyn VirtualColumnEngi
 /// Returns `true` if the given DM type name is a recognized virtual engine.
 pub(crate) fn is_virtual_engine(type_name: &str) -> bool {
     type_name == "ForwardColumnEngine"
+        || type_name == "ForwardColumnIndexedRowEngine"
         || type_name.starts_with("ScaledArrayEngine")
         || type_name.starts_with("ScaledComplexData")
+        || type_name.starts_with("BitFlagsEngine")
+        || type_name == "CompressFloat"
+        || type_name == "CompressComplex"
+        || type_name == "CompressComplexSD"
 }
 
 /// Metadata for a virtual column binding, used during save to produce
@@ -115,5 +139,49 @@ pub(crate) enum VirtualColumnBinding {
         stored_col: String,
         scale: Complex64,
         offset: Complex64,
+    },
+    /// A BitFlagsEngine binding: stored integer → virtual Bool via bitmask.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `BitFlagsEngine<uChar|Short|Int>`.
+    BitFlags {
+        virtual_col: String,
+        stored_col: String,
+        read_mask: u32,
+        write_mask: u32,
+    },
+    /// A CompressFloat binding: stored Int16 → virtual Float via FITS-style scaling.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `CompressFloat` in `casacore/tables/DataMan/CompressFloat.h`.
+    CompressFloat {
+        virtual_col: String,
+        stored_col: String,
+        scale: f32,
+        offset: f32,
+    },
+    /// A CompressComplex binding: stored Int32 → virtual Complex.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `CompressComplex` / `CompressComplexSD`.
+    CompressComplex {
+        virtual_col: String,
+        stored_col: String,
+        scale: f32,
+        offset: f32,
+        single_dish: bool,
+    },
+    /// A ForwardColumnIndexedRowEngine binding: forwarding with row remapping.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ForwardColumnIndexedRowEngine`.
+    ForwardIndexedRow {
+        col_name: String,
+        ref_table: PathBuf,
+        row_column: String,
     },
 }

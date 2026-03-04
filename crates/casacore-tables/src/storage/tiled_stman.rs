@@ -81,6 +81,21 @@ enum TiledVariant {
     Cell {
         default_tile_shape: Vec<i32>,
     },
+    /// TiledDataStMan: user-controlled hypercube assignment.
+    ///
+    /// Unlike TiledShapeStMan (automatic shape-based grouping), the user
+    /// explicitly assigns rows to hypercubes. Found in some older datasets.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TiledDataStMan` in `casacore/tables/DataMan/TiledDataStMan.h`.
+    Data {
+        default_tile_shape: Vec<i32>,
+        nrrow_last: u64,
+        row_map: Vec<u64>,
+        cube_map: Vec<u32>,
+        pos_map: Vec<u32>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +196,28 @@ fn read_tiled_header(path: &Path) -> Result<(TiledVariant, TiledStManHeader), St
             io.getend()?;
             io.close()?;
             Ok((TiledVariant::Cell { default_tile_shape }, header))
+        }
+        "TiledDataStMan" => {
+            // TiledDataStMan (version 2): base class first, then
+            // default_tile_shape, nrrowLast, rowMap, cubeMap, posMap.
+            let header = read_tiled_stman_base(&mut io)?;
+            let default_tile_shape = read_iposition(&mut io)?;
+            let nrrow_last = io.get_u64().unwrap_or(io.get_u32().unwrap_or(0) as u64);
+            let row_map = read_block_u64(&mut io)?;
+            let cube_map = read_block_u32(&mut io)?;
+            let pos_map = read_block_u32(&mut io)?;
+            io.getend()?;
+            io.close()?;
+            Ok((
+                TiledVariant::Data {
+                    default_tile_shape,
+                    nrrow_last,
+                    row_map,
+                    cube_map,
+                    pos_map,
+                },
+                header,
+            ))
         }
         other => Err(StorageError::FormatMismatch(format!(
             "unsupported tiled storage manager type: {other}"
@@ -363,6 +400,22 @@ fn write_tiled_header(
             write_tiled_stman_base(&mut io, header)?;
             io.putend()?;
         }
+        TiledVariant::Data {
+            default_tile_shape,
+            nrrow_last,
+            row_map,
+            cube_map,
+            pos_map,
+        } => {
+            io.putstart("TiledDataStMan", 2)?;
+            write_tiled_stman_base(&mut io, header)?;
+            write_iposition(&mut io, default_tile_shape)?;
+            io.put_u64(*nrrow_last)?;
+            write_block_u64(&mut io, row_map)?;
+            write_block_u32(&mut io, cube_map)?;
+            write_block_u32(&mut io, pos_map)?;
+            io.putend()?;
+        }
     }
 
     io.close()?;
@@ -459,6 +512,29 @@ fn write_block_u32(io: &mut AipsIo, values: &[u32]) -> Result<(), StorageError> 
     io.put_u32(values.len() as u32)?;
     for &v in values {
         io.put_u32(v)?;
+    }
+    io.putend()?;
+    Ok(())
+}
+
+/// Read a `Block<Int64>` AipsIO object (used by TiledDataStMan row maps).
+fn read_block_u64(io: &mut AipsIo) -> Result<Vec<u64>, StorageError> {
+    let _version = io.getstart("Block")?;
+    let count = io.get_u32()?;
+    let mut values = vec![0u64; count as usize];
+    for v in &mut values {
+        *v = io.get_u64()?;
+    }
+    io.getend()?;
+    Ok(values)
+}
+
+/// Write a `Block<Int64>` AipsIO object.
+fn write_block_u64(io: &mut AipsIo, values: &[u64]) -> Result<(), StorageError> {
+    io.putstart("Block", 1)?;
+    io.put_u32(values.len() as u32)?;
+    for &v in values {
+        io.put_u64(v)?;
     }
     io.putend()?;
     Ok(())
@@ -945,6 +1021,14 @@ pub(crate) fn load_tiled_columns(
         TiledVariant::Cell { .. } => {
             load_tiled_cell_stman(table_path, dm.seq_nr, &header, &col_descs, rows, nrrow)
         }
+        TiledVariant::Data {
+            ref row_map,
+            ref cube_map,
+            ref pos_map,
+            ..
+        } => load_tiled_data_stman(
+            table_path, dm.seq_nr, &header, &col_descs, rows, nrrow, row_map, cube_map, pos_map,
+        ),
     }
 }
 
@@ -1137,6 +1221,161 @@ fn load_tiled_shape_stman(
 
         if cube_idx >= cube_col_data.len() {
             continue; // undefined cell (cube 0 is dummy)
+        }
+
+        for (col_idx, col_desc) in col_descs.iter().enumerate() {
+            if let Some(ref ccd) = cube_col_data[cube_idx][col_idx] {
+                let dt = header.col_data_types[col_idx];
+                let elem_size = tile_element_size(dt);
+                let row_bytes = ccd.cell_nelem * elem_size;
+                let start = pos_in_cube * row_bytes;
+                let end = start + row_bytes;
+                if end <= ccd.raw.len() {
+                    let value = decode_array_value(
+                        &ccd.raw[start..end],
+                        &ccd.cell_shape,
+                        dt,
+                        header.big_endian,
+                    )?;
+                    row.push(RecordField::new(col_desc.col_name.clone(), value));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Load columns from a `TiledDataStMan` (user-controlled hypercube assignment).
+///
+/// Uses binary search in `row_map` to find the chunk index for each row.
+/// `cube_map[chunk]` gives the hypercube and `pos_map[chunk]` gives the
+/// starting position in the last dimension.
+///
+/// # C++ equivalent
+///
+/// `TiledDataStMan::getArraySection()`.
+#[allow(clippy::too_many_arguments)]
+fn load_tiled_data_stman(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    col_descs: &[&ColumnDescContents],
+    rows: &mut [RecordValue],
+    nrrow: usize,
+    row_map: &[u64],
+    cube_map: &[u32],
+    pos_map: &[u32],
+) -> Result<(), StorageError> {
+    // Pre-read all TSM data files and compute per-cube layouts.
+    let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();
+
+    struct CubeLayout {
+        bucket_size: usize,
+        col_offsets: Vec<usize>,
+    }
+    let mut cube_layouts: Vec<Option<CubeLayout>> = Vec::with_capacity(header.cubes.len());
+
+    for cube in &header.cubes {
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            cube_layouts.push(None);
+            continue;
+        }
+        let (bucket_size, col_offsets) =
+            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+        cube_layouts.push(Some(CubeLayout {
+            bucket_size,
+            col_offsets,
+        }));
+
+        let fseq = cube.file_seq_nr as u32;
+        if let std::collections::hash_map::Entry::Vacant(e) = file_cache.entry(fseq) {
+            let path = tsm_data_path(table_path, dm_seq_nr, fseq);
+            let data = std::fs::read(&path).map_err(|err| {
+                StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
+            })?;
+            e.insert(data);
+        }
+    }
+
+    // Pre-reconstruct per-cube per-column data.
+    struct CubeColumnData {
+        raw: Vec<u8>,
+        cell_shape: Vec<usize>,
+        cell_nelem: usize,
+    }
+    let mut cube_col_data: Vec<Vec<Option<CubeColumnData>>> =
+        Vec::with_capacity(header.cubes.len());
+
+    for (cube_idx, cube) in header.cubes.iter().enumerate() {
+        let mut cols = Vec::with_capacity(col_descs.len());
+        let layout = &cube_layouts[cube_idx];
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() || layout.is_none() {
+            for _ in col_descs {
+                cols.push(None);
+            }
+            cube_col_data.push(cols);
+            continue;
+        }
+        let layout = layout.as_ref().unwrap();
+        let file_data = &file_cache[&(cube.file_seq_nr as u32)];
+
+        let cell_ndim = cube.cube_shape.len() - 1;
+        let cell_shape: Vec<usize> = cube.cube_shape[..cell_ndim].to_vec();
+        let cell_nelem: usize = cell_shape.iter().product();
+
+        for (col_idx, _) in col_descs.iter().enumerate() {
+            if col_idx >= header.col_data_types.len() {
+                cols.push(None);
+                continue;
+            }
+            let dt = header.col_data_types[col_idx];
+            let elem_size = tile_element_size(dt);
+            if elem_size == 0 {
+                cols.push(None);
+                continue;
+            }
+            let raw = reconstruct_cube_column(
+                file_data,
+                cube.file_offset as usize,
+                &cube.cube_shape,
+                &cube.tile_shape,
+                layout.col_offsets[col_idx],
+                layout.bucket_size,
+                elem_size,
+            )?;
+            cols.push(Some(CubeColumnData {
+                raw,
+                cell_shape: cell_shape.clone(),
+                cell_nelem,
+            }));
+        }
+        cube_col_data.push(cols);
+    }
+
+    // Map rows to cubes using binary search in row_map.
+    let n_chunks = row_map.len();
+    for (row_idx, row) in rows.iter_mut().enumerate().take(nrrow) {
+        // Binary search: find the first chunk where row_map[chunk] > row_idx.
+        let chunk = match row_map.binary_search(&(row_idx as u64)) {
+            Ok(i) => i,
+            Err(i) => {
+                if i == 0 {
+                    continue; // row before first chunk
+                }
+                i - 1
+            }
+        };
+        if chunk >= n_chunks {
+            continue;
+        }
+
+        let cube_idx = cube_map[chunk] as usize;
+        let chunk_start = row_map[chunk] as usize;
+        let pos_in_cube = pos_map[chunk] as usize + (row_idx - chunk_start);
+
+        if cube_idx >= cube_col_data.len() {
+            continue;
         }
 
         for (col_idx, col_desc) in col_descs.iter().enumerate() {

@@ -1483,6 +1483,10 @@ impl TableDatContents {
                 VirtualColumnBinding::Forward { col_name, .. } => col_name.as_str(),
                 VirtualColumnBinding::ScaledArray { virtual_col, .. } => virtual_col.as_str(),
                 VirtualColumnBinding::ScaledComplexData { virtual_col, .. } => virtual_col.as_str(),
+                VirtualColumnBinding::BitFlags { virtual_col, .. } => virtual_col.as_str(),
+                VirtualColumnBinding::CompressFloat { virtual_col, .. } => virtual_col.as_str(),
+                VirtualColumnBinding::CompressComplex { virtual_col, .. } => virtual_col.as_str(),
+                VirtualColumnBinding::ForwardIndexedRow { col_name, .. } => col_name.as_str(),
             })
             .collect();
 
@@ -1556,6 +1560,67 @@ impl TableDatContents {
                     col_dm_map.insert(
                         virtual_col.clone(),
                         (seq, type_name, "ScaledComplexData".to_string()),
+                    );
+                }
+                VirtualColumnBinding::BitFlags { virtual_col, .. } => {
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    let type_name = "BitFlagsEngine<uChar".to_string();
+                    dm_entries.push(DataManagerEntry {
+                        type_name: type_name.clone(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(
+                        virtual_col.clone(),
+                        (seq, type_name, "BitFlagsEngine".to_string()),
+                    );
+                }
+                VirtualColumnBinding::CompressFloat { virtual_col, .. } => {
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    let type_name = "CompressFloat".to_string();
+                    dm_entries.push(DataManagerEntry {
+                        type_name: type_name.clone(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(virtual_col.clone(), (seq, type_name.clone(), type_name));
+                }
+                VirtualColumnBinding::CompressComplex {
+                    virtual_col,
+                    single_dish,
+                    ..
+                } => {
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    let type_name = if *single_dish {
+                        "CompressComplexSD".to_string()
+                    } else {
+                        "CompressComplex".to_string()
+                    };
+                    dm_entries.push(DataManagerEntry {
+                        type_name: type_name.clone(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(virtual_col.clone(), (seq, type_name.clone(), type_name));
+                }
+                VirtualColumnBinding::ForwardIndexedRow { col_name, .. } => {
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    dm_entries.push(DataManagerEntry {
+                        type_name: "ForwardColumnIndexedRowEngine".to_string(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(
+                        col_name.clone(),
+                        (
+                            seq,
+                            "ForwardColumnIndexedRowEngine".to_string(),
+                            "ForwardColumnIndexedRowEngine".to_string(),
+                        ),
                     );
                 }
             }
@@ -1666,6 +1731,106 @@ impl TableDatContents {
                         desc.keywords.push(RecordField::new(
                             "_ScaledComplexData_Offset".to_string(),
                             Value::Scalar(ScalarValue::Complex64(*offset)),
+                        ));
+                    }
+                }
+                VirtualColumnBinding::BitFlags {
+                    virtual_col,
+                    stored_col,
+                    read_mask,
+                    write_mask,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *virtual_col) {
+                        desc.keywords.push(RecordField::new(
+                            "_BaseMappedArrayEngine_StoredColumnName".to_string(),
+                            Value::Scalar(ScalarValue::String(stored_col.clone())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_BitFlagsEngine_ReadMask".to_string(),
+                            Value::Scalar(ScalarValue::UInt32(*read_mask)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_BitFlagsEngine_WriteMask".to_string(),
+                            Value::Scalar(ScalarValue::UInt32(*write_mask)),
+                        ));
+                    }
+                }
+                VirtualColumnBinding::CompressFloat {
+                    virtual_col,
+                    stored_col,
+                    scale,
+                    offset,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *virtual_col) {
+                        desc.keywords.push(RecordField::new(
+                            "_BaseMappedArrayEngine_StoredColumnName".to_string(),
+                            Value::Scalar(ScalarValue::String(stored_col.clone())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_CompressFloat_Scale".to_string(),
+                            Value::Scalar(ScalarValue::Float32(*scale)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_CompressFloat_Offset".to_string(),
+                            Value::Scalar(ScalarValue::Float32(*offset)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_CompressFloat_Fixed".to_string(),
+                            Value::Scalar(ScalarValue::Bool(true)),
+                        ));
+                    }
+                }
+                VirtualColumnBinding::CompressComplex {
+                    virtual_col,
+                    stored_col,
+                    scale,
+                    offset,
+                    single_dish,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *virtual_col) {
+                        desc.keywords.push(RecordField::new(
+                            "_BaseMappedArrayEngine_StoredColumnName".to_string(),
+                            Value::Scalar(ScalarValue::String(stored_col.clone())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_CompressComplex_Scale".to_string(),
+                            Value::Scalar(ScalarValue::Float32(*scale)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_CompressComplex_Offset".to_string(),
+                            Value::Scalar(ScalarValue::Float32(*offset)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_CompressComplex_Fixed".to_string(),
+                            Value::Scalar(ScalarValue::Bool(true)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_CompressComplex_Type".to_string(),
+                            Value::Scalar(ScalarValue::String(
+                                if *single_dish {
+                                    "CompressComplexSD"
+                                } else {
+                                    "CompressComplex"
+                                }
+                                .to_string(),
+                            )),
+                        ));
+                    }
+                }
+                VirtualColumnBinding::ForwardIndexedRow {
+                    col_name,
+                    ref_table,
+                    row_column,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *col_name) {
+                        let rel_path = super::strip_directory(ref_table, table_path);
+                        desc.keywords.push(RecordField::new(
+                            "_ForwardColumn_TableName_Row".to_string(),
+                            Value::Scalar(ScalarValue::String(rel_path)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "ForwardColumnIndexedRowEngine_RowName".to_string(),
+                            Value::Scalar(ScalarValue::String(row_column.clone())),
                         ));
                     }
                 }

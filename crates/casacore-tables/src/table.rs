@@ -178,6 +178,38 @@ pub enum DataManagerKind {
     ///
     /// C++ equivalent: `TiledCellStMan`.
     TiledCellStMan,
+    /// Tiled storage: user-controlled hypercube assignment.
+    ///
+    /// Like `TiledShapeStMan` but with explicit row-to-cube assignment
+    /// rather than automatic shape-based grouping. Found in some older
+    /// datasets.
+    ///
+    /// C++ equivalent: `TiledDataStMan`.
+    TiledDataStMan,
+}
+
+/// Per-column data manager binding for [`Table::save_with_bindings`].
+///
+/// Specifies which storage manager to use for a particular column.
+/// Columns not listed in the bindings map use the default DM from
+/// [`TableOptions`].
+///
+/// # Example
+///
+/// ```rust
+/// use casacore_tables::{ColumnBinding, DataManagerKind};
+///
+/// let binding = ColumnBinding {
+///     data_manager: DataManagerKind::TiledColumnStMan,
+///     tile_shape: Some(vec![4, 32]),
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct ColumnBinding {
+    /// The storage manager to use for this column.
+    pub data_manager: DataManagerKind,
+    /// Optional tile shape (only used with tiled storage managers).
+    pub tile_shape: Option<Vec<usize>>,
 }
 
 /// Configuration for opening or saving a [`Table`] to disk.
@@ -1017,6 +1049,60 @@ impl Table {
         Ok(())
     }
 
+    /// Save the table with per-column data manager bindings.
+    ///
+    /// Columns listed in `bindings` are stored using their specified DM;
+    /// all other stored columns use the default DM from `options`.
+    ///
+    /// This allows mixing storage managers within one table, for example
+    /// scalars in StandardStMan and arrays in TiledColumnStMan.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use std::collections::HashMap;
+    /// use casacore_tables::{Table, TableOptions, DataManagerKind, ColumnBinding};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let table = Table::default();
+    /// let mut bindings = HashMap::new();
+    /// bindings.insert("DATA".to_string(), ColumnBinding {
+    ///     data_manager: DataManagerKind::TiledColumnStMan,
+    ///     tile_shape: Some(vec![4, 32]),
+    /// });
+    /// table.save_with_bindings(
+    ///     TableOptions::new("/tmp/my_table"),
+    ///     &bindings,
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn save_with_bindings(
+        &self,
+        options: TableOptions,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+    ) -> Result<(), TableError> {
+        self.validate()?;
+        let snapshot = StorageSnapshot {
+            rows: self.inner.rows().to_vec(),
+            keywords: self.inner.keywords().clone(),
+            column_keywords: self.inner.all_column_keywords().clone(),
+            schema: self.inner.schema().cloned(),
+            virtual_columns: self.virtual_columns.clone(),
+            virtual_bindings: self.virtual_bindings.clone(),
+        };
+        let storage = CompositeStorage;
+        storage.save_with_bindings(
+            &options.path,
+            &snapshot,
+            options.data_manager,
+            options.endian_format.is_big_endian(),
+            options.tile_shape.as_deref(),
+            bindings,
+        )?;
+        Ok(())
+    }
+
     /// Returns the filesystem path this table was opened from or saved to,
     /// if any. In-memory tables that have never been persisted return `None`.
     pub fn path(&self) -> Option<&Path> {
@@ -1162,6 +1248,155 @@ impl Table {
                 stored_col: stored_col.to_string(),
                 scale,
                 offset,
+            });
+        Ok(())
+    }
+
+    /// Bind a column as a `BitFlagsEngine` column.
+    ///
+    /// The column `virtual_col` produces `(stored_col & read_mask) != 0`.
+    /// Both columns must exist in the schema. The stored column holds
+    /// integer data; the virtual column exposes Bool values.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `BitFlagsEngine<uChar>(virtualCol, storedCol)`.
+    pub fn bind_bitflags_column(
+        &mut self,
+        virtual_col: &str,
+        stored_col: &str,
+        read_mask: u32,
+        write_mask: u32,
+    ) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == virtual_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: virtual_col.to_string(),
+                });
+            }
+            if !schema.columns().iter().any(|c| c.name() == stored_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: stored_col.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(virtual_col.to_string());
+        self.virtual_bindings.push(VirtualColumnBinding::BitFlags {
+            virtual_col: virtual_col.to_string(),
+            stored_col: stored_col.to_string(),
+            read_mask,
+            write_mask,
+        });
+        Ok(())
+    }
+
+    /// Bind a column as a `CompressFloat` column.
+    ///
+    /// The column `virtual_col` decompresses stored Int16 data from
+    /// `stored_col` using FITS-style linear scaling:
+    /// `virtual[i] = (stored == -32768) ? NaN : stored * scale + offset`.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `CompressFloat(virtualCol, storedCol, scale, offset)`.
+    pub fn bind_compress_float_column(
+        &mut self,
+        virtual_col: &str,
+        stored_col: &str,
+        scale: f32,
+        offset: f32,
+    ) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == virtual_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: virtual_col.to_string(),
+                });
+            }
+            if !schema.columns().iter().any(|c| c.name() == stored_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: stored_col.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(virtual_col.to_string());
+        self.virtual_bindings
+            .push(VirtualColumnBinding::CompressFloat {
+                virtual_col: virtual_col.to_string(),
+                stored_col: stored_col.to_string(),
+                scale,
+                offset,
+            });
+        Ok(())
+    }
+
+    /// Bind a column as a `CompressComplex` or `CompressComplexSD` column.
+    ///
+    /// The column `virtual_col` decompresses stored Int32 data from
+    /// `stored_col` into complex values.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `CompressComplex` / `CompressComplexSD`.
+    pub fn bind_compress_complex_column(
+        &mut self,
+        virtual_col: &str,
+        stored_col: &str,
+        scale: f32,
+        offset: f32,
+        single_dish: bool,
+    ) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == virtual_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: virtual_col.to_string(),
+                });
+            }
+            if !schema.columns().iter().any(|c| c.name() == stored_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: stored_col.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(virtual_col.to_string());
+        self.virtual_bindings
+            .push(VirtualColumnBinding::CompressComplex {
+                virtual_col: virtual_col.to_string(),
+                stored_col: stored_col.to_string(),
+                scale,
+                offset,
+                single_dish,
+            });
+        Ok(())
+    }
+
+    /// Bind a column as a `ForwardColumnIndexedRowEngine` column.
+    ///
+    /// Like `ForwardColumnEngine` but remaps rows via an index column.
+    /// For row `r`, reads `idx = row_map_col[r]`, then reads the
+    /// forwarded column at row `idx` in the referenced table.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ForwardColumnIndexedRowEngine`.
+    pub fn bind_forward_column_indexed(
+        &mut self,
+        column: &str,
+        ref_table: &Path,
+        row_column: &str,
+    ) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == column) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: column.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(column.to_string());
+        self.virtual_bindings
+            .push(VirtualColumnBinding::ForwardIndexedRow {
+                col_name: column.to_string(),
+                ref_table: ref_table.to_path_buf(),
+                row_column: row_column.to_string(),
             });
         Ok(())
     }
