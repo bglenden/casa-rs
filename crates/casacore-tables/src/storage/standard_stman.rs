@@ -19,6 +19,8 @@ use std::path::Path;
 
 use casacore_aipsio::{AipsIo, ByteOrder};
 
+use casacore_types::Value;
+
 use super::StorageError;
 use super::canonical::{
     canonical_element_size, read_bool_bits, read_f32_be, read_f32_le, read_f32_slice_be,
@@ -31,10 +33,18 @@ use super::canonical::{
 };
 use super::data_type::CasacoreDataType;
 use super::stman_aipsio::ColumnRawData;
+use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
 use super::table_control::ColumnDescContents;
 
 const SSM_HEADER_SIZE: u64 = 512;
 const AIPSIO_MAGIC: u32 = 0xbebebebe;
+
+/// SSM column data — either flat (scalar/fixed-shape) or indirect (variable-shape).
+#[derive(Debug)]
+pub(crate) enum SsmColumnResult {
+    Flat(ColumnRawData),
+    Indirect(Vec<Option<Value>>),
+}
 
 // ---------------------------------------------------------------------------
 // Byte-order-aware buffer reader for in-memory AipsIO parsing
@@ -535,11 +545,30 @@ pub(crate) fn read_ssm_file(
     dm_blob: &[u8],
     col_descs: &[&ColumnDescContents],
     nrrow: usize,
-) -> Result<Vec<(String, ColumnRawData)>, StorageError> {
+) -> Result<Vec<(String, SsmColumnResult)>, StorageError> {
     let mut file = File::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
+
+    // Check if any columns are variable-shape (indirect).
+    let has_indirect = col_descs
+        .iter()
+        .any(|c| c.is_array && c.nrdim > 0 && c.shape.is_empty());
+
+    // Lazily open the shared array file for indirect columns.
+    let mut array_reader: Option<StManArrayFileReader> = if has_indirect {
+        let mut arr_path = file_path.as_os_str().to_os_string();
+        arr_path.push("i");
+        let arr_pathbuf = std::path::PathBuf::from(arr_path);
+        if arr_pathbuf.exists() {
+            Some(StManArrayFileReader::open(&arr_pathbuf, header.big_endian)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut result = Vec::with_capacity(col_descs.len());
 
@@ -562,23 +591,64 @@ pub(crate) fn read_ssm_file(
         }
         let index = &indices[index_nr];
 
-        let nrelem = if col_desc.is_array && !col_desc.shape.is_empty() {
-            col_desc.shape.iter().map(|&s| s as usize).product()
+        let is_indirect = col_desc.is_array && col_desc.nrdim > 0 && col_desc.shape.is_empty();
+
+        if is_indirect {
+            // Read i64 offsets from bucket data (8 bytes per row).
+            let offsets = read_column_from_buckets(
+                &mut file,
+                &header,
+                index,
+                column_offset,
+                CasacoreDataType::TpInt64,
+                1,
+                nrrow,
+            )?;
+
+            let offset_values = match offsets {
+                ColumnRawData::Int64(v) => v,
+                _ => {
+                    return Err(StorageError::FormatMismatch(
+                        "SSM indirect: expected Int64 offsets".to_string(),
+                    ));
+                }
+            };
+
+            let dt = CasacoreDataType::from_primitive_type(col_desc.primitive_type, false);
+            let reader = array_reader.as_mut().ok_or_else(|| {
+                StorageError::FormatMismatch(
+                    "SSM indirect column but no array file found".to_string(),
+                )
+            })?;
+
+            let mut per_row = Vec::with_capacity(nrrow);
+            for &off in &offset_values {
+                per_row.push(reader.read_array_at(off, dt)?);
+            }
+
+            result.push((
+                col_desc.col_name.clone(),
+                SsmColumnResult::Indirect(per_row),
+            ));
         } else {
-            1usize
-        };
+            let nrelem = if col_desc.is_array && !col_desc.shape.is_empty() {
+                col_desc.shape.iter().map(|&s| s as usize).product()
+            } else {
+                1usize
+            };
 
-        let raw = read_column_from_buckets(
-            &mut file,
-            &header,
-            index,
-            column_offset,
-            col_desc.data_type,
-            nrelem,
-            nrrow,
-        )?;
+            let raw = read_column_from_buckets(
+                &mut file,
+                &header,
+                index,
+                column_offset,
+                col_desc.data_type,
+                nrelem,
+                nrrow,
+            )?;
 
-        result.push((col_desc.col_name.clone(), raw));
+            result.push((col_desc.col_name.clone(), SsmColumnResult::Flat(raw)));
+        }
     }
 
     Ok(result)
@@ -926,17 +996,41 @@ pub(crate) fn write_ssm_file(
     let nrrow = rows.len();
     let ncol = col_descs.len();
 
+    // Check if any columns are variable-shape (indirect).
+    let has_indirect = col_descs
+        .iter()
+        .any(|c| c.is_array && c.nrdim > 0 && c.shape.is_empty());
+
+    // Create shared array file for indirect columns (SSM uses version 0, no refcount).
+    let mut array_writer = if has_indirect {
+        let mut arr_path = file_path.as_os_str().to_os_string();
+        arr_path.push("i");
+        Some(StManArrayFileWriter::create(
+            &std::path::PathBuf::from(arr_path),
+            big_endian,
+            0,
+        )?)
+    } else {
+        None
+    };
+
     // 1. Compute column sizes in bits (for Bool bit-packing)
+    // For indirect columns: 8 bytes (i64 offset) per row.
     let col_sizes_bits: Vec<usize> = col_descs
         .iter()
         .map(|c| {
-            let nrelem = if c.is_array && !c.shape.is_empty() {
-                c.shape.iter().map(|&s| s as usize).product()
+            let is_indirect = c.is_array && c.nrdim > 0 && c.shape.is_empty();
+            if is_indirect {
+                64 // i64 offset = 8 bytes = 64 bits
             } else {
-                1
-            };
-            let (_, bits) = canonical_element_size(c.data_type);
-            nrelem * bits
+                let nrelem = if c.is_array && !c.shape.is_empty() {
+                    c.shape.iter().map(|&s| s as usize).product()
+                } else {
+                    1
+                };
+                let (_, bits) = canonical_element_size(c.data_type);
+                nrelem * bits
+            }
         })
         .collect();
 
@@ -996,35 +1090,73 @@ pub(crate) fn write_ssm_file(
     let mut string_buckets: Vec<Vec<u8>> = Vec::new();
 
     for (col_idx, col_desc) in col_descs.iter().enumerate() {
-        let nrelem = if col_desc.is_array && !col_desc.shape.is_empty() {
+        let is_indirect = col_desc.is_array && col_desc.nrdim > 0 && col_desc.shape.is_empty();
+        let nrelem = if is_indirect {
+            1usize
+        } else if col_desc.is_array && !col_desc.shape.is_empty() {
             col_desc.shape.iter().map(|&s| s as usize).product()
         } else {
             1usize
         };
         let col_off = column_offsets[col_idx] as usize;
 
-        for (row, row_record) in rows.iter().enumerate() {
-            let bucket_idx = row / rows_per_bucket as usize;
-            let row_in_bucket = row % rows_per_bucket as usize;
-            let bucket = &mut buckets[bucket_idx];
+        if is_indirect {
+            // Write array data to shared file, store i64 offsets in buckets.
+            let dt = CasacoreDataType::from_primitive_type(col_desc.primitive_type, false);
+            let writer = array_writer.as_mut().ok_or_else(|| {
+                StorageError::FormatMismatch(
+                    "no array file writer for indirect SSM column".to_string(),
+                )
+            })?;
 
-            let value = row_record
-                .fields()
-                .iter()
-                .find(|f| f.name == col_desc.col_name)
-                .map(|f| &f.value);
+            for (row, row_record) in rows.iter().enumerate() {
+                let bucket_idx = row / rows_per_bucket as usize;
+                let row_in_bucket = row % rows_per_bucket as usize;
+                let bucket = &mut buckets[bucket_idx];
+                let byte_off = col_off + row_in_bucket * 8;
 
-            write_cell_to_bucket(
-                bucket,
-                col_off,
-                row_in_bucket,
-                col_desc.data_type,
-                nrelem,
-                value,
-                &mut string_buckets,
-                bucket_size as usize,
-                big_endian,
-            );
+                let value = row_record
+                    .fields()
+                    .iter()
+                    .find(|f| f.name == col_desc.col_name)
+                    .map(|f| &f.value);
+
+                let offset: i64 = match value {
+                    Some(val @ Value::Array(_)) => writer.write_array(val, dt)?,
+                    _ => 0i64, // undefined cell
+                };
+
+                // Write i64 offset in canonical byte order.
+                if big_endian {
+                    write_i64_be(&mut bucket[byte_off..], offset);
+                } else {
+                    write_i64_le(&mut bucket[byte_off..], offset);
+                }
+            }
+        } else {
+            for (row, row_record) in rows.iter().enumerate() {
+                let bucket_idx = row / rows_per_bucket as usize;
+                let row_in_bucket = row % rows_per_bucket as usize;
+                let bucket = &mut buckets[bucket_idx];
+
+                let value = row_record
+                    .fields()
+                    .iter()
+                    .find(|f| f.name == col_desc.col_name)
+                    .map(|f| &f.value);
+
+                write_cell_to_bucket(
+                    bucket,
+                    col_off,
+                    row_in_bucket,
+                    col_desc.data_type,
+                    nrelem,
+                    value,
+                    &mut string_buckets,
+                    bucket_size as usize,
+                    big_endian,
+                );
+            }
         }
     }
 

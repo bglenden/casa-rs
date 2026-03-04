@@ -6,6 +6,7 @@ pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
+pub(crate) mod stman_array_file;
 pub(crate) mod table_control;
 pub(crate) mod tiled_stman;
 pub(crate) mod virtual_bitflags;
@@ -24,9 +25,12 @@ use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
 
+use self::data_type::CasacoreDataType;
 use self::incremental_stman::{read_ism_file, write_ism_file};
 use self::standard_stman::{read_ssm_file, write_ssm_file};
-use self::stman_aipsio::{StManColumnInfo, extract_row_value, read_stman_file, write_stman_file};
+use self::stman_aipsio::{
+    StManColumnData, StManColumnInfo, extract_row_value, read_stman_file, write_stman_file,
+};
 pub(crate) use self::table_control::RefTableDatContents;
 use self::virtual_engine::{VirtualContext, is_virtual_engine, lookup_engine};
 
@@ -940,10 +944,29 @@ fn load_stman_aipsio_columns(
             break;
         }
         let col_desc = &all_col_descs[*desc_idx];
-        for (row_idx, row) in rows.iter_mut().enumerate() {
-            let value =
-                extract_row_value(&stman_data.columns[stman_col_idx], col_desc, row_idx, nrrow)?;
-            row.push(RecordField::new(col_desc.col_name.clone(), value));
+        match &stman_data.columns[stman_col_idx] {
+            StManColumnData::Flat(raw) => {
+                for (row_idx, row) in rows.iter_mut().enumerate() {
+                    let value = extract_row_value(raw, col_desc, row_idx, nrrow)?;
+                    row.push(RecordField::new(col_desc.col_name.clone(), value));
+                }
+            }
+            StManColumnData::Indirect(per_row) => {
+                for (row_idx, row) in rows.iter_mut().enumerate() {
+                    let value = match per_row.get(row_idx) {
+                        Some(Some(v)) => v.clone(),
+                        // Undefined cell: use a 0-D empty array.
+                        Some(None) | None => {
+                            let dt = CasacoreDataType::from_primitive_type(
+                                col_desc.primitive_type,
+                                false,
+                            );
+                            make_undefined_array(dt, col_desc.nrdim as usize)
+                        }
+                    };
+                    row.push(RecordField::new(col_desc.col_name.clone(), value));
+                }
+            }
         }
     }
 
@@ -966,7 +989,7 @@ fn load_ssm_columns(
 
     let ssm_columns = read_ssm_file(data_path, dm_blob, &col_descs, nrrow)?;
 
-    for (col_name, raw_data) in &ssm_columns {
+    for (col_name, col_result) in &ssm_columns {
         let col_desc = col_descs
             .iter()
             .find(|c| c.col_name == *col_name)
@@ -976,9 +999,28 @@ fn load_ssm_columns(
                 ))
             })?;
 
-        for (row_idx, row) in rows.iter_mut().enumerate() {
-            let value = extract_row_value(raw_data, col_desc, row_idx, nrrow)?;
-            row.push(RecordField::new(col_name.clone(), value));
+        match col_result {
+            standard_stman::SsmColumnResult::Flat(raw_data) => {
+                for (row_idx, row) in rows.iter_mut().enumerate() {
+                    let value = extract_row_value(raw_data, col_desc, row_idx, nrrow)?;
+                    row.push(RecordField::new(col_name.clone(), value));
+                }
+            }
+            standard_stman::SsmColumnResult::Indirect(per_row) => {
+                for (row_idx, row) in rows.iter_mut().enumerate() {
+                    let value = match per_row.get(row_idx) {
+                        Some(Some(v)) => v.clone(),
+                        Some(None) | None => {
+                            let dt = CasacoreDataType::from_primitive_type(
+                                col_desc.primitive_type,
+                                false,
+                            );
+                            make_undefined_array(dt, col_desc.nrdim as usize)
+                        }
+                    };
+                    row.push(RecordField::new(col_name.clone(), value));
+                }
+            }
         }
     }
 
@@ -1018,6 +1060,40 @@ fn load_ism_columns(
     }
 
     Ok(())
+}
+
+/// Create a Value representing an undefined variable-shape array cell.
+///
+/// For ndim > 0, returns a zero-sized array with `ndim` dimensions (all sizes 0).
+/// For ndim == 0, returns a 0-D empty array.
+fn make_undefined_array(dt: CasacoreDataType, ndim: usize) -> casacore_types::Value {
+    use casacore_types::{ArrayValue, Value};
+    use ndarray::{ArrayD, IxDyn};
+
+    let shape = vec![0usize; ndim.max(1)];
+    let s = IxDyn(&shape);
+    let av = match dt {
+        CasacoreDataType::TpBool => ArrayValue::Bool(ArrayD::default(s)),
+        CasacoreDataType::TpUChar => ArrayValue::UInt8(ArrayD::default(s)),
+        CasacoreDataType::TpShort => ArrayValue::Int16(ArrayD::default(s)),
+        CasacoreDataType::TpUShort => ArrayValue::UInt16(ArrayD::default(s)),
+        CasacoreDataType::TpInt => ArrayValue::Int32(ArrayD::default(s)),
+        CasacoreDataType::TpUInt => ArrayValue::UInt32(ArrayD::default(s)),
+        CasacoreDataType::TpInt64 => ArrayValue::Int64(ArrayD::default(s)),
+        CasacoreDataType::TpFloat => ArrayValue::Float32(ArrayD::default(s)),
+        CasacoreDataType::TpDouble => ArrayValue::Float64(ArrayD::default(s)),
+        CasacoreDataType::TpComplex => ArrayValue::Complex32(ArrayD::from_elem(
+            s,
+            casacore_types::Complex32::new(0.0, 0.0),
+        )),
+        CasacoreDataType::TpDComplex => ArrayValue::Complex64(ArrayD::from_elem(
+            s,
+            casacore_types::Complex64::new(0.0, 0.0),
+        )),
+        CasacoreDataType::TpString => ArrayValue::String(ArrayD::from_elem(s, String::new())),
+        _ => ArrayValue::Float32(ArrayD::default(s)),
+    };
+    Value::Array(av)
 }
 
 /// Compute a relative path using the C++ `Path::stripDirectory` convention.

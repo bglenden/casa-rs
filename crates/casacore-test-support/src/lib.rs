@@ -1261,6 +1261,23 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    fn cpp_table_write_aipsio_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn casacore_cpp_aipsio_encode(
         primitive: u8,
         is_array: u8,
@@ -1521,6 +1538,12 @@ pub enum CppTableFixture {
     /// ScaledArrayEngine interop: stored_col (Int array \[2\], 3 rows) and
     /// virtual_col (Double array, via ScaledArrayEngine with scale=2.5, offset=10.0).
     ScaledArray,
+    /// AipsIO variable-shape array: Float32 column "data" with ndim=2,
+    /// 4 rows with shapes \[2,3\], \[3,2\], \[3,2\], \[2,3\], values 1.0..24.0.
+    AipsIOVariableArray,
+    /// SSM variable-shape array: same schema and data as `AipsIOVariableArray`
+    /// but stored with `StandardStMan`.
+    SsmVariableArray,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1581,6 +1604,12 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             }
             CppTableFixture::ScaledArray => {
                 cpp_table_write_scaled_array_fixture(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsIOVariableArray => {
+                cpp_table_write_aipsio_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmVariableArray => {
+                cpp_table_write_ssm_variable_array(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -1677,6 +1706,12 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             }
             CppTableFixture::ScaledArray => {
                 cpp_table_verify_scaled_array_fixture(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsIOVariableArray => {
+                cpp_table_verify_aipsio_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmVariableArray => {
+                cpp_table_verify_ssm_variable_array(c_path.as_ptr(), &mut error)
             }
         }
     };

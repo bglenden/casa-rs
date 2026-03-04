@@ -9,12 +9,14 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::StorageError;
 use super::data_type::CasacoreDataType;
+use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
 use super::table_control::ColumnDescContents;
 
 // ---------------------------------------------------------------------------
 // Parsed column data from table.f<N>
 // ---------------------------------------------------------------------------
 
+/// Parsed data from a StManAipsIO data file (`table.fN`).
 #[derive(Debug)]
 pub(crate) struct StManAipsIOFile {
     pub name: String,
@@ -23,7 +25,18 @@ pub(crate) struct StManAipsIOFile {
     pub nrrow: u32,
     pub ncol: u32,
     pub data_types: Vec<CasacoreDataType>,
-    pub columns: Vec<ColumnRawData>,
+    pub columns: Vec<StManColumnData>,
+}
+
+/// Column data from StManAipsIO — either flat (scalar/fixed-shape) or
+/// indirect (variable-shape, per-row).
+#[derive(Debug)]
+pub(crate) enum StManColumnData {
+    /// Scalar or fixed-shape array column: flat column-major data.
+    Flat(ColumnRawData),
+    /// Variable-shape (indirect) array column: per-row `Option<Value>`.
+    /// `None` entries represent undefined cells (file offset = 0).
+    Indirect(Vec<Option<Value>>),
 }
 
 /// Raw column data in column-major order (one entry per row for scalars,
@@ -86,16 +99,29 @@ pub(crate) fn read_stman_file(
         data_types.push(dt);
     }
 
-    // Read per-column data blocks
+    // Read per-column data blocks, using get_next_type() to dispatch.
     let mut columns = Vec::with_capacity(ncol as usize);
+    let big_endian = byte_order == ByteOrder::BigEndian;
     for (i, dt) in data_types.iter().enumerate() {
         let info = col_info.get(i).ok_or_else(|| {
             StorageError::FormatMismatch(format!("missing column info for StManAipsIO col {i}"))
         })?;
-        let col_data = if info.is_array {
-            read_stman_array_column(&mut io, *dt, info.nrelem)?
-        } else {
-            read_stman_column(&mut io, *dt)?
+
+        // Peek at the next AipsIO object type to determine column kind.
+        let next_type = io.get_next_type()?;
+        let col_data = match next_type.as_str() {
+            "StManColumnIndArrayAipsIO" => {
+                read_stman_indirect_column(&mut io, *dt, path, big_endian)?
+            }
+            "StManColumnArrayAipsIO" => {
+                StManColumnData::Flat(read_stman_array_column(&mut io, *dt, info.nrelem)?)
+            }
+            "StManColumnAipsIO" => StManColumnData::Flat(read_stman_column(&mut io, *dt)?),
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "unexpected StManAipsIO column type: {other}"
+                )));
+            }
         };
         columns.push(col_data);
     }
@@ -151,6 +177,108 @@ fn read_stman_array_column(
     io.getend()?; // StManColumnAipsIO
     io.getend()?; // StManColumnArrayAipsIO
     Ok(data)
+}
+
+/// Marker value for file offsets > 2GB in indirect AipsIO columns.
+const LARGE_OFFSET_MARKER: u32 = 2u32 * 1024 * 1024 * 1024 + 1;
+
+/// Read a variable-shape (indirect) array column.
+///
+/// Corresponds to C++ `StManColumnIndArrayAipsIO::getFile`.
+/// The AipsIO stream contains:
+/// ```text
+/// StManColumnIndArrayAipsIO v2 {
+///     dtype: i32,
+///     seqnr: i32,
+///     StManColumnAipsIO {
+///         nrval,
+///         extents containing file offsets (not data)
+///     }
+/// }
+/// ```
+fn read_stman_indirect_column(
+    io: &mut AipsIo,
+    dt: CasacoreDataType,
+    data_path: &Path,
+    big_endian: bool,
+) -> Result<StManColumnData, StorageError> {
+    let ind_version = io.getstart("StManColumnIndArrayAipsIO")?;
+    let _dtype_compat = io.get_i32()?; // backward-compat dtype
+    let _seqnr = io.get_i32()?;
+
+    // Read inner StManColumnAipsIO containing file offsets.
+    let _inner_version = io.getstart("StManColumnAipsIO")?;
+    let nrval = io.get_u32()?;
+
+    let mut offsets: Vec<i64> = Vec::with_capacity(nrval as usize);
+    if nrval > 0 {
+        // Read extent blocks. Each extent: u32(extent_count) + getnew(count_prefix + u32 offsets).
+        // But the indirect column stores offsets via putData, which writes directly without
+        // count prefix — it uses the same extent structure as scalar columns.
+        let mut nrd: u32 = 0;
+        while nrd < nrval {
+            let mut extent_count = io.get_u32()?;
+            if extent_count == 0 {
+                extent_count = nrval - nrd;
+            }
+
+            // Read file offsets for this extent.
+            // The C++ putData writes u32 offsets (or marker+i64 for >2GB).
+            // The C++ getData reads them via ios >> off pattern.
+            // Since this is inside a scalar-column extent, it uses getnew (count-prefixed).
+            // Actually, looking at the C++ code more carefully:
+            // StManColumnAipsIO::putFile calls putData per extent, and putData/getData
+            // are virtual — for indirect columns they write/read file offsets.
+            // The getData reads raw u32 values from the AipsIO stream.
+            let extent_offsets = read_indirect_extent_offsets(io, extent_count as usize)?;
+            offsets.extend(extent_offsets);
+
+            nrd += extent_count;
+        }
+    }
+
+    io.getend()?; // StManColumnAipsIO
+    io.getend()?; // StManColumnIndArrayAipsIO
+
+    // Determine the array file path.
+    // Version >= 2: shared file = data_path + "i"
+    // Version <= 1: per-column file = data_path + "i" + seqnr (not commonly seen)
+    let array_file_path = if ind_version >= 2 {
+        let mut p = data_path.as_os_str().to_os_string();
+        p.push("i");
+        std::path::PathBuf::from(p)
+    } else {
+        let mut p = data_path.as_os_str().to_os_string();
+        p.push(format!("i{}", _seqnr));
+        std::path::PathBuf::from(p)
+    };
+
+    // Open the array file and read each row's data.
+    let mut reader = StManArrayFileReader::open(&array_file_path, big_endian)?;
+    let mut values = Vec::with_capacity(offsets.len());
+    for &offset in &offsets {
+        values.push(reader.read_array_at(offset, dt)?);
+    }
+
+    Ok(StManColumnData::Indirect(values))
+}
+
+/// Read file offsets from an indirect column extent.
+///
+/// C++ `StManColumnIndArrayAipsIO::getData` reads individual `ios >> uInt` per
+/// row (no count prefix). For offsets > 2GB a marker u32 is followed by an i64.
+fn read_indirect_extent_offsets(io: &mut AipsIo, count: usize) -> Result<Vec<i64>, StorageError> {
+    let mut offsets = Vec::with_capacity(count);
+    for _ in 0..count {
+        let off = io.get_u32()?;
+        if off == LARGE_OFFSET_MARKER {
+            let big = io.get_i64()?;
+            offsets.push(big);
+        } else {
+            offsets.push(off as i64);
+        }
+    }
+    Ok(offsets)
 }
 
 /// Read array column data organized in extent blocks.
@@ -475,6 +603,26 @@ pub(crate) fn write_stman_file(
 ) -> Result<(), StorageError> {
     let nrrow = rows.len() as u32;
     let ncol = columns.len() as u32;
+    let big_endian = byte_order == ByteOrder::BigEndian;
+
+    // Check if any columns are variable-shape (indirect).
+    let has_indirect = columns
+        .iter()
+        .any(|c| c.is_array && c.nrdim > 0 && c.shape.is_empty());
+
+    // Create shared array file for indirect columns (version 2 format: path + "i").
+    let mut array_writer = if has_indirect {
+        let mut arr_path = path.as_os_str().to_os_string();
+        arr_path.push("i");
+        // StManAipsIO uses version 1 (with refcount) by default.
+        Some(StManArrayFileWriter::create(
+            &std::path::PathBuf::from(arr_path),
+            big_endian,
+            1,
+        )?)
+    } else {
+        None
+    };
 
     let mut io = AipsIo::open_with_order(path, AipsOpenOption::New, byte_order)?;
     io.putstart("StManAipsIO", 2)?;
@@ -494,7 +642,7 @@ pub(crate) fn write_stman_file(
 
     // Per-column data blocks
     for (col_idx, col) in columns.iter().enumerate() {
-        write_stman_column(&mut io, col, rows, col_idx)?;
+        write_stman_column(&mut io, col, rows, col_idx, &mut array_writer)?;
     }
 
     io.putend()?;
@@ -507,12 +655,17 @@ fn write_stman_column(
     col_desc: &ColumnDescContents,
     rows: &[casacore_types::RecordValue],
     col_idx: usize,
+    array_writer: &mut Option<StManArrayFileWriter>,
 ) -> Result<(), StorageError> {
     let col_name = &col_desc.col_name;
     let is_fixed_array = col_desc.is_array && col_desc.nrdim > 0 && !col_desc.shape.is_empty();
+    let is_variable_array = col_desc.is_array && col_desc.nrdim > 0 && col_desc.shape.is_empty();
 
-    if is_fixed_array {
-        // Array columns: StManColumnArrayAipsIO wrapping StManColumnAipsIO
+    if is_variable_array {
+        // Variable-shape (indirect) column: StManColumnIndArrayAipsIO
+        write_stman_indirect_column(io, col_desc, rows, col_name, array_writer)?;
+    } else if is_fixed_array {
+        // Fixed-shape array: StManColumnArrayAipsIO wrapping StManColumnAipsIO
         let nrrow = rows.len() as u32;
         let elements_per_row: usize = col_desc.shape.iter().map(|&s| s as usize).product();
 
@@ -545,6 +698,69 @@ fn write_stman_column(
 
         io.putend()?;
     }
+
+    Ok(())
+}
+
+/// Write a variable-shape (indirect) column.
+///
+/// Corresponds to C++ `StManColumnIndArrayAipsIO::putFile`.
+fn write_stman_indirect_column(
+    io: &mut AipsIo,
+    col_desc: &ColumnDescContents,
+    rows: &[casacore_types::RecordValue],
+    col_name: &str,
+    array_writer: &mut Option<StManArrayFileWriter>,
+) -> Result<(), StorageError> {
+    let nrrow = rows.len() as u32;
+    let dt = CasacoreDataType::from_primitive_type(col_desc.primitive_type, false);
+
+    let writer = array_writer.as_mut().ok_or_else(|| {
+        StorageError::FormatMismatch("no array file writer for indirect column".to_string())
+    })?;
+
+    // Write each row's array to the array file, collecting offsets.
+    let mut offsets = Vec::with_capacity(nrrow as usize);
+    for row in rows {
+        match row.get(col_name) {
+            Some(val @ Value::Array(_)) => {
+                let offset = writer.write_array(val, dt)?;
+                offsets.push(offset);
+            }
+            _ => {
+                offsets.push(0i64); // undefined cell
+            }
+        }
+    }
+
+    // Write AipsIO envelope.
+    io.putstart("StManColumnIndArrayAipsIO", 2)?;
+    io.put_i32(dt as i32)?; // dtype for backward compatibility
+    io.put_i32(0)?; // seqnr (not significant for v2)
+
+    // Inner StManColumnAipsIO with file offsets as scalar data.
+    io.putstart("StManColumnAipsIO", 2)?;
+    io.put_u32(nrrow)?; // nrval
+
+    if nrrow > 0 {
+        // Single extent: extent_count + individual u32 offsets (no count prefix).
+        // C++ StManColumnIndArrayAipsIO::putData writes `ios << uInt(off)` per row.
+        io.put_u32(nrrow)?; // extent_count
+
+        for &off in &offsets {
+            if off == 0 {
+                io.put_u32(0)?;
+            } else if off <= 2u64.pow(31) as i64 {
+                io.put_u32(off as u32)?;
+            } else {
+                io.put_u32(LARGE_OFFSET_MARKER)?;
+                io.put_i64(off)?;
+            }
+        }
+    }
+
+    io.putend()?; // StManColumnAipsIO
+    io.putend()?; // StManColumnIndArrayAipsIO
 
     Ok(())
 }
