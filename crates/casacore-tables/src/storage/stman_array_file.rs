@@ -32,7 +32,7 @@
 //! - `casacore::StIndArray`      (`StIndArray.h / StIndArray.cc`)
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use casacore_types::{ArrayValue, Value};
@@ -52,7 +52,7 @@ pub(crate) enum ArrayFileByteOrder {
     Little,
 }
 
-fn read_u32(f: &mut File, bo: ArrayFileByteOrder) -> Result<u32, StorageError> {
+fn read_u32(f: &mut (impl Read + ?Sized), bo: ArrayFileByteOrder) -> Result<u32, StorageError> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
     Ok(match bo {
@@ -61,7 +61,7 @@ fn read_u32(f: &mut File, bo: ArrayFileByteOrder) -> Result<u32, StorageError> {
     })
 }
 
-fn read_i32(f: &mut File, bo: ArrayFileByteOrder) -> Result<i32, StorageError> {
+fn read_i32(f: &mut (impl Read + ?Sized), bo: ArrayFileByteOrder) -> Result<i32, StorageError> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
     Ok(match bo {
@@ -70,7 +70,7 @@ fn read_i32(f: &mut File, bo: ArrayFileByteOrder) -> Result<i32, StorageError> {
     })
 }
 
-fn read_i64(f: &mut File, bo: ArrayFileByteOrder) -> Result<i64, StorageError> {
+fn read_i64(f: &mut (impl Read + ?Sized), bo: ArrayFileByteOrder) -> Result<i64, StorageError> {
     let mut buf = [0u8; 8];
     f.read_exact(&mut buf)?;
     Ok(match bo {
@@ -79,7 +79,11 @@ fn read_i64(f: &mut File, bo: ArrayFileByteOrder) -> Result<i64, StorageError> {
     })
 }
 
-fn write_u32(f: &mut File, val: u32, bo: ArrayFileByteOrder) -> Result<(), StorageError> {
+fn write_u32(
+    f: &mut (impl Write + ?Sized),
+    val: u32,
+    bo: ArrayFileByteOrder,
+) -> Result<(), StorageError> {
     let bytes = match bo {
         ArrayFileByteOrder::Big => val.to_be_bytes(),
         ArrayFileByteOrder::Little => val.to_le_bytes(),
@@ -88,7 +92,11 @@ fn write_u32(f: &mut File, val: u32, bo: ArrayFileByteOrder) -> Result<(), Stora
     Ok(())
 }
 
-fn write_i32(f: &mut File, val: i32, bo: ArrayFileByteOrder) -> Result<(), StorageError> {
+fn write_i32(
+    f: &mut (impl Write + ?Sized),
+    val: i32,
+    bo: ArrayFileByteOrder,
+) -> Result<(), StorageError> {
     let bytes = match bo {
         ArrayFileByteOrder::Big => val.to_be_bytes(),
         ArrayFileByteOrder::Little => val.to_le_bytes(),
@@ -97,7 +105,11 @@ fn write_i32(f: &mut File, val: i32, bo: ArrayFileByteOrder) -> Result<(), Stora
     Ok(())
 }
 
-fn write_i64(f: &mut File, val: i64, bo: ArrayFileByteOrder) -> Result<(), StorageError> {
+fn write_i64(
+    f: &mut (impl Write + ?Sized),
+    val: i64,
+    bo: ArrayFileByteOrder,
+) -> Result<(), StorageError> {
     let bytes = match bo {
         ArrayFileByteOrder::Big => val.to_be_bytes(),
         ArrayFileByteOrder::Little => val.to_le_bytes(),
@@ -106,7 +118,11 @@ fn write_i64(f: &mut File, val: i64, bo: ArrayFileByteOrder) -> Result<(), Stora
     Ok(())
 }
 
-fn write_f32(f: &mut File, val: f32, bo: ArrayFileByteOrder) -> Result<(), StorageError> {
+fn write_f32(
+    f: &mut (impl Write + ?Sized),
+    val: f32,
+    bo: ArrayFileByteOrder,
+) -> Result<(), StorageError> {
     let bytes = match bo {
         ArrayFileByteOrder::Big => val.to_be_bytes(),
         ArrayFileByteOrder::Little => val.to_le_bytes(),
@@ -115,7 +131,11 @@ fn write_f32(f: &mut File, val: f32, bo: ArrayFileByteOrder) -> Result<(), Stora
     Ok(())
 }
 
-fn write_f64(f: &mut File, val: f64, bo: ArrayFileByteOrder) -> Result<(), StorageError> {
+fn write_f64(
+    f: &mut (impl Write + ?Sized),
+    val: f64,
+    bo: ArrayFileByteOrder,
+) -> Result<(), StorageError> {
     let bytes = match bo {
         ArrayFileByteOrder::Big => val.to_be_bytes(),
         ArrayFileByteOrder::Little => val.to_le_bytes(),
@@ -124,7 +144,7 @@ fn write_f64(f: &mut File, val: f64, bo: ArrayFileByteOrder) -> Result<(), Stora
     Ok(())
 }
 
-fn read_f32(f: &mut File, bo: ArrayFileByteOrder) -> Result<f32, StorageError> {
+fn read_f32(f: &mut (impl Read + ?Sized), bo: ArrayFileByteOrder) -> Result<f32, StorageError> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
     Ok(match bo {
@@ -133,7 +153,7 @@ fn read_f32(f: &mut File, bo: ArrayFileByteOrder) -> Result<f32, StorageError> {
     })
 }
 
-fn read_f64(f: &mut File, bo: ArrayFileByteOrder) -> Result<f64, StorageError> {
+fn read_f64(f: &mut (impl Read + ?Sized), bo: ArrayFileByteOrder) -> Result<f64, StorageError> {
     let mut buf = [0u8; 8];
     f.read_exact(&mut buf)?;
     Ok(match bo {
@@ -142,7 +162,7 @@ fn read_f64(f: &mut File, bo: ArrayFileByteOrder) -> Result<f64, StorageError> {
     })
 }
 
-fn read_i16(f: &mut File, bo: ArrayFileByteOrder) -> Result<i16, StorageError> {
+fn read_i16(f: &mut (impl Read + ?Sized), bo: ArrayFileByteOrder) -> Result<i16, StorageError> {
     let mut buf = [0u8; 2];
     f.read_exact(&mut buf)?;
     Ok(match bo {
@@ -151,7 +171,7 @@ fn read_i16(f: &mut File, bo: ArrayFileByteOrder) -> Result<i16, StorageError> {
     })
 }
 
-fn read_u16(f: &mut File, bo: ArrayFileByteOrder) -> Result<u16, StorageError> {
+fn read_u16(f: &mut (impl Read + ?Sized), bo: ArrayFileByteOrder) -> Result<u16, StorageError> {
     let mut buf = [0u8; 2];
     f.read_exact(&mut buf)?;
     Ok(match bo {
@@ -160,7 +180,11 @@ fn read_u16(f: &mut File, bo: ArrayFileByteOrder) -> Result<u16, StorageError> {
     })
 }
 
-fn write_i16(f: &mut File, val: i16, bo: ArrayFileByteOrder) -> Result<(), StorageError> {
+fn write_i16(
+    f: &mut (impl Write + ?Sized),
+    val: i16,
+    bo: ArrayFileByteOrder,
+) -> Result<(), StorageError> {
     let bytes = match bo {
         ArrayFileByteOrder::Big => val.to_be_bytes(),
         ArrayFileByteOrder::Little => val.to_le_bytes(),
@@ -169,7 +193,11 @@ fn write_i16(f: &mut File, val: i16, bo: ArrayFileByteOrder) -> Result<(), Stora
     Ok(())
 }
 
-fn write_u16(f: &mut File, val: u16, bo: ArrayFileByteOrder) -> Result<(), StorageError> {
+fn write_u16(
+    f: &mut (impl Write + ?Sized),
+    val: u16,
+    bo: ArrayFileByteOrder,
+) -> Result<(), StorageError> {
     let bytes = match bo {
         ArrayFileByteOrder::Big => val.to_be_bytes(),
         ArrayFileByteOrder::Little => val.to_le_bytes(),
@@ -205,17 +233,19 @@ fn canonical_elem_bytes(dt: CasacoreDataType) -> f64 {
 ///
 /// Corresponds to C++ `casacore::StManArrayFile` in read mode.
 pub(crate) struct StManArrayFileReader {
-    file: File,
+    file: BufReader<File>,
     bo: ArrayFileByteOrder,
     version: u32,
     #[allow(dead_code)]
     file_length: i64,
+    /// Tracked logical position to avoid unnecessary seeks.
+    pos: u64,
 }
 
 impl StManArrayFileReader {
     /// Open an existing array file.
     pub(crate) fn open(path: &Path, big_endian: bool) -> Result<Self, StorageError> {
-        let mut file = File::open(path)?;
+        let mut file = BufReader::new(File::open(path)?);
         let bo = if big_endian {
             ArrayFileByteOrder::Big
         } else {
@@ -234,6 +264,7 @@ impl StManArrayFileReader {
             bo,
             version,
             file_length,
+            pos: 16, // after 16-byte header
         })
     }
 
@@ -250,7 +281,11 @@ impl StManArrayFileReader {
             return Ok(None);
         }
 
-        self.file.seek(SeekFrom::Start(offset as u64))?;
+        let target = offset as u64;
+        if self.pos != target {
+            self.file.seek(SeekFrom::Start(target))?;
+            self.pos = target;
+        }
 
         // Skip refCount for version > 0.
         if self.version > 0 {
@@ -266,11 +301,24 @@ impl StManArrayFileReader {
 
         let total: usize = shape.iter().product();
         if total == 0 {
+            let header_bytes = if self.version > 0 { 4u64 } else { 0 } + 4 + (ndim as u64 * 4);
+            self.pos = target + header_bytes;
             return Ok(Some(make_empty_array(dt, &shape)));
         }
 
         // Read flat data in Fortran order, then construct ndarray.
         let array_value = self.read_typed_data(dt, total, &shape)?;
+
+        // Update tracked position: header + shape + data bytes.
+        // For strings, internal seeks invalidate the position.
+        if dt == CasacoreDataType::TpString {
+            self.pos = u64::MAX;
+        } else {
+            let header_bytes = if self.version > 0 { 4u64 } else { 0 } + 4 + (ndim as u64 * 4);
+            let data_bytes = (total as f64 * canonical_elem_bytes(dt) + 0.95) as u64;
+            self.pos = target + header_bytes + data_bytes;
+        }
+
         Ok(Some(Value::Array(array_value)))
     }
 
@@ -426,7 +474,7 @@ impl StManArrayFileReader {
 ///
 /// Corresponds to C++ `casacore::StManArrayFile` in write mode.
 pub(crate) struct StManArrayFileWriter {
-    file: File,
+    file: BufWriter<File>,
     bo: ArrayFileByteOrder,
     version: u32,
     file_length: i64,
@@ -441,7 +489,7 @@ impl StManArrayFileWriter {
         big_endian: bool,
         version: u32,
     ) -> Result<Self, StorageError> {
-        let mut file = File::create(path)?;
+        let mut file = BufWriter::new(File::create(path)?);
         let bo = if big_endian {
             ArrayFileByteOrder::Big
         } else {
@@ -511,9 +559,6 @@ impl StManArrayFileWriter {
 
         // Write the actual array data.
         self.write_typed_data(value, dt)?;
-
-        // Update file header.
-        self.flush_header()?;
 
         Ok(offset)
     }
@@ -629,6 +674,15 @@ impl StManArrayFileWriter {
         write_i64(&mut self.file, self.file_length, self.bo)?;
         Ok(())
     }
+
+    /// Flush the file header and buffered data to disk.
+    ///
+    /// Must be called after all arrays have been written.
+    pub(crate) fn finish(&mut self) -> Result<(), StorageError> {
+        self.flush_header()?;
+        self.file.flush()?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -662,12 +716,24 @@ fn make_empty_array(dt: CasacoreDataType, shape: &[usize]) -> Value {
     Value::Array(av)
 }
 
-/// Iterate over an ndarray in Fortran (column-major) order.
+/// Return array data as a flat Vec in Fortran (column-major) order.
+///
+/// Fast path: if the array is contiguous in Fortran order, copies directly
+/// from memory via `as_slice_memory_order()` (avoids per-element index math).
+/// Fallback: manual index iteration for non-contiguous or C-order arrays.
 fn fortran_flat_iter<T: Clone>(arr: &ArrayD<T>) -> Vec<T> {
-    let shape = arr.shape();
-    if shape.is_empty() {
+    if arr.is_empty() {
         return vec![];
     }
+    // Fast path: contiguous Fortran-order array — bulk copy from memory.
+    if let Some(slice) = arr.as_slice_memory_order() {
+        let is_fortran = arr.ndim() <= 1 || arr.strides().first().is_some_and(|&s| s == 1);
+        if is_fortran {
+            return slice.to_vec();
+        }
+    }
+    // Fallback: manual iteration for non-contiguous or C-order arrays.
+    let shape = arr.shape();
     let total: usize = shape.iter().product();
     let ndim = shape.len();
     let mut result = Vec::with_capacity(total);
@@ -708,7 +774,9 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
-            writer.write_array(&val, CasacoreDataType::TpFloat).unwrap()
+            let off = writer.write_array(&val, CasacoreDataType::TpFloat).unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         // Read.
@@ -736,7 +804,9 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 0).unwrap();
-            writer.write_array(&val, CasacoreDataType::TpBool).unwrap()
+            let off = writer.write_array(&val, CasacoreDataType::TpBool).unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -767,9 +837,11 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
-            writer
+            let off = writer
                 .write_array(&val, CasacoreDataType::TpString)
-                .unwrap()
+                .unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -803,9 +875,11 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
-            writer
+            let off = writer
                 .write_array(&val, CasacoreDataType::TpComplex)
-                .unwrap()
+                .unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -834,6 +908,7 @@ mod tests {
             let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
             let o1 = writer.write_array(&arr1, CasacoreDataType::TpInt).unwrap();
             let o2 = writer.write_array(&arr2, CasacoreDataType::TpInt).unwrap();
+            writer.finish().unwrap();
             (o1, o2)
         };
 
@@ -858,7 +933,8 @@ mod tests {
         let path = dir.path().join("test.arr");
 
         {
-            StManArrayFileWriter::create(&path, true, 1).unwrap();
+            let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
+            writer.finish().unwrap();
         }
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -880,7 +956,9 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
-            writer.write_array(&val, CasacoreDataType::TpInt).unwrap()
+            let off = writer.write_array(&val, CasacoreDataType::TpInt).unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -905,7 +983,9 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 0).unwrap();
-            writer.write_array(&val, CasacoreDataType::TpShort).unwrap()
+            let off = writer.write_array(&val, CasacoreDataType::TpShort).unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -930,7 +1010,9 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
-            writer.write_array(&val, CasacoreDataType::TpInt64).unwrap()
+            let off = writer.write_array(&val, CasacoreDataType::TpInt64).unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -955,7 +1037,9 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 0).unwrap();
-            writer.write_array(&val, CasacoreDataType::TpUChar).unwrap()
+            let off = writer.write_array(&val, CasacoreDataType::TpUChar).unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -986,9 +1070,11 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, true, 1).unwrap();
-            writer
+            let off = writer
                 .write_array(&val, CasacoreDataType::TpDComplex)
-                .unwrap()
+                .unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, true).unwrap();
@@ -1014,9 +1100,11 @@ mod tests {
 
         let offset = {
             let mut writer = StManArrayFileWriter::create(&path, false, 1).unwrap();
-            writer
+            let off = writer
                 .write_array(&arr, CasacoreDataType::TpDouble)
-                .unwrap()
+                .unwrap();
+            writer.finish().unwrap();
+            off
         };
 
         let mut reader = StManArrayFileReader::open(&path, false).unwrap();

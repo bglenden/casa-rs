@@ -645,6 +645,11 @@ pub(crate) fn write_stman_file(
         write_stman_column(&mut io, col, rows, col_idx, &mut array_writer)?;
     }
 
+    // Flush the array file header and buffer if we wrote indirect arrays.
+    if let Some(ref mut w) = array_writer {
+        w.finish()?;
+    }
+
     io.putend()?;
     io.close()?;
     Ok(())
