@@ -13,6 +13,11 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - Upstream: `https://github.com/casacore/casacore`
 - Local C++ headers/libs installed via Homebrew.
 
+## Worktrees
+
+- Worktrees should go in ../casa-rs-worktrees
+- main is in ~/SoftwareProjects/casa-rs
+
 ## Rules
 
 - Prefer idiomatic Rust APIs over direct C++ API mirroring.
