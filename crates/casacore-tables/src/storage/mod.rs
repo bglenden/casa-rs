@@ -8,8 +8,11 @@ pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod table_control;
 pub(crate) mod tiled_stman;
+pub(crate) mod virtual_engine;
+pub(crate) mod virtual_forward;
+pub(crate) mod virtual_scaled_array;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +26,7 @@ use self::incremental_stman::{read_ism_file, write_ism_file};
 use self::standard_stman::{read_ssm_file, write_ssm_file};
 use self::stman_aipsio::{StManColumnInfo, extract_row_value, read_stman_file, write_stman_file};
 pub(crate) use self::table_control::RefTableDatContents;
+use self::virtual_engine::{VirtualContext, is_virtual_engine, lookup_engine};
 
 use self::table_control::{
     TableDatContents, TableDatResult, read_table_dat_dispatch, write_concat_table_dat,
@@ -59,12 +63,16 @@ impl From<SchemaError> for StorageError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct StorageSnapshot {
     pub(crate) rows: Vec<RecordValue>,
     pub(crate) keywords: RecordValue,
     pub(crate) column_keywords: HashMap<String, RecordValue>,
     pub(crate) schema: Option<TableSchema>,
+    /// Names of columns materialized by virtual engines (empty for non-virtual tables).
+    pub(crate) virtual_columns: HashSet<String>,
+    /// Virtual column bindings for save (empty on load).
+    pub(crate) virtual_bindings: Vec<virtual_engine::VirtualColumnBinding>,
 }
 
 pub(crate) trait StorageManager {
@@ -122,6 +130,28 @@ impl StorageManager for CompositeStorage {
 
         let nrrow = snapshot.rows.len() as u64;
         let data_path = table_path.join(format!("{}0", TABLE_DATA_FILE_PREFIX));
+        let has_virtual = !snapshot.virtual_bindings.is_empty();
+
+        // When saving with virtual bindings, build rows that exclude virtual columns.
+        let stored_rows: Vec<RecordValue>;
+        let rows_for_data = if has_virtual {
+            stored_rows = snapshot
+                .rows
+                .iter()
+                .map(|row| {
+                    let stored_fields: Vec<_> = row
+                        .fields()
+                        .iter()
+                        .filter(|f| !snapshot.virtual_columns.contains(&f.name))
+                        .cloned()
+                        .collect();
+                    RecordValue::new(stored_fields)
+                })
+                .collect();
+            &stored_rows
+        } else {
+            &snapshot.rows
+        };
 
         let dm_type_name;
         let dm_data;
@@ -129,53 +159,106 @@ impl StorageManager for CompositeStorage {
             DataManagerKind::StManAipsIO => {
                 dm_type_name = "StManAipsIO".to_string();
                 dm_data = Vec::new();
-                let table_dat = TableDatContents::from_snapshot(
-                    schema,
-                    &snapshot.keywords,
-                    &snapshot.column_keywords,
-                    nrrow,
-                    &dm_type_name,
-                    &dm_data,
-                    big_endian,
-                );
+                let table_dat = if has_virtual {
+                    TableDatContents::from_snapshot_with_virtual(
+                        schema,
+                        &snapshot.keywords,
+                        &snapshot.column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                        &snapshot.virtual_bindings,
+                        table_path,
+                    )
+                } else {
+                    TableDatContents::from_snapshot(
+                        schema,
+                        &snapshot.keywords,
+                        &snapshot.column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                    )
+                };
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
+                // Filter col_descs to stored-only columns for the data file.
+                let stored_col_descs: Vec<_> = table_dat
+                    .table_desc
+                    .columns
+                    .iter()
+                    .filter(|c| !snapshot.virtual_columns.contains(&c.col_name))
+                    .cloned()
+                    .collect();
                 // StManAipsIO always uses canonical (big-endian) AipsIO.
                 write_stman_file(
                     &data_path,
-                    &table_dat.table_desc.columns,
-                    &snapshot.rows,
+                    &stored_col_descs,
+                    rows_for_data,
                     ByteOrder::BigEndian,
                 )?;
             }
             DataManagerKind::StandardStMan => {
                 dm_type_name = "StandardStMan".to_string();
-                // Write SSM data file first (it returns the DM blob)
-                let table_dat_tmp = TableDatContents::from_snapshot(
-                    schema,
-                    &snapshot.keywords,
-                    &snapshot.column_keywords,
-                    nrrow,
-                    "StandardStMan",
-                    &[],
-                    big_endian,
-                );
-                dm_data = write_ssm_file(
-                    &data_path,
-                    &table_dat_tmp.table_desc.columns,
-                    &snapshot.rows,
-                    big_endian,
-                )?;
-                // Re-create table_dat with the actual DM blob
-                let table_dat = TableDatContents::from_snapshot(
-                    schema,
-                    &snapshot.keywords,
-                    &snapshot.column_keywords,
-                    nrrow,
-                    &dm_type_name,
-                    &dm_data,
-                    big_endian,
-                );
+                // Write SSM data file first (it returns the DM blob).
+                // Use stored-only columns for the data file.
+                let table_dat_tmp = if has_virtual {
+                    TableDatContents::from_snapshot_with_virtual(
+                        schema,
+                        &snapshot.keywords,
+                        &snapshot.column_keywords,
+                        nrrow,
+                        "StandardStMan",
+                        &[],
+                        big_endian,
+                        &snapshot.virtual_bindings,
+                        table_path,
+                    )
+                } else {
+                    TableDatContents::from_snapshot(
+                        schema,
+                        &snapshot.keywords,
+                        &snapshot.column_keywords,
+                        nrrow,
+                        "StandardStMan",
+                        &[],
+                        big_endian,
+                    )
+                };
+                let stored_col_descs: Vec<_> = table_dat_tmp
+                    .table_desc
+                    .columns
+                    .iter()
+                    .filter(|c| !snapshot.virtual_columns.contains(&c.col_name))
+                    .cloned()
+                    .collect();
+                dm_data = write_ssm_file(&data_path, &stored_col_descs, rows_for_data, big_endian)?;
+                // Re-create table_dat with the actual DM blob.
+                let table_dat = if has_virtual {
+                    TableDatContents::from_snapshot_with_virtual(
+                        schema,
+                        &snapshot.keywords,
+                        &snapshot.column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                        &snapshot.virtual_bindings,
+                        table_path,
+                    )
+                } else {
+                    TableDatContents::from_snapshot(
+                        schema,
+                        &snapshot.keywords,
+                        &snapshot.column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                    )
+                };
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
             }
@@ -254,6 +337,11 @@ impl StorageManager for CompositeStorage {
 
 impl CompositeStorage {
     /// Load a PlainTable from table.dat contents and data files.
+    ///
+    /// Uses two-pass loading:
+    /// - Pass 1: Load stored columns from storage managers (StManAipsIO, StandardStMan).
+    /// - Pass 2: Materialize virtual columns from virtual engines.
+    /// - Pass 3: Reject any remaining unknown DM types.
     fn load_plain_table(
         &self,
         table_path: &Path,
@@ -271,8 +359,14 @@ impl CompositeStorage {
         let nrrow = table_dat.nrrow as usize;
 
         let mut rows: Vec<RecordValue> = (0..nrrow).map(|_| RecordValue::default()).collect();
+        let mut virtual_columns = HashSet::new();
 
+        // Pass 1: Load stored columns from storage managers.
         for dm in &table_dat.column_set.data_managers {
+            if is_virtual_engine(&dm.type_name) {
+                continue; // Handled in pass 2.
+            }
+
             let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
 
             let bound_cols: Vec<(usize, &_)> = table_dat
@@ -339,11 +433,48 @@ impl CompositeStorage {
             }
         }
 
+        // Pass 2: Materialize virtual columns.
+        // Take a snapshot of stored rows so virtual engines can read from them
+        // while we mutate the main rows vector.
+        let stored_rows = rows.clone();
+        for dm in &table_dat.column_set.data_managers {
+            if !is_virtual_engine(&dm.type_name) {
+                continue; // Already handled in pass 1.
+            }
+
+            let engine = lookup_engine(&dm.type_name)
+                .ok_or_else(|| StorageError::UnsupportedDataManager(dm.type_name.clone()))?;
+
+            let bound_cols: Vec<(usize, &_)> = table_dat
+                .column_set
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+                .collect();
+
+            // Record which columns are virtual.
+            for &(desc_idx, _) in &bound_cols {
+                virtual_columns.insert(table_dat.table_desc.columns[desc_idx].col_name.clone());
+            }
+
+            let ctx = VirtualContext {
+                col_descs: &table_dat.table_desc.columns,
+                rows: &stored_rows,
+                table_path,
+                nrrow,
+            };
+
+            engine.materialize(&ctx, &bound_cols, &mut rows)?;
+        }
+
         Ok(StorageSnapshot {
             rows,
             keywords,
             column_keywords,
             schema: Some(schema),
+            virtual_columns,
+            virtual_bindings: Vec::new(),
         })
     }
 
@@ -432,6 +563,8 @@ impl CompositeStorage {
             keywords: parent.keywords,
             column_keywords: parent.column_keywords,
             schema,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
         })
     }
 
@@ -481,6 +614,8 @@ impl CompositeStorage {
             keywords,
             column_keywords,
             schema,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
         })
     }
 

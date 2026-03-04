@@ -1456,6 +1456,341 @@ impl TableDatContents {
             },
         }
     }
+    /// Build `TableDatContents` with both a storage manager DM and virtual engine DMs.
+    ///
+    /// Stored columns are bound to DM seq_nr 0 (the physical storage manager).
+    /// Each virtual column binding gets a separate DM entry (seq_nr 1, 2, ...).
+    /// Virtual engine keywords are injected into the column descriptors.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_snapshot_with_virtual(
+        schema: &TableSchema,
+        keywords: &RecordValue,
+        column_keywords: &std::collections::HashMap<String, RecordValue>,
+        nrrow: u64,
+        dm_type_name: &str,
+        dm_data: &[u8],
+        big_endian: bool,
+        virtual_bindings: &[super::virtual_engine::VirtualColumnBinding],
+        table_path: &std::path::Path,
+    ) -> Self {
+        use super::virtual_engine::VirtualColumnBinding;
+        use casacore_types::{RecordField, ScalarValue, Value};
+
+        // Build set of virtual column names for quick lookup.
+        let virtual_col_names: std::collections::HashSet<&str> = virtual_bindings
+            .iter()
+            .map(|b| match b {
+                VirtualColumnBinding::Forward { col_name, .. } => col_name.as_str(),
+                VirtualColumnBinding::ScaledArray { virtual_col, .. } => virtual_col.as_str(),
+                VirtualColumnBinding::ScaledComplexData { virtual_col, .. } => virtual_col.as_str(),
+            })
+            .collect();
+
+        // Group virtual bindings by DM type + group name for DM entry creation.
+        // Each unique engine type gets one DM entry.
+        let mut dm_entries = vec![DataManagerEntry {
+            type_name: dm_type_name.to_string(),
+            seq_nr: 0,
+            data: dm_data.to_vec(),
+        }];
+
+        // Map from column name to (dm_seq_nr, engine_type, engine_group).
+        let mut col_dm_map: std::collections::HashMap<String, (u32, String, String)> =
+            std::collections::HashMap::new();
+
+        let mut next_seq_nr = 1u32;
+
+        for binding in virtual_bindings {
+            match binding {
+                VirtualColumnBinding::Forward { col_name, .. } => {
+                    // Each ForwardColumnEngine binding gets its own DM entry.
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    dm_entries.push(DataManagerEntry {
+                        type_name: "ForwardColumnEngine".to_string(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(
+                        col_name.clone(),
+                        (
+                            seq,
+                            "ForwardColumnEngine".to_string(),
+                            "ForwardColumnEngine".to_string(),
+                        ),
+                    );
+                }
+                VirtualColumnBinding::ScaledArray {
+                    virtual_col,
+                    stored_col,
+                    ..
+                } => {
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    // C++ uses parameterized type name with 8-char padded type
+                    // strings from ValType::getTypeStr.
+                    let type_name = scaled_array_dm_type_name(schema, virtual_col, stored_col);
+                    dm_entries.push(DataManagerEntry {
+                        type_name: type_name.clone(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(
+                        virtual_col.clone(),
+                        (seq, type_name, "ScaledArrayEngine".to_string()),
+                    );
+                }
+                VirtualColumnBinding::ScaledComplexData {
+                    virtual_col,
+                    stored_col,
+                    ..
+                } => {
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    let type_name = scaled_complex_dm_type_name(schema, virtual_col, stored_col);
+                    dm_entries.push(DataManagerEntry {
+                        type_name: type_name.clone(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(
+                        virtual_col.clone(),
+                        (seq, type_name, "ScaledComplexData".to_string()),
+                    );
+                }
+            }
+        }
+
+        let mut columns: Vec<ColumnDescContents> = schema
+            .columns()
+            .iter()
+            .map(|col| {
+                let mut desc = ColumnDescContents::from_column_schema(col);
+                if let Some(kw) = column_keywords.get(col.name()) {
+                    desc.keywords = kw.clone();
+                }
+                // Set DM type/group for virtual columns.
+                if let Some((_seq, dm_type, dm_group)) = col_dm_map.get(col.name()) {
+                    desc.data_manager_type = dm_type.clone();
+                    desc.data_manager_group = dm_group.clone();
+                }
+                desc
+            })
+            .collect();
+
+        // Inject engine-specific keywords into virtual column descriptors.
+        for binding in virtual_bindings {
+            match binding {
+                VirtualColumnBinding::Forward {
+                    col_name,
+                    ref_table,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *col_name) {
+                        let rel_path = super::strip_directory(ref_table, table_path);
+                        desc.keywords.push(RecordField::new(
+                            "_ForwardColumn_TableName".to_string(),
+                            Value::Scalar(ScalarValue::String(rel_path)),
+                        ));
+                    }
+                }
+                VirtualColumnBinding::ScaledArray {
+                    virtual_col,
+                    stored_col,
+                    scale,
+                    offset,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *virtual_col) {
+                        desc.keywords.push(RecordField::new(
+                            "_BaseMappedArrayEngine_Name".to_string(),
+                            Value::Scalar(ScalarValue::String(stored_col.clone())),
+                        ));
+                        // C++ always writes ScaleName/OffsetName (empty when
+                        // fixed), FixedScale/FixedOffset, and Scale/Offset.
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledArrayEngine_ScaleName".to_string(),
+                            Value::Scalar(ScalarValue::String(String::new())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledArrayEngine_OffsetName".to_string(),
+                            Value::Scalar(ScalarValue::String(String::new())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledArrayEngine_FixedScale".to_string(),
+                            Value::Scalar(ScalarValue::Bool(true)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledArrayEngine_Scale".to_string(),
+                            Value::Scalar(ScalarValue::Float64(*scale)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledArrayEngine_FixedOffset".to_string(),
+                            Value::Scalar(ScalarValue::Bool(true)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledArrayEngine_Offset".to_string(),
+                            Value::Scalar(ScalarValue::Float64(*offset)),
+                        ));
+                    }
+                }
+                VirtualColumnBinding::ScaledComplexData {
+                    virtual_col,
+                    stored_col,
+                    scale,
+                    offset,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *virtual_col) {
+                        desc.keywords.push(RecordField::new(
+                            "_BaseMappedArrayEngine_Name".to_string(),
+                            Value::Scalar(ScalarValue::String(stored_col.clone())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledComplexData_ScaleName".to_string(),
+                            Value::Scalar(ScalarValue::String(String::new())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledComplexData_OffsetName".to_string(),
+                            Value::Scalar(ScalarValue::String(String::new())),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledComplexData_FixedScale".to_string(),
+                            Value::Scalar(ScalarValue::Bool(true)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledComplexData_Scale".to_string(),
+                            Value::Scalar(ScalarValue::Complex64(*scale)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledComplexData_FixedOffset".to_string(),
+                            Value::Scalar(ScalarValue::Bool(true)),
+                        ));
+                        desc.keywords.push(RecordField::new(
+                            "_ScaledComplexData_Offset".to_string(),
+                            Value::Scalar(ScalarValue::Complex64(*offset)),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let plain_columns: Vec<PlainColumnEntry> = columns
+            .iter()
+            .map(|c| {
+                let dm_seq_nr = if virtual_col_names.contains(c.col_name.as_str()) {
+                    col_dm_map
+                        .get(&c.col_name)
+                        .map(|(seq, _, _)| *seq)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                PlainColumnEntry {
+                    original_name: c.col_name.clone(),
+                    dm_seq_nr,
+                    is_array: c.is_array,
+                }
+            })
+            .collect();
+
+        let seq_count = next_seq_nr;
+
+        TableDatContents {
+            nrrow,
+            big_endian,
+            table_desc: TableDescContents {
+                name: String::new(),
+                version: String::new(),
+                comment: String::new(),
+                table_keywords: keywords.clone(),
+                private_keywords: RecordValue::default(),
+                columns,
+            },
+            column_set: ColumnSetContents {
+                nrrow,
+                seq_count,
+                data_managers: dm_entries,
+                columns: plain_columns,
+            },
+        }
+    }
+}
+
+/// Build the C++ DM type name for a ScaledArrayEngine binding.
+///
+/// C++ casacore uses 8-char padded type strings from `ValType::getTypeStr`,
+/// producing names like `"ScaledArrayEngine<double  ,Int     >"`.
+fn scaled_array_dm_type_name(schema: &TableSchema, virtual_col: &str, stored_col: &str) -> String {
+    let vtype = schema
+        .columns()
+        .iter()
+        .find(|c| c.name() == virtual_col)
+        .and_then(|c| c.data_type());
+    let vtype_str = match vtype {
+        Some(casacore_types::PrimitiveType::Float32) => "float   ",
+        Some(casacore_types::PrimitiveType::Float64) => "double  ",
+        Some(casacore_types::PrimitiveType::Complex32) => "Complex ",
+        Some(casacore_types::PrimitiveType::Complex64) => "DComplex",
+        _ => "double  ",
+    };
+    let stype = schema
+        .columns()
+        .iter()
+        .find(|c| c.name() == stored_col)
+        .and_then(|c| c.data_type());
+    let stype_str = match stype {
+        Some(casacore_types::PrimitiveType::Int16) => "Short   ",
+        Some(casacore_types::PrimitiveType::Int32) => "Int     ",
+        Some(casacore_types::PrimitiveType::Int64) => "Int64   ",
+        Some(casacore_types::PrimitiveType::UInt8) => "uChar   ",
+        Some(casacore_types::PrimitiveType::UInt16) => "uShort  ",
+        Some(casacore_types::PrimitiveType::UInt32) => "uInt    ",
+        Some(casacore_types::PrimitiveType::Float32) => "float   ",
+        Some(casacore_types::PrimitiveType::Float64) => "double  ",
+        _ => "Int     ",
+    };
+    format!("ScaledArrayEngine<{vtype_str},{stype_str}>")
+}
+
+/// Build the C++ DM type name for a ScaledComplexData binding.
+///
+/// C++ casacore uses 8-char padded type strings from `ValType::getTypeStr`,
+/// producing names like `"ScaledComplexData<Complex ,Short   >"`.
+///
+/// # C++ equivalent
+///
+/// `ScaledComplexData<VT, ST>::dataManagerType()` in
+/// `casacore/tables/DataMan/ScaledComplexData.tcc`.
+fn scaled_complex_dm_type_name(
+    schema: &TableSchema,
+    virtual_col: &str,
+    stored_col: &str,
+) -> String {
+    let vtype = schema
+        .columns()
+        .iter()
+        .find(|c| c.name() == virtual_col)
+        .and_then(|c| c.data_type());
+    let vtype_str = match vtype {
+        Some(casacore_types::PrimitiveType::Complex32) => "Complex ",
+        Some(casacore_types::PrimitiveType::Complex64) => "DComplex",
+        _ => "Complex ",
+    };
+    let stype = schema
+        .columns()
+        .iter()
+        .find(|c| c.name() == stored_col)
+        .and_then(|c| c.data_type());
+    let stype_str = match stype {
+        Some(casacore_types::PrimitiveType::Int16) => "Short   ",
+        Some(casacore_types::PrimitiveType::Int32) => "Int     ",
+        Some(casacore_types::PrimitiveType::Int64) => "Int64   ",
+        Some(casacore_types::PrimitiveType::UInt8) => "uChar   ",
+        Some(casacore_types::PrimitiveType::UInt16) => "uShort  ",
+        Some(casacore_types::PrimitiveType::UInt32) => "uInt    ",
+        Some(casacore_types::PrimitiveType::Float32) => "float   ",
+        Some(casacore_types::PrimitiveType::Float64) => "double  ",
+        _ => "Short   ",
+    };
+    format!("ScaledComplexData<{vtype_str},{stype_str}>")
 }
 
 impl ColumnDescContents {

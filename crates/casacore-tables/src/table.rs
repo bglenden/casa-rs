@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value, ValueKind};
+use casacore_types::{
+    ArrayValue, Complex64, RecordField, RecordValue, ScalarValue, Value, ValueKind,
+};
 use thiserror::Error;
 
 #[cfg(unix)]
@@ -9,6 +12,7 @@ use crate::lock::LockFile;
 use crate::lock::SyncData;
 use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
+use crate::storage::virtual_engine::VirtualColumnBinding;
 use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot};
 use crate::table_impl::TableImpl;
 
@@ -735,6 +739,12 @@ pub struct Table {
     source_path: Option<PathBuf>,
     /// Whether this is a plain (disk-backed) or memory (transient) table.
     kind: TableKind,
+    /// Names of columns backed by virtual engines (ForwardColumnEngine,
+    /// ScaledArrayEngine, etc.). Empty for tables with no virtual columns.
+    virtual_columns: HashSet<String>,
+    /// Virtual column bindings for save — describes how each virtual column
+    /// maps to its engine and configuration.
+    virtual_bindings: Vec<VirtualColumnBinding>,
     #[cfg(unix)]
     lock_state: Option<LockState>,
 }
@@ -746,6 +756,8 @@ impl Table {
             inner: TableImpl::new(),
             source_path: None,
             kind: TableKind::Plain,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         }
@@ -762,6 +774,8 @@ impl Table {
             inner,
             source_path: None,
             kind: TableKind::Plain,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         }
@@ -776,6 +790,8 @@ impl Table {
             inner: TableImpl::from_rows(rows),
             source_path: None,
             kind: TableKind::Plain,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         }
@@ -798,6 +814,8 @@ impl Table {
             ),
             source_path: None,
             kind: TableKind::Plain,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         };
@@ -821,6 +839,8 @@ impl Table {
             inner: TableImpl::new(),
             source_path: None,
             kind: TableKind::Memory,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         }
@@ -840,6 +860,8 @@ impl Table {
             inner,
             source_path: None,
             kind: TableKind::Memory,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         }
@@ -853,6 +875,8 @@ impl Table {
             inner: TableImpl::from_rows(rows),
             source_path: None,
             kind: TableKind::Memory,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         }
@@ -876,6 +900,8 @@ impl Table {
             ),
             source_path: None,
             kind: TableKind::Memory,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         };
@@ -921,6 +947,8 @@ impl Table {
             ),
             source_path: None,
             kind: TableKind::Memory,
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         }
@@ -940,6 +968,7 @@ impl Table {
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
         let storage = CompositeStorage;
         let snapshot = storage.load(&options.path)?;
+        let virtual_cols = snapshot.virtual_columns;
         let table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 snapshot.rows,
@@ -949,6 +978,8 @@ impl Table {
             ),
             source_path: Some(options.path.clone()),
             kind: TableKind::Plain,
+            virtual_columns: virtual_cols,
+            virtual_bindings: Vec::new(),
             #[cfg(unix)]
             lock_state: None,
         };
@@ -972,6 +1003,8 @@ impl Table {
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
+            virtual_columns: self.virtual_columns.clone(),
+            virtual_bindings: self.virtual_bindings.clone(),
         };
         let storage = CompositeStorage;
         storage.save(
@@ -998,6 +1031,139 @@ impl Table {
     /// was constructed in-memory but you want to establish a parent path.
     pub fn set_path(&mut self, path: impl AsRef<Path>) {
         self.source_path = Some(path.as_ref().to_path_buf());
+    }
+
+    // -------------------------------------------------------------------
+    // Virtual column API
+    // -------------------------------------------------------------------
+
+    /// Returns `true` if the named column is a virtual column.
+    ///
+    /// Virtual columns are materialized from other data (e.g. forwarded
+    /// from another table, or computed as `stored * scale + offset`). They
+    /// behave like regular columns in memory, but their on-disk representation
+    /// is through a virtual engine rather than a storage manager.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableColumn::isVirtual()`.
+    pub fn is_virtual_column(&self, name: &str) -> bool {
+        self.virtual_columns.contains(name)
+    }
+
+    /// Bind a column as a `ForwardColumnEngine` column.
+    ///
+    /// The column `column` will read its values from the same-named column
+    /// in the table at `ref_table`. On save, the column is backed by a
+    /// `ForwardColumnEngine` DM entry; on reload, values are copied from
+    /// the referenced table.
+    ///
+    /// The column must already exist in the schema. The referenced table
+    /// must exist on disk at save time.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ForwardColumnEngine::addColumn(...)`.
+    pub fn bind_forward_column(
+        &mut self,
+        column: &str,
+        ref_table: &Path,
+    ) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == column) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: column.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(column.to_string());
+        self.virtual_bindings.push(VirtualColumnBinding::Forward {
+            col_name: column.to_string(),
+            ref_table: ref_table.to_path_buf(),
+        });
+        Ok(())
+    }
+
+    /// Bind a column as a `ScaledArrayEngine` column.
+    ///
+    /// The column `virtual_col` computes `stored_col * scale + offset`.
+    /// Both columns must exist in the schema. The stored column holds
+    /// integer or float data; the virtual column exposes Float64 values.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ScaledArrayEngine<Double,Int>(virtualCol, storedCol, scale, offset)`.
+    pub fn bind_scaled_array_column(
+        &mut self,
+        virtual_col: &str,
+        stored_col: &str,
+        scale: f64,
+        offset: f64,
+    ) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == virtual_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: virtual_col.to_string(),
+                });
+            }
+            if !schema.columns().iter().any(|c| c.name() == stored_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: stored_col.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(virtual_col.to_string());
+        self.virtual_bindings
+            .push(VirtualColumnBinding::ScaledArray {
+                virtual_col: virtual_col.to_string(),
+                stored_col: stored_col.to_string(),
+                scale,
+                offset,
+            });
+        Ok(())
+    }
+
+    /// Bind a column as a `ScaledComplexData` column.
+    ///
+    /// The stored column holds integer data with a prepended dimension of 2
+    /// for real/imaginary parts. The virtual column exposes Complex32 or
+    /// Complex64 values computed as:
+    /// - `re_virtual = re_stored * scale.re + offset.re`
+    /// - `im_virtual = im_stored * scale.im + offset.im`
+    ///
+    /// Both columns must exist in the schema.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ScaledComplexData<Complex,Short>(virtualCol, storedCol, scale, offset)`.
+    pub fn bind_scaled_complex_column(
+        &mut self,
+        virtual_col: &str,
+        stored_col: &str,
+        scale: Complex64,
+        offset: Complex64,
+    ) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == virtual_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: virtual_col.to_string(),
+                });
+            }
+            if !schema.columns().iter().any(|c| c.name() == stored_col) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: stored_col.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(virtual_col.to_string());
+        self.virtual_bindings
+            .push(VirtualColumnBinding::ScaledComplexData {
+                virtual_col: virtual_col.to_string(),
+                stored_col: stored_col.to_string(),
+                scale,
+                offset,
+            });
+        Ok(())
     }
 
     /// Opens an existing table from disk with locking.
@@ -1036,6 +1202,8 @@ impl Table {
             ),
             source_path: Some(options.path.clone()),
             kind: TableKind::Plain,
+            virtual_columns: snapshot.virtual_columns,
+            virtual_bindings: Vec::new(),
             lock_state: None,
         };
         table.validate()?;
@@ -1161,6 +1329,7 @@ impl Table {
                         path: state.path.display().to_string(),
                         message: e.to_string(),
                     })?;
+                    self.virtual_columns = snapshot.virtual_columns;
                     self.inner.replace_from_snapshot(
                         snapshot.rows,
                         snapshot.keywords,
@@ -1445,6 +1614,8 @@ impl Table {
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
+            virtual_columns: std::collections::HashSet::new(),
+            virtual_bindings: Vec::new(),
         };
         let storage = CompositeStorage;
         storage.save(
@@ -3979,5 +4150,201 @@ mod tests {
         let table = Table::new();
         assert!(!table.is_memory());
         assert_eq!(table.table_kind(), super::TableKind::Plain);
+    }
+
+    // -------------------------------------------------------------------
+    // Virtual column tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn forward_column_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("base_table");
+        let fwd_path = dir.path().join("fwd_table");
+
+        // Create and save a base table with some data.
+        let base_schema = TableSchema::new(vec![ColumnSchema::scalar(
+            "value",
+            casacore_types::PrimitiveType::Float64,
+        )])
+        .unwrap();
+        let mut base = Table::with_schema(base_schema);
+        for v in [1.5, 2.5, 3.5] {
+            base.add_row(RecordValue::new(vec![RecordField::new(
+                "value",
+                Value::Scalar(ScalarValue::Float64(v)),
+            )]))
+            .unwrap();
+        }
+        base.save(TableOptions::new(&base_path)).unwrap();
+
+        // Create a forwarding table that references the base table's "value" column.
+        let fwd_schema = TableSchema::new(vec![ColumnSchema::scalar(
+            "value",
+            casacore_types::PrimitiveType::Float64,
+        )])
+        .unwrap();
+        let mut fwd = Table::with_schema(fwd_schema);
+        for _ in 0..3 {
+            fwd.add_row(RecordValue::new(vec![RecordField::new(
+                "value",
+                Value::Scalar(ScalarValue::Float64(0.0)),
+            )]))
+            .unwrap();
+        }
+        fwd.bind_forward_column("value", &base_path).unwrap();
+        fwd.save(TableOptions::new(&fwd_path)).unwrap();
+
+        // Reopen and verify forwarded values.
+        let reopened = Table::open(TableOptions::new(&fwd_path)).unwrap();
+        assert_eq!(reopened.row_count(), 3);
+        assert!(reopened.is_virtual_column("value"));
+        for (i, expected) in [1.5, 2.5, 3.5].iter().enumerate() {
+            let val = reopened.cell(i, "value").unwrap();
+            match val {
+                Value::Scalar(ScalarValue::Float64(v)) => {
+                    assert!(
+                        (v - expected).abs() < 1e-10,
+                        "row {i}: expected {expected}, got {v}"
+                    );
+                }
+                other => panic!("row {i}: expected Float64, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn scaled_array_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let table_path = dir.path().join("scaled_table");
+
+        let scale = 2.5;
+        let offset = 10.0;
+
+        // Schema: stored_col (Int32 scalar), virtual_col (Float64 scalar).
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("stored_col", casacore_types::PrimitiveType::Int32),
+            ColumnSchema::scalar("virtual_col", casacore_types::PrimitiveType::Float64),
+        ])
+        .unwrap();
+
+        let mut table = Table::with_schema(schema);
+        for i in [1i32, 2, 3] {
+            // Only stored_col has meaningful data; virtual_col is a placeholder.
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("stored_col", Value::Scalar(ScalarValue::Int32(i))),
+                    RecordField::new("virtual_col", Value::Scalar(ScalarValue::Float64(0.0))),
+                ]))
+                .unwrap();
+        }
+        table
+            .bind_scaled_array_column("virtual_col", "stored_col", scale, offset)
+            .unwrap();
+        table.save(TableOptions::new(&table_path)).unwrap();
+
+        // Reopen and verify: virtual = stored * 2.5 + 10.0
+        let reopened = Table::open(TableOptions::new(&table_path)).unwrap();
+        assert_eq!(reopened.row_count(), 3);
+        assert!(reopened.is_virtual_column("virtual_col"));
+        assert!(!reopened.is_virtual_column("stored_col"));
+
+        for (i, stored) in [1i32, 2, 3].iter().enumerate() {
+            let expected = (*stored as f64) * scale + offset;
+            let val = reopened.cell(i, "virtual_col").unwrap();
+            match val {
+                Value::Scalar(ScalarValue::Float64(v)) => {
+                    assert!(
+                        (v - expected).abs() < 1e-10,
+                        "row {i}: expected {expected}, got {v}"
+                    );
+                }
+                other => panic!("row {i}: expected Float64, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn is_virtual_column_empty_for_plain_table() {
+        let table = Table::new();
+        assert!(!table.is_virtual_column("anything"));
+    }
+
+    #[test]
+    fn multi_dm_round_trip() {
+        // Test that a table with both stored and virtual columns produces
+        // multiple DM entries in table.dat after save/reload.
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("base");
+        let main_path = dir.path().join("main");
+
+        // Base table for forward column.
+        let base_schema = TableSchema::new(vec![ColumnSchema::scalar(
+            "fwd_col",
+            casacore_types::PrimitiveType::Float64,
+        )])
+        .unwrap();
+        let mut base = Table::with_schema(base_schema);
+        base.add_row(RecordValue::new(vec![RecordField::new(
+            "fwd_col",
+            Value::Scalar(ScalarValue::Float64(42.0)),
+        )]))
+        .unwrap();
+        base.save(TableOptions::new(&base_path)).unwrap();
+
+        // Main table with stored + forward + scaled columns.
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("stored_int", casacore_types::PrimitiveType::Int32),
+            ColumnSchema::scalar("fwd_col", casacore_types::PrimitiveType::Float64),
+            ColumnSchema::scalar("scaled_col", casacore_types::PrimitiveType::Float64),
+        ])
+        .unwrap();
+
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("stored_int", Value::Scalar(ScalarValue::Int32(5))),
+                RecordField::new("fwd_col", Value::Scalar(ScalarValue::Float64(0.0))),
+                RecordField::new("scaled_col", Value::Scalar(ScalarValue::Float64(0.0))),
+            ]))
+            .unwrap();
+
+        table.bind_forward_column("fwd_col", &base_path).unwrap();
+        table
+            .bind_scaled_array_column("scaled_col", "stored_int", 3.0, 1.0)
+            .unwrap();
+        table.save(TableOptions::new(&main_path)).unwrap();
+
+        // Reopen and verify all columns.
+        let reopened = Table::open(TableOptions::new(&main_path)).unwrap();
+        assert_eq!(reopened.row_count(), 1);
+        assert!(!reopened.is_virtual_column("stored_int"));
+        assert!(reopened.is_virtual_column("fwd_col"));
+        assert!(reopened.is_virtual_column("scaled_col"));
+
+        // stored_int should be 5
+        match reopened.cell(0, "stored_int").unwrap() {
+            Value::Scalar(ScalarValue::Int32(v)) => assert_eq!(*v, 5),
+            other => panic!("expected Int32(5), got {other:?}"),
+        }
+
+        // fwd_col should be 42.0 (from base table)
+        match reopened.cell(0, "fwd_col").unwrap() {
+            Value::Scalar(ScalarValue::Float64(v)) => {
+                assert!((v - 42.0).abs() < 1e-10, "fwd_col: expected 42.0, got {v}");
+            }
+            other => panic!("expected Float64(42.0), got {other:?}"),
+        }
+
+        // scaled_col should be 5 * 3.0 + 1.0 = 16.0
+        match reopened.cell(0, "scaled_col").unwrap() {
+            Value::Scalar(ScalarValue::Float64(v)) => {
+                assert!(
+                    (v - 16.0).abs() < 1e-10,
+                    "scaled_col: expected 16.0, got {v}"
+                );
+            }
+            other => panic!("expected Float64(16.0), got {other:?}"),
+        }
     }
 }

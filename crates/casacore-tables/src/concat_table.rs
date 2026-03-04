@@ -282,6 +282,8 @@ impl ConcatTable {
             keywords: self.keywords.clone(),
             column_keywords: self.column_keywords.clone(),
             schema: Some(self.schema.clone()),
+            virtual_columns: std::collections::HashSet::new(),
+            virtual_bindings: Vec::new(),
         };
 
         let storage = CompositeStorage;

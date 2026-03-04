@@ -752,6 +752,22 @@ fn write_flat_array_column_raw(
             }
             io.put_f64_slice(&flat, false)?;
         }
+        PrimitiveType::Int16 => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::Int16(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected Int16 array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_i16_slice(&flat, false)?;
+        }
         PrimitiveType::Int32 => {
             let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
             for row in rows {
@@ -767,6 +783,22 @@ fn write_flat_array_column_raw(
                 }
             }
             io.put_i32_slice(&flat, false)?;
+        }
+        PrimitiveType::Complex32 => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::Complex32(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected Complex32 array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_complex32_slice(&flat, false)?;
         }
         PrimitiveType::Bool => {
             let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
