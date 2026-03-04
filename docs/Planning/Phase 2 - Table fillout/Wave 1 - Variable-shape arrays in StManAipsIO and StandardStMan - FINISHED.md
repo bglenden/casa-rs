@@ -61,8 +61,8 @@
 - [x] Add variable-array indirect storage support for AipsIO + SSM.
 - [x] Add C++ shim functions for variable-array fixtures.
 - [x] Add cross-matrix + endian tests for variable arrays.
-- [ ] Run release-mode Rust vs C++ performance comparison.
-- [ ] Run full workspace closeout gates.
+- [x] Run release-mode Rust vs C++ performance comparison.
+- [x] Run full workspace closeout gates.
 
 ## Test plan
 
@@ -80,20 +80,25 @@
 
 ## Closeout criteria
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace`
-- [ ] `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
-- [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
-- [ ] Performance comparison recorded and within threshold (or follow-up filed).
-- [ ] Public docs/demos updated if user-visible workflow changed.
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `cargo test --workspace`
+- [x] `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
+- [x] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+- [x] Performance comparison recorded and within threshold (or follow-up filed).
+- [x] Public docs/demos updated if user-visible workflow changed.
 
 ## Results
 
 - Date: 2026-03-04
-- Commit: `164e045`
+- Commit: `137fbb9`
 - Commands:
-  - `cargo test -p casacore-test-support --test tables_cross_matrix_variable_arrays -- --nocapture` -> PASS (4 passed, 0 failed)
+  - `cargo fmt --all -- --check` -> PASS
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+  - `cargo test --workspace` -> PASS (all tests passed across all crates)
+  - `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75` -> PASS (75.16% coverage)
+  - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` -> PASS
+  - `cargo test --release -p casacore-test-support --test tables_cross_matrix_variable_arrays -- --nocapture` -> PASS (4 passed, 0 failed, 0.01s)
 - Interop matrix:
   - RR: PASS
   - RC: PASS
@@ -102,16 +107,26 @@
 - Endian matrix:
   - AipsIO variable arrays: PASS
   - SSM variable arrays: PASS
-- Performance:
-  - Rust: not run yet
-  - C++: not run yet
-  - Ratio: pending
+- Performance (10k rows, 60k total elements, AipsIO, release mode):
+  - Write: C++ 5.4 ms, Rust 153.6 ms, ratio 28.2×.
+  - Read:  C++ 2.7 ms, Rust 39.0 ms,  ratio 14.6×.
+  - Both exceed the 2× alert threshold.
+  - Note: The Rust path includes full Table API overhead (in-memory row
+    construction, schema validation, RecordValue abstraction layers) while
+    the C++ path uses direct ArrayColumn put/get. The comparison measures
+    end-to-end API cost, not raw storage I/O alone.
 - Skips/blockers/follow-ups:
-  - Full workspace closeout gate still pending.
-  - Performance benchmark still pending.
+  - **Follow-up required:** Investigate and reduce Rust/C++ performance gap
+    for variable-shape array write (28×) and read (15×). Likely causes:
+    per-element Fortran-order iteration, RecordValue allocation overhead,
+    and lack of bulk I/O buffering. Consider profiling with `cargo flamegraph`
+    and adding buffered write paths.
 
 ## Lessons learned
 
 - Results blocks with explicit command output make wave state clear while still
   in `-TAKEN`.
 - Requiring a Definition of Ready reduced ambiguity in test scope before coding.
+- The 10k-cell benchmark revealed significant overhead in the Rust Table API
+  abstraction layers that isn't visible in small fixture tests. Performance
+  benchmarks should be run early, not deferred to closeout.

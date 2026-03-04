@@ -1278,6 +1278,15 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    fn cpp_vararray_bench_write_read(
+        path: *const std::ffi::c_char,
+        nrows: u64,
+        out_write_ns: *mut u64,
+        out_read_ns: *mut u64,
+        out_total_elems: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn casacore_cpp_aipsio_encode(
         primitive: u8,
         is_array: u8,
@@ -1784,6 +1793,49 @@ pub fn cpp_columns_index_time_lookups(
     _key_value: i32,
     _nqueries: u64,
 ) -> Result<(u64, u64), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Benchmark C++ variable-shape array write + read for `nrows` rows.
+///
+/// Returns `(write_ns, read_ns, total_elems)`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_vararray_bench(path: &std::path::Path, nrows: u64) -> Result<(u64, u64, u64), String> {
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut write_ns: u64 = 0;
+    let mut read_ns: u64 = 0;
+    let mut total_elems: u64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        cpp_vararray_bench_write_read(
+            c_path.as_ptr(),
+            nrows,
+            &mut write_ns,
+            &mut read_ns,
+            &mut total_elems,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        return Ok((write_ns, read_ns, total_elems));
+    }
+    let msg = if error.is_null() {
+        "unknown C++ error".to_string()
+    } else {
+        let s = unsafe { std::ffi::CStr::from_ptr(error) }
+            .to_string_lossy()
+            .to_string();
+        unsafe { cpp_table_free_error(error) };
+        s
+    };
+    Err(msg)
+}
+
+/// Stub for when C++ is unavailable.
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_vararray_bench(_path: &std::path::Path, _nrows: u64) -> Result<(u64, u64, u64), String> {
     Err("C++ casacore backend unavailable".to_string())
 }
 
