@@ -1160,6 +1160,11 @@ pub(crate) fn write_ssm_file(
         }
     }
 
+    // Flush the array file header and buffer if we wrote indirect arrays.
+    if let Some(ref mut w) = array_writer {
+        w.finish()?;
+    }
+
     // 5. Build the SSMIndex
     let mut last_row = Vec::with_capacity(nr_data_buckets);
     let mut bucket_number = Vec::with_capacity(nr_data_buckets);

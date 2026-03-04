@@ -195,7 +195,7 @@
 
 use std::any::Any;
 use std::fs::{File, OpenOptions, remove_file};
-use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use ndarray::{ArrayD, IxDyn};
@@ -207,6 +207,35 @@ use crate::{
 };
 
 pub type AipsIoObjectResult<T> = Result<T, AipsIoObjectError>;
+
+/// A file wrapper that buffers writes while supporting both Read and Write.
+///
+/// `BufWriter<File>` only implements `Write + Seek`, not `Read`.
+/// This wrapper flushes the write buffer before reads so the file position
+/// is consistent, and delegates reads to the underlying `File`.
+struct BufferedFile(BufWriter<File>);
+
+impl Read for BufferedFile {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.flush()?;
+        self.0.get_mut().read(buf)
+    }
+}
+
+impl Write for BufferedFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Seek for BufferedFile {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.0.seek(pos)
+    }
+}
 
 const MAGIC_VALUE: u32 = 0xbebebebe;
 const VALUE_KIND_SCALAR: u8 = 0;
@@ -1688,7 +1717,8 @@ impl AipsIo {
     ) -> AipsIoObjectResult<Self> {
         let path = path.as_ref();
         let (file, readable, writable, delete_on_close) = open_file_with_option(path, option)?;
-        let mut io = Self::with_access(Box::new(file), readable, writable, true, byte_order);
+        let buffered = BufferedFile(BufWriter::new(file));
+        let mut io = Self::with_access(Box::new(buffered), readable, writable, true, byte_order);
         if option == AipsOpenOption::Append {
             let inner = io.inner_mut()?;
             inner.seek(SeekFrom::End(0))?;
