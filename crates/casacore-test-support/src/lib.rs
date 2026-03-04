@@ -1186,6 +1186,22 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_table_write_forward_column_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_forward_column_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_scaled_array_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_scaled_array_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     #[link_name = "cpp_columns_index_time_lookups"]
     fn ffi_columns_index_time_lookups(
         path: *const std::ffi::c_char,
@@ -1430,6 +1446,13 @@ pub enum CppTableFixture {
     /// value = `row_index % 10`. Used to verify `ColumnsIndex` lookups on
     /// C++-written data.
     ColumnsIndex,
+    /// ForwardColumnEngine interop: base table with col_value (Double, 3 rows)
+    /// and a forwarding table that delegates col_value via ForwardColumnEngine.
+    /// The path is the forwarding table directory; base is at `{path}_base`.
+    ForwardColumn,
+    /// ScaledArrayEngine interop: stored_col (Int array [2], 3 rows) and
+    /// virtual_col (Double array, via ScaledArrayEngine with scale=2.5, offset=10.0).
+    ScaledArray,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1466,6 +1489,12 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             CppTableFixture::DeepCopy => cpp_table_write_deep_copy(c_path.as_ptr(), &mut error),
             CppTableFixture::ColumnsIndex => {
                 cpp_table_write_columns_index_fixture(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::ForwardColumn => {
+                cpp_table_write_forward_column_fixture(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::ScaledArray => {
+                cpp_table_write_scaled_array_fixture(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -1538,6 +1567,12 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
                     "ColumnsIndex fixture has no C++ verify (Rust does the verification)"
                         .to_string(),
                 );
+            }
+            CppTableFixture::ForwardColumn => {
+                cpp_table_verify_forward_column_fixture(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::ScaledArray => {
+                cpp_table_verify_scaled_array_fixture(c_path.as_ptr(), &mut error)
             }
         }
     };
