@@ -1955,9 +1955,20 @@ mod tests {
     #[test]
     fn tile_element_sizes() {
         assert_eq!(tile_element_size(CasacoreDataType::TpBool), 1);
+        assert_eq!(tile_element_size(CasacoreDataType::TpUChar), 1);
+        assert_eq!(tile_element_size(CasacoreDataType::TpChar), 1);
+        assert_eq!(tile_element_size(CasacoreDataType::TpShort), 2);
+        assert_eq!(tile_element_size(CasacoreDataType::TpUShort), 2);
+        assert_eq!(tile_element_size(CasacoreDataType::TpInt), 4);
+        assert_eq!(tile_element_size(CasacoreDataType::TpUInt), 4);
         assert_eq!(tile_element_size(CasacoreDataType::TpFloat), 4);
         assert_eq!(tile_element_size(CasacoreDataType::TpDouble), 8);
+        assert_eq!(tile_element_size(CasacoreDataType::TpInt64), 8);
+        assert_eq!(tile_element_size(CasacoreDataType::TpComplex), 8);
         assert_eq!(tile_element_size(CasacoreDataType::TpDComplex), 16);
+        // Unsupported types return 0.
+        assert_eq!(tile_element_size(CasacoreDataType::TpString), 0);
+        assert_eq!(tile_element_size(CasacoreDataType::TpTable), 0);
     }
 
     #[test]
