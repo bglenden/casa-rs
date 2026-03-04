@@ -1,0 +1,76 @@
+# Development image for casa-rs
+# Build:  docker build -f Dockerfile.dev -t casa-rs-dev .
+# Run:    docker run -it --rm -v $(pwd):/workspace -v ~/.claude:/root/.claude casa-rs-dev
+
+FROM rust:latest
+
+# System packages: C++ build tools, dev utilities, casacore build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config \
+    g++ \
+    gfortran \
+    git \
+    curl \
+    jq \
+    libboost-dev \
+    libboost-filesystem-dev \
+    libboost-program-options-dev \
+    libboost-system-dev \
+    libboost-test-dev \
+    libhdf5-dev \
+    libfftw3-dev \
+    libgsl-dev \
+    liblapack-dev \
+    libblas-dev \
+    libcfitsio-dev \
+    libncurses-dev \
+    libreadline-dev \
+    wcslib-dev \
+    flex \
+    bison \
+  && rm -rf /var/lib/apt/lists/*
+
+# Build casacore from source (also keeps source for reference)
+# Debug build (default) — installed to /usr/local
+RUN git clone --depth 1 https://github.com/casacore/casacore /opt/casacore-src \
+  && mkdir /opt/casacore-src/build-debug \
+  && cd /opt/casacore-src/build-debug \
+  && cmake .. \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DBUILD_TESTING=OFF \
+    -DUSE_OPENMP=OFF \
+    -DUSE_HDF5=ON \
+    -DUSE_FFTW3=ON \
+    -DBUILD_PYTHON3=OFF \
+  && make -j$(nproc) \
+  && make install \
+  && ldconfig
+
+# Optimized build — installed to /opt/casacore-release
+RUN mkdir /opt/casacore-src/build-release \
+  && cd /opt/casacore-src/build-release \
+  && cmake .. \
+    -DCMAKE_INSTALL_PREFIX=/opt/casacore-release \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTING=OFF \
+    -DUSE_OPENMP=OFF \
+    -DUSE_HDF5=ON \
+    -DUSE_FFTW3=ON \
+    -DBUILD_PYTHON3=OFF \
+  && make -j$(nproc) \
+  && make install \
+  && ldconfig
+
+# Rust tooling
+RUN rustup component add rustfmt clippy \
+  && cargo install cargo-tarpaulin
+
+# Claude Code (native installer)
+RUN curl -fsSL https://claude.ai/install.sh | sh
+
+WORKDIR /workspace
+
+CMD ["bash"]
