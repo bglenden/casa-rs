@@ -1,2 +1,3 @@
 target/
+target-clippy/
 .DS_Store
