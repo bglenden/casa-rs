@@ -22,6 +22,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_table_ssm.cpp");
     build.file("src/cpp/casacore_cpp_table_misc.cpp");
     build.file("src/cpp/casacore_cpp_table_ism.cpp");
+    build.file("src/cpp/casacore_cpp_table_tiled.cpp");
 
     for include in &casacore.include_paths {
         build.include(include);

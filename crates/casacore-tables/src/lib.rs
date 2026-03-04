@@ -46,7 +46,7 @@
 //!
 //! # Storage managers
 //!
-//! This crate supports two on-disk formats, both interoperable with C++
+//! This crate supports five on-disk formats, all interoperable with C++
 //! casacore:
 //!
 //! - [`DataManagerKind::StManAipsIO`] — each column is written as a single
@@ -56,6 +56,17 @@
 //! - [`DataManagerKind::StandardStMan`] — data is partitioned into
 //!   fixed-size buckets. This is the default storage manager in C++ casacore
 //!   and provides more efficient random access for large tables.
+//!
+//! - [`DataManagerKind::TiledColumnStMan`] — stores multi-dimensional
+//!   array data in rectangular tiles within a single hypercube. All rows
+//!   must have the same array shape. Best for large fixed-shape columns.
+//!
+//! - [`DataManagerKind::TiledShapeStMan`] — one hypercube per unique
+//!   array shape. Rows with different shapes are automatically grouped.
+//!   Standard format for variable-shape visibility columns.
+//!
+//! - [`DataManagerKind::TiledCellStMan`] — one hypercube per row,
+//!   allowing fully variable shapes. Most memory-intensive variant.
 //!
 //! # Reference tables (views)
 //!

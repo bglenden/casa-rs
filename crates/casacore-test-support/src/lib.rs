@@ -1182,6 +1182,30 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
+    fn cpp_table_write_tiled_column_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_tiled_column_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_tiled_shape_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_tiled_shape_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_tiled_cell_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_tiled_cell_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     fn cpp_table_write_columns_index_fixture(
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
@@ -1465,6 +1489,15 @@ pub enum CppTableFixture {
     /// ISM complex scalars: table with `col_c32` (Complex) and `col_c64`
     /// (DComplex), 3 rows, stored with `IncrementalStMan`.
     IsmComplexScalars,
+    /// TiledColumnStMan interop: Fixed-shape Float32 [2,3] array column,
+    /// 3 rows, tile shape [2,3,2].
+    TiledColumnStMan,
+    /// TiledShapeStMan interop: Variable-shape Float32 array column,
+    /// 4 rows with two different shapes ([2,3] and [3,2]).
+    TiledShapeStMan,
+    /// TiledCellStMan interop: Variable-shape Float32 array column,
+    /// 3 rows each with a unique shape ([2,3], [4,2], [3,3]).
+    TiledCellStMan,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1510,6 +1543,15 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             }
             CppTableFixture::IsmComplexScalars => {
                 cpp_table_write_ism_complex_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledColumnStMan => {
+                cpp_table_write_tiled_column_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledShapeStMan => {
+                cpp_table_write_tiled_shape_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledCellStMan => {
+                cpp_table_write_tiled_cell_stman(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -1591,6 +1633,15 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
                     "ColumnsIndex fixture has no C++ verify (Rust does the verification)"
                         .to_string(),
                 );
+            }
+            CppTableFixture::TiledColumnStMan => {
+                cpp_table_verify_tiled_column_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledShapeStMan => {
+                cpp_table_verify_tiled_shape_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledCellStMan => {
+                cpp_table_verify_tiled_cell_stman(c_path.as_ptr(), &mut error)
             }
         }
     };

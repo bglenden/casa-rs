@@ -56,6 +56,7 @@ fn ism_scalar_primitives_fixture() -> TableFixture {
         table_keywords,
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmScalarPrimitives),
+        tile_shape: None,
     }
 }
 
@@ -91,6 +92,7 @@ fn ism_slowly_changing_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmSlowlyChanging),
+        tile_shape: None,
     }
 }
 
@@ -192,6 +194,7 @@ fn ism_all_numeric_scalars_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: None,
+        tile_shape: None,
     }
 }
 
@@ -252,6 +255,7 @@ fn ism_complex_scalars_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmComplexScalars),
+        tile_shape: None,
     }
 }
 

@@ -148,6 +148,32 @@ pub enum DataManagerKind {
     /// MeasurementSet. Along with `StandardStMan`, ISM is one of the two
     /// most commonly used storage managers in real radio astronomy data.
     IncrementalStMan,
+    /// Tiled storage: single hypercube for the entire column.
+    ///
+    /// All rows must have the same array shape. Data is stored in
+    /// rectangular tiles within a single hypercube whose last dimension
+    /// is the row count. This is the standard format for large fixed-shape
+    /// array columns in measurement sets and images.
+    ///
+    /// C++ equivalent: `TiledColumnStMan`.
+    TiledColumnStMan,
+    /// Tiled storage: one hypercube per unique array shape.
+    ///
+    /// Rows with different array shapes are automatically grouped into
+    /// separate hypercubes. An internal row map tracks which cube holds
+    /// each row. This is the standard format for variable-shape array
+    /// columns (e.g. visibilities with varying channel counts).
+    ///
+    /// C++ equivalent: `TiledShapeStMan`.
+    TiledShapeStMan,
+    /// Tiled storage: one hypercube per row.
+    ///
+    /// Each row has its own cube, allowing fully variable shapes per row.
+    /// Most memory-intensive variant; use `TiledShapeStMan` when many rows
+    /// share shapes.
+    ///
+    /// C++ equivalent: `TiledCellStMan`.
+    TiledCellStMan,
 }
 
 /// Configuration for opening or saving a [`Table`] to disk.
@@ -176,6 +202,7 @@ pub struct TableOptions {
     path: PathBuf,
     data_manager: DataManagerKind,
     endian_format: EndianFormat,
+    tile_shape: Option<Vec<usize>>,
 }
 
 impl TableOptions {
@@ -187,6 +214,7 @@ impl TableOptions {
             path: path.as_ref().to_path_buf(),
             data_manager: DataManagerKind::default(),
             endian_format: EndianFormat::default(),
+            tile_shape: None,
         }
     }
 
@@ -206,6 +234,19 @@ impl TableOptions {
         self
     }
 
+    /// Overrides the tile shape for tiled storage managers, returning the
+    /// updated options.
+    ///
+    /// The tile shape must include the row dimension as the last element
+    /// for `TiledColumnStMan` and `TiledShapeStMan`. For `TiledCellStMan`,
+    /// the tile shape covers only the cell dimensions.
+    ///
+    /// If not set, a reasonable default is chosen automatically.
+    pub fn with_tile_shape(mut self, shape: Vec<usize>) -> Self {
+        self.tile_shape = Some(shape);
+        self
+    }
+
     /// Returns the filesystem path for this table.
     pub fn path(&self) -> &Path {
         &self.path
@@ -219,6 +260,11 @@ impl TableOptions {
     /// Returns the endian format that will be used when saving.
     pub fn endian_format(&self) -> EndianFormat {
         self.endian_format
+    }
+
+    /// Returns the tile shape, if set.
+    pub fn tile_shape(&self) -> Option<&[usize]> {
+        self.tile_shape.as_deref()
     }
 }
 
@@ -933,6 +979,7 @@ impl Table {
             &snapshot,
             options.data_manager,
             options.endian_format.is_big_endian(),
+            options.tile_shape.as_deref(),
         )?;
         Ok(())
     }
@@ -1405,6 +1452,7 @@ impl Table {
             &snapshot,
             opts.data_manager,
             opts.endian_format.is_big_endian(),
+            opts.tile_shape.as_deref(),
         )?;
         Ok(())
     }
