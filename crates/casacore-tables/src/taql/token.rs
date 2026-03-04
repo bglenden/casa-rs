@@ -105,6 +105,26 @@ pub enum Token {
     Max,
     #[token("ROWID", ignore(ascii_case))]
     Rowid,
+    #[token("CALC", ignore(ascii_case))]
+    Calc,
+    #[token("ALTER", ignore(ascii_case))]
+    Alter,
+    #[token("TABLE", ignore(ascii_case))]
+    Table,
+    #[token("COLUMN", ignore(ascii_case))]
+    Column,
+    #[token("RENAME", ignore(ascii_case))]
+    Rename,
+    #[token("ADD", ignore(ascii_case))]
+    Add,
+    #[token("DROP", ignore(ascii_case))]
+    Drop,
+    #[token("KEYWORD", ignore(ascii_case))]
+    Keyword,
+    #[token("TO", ignore(ascii_case))]
+    To,
+    #[token("ROW", ignore(ascii_case))]
+    Row,
 
     // ── Operators ───────────────────────────────────────────────────
     #[token("+")]
@@ -261,6 +281,16 @@ impl std::fmt::Display for Token {
             Token::Min => "MIN",
             Token::Max => "MAX",
             Token::Rowid => "ROWID",
+            Token::Calc => "CALC",
+            Token::Alter => "ALTER",
+            Token::Table => "TABLE",
+            Token::Column => "COLUMN",
+            Token::Rename => "RENAME",
+            Token::Add => "ADD",
+            Token::Drop => "DROP",
+            Token::Keyword => "KEYWORD",
+            Token::To => "TO",
+            Token::Row => "ROW",
             Token::Plus => "+",
             Token::Minus => "-",
             Token::Star => "*",
@@ -291,5 +321,115 @@ impl std::fmt::Display for Token {
             Token::Ident => "<ident>",
         };
         f.write_str(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_all_tokens() {
+        // Exercises every Display match arm to ensure coverage.
+        let tokens = vec![
+            (Token::Select, "SELECT"),
+            (Token::From, "FROM"),
+            (Token::Where, "WHERE"),
+            (Token::Order, "ORDER"),
+            (Token::By, "BY"),
+            (Token::Group, "GROUP"),
+            (Token::Having, "HAVING"),
+            (Token::Limit, "LIMIT"),
+            (Token::Offset, "OFFSET"),
+            (Token::Distinct, "DISTINCT"),
+            (Token::As, "AS"),
+            (Token::And, "AND"),
+            (Token::Or, "OR"),
+            (Token::Not, "NOT"),
+            (Token::In, "IN"),
+            (Token::Between, "BETWEEN"),
+            (Token::Like, "LIKE"),
+            (Token::Ilike, "ILIKE"),
+            (Token::Is, "IS"),
+            (Token::Null, "NULL"),
+            (Token::True, "TRUE"),
+            (Token::False, "FALSE"),
+            (Token::Asc, "ASC"),
+            (Token::Desc, "DESC"),
+            (Token::Update, "UPDATE"),
+            (Token::Set, "SET"),
+            (Token::Insert, "INSERT"),
+            (Token::Into, "INTO"),
+            (Token::Values, "VALUES"),
+            (Token::Delete, "DELETE"),
+            (Token::Join, "JOIN"),
+            (Token::Inner, "INNER"),
+            (Token::Left, "LEFT"),
+            (Token::Right, "RIGHT"),
+            (Token::Cross, "CROSS"),
+            (Token::On, "ON"),
+            (Token::Count, "COUNT"),
+            (Token::Sum, "SUM"),
+            (Token::Avg, "AVG"),
+            (Token::Min, "MIN"),
+            (Token::Max, "MAX"),
+            (Token::Rowid, "ROWID"),
+            (Token::Calc, "CALC"),
+            (Token::Alter, "ALTER"),
+            (Token::Table, "TABLE"),
+            (Token::Column, "COLUMN"),
+            (Token::Rename, "RENAME"),
+            (Token::Add, "ADD"),
+            (Token::Drop, "DROP"),
+            (Token::Keyword, "KEYWORD"),
+            (Token::To, "TO"),
+            (Token::Row, "ROW"),
+            (Token::Plus, "+"),
+            (Token::Minus, "-"),
+            (Token::Star, "*"),
+            (Token::Slash, "/"),
+            (Token::Percent, "%"),
+            (Token::DoubleStar, "**"),
+            (Token::Eq, "="),
+            (Token::EqEq, "=="),
+            (Token::Ne, "!="),
+            (Token::LtGt, "<>"),
+            (Token::Lt, "<"),
+            (Token::Le, "<="),
+            (Token::Gt, ">"),
+            (Token::Ge, ">="),
+            (Token::AmpAmp, "&&"),
+            (Token::PipePipe, "||"),
+            (Token::Bang, "!"),
+            (Token::Tilde, "~"),
+            (Token::LParen, "("),
+            (Token::RParen, ")"),
+            (Token::LBracket, "["),
+            (Token::RBracket, "]"),
+            (Token::Comma, ","),
+            (Token::Dot, "."),
+            (Token::IntLiteral, "<int>"),
+            (Token::FloatLiteral, "<float>"),
+            (Token::StringLiteral, "<string>"),
+            (Token::Ident, "<ident>"),
+        ];
+        for (tok, expected) in tokens {
+            assert_eq!(tok.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn is_keyword_classification() {
+        // Keywords should return true
+        assert!(Token::Select.is_keyword());
+        assert!(Token::Calc.is_keyword());
+        assert!(Token::Alter.is_keyword());
+        assert!(Token::Row.is_keyword());
+
+        // Non-keywords should return false
+        assert!(!Token::Plus.is_keyword());
+        assert!(!Token::LParen.is_keyword());
+        assert!(!Token::IntLiteral.is_keyword());
+        assert!(!Token::Ident.is_keyword());
     }
 }

@@ -46,12 +46,16 @@ impl<'src> Parser<'src> {
             Some(Token::Update) => Statement::Update(self.parse_update()?),
             Some(Token::Insert) => Statement::Insert(self.parse_insert()?),
             Some(Token::Delete) => Statement::Delete(self.parse_delete()?),
+            Some(Token::Calc) => Statement::Calc(self.parse_calc()?),
+            Some(Token::Alter) => Statement::AlterTable(self.parse_alter_table()?),
             Some(tok) => {
                 let tok_str = tok.to_string();
                 let (_, span) = self.lexer.next_token().unwrap();
                 return Err(TaqlError::parse(
                     self.lexer.position(span.start),
-                    format!("expected SELECT, UPDATE, INSERT, or DELETE; found {tok_str}"),
+                    format!(
+                        "expected SELECT, UPDATE, INSERT, DELETE, CALC, or ALTER; found {tok_str}"
+                    ),
                 ));
             }
             None => {
@@ -382,6 +386,98 @@ impl<'src> Parser<'src> {
         })
     }
 
+    // ── CALC statement ────────────────────────────────────────────
+
+    fn parse_calc(&mut self) -> Result<CalcStatement, TaqlError> {
+        self.lexer.expect(&Token::Calc)?;
+        let expr = self.parse_expr()?;
+        let from = if self.lexer.eat_if(&Token::From).is_some() {
+            Some(self.parse_table_ref()?)
+        } else {
+            None
+        };
+        Ok(CalcStatement { expr, from })
+    }
+
+    // ── ALTER TABLE statement ─────────────────────────────────────
+
+    fn parse_alter_table(&mut self) -> Result<AlterTableStatement, TaqlError> {
+        self.lexer.expect(&Token::Alter)?;
+        self.lexer.expect(&Token::Table)?;
+
+        // Optional table name
+        let table = if self.peek_is_ident_like()
+            && self.lexer.peek() != Some(&Token::Add)
+            && self.lexer.peek() != Some(&Token::Drop)
+            && self.lexer.peek() != Some(&Token::Rename)
+            && self.lexer.peek() != Some(&Token::Set)
+        {
+            Some(self.parse_table_ref()?)
+        } else {
+            None
+        };
+
+        let operation = match self.lexer.peek() {
+            Some(Token::Add) => {
+                self.lexer.next_token(); // consume ADD
+                match self.lexer.peek() {
+                    Some(Token::Column) => {
+                        self.lexer.next_token(); // consume COLUMN
+                        let name = self.parse_ident_string()?;
+                        let data_type = self.parse_ident_string()?;
+                        AlterOperation::AddColumn { name, data_type }
+                    }
+                    Some(Token::Row) => {
+                        self.lexer.next_token(); // consume ROW
+                        let count = if self.lexer.peek().is_some()
+                            && !self.lexer.is_eof()
+                            && self.lexer.peek() != Some(&Token::RParen)
+                        {
+                            self.parse_expr().ok()
+                        } else {
+                            None
+                        };
+                        AlterOperation::AddRow { count }
+                    }
+                    _ => {
+                        return Err(TaqlError::unexpected_end(
+                            "expected COLUMN or ROW after ADD",
+                        ));
+                    }
+                }
+            }
+            Some(Token::Drop) => {
+                self.lexer.next_token(); // consume DROP
+                self.lexer.expect(&Token::Column)?;
+                let name = self.parse_ident_string()?;
+                AlterOperation::DropColumn { name }
+            }
+            Some(Token::Rename) => {
+                self.lexer.next_token(); // consume RENAME
+                self.lexer.expect(&Token::Column)?;
+                let old_name = self.parse_ident_string()?;
+                self.lexer.expect(&Token::To)?;
+                let new_name = self.parse_ident_string()?;
+                AlterOperation::RenameColumn { old_name, new_name }
+            }
+            Some(Token::Set) => {
+                self.lexer.next_token(); // consume SET
+                self.lexer.expect(&Token::Keyword)?;
+                let name = self.parse_ident_string()?;
+                self.lexer.expect(&Token::Eq)?;
+                let value = self.parse_expr()?;
+                AlterOperation::SetKeyword { name, value }
+            }
+            _ => {
+                return Err(TaqlError::unexpected_end(
+                    "expected ADD, DROP, RENAME, or SET after ALTER TABLE",
+                ));
+            }
+        };
+
+        Ok(AlterTableStatement { table, operation })
+    }
+
     // ── Expression parser (Pratt) ──────────────────────────────────
 
     /// Parse an expression at minimum binding power 0.
@@ -649,6 +745,24 @@ impl<'src> Parser<'src> {
     /// Parse an identifier expression: column reference or function call.
     fn parse_ident_expr(&mut self) -> Result<Expr, TaqlError> {
         let name = self.parse_ident_string()?;
+
+        // Check for g-prefixed aggregate function names (e.g. gmin, gcount)
+        if self.lexer.peek() == Some(&Token::LParen) {
+            if let Some(agg) = aggregate_from_name(&name) {
+                self.lexer.next_token(); // consume (
+                let arg = if self.lexer.peek() == Some(&Token::Star) {
+                    self.lexer.next_token();
+                    Expr::Star
+                } else {
+                    self.parse_expr()?
+                };
+                self.lexer.expect(&Token::RParen)?;
+                return Ok(Expr::Aggregate {
+                    func: agg,
+                    arg: Box::new(arg),
+                });
+            }
+        }
 
         // Function call: name(...)
         if self.lexer.peek() == Some(&Token::LParen) {
@@ -1447,6 +1561,140 @@ mod tests {
                     }
                 ));
             }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    // ── CALC statement tests ──
+
+    #[test]
+    fn calc_simple_expr() {
+        let stmt = parse("CALC 1 + 2");
+        match stmt {
+            Statement::Calc(c) => {
+                assert!(c.from.is_none());
+                assert!(matches!(c.expr, Expr::Binary { .. }));
+            }
+            _ => panic!("expected Calc"),
+        }
+    }
+
+    #[test]
+    fn calc_with_from() {
+        let stmt = parse("CALC SUM(col) FROM my_table");
+        match stmt {
+            Statement::Calc(c) => {
+                assert!(c.from.is_some());
+                assert_eq!(c.from.unwrap().name, "my_table");
+            }
+            _ => panic!("expected Calc"),
+        }
+    }
+
+    // ── ALTER TABLE tests ──
+
+    #[test]
+    fn alter_add_column() {
+        let stmt = parse("ALTER TABLE ADD COLUMN new_col INT");
+        match stmt {
+            Statement::AlterTable(a) => {
+                assert!(matches!(
+                    a.operation,
+                    AlterOperation::AddColumn { ref name, ref data_type }
+                    if name == "new_col" && data_type == "INT"
+                ));
+            }
+            _ => panic!("expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn alter_drop_column() {
+        let stmt = parse("ALTER TABLE DROP COLUMN old_col");
+        match stmt {
+            Statement::AlterTable(a) => {
+                assert!(matches!(
+                    a.operation,
+                    AlterOperation::DropColumn { ref name } if name == "old_col"
+                ));
+            }
+            _ => panic!("expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn alter_rename_column() {
+        let stmt = parse("ALTER TABLE RENAME COLUMN a TO b");
+        match stmt {
+            Statement::AlterTable(a) => {
+                assert!(matches!(
+                    a.operation,
+                    AlterOperation::RenameColumn { ref old_name, ref new_name }
+                    if old_name == "a" && new_name == "b"
+                ));
+            }
+            _ => panic!("expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn alter_add_row() {
+        let stmt = parse("ALTER TABLE ADD ROW");
+        match stmt {
+            Statement::AlterTable(a) => {
+                assert!(matches!(
+                    a.operation,
+                    AlterOperation::AddRow { count: None }
+                ));
+            }
+            _ => panic!("expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn alter_set_keyword() {
+        let stmt = parse("ALTER TABLE SET KEYWORD my_key = 42");
+        match stmt {
+            Statement::AlterTable(a) => {
+                assert!(matches!(
+                    a.operation,
+                    AlterOperation::SetKeyword { ref name, .. }
+                    if name == "my_key"
+                ));
+            }
+            _ => panic!("expected AlterTable"),
+        }
+    }
+
+    // ── g-prefix aggregate tests ──
+
+    #[test]
+    fn gmin_aggregate_in_select() {
+        let stmt = parse("SELECT GMIN(col) FROM t GROUP BY grp");
+        match stmt {
+            Statement::Select(s) => {
+                assert_eq!(s.columns.len(), 1);
+                match &s.columns[0].expr {
+                    Expr::Aggregate { func, .. } => {
+                        assert_eq!(*func, AggregateFunc::Min);
+                    }
+                    other => panic!("expected Aggregate, got {other:?}"),
+                }
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn gmean_aggregate_in_select() {
+        let stmt = parse("SELECT GMEAN(col) FROM t GROUP BY grp");
+        match stmt {
+            Statement::Select(s) => match &s.columns[0].expr {
+                Expr::Aggregate { func, .. } => {
+                    assert_eq!(*func, AggregateFunc::Avg);
+                }
+                other => panic!("expected Aggregate, got {other:?}"),
+            },
             _ => panic!("expected SELECT"),
         }
     }
