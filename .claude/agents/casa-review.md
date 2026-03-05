@@ -25,7 +25,7 @@ State the detected scope at the top of your report.
 
 ## Review Criteria
 
-Check these 5 areas. For each, produce a section with specific findings and file references.
+Check these 6 areas. For each, produce a section with specific findings and file references.
 
 ### 1. Interop Test Coverage (2×2 Matrix)
 
@@ -74,7 +74,20 @@ Check documentation coverage on public API surface (`casacore-types` and `casaco
 
 **Output:** List of public items missing docs or C++ cross-references.
 
-### 5. Crate Separation
+### 5. Quality Gates
+
+Run the four project quality gate commands and report their pass/fail status:
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+
+Run all four. For any that fail, include the relevant error output (first ~20 lines of errors, not the full dump). For `cargo test`, report the count of passed/failed/ignored tests.
+
+**Output:** Pass/fail status for each gate with error excerpts for failures.
+
+### 6. Crate Separation
 
 Verify architectural boundaries:
 
@@ -89,7 +102,7 @@ Verify architectural boundaries:
 
 Use the Agent tool to parallelize independent sub-searches where beneficial — for example, searching C++ source, scanning Rust tests, and checking docs can happen concurrently.
 
-Use Bash ONLY for read-only git commands: `git diff`, `git log`, `git show`, `git diff --name-only`. Never use Bash for file modification.
+Use Bash for read-only git commands (`git diff`, `git log`, `git show`, `git diff --name-only`) and for running the quality gate commands (`cargo fmt --check`, `cargo clippy`, `cargo test`, `cargo doc`). Never use Bash for file modification.
 
 ## Output Format
 
@@ -113,7 +126,10 @@ Produce a markdown report structured as:
 ## 4. Rustdoc Documentation
 [findings with file references]
 
-## 5. Crate Separation
+## 5. Quality Gates
+[pass/fail status for each gate, error excerpts for failures]
+
+## 6. Crate Separation
 [findings with file references]
 
 ## Summary
@@ -124,6 +140,7 @@ Produce a markdown report structured as:
 | Performance Tests | ✅/⚠️/❌ | brief description |
 | Demo Parity | ✅/⚠️/❌ | brief description |
 | Rustdoc Coverage | ✅/⚠️/❌ | brief description |
+| Quality Gates | ✅/⚠️/❌ | brief description |
 | Crate Separation | ✅/⚠️/❌ | brief description |
 ```
 
