@@ -6,10 +6,13 @@
 //! RR (Rust write, Rust query), CC (C++ write, C++ query),
 //! CR (C++ write, Rust query), RC (Rust write, C++ query).
 
+#[cfg(has_casacore_cpp)]
 use std::path::Path;
 
+#[cfg(has_casacore_cpp)]
+use casacore_tables::TableOptions;
 use casacore_tables::taql::format as taql_fmt;
-use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casacore_tables::{ColumnSchema, Table, TableSchema};
 use casacore_types::*;
 
 /// String-grid result from a TaQL query.
@@ -641,6 +644,7 @@ fn check_cpp_result(rc: i32, error: *mut std::ffi::c_char) -> Result<(), String>
 }
 
 /// Parse a tab-separated grid string into a `TaqlQueryResult`.
+#[cfg(has_casacore_cpp)]
 fn parse_tsv_grid(tsv: &str) -> TaqlQueryResult {
     let mut lines = tsv.lines();
     let columns: Vec<String> = match lines.next() {
