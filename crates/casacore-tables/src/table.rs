@@ -3627,7 +3627,7 @@ impl Table {
 
         match state.options.mode {
             LockMode::NoLocking => Ok(false),
-            LockMode::UserLocking => {
+            LockMode::UserLocking | LockMode::UserNoReadLocking => {
                 if state.lock_file.has_lock(LockType::Write) {
                     Ok(false)
                 } else {
@@ -3651,7 +3651,7 @@ impl Table {
                     })
                 }
             }
-            LockMode::AutoLocking => {
+            LockMode::AutoLocking | LockMode::AutoNoReadLocking | LockMode::DefaultLocking => {
                 if state.lock_file.has_lock(LockType::Write) {
                     return Ok(false);
                 }
@@ -3726,40 +3726,6 @@ impl Table {
                 row_index,
                 row_count: self.row_count(),
             })
-        }
-    }
-}
-
-impl Drop for Table {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            if self.kind == TableKind::Memory {
-                return;
-            }
-
-            let Some(state) = self.lock_state.as_ref() else {
-                return;
-            };
-            if !state.lock_file.has_lock(LockType::Write) {
-                return;
-            }
-
-            // Persist pending writes and sync metadata before the lock file is
-            // dropped (which releases any held lock).
-            let save_opts = TableOptions::new(&state.path)
-                .with_data_manager(state.data_manager)
-                .with_endian_format(state.endian_format);
-            if self.save(save_opts).is_err() {
-                return;
-            }
-
-            let nrrow = self.row_count() as u64;
-            let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
-            if let Some(state) = self.lock_state.as_mut() {
-                state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
-                let _ = state.lock_file.write_sync_data(&state.sync_data);
-            }
         }
     }
 }
@@ -3988,6 +3954,35 @@ fn put_slice_array_value(target: &mut ArrayValue, slicer: &Slicer, data: &ArrayV
 
 impl Drop for Table {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            if self.kind != TableKind::Memory {
+                let had_write_lock = self
+                    .lock_state
+                    .as_ref()
+                    .is_some_and(|state| state.lock_file.has_lock(LockType::Write));
+
+                if had_write_lock {
+                    let save_opts = self.lock_state.as_ref().map(|state| {
+                        TableOptions::new(&state.path)
+                            .with_data_manager(state.data_manager)
+                            .with_endian_format(state.endian_format)
+                    });
+
+                    if let Some(save_opts) = save_opts
+                        && self.save(save_opts).is_ok()
+                    {
+                        let nrrow = self.row_count() as u64;
+                        let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
+                        if let Some(state) = self.lock_state.as_mut() {
+                            state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
+                            let _ = state.lock_file.write_sync_data(&state.sync_data);
+                        }
+                    }
+                }
+            }
+        }
+
         if self.marked_for_delete {
             if let Some(path) = &self.source_path {
                 let _ = std::fs::remove_dir_all(path);
