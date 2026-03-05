@@ -46,29 +46,41 @@
 
 ## Definition of Ready
 
-- [ ] C++ reference paths identified in `../casacore` (class + function names).
-- [ ] 2x2 interop fixtures identified (RR, RC, CR, CC).
-- [ ] Endian and undefined-cell behavior reviewed for touched formats.
-- [ ] Performance workload defined or marked N/A.
-- [ ] Non-goals documented.
+- [x] C++ reference paths identified — `tables/TaQL/TableParse.h: tableCommand()`
+- [x] 2x2 interop fixtures identified — Simple fixture (50-row scalar), interop queries:
+  1. `SELECT col1 FROM $T WHERE col1 =~ p/^A.*/i`
+  2. `SELECT col1 FROM $T WHERE col1 =~ m/test/`
+  3. `SELECT col1 & 0xFF FROM $T`
+  4. `SELECT col1 | 0x10 FROM $T`
+  5. `SELECT col1 ^ col2 FROM $T`
+  6. `SELECT col1 FROM $T WHERE col1 IN [1,2,3]`
+  7. `SELECT col1 FROM $T WHERE col1 IN [1:10]`
+  8. `SELECT CASE WHEN col1>5 THEN 'big' ELSE 'small' END FROM $T`
+- [x] Endian and undefined-cell behavior reviewed for touched formats.
+- [x] Performance workload defined or marked N/A — N/A (pure expression eval, no hot path).
+- [x] Non-goals documented.
 
 ## Implementation checklist
 
-- [ ] Add tokens/lexer support.
-- [ ] Extend AST/parser.
-- [ ] Implement evaluator semantics and errors.
-- [ ] Add parser/eval regression tests.
+- [x] Add tokens/lexer support.
+- [x] Extend AST/parser.
+- [x] Implement evaluator semantics and errors.
+- [x] Add parser/eval regression tests.
+- [ ] Add C++ TaQL interop queries for this wave (8 queries above).
+- [ ] Run cross-matrix and record results.
 
 ## Test plan
 
-- [ ] Parser coverage for new syntax forms.
-- [ ] Eval coverage for valid/invalid expressions.
-- [ ] Existing TaQL tests remain green.
-- [ ] Clean skip when `pkg-config casacore` is unavailable.
+- [x] Parser coverage for new syntax forms.
+- [x] Eval coverage for valid/invalid expressions.
+- [x] Existing TaQL tests remain green.
+- [x] Clean skip when `pkg-config casacore` is unavailable.
+- [ ] TaQL interop cross-matrix (RR/CC/RC/CR) for 8 queries.
+- [ ] Results match between Rust and C++ within tolerance.
 
 ## Performance plan
 
-- Workload: N/A.
+- Workload: N/A — pure expression evaluation, no hot-path concern.
 - Rust command: N/A.
 - C++ command: N/A.
 - Alert threshold: N/A.

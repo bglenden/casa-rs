@@ -293,11 +293,11 @@ fn select_count_star() {
     let stmt = taql::parse("SELECT COUNT(*)").unwrap();
     let result = taql::execute(&stmt, &mut table).unwrap();
     match result {
-        TaqlResult::Aggregate { row_count } => {
+        TaqlResult::Materialized { table } => {
             // One group (the whole table)
-            assert_eq!(row_count, 1);
+            assert_eq!(table.row_count(), 1);
         }
-        _ => panic!("expected Aggregate"),
+        _ => panic!("expected Materialized"),
     }
 }
 
@@ -307,10 +307,10 @@ fn select_group_by_category() {
     let stmt = taql::parse("SELECT category, COUNT(*) GROUP BY category").unwrap();
     let result = taql::execute(&stmt, &mut table).unwrap();
     match result {
-        TaqlResult::Aggregate { row_count } => {
-            assert_eq!(row_count, 5); // 5 categories
+        TaqlResult::Materialized { table } => {
+            assert_eq!(table.row_count(), 5); // 5 categories
         }
-        _ => panic!("expected Aggregate"),
+        _ => panic!("expected Materialized"),
     }
 }
 

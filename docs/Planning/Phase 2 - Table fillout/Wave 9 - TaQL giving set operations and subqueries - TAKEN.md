@@ -43,29 +43,37 @@
 
 ## Definition of Ready
 
-- [ ] C++ reference paths identified in `../casacore` (class + function names).
-- [ ] 2x2 interop fixtures identified (RR, RC, CR, CC).
-- [ ] Endian and undefined-cell behavior reviewed for touched formats.
-- [ ] Performance workload defined or marked N/A.
-- [ ] Non-goals documented.
+- [x] C++ reference paths identified — `tables/TaQL/TableParse.h: tableCommand()`
+- [x] 2x2 interop fixtures identified — Simple fixture (50-row scalar), interop queries:
+  1. `SELECT col1 FROM $T WHERE col1 > 10 UNION SELECT col1 FROM $T WHERE col1 < 5`
+  2. `SELECT col1 FROM $T WHERE col1 > 10 INTERSECT SELECT col1 FROM $T WHERE col1 < 30`
+  3. `SELECT col1 FROM $T WHERE col1 IN [SELECT col2 FROM $T WHERE col2 > 20]`
+  4. `SELECT col1 FROM $T WHERE col1 > (SELECT MIN(col2) FROM $T)`
+- [x] Endian and undefined-cell behavior reviewed for touched formats.
+- [x] Performance workload defined or marked N/A — N/A (query-shape semantics, not compute-bound).
+- [x] Non-goals documented.
 
 ## Implementation checklist
 
-- [ ] Add parser support for `GIVING` and set-op syntax.
-- [ ] Add executor paths for set-op row-set operations.
-- [ ] Add subquery execution and value extraction.
-- [ ] Add output materialization logic for `GIVING`.
+- [x] Add parser support for `GIVING` and set-op syntax.
+- [x] Add executor paths for set-op row-set operations.
+- [x] Add subquery execution and value extraction.
+- [x] Add output materialization logic for `GIVING`.
+- [ ] Add C++ TaQL interop queries for this wave (4 queries above).
+- [ ] Run cross-matrix and record results.
 
 ## Test plan
 
-- [ ] `GIVING` path/mode tests.
-- [ ] Set-operations correctness tests.
-- [ ] Subquery `IN` and scalar tests.
-- [ ] Schema mismatch error tests.
+- [x] `GIVING` path/mode tests.
+- [x] Set-operations correctness tests.
+- [x] Subquery `IN` and scalar tests.
+- [x] Schema mismatch error tests.
+- [ ] TaQL interop cross-matrix (RR/CC/RC/CR) for 4 queries.
+- [ ] Results match between Rust and C++ within tolerance.
 
 ## Performance plan
 
-- Workload: N/A.
+- Workload: N/A — query-shape semantics, not compute-bound.
 - Rust command: N/A.
 - C++ command: N/A.
 - Alert threshold: N/A.

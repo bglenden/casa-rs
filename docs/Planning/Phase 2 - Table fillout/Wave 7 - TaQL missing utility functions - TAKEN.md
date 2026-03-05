@@ -43,28 +43,37 @@
 
 ## Definition of Ready
 
-- [ ] C++ reference paths identified in `../casacore` (class + function names).
-- [ ] 2x2 interop fixtures identified (RR, RC, CR, CC).
-- [ ] Endian and undefined-cell behavior reviewed for touched formats.
-- [ ] Performance workload defined or marked N/A.
-- [ ] Non-goals documented.
+- [x] C++ reference paths identified — `tables/TaQL/TableParse.h: tableCommand()`
+- [x] 2x2 interop fixtures identified — Simple fixture (50-row scalar), interop queries:
+  1. `SELECT pattern('test*', 'f') FROM $T`
+  2. `SELECT sqlpattern('test%') FROM $T`
+  3. `SELECT string(col1, '%06.2f') FROM $T`
+  4. `SELECT iskeyword('EXISTING_KEY') FROM $T`
+  - Note: `rand()` cannot be compared (different RNGs); verify bounds only (0 ≤ r < 1).
+- [x] Endian and undefined-cell behavior reviewed for touched formats.
+- [x] Performance workload defined or marked N/A — N/A (utility functions, no hot path).
+- [x] Non-goals documented.
 
 ## Implementation checklist
 
-- [ ] Add missing function implementations.
-- [ ] Add eval keyword context plumbing.
-- [ ] Add deterministic-range and behavior tests.
+- [x] Add missing function implementations.
+- [x] Add eval keyword context plumbing.
+- [x] Add deterministic-range and behavior tests.
+- [ ] Add C++ TaQL interop queries for this wave (4 queries above).
+- [ ] Run cross-matrix and record results.
 
 ## Test plan
 
-- [ ] `pattern`/`sqlpattern` matching tests.
-- [ ] `string` formatted output tests.
-- [ ] `iskeyword` true/false tests.
-- [ ] `rand()` bounds and non-constant behavior tests.
+- [x] `pattern`/`sqlpattern` matching tests.
+- [x] `string` formatted output tests.
+- [x] `iskeyword` true/false tests.
+- [x] `rand()` bounds and non-constant behavior tests.
+- [ ] TaQL interop cross-matrix (RR/CC/RC/CR) for 4 queries.
+- [ ] Results match between Rust and C++ within tolerance (except `rand()` — bounds-only check).
 
 ## Performance plan
 
-- Workload: N/A.
+- Workload: N/A — utility functions, no hot-path concern.
 - Rust command: N/A.
 - C++ command: N/A.
 - Alert threshold: N/A.

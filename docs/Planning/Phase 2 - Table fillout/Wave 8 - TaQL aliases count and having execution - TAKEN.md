@@ -42,28 +42,37 @@
 
 ## Definition of Ready
 
-- [ ] C++ reference paths identified in `../casacore` (class + function names).
-- [ ] 2x2 interop fixtures identified (RR, RC, CR, CC).
-- [ ] Endian and undefined-cell behavior reviewed for touched formats.
-- [ ] Performance workload defined or marked N/A.
-- [ ] Non-goals documented.
+- [x] C++ reference paths identified — `tables/TaQL/TableParse.h: tableCommand()`
+- [x] 2x2 interop fixtures identified — Simple fixture (50-row scalar), interop queries:
+  1. `SELECT col1 AS alias1 FROM $T`
+  2. `SELECT col1 AS a, col2 AS b FROM $T WHERE a > 5`
+  3. `COUNT SELECT col1 FROM $T WHERE col1 > 10`
+  4. `SELECT grp, COUNT(val) AS cnt FROM $T GROUP BY grp HAVING cnt > 2`
+  5. `SELECT grp, SUM(val) FROM $T GROUP BY grp HAVING SUM(val) > 100`
+- [x] Endian and undefined-cell behavior reviewed for touched formats.
+- [x] Performance workload defined or marked N/A — N/A (statement semantics, not compute-bound).
+- [x] Non-goals documented.
 
 ## Implementation checklist
 
-- [ ] Alias propagation in result schema.
-- [ ] `COUNT SELECT` parser + executor support.
-- [ ] HAVING filtering in grouped results.
+- [x] Alias propagation in result schema.
+- [x] `COUNT SELECT` parser + executor support.
+- [x] HAVING filtering in grouped results.
+- [ ] Add C++ TaQL interop queries for this wave (5 queries above).
+- [ ] Run cross-matrix and record results.
 
 ## Test plan
 
-- [ ] Alias naming tests.
-- [ ] `COUNT SELECT` statement tests.
-- [ ] HAVING aggregate threshold tests.
-- [ ] Clean skip when `pkg-config casacore` is unavailable.
+- [x] Alias naming tests.
+- [x] `COUNT SELECT` statement tests.
+- [x] HAVING aggregate threshold tests.
+- [x] Clean skip when `pkg-config casacore` is unavailable.
+- [ ] TaQL interop cross-matrix (RR/CC/RC/CR) for 5 queries.
+- [ ] Results match between Rust and C++ within tolerance.
 
 ## Performance plan
 
-- Workload: N/A.
+- Workload: N/A — statement-level semantics, not compute-bound.
 - Rust command: N/A.
 - C++ command: N/A.
 - Alert threshold: N/A.

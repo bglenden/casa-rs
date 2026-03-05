@@ -23,20 +23,115 @@
 //!
 //! `TableExprFuncNode.cc`, `TaQLNode.cc`.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use super::error::TaqlError;
 use super::eval::{EvalContext, ExprValue};
 use num_complex::Complex64;
+
+/// Trait for user-defined TaQL functions.
+///
+/// Implement this trait to add custom functions to the TaQL evaluator.
+/// Registered UDFs take precedence over built-in functions with the
+/// same name.
+///
+/// # C++ reference
+///
+/// `UDFBase` — the base class for casacore user-defined TaQL functions.
+pub trait TaqlUdf: Send + Sync {
+    /// Execute the function with the given arguments and row context.
+    fn call(&self, args: &[ExprValue], ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlError>;
+}
+
+/// A boxed function pointer variant for simple UDFs.
+type UdfFn =
+    Box<dyn Fn(&[ExprValue], &EvalContext<'_>) -> Result<ExprValue, TaqlError> + Send + Sync>;
+
+enum UdfEntry {
+    Trait(Box<dyn TaqlUdf>),
+    Fn(UdfFn),
+}
+
+static UDF_REGISTRY: Mutex<Option<HashMap<String, UdfEntry>>> = Mutex::new(None);
+
+fn with_registry<R>(f: impl FnOnce(&mut HashMap<String, UdfEntry>) -> R) -> R {
+    let mut guard = UDF_REGISTRY.lock().unwrap();
+    let registry = guard.get_or_insert_with(HashMap::new);
+    f(registry)
+}
+
+/// Register a user-defined function by name.
+///
+/// The function takes precedence over built-in functions with the same name.
+/// Names are stored case-insensitively (lowercased).
+///
+/// # Examples
+///
+/// ```rust
+/// use casacore_tables::taql::functions::register_udf;
+/// use casacore_tables::taql::eval::ExprValue;
+///
+/// register_udf("double", |args, _ctx| {
+///     let v = args[0].to_float()?;
+///     Ok(ExprValue::Float(v * 2.0))
+/// });
+/// ```
+pub fn register_udf<F>(name: &str, f: F)
+where
+    F: Fn(&[ExprValue], &EvalContext<'_>) -> Result<ExprValue, TaqlError> + Send + Sync + 'static,
+{
+    with_registry(|reg| {
+        reg.insert(name.to_lowercase(), UdfEntry::Fn(Box::new(f)));
+    });
+}
+
+/// Register a user-defined function using the [`TaqlUdf`] trait.
+///
+/// The function takes precedence over built-in functions with the same name.
+pub fn register_udf_trait(name: &str, udf: Box<dyn TaqlUdf>) {
+    with_registry(|reg| {
+        reg.insert(name.to_lowercase(), UdfEntry::Trait(udf));
+    });
+}
+
+/// Unregister a user-defined function by name.
+///
+/// Returns `true` if the function was registered and removed.
+pub fn unregister_udf(name: &str) -> bool {
+    with_registry(|reg| reg.remove(&name.to_lowercase()).is_some())
+}
+
+/// Clear all registered user-defined functions.
+pub fn clear_udfs() {
+    with_registry(|reg| reg.clear());
+}
 
 /// Call a built-in TaQL function by name.
 ///
 /// Function names are matched case-insensitively. The `ctx` parameter
 /// provides row context for functions like `rownumber()` and `rowid()`.
+///
+/// User-defined functions registered via [`register_udf`] take precedence
+/// over built-in functions.
 pub fn call_function(
     name: &str,
     args: &[ExprValue],
     ctx: &EvalContext<'_>,
 ) -> Result<ExprValue, TaqlError> {
     let lower = name.to_lowercase();
+
+    // Check UDF registry first (UDFs override built-ins)
+    let udf_result = with_registry(|reg| {
+        reg.get(&lower).map(|entry| match entry {
+            UdfEntry::Trait(udf) => udf.call(args, ctx),
+            UdfEntry::Fn(f) => f(args, ctx),
+        })
+    });
+    if let Some(result) = udf_result {
+        return result;
+    }
+
     match lower.as_str() {
         // ── Math constants ─────────────────────────────────────────
         "pi" => {
@@ -1096,7 +1191,8 @@ pub fn call_function(
             let rows = arr.shape[0];
             let cols = arr.shape[1];
             let n = rows.min(cols);
-            let data: Vec<ExprValue> = (0..n).map(|i| arr.data[i * cols + i].clone()).collect();
+            // Column-major: element (i,i) is at flat index i + rows * i = i * (rows + 1).
+            let data: Vec<ExprValue> = (0..n).map(|i| arr.data[i * (rows + 1)].clone()).collect();
             Ok(ExprValue::Array(super::eval::ArrayValue {
                 shape: vec![n],
                 data,
@@ -1310,6 +1406,75 @@ pub fn call_function(
                     got: args.len(),
                 })
             }
+        }
+
+        // ── Running window aggregates ─────────────────────────────
+        //
+        // RUNNING*(array) — cumulative aggregate over array elements.
+        // Returns an array of the same length where element i is the
+        // aggregate of elements 0..=i.
+        //
+        // C++ reference: `TableExprGroupFuncRunning*.h`.
+        "runningmin" => running_aggregate(name, args, RunningOp::Min),
+        "runningmax" => running_aggregate(name, args, RunningOp::Max),
+        "runningsum" => running_aggregate(name, args, RunningOp::Sum),
+        "runningmean" => running_aggregate(name, args, RunningOp::Mean),
+        "runningmedian" => running_aggregate(name, args, RunningOp::Median),
+        "runningrms" => running_aggregate(name, args, RunningOp::Rms),
+        "runningvariance" => running_aggregate(name, args, RunningOp::Variance),
+        "runningstddev" => running_aggregate(name, args, RunningOp::StdDev),
+        "runningany" => running_aggregate(name, args, RunningOp::Any),
+        "runningall" => running_aggregate(name, args, RunningOp::All),
+
+        // ── Boxed (sliding) window aggregates ────────────────────
+        //
+        // BOXED*(array, box_size) — sliding window aggregate.
+        // Returns an array where element i is the aggregate of elements
+        // in the window centered on i with the given box size.
+        //
+        // C++ reference: `TableExprGroupFuncBoxed*.h`.
+        "boxedmin" => boxed_aggregate(name, args, RunningOp::Min),
+        "boxedmax" => boxed_aggregate(name, args, RunningOp::Max),
+        "boxedsum" => boxed_aggregate(name, args, RunningOp::Sum),
+        "boxedmean" => boxed_aggregate(name, args, RunningOp::Mean),
+        "boxedmedian" => boxed_aggregate(name, args, RunningOp::Median),
+        "boxedrms" => boxed_aggregate(name, args, RunningOp::Rms),
+        "boxedvariance" => boxed_aggregate(name, args, RunningOp::Variance),
+        "boxedstddev" => boxed_aggregate(name, args, RunningOp::StdDev),
+        "boxedany" => boxed_aggregate(name, args, RunningOp::Any),
+        "boxedall" => boxed_aggregate(name, args, RunningOp::All),
+
+        // ── Partial-axis array reductions ────────────────────────
+        //
+        // SUMS(array [, axis]) — reduce along an axis (or all axes).
+        // The pluralized forms (S suffix) collapse one dimension.
+        //
+        // C++ reference: `TableExprFuncNodeArray.cc`.
+        "sums" => partial_axis_reduce(name, args, RunningOp::Sum),
+        "means" => partial_axis_reduce(name, args, RunningOp::Mean),
+        "mins" => partial_axis_reduce(name, args, RunningOp::Min),
+        "maxs" => partial_axis_reduce(name, args, RunningOp::Max),
+        "medians" => partial_axis_reduce(name, args, RunningOp::Median),
+        "variances" => partial_axis_reduce(name, args, RunningOp::Variance),
+        "stddevs" => partial_axis_reduce(name, args, RunningOp::StdDev),
+        "rmss" => partial_axis_reduce(name, args, RunningOp::Rms),
+        "anys" => partial_axis_reduce(name, args, RunningOp::Any),
+        "alls" => partial_axis_reduce(name, args, RunningOp::All),
+
+        // ── Wave 7: Missing utility functions ────────────────────
+        //
+        // C++ reference: `TableExprFuncNode.cc`.
+        "pattern" => {
+            // Convert a shell-style glob pattern to a regex pattern.
+            check_arity(name, args, 1)?;
+            let s = args[0].to_string_val()?;
+            Ok(ExprValue::String(glob_to_regex(&s)))
+        }
+        "sqlpattern" => {
+            // Convert a SQL LIKE pattern (% and _) to a regex pattern.
+            check_arity(name, args, 1)?;
+            let s = args[0].to_string_val()?;
+            Ok(ExprValue::String(sql_like_to_regex(&s)))
         }
 
         _ => Err(TaqlError::UnknownFunction {
@@ -1557,18 +1722,20 @@ fn array_variance(name: &str, val: &ExprValue, population: bool) -> Result<ExprV
 fn flat_to_multi(flat: usize, shape: &[usize]) -> Vec<usize> {
     let mut result = vec![0; shape.len()];
     let mut remainder = flat;
-    for i in (0..shape.len()).rev() {
+    // Column-major (Fortran order): first dimension varies fastest.
+    for i in 0..shape.len() {
         result[i] = remainder % shape[i];
         remainder /= shape[i];
     }
     result
 }
 
-/// Convert multi-dimensional indices to flat index (row-major).
+/// Convert multi-dimensional indices to flat index (column-major / Fortran order).
 fn multi_to_flat(indices: &[usize], shape: &[usize]) -> usize {
     let mut flat = 0;
     let mut stride = 1;
-    for i in (0..shape.len()).rev() {
+    // Column-major: first dimension varies fastest.
+    for i in 0..shape.len() {
         flat += indices[i] * stride;
         stride *= shape[i];
     }
@@ -1633,6 +1800,318 @@ fn extract_ra_dec(val: &ExprValue) -> Result<(f64, f64), TaqlError> {
     }
 }
 
+// ── Window aggregate infrastructure ──────────────────────────────────
+
+/// The aggregate operation to apply over a window of values.
+#[derive(Debug, Clone, Copy)]
+enum RunningOp {
+    Min,
+    Max,
+    Sum,
+    Mean,
+    Median,
+    Rms,
+    Variance,
+    StdDev,
+    Any,
+    All,
+}
+
+/// Compute a single aggregate value from a window of floats.
+fn window_aggregate(vals: &[f64], op: RunningOp) -> f64 {
+    let n = vals.len() as f64;
+    match op {
+        RunningOp::Min => vals.iter().copied().fold(f64::INFINITY, f64::min),
+        RunningOp::Max => vals.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        RunningOp::Sum => vals.iter().sum(),
+        RunningOp::Mean => vals.iter().sum::<f64>() / n,
+        RunningOp::Median => {
+            let mut sorted = vals.to_vec();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let mid = sorted.len() / 2;
+            if sorted.len() % 2 == 0 {
+                (sorted[mid - 1] + sorted[mid]) / 2.0
+            } else {
+                sorted[mid]
+            }
+        }
+        RunningOp::Rms => (vals.iter().map(|v| v * v).sum::<f64>() / n).sqrt(),
+        RunningOp::Variance => {
+            let mean = vals.iter().sum::<f64>() / n;
+            vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n
+        }
+        RunningOp::StdDev => {
+            let mean = vals.iter().sum::<f64>() / n;
+            (vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n).sqrt()
+        }
+        RunningOp::Any => {
+            if vals.iter().any(|v| *v != 0.0) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        RunningOp::All => {
+            if vals.iter().all(|v| *v != 0.0) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
+/// Returns true if the result type should be Bool for this op.
+fn is_bool_op(op: RunningOp) -> bool {
+    matches!(op, RunningOp::Any | RunningOp::All)
+}
+
+/// RUNNING*(array) — cumulative aggregate over array elements.
+/// RUNNING*(array, halfWidth) — centered sliding-window aggregate.
+///
+/// The second argument is the half-window width. Element `i` is computed
+/// from `array[max(0, i-half) ..= min(n-1, i+half)]`. Partial windows
+/// at the edges are included (matching C++ `fillEdge=True`).
+///
+/// C++ reference: `TableExprFuncNodeArray.cc` — `runningXXX`.
+fn running_aggregate(
+    name: &str,
+    args: &[ExprValue],
+    op: RunningOp,
+) -> Result<ExprValue, TaqlError> {
+    check_arity(name, args, 2)?;
+    let arr = require_array(name, &args[0])?;
+    let half = args[1].to_int()? as usize;
+    if arr.data.is_empty() {
+        return Ok(ExprValue::Array(super::eval::ArrayValue {
+            shape: vec![0],
+            data: vec![],
+        }));
+    }
+    let floats: Vec<f64> = arr
+        .data
+        .iter()
+        .map(|v| v.to_float())
+        .collect::<Result<_, _>>()?;
+    let n = floats.len();
+    let mut result = Vec::with_capacity(n);
+    for i in 0..n {
+        let start = i.saturating_sub(half);
+        let end = (i + half + 1).min(n);
+        let window = &floats[start..end];
+        let val = window_aggregate(window, op);
+        if is_bool_op(op) {
+            result.push(ExprValue::Bool(val != 0.0));
+        } else {
+            result.push(ExprValue::Float(val));
+        }
+    }
+    Ok(ExprValue::Array(super::eval::ArrayValue {
+        shape: vec![result.len()],
+        data: result,
+    }))
+}
+
+/// BOXED*(array, box_size) — sliding window aggregate.
+fn boxed_aggregate(name: &str, args: &[ExprValue], op: RunningOp) -> Result<ExprValue, TaqlError> {
+    check_arity(name, args, 2)?;
+    let arr = require_array(name, &args[0])?;
+    let box_size = args[1].to_int()? as usize;
+    if box_size == 0 {
+        return Err(TaqlError::TypeError {
+            message: format!("{name}(): box size must be > 0"),
+        });
+    }
+    if arr.data.is_empty() {
+        return Ok(ExprValue::Array(super::eval::ArrayValue {
+            shape: vec![0],
+            data: vec![],
+        }));
+    }
+    let floats: Vec<f64> = arr
+        .data
+        .iter()
+        .map(|v| v.to_float())
+        .collect::<Result<_, _>>()?;
+    let n = floats.len();
+    let half = box_size / 2;
+    let mut result = Vec::with_capacity(n);
+    for i in 0..n {
+        let start = i.saturating_sub(half);
+        let end = (i + half + 1).min(n);
+        let window = &floats[start..end];
+        let val = window_aggregate(window, op);
+        if is_bool_op(op) {
+            result.push(ExprValue::Bool(val != 0.0));
+        } else {
+            result.push(ExprValue::Float(val));
+        }
+    }
+    Ok(ExprValue::Array(super::eval::ArrayValue {
+        shape: vec![result.len()],
+        data: result,
+    }))
+}
+
+/// Partial-axis array reduction: SUMS(array [, axis]).
+///
+/// With one argument, reduces the entire array to a scalar.
+/// With two arguments, reduces along the specified 0-based axis,
+/// producing an array with one fewer dimension.
+///
+/// C++ reference: `TableExprFuncNodeArray.cc`.
+fn partial_axis_reduce(
+    name: &str,
+    args: &[ExprValue],
+    op: RunningOp,
+) -> Result<ExprValue, TaqlError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(TaqlError::ArgumentCount {
+            name: name.to_string(),
+            expected: "1 or 2".to_string(),
+            got: args.len(),
+        });
+    }
+    let arr = require_array(name, &args[0])?;
+    if arr.data.is_empty() {
+        return Ok(ExprValue::Null);
+    }
+    // Check if input is integer-typed (for min/max, preserve type)
+    let input_is_int = matches!(&arr.data[0], ExprValue::Int(_));
+    let preserve_int = input_is_int && matches!(op, RunningOp::Min | RunningOp::Max);
+
+    let floats: Vec<f64> = arr
+        .data
+        .iter()
+        .map(|v| v.to_float())
+        .collect::<Result<_, _>>()?;
+
+    if args.len() == 1 {
+        // Full reduction to scalar
+        let val = window_aggregate(&floats, op);
+        return if is_bool_op(op) {
+            Ok(ExprValue::Bool(val != 0.0))
+        } else if preserve_int {
+            Ok(ExprValue::Int(val as i64))
+        } else {
+            Ok(ExprValue::Float(val))
+        };
+    }
+
+    // Axis reduction — TaQL uses 1-based axis numbering (like Glish/Fortran)
+    let axis_1based = args[1].to_int()?;
+    if axis_1based < 1 {
+        return Err(TaqlError::TypeError {
+            message: format!("{name}(): axis must be >= 1 (1-based), got {axis_1based}"),
+        });
+    }
+    let axis = (axis_1based - 1) as usize;
+    let ndim = arr.shape.len();
+    if axis >= ndim {
+        return Err(TaqlError::TypeError {
+            message: format!("{name}(): axis {axis_1based} out of range for {ndim}-D array"),
+        });
+    }
+
+    let axis_len = arr.shape[axis];
+    // Compute output shape (remove the axis dimension).
+    let out_shape: Vec<usize> = arr
+        .shape
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| i != axis)
+        .map(|(_, &s)| s)
+        .collect();
+    let out_size: usize = out_shape.iter().product();
+
+    // For each output element, gather values along the axis and reduce.
+    let mut out_data = Vec::with_capacity(out_size);
+    for out_flat in 0..out_size {
+        // Convert out_flat to multi-index in out_shape
+        let out_multi = flat_to_multi(out_flat, &out_shape);
+        // Insert the axis dimension back to iterate over it
+        let mut window = Vec::with_capacity(axis_len);
+        for ax_idx in 0..axis_len {
+            let mut full_multi = Vec::with_capacity(ndim);
+            let mut out_dim = 0;
+            for dim in 0..ndim {
+                if dim == axis {
+                    full_multi.push(ax_idx);
+                } else {
+                    full_multi.push(out_multi[out_dim]);
+                    out_dim += 1;
+                }
+            }
+            let flat_idx = multi_to_flat(&full_multi, &arr.shape);
+            window.push(floats[flat_idx]);
+        }
+        let val = window_aggregate(&window, op);
+        if is_bool_op(op) {
+            out_data.push(ExprValue::Bool(val != 0.0));
+        } else if preserve_int {
+            out_data.push(ExprValue::Int(val as i64));
+        } else {
+            out_data.push(ExprValue::Float(val));
+        }
+    }
+
+    // If the result is a scalar (all dims collapsed), unwrap.
+    if out_shape.is_empty() || out_shape == [1] {
+        return Ok(out_data.into_iter().next().unwrap_or(ExprValue::Null));
+    }
+
+    Ok(ExprValue::Array(super::eval::ArrayValue {
+        shape: out_shape,
+        data: out_data,
+    }))
+}
+
+// ── Wave 7: Utility helpers ─────────────────────────────────────────
+
+/// Convert a shell-style glob pattern to a regex string.
+///
+/// `*` → `.*`, `?` → `.`, all other regex-special chars are escaped.
+///
+/// C++ reference: `Regex::fromPattern()`.
+fn glob_to_regex(pattern: &str) -> String {
+    let mut result = String::from("^");
+    for ch in pattern.chars() {
+        match ch {
+            '*' => result.push_str(".*"),
+            '?' => result.push('.'),
+            '.' | '+' | '(' | ')' | '{' | '}' | '[' | ']' | '|' | '^' | '$' | '\\' => {
+                result.push('\\');
+                result.push(ch);
+            }
+            _ => result.push(ch),
+        }
+    }
+    result.push('$');
+    result
+}
+
+/// Convert a SQL LIKE pattern (`%` and `_`) to a regex string.
+///
+/// `%` → `.*`, `_` → `.`, other regex chars are escaped.
+///
+/// C++ reference: `Regex::fromSQLPattern()`.
+fn sql_like_to_regex(pattern: &str) -> String {
+    let mut result = String::from("^");
+    for ch in pattern.chars() {
+        match ch {
+            '%' => result.push_str(".*"),
+            '_' => result.push('.'),
+            '.' | '+' | '*' | '?' | '(' | ')' | '{' | '}' | '[' | ']' | '|' | '^' | '$' | '\\' => {
+                result.push('\\');
+                result.push(ch);
+            }
+            _ => result.push(ch),
+        }
+    }
+    result.push('$');
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1651,6 +2130,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: idx,
+            style: crate::taql::ast::IndexStyle::default(),
         };
         call_function(name, &args, &ctx).unwrap()
     }
@@ -1660,6 +2140,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: idx,
+            style: crate::taql::ast::IndexStyle::default(),
         };
         call_function(name, args, &ctx)
     }
@@ -2669,5 +3150,458 @@ mod tests {
             ],
         );
         assert_eq!(v, ExprValue::Int(0));
+    }
+
+    // ── Wave 4: Running and boxed window functions ──
+
+    fn make_array(vals: Vec<f64>) -> ExprValue {
+        let data = vals.into_iter().map(ExprValue::Float).collect::<Vec<_>>();
+        let len = data.len();
+        ExprValue::Array(super::super::eval::ArrayValue {
+            shape: vec![len],
+            data,
+        })
+    }
+
+    fn extract_floats(val: ExprValue) -> Vec<f64> {
+        match val {
+            ExprValue::Array(a) => a.data.iter().map(|v| v.to_float().unwrap()).collect(),
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn runningsum_basic() {
+        // halfWidth=1: window of 3 centered on each element
+        // [1,2,3,4]: i=0 [1,2]→3, i=1 [1,2,3]→6, i=2 [2,3,4]→9, i=3 [3,4]→7
+        let v = call(
+            "runningsum",
+            vec![make_array(vec![1.0, 2.0, 3.0, 4.0]), ExprValue::Int(1)],
+        );
+        let result = extract_floats(v);
+        assert_eq!(result, vec![3.0, 6.0, 9.0, 7.0]);
+    }
+
+    #[test]
+    fn runningmean_basic() {
+        // halfWidth=1: window of 3 centered on each element
+        // [2,4,6]: i=0 [2,4]→3, i=1 [2,4,6]→4, i=2 [4,6]→5
+        let v = call(
+            "runningmean",
+            vec![make_array(vec![2.0, 4.0, 6.0]), ExprValue::Int(1)],
+        );
+        let result = extract_floats(v);
+        assert_eq!(result, vec![3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn runningmin_basic() {
+        // halfWidth=1
+        // [3,1,4,1]: i=0 [3,1]→1, i=1 [3,1,4]→1, i=2 [1,4,1]→1, i=3 [4,1]→1
+        let v = call(
+            "runningmin",
+            vec![make_array(vec![3.0, 1.0, 4.0, 1.0]), ExprValue::Int(1)],
+        );
+        let result = extract_floats(v);
+        assert_eq!(result, vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn runningmax_basic() {
+        // halfWidth=1
+        // [1,3,2,4]: i=0 [1,3]→3, i=1 [1,3,2]→3, i=2 [3,2,4]→4, i=3 [2,4]→4
+        let v = call(
+            "runningmax",
+            vec![make_array(vec![1.0, 3.0, 2.0, 4.0]), ExprValue::Int(1)],
+        );
+        let result = extract_floats(v);
+        assert_eq!(result, vec![3.0, 3.0, 4.0, 4.0]);
+    }
+
+    #[test]
+    fn runningmedian_basic() {
+        // halfWidth=1
+        // [3,1,4]: i=0 [3,1]→2, i=1 [3,1,4]→3, i=2 [1,4]→2.5
+        let v = call(
+            "runningmedian",
+            vec![make_array(vec![3.0, 1.0, 4.0]), ExprValue::Int(1)],
+        );
+        let result = extract_floats(v);
+        assert_eq!(result, vec![2.0, 3.0, 2.5]);
+    }
+
+    #[test]
+    fn runningany_basic() {
+        // halfWidth=1
+        // [0,0,1,0]: i=0 [0,0]→F, i=1 [0,0,1]→T, i=2 [0,1,0]→T, i=3 [1,0]→T
+        let v = call(
+            "runningany",
+            vec![make_array(vec![0.0, 0.0, 1.0, 0.0]), ExprValue::Int(1)],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                let bools: Vec<bool> = a
+                    .data
+                    .iter()
+                    .map(|v| match v {
+                        ExprValue::Bool(b) => *b,
+                        _ => panic!("expected Bool"),
+                    })
+                    .collect();
+                assert_eq!(bools, vec![false, true, true, true]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn runningall_basic() {
+        // halfWidth=1
+        // [1,1,0,1]: i=0 [1,1]→T, i=1 [1,1,0]→F, i=2 [1,0,1]→F, i=3 [0,1]→F
+        let v = call(
+            "runningall",
+            vec![make_array(vec![1.0, 1.0, 0.0, 1.0]), ExprValue::Int(1)],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                let bools: Vec<bool> = a
+                    .data
+                    .iter()
+                    .map(|v| match v {
+                        ExprValue::Bool(b) => *b,
+                        _ => panic!("expected Bool"),
+                    })
+                    .collect();
+                assert_eq!(bools, vec![true, false, false, false]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn boxedmean_basic() {
+        // box_size=3, array=[1,2,3,4,5]
+        // i=0: window [1,2] → 1.5
+        // i=1: window [1,2,3] → 2.0
+        // i=2: window [2,3,4] → 3.0
+        // i=3: window [3,4,5] → 4.0
+        // i=4: window [4,5] → 4.5
+        let v = call(
+            "boxedmean",
+            vec![make_array(vec![1.0, 2.0, 3.0, 4.0, 5.0]), ExprValue::Int(3)],
+        );
+        let result = extract_floats(v);
+        assert_eq!(result, vec![1.5, 2.0, 3.0, 4.0, 4.5]);
+    }
+
+    #[test]
+    fn boxedmin_basic() {
+        let v = call(
+            "boxedmin",
+            vec![make_array(vec![3.0, 1.0, 4.0, 1.0, 5.0]), ExprValue::Int(3)],
+        );
+        let result = extract_floats(v);
+        // i=0: [3,1]→1, i=1: [3,1,4]→1, i=2: [1,4,1]→1, i=3: [4,1,5]→1, i=4: [1,5]→1
+        assert_eq!(result, vec![1.0, 1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn boxedmax_boundary() {
+        let v = call(
+            "boxedmax",
+            vec![make_array(vec![1.0, 5.0, 3.0]), ExprValue::Int(1)],
+        );
+        let result = extract_floats(v);
+        // box_size=1: each element is its own window
+        assert_eq!(result, vec![1.0, 5.0, 3.0]);
+    }
+
+    #[test]
+    fn boxed_zero_size_error() {
+        let result = call_err("boxedsum", &[make_array(vec![1.0, 2.0]), ExprValue::Int(0)]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn running_empty_array() {
+        let v = call("runningsum", vec![make_array(vec![]), ExprValue::Int(1)]);
+        match v {
+            ExprValue::Array(a) => assert!(a.data.is_empty()),
+            _ => panic!("expected empty Array"),
+        }
+    }
+
+    // ── Wave 5: Partial-axis array reductions ──
+
+    fn make_2d_array_f(rows: usize, cols: usize, vals: Vec<f64>) -> ExprValue {
+        ExprValue::Array(super::super::eval::ArrayValue {
+            shape: vec![rows, cols],
+            data: vals.into_iter().map(ExprValue::Float).collect(),
+        })
+    }
+
+    #[test]
+    fn sums_full_reduction() {
+        let v = call("sums", vec![make_array(vec![1.0, 2.0, 3.0])]);
+        assert_eq!(v, ExprValue::Float(6.0));
+    }
+
+    #[test]
+    fn means_full_reduction() {
+        let v = call("means", vec![make_array(vec![2.0, 4.0, 6.0])]);
+        assert_eq!(v, ExprValue::Float(4.0));
+    }
+
+    #[test]
+    fn mins_full_reduction() {
+        let v = call("mins", vec![make_array(vec![3.0, 1.0, 4.0])]);
+        assert_eq!(v, ExprValue::Float(1.0));
+    }
+
+    #[test]
+    fn sums_axis0_2d() {
+        // 2x3 array: [[1,2,3],[4,5,6]] stored in column-major flat order
+        // Sum along axis 1 (1-based) = axis 0 (0-based) → [5, 7, 9]
+        let v = call(
+            "sums",
+            vec![
+                make_2d_array_f(2, 3, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]),
+                ExprValue::Int(1),
+            ],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                let vals: Vec<f64> = a.data.iter().map(|v| v.to_float().unwrap()).collect();
+                assert_eq!(vals, vec![5.0, 7.0, 9.0]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn sums_axis1_2d() {
+        // 2x3 array: [[1,2,3],[4,5,6]] stored in column-major flat order
+        // Sum along axis 2 (1-based) = axis 1 (0-based) → [6, 15]
+        let v = call(
+            "sums",
+            vec![
+                make_2d_array_f(2, 3, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]),
+                ExprValue::Int(2),
+            ],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![2]);
+                let vals: Vec<f64> = a.data.iter().map(|v| v.to_float().unwrap()).collect();
+                assert_eq!(vals, vec![6.0, 15.0]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn means_axis0_2d() {
+        // 2x3 array: [[1,2,3],[4,5,6]] stored in column-major flat order
+        // Mean along axis 1 (1-based) = axis 0 (0-based)
+        let v = call(
+            "means",
+            vec![
+                make_2d_array_f(2, 3, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]),
+                ExprValue::Int(1),
+            ],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                let vals: Vec<f64> = a.data.iter().map(|v| v.to_float().unwrap()).collect();
+                assert_eq!(vals, vec![2.5, 3.5, 4.5]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn maxs_axis1_2d() {
+        // 2x3 array: [[1,5,3],[4,2,6]] stored in column-major flat order
+        // Max along axis 2 (1-based) = axis 1 (0-based)
+        let v = call(
+            "maxs",
+            vec![
+                make_2d_array_f(2, 3, vec![1.0, 4.0, 5.0, 2.0, 3.0, 6.0]),
+                ExprValue::Int(2),
+            ],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![2]);
+                let vals: Vec<f64> = a.data.iter().map(|v| v.to_float().unwrap()).collect();
+                assert_eq!(vals, vec![5.0, 6.0]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn sums_axis_out_of_range() {
+        // 1D array: axis 2 (1-based) is out of range
+        let result = call_err("sums", &[make_array(vec![1.0, 2.0]), ExprValue::Int(2)]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn anys_full_reduction() {
+        let v = call("anys", vec![make_array(vec![0.0, 0.0, 1.0])]);
+        assert_eq!(v, ExprValue::Bool(true));
+    }
+
+    #[test]
+    fn alls_full_reduction() {
+        let v = call("alls", vec![make_array(vec![1.0, 1.0, 0.0])]);
+        assert_eq!(v, ExprValue::Bool(false));
+    }
+
+    // ── Wave 7: Missing utility functions ──
+
+    #[test]
+    fn pattern_glob() {
+        let v = call("pattern", vec![ExprValue::String("*.fits".into())]);
+        assert_eq!(v, ExprValue::String("^.*\\.fits$".into()));
+    }
+
+    #[test]
+    fn sqlpattern_like() {
+        let v = call("sqlpattern", vec![ExprValue::String("test%".into())]);
+        assert_eq!(v, ExprValue::String("^test.*$".into()));
+    }
+
+    #[test]
+    fn sqlpattern_underscore() {
+        let v = call("sqlpattern", vec![ExprValue::String("a_b".into())]);
+        assert_eq!(v, ExprValue::String("^a.b$".into()));
+    }
+
+    #[test]
+    fn rand_returns_float() {
+        let v = call("rand", vec![]);
+        match v {
+            ExprValue::Float(f) => {
+                assert!((0.0..1.0).contains(&f), "rand() returned {f}");
+            }
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn near_basic() {
+        let v = call(
+            "near",
+            vec![ExprValue::Float(1.0), ExprValue::Float(1.0000000000001)],
+        );
+        assert_eq!(v, ExprValue::Bool(true));
+    }
+
+    #[test]
+    fn nearabs_basic() {
+        let v = call(
+            "nearabs",
+            vec![
+                ExprValue::Float(1.0),
+                ExprValue::Float(1.1),
+                ExprValue::Float(0.2),
+            ],
+        );
+        assert_eq!(v, ExprValue::Bool(true));
+    }
+
+    #[test]
+    fn transpose_2d() {
+        // [[1,2,3],[4,5,6]] → [[1,4],[2,5],[3,6]]
+        // Input column-major flat: [1,4,2,5,3,6]
+        // Output column-major flat: [1,2,3,4,5,6]
+        let v = call(
+            "transpose",
+            vec![make_2d_array_f(2, 3, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0])],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3, 2]);
+                let vals: Vec<f64> = a.data.iter().map(|v| v.to_float().unwrap()).collect();
+                assert_eq!(vals, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn diagonal_3x3() {
+        // 3x3 array: [[1,2,3],[4,5,6],[7,8,9]] stored in column-major flat order
+        let v = call(
+            "diagonal",
+            vec![make_2d_array_f(
+                3,
+                3,
+                vec![1.0, 4.0, 7.0, 2.0, 5.0, 8.0, 3.0, 6.0, 9.0],
+            )],
+        );
+        match v {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                let vals: Vec<f64> = a.data.iter().map(|v| v.to_float().unwrap()).collect();
+                assert_eq!(vals, vec![1.0, 5.0, 9.0]);
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    // ── Wave 12: UDF framework ──────────────────────────────────
+
+    #[test]
+    fn udf_register_and_call() {
+        super::register_udf("myudf", |args, _ctx| {
+            let v = args[0].to_float()?;
+            Ok(ExprValue::Float(v * 3.0))
+        });
+        let v = call("myudf", vec![ExprValue::Float(10.0)]);
+        assert_eq!(v, ExprValue::Float(30.0));
+        super::unregister_udf("myudf");
+    }
+
+    #[test]
+    fn udf_overrides_builtin() {
+        // Register a UDF that overrides the built-in "abs"
+        super::register_udf("abs", |_args, _ctx| Ok(ExprValue::Float(999.0)));
+        let v = call("abs", vec![ExprValue::Float(-5.0)]);
+        assert_eq!(v, ExprValue::Float(999.0)); // UDF, not built-in abs
+        super::unregister_udf("abs");
+        // After unregister, built-in should work again
+        let v = call("abs", vec![ExprValue::Float(-5.0)]);
+        assert_eq!(v, ExprValue::Float(5.0));
+    }
+
+    #[test]
+    fn udf_unregistered_falls_through() {
+        // Calling a name with no UDF or built-in should error
+        let ctx = EvalContext {
+            row: &casacore_types::RecordValue::default(),
+            row_index: 0,
+            style: crate::taql::ast::IndexStyle::default(),
+        };
+        let result = super::call_function("nonexistent_udf_xyz", &[], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn udf_clear_all() {
+        super::register_udf("tmp_udf1", |_, _| Ok(ExprValue::Int(1)));
+        super::register_udf("tmp_udf2", |_, _| Ok(ExprValue::Int(2)));
+        super::clear_udfs();
+        let ctx = EvalContext {
+            row: &casacore_types::RecordValue::default(),
+            row_index: 0,
+            style: crate::taql::ast::IndexStyle::default(),
+        };
+        assert!(super::call_function("tmp_udf1", &[], &ctx).is_err());
+        assert!(super::call_function("tmp_udf2", &[], &ctx).is_err());
     }
 }

@@ -258,6 +258,6 @@ pub use sorting::{TableGroup, TableIterator};
 pub use storage::{DataManagerInfo, TableInfo};
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table, TableError, TableKind,
-    TableOptions,
+    QueryResult, RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table,
+    TableError, TableKind, TableOptions,
 };

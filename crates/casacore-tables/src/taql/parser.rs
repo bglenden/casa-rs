@@ -41,12 +41,37 @@ impl<'src> Parser<'src> {
 
     /// Parses a complete TaQL statement.
     pub fn parse_statement(&mut self) -> Result<Statement, TaqlError> {
+        // Optional leading `USING STYLE GLISH|PYTHON`.
+        let style = self.parse_using_style()?;
+
         let stmt = match self.lexer.peek() {
-            Some(Token::Select) => Statement::Select(self.parse_select()?),
+            Some(Token::Select) => {
+                let mut s = self.parse_select()?;
+                s.style = style;
+                Statement::Select(s)
+            }
+            Some(Token::Count) => {
+                // COUNT SELECT ... — returns row count of a SELECT.
+                self.lexer.next_token(); // consume COUNT
+                if self.lexer.peek() != Some(&Token::Select) {
+                    return Err(TaqlError::unexpected_end("expected SELECT after COUNT"));
+                }
+                let mut s = self.parse_select()?;
+                s.style = style;
+                Statement::CountSelect(s)
+            }
             Some(Token::Update) => Statement::Update(self.parse_update()?),
             Some(Token::Insert) => Statement::Insert(self.parse_insert()?),
             Some(Token::Delete) => Statement::Delete(self.parse_delete()?),
             Some(Token::Calc) => Statement::Calc(self.parse_calc()?),
+            Some(Token::Create) => Statement::CreateTable(self.parse_create_table()?),
+            Some(Token::Drop) => {
+                // DROP TABLE or DROP COLUMN (but DROP COLUMN is ALTER TABLE syntax)
+                self.lexer.next_token(); // consume DROP
+                self.lexer.expect(&Token::Table)?;
+                let table_name = self.parse_ident_string()?;
+                Statement::DropTable(DropTableStatement { table_name })
+            }
             Some(Token::Alter) => Statement::AlterTable(self.parse_alter_table()?),
             Some(tok) => {
                 let tok_str = tok.to_string();
@@ -54,7 +79,7 @@ impl<'src> Parser<'src> {
                 return Err(TaqlError::parse(
                     self.lexer.position(span.start),
                     format!(
-                        "expected SELECT, UPDATE, INSERT, DELETE, CALC, or ALTER; found {tok_str}"
+                        "expected SELECT, UPDATE, INSERT, DELETE, CALC, COUNT, CREATE, DROP, or ALTER; found {tok_str}"
                     ),
                 ));
             }
@@ -73,6 +98,22 @@ impl<'src> Parser<'src> {
             }
         }
         Ok(stmt)
+    }
+    /// Parse optional `USING STYLE GLISH|PYTHON` prefix.
+    fn parse_using_style(&mut self) -> Result<IndexStyle, TaqlError> {
+        if self.lexer.eat_if(&Token::Using).is_some() {
+            self.lexer.expect(&Token::Style)?;
+            let name = self.parse_ident_string()?;
+            match name.to_uppercase().as_str() {
+                "GLISH" => Ok(IndexStyle::Glish),
+                "PYTHON" => Ok(IndexStyle::Python),
+                other => Err(TaqlError::unexpected_end(format!(
+                    "expected GLISH or PYTHON after USING STYLE, got {other}"
+                ))),
+            }
+        } else {
+            Ok(IndexStyle::Glish)
+        }
     }
 
     // ── SELECT ─────────────────────────────────────────────────────
@@ -130,6 +171,21 @@ impl<'src> Parser<'src> {
             None
         };
 
+        let giving = if self.lexer.eat_if(&Token::Giving).is_some() {
+            let table_name = self.parse_ident_string()?;
+            let output_type = if self.lexer.eat_if(&Token::As).is_some() {
+                Some(self.parse_ident_string()?)
+            } else {
+                None
+            };
+            Some(GivingClause {
+                table_name,
+                output_type,
+            })
+        } else {
+            None
+        };
+
         Ok(SelectStatement {
             columns,
             from,
@@ -141,6 +197,8 @@ impl<'src> Parser<'src> {
             limit,
             offset,
             distinct,
+            style: IndexStyle::default(),
+            giving,
         })
     }
 
@@ -401,6 +459,27 @@ impl<'src> Parser<'src> {
 
     // ── ALTER TABLE statement ─────────────────────────────────────
 
+    fn parse_create_table(&mut self) -> Result<CreateTableStatement, TaqlError> {
+        self.lexer.expect(&Token::Create)?;
+        self.lexer.expect(&Token::Table)?;
+        let table_name = self.parse_ident_string()?;
+        self.lexer.expect(&Token::LParen)?;
+        let mut columns = Vec::new();
+        loop {
+            let name = self.parse_ident_string()?;
+            let data_type = self.parse_ident_string()?;
+            columns.push(ColumnDef { name, data_type });
+            if self.lexer.eat_if(&Token::Comma).is_none() {
+                break;
+            }
+        }
+        self.lexer.expect(&Token::RParen)?;
+        Ok(CreateTableStatement {
+            table_name,
+            columns,
+        })
+    }
+
     fn parse_alter_table(&mut self) -> Result<AlterTableStatement, TaqlError> {
         self.lexer.expect(&Token::Alter)?;
         self.lexer.expect(&Token::Table)?;
@@ -596,6 +675,49 @@ impl<'src> Parser<'src> {
                         case_insensitive: true,
                     }
                 }
+                // Regex match: =~ or !~
+                Some(Token::EqTilde) | Some(Token::BangTilde) => {
+                    let bp = 10; // same as comparison operators
+                    if bp < min_bp {
+                        break;
+                    }
+                    let negated = self.lexer.peek() == Some(&Token::BangTilde);
+                    self.lexer.next_token();
+                    let pattern = self.parse_expr_bp(11)?;
+                    Expr::RegexMatch {
+                        expr: Box::new(lhs),
+                        pattern: Box::new(pattern),
+                        negated,
+                    }
+                }
+                // Tilde as binary infix = regex match (C++ TaQL compatibility)
+                Some(Token::Tilde) => {
+                    let bp = 10;
+                    if bp < min_bp {
+                        break;
+                    }
+                    self.lexer.next_token();
+                    let pattern = self.parse_expr_bp(11)?;
+                    Expr::RegexMatch {
+                        expr: Box::new(lhs),
+                        pattern: Box::new(pattern),
+                        negated: false,
+                    }
+                }
+                // Array indexing: expr[...]
+                Some(Token::LBracket) => {
+                    let bp = 20; // highest precedence (postfix)
+                    if bp < min_bp {
+                        break;
+                    }
+                    self.lexer.next_token();
+                    let indices = self.parse_index_elements()?;
+                    self.lexer.expect(&Token::RBracket)?;
+                    Expr::ArrayIndex {
+                        array: Box::new(lhs),
+                        indices,
+                    }
+                }
                 // Infix operators
                 Some(tok) => {
                     if let Some((l_bp, r_bp)) = infix_binding_power(tok) {
@@ -698,12 +820,30 @@ impl<'src> Parser<'src> {
                     operand: Box::new(operand),
                 })
             }
-            // Parenthesized expression
+            // Regex literal: p/pattern/flags or m/pattern/flags
+            Some(Token::RegexLiteral) => {
+                let (_, span) = self.lexer.next_token().unwrap();
+                let s = self.lexer.slice(&span);
+                // Parse: {p|m}/pattern/flags
+                let inner = &s[2..]; // skip "p/" or "m/"
+                let last_slash = inner.rfind('/').unwrap();
+                let pattern = inner[..last_slash].to_string();
+                let flags = inner[last_slash + 1..].to_string();
+                Ok(Expr::Literal(Literal::Regex { pattern, flags }))
+            }
+            // Parenthesized expression or subquery
             Some(Token::LParen) => {
                 self.lexer.next_token();
-                let expr = self.parse_expr()?;
-                self.lexer.expect(&Token::RParen)?;
-                Ok(expr)
+                if self.lexer.peek() == Some(&Token::Select) {
+                    // Subquery: (SELECT ...)
+                    let sel = self.parse_select()?;
+                    self.lexer.expect(&Token::RParen)?;
+                    Ok(Expr::Subquery(Box::new(sel)))
+                } else {
+                    let expr = self.parse_expr()?;
+                    self.lexer.expect(&Token::RParen)?;
+                    Ok(expr)
+                }
             }
             // Aggregate functions: COUNT, SUM, AVG, MIN, MAX
             Some(Token::Count) => self.parse_aggregate(AggregateFunc::Count),
@@ -750,7 +890,10 @@ impl<'src> Parser<'src> {
         if self.lexer.peek() == Some(&Token::LParen) {
             if let Some(agg) = aggregate_from_name(&name) {
                 self.lexer.next_token(); // consume (
-                let arg = if self.lexer.peek() == Some(&Token::Star) {
+                let arg = if self.lexer.peek() == Some(&Token::RParen) {
+                    // Zero-arg aggregate: gcount(), growid(), etc.
+                    Expr::Star
+                } else if self.lexer.peek() == Some(&Token::Star) {
                     self.lexer.next_token();
                     Expr::Star
                 } else {
@@ -808,7 +951,28 @@ impl<'src> Parser<'src> {
 
     fn parse_in_tail(&mut self, lhs: Expr, negated: bool) -> Result<Expr, TaqlError> {
         self.lexer.expect(&Token::In)?;
+        // Bracket syntax: IN [a, b, c] or IN [a:b] or IN [a:b:s]
+        if self.lexer.eat_if(&Token::LBracket).is_some() {
+            let elements = self.parse_in_set_elements()?;
+            self.lexer.expect(&Token::RBracket)?;
+            return Ok(Expr::InSet {
+                expr: Box::new(lhs),
+                elements,
+                negated,
+            });
+        }
+        // Parenthesized syntax: IN (a, b, c) or IN (SELECT ...)
         self.lexer.expect(&Token::LParen)?;
+        if self.lexer.peek() == Some(&Token::Select) {
+            // Subquery: IN (SELECT ...)
+            let sel = self.parse_select()?;
+            self.lexer.expect(&Token::RParen)?;
+            return Ok(Expr::In {
+                expr: Box::new(lhs),
+                values: vec![Expr::Subquery(Box::new(sel))],
+                negated,
+            });
+        }
         let values = self.parse_expr_list()?;
         self.lexer.expect(&Token::RParen)?;
         Ok(Expr::In {
@@ -816,6 +980,129 @@ impl<'src> Parser<'src> {
             values,
             negated,
         })
+    }
+
+    /// Parse comma-separated IN set elements (values and/or ranges).
+    fn parse_in_set_elements(&mut self) -> Result<Vec<InSetElement>, TaqlError> {
+        let mut elements = vec![self.parse_in_set_element()?];
+        while self.lexer.eat_if(&Token::Comma).is_some() {
+            elements.push(self.parse_in_set_element()?);
+        }
+        Ok(elements)
+    }
+
+    /// Parse a single IN set element: either a value or a range (start:end[:step]).
+    fn parse_in_set_element(&mut self) -> Result<InSetElement, TaqlError> {
+        // Check for leading colon (open-start range)
+        if self.lexer.peek() == Some(&Token::Colon) {
+            self.lexer.next_token();
+            let end = self.parse_expr_bp(10)?;
+            let step = if self.lexer.eat_if(&Token::Colon).is_some() {
+                Some(self.parse_expr_bp(10)?)
+            } else {
+                None
+            };
+            return Ok(InSetElement::Range {
+                start: None,
+                end: Some(end),
+                step,
+            });
+        }
+
+        let start = self.parse_expr_bp(10)?;
+        if self.lexer.eat_if(&Token::Colon).is_some() {
+            // Range: start:end or start:end:step
+            let end = if self.lexer.peek() == Some(&Token::Colon)
+                || self.lexer.peek() == Some(&Token::Comma)
+                || self.lexer.peek() == Some(&Token::RBracket)
+            {
+                None
+            } else {
+                Some(self.parse_expr_bp(10)?)
+            };
+            let step = if self.lexer.eat_if(&Token::Colon).is_some() {
+                Some(self.parse_expr_bp(10)?)
+            } else {
+                None
+            };
+            Ok(InSetElement::Range {
+                start: Some(start),
+                end,
+                step,
+            })
+        } else {
+            Ok(InSetElement::Value(start))
+        }
+    }
+
+    /// Parse comma-separated index elements for array subscripts.
+    fn parse_index_elements(&mut self) -> Result<Vec<IndexElement>, TaqlError> {
+        let mut elements = vec![self.parse_index_element()?];
+        while self.lexer.eat_if(&Token::Comma).is_some() {
+            // Empty dimension after comma (e.g. `[1:2,]`) means "all elements".
+            if self.lexer.peek() == Some(&Token::RBracket)
+                || self.lexer.peek() == Some(&Token::Comma)
+            {
+                elements.push(IndexElement::Slice {
+                    start: None,
+                    end: None,
+                    step: None,
+                });
+            } else {
+                elements.push(self.parse_index_element()?);
+            }
+        }
+        Ok(elements)
+    }
+
+    /// Parse a single index element: value or slice (start:end[:step]).
+    fn parse_index_element(&mut self) -> Result<IndexElement, TaqlError> {
+        // Check for leading colon (open-start slice)
+        if self.lexer.peek() == Some(&Token::Colon) {
+            self.lexer.next_token();
+            let end = if self.lexer.peek() != Some(&Token::Colon)
+                && self.lexer.peek() != Some(&Token::Comma)
+                && self.lexer.peek() != Some(&Token::RBracket)
+            {
+                Some(self.parse_expr_bp(10)?)
+            } else {
+                None
+            };
+            let step = if self.lexer.eat_if(&Token::Colon).is_some() {
+                Some(self.parse_expr_bp(10)?)
+            } else {
+                None
+            };
+            return Ok(IndexElement::Slice {
+                start: None,
+                end,
+                step,
+            });
+        }
+
+        let start = self.parse_expr_bp(10)?;
+        if self.lexer.eat_if(&Token::Colon).is_some() {
+            let end = if self.lexer.peek() != Some(&Token::Colon)
+                && self.lexer.peek() != Some(&Token::Comma)
+                && self.lexer.peek() != Some(&Token::RBracket)
+            {
+                Some(self.parse_expr_bp(10)?)
+            } else {
+                None
+            };
+            let step = if self.lexer.eat_if(&Token::Colon).is_some() {
+                Some(self.parse_expr_bp(10)?)
+            } else {
+                None
+            };
+            Ok(IndexElement::Slice {
+                start: Some(start),
+                end,
+                step,
+            })
+        } else {
+            Ok(IndexElement::Single(start))
+        }
     }
 
     // ── Helpers ────────────────────────────────────────────────────
@@ -872,6 +1159,10 @@ fn infix_binding_power(tok: &Token) -> Option<(u8, u8)> {
     match tok {
         Token::Or | Token::PipePipe => Some((2, 3)),
         Token::And | Token::AmpAmp => Some((4, 5)),
+        // Bitwise operators between logical and comparison
+        Token::Pipe => Some((3, 4)), // bitwise OR — just above logical OR
+        Token::Caret => Some((5, 6)), // bitwise XOR
+        Token::Amp => Some((7, 8)),  // bitwise AND — just below comparison
         Token::Eq
         | Token::EqEq
         | Token::Ne
@@ -904,6 +1195,9 @@ fn infix_op(tok: &Token) -> BinaryOp {
         Token::Ge => BinaryOp::Ge,
         Token::And | Token::AmpAmp => BinaryOp::And,
         Token::Or | Token::PipePipe => BinaryOp::Or,
+        Token::Amp => BinaryOp::BitAnd,
+        Token::Pipe => BinaryOp::BitOr,
+        Token::Caret => BinaryOp::BitXor,
         _ => unreachable!("infix_op called with non-infix token: {tok}"),
     }
 }
@@ -942,6 +1236,10 @@ fn is_allowed_column_keyword(tok: &Token) -> bool {
             | Token::True
             | Token::False
             | Token::Null
+            | Token::Using
+            | Token::Style
+            | Token::Create
+            | Token::Giving
     )
 }
 
@@ -1685,6 +1983,271 @@ mod tests {
         }
     }
 
+    // ── Wave 2: Bitwise operators ──
+
+    #[test]
+    fn bitwise_and() {
+        let stmt = parse("SELECT x & 255 AS masked");
+        match stmt {
+            Statement::Select(s) => match &s.columns[0].expr {
+                Expr::Binary {
+                    op: BinaryOp::BitAnd,
+                    ..
+                } => {}
+                other => panic!("expected BitAnd, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn bitwise_or_xor() {
+        let stmt = parse("SELECT x | y ^ z");
+        match stmt {
+            Statement::Select(s) => {
+                // Should parse; exact shape depends on precedence
+                assert_eq!(s.columns.len(), 1);
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    // ── Wave 2: Regex literals and matching ──
+
+    #[test]
+    fn regex_literal() {
+        let stmt = parse("SELECT * WHERE name =~ p/foo.*/i");
+        match stmt {
+            Statement::Select(s) => match s.where_clause.as_ref().unwrap() {
+                Expr::RegexMatch {
+                    negated, pattern, ..
+                } => {
+                    assert!(!negated);
+                    assert!(matches!(
+                        pattern.as_ref(),
+                        Expr::Literal(Literal::Regex {
+                            pattern: p,
+                            flags: f,
+                        }) if p == "foo.*" && f == "i"
+                    ));
+                }
+                other => panic!("expected RegexMatch, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn regex_not_match() {
+        let stmt = parse("SELECT * WHERE name !~ p/bad/");
+        match stmt {
+            Statement::Select(s) => {
+                assert!(matches!(
+                    s.where_clause.as_ref().unwrap(),
+                    Expr::RegexMatch { negated: true, .. }
+                ));
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    // ── Wave 2: IN with bracket ranges ──
+
+    #[test]
+    fn in_bracket_values() {
+        let stmt = parse("SELECT * WHERE x IN [1, 2, 3]");
+        match stmt {
+            Statement::Select(s) => match s.where_clause.as_ref().unwrap() {
+                Expr::InSet {
+                    elements, negated, ..
+                } => {
+                    assert!(!negated);
+                    assert_eq!(elements.len(), 3);
+                    assert!(matches!(&elements[0], InSetElement::Value(_)));
+                }
+                other => panic!("expected InSet, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn in_bracket_range() {
+        let stmt = parse("SELECT * WHERE x IN [1:10]");
+        match stmt {
+            Statement::Select(s) => match s.where_clause.as_ref().unwrap() {
+                Expr::InSet { elements, .. } => {
+                    assert_eq!(elements.len(), 1);
+                    assert!(matches!(
+                        &elements[0],
+                        InSetElement::Range {
+                            start: Some(_),
+                            end: Some(_),
+                            step: None,
+                        }
+                    ));
+                }
+                other => panic!("expected InSet, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn in_bracket_range_with_step() {
+        let stmt = parse("SELECT * WHERE x IN [0:10:2]");
+        match stmt {
+            Statement::Select(s) => match s.where_clause.as_ref().unwrap() {
+                Expr::InSet { elements, .. } => {
+                    assert_eq!(elements.len(), 1);
+                    assert!(matches!(
+                        &elements[0],
+                        InSetElement::Range {
+                            start: Some(_),
+                            end: Some(_),
+                            step: Some(_),
+                        }
+                    ));
+                }
+                other => panic!("expected InSet, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    // ── Wave 2: Array indexing (basic parsing, full impl in Wave 3) ──
+
+    #[test]
+    fn array_index_single() {
+        let stmt = parse("SELECT arr[0]");
+        match stmt {
+            Statement::Select(s) => {
+                assert!(matches!(&s.columns[0].expr, Expr::ArrayIndex { .. }));
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn array_index_slice() {
+        let stmt = parse("SELECT arr[1:3]");
+        match stmt {
+            Statement::Select(s) => match &s.columns[0].expr {
+                Expr::ArrayIndex { indices, .. } => {
+                    assert_eq!(indices.len(), 1);
+                    assert!(matches!(&indices[0], IndexElement::Slice { .. }));
+                }
+                other => panic!("expected ArrayIndex, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    // ── Wave 3: USING STYLE and multi-dim indexing ──
+
+    #[test]
+    fn using_style_python() {
+        let stmt = parse("USING STYLE PYTHON SELECT arr[0]");
+        match stmt {
+            Statement::Select(s) => {
+                assert_eq!(s.style, IndexStyle::Python);
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn using_style_glish() {
+        let stmt = parse("USING STYLE GLISH SELECT arr[1]");
+        match stmt {
+            Statement::Select(s) => {
+                assert_eq!(s.style, IndexStyle::Glish);
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn using_style_case_insensitive() {
+        let stmt = parse("using style python SELECT arr[0]");
+        match stmt {
+            Statement::Select(s) => {
+                assert_eq!(s.style, IndexStyle::Python);
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn no_using_style_defaults_glish() {
+        let stmt = parse("SELECT arr[1]");
+        match stmt {
+            Statement::Select(s) => {
+                assert_eq!(s.style, IndexStyle::Glish);
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn multi_dim_index() {
+        let stmt = parse("SELECT arr[1, 2]");
+        match stmt {
+            Statement::Select(s) => match &s.columns[0].expr {
+                Expr::ArrayIndex { indices, .. } => {
+                    assert_eq!(indices.len(), 2);
+                    assert!(matches!(&indices[0], IndexElement::Single(_)));
+                    assert!(matches!(&indices[1], IndexElement::Single(_)));
+                }
+                other => panic!("expected ArrayIndex, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn multi_dim_slice() {
+        let stmt = parse("SELECT arr[1:3, 2:4]");
+        match stmt {
+            Statement::Select(s) => match &s.columns[0].expr {
+                Expr::ArrayIndex { indices, .. } => {
+                    assert_eq!(indices.len(), 2);
+                    assert!(matches!(&indices[0], IndexElement::Slice { .. }));
+                    assert!(matches!(&indices[1], IndexElement::Slice { .. }));
+                }
+                other => panic!("expected ArrayIndex, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn slice_with_step() {
+        let stmt = parse("SELECT arr[1:10:2]");
+        match stmt {
+            Statement::Select(s) => match &s.columns[0].expr {
+                Expr::ArrayIndex { indices, .. } => {
+                    assert_eq!(indices.len(), 1);
+                    match &indices[0] {
+                        IndexElement::Slice { start, end, step } => {
+                            assert!(start.is_some());
+                            assert!(end.is_some());
+                            assert!(step.is_some());
+                        }
+                        _ => panic!("expected Slice"),
+                    }
+                }
+                other => panic!("expected ArrayIndex, got {other:?}"),
+            },
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn using_style_python_roundtrip() {
+        roundtrip("USING STYLE PYTHON SELECT arr[0]");
+    }
+
     #[test]
     fn gmean_aggregate_in_select() {
         let stmt = parse("SELECT GMEAN(col) FROM t GROUP BY grp");
@@ -1697,5 +2260,39 @@ mod tests {
             },
             _ => panic!("expected SELECT"),
         }
+    }
+
+    // ── Wave 8: COUNT SELECT parsing ─────────────────────────────
+
+    #[test]
+    fn count_select_basic() {
+        let stmt = parse("COUNT SELECT *");
+        match stmt {
+            Statement::CountSelect(s) => {
+                assert!(s.columns.is_empty()); // * = empty
+                assert!(s.where_clause.is_none());
+            }
+            _ => panic!("expected CountSelect"),
+        }
+    }
+
+    #[test]
+    fn count_select_with_where() {
+        let stmt = parse("COUNT SELECT * WHERE x > 5");
+        match stmt {
+            Statement::CountSelect(s) => {
+                assert!(s.where_clause.is_some());
+            }
+            _ => panic!("expected CountSelect"),
+        }
+    }
+
+    #[test]
+    fn count_select_roundtrip() {
+        let stmt = parse("COUNT SELECT *");
+        let displayed = stmt.to_string();
+        assert!(displayed.starts_with("COUNT "));
+        let reparsed = parse(&displayed);
+        assert!(matches!(reparsed, Statement::CountSelect(_)));
     }
 }

@@ -125,7 +125,14 @@ pub enum Token {
     To,
     #[token("ROW", ignore(ascii_case))]
     Row,
-
+    #[token("USING", ignore(ascii_case))]
+    Using,
+    #[token("STYLE", ignore(ascii_case))]
+    Style,
+    #[token("CREATE", ignore(ascii_case))]
+    Create,
+    #[token("GIVING", ignore(ascii_case))]
+    Giving,
     // ── Operators ───────────────────────────────────────────────────
     #[token("+")]
     Plus,
@@ -163,6 +170,20 @@ pub enum Token {
     Bang,
     #[token("~")]
     Tilde,
+    #[token("&")]
+    Amp,
+    #[token("|")]
+    Pipe,
+    #[token("^")]
+    Caret,
+    #[token(":")]
+    Colon,
+    /// Regex match operator `=~`
+    #[token("=~")]
+    EqTilde,
+    /// Negated regex match operator `!~`
+    #[token("!~")]
+    BangTilde,
 
     // ── Delimiters ──────────────────────────────────────────────────
     #[token("(")]
@@ -194,6 +215,12 @@ pub enum Token {
     #[regex(r#""[^"]*""#)]
     StringLiteral,
 
+    /// Regex literal: `p/pattern/flags` or `m/pattern/flags`.
+    ///
+    /// C++ reference: `TaQLRegexNode`, `StringUtil::regex()`.
+    #[regex(r"[pm]/[^/]*/[ig]*", priority = 5)]
+    RegexLiteral,
+
     /// Identifier or unquoted column/table name.
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", priority = 1)]
     Ident,
@@ -222,6 +249,12 @@ impl Token {
                 | Token::PipePipe
                 | Token::Bang
                 | Token::Tilde
+                | Token::Amp
+                | Token::Pipe
+                | Token::Caret
+                | Token::Colon
+                | Token::EqTilde
+                | Token::BangTilde
                 | Token::LParen
                 | Token::RParen
                 | Token::LBracket
@@ -231,6 +264,7 @@ impl Token {
                 | Token::IntLiteral
                 | Token::FloatLiteral
                 | Token::StringLiteral
+                | Token::RegexLiteral
                 | Token::Ident
         )
     }
@@ -291,6 +325,10 @@ impl std::fmt::Display for Token {
             Token::Keyword => "KEYWORD",
             Token::To => "TO",
             Token::Row => "ROW",
+            Token::Using => "USING",
+            Token::Style => "STYLE",
+            Token::Create => "CREATE",
+            Token::Giving => "GIVING",
             Token::Plus => "+",
             Token::Minus => "-",
             Token::Star => "*",
@@ -309,6 +347,12 @@ impl std::fmt::Display for Token {
             Token::PipePipe => "||",
             Token::Bang => "!",
             Token::Tilde => "~",
+            Token::Amp => "&",
+            Token::Pipe => "|",
+            Token::Caret => "^",
+            Token::Colon => ":",
+            Token::EqTilde => "=~",
+            Token::BangTilde => "!~",
             Token::LParen => "(",
             Token::RParen => ")",
             Token::LBracket => "[",
@@ -318,6 +362,7 @@ impl std::fmt::Display for Token {
             Token::IntLiteral => "<int>",
             Token::FloatLiteral => "<float>",
             Token::StringLiteral => "<string>",
+            Token::RegexLiteral => "<regex>",
             Token::Ident => "<ident>",
         };
         f.write_str(s)
@@ -384,6 +429,10 @@ mod tests {
             (Token::Keyword, "KEYWORD"),
             (Token::To, "TO"),
             (Token::Row, "ROW"),
+            (Token::Using, "USING"),
+            (Token::Style, "STYLE"),
+            (Token::Create, "CREATE"),
+            (Token::Giving, "GIVING"),
             (Token::Plus, "+"),
             (Token::Minus, "-"),
             (Token::Star, "*"),
@@ -402,6 +451,12 @@ mod tests {
             (Token::PipePipe, "||"),
             (Token::Bang, "!"),
             (Token::Tilde, "~"),
+            (Token::Amp, "&"),
+            (Token::Pipe, "|"),
+            (Token::Caret, "^"),
+            (Token::Colon, ":"),
+            (Token::EqTilde, "=~"),
+            (Token::BangTilde, "!~"),
             (Token::LParen, "("),
             (Token::RParen, ")"),
             (Token::LBracket, "["),
@@ -411,6 +466,7 @@ mod tests {
             (Token::IntLiteral, "<int>"),
             (Token::FloatLiteral, "<float>"),
             (Token::StringLiteral, "<string>"),
+            (Token::RegexLiteral, "<regex>"),
             (Token::Ident, "<ident>"),
         ];
         for (tok, expected) in tokens {
@@ -431,5 +487,8 @@ mod tests {
         assert!(!Token::LParen.is_keyword());
         assert!(!Token::IntLiteral.is_keyword());
         assert!(!Token::Ident.is_keyword());
+        assert!(!Token::Amp.is_keyword());
+        assert!(!Token::Pipe.is_keyword());
+        assert!(!Token::RegexLiteral.is_keyword());
     }
 }

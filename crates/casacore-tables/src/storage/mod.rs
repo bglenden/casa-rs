@@ -14,6 +14,7 @@ pub(crate) mod virtual_compress;
 pub(crate) mod virtual_engine;
 pub(crate) mod virtual_forward;
 pub(crate) mod virtual_scaled_array;
+pub(crate) mod virtual_taql_column;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;

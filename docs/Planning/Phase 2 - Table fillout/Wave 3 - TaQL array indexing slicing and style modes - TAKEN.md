@@ -42,29 +42,38 @@
 
 ## Definition of Ready
 
-- [ ] C++ reference paths identified in `../casacore` (class + function names).
-- [ ] 2x2 interop fixtures identified (RR, RC, CR, CC).
-- [ ] Endian and undefined-cell behavior reviewed for touched formats.
-- [ ] Performance workload defined or marked N/A.
-- [ ] Non-goals documented.
+- [x] C++ reference paths identified — `tables/TaQL/TableParse.h: tableCommand()`
+- [x] 2x2 interop fixtures identified — Array fixture (10-row, 2-D arrays), interop queries:
+  1. `SELECT arrcol[1,2] FROM $T`
+  2. `SELECT arrcol[2,3] FROM $T`
+  3. `SELECT arrcol[1:3,] FROM $T`
+  4. `SELECT arrcol[,2:4] FROM $T`
+  5. `SELECT arrcol[1:2:1,1:3:1] FROM $T USING STYLE PYTHON`
+- [x] Endian and undefined-cell behavior reviewed for touched formats.
+- [x] Performance workload defined or marked N/A — N/A (array access, not a hot path).
+- [x] Non-goals documented.
 
 ## Implementation checklist
 
-- [ ] Add array index/slice AST + parser handling.
-- [ ] Implement slicing/index extraction in eval.
-- [ ] Add style context and parser support for `USING STYLE`.
-- [ ] Add regression tests for GLISH and PYTHON behavior.
+- [x] Add array index/slice AST + parser handling.
+- [x] Implement slicing/index extraction in eval.
+- [x] Add style context and parser support for `USING STYLE`.
+- [x] Add regression tests for GLISH and PYTHON behavior.
+- [ ] Add C++ TaQL interop queries for this wave (5 queries above).
+- [ ] Run cross-matrix and record results.
 
 ## Test plan
 
-- [ ] Array indexing/slicing positive and error cases.
-- [ ] Style mode tests for 1-based and 0-based behavior.
-- [ ] Existing TaQL tests remain green.
-- [ ] Clean skip when `pkg-config casacore` is unavailable.
+- [x] Array indexing/slicing positive and error cases.
+- [x] Style mode tests for 1-based and 0-based behavior.
+- [x] Existing TaQL tests remain green.
+- [x] Clean skip when `pkg-config casacore` is unavailable.
+- [ ] TaQL interop cross-matrix (RR/CC/RC/CR) for 5 queries.
+- [ ] Results match between Rust and C++ within tolerance.
 
 ## Performance plan
 
-- Workload: N/A.
+- Workload: N/A — array element access, not a hot path.
 - Rust command: N/A.
 - C++ command: N/A.
 - Alert threshold: N/A.

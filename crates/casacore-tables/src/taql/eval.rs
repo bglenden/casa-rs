@@ -19,7 +19,7 @@ use std::fmt;
 use casacore_types::{RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 
-use super::ast::*;
+use super::ast::{self, *};
 use super::error::TaqlError;
 
 /// A dynamically typed value produced by expression evaluation.
@@ -41,6 +41,11 @@ pub enum ExprValue {
     DateTime(f64),
     /// N-dimensional array with shape and flat data (row-major order).
     Array(ArrayValue),
+    /// A compiled regex pattern for matching.
+    Regex {
+        pattern: String,
+        flags: String,
+    },
     Null,
 }
 
@@ -68,6 +73,16 @@ impl PartialEq for ExprValue {
             (Self::String(a), Self::String(b)) => a == b,
             (Self::DateTime(a), Self::DateTime(b)) => a == b,
             (Self::Array(a), Self::Array(b)) => a.shape == b.shape && a.data == b.data,
+            (
+                Self::Regex {
+                    pattern: a,
+                    flags: af,
+                },
+                Self::Regex {
+                    pattern: b,
+                    flags: bf,
+                },
+            ) => a == b && af == bf,
             (Self::Null, Self::Null) => true,
             // Cross-type equality after promotion
             _ => {
@@ -104,6 +119,7 @@ impl fmt::Display for ExprValue {
                 }
                 write!(f, "]")
             }
+            Self::Regex { pattern, flags } => write!(f, "p/{pattern}/{flags}"),
             Self::Null => write!(f, "NULL"),
         }
     }
@@ -120,6 +136,7 @@ impl ExprValue {
             Self::String(_) => "String",
             Self::DateTime(_) => "DateTime",
             Self::Array(_) => "Array",
+            Self::Regex { .. } => "Regex",
             Self::Null => "Null",
         }
     }
@@ -172,6 +189,17 @@ impl ExprValue {
                     type_name = other.type_name()
                 ),
             }),
+        }
+    }
+
+    /// Convert to a Rust String, or error if not a String value.
+    pub fn to_string_val(&self) -> Result<String, TaqlError> {
+        match self {
+            Self::String(s) => Ok(s.clone()),
+            Self::Null => Err(TaqlError::TypeError {
+                message: "cannot convert Null to String".to_string(),
+            }),
+            other => Ok(format!("{other}")),
         }
     }
 
@@ -337,25 +365,70 @@ impl From<&Value> for ExprValue {
 }
 
 /// Convert a casacore `ArrayValue` (typed ndarray) into an `ExprValue::Array`.
+///
+/// The flat data vector uses **column-major** (Fortran) order to match C++ casacore
+/// conventions, where the first dimension varies fastest. We use `as_slice_memory_order()`
+/// since casacore arrays are stored in Fortran layout.
 fn array_value_to_expr(arr: &casacore_types::ArrayValue) -> ExprValue {
     use casacore_types::ArrayValue as AV;
     let shape: Vec<usize> = arr.shape().to_vec();
+
+    /// Iterate ndarray elements in storage (memory) order.
+    /// For Fortran-layout arrays (as used by casacore), this gives column-major order.
+    fn storage_order<T>(a: &ndarray::ArrayD<T>) -> &[T] {
+        a.as_slice_memory_order()
+            .expect("casacore arrays are always contiguous")
+    }
+
     let data: Vec<ExprValue> = match arr {
-        AV::Bool(a) => a.iter().map(|v| ExprValue::Bool(*v)).collect(),
-        AV::UInt8(a) => a.iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::UInt16(a) => a.iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::UInt32(a) => a.iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::Int16(a) => a.iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::Int32(a) => a.iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::Int64(a) => a.iter().map(|v| ExprValue::Int(*v)).collect(),
-        AV::Float32(a) => a.iter().map(|v| ExprValue::Float(*v as f64)).collect(),
-        AV::Float64(a) => a.iter().map(|v| ExprValue::Float(*v)).collect(),
-        AV::Complex32(a) => a
+        AV::Bool(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Bool(*v))
+            .collect(),
+        AV::UInt8(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::UInt16(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::UInt32(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::Int16(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::Int32(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::Int64(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Int(*v))
+            .collect(),
+        AV::Float32(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Float(*v as f64))
+            .collect(),
+        AV::Float64(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Float(*v))
+            .collect(),
+        AV::Complex32(a) => storage_order(a)
             .iter()
             .map(|v| ExprValue::Complex(Complex64::new(v.re as f64, v.im as f64)))
             .collect(),
-        AV::Complex64(a) => a.iter().map(|v| ExprValue::Complex(*v)).collect(),
-        AV::String(a) => a.iter().map(|v| ExprValue::String(v.clone())).collect(),
+        AV::Complex64(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::Complex(*v))
+            .collect(),
+        AV::String(a) => storage_order(a)
+            .iter()
+            .map(|v| ExprValue::String(v.clone()))
+            .collect(),
     };
     ExprValue::Array(ArrayValue { shape, data })
 }
@@ -366,6 +439,8 @@ pub struct EvalContext<'a> {
     pub row: &'a RecordValue,
     /// The 0-based row index in the parent table.
     pub row_index: usize,
+    /// Index style (Glish=1-based or Python=0-based).
+    pub style: ast::IndexStyle,
 }
 
 /// Evaluate an expression against a row context.
@@ -453,8 +528,123 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
             let is_null = val.is_null();
             Ok(ExprValue::Bool(if *negated { !is_null } else { is_null }))
         }
+        Expr::RegexMatch {
+            expr,
+            pattern,
+            negated,
+        } => {
+            let val = eval_expr(expr, ctx)?;
+            let pat = eval_expr(pattern, ctx)?;
+            if val.is_null() || pat.is_null() {
+                return Ok(ExprValue::Null);
+            }
+            let s = match &val {
+                ExprValue::String(s) => s.as_str(),
+                _ => {
+                    return Err(TaqlError::TypeError {
+                        message: format!("regex match requires String, got {}", val.type_name()),
+                    });
+                }
+            };
+            let (re_pattern, case_insensitive) = match &pat {
+                ExprValue::String(p) => (p.as_str(), false),
+                ExprValue::Regex { pattern, flags } => (pattern.as_str(), flags.contains('i')),
+                _ => {
+                    return Err(TaqlError::TypeError {
+                        message: format!(
+                            "regex pattern must be String or Regex, got {}",
+                            pat.type_name()
+                        ),
+                    });
+                }
+            };
+            let re_str = if case_insensitive {
+                format!("(?i){re_pattern}")
+            } else {
+                re_pattern.to_string()
+            };
+            let re = regex::Regex::new(&re_str).map_err(|e| TaqlError::TypeError {
+                message: format!("invalid regex: {e}"),
+            })?;
+            let matched = re.is_match(s);
+            Ok(ExprValue::Bool(if *negated { !matched } else { matched }))
+        }
+        Expr::InSet {
+            expr,
+            elements,
+            negated,
+        } => {
+            let val = eval_expr(expr, ctx)?;
+            if val.is_null() {
+                return Ok(ExprValue::Null);
+            }
+            let mut found = false;
+            for elem in elements {
+                match elem {
+                    ast::InSetElement::Value(v) => {
+                        let item = eval_expr(v, ctx)?;
+                        if val == item {
+                            found = true;
+                            break;
+                        }
+                    }
+                    ast::InSetElement::Range { start, end, step } => {
+                        let lo = start.as_ref().map(|s| eval_expr(s, ctx)).transpose()?;
+                        let hi = end.as_ref().map(|e| eval_expr(e, ctx)).transpose()?;
+                        // Check range membership
+                        let ge_lo = match &lo {
+                            Some(l) => val.compare(l)? != Ordering::Less,
+                            None => true,
+                        };
+                        let le_hi = match &hi {
+                            Some(h) => val.compare(h)? != Ordering::Greater,
+                            None => true,
+                        };
+                        if ge_lo && le_hi {
+                            // If step is given, check stride
+                            if let Some(step_expr) = step {
+                                let s_val = eval_expr(step_expr, ctx)?;
+                                let step_f = s_val.to_float()?;
+                                let v_f = val.to_float()?;
+                                let lo_f = lo
+                                    .as_ref()
+                                    .map(|l| l.to_float())
+                                    .transpose()?
+                                    .unwrap_or(0.0);
+                                if step_f != 0.0 {
+                                    let offset = v_f - lo_f;
+                                    let remainder = offset % step_f;
+                                    if remainder.abs() < 1e-10 {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(ExprValue::Bool(if *negated { !found } else { found }))
+        }
+        Expr::ArrayIndex { array, indices } => {
+            let arr_val = eval_expr(array, ctx)?;
+            match arr_val {
+                ExprValue::Array(arr) => eval_array_index(&arr, indices, ctx),
+                other => Err(TaqlError::TypeError {
+                    message: format!("array indexing requires Array, got {}", other.type_name()),
+                }),
+            }
+        }
         Expr::Star => Ok(ExprValue::Null), // * in expression context is unusual
         Expr::RowNumber => Ok(ExprValue::Int(ctx.row_index as i64)),
+        Expr::Subquery(_) => {
+            // Subquery evaluation requires a table context; in per-row eval
+            // we return Null. Full subquery support needs the executor.
+            Ok(ExprValue::Null)
+        }
         Expr::FunctionCall { name, args } => {
             let evaluated_args: Vec<ExprValue> = args
                 .iter()
@@ -478,6 +668,10 @@ fn eval_literal(lit: &Literal) -> ExprValue {
         Literal::String(s) => ExprValue::String(s.clone()),
         Literal::Bool(b) => ExprValue::Bool(*b),
         Literal::Complex(c) => ExprValue::Complex(*c),
+        Literal::Regex { pattern, flags } => ExprValue::Regex {
+            pattern: pattern.clone(),
+            flags: flags.clone(),
+        },
         Literal::Null => ExprValue::Null,
     }
 }
@@ -550,6 +744,21 @@ fn eval_binary(op: BinaryOp, lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue
         BinaryOp::IntDiv => eval_int_div(lhs, rhs),
         BinaryOp::Modulo => eval_modulo(lhs, rhs),
         BinaryOp::Power => eval_power(lhs, rhs),
+        BinaryOp::BitAnd => {
+            let a = lhs.to_int()?;
+            let b = rhs.to_int()?;
+            Ok(ExprValue::Int(a & b))
+        }
+        BinaryOp::BitOr => {
+            let a = lhs.to_int()?;
+            let b = rhs.to_int()?;
+            Ok(ExprValue::Int(a | b))
+        }
+        BinaryOp::BitXor => {
+            let a = lhs.to_int()?;
+            let b = rhs.to_int()?;
+            Ok(ExprValue::Int(a ^ b))
+        }
     }
 }
 
@@ -694,6 +903,224 @@ fn like_match_recursive(text: &[u8], pattern: &[u8]) -> bool {
     }
 
     pi == pattern.len()
+}
+
+/// Convert a user-supplied index to a 0-based index, respecting [`IndexStyle`].
+///
+/// - **Glish** (1-based): subtract 1.
+/// - **Python** (0-based): use as-is. Negative indices count from end.
+fn to_zero_based(idx: i64, len: usize, style: ast::IndexStyle) -> Result<usize, TaqlError> {
+    let len_i = len as i64;
+    let actual = match style {
+        ast::IndexStyle::Glish => {
+            // 1-based: 1 → 0, negative counts from end
+            if idx < 0 { len_i + idx } else { idx - 1 }
+        }
+        ast::IndexStyle::Python => {
+            if idx < 0 {
+                len_i + idx
+            } else {
+                idx
+            }
+        }
+    };
+    if actual < 0 || actual >= len_i {
+        return Err(TaqlError::TypeError {
+            message: format!("array index {idx} out of bounds (length {len})"),
+        });
+    }
+    Ok(actual as usize)
+}
+
+/// Resolve a slice (start:end[:step]) to a Vec of 0-based indices.
+fn resolve_slice(
+    start: Option<i64>,
+    end: Option<i64>,
+    step: Option<i64>,
+    dim_len: usize,
+    style: ast::IndexStyle,
+) -> Result<Vec<usize>, TaqlError> {
+    let step = step.unwrap_or(1);
+    if step == 0 {
+        return Err(TaqlError::TypeError {
+            message: "slice step cannot be zero".to_string(),
+        });
+    }
+    let len_i = dim_len as i64;
+    match style {
+        ast::IndexStyle::Glish => {
+            // 1-based inclusive: start defaults to 1, end defaults to len
+            let s = start.unwrap_or(1);
+            let e = end.unwrap_or(len_i);
+            let s0 = if s < 0 { len_i + s } else { s - 1 };
+            let e0 = if e < 0 { len_i + e } else { e - 1 };
+            let mut result = Vec::new();
+            if step > 0 {
+                let mut i = s0;
+                while i <= e0 && i < len_i {
+                    if i >= 0 {
+                        result.push(i as usize);
+                    }
+                    i += step;
+                }
+            } else {
+                let mut i = s0;
+                while i >= e0 && i >= 0 {
+                    if i < len_i {
+                        result.push(i as usize);
+                    }
+                    i += step;
+                }
+            }
+            Ok(result)
+        }
+        ast::IndexStyle::Python => {
+            // 0-based exclusive end: start defaults to 0, end defaults to len
+            let s = start.unwrap_or(if step > 0 { 0 } else { len_i - 1 });
+            let e = end.unwrap_or(if step > 0 { len_i } else { -len_i - 1 });
+            let s0 = if s < 0 {
+                (len_i + s).max(0)
+            } else {
+                s.min(len_i)
+            };
+            let e0 = if e < 0 {
+                (len_i + e).max(-1)
+            } else {
+                e.min(len_i)
+            };
+            let mut result = Vec::new();
+            if step > 0 {
+                let mut i = s0;
+                while i < e0 {
+                    result.push(i as usize);
+                    i += step;
+                }
+            } else {
+                let mut i = s0;
+                while i > e0 {
+                    result.push(i as usize);
+                    i += step;
+                }
+            }
+            Ok(result)
+        }
+    }
+}
+
+/// Evaluate array indexing/slicing with style-aware offset.
+///
+/// Supports N-dimensional arrays with single-element access and slicing.
+///
+/// C++ reference: `TableExprNodeArrayPart`.
+fn eval_array_index(
+    arr: &ArrayValue,
+    indices: &[ast::IndexElement],
+    ctx: &EvalContext<'_>,
+) -> Result<ExprValue, TaqlError> {
+    let ndim = arr.shape.len();
+
+    // If fewer indices than dimensions, remaining dims are taken in full.
+    // If more indices than dimensions for a 1-D array, allow as flat access.
+    if indices.len() > ndim && ndim != 1 {
+        return Err(TaqlError::TypeError {
+            message: format!(
+                "too many indices ({}) for {}-dimensional array",
+                indices.len(),
+                ndim
+            ),
+        });
+    }
+
+    // Resolve each index dimension to a list of positions.
+    let mut dim_indices: Vec<Vec<usize>> = Vec::with_capacity(ndim);
+    for dim in 0..ndim {
+        let dim_len = arr.shape[dim];
+        if dim < indices.len() {
+            match &indices[dim] {
+                ast::IndexElement::Single(expr) => {
+                    let val = eval_expr(expr, ctx)?;
+                    let idx = val.to_int()?;
+                    let pos = to_zero_based(idx, dim_len, ctx.style)?;
+                    dim_indices.push(vec![pos]);
+                }
+                ast::IndexElement::Slice { start, end, step } => {
+                    let s = start
+                        .as_ref()
+                        .map(|e| eval_expr(e, ctx)?.to_int())
+                        .transpose()?;
+                    let e = end
+                        .as_ref()
+                        .map(|e| eval_expr(e, ctx)?.to_int())
+                        .transpose()?;
+                    let st = step
+                        .as_ref()
+                        .map(|e| eval_expr(e, ctx)?.to_int())
+                        .transpose()?;
+                    dim_indices.push(resolve_slice(s, e, st, dim_len, ctx.style)?);
+                }
+            }
+        } else {
+            // Remaining dims: take all elements.
+            dim_indices.push((0..dim_len).collect());
+        }
+    }
+
+    // Compute output shape: dims with >1 element remain; dims with 1 element are squeezed.
+    // But only squeeze if the user gave a Single index for that dim.
+    let mut result_shape = Vec::new();
+    for (dim, idxs) in dim_indices.iter().enumerate() {
+        let is_single = dim < indices.len() && matches!(indices[dim], ast::IndexElement::Single(_));
+        if !is_single {
+            result_shape.push(idxs.len());
+        }
+    }
+
+    // Collect elements using column-major (Fortran) traversal of the index
+    // combinations, matching C++ casacore array storage order.
+    let mut result_data = Vec::new();
+    let mut combo = vec![0usize; ndim];
+    loop {
+        // Compute flat index from combo using column-major strides
+        // (first dimension varies fastest, matching C++ casacore).
+        let mut flat = 0;
+        let mut stride = 1;
+        for dim in 0..ndim {
+            flat += dim_indices[dim][combo[dim]] * stride;
+            stride *= arr.shape[dim];
+        }
+        if flat < arr.data.len() {
+            result_data.push(arr.data[flat].clone());
+        }
+
+        // Advance combo (leftmost first = column-major traversal)
+        let mut carry = true;
+        for dim in 0..ndim {
+            if carry {
+                combo[dim] += 1;
+                if combo[dim] < dim_indices[dim].len() {
+                    carry = false;
+                } else {
+                    combo[dim] = 0;
+                }
+            }
+        }
+        if carry {
+            break;
+        }
+    }
+
+    // If the result is a scalar (all dims squeezed), return the single element.
+    if result_shape.is_empty() || result_shape.iter().all(|&d| d == 1) {
+        if let Some(val) = result_data.into_iter().next() {
+            return Ok(val);
+        }
+        return Ok(ExprValue::Null);
+    }
+
+    Ok(ExprValue::Array(ArrayValue {
+        shape: result_shape,
+        data: result_data,
+    }))
 }
 
 #[cfg(test)]
@@ -868,6 +1295,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
 
         // Evaluate: flux * 2.0
@@ -889,6 +1317,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 42,
+            style: ast::IndexStyle::default(),
         };
         let result = eval_expr(&Expr::RowNumber, &ctx).unwrap();
         assert_eq!(result, ExprValue::Int(42));
@@ -1122,6 +1551,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         assert_eq!(
             eval_expr(&Expr::Literal(Literal::Int(42)), &ctx).unwrap(),
@@ -1151,6 +1581,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         let expr = Expr::Unary {
             op: UnaryOp::Not,
@@ -1165,6 +1596,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         let expr = Expr::Unary {
             op: UnaryOp::Negate,
@@ -1179,6 +1611,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         let expr = Expr::IsNull {
             expr: Box::new(Expr::Literal(Literal::Null)),
@@ -1199,6 +1632,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         let expr = Expr::Between {
             expr: Box::new(Expr::Literal(Literal::Int(5))),
@@ -1226,6 +1660,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         let expr = Expr::In {
             expr: Box::new(Expr::Literal(Literal::Int(2))),
@@ -1252,6 +1687,7 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         let expr = Expr::Binary {
             left: Box::new(Expr::Literal(Literal::Int(3))),
@@ -1267,11 +1703,452 @@ mod tests {
         let ctx = EvalContext {
             row: &row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
         let expr = Expr::FunctionCall {
             name: "abs".to_string(),
             args: vec![Expr::Literal(Literal::Float(-5.0))],
         };
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Float(5.0));
+    }
+
+    // ── Wave 2: Bitwise operator tests ──
+
+    #[test]
+    fn bitwise_and_eval() {
+        let result =
+            eval_binary(BinaryOp::BitAnd, ExprValue::Int(0xFF), ExprValue::Int(0x0F)).unwrap();
+        assert_eq!(result, ExprValue::Int(0x0F));
+    }
+
+    #[test]
+    fn bitwise_or_eval() {
+        let result =
+            eval_binary(BinaryOp::BitOr, ExprValue::Int(0xF0), ExprValue::Int(0x0F)).unwrap();
+        assert_eq!(result, ExprValue::Int(0xFF));
+    }
+
+    #[test]
+    fn bitwise_xor_eval() {
+        let result =
+            eval_binary(BinaryOp::BitXor, ExprValue::Int(0xFF), ExprValue::Int(0x0F)).unwrap();
+        assert_eq!(result, ExprValue::Int(0xF0));
+    }
+
+    #[test]
+    fn bitwise_not_eval() {
+        let result = eval_unary(UnaryOp::BitNot, ExprValue::Int(0)).unwrap();
+        assert_eq!(result, ExprValue::Int(-1)); // !0 = -1 in two's complement
+    }
+
+    // ── Wave 2: Regex match tests ──
+
+    #[test]
+    fn regex_match_positive() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::default(),
+        };
+        let expr = Expr::RegexMatch {
+            expr: Box::new(Expr::Literal(Literal::String("hello world".to_string()))),
+            pattern: Box::new(Expr::Literal(Literal::Regex {
+                pattern: "hello.*".to_string(),
+                flags: String::new(),
+            })),
+            negated: false,
+        };
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Bool(true));
+    }
+
+    #[test]
+    fn regex_match_negated() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::default(),
+        };
+        let expr = Expr::RegexMatch {
+            expr: Box::new(Expr::Literal(Literal::String("hello".to_string()))),
+            pattern: Box::new(Expr::Literal(Literal::Regex {
+                pattern: "world".to_string(),
+                flags: String::new(),
+            })),
+            negated: true,
+        };
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Bool(true));
+    }
+
+    #[test]
+    fn regex_case_insensitive() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::default(),
+        };
+        let expr = Expr::RegexMatch {
+            expr: Box::new(Expr::Literal(Literal::String("HELLO".to_string()))),
+            pattern: Box::new(Expr::Literal(Literal::Regex {
+                pattern: "hello".to_string(),
+                flags: "i".to_string(),
+            })),
+            negated: false,
+        };
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Bool(true));
+    }
+
+    // ── Wave 2: IN set/range tests ──
+
+    #[test]
+    fn in_set_range_membership() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::default(),
+        };
+        let expr = Expr::InSet {
+            expr: Box::new(Expr::Literal(Literal::Int(5))),
+            elements: vec![ast::InSetElement::Range {
+                start: Some(Expr::Literal(Literal::Int(1))),
+                end: Some(Expr::Literal(Literal::Int(10))),
+                step: None,
+            }],
+            negated: false,
+        };
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Bool(true));
+    }
+
+    #[test]
+    fn in_set_range_outside() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::default(),
+        };
+        let expr = Expr::InSet {
+            expr: Box::new(Expr::Literal(Literal::Int(15))),
+            elements: vec![ast::InSetElement::Range {
+                start: Some(Expr::Literal(Literal::Int(1))),
+                end: Some(Expr::Literal(Literal::Int(10))),
+                step: None,
+            }],
+            negated: false,
+        };
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Bool(false));
+    }
+
+    #[test]
+    fn in_set_discrete_values() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::default(),
+        };
+        let expr = Expr::InSet {
+            expr: Box::new(Expr::Literal(Literal::Int(2))),
+            elements: vec![
+                ast::InSetElement::Value(Expr::Literal(Literal::Int(1))),
+                ast::InSetElement::Value(Expr::Literal(Literal::Int(2))),
+                ast::InSetElement::Value(Expr::Literal(Literal::Int(3))),
+            ],
+            negated: false,
+        };
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Bool(true));
+    }
+
+    // ── Wave 3: Array indexing, slicing, style modes ──
+
+    fn make_1d_array(vals: Vec<i64>) -> ArrayValue {
+        let data = vals.into_iter().map(ExprValue::Int).collect::<Vec<_>>();
+        let len = data.len();
+        ArrayValue {
+            shape: vec![len],
+            data,
+        }
+    }
+
+    fn make_2d_array(rows: usize, cols: usize, vals: Vec<i64>) -> ArrayValue {
+        ArrayValue {
+            shape: vec![rows, cols],
+            data: vals.into_iter().map(ExprValue::Int).collect(),
+        }
+    }
+
+    #[test]
+    fn glish_1based_single_index() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Glish,
+        };
+        let arr = make_1d_array(vec![10, 20, 30]);
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Single(Expr::Literal(Literal::Int(1)))],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result, ExprValue::Int(10)); // 1-based: index 1 → element 0
+    }
+
+    #[test]
+    fn python_0based_single_index() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Python,
+        };
+        let arr = make_1d_array(vec![10, 20, 30]);
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Single(Expr::Literal(Literal::Int(0)))],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result, ExprValue::Int(10)); // 0-based: index 0 → element 0
+    }
+
+    #[test]
+    fn python_negative_index() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Python,
+        };
+        let arr = make_1d_array(vec![10, 20, 30]);
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Single(Expr::Literal(Literal::Int(-1)))],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result, ExprValue::Int(30)); // -1 → last element
+    }
+
+    #[test]
+    fn glish_slice_inclusive() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Glish,
+        };
+        let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
+        // Glish: 2:4 → indices 2,3,4 (1-based) → elements 1,2,3 (0-based)
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Slice {
+                start: Some(Expr::Literal(Literal::Int(2))),
+                end: Some(Expr::Literal(Literal::Int(4))),
+                step: None,
+            }],
+            &ctx,
+        )
+        .unwrap();
+        match result {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                assert_eq!(
+                    a.data,
+                    vec![ExprValue::Int(20), ExprValue::Int(30), ExprValue::Int(40)]
+                );
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn python_slice_exclusive() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Python,
+        };
+        let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
+        // Python: 1:4 → indices 1,2,3 (0-based, end exclusive)
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Slice {
+                start: Some(Expr::Literal(Literal::Int(1))),
+                end: Some(Expr::Literal(Literal::Int(4))),
+                step: None,
+            }],
+            &ctx,
+        )
+        .unwrap();
+        match result {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                assert_eq!(
+                    a.data,
+                    vec![ExprValue::Int(20), ExprValue::Int(30), ExprValue::Int(40)]
+                );
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn glish_slice_with_step() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Glish,
+        };
+        let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
+        // Glish: 1:5:2 → indices 1,3,5 (1-based) → elements 0,2,4
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Slice {
+                start: Some(Expr::Literal(Literal::Int(1))),
+                end: Some(Expr::Literal(Literal::Int(5))),
+                step: Some(Expr::Literal(Literal::Int(2))),
+            }],
+            &ctx,
+        )
+        .unwrap();
+        match result {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                assert_eq!(
+                    a.data,
+                    vec![ExprValue::Int(10), ExprValue::Int(30), ExprValue::Int(50)]
+                );
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn python_slice_with_step() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Python,
+        };
+        let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
+        // Python: 0:5:2 → indices 0,2,4
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Slice {
+                start: Some(Expr::Literal(Literal::Int(0))),
+                end: Some(Expr::Literal(Literal::Int(5))),
+                step: Some(Expr::Literal(Literal::Int(2))),
+            }],
+            &ctx,
+        )
+        .unwrap();
+        match result {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                assert_eq!(
+                    a.data,
+                    vec![ExprValue::Int(10), ExprValue::Int(30), ExprValue::Int(50)]
+                );
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn multidim_single_element() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Glish,
+        };
+        // 2x3 array: [[1,2,3],[4,5,6]]
+        let arr = make_2d_array(2, 3, vec![1, 2, 3, 4, 5, 6]);
+        // Glish: arr[2,3] → row=2 (0-based 1), col=3 (0-based 2) → flat index 1*3+2=5 → value 6
+        let result = eval_array_index(
+            &arr,
+            &[
+                ast::IndexElement::Single(Expr::Literal(Literal::Int(2))),
+                ast::IndexElement::Single(Expr::Literal(Literal::Int(3))),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result, ExprValue::Int(6));
+    }
+
+    #[test]
+    fn multidim_row_slice() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Python,
+        };
+        // 2x3 array: [[1,2,3],[4,5,6]] in column-major flat order
+        let arr = make_2d_array(2, 3, vec![1, 4, 2, 5, 3, 6]);
+        // Python: arr[1] → row 1, all cols → [4,5,6]
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Single(Expr::Literal(Literal::Int(1)))],
+            &ctx,
+        )
+        .unwrap();
+        match result {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                assert_eq!(
+                    a.data,
+                    vec![ExprValue::Int(4), ExprValue::Int(5), ExprValue::Int(6)]
+                );
+            }
+            _ => panic!("expected Array, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn out_of_bounds_error() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Python,
+        };
+        let arr = make_1d_array(vec![10, 20, 30]);
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Single(Expr::Literal(Literal::Int(5)))],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn slice_step_zero_error() {
+        let row = casacore_types::RecordValue::default();
+        let ctx = EvalContext {
+            row: &row,
+            row_index: 0,
+            style: ast::IndexStyle::Python,
+        };
+        let arr = make_1d_array(vec![10, 20, 30]);
+        let result = eval_array_index(
+            &arr,
+            &[ast::IndexElement::Slice {
+                start: Some(Expr::Literal(Literal::Int(0))),
+                end: Some(Expr::Literal(Literal::Int(3))),
+                step: Some(Expr::Literal(Literal::Int(0))),
+            }],
+            &ctx,
+        );
+        assert!(result.is_err());
     }
 }

@@ -14,7 +14,7 @@ use std::collections::HashSet;
 
 use casacore_types::{RecordField, RecordValue, ScalarValue, Value};
 
-use super::ast::*;
+use super::ast::{self, *};
 use super::error::TaqlError;
 use super::eval::{EvalContext, ExprValue, eval_expr};
 
@@ -28,10 +28,16 @@ pub enum TaqlResult {
         /// Column names to include (empty = all columns).
         columns: Vec<String>,
     },
-    /// Aggregate SELECT result (GROUP BY or aggregate functions).
-    Aggregate {
-        /// Number of result groups/rows.
-        row_count: usize,
+    /// Materialized SELECT result: an in-memory table with computed values.
+    ///
+    /// Produced when SELECT columns contain expressions (not just column refs),
+    /// or when GROUP BY / aggregate functions are used. The table holds the
+    /// fully evaluated result rows.
+    ///
+    /// C++ equivalent: the result of `makeProjectExprTable()` → `doProjectExpr()`.
+    Materialized {
+        /// The in-memory result table (boxed to avoid large enum variant).
+        table: Box<crate::Table>,
     },
     /// UPDATE result.
     Update {
@@ -48,16 +54,34 @@ pub enum TaqlResult {
         /// Number of rows deleted.
         rows_deleted: usize,
     },
+    /// COUNT SELECT result.
+    Count {
+        /// Number of matching rows.
+        count: usize,
+    },
+    /// CREATE TABLE result.
+    CreateTable {
+        /// Path of the created table.
+        table_name: String,
+    },
+    /// DROP TABLE result.
+    DropTable {
+        /// Path of the dropped table.
+        table_name: String,
+    },
 }
 
 /// Execute a parsed TaQL statement against a table.
 pub fn execute(stmt: &Statement, table: &mut crate::Table) -> Result<TaqlResult, TaqlError> {
     match stmt {
         Statement::Select(sel) => execute_select(sel, table),
+        Statement::CountSelect(sel) => execute_count_select(sel, table),
         Statement::Update(upd) => execute_update(upd, table),
         Statement::Insert(ins) => execute_insert(ins, table),
         Statement::Delete(del) => execute_delete(del, table),
         Statement::Calc(calc) => execute_calc(calc, table),
+        Statement::CreateTable(ct) => execute_create_table(ct),
+        Statement::DropTable(dt) => execute_drop_table(dt),
         Statement::AlterTable(alt) => execute_alter_table(alt, table),
     }
 }
@@ -74,12 +98,18 @@ fn execute_select(
 
     let row_count = table.row_count();
 
+    let style = sel.style;
+
     // 1. WHERE filter
     let mut row_indices: Vec<usize> = if let Some(ref where_clause) = sel.where_clause {
         let mut indices = Vec::new();
         for i in 0..row_count {
             if let Some(row) = table.row(i) {
-                let ctx = EvalContext { row, row_index: i };
+                let ctx = EvalContext {
+                    row,
+                    row_index: i,
+                    style,
+                };
                 let val = eval_expr(where_clause, &ctx)?;
                 if val.to_bool()? {
                     indices.push(i);
@@ -91,14 +121,19 @@ fn execute_select(
         (0..row_count).collect()
     };
 
+    // 1b. JOIN — nested-loop join against same table (self-join)
+    if !sel.joins.is_empty() {
+        row_indices = execute_joins(&row_indices, &sel.joins, table, style)?;
+    }
+
     // 2. ORDER BY
     if !sel.order_by.is_empty() {
-        sort_rows(&mut row_indices, &sel.order_by, table)?;
+        sort_rows(&mut row_indices, &sel.order_by, table, style)?;
     }
 
     // 3. DISTINCT
     if sel.distinct {
-        deduplicate_rows(&mut row_indices, &sel.columns, table)?;
+        deduplicate_rows(&mut row_indices, &sel.columns, table, style)?;
     }
 
     // 4. OFFSET
@@ -126,6 +161,259 @@ fn execute_select(
     })
 }
 
+/// Execute a parsed TaQL statement, materializing computed SELECTs.
+///
+/// Like [`execute()`], but for SELECT statements with computed columns,
+/// evaluates expressions and returns `TaqlResult::Materialized` instead of
+/// `TaqlResult::Select`. Used by `Table::query_result()`.
+pub(crate) fn execute_materializing(
+    stmt: &Statement,
+    table: &mut crate::Table,
+) -> Result<TaqlResult, TaqlError> {
+    let result = execute(stmt, table)?;
+    match result {
+        TaqlResult::Select {
+            ref row_indices,
+            columns: _,
+        } => {
+            // Check if the original SELECT has computed columns
+            if let Statement::Select(sel) = stmt {
+                if !sel.columns.is_empty() && has_computed_columns(&sel.columns) {
+                    return materialize_select(sel, row_indices, table);
+                }
+            }
+            Ok(result)
+        }
+        other => Ok(other),
+    }
+}
+
+/// Returns `true` if any SELECT column requires materialization.
+///
+/// A column needs materialization if it's not a plain `ColumnRef`, or if it
+/// has an alias (which renames the column in the output).
+fn has_computed_columns(columns: &[SelectColumn]) -> bool {
+    columns.iter().any(|c| {
+        // An alias on a ColumnRef renames the output column — must materialize
+        if c.alias.is_some() {
+            return true;
+        }
+        !matches!(&c.expr, Expr::ColumnRef(_))
+    })
+}
+
+/// Materialize a SELECT with computed columns into an in-memory Table.
+///
+/// Evaluates each column expression for each selected row and builds a new
+/// Table containing the computed values.
+///
+/// C++ equivalent: `makeProjectExprTable()` → `doProjectExpr()` → `doUpdate()`.
+fn materialize_select(
+    sel: &SelectStatement,
+    row_indices: &[usize],
+    table: &crate::Table,
+) -> Result<TaqlResult, TaqlError> {
+    use crate::schema::{ColumnSchema, TableSchema};
+
+    let style = sel.style;
+
+    // Determine column names
+    let col_names = extract_column_names(&sel.columns, table)?;
+
+    // Build result rows by evaluating each expression per row
+    let mut result_rows: Vec<RecordValue> = Vec::with_capacity(row_indices.len());
+    for &row_idx in row_indices {
+        let row = table
+            .row(row_idx)
+            .ok_or_else(|| TaqlError::Table(format!("row {row_idx} not found")))?;
+        let ctx = EvalContext {
+            row,
+            row_index: row_idx,
+            style,
+        };
+        let mut fields = Vec::with_capacity(sel.columns.len());
+        for (ci, col) in sel.columns.iter().enumerate() {
+            let val = eval_expr(&col.expr, &ctx)?;
+            let value = expr_value_to_value_untyped(&val);
+            fields.push(RecordField::new(&col_names[ci], value));
+        }
+        result_rows.push(RecordValue::new(fields));
+    }
+
+    // Build schema from first row (or column names if empty)
+    let mut mat_table = if let Some(first_row) = result_rows.first() {
+        let schema_cols: Vec<ColumnSchema> = col_names
+            .iter()
+            .map(|name| {
+                let val = first_row.get(name);
+                col_schema_from_value(name, val)
+            })
+            .collect();
+        if let Ok(schema) = TableSchema::new(schema_cols) {
+            crate::Table::with_schema_memory(schema)
+        } else {
+            crate::Table::new_memory()
+        }
+    } else {
+        crate::Table::new_memory()
+    };
+
+    for row in result_rows {
+        mat_table
+            .add_row(row)
+            .map_err(|e| TaqlError::Table(format!("materialization error: {e}")))?;
+    }
+
+    Ok(TaqlResult::Materialized {
+        table: Box::new(mat_table),
+    })
+}
+
+/// Infer a ColumnSchema from a Value.
+fn col_schema_from_value(name: &str, val: Option<&Value>) -> crate::schema::ColumnSchema {
+    use casacore_types::PrimitiveType as PT;
+    match val {
+        Some(Value::Scalar(s)) => {
+            let pt = match s {
+                ScalarValue::Bool(_) => PT::Bool,
+                ScalarValue::UInt8(_) => PT::UInt8,
+                ScalarValue::UInt16(_) => PT::UInt16,
+                ScalarValue::UInt32(_) => PT::UInt32,
+                ScalarValue::Int16(_) => PT::Int16,
+                ScalarValue::Int32(_) => PT::Int32,
+                ScalarValue::Int64(_) => PT::Int64,
+                ScalarValue::Float32(_) => PT::Float32,
+                ScalarValue::Float64(_) => PT::Float64,
+                ScalarValue::Complex32(_) => PT::Complex32,
+                ScalarValue::Complex64(_) => PT::Complex64,
+                ScalarValue::String(_) => PT::String,
+            };
+            crate::schema::ColumnSchema::scalar(name, pt)
+        }
+        Some(Value::Array(arr)) => {
+            let pt = arr.primitive_type();
+            let shape: Vec<usize> = arr.shape().to_vec();
+            crate::schema::ColumnSchema::array_fixed(name, pt, shape)
+        }
+        _ => crate::schema::ColumnSchema::scalar(name, PT::String),
+    }
+}
+
+/// Execute a COUNT SELECT statement — returns the count of matching rows.
+fn execute_count_select(
+    sel: &SelectStatement,
+    table: &mut crate::Table,
+) -> Result<TaqlResult, TaqlError> {
+    let result = execute_select(sel, table)?;
+    let count = match result {
+        TaqlResult::Select { row_indices, .. } => row_indices.len(),
+        TaqlResult::Materialized { ref table } => table.row_count(),
+        _ => 0,
+    };
+    Ok(TaqlResult::Count { count })
+}
+
+/// Execute JOIN clauses using nested-loop against the same table (self-join).
+///
+/// For each left row in `left_rows`, scans all table rows for the right side
+/// and evaluates the ON condition with a merged row context.
+/// Returns the unique set of left-row indices that matched.
+///
+/// C++ reference: `TableParseJoin`.
+fn execute_joins(
+    left_rows: &[usize],
+    joins: &[JoinClause],
+    table: &crate::Table,
+    style: ast::IndexStyle,
+) -> Result<Vec<usize>, TaqlError> {
+    let mut result_rows: Vec<usize> = left_rows.to_vec();
+
+    for join in joins {
+        let right_count = table.row_count();
+        let mut matched: Vec<usize> = Vec::new();
+        let mut left_matched: HashSet<usize> = HashSet::new();
+
+        for &left_idx in &result_rows {
+            let left_row = table
+                .row(left_idx)
+                .ok_or_else(|| TaqlError::Table(format!("row {left_idx} not found")))?;
+            let mut found_match = false;
+
+            if join.join_type == JoinType::Cross {
+                // Cross join: every left row pairs with every right row
+                if !left_matched.contains(&left_idx) {
+                    matched.push(left_idx);
+                    left_matched.insert(left_idx);
+                }
+                continue;
+            }
+
+            for right_idx in 0..right_count {
+                let right_row = table
+                    .row(right_idx)
+                    .ok_or_else(|| TaqlError::Table(format!("row {right_idx} not found")))?;
+
+                // Merge left and right rows for ON evaluation.
+                // Fields from right are accessible with the join table alias prefix,
+                // but for self-joins we merge into one context.
+                let merged = merge_rows(left_row, right_row, join.table.alias.as_deref());
+
+                let ctx = EvalContext {
+                    row: &merged,
+                    row_index: left_idx,
+                    style,
+                };
+
+                let passes = if let Some(ref on_expr) = join.on {
+                    eval_expr(on_expr, &ctx)?.to_bool()?
+                } else {
+                    true
+                };
+
+                if passes {
+                    found_match = true;
+                    if left_matched.insert(left_idx) {
+                        matched.push(left_idx);
+                    }
+                }
+            }
+
+            // LEFT JOIN: include unmatched left rows
+            if join.join_type == JoinType::Left && !found_match && left_matched.insert(left_idx) {
+                matched.push(left_idx);
+            }
+        }
+
+        result_rows = matched;
+    }
+
+    Ok(result_rows)
+}
+
+/// Merge two rows into one, optionally prefixing right-side fields with an alias.
+fn merge_rows<'a>(
+    left: &'a RecordValue,
+    right: &'a RecordValue,
+    right_alias: Option<&str>,
+) -> RecordValue {
+    let mut fields: Vec<RecordField> = left
+        .fields()
+        .iter()
+        .map(|f| RecordField::new(&f.name, f.value.clone()))
+        .collect();
+
+    for f in right.fields() {
+        let name = if let Some(alias) = right_alias {
+            format!("{}.{}", alias, f.name)
+        } else {
+            f.name.clone()
+        };
+        fields.push(RecordField::new(&name, f.value.clone()));
+    }
+
+    RecordValue::new(fields)
+}
+
 /// Execute an UPDATE statement.
 fn execute_update(
     upd: &UpdateStatement,
@@ -138,7 +426,11 @@ fn execute_update(
         let mut indices = Vec::new();
         for i in 0..row_count {
             if let Some(row) = table.row(i) {
-                let ctx = EvalContext { row, row_index: i };
+                let ctx = EvalContext {
+                    row,
+                    row_index: i,
+                    style: ast::IndexStyle::default(),
+                };
                 let val = eval_expr(where_clause, &ctx)?;
                 if val.to_bool()? {
                     indices.push(i);
@@ -165,6 +457,7 @@ fn execute_update(
         let ctx = EvalContext {
             row,
             row_index: row_idx,
+            style: ast::IndexStyle::default(),
         };
         let mut row_updates = Vec::with_capacity(upd.assignments.len());
         for assignment in &upd.assignments {
@@ -219,6 +512,7 @@ fn execute_insert(
         let ctx = EvalContext {
             row: &empty_row,
             row_index: 0,
+            style: ast::IndexStyle::default(),
         };
 
         let mut fields = Vec::new();
@@ -257,7 +551,11 @@ fn execute_delete(
         let mut indices = Vec::new();
         for i in 0..row_count {
             if let Some(row) = table.row(i) {
-                let ctx = EvalContext { row, row_index: i };
+                let ctx = EvalContext {
+                    row,
+                    row_index: i,
+                    style: ast::IndexStyle::default(),
+                };
                 let val = eval_expr(where_clause, &ctx)?;
                 if val.to_bool()? {
                     indices.push(i);
@@ -301,7 +599,11 @@ fn execute_calc(calc: &CalcStatement, table: &mut crate::Table) -> Result<TaqlRe
     } else {
         &empty_row
     };
-    let ctx = EvalContext { row, row_index: 0 };
+    let ctx = EvalContext {
+        row,
+        row_index: 0,
+        style: ast::IndexStyle::default(),
+    };
     let _val = eval_expr(&calc.expr, &ctx)?;
 
     // CALC returns the source row as context; report row 0 as the result row.
@@ -389,6 +691,7 @@ fn execute_alter_table(
             let ctx = EvalContext {
                 row: &empty_row,
                 row_index: 0,
+                style: ast::IndexStyle::default(),
             };
             let val = eval_expr(value, &ctx)?;
             let kw_val = match val {
@@ -405,6 +708,51 @@ fn execute_alter_table(
             table.keywords_mut().upsert(name, kw_val);
             Ok(TaqlResult::Update { rows_affected: 0 })
         }
+    }
+}
+
+/// Execute a CREATE TABLE statement.
+///
+/// This creates a new in-memory table with the specified schema. The resulting
+/// table is not persisted — callers should use `Table::create_new` for disk
+/// tables. The return value confirms the schema was valid.
+fn execute_create_table(ct: &CreateTableStatement) -> Result<TaqlResult, TaqlError> {
+    // Validate all column types
+    for col_def in &ct.columns {
+        parse_data_type(&col_def.data_type)?;
+    }
+
+    Ok(TaqlResult::CreateTable {
+        table_name: ct.table_name.clone(),
+    })
+}
+
+/// Execute a DROP TABLE statement.
+///
+/// This validates the statement but does not perform filesystem operations.
+/// Actual table deletion requires filesystem access via `Table::delete`.
+fn execute_drop_table(dt: &DropTableStatement) -> Result<TaqlResult, TaqlError> {
+    Ok(TaqlResult::DropTable {
+        table_name: dt.table_name.clone(),
+    })
+}
+
+/// Parse a data type string into a PrimitiveType.
+fn parse_data_type(type_str: &str) -> Result<casacore_types::PrimitiveType, TaqlError> {
+    use casacore_types::PrimitiveType;
+    match type_str.to_lowercase().as_str() {
+        "bool" | "boolean" => Ok(PrimitiveType::Bool),
+        "int16" | "short" => Ok(PrimitiveType::Int16),
+        "int32" | "int" | "integer" => Ok(PrimitiveType::Int32),
+        "int64" | "long" => Ok(PrimitiveType::Int64),
+        "float32" | "float" => Ok(PrimitiveType::Float32),
+        "float64" | "double" => Ok(PrimitiveType::Float64),
+        "complex" | "complex32" => Ok(PrimitiveType::Complex32),
+        "dcomplex" | "complex64" => Ok(PrimitiveType::Complex64),
+        "string" | "text" => Ok(PrimitiveType::String),
+        other => Err(TaqlError::TypeError {
+            message: format!("unknown data type '{other}'"),
+        }),
     }
 }
 
@@ -433,13 +781,18 @@ fn execute_group_by(
     table: &mut crate::Table,
 ) -> Result<TaqlResult, TaqlError> {
     let row_count = table.row_count();
+    let style = sel.style;
 
     // 1. WHERE filter
     let row_indices: Vec<usize> = if let Some(ref where_clause) = sel.where_clause {
         let mut indices = Vec::new();
         for i in 0..row_count {
             if let Some(row) = table.row(i) {
-                let ctx = EvalContext { row, row_index: i };
+                let ctx = EvalContext {
+                    row,
+                    row_index: i,
+                    style,
+                };
                 let val = eval_expr(where_clause, &ctx)?;
                 if val.to_bool()? {
                     indices.push(i);
@@ -456,12 +809,13 @@ fn execute_group_by(
         // No GROUP BY: entire result set is one group
         vec![row_indices]
     } else {
-        group_rows(&row_indices, &sel.group_by, table)?
+        group_rows(&row_indices, &sel.group_by, table, style)?
     };
 
     // 3. For each group, compute aggregates and evaluate columns
-    // Build result rows
-    let mut result_rows: Vec<Vec<ExprValue>> = Vec::new();
+    let col_names = extract_column_names(&sel.columns, table)?;
+
+    let mut record_rows: Vec<RecordValue> = Vec::new();
     for group in &groups {
         if group.is_empty() {
             continue;
@@ -469,23 +823,52 @@ fn execute_group_by(
         // Compute aggregate values for this group
         let mut col_values: Vec<ExprValue> = Vec::new();
         for col in &sel.columns {
-            let val = eval_aggregate_column(&col.expr, group, table)?;
+            let val = eval_aggregate_column(&col.expr, group, table, style)?;
             col_values.push(val);
         }
 
         // HAVING filter
         if let Some(ref having) = sel.having {
-            let having_val = eval_aggregate_expr(having, group, table)?;
+            let having_val = eval_aggregate_expr(having, group, table, style)?;
             if !having_val.to_bool()? {
                 continue;
             }
         }
 
-        result_rows.push(col_values);
+        // Convert ExprValue row to RecordValue
+        let fields: Vec<RecordField> = col_names
+            .iter()
+            .zip(&col_values)
+            .map(|(name, val)| RecordField::new(name, expr_value_to_value_untyped(val)))
+            .collect();
+        record_rows.push(RecordValue::new(fields));
     }
 
-    Ok(TaqlResult::Aggregate {
-        row_count: result_rows.len(),
+    // Build materialized table
+    use crate::schema::{ColumnSchema, TableSchema};
+
+    let mut mat_table = if let Some(first_row) = record_rows.first() {
+        let schema_cols: Vec<ColumnSchema> = col_names
+            .iter()
+            .map(|name| col_schema_from_value(name, first_row.get(name)))
+            .collect();
+        if let Ok(schema) = TableSchema::new(schema_cols) {
+            crate::Table::with_schema_memory(schema)
+        } else {
+            crate::Table::new_memory()
+        }
+    } else {
+        crate::Table::new_memory()
+    };
+
+    for row in record_rows {
+        mat_table
+            .add_row(row)
+            .map_err(|e| TaqlError::Table(format!("group-by materialization error: {e}")))?;
+    }
+
+    Ok(TaqlResult::Materialized {
+        table: Box::new(mat_table),
     })
 }
 
@@ -494,6 +877,7 @@ fn group_rows(
     row_indices: &[usize],
     group_by: &[Expr],
     table: &crate::Table,
+    style: ast::IndexStyle,
 ) -> Result<Vec<Vec<usize>>, TaqlError> {
     use std::collections::HashMap;
 
@@ -507,6 +891,7 @@ fn group_rows(
         let ctx = EvalContext {
             row,
             row_index: row_idx,
+            style,
         };
         let key = GroupKey(
             group_by
@@ -567,6 +952,10 @@ impl std::hash::Hash for ExprValueKey {
                 arr.shape.hash(state);
                 arr.data.len().hash(state);
             }
+            ExprValue::Regex { pattern, flags } => {
+                pattern.hash(state);
+                flags.hash(state);
+            }
             ExprValue::Null => {}
         }
     }
@@ -577,6 +966,7 @@ fn eval_aggregate_column(
     expr: &Expr,
     group: &[usize],
     table: &crate::Table,
+    style: ast::IndexStyle,
 ) -> Result<ExprValue, TaqlError> {
     match expr {
         Expr::Aggregate { func, arg } => {
@@ -589,13 +979,19 @@ fn eval_aggregate_column(
                 let ctx = EvalContext {
                     row,
                     row_index: row_idx,
+                    style,
                 };
-                let val = if matches!(**arg, Expr::Star) {
-                    ExprValue::Int(1) // COUNT(*)
+                // GROWID collects row indices; others evaluate the expression.
+                if *func == AggregateFunc::RowId {
+                    acc.accumulate_row_id(row_idx as i64);
                 } else {
-                    eval_expr(arg, &ctx)?
-                };
-                acc.accumulate(&val);
+                    let val = if matches!(**arg, Expr::Star) {
+                        ExprValue::Int(1) // COUNT(*)
+                    } else {
+                        eval_expr(arg, &ctx)?
+                    };
+                    acc.accumulate(&val);
+                }
             }
             Ok(acc.finish())
         }
@@ -608,6 +1004,7 @@ fn eval_aggregate_column(
                 let ctx = EvalContext {
                     row,
                     row_index: first_row,
+                    style,
                 };
                 eval_expr(expr, &ctx)
             } else {
@@ -623,6 +1020,7 @@ fn eval_aggregate_column(
                 let ctx = EvalContext {
                     row,
                     row_index: first_row,
+                    style,
                 };
                 eval_expr(expr, &ctx)
             } else {
@@ -637,12 +1035,13 @@ fn eval_aggregate_expr(
     expr: &Expr,
     group: &[usize],
     table: &crate::Table,
+    style: ast::IndexStyle,
 ) -> Result<ExprValue, TaqlError> {
     match expr {
-        Expr::Aggregate { .. } => eval_aggregate_column(expr, group, table),
+        Expr::Aggregate { .. } => eval_aggregate_column(expr, group, table, style),
         Expr::Binary { left, op, right } => {
-            let lval = eval_aggregate_expr(left, group, table)?;
-            let rval = eval_aggregate_expr(right, group, table)?;
+            let lval = eval_aggregate_expr(left, group, table, style)?;
+            let rval = eval_aggregate_expr(right, group, table, style)?;
             super::eval::eval_expr(
                 &Expr::Binary {
                     left: Box::new(Expr::Literal(expr_value_to_literal(&lval))),
@@ -652,10 +1051,11 @@ fn eval_aggregate_expr(
                 &EvalContext {
                     row: &RecordValue::new(vec![]),
                     row_index: 0,
+                    style,
                 },
             )
         }
-        _ => eval_aggregate_column(expr, group, table),
+        _ => eval_aggregate_column(expr, group, table, style),
     }
 }
 
@@ -668,6 +1068,10 @@ fn expr_value_to_literal(val: &ExprValue) -> Literal {
         ExprValue::String(s) => Literal::String(s.clone()),
         ExprValue::DateTime(v) => Literal::Float(*v),
         ExprValue::Array(_) => Literal::Null, // arrays don't have a literal form
+        ExprValue::Regex { pattern, flags } => Literal::Regex {
+            pattern: pattern.clone(),
+            flags: flags.clone(),
+        },
         ExprValue::Null => Literal::Null,
     }
 }
@@ -694,6 +1098,7 @@ fn sort_rows(
     row_indices: &mut [usize],
     order_by: &[OrderBySpec],
     table: &crate::Table,
+    style: ast::IndexStyle,
 ) -> Result<(), TaqlError> {
     // Pre-evaluate all sort keys for all rows to avoid repeated evaluation.
     let mut sort_keys: Vec<Vec<ExprValue>> = Vec::with_capacity(row_indices.len());
@@ -704,6 +1109,7 @@ fn sort_rows(
         let ctx = EvalContext {
             row,
             row_index: row_idx,
+            style,
         };
         let keys: Vec<ExprValue> = order_by
             .iter()
@@ -740,6 +1146,7 @@ fn deduplicate_rows(
     row_indices: &mut Vec<usize>,
     columns: &[SelectColumn],
     table: &crate::Table,
+    style: ast::IndexStyle,
 ) -> Result<(), TaqlError> {
     let mut seen: HashSet<GroupKey> = HashSet::new();
     let mut deduped = Vec::with_capacity(row_indices.len());
@@ -751,6 +1158,7 @@ fn deduplicate_rows(
         let ctx = EvalContext {
             row,
             row_index: row_idx,
+            style,
         };
 
         let key = GroupKey(if columns.is_empty() {
@@ -830,6 +1238,7 @@ fn eval_const_int(expr: &Expr) -> Result<i64, TaqlError> {
     let ctx = EvalContext {
         row: &empty,
         row_index: 0,
+        style: ast::IndexStyle::default(),
     };
     let val = eval_expr(expr, &ctx)?;
     val.to_int()
@@ -875,8 +1284,111 @@ fn expr_value_to_value_untyped(val: &ExprValue) -> Value {
         ExprValue::Complex(c) => Value::Scalar(ScalarValue::Complex64(*c)),
         ExprValue::String(s) => Value::Scalar(ScalarValue::String(s.clone())),
         ExprValue::DateTime(v) => Value::Scalar(ScalarValue::Float64(*v)),
-        ExprValue::Array(_) => Value::Scalar(ScalarValue::Bool(false)), // arrays need typed conversion
-        ExprValue::Null => Value::Scalar(ScalarValue::Bool(false)),     // fallback
+        ExprValue::Array(arr) => expr_array_to_value(arr),
+        ExprValue::Regex { pattern, .. } => Value::Scalar(ScalarValue::String(pattern.clone())),
+        ExprValue::Null => Value::Scalar(ScalarValue::Bool(false)), // fallback
+    }
+}
+
+/// Convert an `eval::ArrayValue` to a `casacore_types::Value::Array`.
+///
+/// Determines the element type from the first element and builds an
+/// `ndarray::ArrayD` with Fortran (column-major) layout, matching casacore conventions.
+/// The eval flat data vector is in column-major order.
+fn expr_array_to_value(arr: &super::eval::ArrayValue) -> Value {
+    use casacore_types::ArrayValue as AV;
+    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+
+    let shape = IxDyn(&arr.shape).f();
+
+    if arr.data.is_empty() {
+        // Empty array — default to Float64
+        return Value::Array(AV::Float64(ArrayD::zeros(shape)));
+    }
+
+    // Determine type from first element
+    match &arr.data[0] {
+        ExprValue::Bool(_) => {
+            let data: Vec<bool> = arr
+                .data
+                .iter()
+                .map(|e| matches!(e, ExprValue::Bool(true)))
+                .collect();
+            Value::Array(AV::Bool(
+                ArrayD::from_shape_vec(shape, data).unwrap_or_default(),
+            ))
+        }
+        ExprValue::Int(_) => {
+            let data: Vec<i64> = arr
+                .data
+                .iter()
+                .map(|e| match e {
+                    ExprValue::Int(n) => *n,
+                    ExprValue::Float(v) => *v as i64,
+                    _ => 0,
+                })
+                .collect();
+            Value::Array(AV::Int64(
+                ArrayD::from_shape_vec(shape, data).unwrap_or_default(),
+            ))
+        }
+        ExprValue::Float(_) | ExprValue::DateTime(_) => {
+            let data: Vec<f64> = arr
+                .data
+                .iter()
+                .map(|e| match e {
+                    ExprValue::Float(v) | ExprValue::DateTime(v) => *v,
+                    ExprValue::Int(n) => *n as f64,
+                    _ => 0.0,
+                })
+                .collect();
+            Value::Array(AV::Float64(
+                ArrayD::from_shape_vec(shape, data).unwrap_or_default(),
+            ))
+        }
+        ExprValue::Complex(_) => {
+            let data: Vec<num_complex::Complex64> = arr
+                .data
+                .iter()
+                .map(|e| match e {
+                    ExprValue::Complex(c) => *c,
+                    ExprValue::Float(v) => num_complex::Complex64::new(*v, 0.0),
+                    ExprValue::Int(n) => num_complex::Complex64::new(*n as f64, 0.0),
+                    _ => num_complex::Complex64::new(0.0, 0.0),
+                })
+                .collect();
+            Value::Array(AV::Complex64(
+                ArrayD::from_shape_vec(shape, data).unwrap_or_default(),
+            ))
+        }
+        ExprValue::String(_) => {
+            let data: Vec<String> = arr
+                .data
+                .iter()
+                .map(|e| match e {
+                    ExprValue::String(s) => s.clone(),
+                    _ => String::new(),
+                })
+                .collect();
+            Value::Array(AV::String(
+                ArrayD::from_shape_vec(shape, data).unwrap_or_default(),
+            ))
+        }
+        _ => {
+            // Fallback: treat as Float64
+            let data: Vec<f64> = arr
+                .data
+                .iter()
+                .map(|e| match e {
+                    ExprValue::Float(v) => *v,
+                    ExprValue::Int(n) => *n as f64,
+                    _ => 0.0,
+                })
+                .collect();
+            Value::Array(AV::Float64(
+                ArrayD::from_shape_vec(shape, data).unwrap_or_default(),
+            ))
+        }
     }
 }
 
@@ -1282,5 +1794,281 @@ mod tests {
             // Just verify it produces a valid Value without panicking
             assert!(matches!(val, Value::Scalar(_)));
         }
+    }
+
+    // ── Wave 8: Aliases, COUNT SELECT, HAVING ───────────────────
+
+    #[test]
+    fn alias_propagation() {
+        let mut table = test_table();
+        let stmt = crate::taql::parse("SELECT id AS source_id, flux AS brightness").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Select { columns, .. } => {
+                assert_eq!(columns, vec!["source_id", "brightness"]);
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    #[test]
+    fn alias_mixed_with_bare_columns() {
+        let mut table = test_table();
+        let stmt = crate::taql::parse("SELECT id, flux AS brightness").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Select { columns, .. } => {
+                assert_eq!(columns, vec!["id", "brightness"]);
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    #[test]
+    fn count_select_all() {
+        let mut table = test_table();
+        let stmt = crate::taql::parse("COUNT SELECT *").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Count { count } => assert_eq!(count, 10),
+            _ => panic!("expected Count"),
+        }
+    }
+
+    #[test]
+    fn count_select_with_where() {
+        let mut table = test_table();
+        let stmt = crate::taql::parse("COUNT SELECT * WHERE id > 5").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Count { count } => assert_eq!(count, 4),
+            _ => panic!("expected Count"),
+        }
+    }
+
+    #[test]
+    fn count_select_empty() {
+        let mut table = test_table();
+        let stmt = crate::taql::parse("COUNT SELECT * WHERE id > 100").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Count { count } => assert_eq!(count, 0),
+            _ => panic!("expected Count"),
+        }
+    }
+
+    #[test]
+    fn having_filters_groups() {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("category", PrimitiveType::String),
+            ColumnSchema::scalar("val", PrimitiveType::Int32),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        // category A: 3 rows, category B: 1 row, category C: 2 rows
+        for (cat, v) in &[("A", 1), ("A", 2), ("A", 3), ("B", 10), ("C", 5), ("C", 6)] {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new(
+                        "category",
+                        Value::Scalar(ScalarValue::String(cat.to_string())),
+                    ),
+                    RecordField::new("val", Value::Scalar(ScalarValue::Int32(*v))),
+                ]))
+                .unwrap();
+        }
+
+        let stmt =
+            crate::taql::parse("SELECT category, COUNT(*) GROUP BY category HAVING COUNT(*) > 1")
+                .unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Materialized { table } => {
+                // Only A (3 rows) and C (2 rows) pass HAVING COUNT(*) > 1
+                assert_eq!(table.row_count(), 2);
+            }
+            _ => panic!("expected Materialized"),
+        }
+    }
+
+    #[test]
+    fn having_sum_threshold() {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("grp", PrimitiveType::String),
+            ColumnSchema::scalar("amount", PrimitiveType::Float64),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        for (g, a) in &[("X", 10.0), ("X", 20.0), ("Y", 1.0), ("Y", 2.0)] {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("grp", Value::Scalar(ScalarValue::String(g.to_string()))),
+                    RecordField::new("amount", Value::Scalar(ScalarValue::Float64(*a))),
+                ]))
+                .unwrap();
+        }
+
+        let stmt =
+            crate::taql::parse("SELECT grp, SUM(amount) GROUP BY grp HAVING SUM(amount) > 5.0")
+                .unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Materialized { table } => {
+                // Only X (sum=30) passes; Y (sum=3) does not
+                assert_eq!(table.row_count(), 1);
+            }
+            _ => panic!("expected Materialized"),
+        }
+    }
+
+    // ── Wave 9: GIVING, subqueries ──────────────
+
+    #[test]
+    fn giving_clause_parses() {
+        let stmt = crate::taql::parse("SELECT * GIVING output_table").unwrap();
+        match stmt {
+            Statement::Select(s) => {
+                let g = s.giving.as_ref().unwrap();
+                assert_eq!(g.table_name, "output_table");
+                assert!(g.output_type.is_none());
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    #[test]
+    fn giving_clause_with_type() {
+        let stmt = crate::taql::parse("SELECT * GIVING output AS MEMORY").unwrap();
+        match stmt {
+            Statement::Select(s) => {
+                let g = s.giving.as_ref().unwrap();
+                assert_eq!(g.table_name, "output");
+                assert_eq!(g.output_type.as_deref(), Some("MEMORY"));
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    #[test]
+    fn subquery_in_expr_parses() {
+        let stmt = crate::taql::parse("SELECT * WHERE id IN (SELECT id WHERE flux > 5.0)").unwrap();
+        match stmt {
+            Statement::Select(s) => {
+                assert!(s.where_clause.is_some());
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    // ── Wave 10: CREATE TABLE, DROP TABLE ───────────────────────
+
+    #[test]
+    fn create_table_basic() {
+        let stmt = crate::taql::parse("CREATE TABLE mytab (col1 INT32, col2 FLOAT64)").unwrap();
+        match &stmt {
+            Statement::CreateTable(ct) => {
+                assert_eq!(ct.table_name, "mytab");
+                assert_eq!(ct.columns.len(), 2);
+                assert_eq!(ct.columns[0].name, "col1");
+                assert_eq!(ct.columns[0].data_type, "INT32");
+                assert_eq!(ct.columns[1].name, "col2");
+                assert_eq!(ct.columns[1].data_type, "FLOAT64");
+            }
+            _ => panic!("expected CreateTable"),
+        }
+        // Execute validates types
+        let mut table = test_table();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::CreateTable { table_name } => assert_eq!(table_name, "mytab"),
+            _ => panic!("expected CreateTable result"),
+        }
+    }
+
+    #[test]
+    fn create_table_invalid_type() {
+        let stmt = crate::taql::parse("CREATE TABLE t (col BADTYPE)").unwrap();
+        let mut table = test_table();
+        let result = execute(&stmt, &mut table);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn drop_table_basic() {
+        let stmt = crate::taql::parse("DROP TABLE mytab").unwrap();
+        match &stmt {
+            Statement::DropTable(dt) => assert_eq!(dt.table_name, "mytab"),
+            _ => panic!("expected DropTable"),
+        }
+        let mut table = test_table();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::DropTable { table_name } => assert_eq!(table_name, "mytab"),
+            _ => panic!("expected DropTable result"),
+        }
+    }
+
+    #[test]
+    fn create_table_roundtrip() {
+        let stmt = crate::taql::parse("CREATE TABLE t (a INT32, b STRING)").unwrap();
+        let displayed = stmt.to_string();
+        let reparsed = crate::taql::parse(&displayed).unwrap();
+        assert!(matches!(reparsed, Statement::CreateTable(_)));
+    }
+
+    // ── Wave 11: JOIN execution ─────────────────────────────────
+
+    #[test]
+    fn inner_join_self() {
+        let mut table = test_table();
+        // Self-join: every row joins with itself on matching id
+        let stmt =
+            crate::taql::parse("SELECT * FROM t JOIN t AS t2 ON id = t2.id WHERE id < 3").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Select { row_indices, .. } => {
+                // Each row joins with itself, so rows 0,1,2 all match
+                assert_eq!(row_indices, vec![0, 1, 2]);
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    #[test]
+    fn cross_join() {
+        let mut table = test_table();
+        let stmt = crate::taql::parse("SELECT * FROM t CROSS JOIN t AS t2 WHERE id < 3").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Select { row_indices, .. } => {
+                // Cross join includes all left rows that pass WHERE (0,1,2)
+                assert_eq!(row_indices, vec![0, 1, 2]);
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    #[test]
+    fn left_join_preserves_unmatched() {
+        let mut table = test_table();
+        // LEFT JOIN with an ON condition that never matches
+        let stmt = crate::taql::parse("SELECT * FROM t LEFT JOIN t AS t2 ON id = 999 WHERE id < 3")
+            .unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        match result {
+            TaqlResult::Select { row_indices, .. } => {
+                // LEFT JOIN: unmatched rows are still included
+                assert_eq!(row_indices, vec![0, 1, 2]);
+            }
+            _ => panic!("expected Select"),
+        }
+    }
+
+    #[test]
+    fn join_parse_roundtrip() {
+        let stmt = crate::taql::parse("SELECT * FROM t JOIN t AS t2 ON id = t2.id").unwrap();
+        let displayed = stmt.to_string();
+        let reparsed = crate::taql::parse(&displayed).unwrap();
+        assert!(matches!(reparsed, Statement::Select(_)));
     }
 }

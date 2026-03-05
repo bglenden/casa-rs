@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 pub mod table_interop;
+pub mod taql_interop;
 
 #[cfg(has_casacore_cpp)]
 use std::ffi::CStr;
@@ -1453,6 +1454,30 @@ unsafe extern "C" {
     fn casacore_cpp_aipsio_free_bytes(ptr: *mut u8);
     fn casacore_cpp_aipsio_free_offsets(ptr: *mut u32);
     fn casacore_cpp_aipsio_free_error(ptr: *mut std::ffi::c_char);
+
+    // ── TaQL interop shim ──
+    fn cpp_taql_write_simple_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_taql_write_array_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_taql_write_varshape_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_taql_query(
+        table_path: *const std::ffi::c_char,
+        query: *const std::ffi::c_char,
+        out_result: *mut *mut std::ffi::c_char,
+        out_nrow: *mut u64,
+        out_ncol: *mut u64,
+        out_elapsed_ns: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_taql_free_result(ptr: *mut std::ffi::c_char);
 }
 
 #[cfg(has_casacore_cpp)]

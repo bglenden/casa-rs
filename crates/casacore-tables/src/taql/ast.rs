@@ -14,6 +14,33 @@ use std::fmt;
 
 use num_complex::Complex64;
 
+/// Index style for array subscripts.
+///
+/// TaQL supports two indexing conventions:
+/// - **Glish** (default): 1-based, end-inclusive ranges.
+/// - **Python**: 0-based, end-exclusive ranges.
+///
+/// Selected via `USING STYLE GLISH` or `USING STYLE PYTHON`.
+///
+/// C++ reference: `TaQLStyle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndexStyle {
+    /// 1-based indexing with inclusive end (Fortran/Glish convention). This is the default.
+    #[default]
+    Glish,
+    /// 0-based indexing with exclusive end (Python/C convention).
+    Python,
+}
+
+impl fmt::Display for IndexStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Glish => write!(f, "GLISH"),
+            Self::Python => write!(f, "PYTHON"),
+        }
+    }
+}
+
 /// A complete TaQL statement.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
@@ -25,6 +52,58 @@ pub enum Statement {
     Calc(CalcStatement),
     /// `ALTER TABLE ... ADD COLUMN | DROP COLUMN | RENAME COLUMN | ADD ROW`
     AlterTable(AlterTableStatement),
+    /// `COUNT SELECT ...` — return the number of rows matching a SELECT.
+    ///
+    /// C++ reference: `TaQLCountNodeRep`.
+    CountSelect(SelectStatement),
+    /// `CREATE TABLE name (col type, ...)`
+    ///
+    /// C++ reference: `TaQLCreTabNodeRep`.
+    CreateTable(CreateTableStatement),
+    /// `DROP TABLE name`
+    ///
+    /// C++ reference: `TaQLDropTabNodeRep`.
+    DropTable(DropTableStatement),
+}
+
+/// A CREATE TABLE statement.
+///
+/// C++ reference: `TaQLCreTabNodeRep`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateTableStatement {
+    /// Table name or path.
+    pub table_name: String,
+    /// Column definitions.
+    pub columns: Vec<ColumnDef>,
+}
+
+/// A column definition in CREATE TABLE.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnDef {
+    /// Column name.
+    pub name: String,
+    /// Column data type as a string (e.g. "INT32", "FLOAT64", "STRING").
+    pub data_type: String,
+}
+
+/// A DROP TABLE statement.
+///
+/// C++ reference: `TaQLDropTabNodeRep`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropTableStatement {
+    /// Table name or path.
+    pub table_name: String,
+}
+
+/// The GIVING clause specifies how to store results.
+///
+/// C++ reference: `TaQLGivingNodeRep`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GivingClause {
+    /// Output table name or path.
+    pub table_name: String,
+    /// Optional output type (e.g., "MEMORY", "PLAIN", "SCRATCH").
+    pub output_type: Option<String>,
 }
 
 /// A CALC statement.
@@ -112,6 +191,10 @@ pub struct SelectStatement {
     pub offset: Option<Expr>,
     /// Whether DISTINCT was specified.
     pub distinct: bool,
+    /// Index style (`USING STYLE GLISH` or `USING STYLE PYTHON`).
+    pub style: IndexStyle,
+    /// Optional GIVING clause for output materialization.
+    pub giving: Option<GivingClause>,
 }
 
 /// A column in a SELECT list.
@@ -261,10 +344,65 @@ pub enum Expr {
     IsNull { expr: Box<Expr>, negated: bool },
     /// An aggregate function: COUNT, SUM, AVG, MIN, MAX.
     Aggregate { func: AggregateFunc, arg: Box<Expr> },
+    /// `expr =~ regex` or `expr !~ regex` — regex match.
+    ///
+    /// C++ reference: `TableExprNodeRegex`.
+    RegexMatch {
+        expr: Box<Expr>,
+        pattern: Box<Expr>,
+        negated: bool,
+    },
+    /// `expr IN [a, b, c]` or `expr IN [a:b]` — set/range membership with bracket syntax.
+    ///
+    /// C++ reference: `TaQLMultiNode` with set elements.
+    InSet {
+        expr: Box<Expr>,
+        elements: Vec<InSetElement>,
+        negated: bool,
+    },
+    /// Array indexing: `expr[i]`, `expr[i,j]`, `expr[s:e]`, `expr[s:e:step]`.
+    ///
+    /// C++ reference: `TableExprNodeArrayPart`.
+    ArrayIndex {
+        array: Box<Expr>,
+        indices: Vec<IndexElement>,
+    },
     /// `SELECT *` — all columns wildcard.
     Star,
     /// ROWID pseudo-column (0-based row number).
     RowNumber,
+    /// A subquery expression: `(SELECT ...)`.
+    ///
+    /// C++ reference: `TaQLSubqueryNodeRep`.
+    Subquery(Box<SelectStatement>),
+}
+
+/// An element in an IN set: either a discrete value or a range.
+///
+/// C++ reference: `TaQLMultiNode` with `TaQLRangeNodeRep`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InSetElement {
+    /// A single value.
+    Value(Expr),
+    /// A range `start:end` or `start:end:step`.
+    Range {
+        start: Option<Expr>,
+        end: Option<Expr>,
+        step: Option<Expr>,
+    },
+}
+
+/// An index element for array subscripts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndexElement {
+    /// A single index value.
+    Single(Expr),
+    /// A slice `start:end` or `start:end:step`.
+    Slice {
+        start: Option<Expr>,
+        end: Option<Expr>,
+        step: Option<Expr>,
+    },
 }
 
 /// A literal value in an expression.
@@ -275,6 +413,13 @@ pub enum Literal {
     String(String),
     Bool(bool),
     Complex(Complex64),
+    /// Regex pattern literal: `p/pattern/flags` or `m/pattern/flags`.
+    ///
+    /// C++ reference: `TaQLRegexNode`.
+    Regex {
+        pattern: String,
+        flags: String,
+    },
     Null,
 }
 
@@ -305,6 +450,12 @@ pub enum BinaryOp {
     Ge,
     And,
     Or,
+    /// Bitwise AND (`&`).
+    BitAnd,
+    /// Bitwise OR (`|`).
+    BitOr,
+    /// Bitwise XOR (`^`).
+    BitXor,
 }
 
 /// Unary operators.
@@ -359,6 +510,18 @@ pub enum AggregateFunc {
     Median,
     /// Fractile (percentile); takes a second argument for the fraction.
     Fractile,
+    /// Collect all group values into an array.
+    ///
+    /// C++ reference: `TableExprGroupAggr`.
+    Aggr,
+    /// Collect all group row IDs into an array.
+    ///
+    /// C++ reference: `TableExprGroupRowid`.
+    RowId,
+    /// Histogram of group values.
+    ///
+    /// C++ reference: `TableExprGroupHist`.
+    Hist,
 }
 
 /// Try to parse a string as an aggregate function name.
@@ -387,6 +550,9 @@ pub fn aggregate_from_name(name: &str) -> Option<AggregateFunc> {
         "gnfalse" => Some(AggregateFunc::NFalse),
         "gmedian" => Some(AggregateFunc::Median),
         "gfractile" => Some(AggregateFunc::Fractile),
+        "gaggr" => Some(AggregateFunc::Aggr),
+        "growid" => Some(AggregateFunc::RowId),
+        "ghist" => Some(AggregateFunc::Hist),
         _ => None,
     }
 }
@@ -402,6 +568,18 @@ impl fmt::Display for Statement {
             Self::Delete(s) => write!(f, "{s}"),
             Self::Calc(s) => write!(f, "{s}"),
             Self::AlterTable(s) => write!(f, "{s}"),
+            Self::CountSelect(s) => write!(f, "COUNT {s}"),
+            Self::CreateTable(s) => {
+                write!(f, "CREATE TABLE {} (", s.table_name)?;
+                for (i, col) in s.columns.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{} {}", col.name, col.data_type)?;
+                }
+                write!(f, ")")
+            }
+            Self::DropTable(s) => write!(f, "DROP TABLE {}", s.table_name),
         }
     }
 }
@@ -452,6 +630,9 @@ impl fmt::Display for AlterOperation {
 
 impl fmt::Display for SelectStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.style != IndexStyle::Glish {
+            write!(f, "USING STYLE {} ", self.style)?;
+        }
         write!(f, "SELECT ")?;
         if self.distinct {
             write!(f, "DISTINCT ")?;
@@ -501,6 +682,12 @@ impl fmt::Display for SelectStatement {
         }
         if let Some(ref o) = self.offset {
             write!(f, " OFFSET {o}")?;
+        }
+        if let Some(ref g) = self.giving {
+            write!(f, " GIVING {}", g.table_name)?;
+            if let Some(ref ot) = g.output_type {
+                write!(f, " AS {ot}")?;
+            }
         }
         Ok(())
     }
@@ -708,8 +895,90 @@ impl fmt::Display for Expr {
                 write!(f, " NULL)")
             }
             Self::Aggregate { func, arg } => write!(f, "{func}({arg})"),
+            Self::RegexMatch {
+                expr,
+                pattern,
+                negated,
+            } => {
+                if *negated {
+                    write!(f, "({expr} !~ {pattern})")
+                } else {
+                    write!(f, "({expr} =~ {pattern})")
+                }
+            }
+            Self::InSet {
+                expr,
+                elements,
+                negated,
+            } => {
+                write!(f, "({expr}")?;
+                if *negated {
+                    write!(f, " NOT")?;
+                }
+                write!(f, " IN [")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, "])")
+            }
+            Self::ArrayIndex { array, indices } => {
+                write!(f, "{array}[")?;
+                for (i, idx) in indices.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{idx}")?;
+                }
+                write!(f, "]")
+            }
             Self::Star => write!(f, "*"),
             Self::RowNumber => write!(f, "ROWID()"),
+            Self::Subquery(s) => write!(f, "({s})"),
+        }
+    }
+}
+
+impl fmt::Display for InSetElement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(e) => write!(f, "{e}"),
+            Self::Range { start, end, step } => {
+                if let Some(s) = start {
+                    write!(f, "{s}")?;
+                }
+                write!(f, ":")?;
+                if let Some(e) = end {
+                    write!(f, "{e}")?;
+                }
+                if let Some(st) = step {
+                    write!(f, ":{st}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl fmt::Display for IndexElement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Single(e) => write!(f, "{e}"),
+            Self::Slice { start, end, step } => {
+                if let Some(s) = start {
+                    write!(f, "{s}")?;
+                }
+                write!(f, ":")?;
+                if let Some(e) = end {
+                    write!(f, "{e}")?;
+                }
+                if let Some(st) = step {
+                    write!(f, ":{st}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -734,6 +1003,7 @@ impl fmt::Display for Literal {
                 }
             }
             Self::Complex(c) => write!(f, "({} + {}i)", c.re, c.im),
+            Self::Regex { pattern, flags } => write!(f, "p/{pattern}/{flags}"),
             Self::Null => write!(f, "NULL"),
         }
     }
@@ -767,6 +1037,9 @@ impl fmt::Display for BinaryOp {
             Self::Ge => ">=",
             Self::And => "AND",
             Self::Or => "OR",
+            Self::BitAnd => "&",
+            Self::BitOr => "|",
+            Self::BitXor => "^",
         };
         f.write_str(s)
     }
@@ -805,6 +1078,9 @@ impl fmt::Display for AggregateFunc {
             Self::NFalse => write!(f, "GNFALSE"),
             Self::Median => write!(f, "GMEDIAN"),
             Self::Fractile => write!(f, "GFRACTILE"),
+            Self::Aggr => write!(f, "GAGGR"),
+            Self::RowId => write!(f, "GROWID"),
+            Self::Hist => write!(f, "GHIST"),
         }
     }
 }
@@ -898,6 +1174,9 @@ mod tests {
             AggregateFunc::NFalse,
             AggregateFunc::Median,
             AggregateFunc::Fractile,
+            AggregateFunc::Aggr,
+            AggregateFunc::RowId,
+            AggregateFunc::Hist,
         ] {
             let displayed = func.to_string();
             let parsed = aggregate_from_name(&displayed);

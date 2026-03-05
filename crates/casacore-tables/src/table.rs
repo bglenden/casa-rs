@@ -594,6 +594,63 @@ impl Iterator for RowRangeIter {
     }
 }
 
+/// Result of a TaQL SELECT query via [`Table::query_result()`].
+///
+/// Simple SELECTs (only column references) produce a zero-copy
+/// [`View`](QueryResult::View). SELECTs with computed expressions, GROUP BY,
+/// or aggregate functions produce a [`Materialized`](QueryResult::Materialized)
+/// in-memory table containing the evaluated result rows.
+///
+/// Both variants support reading column names and row data.
+///
+/// C++ equivalent: the result of `tableCommand()` — either a `Table` reference
+/// or a newly materialized `Table` from `makeProjectExprTable()`.
+pub enum QueryResult<'a> {
+    /// A zero-copy view into the source table (row-index mapping).
+    View(crate::RefTable<'a>),
+    /// An owned in-memory table with computed/aggregated values (boxed to
+    /// keep the enum size small).
+    Materialized(Box<Table>),
+}
+
+impl std::fmt::Debug for QueryResult<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::View(v) => write!(f, "QueryResult::View({} rows)", v.row_count()),
+            Self::Materialized(t) => write!(f, "QueryResult::Materialized({} rows)", t.row_count()),
+        }
+    }
+}
+
+impl QueryResult<'_> {
+    /// Returns the number of result rows.
+    pub fn row_count(&self) -> usize {
+        match self {
+            QueryResult::View(v) => v.row_count(),
+            QueryResult::Materialized(t) => t.row_count(),
+        }
+    }
+
+    /// Returns the column names of the result.
+    pub fn column_names(&self) -> Vec<String> {
+        match self {
+            QueryResult::View(v) => v.column_names().to_vec(),
+            QueryResult::Materialized(t) => t
+                .schema()
+                .map(|s| s.columns().iter().map(|c| c.name().to_string()).collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Returns the row at the given index, or `None` if out of bounds.
+    pub fn row(&self, index: usize) -> Option<&RecordValue> {
+        match self {
+            QueryResult::View(v) => v.row(index),
+            QueryResult::Materialized(t) => t.row(index),
+        }
+    }
+}
+
 /// Errors that can occur when reading or writing a [`Table`].
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TableError {
@@ -1921,6 +1978,36 @@ impl Table {
                 col_name: column.to_string(),
                 ref_table: ref_table.to_path_buf(),
                 row_column: row_column.to_string(),
+            });
+        Ok(())
+    }
+
+    /// Bind a virtual column computed from a TaQL expression.
+    ///
+    /// The expression is evaluated per-row against stored columns during
+    /// materialization. The column must already exist in the schema.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `VirtualTaQLColumn` in `casacore/tables/DataMan/VirtualTaQLColumn.h`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError::SchemaColumnUnknown`] if the column is not in
+    /// the schema.
+    pub fn bind_taql_column(&mut self, column: &str, expression: &str) -> Result<(), TableError> {
+        if let Some(schema) = self.inner.schema() {
+            if !schema.columns().iter().any(|c| c.name() == column) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: column.to_string(),
+                });
+            }
+        }
+        self.virtual_columns.insert(column.to_string());
+        self.virtual_bindings
+            .push(VirtualColumnBinding::TaQLColumn {
+                col_name: column.to_string(),
+                expression: expression.to_string(),
             });
         Ok(())
     }
@@ -3344,6 +3431,70 @@ impl Table {
     }
 
     // ── TaQL query methods ──────────────────────────────────────────
+
+    /// Executes a TaQL SELECT query and returns a [`QueryResult`].
+    ///
+    /// For simple SELECTs (only column references, no computed expressions),
+    /// returns `QueryResult::View` with a zero-copy [`RefTable`](crate::RefTable). For SELECTs
+    /// with computed columns, GROUP BY, or aggregate functions, returns
+    /// `QueryResult::Materialized` with an owned in-memory [`Table`] containing
+    /// the evaluated result rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError::Taql`] if the query is invalid or execution fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use casacore_tables::{Table, TableSchema, ColumnSchema, QueryResult};
+    /// # use casacore_types::*;
+    /// # let schema = TableSchema::new(vec![
+    /// #     ColumnSchema::scalar("id", PrimitiveType::Int32),
+    /// #     ColumnSchema::scalar("flux", PrimitiveType::Float64),
+    /// # ]).unwrap();
+    /// # let mut table = Table::with_schema(schema);
+    /// # for i in 0..5 {
+    /// #     table.add_row(RecordValue::new(vec![
+    /// #         RecordField::new("id", Value::Scalar(ScalarValue::Int32(i))),
+    /// #         RecordField::new("flux", Value::Scalar(ScalarValue::Float64(i as f64))),
+    /// #     ])).unwrap();
+    /// # }
+    /// match table.query_result("SELECT * WHERE flux > 2.0").unwrap() {
+    ///     QueryResult::View(view) => assert_eq!(view.row_count(), 2),
+    ///     QueryResult::Materialized(mat) => {
+    ///         // Computed columns produce a materialized table
+    ///         let _ = mat.row_count();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// C++ equivalent: `tableCommand()` with a SELECT query.
+    pub fn query_result(&mut self, taql: &str) -> Result<QueryResult<'_>, TableError> {
+        let stmt = crate::taql::parse(taql).map_err(|e| TableError::Taql(e.to_string()))?;
+        let result = crate::taql::exec::execute_materializing(&stmt, self)
+            .map_err(|e| TableError::Taql(e.to_string()))?;
+        match result {
+            crate::taql::TaqlResult::Select {
+                row_indices,
+                columns,
+            } => {
+                let view = if columns.is_empty() {
+                    crate::RefTable::from_rows(self, row_indices)?
+                } else {
+                    crate::RefTable::from_rows_and_columns(self, row_indices, &columns)?
+                };
+                Ok(QueryResult::View(view))
+            }
+            crate::taql::TaqlResult::Materialized { table } => {
+                Ok(QueryResult::Materialized(table))
+            }
+            _ => Err(TableError::Taql(
+                "Table::query_result() only supports SELECT statements; use execute_taql() for mutations"
+                    .to_string(),
+            )),
+        }
+    }
 
     /// Executes a TaQL SELECT query and returns a [`RefTable`](crate::RefTable) view.
     ///

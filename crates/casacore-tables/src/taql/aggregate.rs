@@ -8,7 +8,7 @@
 //! `TableExprGroupFunc*.cc`.
 
 use super::ast::AggregateFunc;
-use super::eval::ExprValue;
+use super::eval::{ArrayValue, ExprValue};
 
 /// An accumulator for computing aggregate function results over a group of rows.
 ///
@@ -34,6 +34,12 @@ pub struct Accumulator {
     values: Vec<f64>,
     /// Fractile fraction (set from the second argument).
     fraction: f64,
+    /// Collected ExprValues for GAGGR.
+    collected: Vec<ExprValue>,
+    /// Collected row IDs for GROWID.
+    row_ids: Vec<i64>,
+    /// Histogram parameters (nbins, start, end) for GHIST.
+    hist_params: Option<(usize, f64, f64)>,
 }
 
 impl Accumulator {
@@ -56,6 +62,9 @@ impl Accumulator {
             nfalse: 0,
             values: Vec::new(),
             fraction: 0.5,
+            collected: Vec::new(),
+            row_ids: Vec::new(),
+            hist_params: None,
         }
     }
 
@@ -64,6 +73,18 @@ impl Accumulator {
         let mut acc = Self::new(AggregateFunc::Fractile);
         acc.fraction = fraction;
         acc
+    }
+
+    /// Create a histogram accumulator with the given parameters.
+    pub fn new_hist(nbins: usize, start: f64, end: f64) -> Self {
+        let mut acc = Self::new(AggregateFunc::Hist);
+        acc.hist_params = Some((nbins, start, end));
+        acc
+    }
+
+    /// Feed a row index (for GROWID).
+    pub fn accumulate_row_id(&mut self, row_id: i64) {
+        self.row_ids.push(row_id);
     }
 
     /// Feed a value into the accumulator.
@@ -165,6 +186,17 @@ impl Accumulator {
                 }
             }
             AggregateFunc::Median | AggregateFunc::Fractile => {
+                if let Ok(f) = val.to_float() {
+                    self.values.push(f);
+                }
+            }
+            AggregateFunc::Aggr => {
+                self.collected.push(val.clone());
+            }
+            AggregateFunc::RowId => {
+                // Row ID accumulation is done via accumulate_row_id
+            }
+            AggregateFunc::Hist => {
                 if let Ok(f) = val.to_float() {
                     self.values.push(f);
                 }
@@ -271,6 +303,41 @@ impl Accumulator {
                         ((self.values.len() as f64 - 1.0) * self.fraction.clamp(0.0, 1.0)) as usize;
                     ExprValue::Float(self.values[idx])
                 }
+            }
+            AggregateFunc::Aggr => {
+                let len = self.collected.len();
+                ExprValue::Array(ArrayValue {
+                    shape: vec![len],
+                    data: std::mem::take(&mut self.collected),
+                })
+            }
+            AggregateFunc::RowId => {
+                let data: Vec<ExprValue> =
+                    self.row_ids.iter().map(|&id| ExprValue::Int(id)).collect();
+                let len = data.len();
+                ExprValue::Array(ArrayValue {
+                    shape: vec![len],
+                    data,
+                })
+            }
+            AggregateFunc::Hist => {
+                let (nbins, start, end) = self.hist_params.unwrap_or((10, 0.0, 1.0));
+                let bin_width = (end - start) / nbins as f64;
+                let mut bins = vec![0i64; nbins];
+                for &v in &self.values {
+                    if v >= start && v < end {
+                        let idx = ((v - start) / bin_width) as usize;
+                        let idx = idx.min(nbins - 1);
+                        bins[idx] += 1;
+                    } else if (v - end).abs() < f64::EPSILON {
+                        // Include the right boundary in the last bin.
+                        bins[nbins - 1] += 1;
+                    }
+                }
+                ExprValue::Array(ArrayValue {
+                    shape: vec![nbins],
+                    data: bins.into_iter().map(ExprValue::Int).collect(),
+                })
             }
         }
     }
@@ -450,5 +517,80 @@ mod tests {
             acc.accumulate(&ExprValue::Float(v));
         }
         assert_eq!(acc.finish(), ExprValue::Float(3.0));
+    }
+
+    // ── Wave 6: Group array aggregates ──
+
+    #[test]
+    fn gaggr_collects_values() {
+        let mut acc = Accumulator::new(AggregateFunc::Aggr);
+        acc.accumulate(&ExprValue::Int(10));
+        acc.accumulate(&ExprValue::Int(20));
+        acc.accumulate(&ExprValue::Int(30));
+        match acc.finish() {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                assert_eq!(
+                    a.data,
+                    vec![ExprValue::Int(10), ExprValue::Int(20), ExprValue::Int(30)]
+                );
+            }
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn growid_collects_row_ids() {
+        let mut acc = Accumulator::new(AggregateFunc::RowId);
+        acc.accumulate_row_id(0);
+        acc.accumulate_row_id(3);
+        acc.accumulate_row_id(7);
+        match acc.finish() {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![3]);
+                assert_eq!(
+                    a.data,
+                    vec![ExprValue::Int(0), ExprValue::Int(3), ExprValue::Int(7)]
+                );
+            }
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ghist_basic() {
+        let mut acc = Accumulator::new_hist(4, 0.0, 4.0);
+        for v in [0.5, 1.5, 1.8, 2.1, 3.0, 3.9] {
+            acc.accumulate(&ExprValue::Float(v));
+        }
+        match acc.finish() {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![4]);
+                // Bins: [0,1) [1,2) [2,3) [3,4)
+                // Values: 0.5→bin0, 1.5→bin1, 1.8→bin1, 2.1→bin2, 3.0→bin3, 3.9→bin3
+                assert_eq!(
+                    a.data,
+                    vec![
+                        ExprValue::Int(1),
+                        ExprValue::Int(2),
+                        ExprValue::Int(1),
+                        ExprValue::Int(2)
+                    ]
+                );
+            }
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gaggr_empty() {
+        let mut acc = Accumulator::new(AggregateFunc::Aggr);
+        match acc.finish() {
+            ExprValue::Array(a) => {
+                assert_eq!(a.shape, vec![0]);
+                assert!(a.data.is_empty());
+            }
+            other => panic!("expected empty Array, got {other:?}"),
+        }
     }
 }

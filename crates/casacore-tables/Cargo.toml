@@ -13,11 +13,17 @@ casacore-aipsio = { path = "../casacore-aipsio" }
 casacore-types = { path = "../casacore-types" }
 logos = "0.15"
 ndarray.workspace = true
+regex = "1"
 num-complex.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"
+
+[[bench]]
+name = "taql_bench"
+harness = false
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

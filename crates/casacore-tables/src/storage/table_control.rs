@@ -1559,6 +1559,7 @@ impl TableDatContents {
                 VirtualColumnBinding::CompressFloat { virtual_col, .. } => virtual_col.as_str(),
                 VirtualColumnBinding::CompressComplex { virtual_col, .. } => virtual_col.as_str(),
                 VirtualColumnBinding::ForwardIndexedRow { col_name, .. } => col_name.as_str(),
+                VirtualColumnBinding::TaQLColumn { col_name, .. } => col_name.as_str(),
             })
             .collect();
 
@@ -1692,6 +1693,23 @@ impl TableDatContents {
                             seq,
                             "ForwardColumnIndexedRowEngine".to_string(),
                             "ForwardColumnIndexedRowEngine".to_string(),
+                        ),
+                    );
+                }
+                VirtualColumnBinding::TaQLColumn { col_name, .. } => {
+                    let seq = next_seq_nr;
+                    next_seq_nr += 1;
+                    dm_entries.push(DataManagerEntry {
+                        type_name: "VirtualTaQLColumn".to_string(),
+                        seq_nr: seq,
+                        data: Vec::new(),
+                    });
+                    col_dm_map.insert(
+                        col_name.clone(),
+                        (
+                            seq,
+                            "VirtualTaQLColumn".to_string(),
+                            "VirtualTaQLColumn".to_string(),
                         ),
                     );
                 }
@@ -1903,6 +1921,17 @@ impl TableDatContents {
                         desc.keywords.push(RecordField::new(
                             "ForwardColumnIndexedRowEngine_RowName".to_string(),
                             Value::Scalar(ScalarValue::String(row_column.clone())),
+                        ));
+                    }
+                }
+                VirtualColumnBinding::TaQLColumn {
+                    col_name,
+                    expression,
+                } => {
+                    if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *col_name) {
+                        desc.keywords.push(RecordField::new(
+                            "_VirtualTaQLColumn_CalcExpr".to_string(),
+                            Value::Scalar(ScalarValue::String(expression.clone())),
                         ));
                     }
                 }

@@ -95,6 +95,10 @@ pub(crate) fn lookup_engine(type_name: &str) -> Option<Box<dyn VirtualColumnEngi
         Some(Box::new(CompressComplexEngine {
             variant: CompressComplexVariant::SingleDish,
         }))
+    } else if type_name == "VirtualTaQLColumn" {
+        Some(Box::new(
+            super::virtual_taql_column::VirtualTaQLColumnEngine,
+        ))
     } else {
         None
     }
@@ -110,6 +114,7 @@ pub(crate) fn is_virtual_engine(type_name: &str) -> bool {
         || type_name == "CompressFloat"
         || type_name == "CompressComplex"
         || type_name == "CompressComplexSD"
+        || type_name == "VirtualTaQLColumn"
 }
 
 /// Metadata for a virtual column binding, used during save to produce
@@ -183,5 +188,14 @@ pub(crate) enum VirtualColumnBinding {
         col_name: String,
         ref_table: PathBuf,
         row_column: String,
+    },
+    /// A VirtualTaQLColumn binding: column computed from a TaQL expression.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `VirtualTaQLColumn` in `casacore/tables/DataMan/VirtualTaQLColumn.h`.
+    TaQLColumn {
+        col_name: String,
+        expression: String,
     },
 }

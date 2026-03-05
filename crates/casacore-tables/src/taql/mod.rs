@@ -50,6 +50,7 @@ pub mod eval;
 pub mod exec;
 
 pub mod aggregate;
+pub mod format;
 pub mod functions;
 
 pub use ast::Statement;

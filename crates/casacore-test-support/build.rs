@@ -27,6 +27,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_table_aipsio_vararray.cpp");
     build.file("src/cpp/casacore_cpp_table_ssm_vararray.cpp");
     build.file("src/cpp/casacore_cpp_table_vararray_bench.cpp");
+    build.file("src/cpp/casacore_cpp_taql.cpp");
     build.file("src/cpp/casacore_cpp_table_perf_bench.cpp");
 
     for include in &casacore.include_paths {

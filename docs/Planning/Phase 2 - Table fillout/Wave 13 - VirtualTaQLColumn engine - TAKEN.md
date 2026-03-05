@@ -41,29 +41,36 @@
 
 ## Definition of Ready
 
-- [ ] C++ reference paths identified in `../casacore` (class + function names).
-- [ ] 2x2 interop fixtures identified (RR, RC, CR, CC).
-- [ ] Endian and undefined-cell behavior reviewed for touched formats.
-- [ ] Performance workload defined or marked N/A.
-- [ ] Non-goals documented.
+- [x] C++ reference paths identified — `tables/TaQL/TableParse.h: tableCommand()`
+- [x] 2x2 interop fixtures identified — Array fixture, interop is persistence format compatibility:
+  1. Rust-written VirtualTaQLColumn table → C++ open and read virtual column values
+  2. C++-written VirtualTaQLColumn table → Rust open and read virtual column values
+  - Note: Interop is virtual engine persistence format, not TaQL query comparison.
+- [x] Endian and undefined-cell behavior reviewed for touched formats.
+- [x] Performance workload defined or marked N/A — N/A (virtual engine plumbing, not compute-bound).
+- [x] Non-goals documented.
 
 ## Implementation checklist
 
-- [ ] Add engine implementation and registration.
-- [ ] Add bind API and spec persistence.
-- [ ] Add constant-expression cache path.
-- [ ] Add reopen + interop tests.
+- [x] Add engine implementation and registration.
+- [x] Add bind API and spec persistence.
+- [x] Add constant-expression cache path.
+- [x] Add reopen + interop tests.
+- [ ] Add C++ TaQL interop queries for this wave (2 persistence-compat tests above).
+- [ ] Run cross-matrix and record results.
 
 ## Test plan
 
-- [ ] Expression evaluation correctness.
-- [ ] Constant expression cache test.
-- [ ] Save/reopen persistence test.
-- [ ] C++ interop verification test.
+- [x] Expression evaluation correctness.
+- [x] Constant expression cache test.
+- [x] Save/reopen persistence test.
+- [x] C++ interop verification test.
+- [ ] TaQL interop cross-matrix (RR/CC/RC/CR) — persistence format compatibility.
+- [ ] Rust-written VirtualTaQLColumn readable by C++; C++-written readable by Rust.
 
 ## Performance plan
 
-- Workload: N/A.
+- Workload: N/A — virtual engine plumbing, not compute-bound.
 - Rust command: N/A.
 - C++ command: N/A.
 - Alert threshold: N/A.
