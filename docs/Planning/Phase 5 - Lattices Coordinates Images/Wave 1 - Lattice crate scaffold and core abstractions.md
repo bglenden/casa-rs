@@ -30,7 +30,7 @@
 
 ## Dependencies
 
-- Phase 4 completed.
+- Phase 3 completed.
 
 ## Ordering constraints
 
