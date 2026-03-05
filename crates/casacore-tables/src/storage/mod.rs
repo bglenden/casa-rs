@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casacore_aipsio::ByteOrder;
-use casacore_types::{RecordField, RecordValue};
+use casacore_types::{RecordField, RecordValue, Value};
 use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
@@ -69,16 +69,84 @@ impl From<SchemaError> for StorageError {
     }
 }
 
+/// C++ `TableInfo` metadata stored in `table.info`.
+///
+/// Contains the logical table type (e.g. `"MeasurementSet"`) and subtype
+/// (e.g. `"UVFITS"`) written as plain-text key-value pairs.
+///
+/// # C++ equivalent
+///
+/// `casacore::TableInfo` — persisted via `TableInfo::flush()` / `readBack()`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableInfo {
+    /// Logical table type (e.g. `"MeasurementSet"`). Empty if unset.
+    pub table_type: String,
+    /// Table subtype (e.g. `"UVFITS"`). Empty if unset.
+    pub sub_type: String,
+}
+
+impl TableInfo {
+    /// Parse a `table.info` file from its text contents.
+    pub fn parse(contents: &str) -> Self {
+        let mut table_type = String::new();
+        let mut sub_type = String::new();
+        for line in contents.lines() {
+            if let Some(rest) = line.strip_prefix("Type = ") {
+                table_type = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("SubType = ") {
+                sub_type = rest.to_string();
+            }
+        }
+        Self {
+            table_type,
+            sub_type,
+        }
+    }
+}
+
+impl std::fmt::Display for TableInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Type = {}\nSubType = {}\n",
+            self.table_type, self.sub_type
+        )
+    }
+}
+
+/// Metadata for one data manager instance.
+///
+/// Each data manager manages one or more columns. The sequence number
+/// is unique within a table and identifies the on-disk data file
+/// (`table.f<seq_nr>`).
+///
+/// # C++ equivalent
+///
+/// `DataManager::dataManagerName()`, `DataManager::dataManagerType()`,
+/// `DataManager::sequenceNr()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataManagerInfo {
+    /// The data manager type name (e.g. `"StManAipsIO"`, `"StandardStMan"`).
+    pub dm_type: String,
+    /// Unique sequence number within the table.
+    pub seq_nr: u32,
+    /// Column names managed by this data manager.
+    pub columns: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct StorageSnapshot {
     pub(crate) rows: Vec<RecordValue>,
     pub(crate) keywords: RecordValue,
     pub(crate) column_keywords: HashMap<String, RecordValue>,
     pub(crate) schema: Option<TableSchema>,
+    pub(crate) table_info: TableInfo,
     /// Names of columns materialized by virtual engines (empty for non-virtual tables).
     pub(crate) virtual_columns: HashSet<String>,
     /// Virtual column bindings for save (empty on load).
     pub(crate) virtual_bindings: Vec<virtual_engine::VirtualColumnBinding>,
+    /// Data manager info extracted from table.dat (empty for memory tables).
+    pub(crate) dm_info: Vec<DataManagerInfo>,
 }
 
 pub(crate) trait StorageManager {
@@ -337,7 +405,7 @@ impl StorageManager for CompositeStorage {
         }
 
         let info_path = table_path.join(TABLE_INFO_FILE);
-        fs::write(&info_path, "Type = \nSubType = \n")?;
+        fs::write(&info_path, snapshot.table_info.to_string())?;
 
         Ok(())
     }
@@ -476,13 +544,20 @@ impl CompositeStorage {
             engine.materialize(&ctx, &bound_cols, &mut rows)?;
         }
 
+        let table_info = load_table_info(table_path);
+
+        // Build DM info from table.dat entries.
+        let dm_info = extract_dm_info(table_dat);
+
         Ok(StorageSnapshot {
             rows,
             keywords,
             column_keywords,
             schema: Some(schema),
+            table_info,
             virtual_columns,
             virtual_bindings: Vec::new(),
+            dm_info,
         })
     }
 
@@ -566,13 +641,17 @@ impl CompositeStorage {
             }
         });
 
+        let table_info = load_table_info(table_path);
+
         Ok(StorageSnapshot {
             rows,
             keywords: parent.keywords,
             column_keywords: parent.column_keywords,
             schema,
+            table_info,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            dm_info: vec![],
         })
     }
 
@@ -581,12 +660,13 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
         contents: &RefTableDatContents,
+        table_info: &TableInfo,
     ) -> Result<(), StorageError> {
         fs::create_dir_all(table_path)?;
         let control_path = table_path.join(TABLE_CONTROL_FILE);
         write_ref_table_dat(&control_path, contents)?;
         let info_path = table_path.join(TABLE_INFO_FILE);
-        fs::write(&info_path, "Type = \nSubType = \n")?;
+        fs::write(&info_path, table_info.to_string())?;
         Ok(())
     }
 
@@ -617,13 +697,17 @@ impl CompositeStorage {
             all_rows.extend(sub_snapshot.rows);
         }
 
+        let table_info = load_table_info(table_path);
+
         Ok(StorageSnapshot {
             rows: all_rows,
             keywords,
             column_keywords,
             schema,
+            table_info,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            dm_info: vec![],
         })
     }
 
@@ -632,12 +716,13 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
         contents: &table_control::ConcatTableDatContents,
+        table_info: &TableInfo,
     ) -> Result<(), StorageError> {
         fs::create_dir_all(table_path)?;
         let control_path = table_path.join(TABLE_CONTROL_FILE);
         write_concat_table_dat(&control_path, contents)?;
         let info_path = table_path.join(TABLE_INFO_FILE);
-        fs::write(&info_path, "Type = \nSubType = \n")?;
+        fs::write(&info_path, table_info.to_string())?;
         Ok(())
     }
 
@@ -905,7 +990,7 @@ impl CompositeStorage {
         let control_path = table_path.join(TABLE_CONTROL_FILE);
         write_table_dat(&control_path, &table_dat)?;
         let info_path = table_path.join(TABLE_INFO_FILE);
-        fs::write(&info_path, "Type = \nSubType = \n")?;
+        fs::write(&info_path, snapshot.table_info.to_string())?;
 
         Ok(())
     }
@@ -954,14 +1039,45 @@ fn load_stman_aipsio_columns(
             StManColumnData::Indirect(per_row) => {
                 for (row_idx, row) in rows.iter_mut().enumerate() {
                     let value = match per_row.get(row_idx) {
-                        Some(Some(v)) => v.clone(),
-                        // Undefined cell: use a 0-D empty array.
+                        Some(Some(v)) => {
+                            if col_desc.is_record() {
+                                // C++ stores records as indirect Vector<uChar>.
+                                // Deserialize the byte array back to a RecordValue.
+                                match v {
+                                    Value::Array(casacore_types::ArrayValue::UInt8(arr)) => {
+                                        let bytes = arr.as_slice().ok_or_else(|| {
+                                            StorageError::FormatMismatch(format!(
+                                                "record column '{}': non-contiguous u8 array",
+                                                col_desc.col_name
+                                            ))
+                                        })?;
+                                        Value::Record(table_control::deserialize_record_from_uchar(
+                                            bytes,
+                                        )?)
+                                    }
+                                    Value::Record(_) => v.clone(),
+                                    _ => {
+                                        return Err(StorageError::FormatMismatch(format!(
+                                            "record column '{}' has unexpected value type",
+                                            col_desc.col_name
+                                        )));
+                                    }
+                                }
+                            } else {
+                                v.clone()
+                            }
+                        }
+                        // Undefined cell: empty record or 0-D empty array.
                         Some(None) | None => {
-                            let dt = CasacoreDataType::from_primitive_type(
-                                col_desc.primitive_type,
-                                false,
-                            );
-                            make_undefined_array(dt, col_desc.nrdim as usize)
+                            if col_desc.is_record() {
+                                Value::Record(RecordValue::default())
+                            } else {
+                                let dt = CasacoreDataType::from_primitive_type(
+                                    col_desc.require_primitive_type()?,
+                                    false,
+                                );
+                                make_undefined_array(dt, col_desc.nrdim as usize)
+                            }
                         }
                     };
                     row.push(RecordField::new(col_desc.col_name.clone(), value));
@@ -1011,11 +1127,15 @@ fn load_ssm_columns(
                     let value = match per_row.get(row_idx) {
                         Some(Some(v)) => v.clone(),
                         Some(None) | None => {
-                            let dt = CasacoreDataType::from_primitive_type(
-                                col_desc.primitive_type,
-                                false,
-                            );
-                            make_undefined_array(dt, col_desc.nrdim as usize)
+                            if col_desc.is_record() {
+                                Value::Record(RecordValue::default())
+                            } else {
+                                let dt = CasacoreDataType::from_primitive_type(
+                                    col_desc.require_primitive_type()?,
+                                    false,
+                                );
+                                make_undefined_array(dt, col_desc.nrdim as usize)
+                            }
                         }
                     };
                     row.push(RecordField::new(col_name.clone(), value));
@@ -1174,4 +1294,67 @@ pub(crate) fn add_directory(
 
     // "././" or more → add the ref table path itself (subtable inside it).
     Ok(ref_table_path.join(name))
+}
+
+/// Read and parse the `table.info` file from a table directory.
+///
+/// Returns a default `TableInfo` if the file is missing or unreadable.
+fn load_table_info(table_path: &Path) -> TableInfo {
+    let info_path = table_path.join(TABLE_INFO_FILE);
+    match fs::read_to_string(&info_path) {
+        Ok(contents) => TableInfo::parse(&contents),
+        Err(_) => TableInfo::default(),
+    }
+}
+
+/// Build [`DataManagerInfo`] from the parsed table.dat contents.
+fn extract_dm_info(table_dat: &table_control::TableDatContents) -> Vec<DataManagerInfo> {
+    table_dat
+        .column_set
+        .data_managers
+        .iter()
+        .map(|dm| {
+            let columns: Vec<String> = table_dat
+                .column_set
+                .columns
+                .iter()
+                .filter(|pc| pc.dm_seq_nr == dm.seq_nr)
+                .map(|pc| pc.original_name.clone())
+                .collect();
+            DataManagerInfo {
+                dm_type: dm.type_name.clone(),
+                seq_nr: dm.seq_nr,
+                columns,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TableInfo;
+
+    #[test]
+    fn table_info_parse_round_trip() {
+        let info = TableInfo {
+            table_type: "MeasurementSet".to_string(),
+            sub_type: "UVFITS".to_string(),
+        };
+        let text = info.to_string();
+        let parsed = TableInfo::parse(&text);
+        assert_eq!(info, parsed);
+    }
+
+    #[test]
+    fn table_info_parse_empty() {
+        let parsed = TableInfo::parse("");
+        assert_eq!(parsed, TableInfo::default());
+    }
+
+    #[test]
+    fn table_info_parse_type_only() {
+        let parsed = TableInfo::parse("Type = Catalog\n");
+        assert_eq!(parsed.table_type, "Catalog");
+        assert_eq!(parsed.sub_type, "");
+    }
 }

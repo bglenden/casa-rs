@@ -17,6 +17,7 @@
 #include <casacore/casa/Arrays/Array.h>
 #include <casacore/casa/Arrays/IPosition.h>
 
+#include <climits>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>

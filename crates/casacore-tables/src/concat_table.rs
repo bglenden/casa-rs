@@ -257,7 +257,11 @@ impl ConcatTable {
 
         let storage = CompositeStorage;
         storage
-            .save_concat_table(concat_path, &contents)
+            .save_concat_table(
+                concat_path,
+                &contents,
+                &crate::storage::TableInfo::default(),
+            )
             .map_err(|e| TableError::Storage(e.to_string()))?;
         Ok(())
     }
@@ -282,8 +286,10 @@ impl ConcatTable {
             keywords: self.keywords.clone(),
             column_keywords: self.column_keywords.clone(),
             schema: Some(self.schema.clone()),
+            table_info: crate::storage::TableInfo::default(),
             virtual_columns: std::collections::HashSet::new(),
             virtual_bindings: Vec::new(),
+            dm_info: vec![],
         };
 
         let storage = CompositeStorage;

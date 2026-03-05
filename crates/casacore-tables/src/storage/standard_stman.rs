@@ -614,7 +614,8 @@ pub(crate) fn read_ssm_file(
                 }
             };
 
-            let dt = CasacoreDataType::from_primitive_type(col_desc.primitive_type, false);
+            let dt =
+                CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
             let reader = array_reader.as_mut().ok_or_else(|| {
                 StorageError::FormatMismatch(
                     "SSM indirect column but no array file found".to_string(),
@@ -1102,7 +1103,8 @@ pub(crate) fn write_ssm_file(
 
         if is_indirect {
             // Write array data to shared file, store i64 offsets in buckets.
-            let dt = CasacoreDataType::from_primitive_type(col_desc.primitive_type, false);
+            let dt =
+                CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
             let writer = array_writer.as_mut().ok_or_else(|| {
                 StorageError::FormatMismatch(
                     "no array file writer for indirect SSM column".to_string(),

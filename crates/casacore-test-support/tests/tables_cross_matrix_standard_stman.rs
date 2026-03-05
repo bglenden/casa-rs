@@ -225,7 +225,7 @@ fn ssm_all_numeric_scalars_fixture() -> TableFixture {
         rows,
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
-        cpp_fixture: None,
+        cpp_fixture: Some(CppTableFixture::SsmAllNumericScalars),
         tile_shape: None,
     }
 }
@@ -275,7 +275,7 @@ fn ssm_complex_scalars_fixture() -> TableFixture {
         rows,
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
-        cpp_fixture: None,
+        cpp_fixture: Some(CppTableFixture::SsmComplexScalars),
         tile_shape: None,
     }
 }
@@ -382,7 +382,7 @@ fn ssm_typed_arrays_fixture() -> TableFixture {
         rows,
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
-        cpp_fixture: None,
+        cpp_fixture: Some(CppTableFixture::SsmTypedArrays),
         tile_shape: None,
     }
 }
@@ -443,28 +443,19 @@ fn ssm_column_keywords_fixture() -> TableFixture {
 #[test]
 fn ssm_all_numeric_scalars_cross_matrix() {
     let fixture = ssm_all_numeric_scalars_fixture();
-    assert_matrix_results(&run_table_cross_matrix(
-        &fixture,
-        ManagerKind::StandardStMan,
-    ));
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
 }
 
 #[test]
 fn ssm_complex_scalars_cross_matrix() {
     let fixture = ssm_complex_scalars_fixture();
-    assert_matrix_results(&run_table_cross_matrix(
-        &fixture,
-        ManagerKind::StandardStMan,
-    ));
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
 }
 
 #[test]
 fn ssm_typed_arrays_cross_matrix() {
     let fixture = ssm_typed_arrays_fixture();
-    assert_matrix_results(&run_table_cross_matrix(
-        &fixture,
-        ManagerKind::StandardStMan,
-    ));
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
 }
 
 #[test]

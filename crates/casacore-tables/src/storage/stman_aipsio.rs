@@ -4,13 +4,13 @@
 use std::path::Path;
 
 use casacore_aipsio::{AipsIo, AipsOpenOption, ByteOrder};
-use casacore_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
+use casacore_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::StorageError;
 use super::data_type::CasacoreDataType;
 use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
-use super::table_control::ColumnDescContents;
+use super::table_control::{self, ColumnDescContents};
 
 // ---------------------------------------------------------------------------
 // Parsed column data from table.f<N>
@@ -116,7 +116,13 @@ pub(crate) fn read_stman_file(
             "StManColumnArrayAipsIO" => {
                 StManColumnData::Flat(read_stman_array_column(&mut io, *dt, info.nrelem)?)
             }
-            "StManColumnAipsIO" => StManColumnData::Flat(read_stman_column(&mut io, *dt)?),
+            "StManColumnAipsIO" => {
+                if *dt == CasacoreDataType::TpRecord {
+                    read_stman_record_column(&mut io)?
+                } else {
+                    StManColumnData::Flat(read_stman_column(&mut io, *dt)?)
+                }
+            }
             other => {
                 return Err(StorageError::FormatMismatch(format!(
                     "unexpected StManAipsIO column type: {other}"
@@ -155,6 +161,37 @@ fn read_stman_column(io: &mut AipsIo, dt: CasacoreDataType) -> Result<ColumnRawD
 
     io.getend()?;
     Ok(data)
+}
+
+/// Read a record column from StManColumnAipsIO.
+///
+/// C++ `StManColumnAipsIO::getData` for `TpRecord` reads individual
+/// `TableRecord` objects (no count prefix, unlike typed columns). Each
+/// extent contains `extent_count` serialized `Record` objects.
+///
+/// Corresponds to C++ `ScalarRecordColumnData` with `StManColumnAipsIO`.
+fn read_stman_record_column(io: &mut AipsIo) -> Result<StManColumnData, StorageError> {
+    let _version = io.getstart("StManColumnAipsIO")?;
+    let nrval = io.get_u32()?;
+
+    let mut records = Vec::with_capacity(nrval as usize);
+    if nrval > 0 {
+        let mut nrd = 0u32;
+        while nrd < nrval {
+            let mut extent_count = io.get_u32()?;
+            if extent_count == 0 {
+                extent_count = nrval - nrd;
+            }
+            for _ in 0..extent_count {
+                let record = table_control::read_record(io)?;
+                records.push(Some(Value::Record(record)));
+            }
+            nrd += extent_count;
+        }
+    }
+
+    io.getend()?;
+    Ok(StManColumnData::Indirect(records))
 }
 
 /// Read an array column wrapped in StManColumnArrayAipsIO > StManColumnAipsIO.
@@ -605,10 +642,11 @@ pub(crate) fn write_stman_file(
     let ncol = columns.len() as u32;
     let big_endian = byte_order == ByteOrder::BigEndian;
 
-    // Check if any columns are variable-shape (indirect).
+    // Check if any columns are variable-shape (indirect) or record.
+    // Record columns use indirect Vector<uChar> storage (like C++ ScaRecordColData).
     let has_indirect = columns
         .iter()
-        .any(|c| c.is_array && c.nrdim > 0 && c.shape.is_empty());
+        .any(|c| c.is_record() || (c.is_array && c.nrdim > 0 && c.shape.is_empty()));
 
     // Create shared array file for indirect columns (version 2 format: path + "i").
     let mut array_writer = if has_indirect {
@@ -634,9 +672,15 @@ pub(crate) fn write_stman_file(
     io.put_u32(nrrow)?;
     io.put_u32(ncol)?;
 
-    // Per-column data types (always the scalar element type)
+    // Per-column data types.
+    // C++ stores the DM-level data type: TpUChar for record columns
+    // (since ScaRecordColData uses createIndArrColumn(name, TpUChar, "")).
     for col in columns {
-        let scalar_dt = CasacoreDataType::from_primitive_type(col.primitive_type, false);
+        let scalar_dt = if col.is_record() {
+            CasacoreDataType::TpUChar
+        } else {
+            CasacoreDataType::from_primitive_type(col.require_primitive_type()?, false)
+        };
         io.put_i32(scalar_dt as i32)?;
     }
 
@@ -666,7 +710,10 @@ fn write_stman_column(
     let is_fixed_array = col_desc.is_array && col_desc.nrdim > 0 && !col_desc.shape.is_empty();
     let is_variable_array = col_desc.is_array && col_desc.nrdim > 0 && col_desc.shape.is_empty();
 
-    if is_variable_array {
+    if col_desc.is_record() {
+        // Record column: serialize as indirect Vector<uChar>, matching C++ ScaRecordColData.
+        write_stman_record_as_indirect(io, rows, col_name, array_writer)?;
+    } else if is_variable_array {
         // Variable-shape (indirect) column: StManColumnIndArrayAipsIO
         write_stman_indirect_column(io, col_desc, rows, col_name, array_writer)?;
     } else if is_fixed_array {
@@ -718,7 +765,7 @@ fn write_stman_indirect_column(
     array_writer: &mut Option<StManArrayFileWriter>,
 ) -> Result<(), StorageError> {
     let nrrow = rows.len() as u32;
-    let dt = CasacoreDataType::from_primitive_type(col_desc.primitive_type, false);
+    let dt = CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
 
     let writer = array_writer.as_mut().ok_or_else(|| {
         StorageError::FormatMismatch("no array file writer for indirect column".to_string())
@@ -770,6 +817,69 @@ fn write_stman_indirect_column(
     Ok(())
 }
 
+/// Write a record column as `StManColumnIndArrayAipsIO` with `TpUChar` data.
+///
+/// Matches C++ `ScalarRecordColumnData` which calls `createIndArrColumn(name, TpUChar, "")`,
+/// storing each record as an AipsIO-serialized `Vector<uChar>` in the indirect array file.
+fn write_stman_record_as_indirect(
+    io: &mut AipsIo,
+    rows: &[casacore_types::RecordValue],
+    col_name: &str,
+    array_writer: &mut Option<StManArrayFileWriter>,
+) -> Result<(), StorageError> {
+    let nrrow = rows.len() as u32;
+    let dt = CasacoreDataType::TpUChar;
+
+    // Serialize each record to uChar bytes and write to the array file.
+    let mut offsets = Vec::with_capacity(nrrow as usize);
+    for row in rows {
+        let record = match row.get(col_name) {
+            Some(Value::Record(r)) => r.clone(),
+            _ => RecordValue::default(),
+        };
+        let bytes = table_control::serialize_record_to_uchar(&record)?;
+        // Write as 1-D Array<uChar> to the array file.
+        let arr = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[bytes.len()]), bytes)
+            .map_err(|e| StorageError::FormatMismatch(format!("record serialize shape: {e}")))?;
+        let value = Value::Array(casacore_types::ArrayValue::UInt8(arr));
+        let writer = array_writer.as_mut().ok_or_else(|| {
+            StorageError::FormatMismatch(
+                "record column requires indirect array writer but none was created".into(),
+            )
+        })?;
+        let offset = writer.write_array(&value, dt)?;
+        offsets.push(offset);
+    }
+
+    // Write AipsIO envelope: StManColumnIndArrayAipsIO.
+    io.putstart("StManColumnIndArrayAipsIO", 2)?;
+    io.put_i32(dt as i32)?; // dtype for backward compatibility
+    io.put_i32(0)?; // seqnr
+
+    // Inner StManColumnAipsIO with file offsets.
+    io.putstart("StManColumnAipsIO", 2)?;
+    io.put_u32(nrrow)?;
+
+    if nrrow > 0 {
+        io.put_u32(nrrow)?; // extent_count
+        for &off in &offsets {
+            if off == 0 {
+                io.put_u32(0)?;
+            } else if off <= 2u64.pow(31) as i64 {
+                io.put_u32(off as u32)?;
+            } else {
+                io.put_u32(LARGE_OFFSET_MARKER)?;
+                io.put_i64(off)?;
+            }
+        }
+    }
+
+    io.putend()?; // StManColumnAipsIO
+    io.putend()?; // StManColumnIndArrayAipsIO
+
+    Ok(())
+}
+
 fn write_scalar_column(
     io: &mut AipsIo,
     col_desc: &ColumnDescContents,
@@ -778,7 +888,7 @@ fn write_scalar_column(
     _col_idx: usize,
 ) -> Result<(), StorageError> {
     // Collect all scalar values into a typed vec and write as array
-    let pt = col_desc.primitive_type;
+    let pt = col_desc.require_primitive_type()?;
     match pt {
         PrimitiveType::Bool => {
             let values: Vec<bool> = rows
@@ -940,7 +1050,7 @@ fn write_flat_array_column_raw(
     let elements_per_row: usize = shape.iter().product();
 
     // Collect all values in row order (Fortran layout within each row), then write without count prefix
-    match col_desc.primitive_type {
+    match col_desc.require_primitive_type()? {
         PrimitiveType::Float32 => {
             let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
             for row in rows {

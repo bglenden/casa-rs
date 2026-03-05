@@ -1574,8 +1574,13 @@ fn save_tiled_column_stman(
     // Collect column data types.
     let col_data_types: Vec<CasacoreDataType> = col_descs
         .iter()
-        .map(|c| CasacoreDataType::from_primitive_type(c.primitive_type, false))
-        .collect();
+        .map(|c| {
+            Ok(CasacoreDataType::from_primitive_type(
+                c.require_primitive_type()?,
+                false,
+            ))
+        })
+        .collect::<Result<_, StorageError>>()?;
 
     let (bucket_size, col_offsets) = compute_tile_layout(&col_data_types, &tile_shape);
 
@@ -1690,8 +1695,13 @@ fn save_tiled_shape_stman(
     let nrrow = rows.len();
     let col_data_types: Vec<CasacoreDataType> = col_descs
         .iter()
-        .map(|c| CasacoreDataType::from_primitive_type(c.primitive_type, false))
-        .collect();
+        .map(|c| {
+            Ok(CasacoreDataType::from_primitive_type(
+                c.require_primitive_type()?,
+                false,
+            ))
+        })
+        .collect::<Result<_, StorageError>>()?;
 
     if nrrow == 0 || col_descs.is_empty() {
         let header = TiledStManHeader {
@@ -1957,8 +1967,13 @@ fn save_tiled_cell_stman(
     let nrrow = rows.len();
     let col_data_types: Vec<CasacoreDataType> = col_descs
         .iter()
-        .map(|c| CasacoreDataType::from_primitive_type(c.primitive_type, false))
-        .collect();
+        .map(|c| {
+            Ok(CasacoreDataType::from_primitive_type(
+                c.require_primitive_type()?,
+                false,
+            ))
+        })
+        .collect::<Result<_, StorageError>>()?;
 
     let nrdim = if !col_descs.is_empty() && col_descs[0].nrdim > 0 {
         col_descs[0].nrdim as u32

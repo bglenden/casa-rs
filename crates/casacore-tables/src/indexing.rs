@@ -223,6 +223,19 @@ impl<'a> ColumnsIndex<'a> {
         self.sorted_rows[lo..hi].to_vec()
     }
 
+    /// Batch exact-match lookup: returns matching row indices for each key.
+    ///
+    /// For each element in `keys`, performs the same operation as
+    /// [`lookup`](ColumnsIndex::lookup). Returns a `Vec` of equal length,
+    /// where each element is the result for the corresponding query key.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ColumnsIndexArray::getRowNumbers()` (batch overload).
+    pub fn lookup_many(&self, keys: &[Vec<(&str, &ScalarValue)>]) -> Vec<Vec<usize>> {
+        keys.iter().map(|k| self.lookup(k)).collect()
+    }
+
     /// Returns `true` if every key in the index is unique (no duplicate rows
     /// for any key combination).
     ///
@@ -604,5 +617,22 @@ mod tests {
         );
         assert!(build_ms < 5_000, "build took too long: {build_ms}ms");
         assert!(lookup_ms < 5_000, "lookup took too long: {lookup_ms}ms");
+    }
+
+    #[test]
+    fn lookup_many_returns_per_key_results() {
+        let table = int_table(&[10, 20, 10, 30, 20]);
+        let idx = ColumnsIndex::new(&table, &["id"]).unwrap();
+
+        let results = idx.lookup_many(&[
+            vec![("id", &ScalarValue::Int32(10))],
+            vec![("id", &ScalarValue::Int32(20))],
+            vec![("id", &ScalarValue::Int32(99))],
+        ]);
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].len(), 2); // rows 0, 2
+        assert_eq!(results[1].len(), 2); // rows 1, 4
+        assert!(results[2].is_empty()); // no match
     }
 }

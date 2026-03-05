@@ -48,12 +48,48 @@ pub enum LockMode {
     /// C++ equivalent: `TableLock::UserLocking`.
     UserLocking,
 
+    /// Like [`AutoLocking`](Self::AutoLocking) but skips acquiring a read
+    /// lock before read operations. Only write locks are acquired. This can
+    /// improve performance when reads need not be serialized.
+    ///
+    /// C++ equivalent: `TableLock::AutoNoReadLocking`.
+    AutoNoReadLocking,
+
+    /// Like [`UserLocking`](Self::UserLocking) but skips acquiring a read
+    /// lock when the user calls [`Table::lock(Read)`](crate::Table::lock).
+    /// Only write locks are acquired.
+    ///
+    /// C++ equivalent: `TableLock::UserNoReadLocking`.
+    UserNoReadLocking,
+
+    /// Uses the default locking mode, which resolves to
+    /// [`AutoLocking`](Self::AutoLocking).
+    ///
+    /// C++ equivalent: `TableLock::DefaultLocking`.
+    DefaultLocking,
+
     /// No locking is performed. This is the default for backward
     /// compatibility with code that does not need multi-process access.
     ///
     /// C++ equivalent: `TableLock::NoLocking`.
     #[default]
     NoLocking,
+}
+
+impl LockMode {
+    /// Resolves [`DefaultLocking`](Self::DefaultLocking) to
+    /// [`AutoLocking`](Self::AutoLocking); all other modes are unchanged.
+    pub fn resolve(self) -> Self {
+        match self {
+            Self::DefaultLocking => Self::AutoLocking,
+            other => other,
+        }
+    }
+
+    /// Returns `true` if this mode skips read locks.
+    pub fn skip_read_lock(self) -> bool {
+        matches!(self, Self::AutoNoReadLocking | Self::UserNoReadLocking)
+    }
 }
 
 /// The type of lock being held or requested.
@@ -104,4 +140,23 @@ impl LockOptions {
         self.inspection_interval = seconds;
         self
     }
+}
+
+/// Hook for external lock synchronization.
+///
+/// Allows an application-level lock manager (e.g. a distributed lock service
+/// or a custom IPC mechanism) to participate in the table locking protocol.
+/// When set on a [`Table`](crate::Table), the hooks are called around
+/// every lock acquire/release pair so that external state stays in sync.
+///
+/// # C++ equivalent
+///
+/// `ExternalLockSync` (abstract base class in `TableLockData`).
+pub trait ExternalLockSync: Send + Sync {
+    /// Called before acquiring a read lock.
+    fn acquire_read(&self);
+    /// Called before acquiring a write lock.
+    fn acquire_write(&self);
+    /// Called after releasing any lock.
+    fn release(&self);
 }

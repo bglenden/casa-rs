@@ -1261,6 +1261,39 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    fn cpp_table_write_undefined_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_undefined_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_column_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_column_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_record_column(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_record_column(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_mixed_schema(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_mixed_schema(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn cpp_table_write_aipsio_variable_array(
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
@@ -1278,12 +1311,116 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    fn cpp_table_write_table_info(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_table_info(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    fn cpp_table_write_aipsio_all_numeric_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_all_numeric_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_aipsio_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_aipsio_typed_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_typed_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_aipsio_3d_fixed_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_3d_fixed_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_all_numeric_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_all_numeric_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_complex_scalars(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_typed_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_typed_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn cpp_vararray_bench_write_read(
         path: *const std::ffi::c_char,
         nrows: u64,
         out_write_ns: *mut u64,
         out_read_ns: *mut u64,
         out_total_elems: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    #[link_name = "cpp_set_algebra_bench"]
+    fn ffi_set_algebra_bench(
+        path: *const std::ffi::c_char,
+        nrows: u64,
+        split_a: u64,
+        split_b: u64,
+        out_union_ns: *mut u64,
+        out_intersection_ns: *mut u64,
+        out_difference_ns: *mut u64,
+        out_union_rows: *mut u64,
+        out_intersection_rows: *mut u64,
+        out_difference_rows: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    #[link_name = "cpp_copy_rows_bench"]
+    fn ffi_copy_rows_bench(
+        dir: *const std::ffi::c_char,
+        nrows: u64,
+        out_ns: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    #[link_name = "cpp_cell_slice_bench"]
+    fn ffi_cell_slice_bench(
+        path: *const std::ffi::c_char,
+        nrows: u64,
+        dim0: i64,
+        dim1: i64,
+        slice_start0: i64,
+        slice_start1: i64,
+        slice_end0: i64,
+        slice_end1: i64,
+        out_write_ns: *mut u64,
+        out_slice_ns: *mut u64,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
@@ -1553,6 +1690,45 @@ pub enum CppTableFixture {
     /// SSM variable-shape array: same schema and data as `AipsIOVariableArray`
     /// but stored with `StandardStMan`.
     SsmVariableArray,
+    /// Undefined scalars: 4-row table (Int, Double, String) where only rows 0
+    /// and 2 are written; rows 1 and 3 keep default values (0, 0.0, "").
+    UndefinedScalars,
+    /// Column keywords: 2-row table (flux: Double, id: Int) with table-level
+    /// and per-column keywords. flux has "unit"="Jy" and "ref_frame"="LSRK";
+    /// id has "description"="source identifier".
+    ColumnKeywords,
+    /// Record column: 3-row table (id: Int, meta: Record) with per-row
+    /// record values. Row 0: {unit: "Jy", value: 2.5}, Row 1: {flag: true},
+    /// Row 2: {} (empty).
+    AipsIORecordColumn,
+    /// Mixed schema: 2-row table combining scalar (Int, Double), fixed array
+    /// (Float32 \[4\]), variable array (Float32 2-D), record column, table
+    /// keywords (telescope, version), and column keywords (flux: unit="Jy").
+    MixedSchema,
+    /// TableInfo metadata: 1-row table (id: Int) with TableInfo set to
+    /// type="Measurement", subType="UVFITS". Tests `table.info` file interop.
+    TableInfoMetadata,
+    /// AipsIO all numeric scalars: 3 rows × 6 cols (uChar, Short, uShort,
+    /// uInt, Float, Int64) stored with `StManAipsIO`.
+    AipsioAllNumericScalars,
+    /// AipsIO complex scalars: 3 rows × 2 cols (Complex, DComplex) stored
+    /// with `StManAipsIO`.
+    AipsioComplexScalars,
+    /// AipsIO typed arrays: 3 rows × 3 cols (Int\[4\], Double\[2,2\], Float32\[3\])
+    /// stored with `StManAipsIO`.
+    AipsioTypedArrays,
+    /// AipsIO 3D fixed array: Float32 \[2,3,4\], 2 rows with ascending values
+    /// 1..24 and 25..48, stored with `StManAipsIO`.
+    Aipsio3DFixedArray,
+    /// SSM all numeric scalars: same as `AipsioAllNumericScalars` but stored
+    /// with `StandardStMan`.
+    SsmAllNumericScalars,
+    /// SSM complex scalars: same as `AipsioComplexScalars` but stored with
+    /// `StandardStMan`.
+    SsmComplexScalars,
+    /// SSM typed arrays: 3 rows × 3 cols (Int\[4\], Double\[2,2\], Complex32\[2\])
+    /// stored with `StandardStMan`.
+    SsmTypedArrays,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1619,6 +1795,42 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             }
             CppTableFixture::SsmVariableArray => {
                 cpp_table_write_ssm_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::UndefinedScalars => {
+                cpp_table_write_undefined_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::ColumnKeywords => {
+                cpp_table_write_column_keywords(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsIORecordColumn => {
+                cpp_table_write_record_column(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MixedSchema => {
+                cpp_table_write_mixed_schema(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TableInfoMetadata => {
+                cpp_table_write_table_info(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioAllNumericScalars => {
+                cpp_table_write_aipsio_all_numeric_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioComplexScalars => {
+                cpp_table_write_aipsio_complex_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioTypedArrays => {
+                cpp_table_write_aipsio_typed_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::Aipsio3DFixedArray => {
+                cpp_table_write_aipsio_3d_fixed_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmAllNumericScalars => {
+                cpp_table_write_ssm_all_numeric_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmComplexScalars => {
+                cpp_table_write_ssm_complex_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmTypedArrays => {
+                cpp_table_write_ssm_typed_arrays(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -1721,6 +1933,42 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             }
             CppTableFixture::SsmVariableArray => {
                 cpp_table_verify_ssm_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::UndefinedScalars => {
+                cpp_table_verify_undefined_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::ColumnKeywords => {
+                cpp_table_verify_column_keywords(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsIORecordColumn => {
+                cpp_table_verify_record_column(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MixedSchema => {
+                cpp_table_verify_mixed_schema(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TableInfoMetadata => {
+                cpp_table_verify_table_info(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioAllNumericScalars => {
+                cpp_table_verify_aipsio_all_numeric_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioComplexScalars => {
+                cpp_table_verify_aipsio_complex_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioTypedArrays => {
+                cpp_table_verify_aipsio_typed_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::Aipsio3DFixedArray => {
+                cpp_table_verify_aipsio_3d_fixed_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmAllNumericScalars => {
+                cpp_table_verify_ssm_all_numeric_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmComplexScalars => {
+                cpp_table_verify_ssm_complex_scalars(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmTypedArrays => {
+                cpp_table_verify_ssm_typed_arrays(c_path.as_ptr(), &mut error)
             }
         }
     };
@@ -1836,6 +2084,187 @@ pub fn cpp_vararray_bench(path: &std::path::Path, nrows: u64) -> Result<(u64, u6
 /// Stub for when C++ is unavailable.
 #[cfg(not(has_casacore_cpp))]
 pub fn cpp_vararray_bench(_path: &std::path::Path, _nrows: u64) -> Result<(u64, u64, u64), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Result of the C++ set algebra benchmark.
+pub struct SetAlgebraBenchResult {
+    pub union_ns: u64,
+    pub intersection_ns: u64,
+    pub difference_ns: u64,
+    pub union_rows: u64,
+    pub intersection_rows: u64,
+    pub difference_rows: u64,
+}
+
+/// Benchmark C++ `Table::operator|`, `operator&`, `operator-` on row-selected tables.
+///
+/// Creates a table with `nrows` rows, selects `[0..split_a)` and `[split_b..nrows)`,
+/// and times union, intersection, and difference.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_set_algebra_bench(
+    path: &std::path::Path,
+    nrows: u64,
+    split_a: u64,
+    split_b: u64,
+) -> Result<SetAlgebraBenchResult, String> {
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut union_ns: u64 = 0;
+    let mut intersection_ns: u64 = 0;
+    let mut difference_ns: u64 = 0;
+    let mut union_rows: u64 = 0;
+    let mut intersection_rows: u64 = 0;
+    let mut difference_rows: u64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        ffi_set_algebra_bench(
+            c_path.as_ptr(),
+            nrows,
+            split_a,
+            split_b,
+            &mut union_ns,
+            &mut intersection_ns,
+            &mut difference_ns,
+            &mut union_rows,
+            &mut intersection_rows,
+            &mut difference_rows,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        return Ok(SetAlgebraBenchResult {
+            union_ns,
+            intersection_ns,
+            difference_ns,
+            union_rows,
+            intersection_rows,
+            difference_rows,
+        });
+    }
+    let msg = if error.is_null() {
+        "unknown C++ error".to_string()
+    } else {
+        let s = unsafe { CStr::from_ptr(error) }
+            .to_string_lossy()
+            .to_string();
+        unsafe { cpp_table_free_error(error) };
+        s
+    };
+    Err(msg)
+}
+
+/// Stub for when C++ is unavailable.
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_set_algebra_bench(
+    _path: &std::path::Path,
+    _nrows: u64,
+    _split_a: u64,
+    _split_b: u64,
+) -> Result<SetAlgebraBenchResult, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Benchmark C++ `TableCopy::copyRows` on a table with `nrows` rows.
+///
+/// Returns elapsed nanoseconds.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_copy_rows_bench(dir: &std::path::Path, nrows: u64) -> Result<u64, String> {
+    let c_dir = std::ffi::CString::new(dir.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut ns: u64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe { ffi_copy_rows_bench(c_dir.as_ptr(), nrows, &mut ns, &mut error) };
+    if rc == 0 {
+        return Ok(ns);
+    }
+    let msg = if error.is_null() {
+        "unknown C++ error".to_string()
+    } else {
+        let s = unsafe { CStr::from_ptr(error) }
+            .to_string_lossy()
+            .to_string();
+        unsafe { cpp_table_free_error(error) };
+        s
+    };
+    Err(msg)
+}
+
+/// Stub for when C++ is unavailable.
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_copy_rows_bench(_dir: &std::path::Path, _nrows: u64) -> Result<u64, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Result of the C++ cell slice benchmark.
+pub struct CellSliceBenchResult {
+    pub write_ns: u64,
+    pub slice_ns: u64,
+}
+
+/// Parameters for the cell slice benchmark.
+pub struct CellSliceBenchParams {
+    pub nrows: u64,
+    pub dim0: i64,
+    pub dim1: i64,
+    pub slice_start0: i64,
+    pub slice_start1: i64,
+    pub slice_end0: i64,
+    pub slice_end1: i64,
+}
+
+/// Benchmark C++ `ArrayColumn::getSlice` on `nrows` cells of shape `[dim0, dim1]`.
+///
+/// Slice region is `[slice_start0..slice_end0, slice_start1..slice_end1]` (end exclusive).
+#[cfg(has_casacore_cpp)]
+pub fn cpp_cell_slice_bench(
+    path: &std::path::Path,
+    params: &CellSliceBenchParams,
+) -> Result<CellSliceBenchResult, String> {
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut write_ns: u64 = 0;
+    let mut slice_ns: u64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        ffi_cell_slice_bench(
+            c_path.as_ptr(),
+            params.nrows,
+            params.dim0,
+            params.dim1,
+            params.slice_start0,
+            params.slice_start1,
+            params.slice_end0,
+            params.slice_end1,
+            &mut write_ns,
+            &mut slice_ns,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        return Ok(CellSliceBenchResult { write_ns, slice_ns });
+    }
+    let msg = if error.is_null() {
+        "unknown C++ error".to_string()
+    } else {
+        let s = unsafe { CStr::from_ptr(error) }
+            .to_string_lossy()
+            .to_string();
+        unsafe { cpp_table_free_error(error) };
+        s
+    };
+    Err(msg)
+}
+
+/// Stub for when C++ is unavailable.
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_cell_slice_bench(
+    _path: &std::path::Path,
+    _params: &CellSliceBenchParams,
+) -> Result<CellSliceBenchResult, String> {
     Err("C++ casacore backend unavailable".to_string())
 }
 

@@ -119,7 +119,7 @@ fn materialize_array(
         let col_desc = &ctx.col_descs[desc_idx];
         let col_name = &col_desc.col_name;
         let kw = &col_desc.keywords;
-        let target_type = col_desc.primitive_type;
+        let target_type = col_desc.require_primitive_type()?;
 
         let stored_col_name = get_string_keyword(kw, KW_STORED_COL, col_name)?;
 
@@ -226,7 +226,7 @@ fn materialize_complex_data(
         let col_desc = &ctx.col_descs[desc_idx];
         let col_name = &col_desc.col_name;
         let kw = &col_desc.keywords;
-        let target_type = col_desc.primitive_type;
+        let target_type = col_desc.require_primitive_type()?;
 
         let stored_col_name = get_string_keyword(kw, KW_STORED_COL, col_name)?;
 

@@ -11,7 +11,8 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::StorageError;
 use super::data_type::{
-    CasacoreDataType, array_column_class_name, parse_column_class_name, scalar_column_class_name,
+    CasacoreDataType, ColumnClassInfo, RECORD_COLUMN_CLASS_NAME, array_column_class_name,
+    parse_column_class_name, scalar_column_class_name,
 };
 
 // ---------------------------------------------------------------------------
@@ -94,7 +95,28 @@ pub(crate) struct ColumnDescContents {
     pub max_length: u32,
     pub keywords: RecordValue,
     pub is_array: bool,
-    pub primitive_type: PrimitiveType,
+    /// The primitive element type. `None` for record columns (`TpRecord`).
+    pub primitive_type: Option<PrimitiveType>,
+}
+
+impl ColumnDescContents {
+    /// Return the primitive element type, or a `StorageError` for record columns.
+    ///
+    /// Most storage managers only handle typed (scalar/array) columns; this
+    /// helper provides a clean unwrap for those code paths.
+    pub(crate) fn require_primitive_type(&self) -> Result<PrimitiveType, StorageError> {
+        self.primitive_type.ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "column '{}' is a record column with no primitive type",
+                self.col_name
+            ))
+        })
+    }
+
+    /// Return `true` if this is a record column (`TpRecord`).
+    pub(crate) fn is_record(&self) -> bool {
+        self.data_type == CasacoreDataType::TpRecord
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -366,9 +388,17 @@ fn read_column_desc(io: &mut AipsIo) -> Result<ColumnDescContents, StorageError>
     let _col_desc_version = io.get_u32()?; // version=1
     let class_name = io.get_string()?;
 
-    let (primitive_type, is_array) = parse_column_class_name(&class_name).ok_or_else(|| {
+    let class_info = parse_column_class_name(&class_name).ok_or_else(|| {
         StorageError::FormatMismatch(format!("unknown column class name: {class_name}"))
     })?;
+
+    let (primitive_type, is_array) = match class_info {
+        ColumnClassInfo::Typed {
+            primitive_type,
+            is_array,
+        } => (Some(primitive_type), is_array),
+        ColumnClassInfo::Record => (None, false),
+    };
 
     // BaseColumnDesc
     let _base_version = io.get_u32()?; // version=1
@@ -460,6 +490,8 @@ fn skip_default_value(io: &mut AipsIo, dt: CasacoreDataType) -> Result<(), Stora
         CasacoreDataType::TpInt64 => {
             io.get_i64()?;
         }
+        // ScalarRecordColumnDesc has no default value.
+        CasacoreDataType::TpRecord => {}
         _ => {
             return Err(StorageError::FormatMismatch(format!(
                 "cannot skip default value for type {:?}",
@@ -698,6 +730,14 @@ fn read_record_field_value(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Valu
         CasacoreDataType::TpRecord => {
             let record = read_table_record(io)?;
             Ok(Value::Record(record))
+        }
+        // Table reference keyword — stores a subtable path as a string.
+        // C++ casacore writes these via `TableKeywordSet::toRecord()` and
+        // the `TableAttr` class. We represent them as plain string values
+        // so the keyword name→path mapping is preserved.
+        CasacoreDataType::TpTable => {
+            let path = io.get_string()?;
+            Ok(Value::Scalar(ScalarValue::String(path)))
         }
         // Array types — used in hypercolumn definitions and cube metadata.
         CasacoreDataType::TpArrayBool
@@ -1132,6 +1172,8 @@ fn write_default_value(io: &mut AipsIo, dt: CasacoreDataType) -> Result<(), Stor
         CasacoreDataType::TpDComplex => io.put_complex64(Complex64::new(0.0, 0.0))?,
         CasacoreDataType::TpString => io.put_string("")?,
         CasacoreDataType::TpInt64 => io.put_i64(0)?,
+        // ScalarRecordColumnDesc has no default value.
+        CasacoreDataType::TpRecord => {}
         _ => {
             return Err(StorageError::FormatMismatch(format!(
                 "cannot write default for type {:?}",
@@ -1205,6 +1247,36 @@ fn write_table_record(io: &mut AipsIo, record: &RecordValue) -> Result<(), Stora
 
     io.putend()?;
     Ok(())
+}
+
+/// Deserialize a `RecordValue` from a uChar byte buffer (AipsIO `TableRecord` format).
+///
+/// C++ `ScalarRecordColumnData` stores records as `Vector<uChar>` containing
+/// AipsIO-serialized `TableRecord` objects. This function reverses that encoding.
+pub(crate) fn deserialize_record_from_uchar(bytes: &[u8]) -> Result<RecordValue, StorageError> {
+    use casacore_aipsio::ByteOrder;
+    use std::io::Cursor;
+
+    let mut io =
+        AipsIo::new_read_only_with_order(Cursor::new(bytes.to_vec()), ByteOrder::BigEndian);
+    read_table_record(&mut io)
+}
+
+/// Serialize a `RecordValue` to a uChar byte buffer (AipsIO `TableRecord` format).
+///
+/// Produces the same encoding that C++ `ScalarRecordColumnData::putRecord` writes:
+/// a `TableRecord` AipsIO object serialized to a `Vector<uChar>`.
+pub(crate) fn serialize_record_to_uchar(record: &RecordValue) -> Result<Vec<u8>, StorageError> {
+    use casacore_aipsio::ByteOrder;
+    use std::io::Cursor;
+
+    let buf = Vec::new();
+    let mut io = AipsIo::new_write_only_with_order(Cursor::new(buf), ByteOrder::BigEndian);
+    write_table_record(&mut io, record)?;
+    let cursor: Cursor<Vec<u8>> = io
+        .into_inner_typed()
+        .map_err(|e| StorageError::FormatMismatch(format!("serialize_record_to_uchar: {e}")))?;
+    Ok(cursor.into_inner())
 }
 
 fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), StorageError> {
@@ -1960,34 +2032,57 @@ fn scaled_complex_dm_type_name(
 
 impl ColumnDescContents {
     fn to_column_schema(&self) -> Result<ColumnSchema, StorageError> {
+        // Record columns have data_type = TpRecord and no primitive type.
+        if self.data_type == CasacoreDataType::TpRecord {
+            return Ok(ColumnSchema::record(&self.col_name));
+        }
+
+        let pt = self.primitive_type.ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "column '{}' has no primitive type",
+                self.col_name
+            ))
+        })?;
+
         if self.is_array {
             if self.nrdim > 0 && !self.shape.is_empty() {
                 let shape: Vec<usize> = self.shape.iter().map(|&s| s as usize).collect();
-                Ok(ColumnSchema::array_fixed(
-                    &self.col_name,
-                    self.primitive_type,
-                    shape,
-                ))
+                Ok(ColumnSchema::array_fixed(&self.col_name, pt, shape))
             } else if self.nrdim > 0 {
                 Ok(ColumnSchema::array_variable(
                     &self.col_name,
-                    self.primitive_type,
+                    pt,
                     Some(self.nrdim as usize),
                 ))
             } else {
-                Ok(ColumnSchema::array_variable(
-                    &self.col_name,
-                    self.primitive_type,
-                    None,
-                ))
+                Ok(ColumnSchema::array_variable(&self.col_name, pt, None))
             }
         } else {
-            Ok(ColumnSchema::scalar(&self.col_name, self.primitive_type))
+            Ok(ColumnSchema::scalar(&self.col_name, pt))
         }
     }
 
     fn from_column_schema(col: &ColumnSchema) -> Self {
         use crate::schema::{ArrayShapeContract, ColumnType};
+
+        // Record columns have no primitive type; use TpRecord directly.
+        if matches!(col.column_type(), ColumnType::Record) {
+            return ColumnDescContents {
+                class_name: RECORD_COLUMN_CLASS_NAME.to_string(),
+                col_name: col.name().to_string(),
+                comment: String::new(),
+                data_manager_type: "StandardStMan".to_string(),
+                data_manager_group: "StandardStMan".to_string(),
+                data_type: CasacoreDataType::TpRecord,
+                option: 0,
+                nrdim: 0,
+                shape: vec![],
+                max_length: 0,
+                keywords: RecordValue::default(),
+                is_array: false,
+                primitive_type: None,
+            };
+        }
 
         let pt = col.data_type().unwrap_or(PrimitiveType::Int32);
         let is_array = matches!(col.column_type(), ColumnType::Array(_));
@@ -2030,8 +2125,6 @@ impl ColumnDescContents {
             class_name,
             col_name: col.name().to_string(),
             comment: String::new(),
-            // C++ casacore default: ColumnDesc stores "StandardStMan" regardless
-            // of which DM is actually bound. The binding is in the ColumnSet.
             data_manager_type: "StandardStMan".to_string(),
             data_manager_group: "StandardStMan".to_string(),
             data_type: dt,
@@ -2041,7 +2134,7 @@ impl ColumnDescContents {
             max_length: 0,
             keywords: RecordValue::default(),
             is_array,
-            primitive_type: pt,
+            primitive_type: Some(pt),
         }
     }
 }

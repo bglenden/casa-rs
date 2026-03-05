@@ -214,7 +214,7 @@ mod tests {
             max_length: 0,
             keywords,
             is_array: true,
-            primitive_type: casacore_types::PrimitiveType::Bool,
+            primitive_type: Some(casacore_types::PrimitiveType::Bool),
         }
     }
 

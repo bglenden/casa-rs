@@ -95,7 +95,7 @@ impl VirtualColumnEngine for CompressFloatEngine {
             let col_desc = &ctx.col_descs[desc_idx];
             let col_name = &col_desc.col_name;
             let kw = &col_desc.keywords;
-            let target_type = col_desc.primitive_type;
+            let target_type = col_desc.require_primitive_type()?;
 
             let stored_col_name = get_string_keyword(kw, KW_CF_STORED_COL, col_name)?;
 
@@ -246,7 +246,7 @@ impl VirtualColumnEngine for CompressComplexEngine {
             let col_desc = &ctx.col_descs[desc_idx];
             let col_name = &col_desc.col_name;
             let kw = &col_desc.keywords;
-            let target_type = col_desc.primitive_type;
+            let target_type = col_desc.require_primitive_type()?;
 
             let stored_col_name = get_string_keyword(kw, KW_CC_STORED_COL, col_name)?;
 
@@ -544,7 +544,7 @@ mod tests {
             max_length: 0,
             keywords,
             is_array: true,
-            primitive_type,
+            primitive_type: Some(primitive_type),
         }
     }
 

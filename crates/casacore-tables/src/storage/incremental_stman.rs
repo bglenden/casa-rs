@@ -847,19 +847,20 @@ pub(crate) fn read_ism_file(
     let col_info: Vec<(CasacoreDataType, usize, bool)> = col_descs
         .iter()
         .map(|c| {
-            let scalar_dt = CasacoreDataType::from_primitive_type(c.primitive_type, false);
+            let scalar_dt =
+                CasacoreDataType::from_primitive_type(c.require_primitive_type()?, false);
             let nrelem = if c.is_array && !c.shape.is_empty() {
                 c.shape.iter().map(|&s| s as usize).product()
             } else {
                 1
             };
-            (
+            Ok((
                 scalar_dt,
                 nrelem,
                 c.is_array && c.nrdim > 0 && !c.shape.is_empty(),
-            )
+            ))
         })
-        .collect();
+        .collect::<Result<_, StorageError>>()?;
 
     // Initialize column-major result vectors
     let ncol = col_descs.len();
@@ -1502,15 +1503,15 @@ pub(crate) fn write_ism_file(
     let col_info: Vec<(CasacoreDataType, usize)> = col_descs
         .iter()
         .map(|c| {
-            let dt = CasacoreDataType::from_primitive_type(c.primitive_type, false);
+            let dt = CasacoreDataType::from_primitive_type(c.require_primitive_type()?, false);
             let nrelem = if c.is_array && !c.shape.is_empty() {
                 c.shape.iter().map(|&s| s as usize).product()
             } else {
                 1
             };
-            (dt, nrelem)
+            Ok((dt, nrelem))
         })
-        .collect();
+        .collect::<Result<_, StorageError>>()?;
 
     // Compute fixed bytes per row for bucket sizing
     let fixed_bytes_per_row: usize = col_info

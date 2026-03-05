@@ -177,18 +177,47 @@ pub(crate) fn array_column_class_name(pt: PrimitiveType) -> &'static str {
     }
 }
 
-/// Parse a casacore className string into (PrimitiveType, is_array).
+/// Result of parsing a casacore column descriptor class name.
 ///
-/// Handles both the C++ on-disk format (8-char padded type, no closing `>`,
-/// lowercase `float`/`double`) and the legacy Rust format with closing `>`.
-pub(crate) fn parse_column_class_name(class_name: &str) -> Option<(PrimitiveType, bool)> {
-    if let Some(inner) = class_name.strip_prefix("ScalarColumnDesc<") {
+/// Distinguishes between typed columns (scalar/array with a [`PrimitiveType`])
+/// and record columns (`ScalarRecordColumnDesc` / `TpRecord`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ColumnClassInfo {
+    /// A scalar or array column with a known element type.
+    Typed {
+        primitive_type: PrimitiveType,
+        is_array: bool,
+    },
+    /// A record column (`ScalarRecordColumnDesc`).
+    Record,
+}
+
+/// The C++ class name written for record column descriptors.
+///
+/// Corresponds to C++ `ScalarRecordColumnDesc`.
+pub(crate) const RECORD_COLUMN_CLASS_NAME: &str = "ScalarRecordColumnDesc";
+
+/// Parse a casacore className string into a [`ColumnClassInfo`].
+///
+/// Handles `ScalarColumnDesc<T>`, `ArrayColumnDesc<T>` (both the C++ on-disk
+/// format with 8-char padded type names and the legacy Rust format with closing
+/// `>`), and `ScalarRecordColumnDesc`.
+pub(crate) fn parse_column_class_name(class_name: &str) -> Option<ColumnClassInfo> {
+    if class_name == RECORD_COLUMN_CLASS_NAME {
+        Some(ColumnClassInfo::Record)
+    } else if let Some(inner) = class_name.strip_prefix("ScalarColumnDesc<") {
         // Strip optional closing '>' (legacy Rust format) then trim spaces
         let inner = inner.strip_suffix('>').unwrap_or(inner).trim();
-        casacore_type_name_to_primitive(inner).map(|pt| (pt, false))
+        casacore_type_name_to_primitive(inner).map(|pt| ColumnClassInfo::Typed {
+            primitive_type: pt,
+            is_array: false,
+        })
     } else if let Some(inner) = class_name.strip_prefix("ArrayColumnDesc<") {
         let inner = inner.strip_suffix('>').unwrap_or(inner).trim();
-        casacore_type_name_to_primitive(inner).map(|pt| (pt, true))
+        casacore_type_name_to_primitive(inner).map(|pt| ColumnClassInfo::Typed {
+            primitive_type: pt,
+            is_array: true,
+        })
     } else {
         None
     }

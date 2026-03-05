@@ -13,7 +13,7 @@ use crate::lock::SyncData;
 use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::virtual_engine::VirtualColumnBinding;
-use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot};
+use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot, TableInfo};
 use crate::table_impl::TableImpl;
 
 /// Byte-ordering format for on-disk table data.
@@ -62,16 +62,6 @@ impl EndianFormat {
             Self::BigEndian => true,
             Self::LittleEndian => false,
             Self::LocalEndian => cfg!(target_endian = "big"),
-        }
-    }
-
-    /// Converts to the [`ByteOrder`](casacore_aipsio::ByteOrder) enum used
-    /// by the lower-level AipsIO codec.
-    pub fn to_byte_order(self) -> casacore_aipsio::ByteOrder {
-        if self.is_big_endian() {
-            casacore_aipsio::ByteOrder::BigEndian
-        } else {
-            casacore_aipsio::ByteOrder::LittleEndian
         }
     }
 }
@@ -396,6 +386,87 @@ impl RowRange {
     }
 }
 
+/// An n-dimensional sub-region selector for array-valued cells.
+///
+/// Specifies `start`, `end` (exclusive), and `stride` along each dimension.
+/// All three vectors must have equal length matching the array dimensionality.
+///
+/// # C++ equivalent
+///
+/// `casacore::Slicer` — `casa/Arrays/Slicer.h`.
+///
+/// # Example
+///
+/// ```rust
+/// use casacore_tables::Slicer;
+///
+/// // Select rows 0..4 step 2, columns 1..3 step 1 from a 2-D array:
+/// let s = Slicer::new(vec![0, 1], vec![4, 3], vec![2, 1]).unwrap();
+/// assert_eq!(s.ndim(), 2);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slicer {
+    start: Vec<usize>,
+    end: Vec<usize>,
+    stride: Vec<usize>,
+}
+
+impl Slicer {
+    /// Creates a new slicer with the given start, end (exclusive), and stride.
+    ///
+    /// Returns an error if the vectors have different lengths or any stride is zero.
+    pub fn new(start: Vec<usize>, end: Vec<usize>, stride: Vec<usize>) -> Result<Self, TableError> {
+        if start.len() != end.len() || start.len() != stride.len() {
+            return Err(TableError::SlicerDimensionMismatch {
+                start_ndim: start.len(),
+                end_ndim: end.len(),
+                stride_ndim: stride.len(),
+            });
+        }
+        for (i, &s) in stride.iter().enumerate() {
+            if s == 0 {
+                return Err(TableError::SlicerZeroStride { axis: i });
+            }
+        }
+        for (i, (&s, &e)) in start.iter().zip(end.iter()).enumerate() {
+            if s > e {
+                return Err(TableError::SlicerInvalidRange {
+                    axis: i,
+                    start: s,
+                    end: e,
+                });
+            }
+        }
+        Ok(Self { start, end, stride })
+    }
+
+    /// Creates a contiguous slicer (stride 1 on all axes).
+    pub fn contiguous(start: Vec<usize>, end: Vec<usize>) -> Result<Self, TableError> {
+        let stride = vec![1; start.len()];
+        Self::new(start, end, stride)
+    }
+
+    /// Number of dimensions.
+    pub fn ndim(&self) -> usize {
+        self.start.len()
+    }
+
+    /// Start indices (inclusive) along each dimension.
+    pub fn start(&self) -> &[usize] {
+        &self.start
+    }
+
+    /// End indices (exclusive) along each dimension.
+    pub fn end(&self) -> &[usize] {
+        &self.end
+    }
+
+    /// Stride along each dimension.
+    pub fn stride(&self) -> &[usize] {
+        &self.stride
+    }
+}
+
 /// A borrowed reference to a single cell value together with its row index.
 ///
 /// `ColumnCellRef` is the item type yielded by [`ColumnCellIter`] and
@@ -673,6 +744,38 @@ pub enum TableError {
     /// [`Table::query`] or [`Table::execute_taql`] methods.
     #[error("TaQL error: {0}")]
     Taql(String),
+    /// Slicer dimension vectors have different lengths.
+    #[error("slicer dimension mismatch: start={start_ndim}, end={end_ndim}, stride={stride_ndim}")]
+    SlicerDimensionMismatch {
+        start_ndim: usize,
+        end_ndim: usize,
+        stride_ndim: usize,
+    },
+    /// A slicer stride was zero on the given axis.
+    #[error("slicer stride is zero on axis {axis}")]
+    SlicerZeroStride { axis: usize },
+    /// A slicer range has start > end on the given axis.
+    #[error("slicer range invalid on axis {axis}: start={start} > end={end}")]
+    SlicerInvalidRange {
+        axis: usize,
+        start: usize,
+        end: usize,
+    },
+    /// A slicer index is out of bounds for the array shape.
+    #[error("slicer out of bounds on axis {axis}: index {index} >= extent {extent}")]
+    SlicerOutOfBounds {
+        axis: usize,
+        index: usize,
+        extent: usize,
+    },
+    /// A cell is not an array (slice operations require array cells).
+    #[error("cell at row {row} column \"{column}\" is not an array")]
+    CellNotArray { row: usize, column: String },
+    /// The number of data elements doesn't match the number of selected rows.
+    #[error(
+        "column slice length mismatch: {rows} rows selected but {data_len} data elements provided"
+    )]
+    ColumnSliceLengthMismatch { rows: usize, data_len: usize },
 }
 
 impl From<crate::storage::StorageError> for TableError {
@@ -764,7 +867,7 @@ impl std::fmt::Debug for LockState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Table {
     inner: TableImpl,
     /// Filesystem path this table was last opened from or saved to.
@@ -777,8 +880,38 @@ pub struct Table {
     /// Virtual column bindings for save — describes how each virtual column
     /// maps to its engine and configuration.
     virtual_bindings: Vec<VirtualColumnBinding>,
+    /// Table metadata (type/subtype) persisted in `table.info`.
+    table_info: TableInfo,
+    /// Data manager info extracted from table.dat (empty for memory tables).
+    dm_info: Vec<crate::storage::DataManagerInfo>,
+    /// Optional external lock synchronization hook.
+    external_sync: Option<Box<dyn crate::lock::ExternalLockSync>>,
+    /// When `true`, the table directory is deleted on [`Drop`].
+    ///
+    /// Set via [`mark_for_delete`](Table::mark_for_delete), cleared via
+    /// [`unmark_for_delete`](Table::unmark_for_delete).
+    marked_for_delete: bool,
     #[cfg(unix)]
     lock_state: Option<LockState>,
+}
+
+impl std::fmt::Debug for Table {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("Table");
+        s.field("inner", &self.inner)
+            .field("source_path", &self.source_path)
+            .field("kind", &self.kind)
+            .field("virtual_columns", &self.virtual_columns)
+            .field("table_info", &self.table_info)
+            .field("marked_for_delete", &self.marked_for_delete)
+            .field(
+                "external_sync",
+                &self.external_sync.as_ref().map(|_| "<hook>"),
+            );
+        #[cfg(unix)]
+        s.field("lock_state", &self.lock_state);
+        s.finish()
+    }
 }
 
 impl Table {
@@ -790,6 +923,10 @@ impl Table {
             kind: TableKind::Plain,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -808,6 +945,10 @@ impl Table {
             kind: TableKind::Plain,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -824,6 +965,10 @@ impl Table {
             kind: TableKind::Plain,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -848,6 +993,10 @@ impl Table {
             kind: TableKind::Plain,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         };
@@ -873,6 +1022,10 @@ impl Table {
             kind: TableKind::Memory,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -894,6 +1047,10 @@ impl Table {
             kind: TableKind::Memory,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -909,6 +1066,10 @@ impl Table {
             kind: TableKind::Memory,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -934,6 +1095,10 @@ impl Table {
             kind: TableKind::Memory,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: TableInfo::default(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         };
@@ -981,6 +1146,10 @@ impl Table {
             kind: TableKind::Memory,
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
+            table_info: self.table_info.clone(),
+            dm_info: vec![],
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         }
@@ -1001,6 +1170,7 @@ impl Table {
         let storage = CompositeStorage;
         let snapshot = storage.load(&options.path)?;
         let virtual_cols = snapshot.virtual_columns;
+        let info = snapshot.table_info;
         let table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 snapshot.rows,
@@ -1012,6 +1182,10 @@ impl Table {
             kind: TableKind::Plain,
             virtual_columns: virtual_cols,
             virtual_bindings: Vec::new(),
+            table_info: info,
+            dm_info: snapshot.dm_info,
+            external_sync: None,
+            marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
         };
@@ -1035,8 +1209,10 @@ impl Table {
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
+            table_info: self.table_info.clone(),
             virtual_columns: self.virtual_columns.clone(),
             virtual_bindings: self.virtual_bindings.clone(),
+            dm_info: vec![],
         };
         let storage = CompositeStorage;
         storage.save(
@@ -1088,8 +1264,10 @@ impl Table {
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
+            table_info: self.table_info.clone(),
             virtual_columns: self.virtual_columns.clone(),
             virtual_bindings: self.virtual_bindings.clone(),
+            dm_info: vec![],
         };
         let storage = CompositeStorage;
         storage.save_with_bindings(
@@ -1117,6 +1295,352 @@ impl Table {
     /// was constructed in-memory but you want to establish a parent path.
     pub fn set_path(&mut self, path: impl AsRef<Path>) {
         self.source_path = Some(path.as_ref().to_path_buf());
+    }
+
+    /// Returns the table metadata (type and subtype) from `table.info`.
+    ///
+    /// Tables loaded from disk carry the persisted values; newly created
+    /// tables return the default (empty strings).
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::tableInfo()`.
+    pub fn info(&self) -> &TableInfo {
+        &self.table_info
+    }
+
+    /// Replaces the table metadata (type and subtype).
+    ///
+    /// The new values are persisted on the next [`save`](Table::save).
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::tableInfo()` (mutable overload) followed by `Table::flushTableInfo()`.
+    pub fn set_info(&mut self, info: TableInfo) {
+        self.table_info = info;
+    }
+
+    /// Returns data manager information for this table.
+    ///
+    /// Each [`crate::storage::DataManagerInfo`] describes one storage manager
+    /// instance and
+    /// the columns it manages. The list is populated when a table is loaded
+    /// from disk; for memory-only tables the list is empty.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::dataManagerInfo()`.
+    pub fn data_manager_info(&self) -> &[crate::storage::DataManagerInfo] {
+        &self.dm_info
+    }
+
+    /// Returns a human-readable summary of the table's structure.
+    ///
+    /// Includes row count, column names and types, and (for disk-loaded
+    /// tables) data manager assignments.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::showStructure(ostream)`, `showtableinfo` utility.
+    pub fn show_structure(&self) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+
+        let _ = writeln!(out, "Table: {} rows", self.row_count());
+
+        if !self.table_info.table_type.is_empty() || !self.table_info.sub_type.is_empty() {
+            let _ = writeln!(
+                out,
+                "  Type = {}  SubType = {}",
+                self.table_info.table_type, self.table_info.sub_type
+            );
+        }
+
+        if let Some(schema) = self.schema() {
+            let _ = writeln!(out, "Columns ({}):", schema.columns().len());
+            for col in schema.columns() {
+                let type_str = match col.column_type() {
+                    crate::schema::ColumnType::Scalar => {
+                        format!(
+                            "Scalar {}",
+                            col.data_type()
+                                .map_or("Record".into(), |dt| format!("{dt:?}"))
+                        )
+                    }
+                    crate::schema::ColumnType::Array(contract) => {
+                        let dt = col.data_type().map_or("?".into(), |dt| format!("{dt:?}"));
+                        format!("Array<{dt}> {contract:?}")
+                    }
+                    crate::schema::ColumnType::Record => "Record".to_string(),
+                };
+                let _ = writeln!(out, "  {} : {}", col.name(), type_str);
+            }
+        }
+
+        if !self.dm_info.is_empty() {
+            let _ = writeln!(out, "Data managers ({}):", self.dm_info.len());
+            for dm in &self.dm_info {
+                let _ = writeln!(
+                    out,
+                    "  [{}] {} -> [{}]",
+                    dm.seq_nr,
+                    dm.dm_type,
+                    dm.columns.join(", ")
+                );
+            }
+        }
+
+        out
+    }
+
+    /// Returns a formatted tree of the table's keyword sets.
+    ///
+    /// Includes both table-level keywords and per-column keywords.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableRecord::print(ostream)`.
+    pub fn show_keywords(&self) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+
+        let kw = self.keywords();
+        if !kw.fields().is_empty() {
+            let _ = writeln!(out, "Table keywords:");
+            for field in kw.fields() {
+                let _ = writeln!(out, "  {} = {:?}", field.name, field.value);
+            }
+        }
+
+        let col_kw = self.inner.all_column_keywords();
+        for (col_name, rec) in col_kw {
+            if !rec.fields().is_empty() {
+                let _ = writeln!(out, "Column \"{}\" keywords:", col_name);
+                for field in rec.fields() {
+                    let _ = writeln!(out, "  {} = {:?}", field.name, field.value);
+                }
+            }
+        }
+
+        out
+    }
+
+    // -------------------------------------------------------------------
+    // Lifecycle operations
+    // -------------------------------------------------------------------
+
+    /// Writes the current in-memory state back to the table's source path.
+    ///
+    /// The table must have been loaded with [`open`](Table::open) or
+    /// previously saved with [`save`](Table::save) so that
+    /// [`path`](Table::path) is `Some`. Returns an error if no source path
+    /// is set.
+    ///
+    /// This is the Rust equivalent of the C++ `Table::flush()` call.
+    pub fn flush(&self) -> Result<(), TableError> {
+        let path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("cannot flush: table has no source path".into()))?;
+        let opts = TableOptions::new(path);
+        self.save(opts)
+    }
+
+    /// Discards all in-memory changes and reloads the table from disk.
+    ///
+    /// The table must have a source path (set by [`open`](Table::open) or
+    /// [`save`](Table::save)). After resync the in-memory state matches the
+    /// on-disk state exactly.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::resync()`.
+    pub fn resync(&mut self) -> Result<(), TableError> {
+        let path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("cannot resync: table has no source path".into()))?
+            .clone();
+        let opts = TableOptions::new(&path);
+        let mut reloaded = Table::open(opts)?;
+        self.inner = std::mem::take(&mut reloaded.inner);
+        self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
+        self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
+        self.table_info = std::mem::take(&mut reloaded.table_info);
+        // Preserve source_path, kind, marked_for_delete, and lock_state.
+        Ok(())
+    }
+
+    /// Marks this table for deletion when it is dropped.
+    ///
+    /// If the table has a [`source_path`](Table::path), the table directory
+    /// is recursively removed when the `Table` value is dropped.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::markForDelete()`.
+    pub fn mark_for_delete(&mut self) {
+        self.marked_for_delete = true;
+    }
+
+    /// Installs an external lock synchronization hook.
+    ///
+    /// The hook's methods are called around every file-level lock
+    /// acquire/release pair so that an external lock manager can stay in
+    /// sync. Pass `None` to remove a previously installed hook.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableLockData::setExternalLockSync()`.
+    pub fn set_external_sync(&mut self, sync: Option<Box<dyn crate::lock::ExternalLockSync>>) {
+        self.external_sync = sync;
+    }
+
+    /// Clears the mark-for-delete flag.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::unmarkForDelete()`.
+    pub fn unmark_for_delete(&mut self) {
+        self.marked_for_delete = false;
+    }
+
+    /// Returns `true` if this table is marked for deletion on drop.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::isMarkedForDelete()`.
+    pub fn is_marked_for_delete(&self) -> bool {
+        self.marked_for_delete
+    }
+
+    // -------------------------------------------------------------------
+    // Row copy and fill utilities
+    // -------------------------------------------------------------------
+
+    /// Copies all rows from `source` into this table.
+    ///
+    /// Both tables must share the same schema (same column names and types).
+    /// Rows are appended after any existing rows.
+    ///
+    /// # Errors
+    ///
+    /// - [`TableError::SchemaColumnUnknown`] if schemas are incompatible
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableCopy::copyRows(target, source)`.
+    pub fn copy_rows(&mut self, source: &Table) -> Result<(), TableError> {
+        self.validate_schema_compat(source)?;
+        for row in source.rows() {
+            self.add_row(row.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Copies selected rows from `source` into this table.
+    ///
+    /// `row_indices` specifies which source rows to copy, in order.
+    /// Both tables must share the same schema.
+    ///
+    /// # Errors
+    ///
+    /// - [`TableError::SchemaColumnUnknown`] if schemas are incompatible
+    /// - [`TableError::RowOutOfBounds`] if a row index exceeds source row count
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableCopy::copyRows(target, source, ..., rowMap)`.
+    pub fn copy_rows_with_mapping(
+        &mut self,
+        source: &Table,
+        row_indices: &[usize],
+    ) -> Result<(), TableError> {
+        self.validate_schema_compat(source)?;
+        let src_rows = source.rows();
+        let src_count = src_rows.len();
+        for &idx in row_indices {
+            let row = src_rows.get(idx).ok_or(TableError::RowOutOfBounds {
+                row_index: idx,
+                row_count: src_count,
+            })?;
+            self.add_row(row.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Copies [`TableInfo`] metadata from `source` to this table.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableCopy::copyInfo(target, source)`.
+    pub fn copy_info(&mut self, source: &Table) {
+        self.table_info = source.table_info.clone();
+    }
+
+    /// Sets every cell in `column` to `value`.
+    ///
+    /// # Errors
+    ///
+    /// - [`TableError::SchemaColumnUnknown`] if `column` does not exist
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ArrayColumn<T>::fillColumn(value)` / `ScalarColumn<T>::fillColumn(value)`.
+    pub fn fill_column(&mut self, column: &str, value: Value) -> Result<(), TableError> {
+        let n = self.row_count();
+        for row_idx in 0..n {
+            self.set_cell(row_idx, column, value.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Sets cells in `column` within `row_range` to `value`.
+    ///
+    /// Rows outside the range are unchanged.
+    ///
+    /// # Errors
+    ///
+    /// - [`TableError::SchemaColumnUnknown`] if `column` does not exist
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ArrayColumn<T>::putColumnRange(rowRange, value)`.
+    pub fn fill_column_range(
+        &mut self,
+        column: &str,
+        row_range: RowRange,
+        value: Value,
+    ) -> Result<(), TableError> {
+        for row_idx in row_range.iter() {
+            if row_idx >= self.row_count() {
+                break;
+            }
+            self.set_cell(row_idx, column, value.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Validates that `source` has a compatible schema with `self`.
+    fn validate_schema_compat(&self, source: &Table) -> Result<(), TableError> {
+        let self_schema = self.schema();
+        let src_schema = source.schema();
+        match (self_schema, src_schema) {
+            (Some(s), Some(o)) => {
+                if s != o {
+                    return Err(TableError::SchemaMismatch {
+                        message: format!("expected {s:?}, found {o:?}"),
+                    });
+                }
+            }
+            (None, None) => {}
+            _ => {
+                return Err(TableError::SchemaMismatch {
+                    message: format!("expected {self_schema:?}, found {src_schema:?}"),
+                });
+            }
+        }
+        Ok(())
     }
 
     // -------------------------------------------------------------------
@@ -1428,6 +1952,7 @@ impl Table {
 
         let storage = CompositeStorage;
         let snapshot = storage.load(&options.path)?;
+        let info = snapshot.table_info;
         let mut table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 snapshot.rows,
@@ -1439,6 +1964,10 @@ impl Table {
             kind: TableKind::Plain,
             virtual_columns: snapshot.virtual_columns,
             virtual_bindings: Vec::new(),
+            table_info: info,
+            dm_info: snapshot.dm_info,
+            external_sync: None,
+            marked_for_delete: false,
             lock_state: None,
         };
         table.validate()?;
@@ -1484,10 +2013,13 @@ impl Table {
                     });
                 }
             }
-            LockMode::AutoLocking => {
+            LockMode::AutoLocking | LockMode::DefaultLocking => {
                 let _ = lock_file.acquire(LockType::Read, 1);
             }
-            LockMode::UserLocking | LockMode::NoLocking => {}
+            LockMode::AutoNoReadLocking => {
+                // Skip read lock on open — only write locks are acquired.
+            }
+            LockMode::UserLocking | LockMode::UserNoReadLocking | LockMode::NoLocking => {}
         }
 
         // Read sync data if available.
@@ -1530,12 +2062,26 @@ impl Table {
         if self.kind == TableKind::Memory {
             return Ok(true);
         }
+
+        // Notify external sync hook before acquiring.
+        if let Some(sync) = &self.external_sync {
+            match lock_type {
+                LockType::Read => sync.acquire_read(),
+                LockType::Write => sync.acquire_write(),
+            }
+        }
+
         let state = self
             .lock_state
             .as_mut()
             .ok_or_else(|| TableError::NotLocked {
                 operation: "lock".into(),
             })?;
+
+        // NoRead modes skip the file-level read lock entirely.
+        if lock_type == LockType::Read && state.options.mode.skip_read_lock() {
+            return Ok(true);
+        }
 
         let acquired =
             state
@@ -1637,6 +2183,11 @@ impl Table {
             message: e.to_string(),
         })?;
 
+        // Notify external sync hook after release.
+        if let Some(sync) = &self.external_sync {
+            sync.release();
+        }
+
         Ok(())
     }
 
@@ -1716,6 +2267,268 @@ impl Table {
         F: Fn(&RecordValue) -> bool,
     {
         crate::RefTable::from_predicate(self, predicate)
+    }
+
+    // -----------------------------------------------------------------------
+    // Row-set algebra
+    // -----------------------------------------------------------------------
+
+    /// Returns row indices present in **either** `a` or `b` (union).
+    ///
+    /// The result is sorted and deduplicated. If both inputs are already
+    /// sorted, this runs in O(n) via a merge; otherwise it falls back to
+    /// sort + dedup.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableExprNode::operator|` (set union on row numbers).
+    pub fn row_union(a: &[usize], b: &[usize]) -> Vec<usize> {
+        if a.is_sorted() && b.is_sorted() {
+            let mut result = Vec::with_capacity(a.len() + b.len());
+            let (mut i, mut j) = (0, 0);
+            while i < a.len() && j < b.len() {
+                match a[i].cmp(&b[j]) {
+                    std::cmp::Ordering::Less => {
+                        result.push(a[i]);
+                        i += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        result.push(b[j]);
+                        j += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        result.push(a[i]);
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            result.extend_from_slice(&a[i..]);
+            result.extend_from_slice(&b[j..]);
+            result
+        } else {
+            let mut set: Vec<usize> = a.iter().chain(b.iter()).copied().collect();
+            set.sort_unstable();
+            set.dedup();
+            set
+        }
+    }
+
+    /// Returns row indices present in **both** `a` and `b` (intersection).
+    ///
+    /// The result is sorted. If both inputs are already sorted, this runs
+    /// in O(n) via a merge; otherwise it falls back to hash + sort.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableExprNode::operator&` (set intersection on row numbers).
+    pub fn row_intersection(a: &[usize], b: &[usize]) -> Vec<usize> {
+        if a.is_sorted() && b.is_sorted() {
+            let mut result = Vec::new();
+            let (mut i, mut j) = (0, 0);
+            while i < a.len() && j < b.len() {
+                match a[i].cmp(&b[j]) {
+                    std::cmp::Ordering::Less => i += 1,
+                    std::cmp::Ordering::Greater => j += 1,
+                    std::cmp::Ordering::Equal => {
+                        result.push(a[i]);
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            result
+        } else {
+            let set_b: std::collections::HashSet<usize> = b.iter().copied().collect();
+            let mut result: Vec<usize> = a.iter().copied().filter(|x| set_b.contains(x)).collect();
+            result.sort_unstable();
+            result.dedup();
+            result
+        }
+    }
+
+    /// Returns row indices present in `a` but not in `b` (difference).
+    ///
+    /// The result is sorted. If both inputs are already sorted, this runs
+    /// in O(n) via a merge; otherwise it falls back to hash + sort.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableExprNode::operator-` (set difference on row numbers).
+    pub fn row_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
+        if a.is_sorted() && b.is_sorted() {
+            let mut result = Vec::new();
+            let (mut i, mut j) = (0, 0);
+            while i < a.len() && j < b.len() {
+                match a[i].cmp(&b[j]) {
+                    std::cmp::Ordering::Less => {
+                        result.push(a[i]);
+                        i += 1;
+                    }
+                    std::cmp::Ordering::Greater => j += 1,
+                    std::cmp::Ordering::Equal => {
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            result.extend_from_slice(&a[i..]);
+            result
+        } else {
+            let set_b: std::collections::HashSet<usize> = b.iter().copied().collect();
+            let mut result: Vec<usize> = a.iter().copied().filter(|x| !set_b.contains(x)).collect();
+            result.sort_unstable();
+            result.dedup();
+            result
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Array cell slicing
+    // -----------------------------------------------------------------------
+
+    /// Reads a sub-region of an array cell.
+    ///
+    /// Returns a new `Value::Array` containing only the elements selected by
+    /// the [`Slicer`]. The cell must be an array-valued cell; returns
+    /// [`TableError::CellNotArray`] otherwise.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ArrayColumn<T>::getSlice(rownr, slicer)`.
+    pub fn get_cell_slice(
+        &self,
+        column: &str,
+        row: usize,
+        slicer: &Slicer,
+    ) -> Result<Value, TableError> {
+        let cell = self
+            .cell(row, column)
+            .ok_or_else(|| TableError::ColumnNotFound {
+                row_index: row,
+                column: column.to_string(),
+            })?;
+        match cell {
+            Value::Array(av) => {
+                let shape = av.shape();
+                validate_slicer_bounds(slicer, shape, row, column)?;
+                Ok(Value::Array(slice_array_value(av, slicer)))
+            }
+            _ => Err(TableError::CellNotArray {
+                row,
+                column: column.to_string(),
+            }),
+        }
+    }
+
+    /// Writes a sub-region of an array cell.
+    ///
+    /// Loads the full cell, replaces the slice region with `data`, and writes
+    /// the updated array back. Both the existing cell and `data` must be
+    /// arrays.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ArrayColumn<T>::putSlice(rownr, slicer, array)`.
+    pub fn put_cell_slice(
+        &mut self,
+        column: &str,
+        row: usize,
+        slicer: &Slicer,
+        data: &ArrayValue,
+    ) -> Result<(), TableError> {
+        let cell = self
+            .inner
+            .row_mut(row)
+            .and_then(|r| r.get_mut(column))
+            .ok_or_else(|| TableError::ColumnNotFound {
+                row_index: row,
+                column: column.to_string(),
+            })?;
+        match cell {
+            Value::Array(av) => {
+                let shape = av.shape();
+                validate_slicer_bounds(slicer, shape, row, column)?;
+                put_slice_array_value(av, slicer, data);
+                Ok(())
+            }
+            _ => Err(TableError::CellNotArray {
+                row,
+                column: column.to_string(),
+            }),
+        }
+    }
+
+    /// Reads a sub-region of an array cell for each row in `row_range`,
+    /// returning one sliced value per row.
+    ///
+    /// Combines row selection ([`RowRange`]) with array slicing ([`Slicer`]).
+    /// Each returned element is the slice of the array cell for that row.
+    ///
+    /// # Errors
+    ///
+    /// - [`TableError::CellNotArray`] if a cell in the column is scalar
+    /// - [`TableError::SlicerDimensionMismatch`] if slicer ndim != array ndim
+    /// - [`TableError::SlicerOutOfBounds`] if slicer exceeds array shape
+    /// - [`TableError::ColumnNotFound`] if `column` does not exist
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ArrayColumn<T>::getColumnRange(slicer, rowRange)`.
+    pub fn get_column_slice(
+        &self,
+        column: &str,
+        row_range: RowRange,
+        slicer: &Slicer,
+    ) -> Result<Vec<Value>, TableError> {
+        let mut results = Vec::new();
+        for row in row_range.iter() {
+            if row >= self.row_count() {
+                break;
+            }
+            results.push(self.get_cell_slice(column, row, slicer)?);
+        }
+        Ok(results)
+    }
+
+    /// Writes a sub-region of an array cell for each row in `row_range`.
+    ///
+    /// `data` must have one element per selected row. Each element replaces
+    /// the corresponding slice region in that row's array cell.
+    ///
+    /// # Errors
+    ///
+    /// - [`TableError::CellNotArray`] if a cell in the column is scalar
+    /// - [`TableError::SlicerDimensionMismatch`] if slicer ndim != array ndim
+    /// - [`TableError::SlicerOutOfBounds`] if slicer exceeds array shape
+    /// - [`TableError::ColumnNotFound`] if `column` does not exist
+    /// - [`TableError::ColumnSliceLengthMismatch`] if `data` does not contain
+    ///   one slice per selected in-bounds row
+    ///
+    /// # C++ equivalent
+    ///
+    /// `ArrayColumn<T>::putColumnRange(slicer, rowRange, data)`.
+    pub fn put_column_slice(
+        &mut self,
+        column: &str,
+        row_range: RowRange,
+        slicer: &Slicer,
+        data: &[ArrayValue],
+    ) -> Result<(), TableError> {
+        let rows: Vec<usize> = row_range
+            .iter()
+            .take_while(|&r| r < self.row_count())
+            .collect();
+        if rows.len() != data.len() {
+            return Err(TableError::ColumnSliceLengthMismatch {
+                rows: rows.len(),
+                data_len: data.len(),
+            });
+        }
+        for (row, patch) in rows.into_iter().zip(data.iter()) {
+            self.put_cell_slice(column, row, slicer, patch)?;
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -1803,6 +2616,23 @@ impl Table {
         crate::sorting::TableIterator::new(self, keys)
     }
 
+    /// Groups rows by key columns in natural (insertion) order, without sorting.
+    ///
+    /// Consecutive rows with equal key values are grouped together, but
+    /// non-adjacent duplicates appear as separate groups. This is useful when
+    /// the table is already sorted or when group ordering must match the
+    /// on-disk row order.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableIterator` constructed with `TableIterator::NoSort`.
+    pub fn iter_groups_nosort(
+        &self,
+        key_columns: &[&str],
+    ) -> Result<crate::sorting::TableIterator<'_>, TableError> {
+        crate::sorting::TableIterator::new_nosort(self, key_columns)
+    }
+
     /// Creates a [`crate::ConcatTable`] from two or more tables with the same schema.
     ///
     /// The resulting virtual table has a row count equal to the sum of all
@@ -1849,8 +2679,10 @@ impl Table {
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
+            table_info: self.table_info.clone(),
             virtual_columns: std::collections::HashSet::new(),
             virtual_bindings: Vec::new(),
+            dm_info: vec![],
         };
         let storage = CompositeStorage;
         storage.save(
@@ -2708,6 +3540,130 @@ fn validate_array_contract(
             }
         }
         ArrayShapeContract::Variable { ndim: None } => Ok(()),
+    }
+}
+
+// ── Slicer helpers ────────────────────────────────────────────────────
+
+fn validate_slicer_bounds(
+    slicer: &Slicer,
+    shape: &[usize],
+    row: usize,
+    column: &str,
+) -> Result<(), TableError> {
+    if slicer.ndim() != shape.len() {
+        return Err(TableError::SlicerDimensionMismatch {
+            start_ndim: slicer.ndim(),
+            end_ndim: shape.len(),
+            stride_ndim: slicer.ndim(),
+        });
+    }
+    for (axis, ((&s, &e), &ext)) in slicer
+        .start()
+        .iter()
+        .zip(slicer.end().iter())
+        .zip(shape.iter())
+        .enumerate()
+    {
+        if e > ext {
+            return Err(TableError::SlicerOutOfBounds {
+                axis,
+                index: e,
+                extent: ext,
+            });
+        }
+        let _ = (s, row, column); // suppress unused warnings
+    }
+    Ok(())
+}
+
+/// Build ndarray `SliceInfoElem` vector from a `Slicer`.
+fn slicer_to_slice_elems(slicer: &Slicer) -> Vec<ndarray::SliceInfoElem> {
+    slicer
+        .start()
+        .iter()
+        .zip(slicer.end().iter())
+        .zip(slicer.stride().iter())
+        .map(|((&s, &e), &st)| ndarray::SliceInfoElem::Slice {
+            start: s as isize,
+            end: Some(e as isize),
+            step: st as isize,
+        })
+        .collect()
+}
+
+/// Extract a sub-array from `av` using `slicer`.
+fn slice_array_value(av: &ArrayValue, slicer: &Slicer) -> ArrayValue {
+    use ndarray::SliceInfoElem;
+    let elems = slicer_to_slice_elems(slicer);
+    let si: Vec<SliceInfoElem> = elems;
+
+    macro_rules! do_slice {
+        ($arr:expr) => {{
+            let view = $arr.slice_each_axis(|ax| match si[ax.axis.index()] {
+                SliceInfoElem::Slice { start, end, step } => ndarray::Slice { start, end, step },
+                _ => unreachable!(),
+            });
+            view.to_owned()
+        }};
+    }
+
+    match av {
+        ArrayValue::Bool(a) => ArrayValue::Bool(do_slice!(a)),
+        ArrayValue::UInt8(a) => ArrayValue::UInt8(do_slice!(a)),
+        ArrayValue::UInt16(a) => ArrayValue::UInt16(do_slice!(a)),
+        ArrayValue::UInt32(a) => ArrayValue::UInt32(do_slice!(a)),
+        ArrayValue::Int16(a) => ArrayValue::Int16(do_slice!(a)),
+        ArrayValue::Int32(a) => ArrayValue::Int32(do_slice!(a)),
+        ArrayValue::Int64(a) => ArrayValue::Int64(do_slice!(a)),
+        ArrayValue::Float32(a) => ArrayValue::Float32(do_slice!(a)),
+        ArrayValue::Float64(a) => ArrayValue::Float64(do_slice!(a)),
+        ArrayValue::Complex32(a) => ArrayValue::Complex32(do_slice!(a)),
+        ArrayValue::Complex64(a) => ArrayValue::Complex64(do_slice!(a)),
+        ArrayValue::String(a) => ArrayValue::String(do_slice!(a)),
+    }
+}
+
+/// Write `data` into a sub-region of `target` specified by `slicer`.
+fn put_slice_array_value(target: &mut ArrayValue, slicer: &Slicer, data: &ArrayValue) {
+    use ndarray::SliceInfoElem;
+    let elems = slicer_to_slice_elems(slicer);
+    let si: Vec<SliceInfoElem> = elems;
+
+    macro_rules! do_put {
+        ($dst:expr, $src:expr) => {{
+            let mut view = $dst.slice_each_axis_mut(|ax| match si[ax.axis.index()] {
+                SliceInfoElem::Slice { start, end, step } => ndarray::Slice { start, end, step },
+                _ => unreachable!(),
+            });
+            view.assign($src);
+        }};
+    }
+
+    match (target, data) {
+        (ArrayValue::Bool(t), ArrayValue::Bool(s)) => do_put!(t, s),
+        (ArrayValue::UInt8(t), ArrayValue::UInt8(s)) => do_put!(t, s),
+        (ArrayValue::UInt16(t), ArrayValue::UInt16(s)) => do_put!(t, s),
+        (ArrayValue::UInt32(t), ArrayValue::UInt32(s)) => do_put!(t, s),
+        (ArrayValue::Int16(t), ArrayValue::Int16(s)) => do_put!(t, s),
+        (ArrayValue::Int32(t), ArrayValue::Int32(s)) => do_put!(t, s),
+        (ArrayValue::Int64(t), ArrayValue::Int64(s)) => do_put!(t, s),
+        (ArrayValue::Float32(t), ArrayValue::Float32(s)) => do_put!(t, s),
+        (ArrayValue::Float64(t), ArrayValue::Float64(s)) => do_put!(t, s),
+        (ArrayValue::Complex32(t), ArrayValue::Complex32(s)) => do_put!(t, s),
+        (ArrayValue::Complex64(t), ArrayValue::Complex64(s)) => do_put!(t, s),
+        (ArrayValue::String(t), ArrayValue::String(s)) => do_put!(t, s),
+        _ => {} // type mismatch silently ignored (validated at higher level)
+    }
+}
+
+impl Drop for Table {
+    fn drop(&mut self) {
+        if self.marked_for_delete {
+            if let Some(path) = &self.source_path {
+                let _ = std::fs::remove_dir_all(path);
+            }
+        }
     }
 }
 
@@ -4581,5 +5537,934 @@ mod tests {
             }
             other => panic!("expected Float64(16.0), got {other:?}"),
         }
+    }
+
+    // -------------------------------------------------------------------
+    // TableInfo round-trip tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn table_info_default_is_empty() {
+        let table = Table::new();
+        assert_eq!(table.info().table_type, "");
+        assert_eq!(table.info().sub_type, "");
+    }
+
+    #[test]
+    fn table_info_set_and_get() {
+        use crate::storage::TableInfo;
+        let mut table = Table::new();
+        table.set_info(TableInfo {
+            table_type: "MeasurementSet".to_string(),
+            sub_type: "UVFITS".to_string(),
+        });
+        assert_eq!(table.info().table_type, "MeasurementSet");
+        assert_eq!(table.info().sub_type, "UVFITS");
+    }
+
+    #[test]
+    fn table_info_round_trip_disk() {
+        use crate::storage::TableInfo;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("info_test.tbl");
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table.set_info(TableInfo {
+            table_type: "MeasurementSet".to_string(),
+            sub_type: "UVFITS".to_string(),
+        });
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "id",
+                Value::Scalar(ScalarValue::Int32(42)),
+            )]))
+            .unwrap();
+        table.save(TableOptions::new(&path)).unwrap();
+
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        assert_eq!(reopened.info().table_type, "MeasurementSet");
+        assert_eq!(reopened.info().sub_type, "UVFITS");
+    }
+
+    #[test]
+    fn table_info_empty_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty_info.tbl");
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+        let table = Table::with_schema(schema);
+        table.save(TableOptions::new(&path)).unwrap();
+
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        assert_eq!(reopened.info().table_type, "");
+        assert_eq!(reopened.info().sub_type, "");
+    }
+
+    #[test]
+    fn table_info_preserved_by_to_memory() {
+        use crate::storage::TableInfo;
+        let mut table = Table::new();
+        table.set_info(TableInfo {
+            table_type: "Catalog".to_string(),
+            sub_type: "".to_string(),
+        });
+        let mem = table.to_memory();
+        assert_eq!(mem.info().table_type, "Catalog");
+    }
+
+    #[test]
+    fn table_info_preserved_by_deep_copy() {
+        use crate::storage::TableInfo;
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("src.tbl");
+        let dst_path = dir.path().join("dst.tbl");
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Float64)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table.set_info(TableInfo {
+            table_type: "Sky".to_string(),
+            sub_type: "Model".to_string(),
+        });
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "x",
+                Value::Scalar(ScalarValue::Float64(1.0)),
+            )]))
+            .unwrap();
+        table.save(TableOptions::new(&src_path)).unwrap();
+
+        let original = Table::open(TableOptions::new(&src_path)).unwrap();
+        original.deep_copy(TableOptions::new(&dst_path)).unwrap();
+
+        let copy = Table::open(TableOptions::new(&dst_path)).unwrap();
+        assert_eq!(copy.info().table_type, "Sky");
+        assert_eq!(copy.info().sub_type, "Model");
+    }
+
+    // -------------------------------------------------------------------
+    // Lifecycle operation tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn flush_writes_changes_to_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("flush_test.tbl");
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "x",
+                Value::Scalar(ScalarValue::Int32(1)),
+            )]))
+            .unwrap();
+        table.save(TableOptions::new(&path)).unwrap();
+
+        // Reopen, mutate, and flush
+        let mut table = Table::open(TableOptions::new(&path)).unwrap();
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "x",
+                Value::Scalar(ScalarValue::Int32(2)),
+            )]))
+            .unwrap();
+        table.flush().unwrap();
+
+        // Reopen and verify both rows
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        assert_eq!(reopened.row_count(), 2);
+    }
+
+    #[test]
+    fn flush_without_path_fails() {
+        let table = Table::new();
+        assert!(table.flush().is_err());
+    }
+
+    #[test]
+    fn resync_discards_in_memory_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resync_test.tbl");
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "x",
+                Value::Scalar(ScalarValue::Int32(1)),
+            )]))
+            .unwrap();
+        table.save(TableOptions::new(&path)).unwrap();
+
+        // Open from disk, add a row in memory (not saved)
+        let mut table = Table::open(TableOptions::new(&path)).unwrap();
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "x",
+                Value::Scalar(ScalarValue::Int32(2)),
+            )]))
+            .unwrap();
+        assert_eq!(table.row_count(), 2);
+
+        // Resync discards the unsaved row
+        table.resync().unwrap();
+        assert_eq!(table.row_count(), 1);
+    }
+
+    #[test]
+    fn resync_without_path_fails() {
+        let mut table = Table::new();
+        assert!(table.resync().is_err());
+    }
+
+    #[test]
+    fn mark_for_delete_removes_directory_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("delete_me.tbl");
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let table = Table::with_schema(schema);
+        table.save(TableOptions::new(&path)).unwrap();
+        assert!(path.exists());
+
+        let mut table = Table::open(TableOptions::new(&path)).unwrap();
+        table.mark_for_delete();
+        assert!(table.is_marked_for_delete());
+
+        drop(table);
+        assert!(!path.exists(), "table directory should be deleted on drop");
+    }
+
+    #[test]
+    fn unmark_for_delete_prevents_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keep_me.tbl");
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let table = Table::with_schema(schema);
+        table.save(TableOptions::new(&path)).unwrap();
+
+        let mut table = Table::open(TableOptions::new(&path)).unwrap();
+        table.mark_for_delete();
+        table.unmark_for_delete();
+        assert!(!table.is_marked_for_delete());
+
+        drop(table);
+        assert!(path.exists(), "table directory should still exist");
+    }
+
+    // -------------------------------------------------------------------
+    // Locking extension tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn lock_mode_resolve() {
+        use crate::lock::LockMode;
+        assert_eq!(LockMode::DefaultLocking.resolve(), LockMode::AutoLocking);
+        assert_eq!(LockMode::AutoLocking.resolve(), LockMode::AutoLocking);
+        assert_eq!(LockMode::NoLocking.resolve(), LockMode::NoLocking);
+    }
+
+    #[test]
+    fn lock_mode_skip_read_lock() {
+        use crate::lock::LockMode;
+        assert!(LockMode::AutoNoReadLocking.skip_read_lock());
+        assert!(LockMode::UserNoReadLocking.skip_read_lock());
+        assert!(!LockMode::AutoLocking.skip_read_lock());
+        assert!(!LockMode::UserLocking.skip_read_lock());
+    }
+
+    #[test]
+    fn external_sync_hook_ordering() {
+        use crate::lock::ExternalLockSync;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct Recorder(Arc<Mutex<Vec<&'static str>>>);
+        impl ExternalLockSync for Recorder {
+            fn acquire_read(&self) {
+                self.0.lock().unwrap().push("acquire_read");
+            }
+            fn acquire_write(&self) {
+                self.0.lock().unwrap().push("acquire_write");
+            }
+            fn release(&self) {
+                self.0.lock().unwrap().push("release");
+            }
+        }
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Recorder(log.clone());
+
+        // Verify the trait is object-safe and can be boxed
+        let _: Box<dyn ExternalLockSync> = Box::new(recorder);
+
+        // Verify the log works
+        let recorder2 = Recorder(log.clone());
+        recorder2.acquire_read();
+        recorder2.acquire_write();
+        recorder2.release();
+
+        let events = log.lock().unwrap();
+        assert_eq!(&*events, &["acquire_read", "acquire_write", "release"]);
+    }
+
+    // -------------------------------------------------------------------
+    // Set algebra tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn row_union_merges_and_deduplicates() {
+        assert_eq!(
+            Table::row_union(&[0, 2, 4], &[1, 2, 3]),
+            vec![0, 1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn row_intersection_keeps_common() {
+        assert_eq!(
+            Table::row_intersection(&[0, 1, 2, 3], &[2, 3, 4]),
+            vec![2, 3]
+        );
+    }
+
+    #[test]
+    fn row_difference_removes_second() {
+        assert_eq!(Table::row_difference(&[0, 1, 2, 3], &[1, 3]), vec![0, 2]);
+    }
+
+    #[test]
+    fn row_set_ops_with_empty() {
+        assert!(Table::row_intersection(&[0, 1], &[]).is_empty());
+        assert_eq!(Table::row_union(&[], &[3, 1]), vec![1, 3]);
+        assert_eq!(Table::row_difference(&[5, 3], &[]), vec![3, 5]);
+    }
+
+    // -------------------------------------------------------------------
+    // NoSort iteration tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn iter_groups_nosort_preserves_natural_order() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("k", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        // Insert pattern: A, B, A — nosort should yield 3 groups
+        for v in [1, 2, 1] {
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "k",
+                    Value::Scalar(ScalarValue::Int32(v)),
+                )]))
+                .unwrap();
+        }
+
+        let groups: Vec<_> = table.iter_groups_nosort(&["k"]).unwrap().collect();
+        assert_eq!(
+            groups.len(),
+            3,
+            "nosort should not merge non-adjacent duplicates"
+        );
+        assert_eq!(groups[0].row_indices, vec![0]); // k=1
+        assert_eq!(groups[1].row_indices, vec![1]); // k=2
+        assert_eq!(groups[2].row_indices, vec![2]); // k=1 again (separate group)
+    }
+
+    #[test]
+    fn iter_groups_nosort_merges_consecutive_equal() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("k", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        for v in [1, 1, 2, 2, 2] {
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "k",
+                    Value::Scalar(ScalarValue::Int32(v)),
+                )]))
+                .unwrap();
+        }
+
+        let groups: Vec<_> = table.iter_groups_nosort(&["k"]).unwrap().collect();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].row_indices, vec![0, 1]); // k=1
+        assert_eq!(groups[1].row_indices, vec![2, 3, 4]); // k=2
+    }
+
+    // -------------------------------------------------------------------
+    // Slicer and cell slicing tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn slicer_contiguous_2d() {
+        use super::Slicer;
+        let s = Slicer::contiguous(vec![0, 1], vec![2, 3]).unwrap();
+        assert_eq!(s.ndim(), 2);
+        assert_eq!(s.start(), &[0, 1]);
+        assert_eq!(s.end(), &[2, 3]);
+        assert_eq!(s.stride(), &[1, 1]);
+    }
+
+    #[test]
+    fn slicer_rejects_zero_stride() {
+        use super::Slicer;
+        assert!(Slicer::new(vec![0], vec![5], vec![0]).is_err());
+    }
+
+    #[test]
+    fn slicer_rejects_start_gt_end() {
+        use super::Slicer;
+        assert!(Slicer::new(vec![5], vec![3], vec![1]).is_err());
+    }
+
+    #[test]
+    fn get_cell_slice_2d() {
+        use super::Slicer;
+        use casacore_types::ArrayD;
+        use ndarray::IxDyn;
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Float64,
+            vec![3, 4],
+        )])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+
+        // 3x4 array filled with value = row*10 + col
+        let arr: ArrayD<f64> =
+            ArrayD::from_shape_fn(IxDyn(&[3, 4]), |idx| (idx[0] * 10 + idx[1]) as f64);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float64(arr)),
+            )]))
+            .unwrap();
+
+        // Slice rows 1..3, cols 2..4
+        let slicer = Slicer::contiguous(vec![1, 2], vec![3, 4]).unwrap();
+        let sliced = table.get_cell_slice("data", 0, &slicer).unwrap();
+
+        match sliced {
+            Value::Array(ArrayValue::Float64(a)) => {
+                assert_eq!(a.shape(), &[2, 2]);
+                assert_eq!(a[[0, 0]], 12.0); // row=1, col=2
+                assert_eq!(a[[0, 1]], 13.0); // row=1, col=3
+                assert_eq!(a[[1, 0]], 22.0); // row=2, col=2
+                assert_eq!(a[[1, 1]], 23.0); // row=2, col=3
+            }
+            other => panic!("expected Float64 array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn put_cell_slice_2d() {
+        use super::Slicer;
+        use casacore_types::ArrayD;
+        use ndarray::IxDyn;
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Float64,
+            vec![3, 4],
+        )])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+
+        let arr: ArrayD<f64> = ArrayD::zeros(IxDyn(&[3, 4]));
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float64(arr)),
+            )]))
+            .unwrap();
+
+        // Write 99.0 into the [1..3, 0..2] sub-region
+        let patch: ArrayD<f64> = ArrayD::from_elem(IxDyn(&[2, 2]), 99.0);
+        let slicer = Slicer::contiguous(vec![1, 0], vec![3, 2]).unwrap();
+        table
+            .put_cell_slice("data", 0, &slicer, &ArrayValue::Float64(patch))
+            .unwrap();
+
+        match table.cell(0, "data").unwrap() {
+            Value::Array(ArrayValue::Float64(a)) => {
+                assert_eq!(a[[0, 0]], 0.0); // untouched
+                assert_eq!(a[[1, 0]], 99.0); // patched
+                assert_eq!(a[[2, 1]], 99.0); // patched
+                assert_eq!(a[[0, 3]], 0.0); // untouched
+            }
+            other => panic!("expected Float64 array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_cell_slice_with_stride() {
+        use super::Slicer;
+        use casacore_types::ArrayD;
+        use ndarray::IxDyn;
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Int32,
+            vec![6],
+        )])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+
+        let arr: ArrayD<i32> = ArrayD::from_shape_fn(IxDyn(&[6]), |idx| idx[0] as i32);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Int32(arr)),
+            )]))
+            .unwrap();
+
+        // Every other element: [0, 2, 4]
+        let slicer = Slicer::new(vec![0], vec![6], vec![2]).unwrap();
+        let sliced = table.get_cell_slice("data", 0, &slicer).unwrap();
+
+        match sliced {
+            Value::Array(ArrayValue::Int32(a)) => {
+                assert_eq!(a.as_slice().unwrap(), &[0, 2, 4]);
+            }
+            other => panic!("expected Int32 array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_cell_slice_scalar_cell_fails() {
+        use super::Slicer;
+
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "x",
+                Value::Scalar(ScalarValue::Int32(42)),
+            )]))
+            .unwrap();
+
+        let slicer = Slicer::contiguous(vec![0], vec![1]).unwrap();
+        assert!(table.get_cell_slice("x", 0, &slicer).is_err());
+    }
+
+    #[test]
+    fn get_column_slice_multiple_rows() {
+        use super::{RowRange, Slicer};
+        use casacore_types::ArrayD;
+        use ndarray::IxDyn;
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Int32,
+            vec![4],
+        )])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+
+        for i in 0..3 {
+            let arr = ArrayD::from_shape_fn(IxDyn(&[4]), |idx| (i * 10 + idx[0]) as i32);
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "data",
+                    Value::Array(ArrayValue::Int32(arr)),
+                )]))
+                .unwrap();
+        }
+
+        // Slice elements [1..3] from rows 0 and 1
+        let slicer = Slicer::contiguous(vec![1], vec![3]).unwrap();
+        let results = table
+            .get_column_slice("data", RowRange::new(0, 2), &slicer)
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        match &results[0] {
+            Value::Array(ArrayValue::Int32(a)) => assert_eq!(a.as_slice().unwrap(), &[1, 2]),
+            other => panic!("expected Int32 array, got {other:?}"),
+        }
+        match &results[1] {
+            Value::Array(ArrayValue::Int32(a)) => assert_eq!(a.as_slice().unwrap(), &[11, 12]),
+            other => panic!("expected Int32 array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn put_column_slice_multiple_rows() {
+        use super::{RowRange, Slicer};
+        use casacore_types::ArrayD;
+        use ndarray::IxDyn;
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Float64,
+            vec![4],
+        )])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+
+        for _ in 0..3 {
+            let arr: ArrayD<f64> = ArrayD::zeros(IxDyn(&[4]));
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "data",
+                    Value::Array(ArrayValue::Float64(arr)),
+                )]))
+                .unwrap();
+        }
+
+        // Patch elements [1..3] in rows 0 and 2 (stride=2)
+        let slicer = Slicer::contiguous(vec![1], vec![3]).unwrap();
+        let patches = vec![
+            ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[2]), 11.0)),
+            ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[2]), 22.0)),
+        ];
+        table
+            .put_column_slice("data", RowRange::with_stride(0, 3, 2), &slicer, &patches)
+            .unwrap();
+
+        // Row 0: [0, 11, 11, 0]
+        match table.cell(0, "data").unwrap() {
+            Value::Array(ArrayValue::Float64(a)) => {
+                assert_eq!(a.as_slice().unwrap(), &[0.0, 11.0, 11.0, 0.0]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // Row 1: untouched
+        match table.cell(1, "data").unwrap() {
+            Value::Array(ArrayValue::Float64(a)) => {
+                assert_eq!(a.as_slice().unwrap(), &[0.0, 0.0, 0.0, 0.0]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // Row 2: [0, 22, 22, 0]
+        match table.cell(2, "data").unwrap() {
+            Value::Array(ArrayValue::Float64(a)) => {
+                assert_eq!(a.as_slice().unwrap(), &[0.0, 22.0, 22.0, 0.0]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn put_column_slice_length_mismatch() {
+        use super::{RowRange, Slicer};
+        use casacore_types::ArrayD;
+        use ndarray::IxDyn;
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Float64,
+            vec![4],
+        )])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+
+        for _ in 0..2 {
+            let arr: ArrayD<f64> = ArrayD::zeros(IxDyn(&[4]));
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "data",
+                    Value::Array(ArrayValue::Float64(arr)),
+                )]))
+                .unwrap();
+        }
+
+        let slicer = Slicer::contiguous(vec![0], vec![2]).unwrap();
+        // 2 rows selected but only 1 data element
+        let patches = vec![ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[2]), 1.0))];
+        let result = table.put_column_slice("data", RowRange::new(0, 2), &slicer, &patches);
+        assert!(result.is_err());
+    }
+
+    // ---- Row copy and fill tests ----
+
+    #[test]
+    fn copy_rows_appends_all() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let mut dst = Table::with_schema(schema.clone());
+        dst.add_row(RecordValue::new(vec![RecordField::new(
+            "x",
+            Value::Scalar(ScalarValue::Int32(0)),
+        )]))
+        .unwrap();
+
+        let src = Table::from_rows_with_schema(
+            vec![
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(1)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(2)),
+                )]),
+            ],
+            schema,
+        )
+        .unwrap();
+
+        dst.copy_rows(&src).unwrap();
+        assert_eq!(dst.row_count(), 3);
+        assert_eq!(
+            dst.cell(2, "x"),
+            Some(&Value::Scalar(ScalarValue::Int32(2)))
+        );
+    }
+
+    #[test]
+    fn copy_rows_schema_mismatch() {
+        let s1 = TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let s2 = TableSchema::new(vec![ColumnSchema::scalar("y", PrimitiveType::Int32)]).unwrap();
+        let mut dst = Table::with_schema(s1);
+        let src = Table::with_schema(s2);
+        assert!(dst.copy_rows(&src).is_err());
+    }
+
+    #[test]
+    fn copy_rows_with_mapping_selects_rows() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let src = Table::from_rows_with_schema(
+            vec![
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(10)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(20)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(30)),
+                )]),
+            ],
+            schema.clone(),
+        )
+        .unwrap();
+
+        let mut dst = Table::with_schema(schema);
+        dst.copy_rows_with_mapping(&src, &[2, 0]).unwrap();
+        assert_eq!(dst.row_count(), 2);
+        assert_eq!(
+            dst.cell(0, "x"),
+            Some(&Value::Scalar(ScalarValue::Int32(30)))
+        );
+        assert_eq!(
+            dst.cell(1, "x"),
+            Some(&Value::Scalar(ScalarValue::Int32(10)))
+        );
+    }
+
+    #[test]
+    fn copy_info_transfers_metadata() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let mut src = Table::with_schema(schema.clone());
+        src.set_info(crate::TableInfo {
+            table_type: "MeasurementSet".into(),
+            sub_type: "".into(),
+        });
+
+        let mut dst = Table::with_schema(schema);
+        dst.copy_info(&src);
+        assert_eq!(dst.info().table_type, "MeasurementSet");
+    }
+
+    #[test]
+    fn fill_column_sets_all_cells() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::from_rows_with_schema(
+            vec![
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(1)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(2)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(3)),
+                )]),
+            ],
+            schema,
+        )
+        .unwrap();
+
+        table
+            .fill_column("x", Value::Scalar(ScalarValue::Int32(99)))
+            .unwrap();
+        for i in 0..3 {
+            assert_eq!(
+                table.cell(i, "x"),
+                Some(&Value::Scalar(ScalarValue::Int32(99)))
+            );
+        }
+    }
+
+    #[test]
+    fn fill_column_range_sets_subset() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::from_rows_with_schema(
+            vec![
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(0)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(0)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(0)),
+                )]),
+                RecordValue::new(vec![RecordField::new(
+                    "x",
+                    Value::Scalar(ScalarValue::Int32(0)),
+                )]),
+            ],
+            schema,
+        )
+        .unwrap();
+
+        // Fill only rows 1 and 3 (stride=2 starting at 1)
+        table
+            .fill_column_range(
+                "x",
+                super::RowRange::with_stride(1, 4, 2),
+                Value::Scalar(ScalarValue::Int32(77)),
+            )
+            .unwrap();
+
+        assert_eq!(
+            table.cell(0, "x"),
+            Some(&Value::Scalar(ScalarValue::Int32(0)))
+        );
+        assert_eq!(
+            table.cell(1, "x"),
+            Some(&Value::Scalar(ScalarValue::Int32(77)))
+        );
+        assert_eq!(
+            table.cell(2, "x"),
+            Some(&Value::Scalar(ScalarValue::Int32(0)))
+        );
+        assert_eq!(
+            table.cell(3, "x"),
+            Some(&Value::Scalar(ScalarValue::Int32(77)))
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Wave 24 — Data manager introspection
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn data_manager_info_empty_for_memory_table() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("x", PrimitiveType::Int32)]).unwrap();
+        let table = Table::with_schema(schema);
+        assert!(table.data_manager_info().is_empty());
+    }
+
+    #[test]
+    fn data_manager_info_populated_after_roundtrip() {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("a", PrimitiveType::Int32),
+            ColumnSchema::scalar("b", PrimitiveType::Float64),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("a", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("b", Value::Scalar(ScalarValue::Float64(2.0))),
+            ]))
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dm_info_test");
+        table.save(TableOptions::new(&path)).unwrap();
+
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        let info = reopened.data_manager_info();
+        assert!(!info.is_empty(), "should have at least one DM");
+        // All columns should appear somewhere across the DMs
+        let all_cols: Vec<&str> = info
+            .iter()
+            .flat_map(|dm| dm.columns.iter().map(|s| s.as_str()))
+            .collect();
+        assert!(all_cols.contains(&"a"));
+        assert!(all_cols.contains(&"b"));
+    }
+
+    #[test]
+    fn show_structure_contains_columns_and_rows() {
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::scalar("flux", PrimitiveType::Float64),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("flux", Value::Scalar(ScalarValue::Float64(1.5))),
+            ]))
+            .unwrap();
+
+        let output = table.show_structure();
+        assert!(output.contains("1 rows"), "should show row count");
+        assert!(output.contains("id"), "should list id column");
+        assert!(output.contains("flux"), "should list flux column");
+        assert!(output.contains("Scalar"), "should show scalar type");
+    }
+
+    #[test]
+    fn show_keywords_includes_table_and_column_keywords() {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("flux", PrimitiveType::Float64)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        *table.keywords_mut() = RecordValue::new(vec![RecordField::new(
+            "telescope",
+            Value::Scalar(ScalarValue::String("ALMA".into())),
+        )]);
+        table.set_column_keywords(
+            "flux",
+            RecordValue::new(vec![RecordField::new(
+                "unit",
+                Value::Scalar(ScalarValue::String("Jy".into())),
+            )]),
+        );
+
+        let output = table.show_keywords();
+        assert!(
+            output.contains("Table keywords:"),
+            "should have table keywords header"
+        );
+        assert!(
+            output.contains("telescope"),
+            "should show telescope keyword"
+        );
+        assert!(
+            output.contains("Column \"flux\" keywords:"),
+            "should have column keywords header"
+        );
+        assert!(output.contains("unit"), "should show unit keyword");
     }
 }

@@ -340,6 +340,43 @@ void cpp_columns_index_time_lookups_impl(
     *out_match_count = rows.nelements();
 }
 
+// ===== TableInfo =====
+
+void write_table_info_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("id"));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StManAipsIO stman;
+    setup.bindAll(stman);
+
+    casacore::Table table(setup, 1);
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+    colId.put(0, 1);
+
+    table.tableInfo().setType("Measurement");
+    table.tableInfo().setSubType("UVFITS");
+    table.flush();
+}
+
+void verify_table_info_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 1)
+        throw std::runtime_error("expected 1 row, got " + std::to_string(table.nrow()));
+
+    casacore::ScalarColumn<casacore::Int> colId(table, "id");
+    if (colId(0) != 1)
+        throw std::runtime_error("row 0 id mismatch: expected 1, got " + std::to_string(colId(0)));
+
+    casacore::String type = table.tableInfo().type();
+    if (type != "Measurement")
+        throw std::runtime_error("tableInfo type mismatch: expected 'Measurement', got '" + type + "'");
+
+    casacore::String subType = table.tableInfo().subType();
+    if (subType != "UVFITS")
+        throw std::runtime_error("tableInfo subType mismatch: expected 'UVFITS', got '" + subType + "'");
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -438,6 +475,18 @@ int32_t cpp_columns_index_time_lookups(
     try {
         cpp_columns_index_time_lookups_impl(path, key_value, nqueries, out_elapsed_ns, out_match_count);
         return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+
+// TableInfo
+int32_t cpp_table_write_table_info(const char* path, char** out_error) {
+    try { write_table_info_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_verify_table_info(const char* path, char** out_error) {
+    try { verify_table_info_impl(path); return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }

@@ -284,7 +284,7 @@ impl<'a> RefTable<'a> {
 
         let storage = CompositeStorage;
         storage
-            .save_ref_table(ref_path, &ref_dat)
+            .save_ref_table(ref_path, &ref_dat, &crate::storage::TableInfo::default())
             .map_err(|e| TableError::Storage(e.to_string()))?;
         Ok(())
     }

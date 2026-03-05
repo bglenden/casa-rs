@@ -75,6 +75,28 @@ impl<'a> TableIterator<'a> {
         })
     }
 
+    /// Creates a new iterator that groups rows in natural (insertion) order.
+    ///
+    /// No sorting is performed — consecutive rows with equal key values are
+    /// grouped together, but non-adjacent duplicates remain in separate groups.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `TableIterator` constructed with `TableIterator::NoSort`.
+    pub(crate) fn new_nosort(table: &'a Table, key_columns: &[&str]) -> Result<Self, TableError> {
+        for &col in key_columns {
+            validate_sort_column(table, col)?;
+        }
+        let sorted_indices: Vec<usize> = (0..table.row_count()).collect();
+        let key_columns: Vec<String> = key_columns.iter().map(|s| s.to_string()).collect();
+        Ok(Self {
+            table,
+            sorted_indices,
+            key_columns,
+            cursor: 0,
+        })
+    }
+
     /// Extracts key column values from the given parent row index.
     fn extract_keys(&self, row_index: usize) -> RecordValue {
         let mut fields = Vec::with_capacity(self.key_columns.len());

@@ -249,14 +249,15 @@ pub mod taql;
 
 pub use concat_table::ConcatTable;
 pub use indexing::ColumnsIndex;
-pub use lock::{LockMode, LockOptions, LockType};
+pub use lock::{ExternalLockSync, LockMode, LockOptions, LockType};
 pub use ref_table::RefTable;
 pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };
 pub use sorting::{TableGroup, TableIterator};
+pub use storage::{DataManagerInfo, TableInfo};
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    RecordColumnCell, RecordColumnIter, RowRange, SortOrder, Table, TableError, TableKind,
+    RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table, TableError, TableKind,
     TableOptions,
 };
