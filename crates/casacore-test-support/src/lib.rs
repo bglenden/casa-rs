@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+pub mod measures_interop;
+pub mod quanta_interop;
 pub mod table_interop;
+pub mod table_measures_interop;
+pub mod table_quantum_interop;
 pub mod taql_interop;
 
 #[cfg(has_casacore_cpp)]

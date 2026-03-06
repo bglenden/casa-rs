@@ -11,9 +11,11 @@ workspace = true
 
 [dependencies]
 casacore-aipsio = { path = "../casacore-aipsio" }
+casacore-measures-data = { path = "../casacore-measures-data" }
 casacore-tables = { path = "../casacore-tables" }
 casacore-types = { path = "../casacore-types" }
 ndarray.workspace = true
+sofars.workspace = true
 tempfile = "3"
 thiserror.workspace = true
 

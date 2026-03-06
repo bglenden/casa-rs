@@ -54,6 +54,9 @@
 //! record.upsert("n", Value::Scalar(ScalarValue::Int32(42)));
 //! ```
 
+pub mod measures;
+pub mod quanta;
+
 pub use num_complex::{Complex32, Complex64};
 
 use ndarray::Array1;

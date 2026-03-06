@@ -52,6 +52,7 @@ pub mod exec;
 pub mod aggregate;
 pub mod format;
 pub mod functions;
+mod meas_udf;
 
 pub use ast::Statement;
 pub use error::TaqlError;

@@ -1,5 +1,11 @@
 # Wave 8 - CoordinateSystem stokes and spectral core
 
+> **SUPERSEDED** — This wave is deferred to Phase 5 Wave 5 ("Complete coordinates
+> and coordinate system parity"), which covers the same scope plus
+> `DirectionCoordinate` and full `CoordinateSystem` behavior. Doing coordinates
+> in Phase 5 alongside lattices and images avoids building coordinate types
+> before their primary consumers exist.
+
 ## Origin
 
 - Backlog items: 7.1, 7.2, 7.3.

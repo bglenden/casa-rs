@@ -919,13 +919,28 @@ impl<'src> Parser<'src> {
             return Ok(Expr::FunctionCall { name, args });
         }
 
-        // Qualified column: table.column
+        // Qualified column: table.column — or dotted function call: meas.epoch(...)
         if self.lexer.peek() == Some(&Token::Dot) {
             self.lexer.next_token();
-            let column = self.parse_ident_string()?;
+            let suffix = self.parse_ident_string()?;
+            if self.lexer.peek() == Some(&Token::LParen) {
+                // Dotted function call: meas.epoch(...)
+                let dotted_name = format!("{name}.{suffix}");
+                self.lexer.next_token(); // consume (
+                let args = if self.lexer.peek() == Some(&Token::RParen) {
+                    vec![]
+                } else {
+                    self.parse_expr_list()?
+                };
+                self.lexer.expect(&Token::RParen)?;
+                return Ok(Expr::FunctionCall {
+                    name: dotted_name,
+                    args,
+                });
+            }
             return Ok(Expr::ColumnRef(ColumnRef {
                 table: Some(name),
-                column,
+                column: suffix,
             }));
         }
 
@@ -2294,5 +2309,36 @@ mod tests {
         assert!(displayed.starts_with("COUNT "));
         let reparsed = parse(&displayed);
         assert!(matches!(reparsed, Statement::CountSelect(_)));
+    }
+
+    #[test]
+    fn dotted_function_call() {
+        let stmt = parse("SELECT meas.epoch('TAI', 51544.5)");
+        match stmt {
+            Statement::Select(s) => {
+                assert!(
+                    matches!(&s.columns[0].expr, Expr::FunctionCall { name, args } if name == "meas.epoch" && args.len() == 2)
+                );
+            }
+            _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn dotted_function_vs_column_ref() {
+        // Without parens, it should be a qualified column reference
+        let stmt = parse("SELECT t1.col1");
+        match stmt {
+            Statement::Select(s) => {
+                assert!(matches!(
+                    &s.columns[0].expr,
+                    Expr::ColumnRef(ColumnRef {
+                        table: Some(t),
+                        column: c,
+                    }) if t == "t1" && c == "col1"
+                ));
+            }
+            _ => panic!("expected SELECT"),
+        }
     }
 }

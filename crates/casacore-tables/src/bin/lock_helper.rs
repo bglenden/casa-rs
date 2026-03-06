@@ -2,25 +2,29 @@
 //! Helper binary for multi-process lock contention tests.
 //!
 //! Usage:
+//!
+//! ```text
 //!   lock_helper <table_dir> <command> [args...]
+//! ```
 //!
 //! Commands:
-//!   hold_write_lock <signal_file> <wait_file>
-//!     Opens the table with UserLocking, acquires a write lock,
-//!     creates `signal_file` to indicate readiness, waits for `wait_file`
-//!     to appear, then unlocks and exits.
 //!
-//!   try_write_lock
-//!     Opens the table with UserLocking, tries to acquire a write lock
-//!     (nattempts=1). Exits 0 if acquired, exits 1 if not.
+//! - `hold_write_lock <signal_file> <wait_file>` —
+//!   Opens the table with UserLocking, acquires a write lock,
+//!   creates `signal_file` to indicate readiness, waits for `wait_file`
+//!   to appear, then unlocks and exits.
 //!
-//!   write_row <id> <name>
-//!     Opens with UserLocking, acquires write lock, adds a row, unlocks.
-//!     Exits 0 on success.
+//! - `try_write_lock` —
+//!   Opens the table with UserLocking, tries to acquire a write lock
+//!   (nattempts=1). Exits 0 if acquired, exits 1 if not.
 //!
-//!   read_row_count
-//!     Opens with UserLocking, acquires read lock, prints row count to
-//!     stdout, unlocks. Exits 0 on success.
+//! - `write_row <id> <name>` —
+//!   Opens with UserLocking, acquires write lock, adds a row, unlocks.
+//!   Exits 0 on success.
+//!
+//! - `read_row_count` —
+//!   Opens with UserLocking, acquires read lock, prints row count to
+//!   stdout, unlocks. Exits 0 on success.
 use std::env;
 use std::fs;
 use std::path::Path;

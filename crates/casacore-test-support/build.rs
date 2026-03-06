@@ -29,6 +29,9 @@ fn main() {
     build.file("src/cpp/casacore_cpp_table_vararray_bench.cpp");
     build.file("src/cpp/casacore_cpp_taql.cpp");
     build.file("src/cpp/casacore_cpp_table_perf_bench.cpp");
+    build.file("src/cpp/casacore_cpp_quanta_shim.cpp");
+    build.file("src/cpp/casacore_cpp_table_quantum.cpp");
+    build.file("src/cpp/casacore_cpp_measures_shim.cpp");
 
     for include in &casacore.include_paths {
         build.include(include);

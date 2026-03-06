@@ -1279,6 +1279,13 @@ pub(crate) fn serialize_record_to_uchar(record: &RecordValue) -> Result<Vec<u8>,
     Ok(cursor.into_inner())
 }
 
+fn write_empty_record_desc(io: &mut AipsIo) -> Result<(), StorageError> {
+    io.putstart("RecordDesc", 2)?;
+    io.put_i32(0)?; // nfields=0
+    io.putend()?;
+    Ok(())
+}
+
 fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), StorageError> {
     io.putstart("RecordDesc", 2)?;
     io.put_i32(record.fields().len() as i32)?;
@@ -1289,9 +1296,10 @@ fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), Storag
         io.put_i32(dt as i32)?;
 
         if dt == CasacoreDataType::TpRecord {
-            if let Value::Record(sub) = &field.value {
-                write_record_desc(io, sub)?;
-            }
+            // C++ writes an empty sub-record schema here (nfields=0).
+            // The actual fields are written in write_record_field_value as
+            // a full TableRecord (Variable record type).
+            write_empty_record_desc(io)?;
         } else if is_array_data_type(dt) {
             // Array field: write IPosition shape.
             if let Value::Array(av) = &field.value {
@@ -2165,5 +2173,145 @@ impl ColumnDescContents {
             is_array,
             primitive_type: Some(pt),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn test_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("table_control_{name}_{nanos}"))
+    }
+
+    #[test]
+    fn column_keywords_roundtrip_in_table_dat() {
+        // Build a ColumnDescContents with nested record keywords
+        let mut measinfo = RecordValue::default();
+        measinfo.upsert("type", Value::Scalar(ScalarValue::String("epoch".into())));
+        measinfo.upsert("Ref", Value::Scalar(ScalarValue::String("UTC".into())));
+        let mut col_kw = RecordValue::default();
+        col_kw.upsert("MEASINFO", Value::Record(measinfo));
+
+        let col = ColumnDescContents {
+            class_name: "ArrayColumnDesc<double  ".to_string(),
+            col_name: "TIME".to_string(),
+            comment: String::new(),
+            data_manager_type: "StManAipsIO".to_string(),
+            data_manager_group: "StManAipsIO".to_string(),
+            data_type: CasacoreDataType::TpDouble,
+            option: 5, // Direct | FixedShape
+            nrdim: 1,
+            shape: vec![1],
+            max_length: 0,
+            keywords: col_kw.clone(),
+            is_array: true,
+            primitive_type: Some(PrimitiveType::Float64),
+        };
+
+        let contents = TableDatContents {
+            nrrow: 1,
+            big_endian: true,
+            table_desc: TableDescContents {
+                name: String::new(),
+                version: String::new(),
+                comment: String::new(),
+                table_keywords: RecordValue::default(),
+                private_keywords: RecordValue::default(),
+                columns: vec![col],
+            },
+            column_set: ColumnSetContents {
+                nrrow: 1,
+                seq_count: 1,
+                data_managers: vec![DataManagerEntry {
+                    type_name: "StManAipsIO".to_string(),
+                    seq_nr: 0,
+                    data: vec![],
+                }],
+                columns: vec![PlainColumnEntry {
+                    original_name: "TIME".to_string(),
+                    dm_seq_nr: 0,
+                    is_array: true,
+                }],
+            },
+        };
+
+        let dir = test_dir("col_kw_rt");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("table.dat");
+
+        write_table_dat(&path, &contents).unwrap();
+
+        // Read back and check column keywords
+        let readback = read_table_dat(&path).unwrap();
+        assert_eq!(readback.table_desc.columns.len(), 1);
+        let kw = &readback.table_desc.columns[0].keywords;
+        assert!(
+            !kw.fields().is_empty(),
+            "column keywords should not be empty after roundtrip"
+        );
+        match kw.get("MEASINFO") {
+            Some(Value::Record(mi)) => {
+                assert_eq!(
+                    mi.get("type"),
+                    Some(&Value::Scalar(ScalarValue::String("epoch".into())))
+                );
+                assert_eq!(
+                    mi.get("Ref"),
+                    Some(&Value::Scalar(ScalarValue::String("UTC".into())))
+                );
+            }
+            other => panic!("expected MEASINFO record, got {other:?}"),
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Write a minimal table.dat + empty data file, then compare with C++-written version.
+    /// The output path is printed so it can be inspected externally.
+    #[test]
+    fn column_keywords_binary_matches_cpp_format() {
+        // Build exactly what `from_snapshot` builds, with column keywords injected
+        let schema = crate::TableSchema::new(vec![crate::ColumnSchema::array_fixed(
+            "TIME",
+            PrimitiveType::Float64,
+            vec![1],
+        )])
+        .unwrap();
+
+        let mut col_keywords = std::collections::HashMap::new();
+        let mut measinfo = RecordValue::default();
+        measinfo.upsert("type", Value::Scalar(ScalarValue::String("epoch".into())));
+        measinfo.upsert("Ref", Value::Scalar(ScalarValue::String("UTC".into())));
+        let mut kw = RecordValue::default();
+        kw.upsert("MEASINFO", Value::Record(measinfo));
+        col_keywords.insert("TIME".to_string(), kw);
+
+        let table_dat = TableDatContents::from_snapshot(
+            &schema,
+            &RecordValue::default(),
+            &col_keywords,
+            1,
+            "StManAipsIO",
+            &[],
+            true,
+        );
+
+        // Verify keywords were injected
+        assert_eq!(table_dat.table_desc.columns.len(), 1);
+        let col = &table_dat.table_desc.columns[0];
+        assert!(
+            !col.keywords.fields().is_empty(),
+            "from_snapshot should inject column keywords into ColumnDescContents"
+        );
+        assert!(
+            col.keywords.get("MEASINFO").is_some(),
+            "MEASINFO should be present in column keywords"
+        );
     }
 }

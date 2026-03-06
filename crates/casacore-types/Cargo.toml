@@ -9,5 +9,21 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+casacore-measures-data = { path = "../casacore-measures-data" }
 ndarray.workspace = true
 num-complex.workspace = true
+sofars.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "unit_parse"
+harness = false
+
+[[bench]]
+name = "epoch_convert"
+harness = false
+
+[[example]]
+name = "t_measure"

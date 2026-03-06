@@ -47,26 +47,26 @@
 
 ## Definition of Ready
 
-- [ ] C++ reference paths identified in `../casacore` (class + function names).
-- [ ] 2x2 interop fixtures identified (RR, RC, CR, CC).
-- [ ] Endian and undefined-cell behavior reviewed for touched formats.
-- [ ] Data-table dependency reviewed (or marked N/A).
-- [ ] Performance workload defined or marked N/A.
-- [ ] Non-goals documented.
+- [x] C++ reference paths identified in `../casacore` (class + function names).
+- [x] 2x2 interop fixtures identified (RR, RC, CR, CC).
+- [x] Endian and undefined-cell behavior reviewed for touched formats.
+- [x] Data-table dependency reviewed (or marked N/A).
+- [x] Performance workload defined or marked N/A.
+- [x] Non-goals documented.
 
 ## Implementation checklist
 
-- [ ] Add read/write support for `MEASINFO` records and linked ref/offset cols.
-- [ ] Implement scalar and array measure accessors with conversion hooks.
-- [ ] Add fixture tests for fixed-ref, var-ref, fixed-offset, and var-offset.
+- [x] Add read/write support for `MEASINFO` records and linked ref/offset cols.
+- [x] Implement scalar and array measure accessors with conversion hooks.
+- [x] Add fixture tests for fixed-ref, var-ref, fixed-offset, and var-offset.
 
 ## Test plan
 
-- [ ] 2x2 interop matrix (RR/RC/CR/CC) where applicable.
-- [ ] Endian matrix (if applicable).
-- [ ] Edge cases (empty/zero-length/undefined/boundary/variable refs).
-- [ ] Clean skip when `pkg-config casacore` is unavailable.
-- [ ] Clean skip when measures data tables are unavailable.
+- [x] 2x2 interop matrix (RR/RC/CR/CC) where applicable.
+- [x] Endian matrix (if applicable). N/A — keyword format is storage-manager–independent.
+- [x] Edge cases (empty/zero-length/undefined/boundary/variable refs).
+- [x] Clean skip when `pkg-config casacore` is unavailable.
+- [x] Clean skip when measures data tables are unavailable. N/A — no data tables needed.
 
 ## Performance plan
 
@@ -77,27 +77,36 @@
 
 ## Closeout criteria
 
-- [ ] All Phase 3 closeout gates pass.
-- [ ] Public docs updated at C++ doxygen-comparable detail.
-- [ ] Demo added/updated if user-visible workflow changed.
+- [x] All Phase 3 closeout gates pass.
+- [x] Public docs updated at C++ doxygen-comparable detail.
+- [x] Demo added/updated if user-visible workflow changed. N/A — existing `t_table` demo already covers measure patterns.
 
 ## Results
 
-- Date:
-- Commit:
+- Date: 2026-03-05
+- Commit: (pending)
 - Commands:
-  - `` -> PASS/FAIL
+  - `cargo fmt --all -- --check` -> PASS
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+  - `cargo test --workspace` -> PASS (all tests, zero failures)
+  - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` -> PASS
 - Interop matrix:
-  - RR:
-  - RC:
-  - CR:
-  - CC:
-- Performance:
-  - Rust:
-  - C++:
-  - Ratio:
+  - RR: 8 tests (epoch fixed/var-int/var-str, direction fixed, measinfo reconstruct, quantum coexist, scalar meas mut, array meas mut)
+  - RC: 3 tests (epoch fixed, epoch var-int, direction fixed)
+  - CR: 4 tests (epoch fixed, epoch var-int, epoch var-str, direction fixed)
+  - CC: 1 test (epoch roundtrip)
+- Performance (release mode, 10K rows × 10 iterations):
+  - Epoch read: Rust 0.09x C++ (Rust ~11x faster)
+  - Direction read: Rust 0.06x C++ (Rust ~17x faster)
+  - All below 2.0x threshold
 - Skips/blockers/follow-ups:
+  - `EpochRef::TT` stored as `"TDT"` in TabRefTypes for C++ casacore 3.7.1 compat (added `casacore_name()` method)
+  - Fixed sub-record RecordDesc binary format bug (write empty RecordDesc for TpRecord fields)
+  - `TableMeasDesc::write()` now also writes `QuantumUnits` (required by C++ ArrayMeasColumn)
 
 ## Lessons learned
 
--
+- C++ casacore 3.7.1 uses "TDT" not "TT" as string name for Terrestrial Time — must use `casacore_name()` in TabRefTypes.
+- C++ RecordDesc writes an empty sub-record schema (nfields=0) for `TpRecord` fields; actual content is in the RecordRep's Variable-type TableRecord. Getting this wrong causes "AipsIO: read beyond end of object" errors.
+- C++ `TableMeasDesc::write()` writes both MEASINFO and QuantumUnits keywords; Rust must do the same or `ArrayMeasColumn` construction fails with assertion errors.
+- Data columns are `ArrayColumnDesc<Double>` requiring `ArrayMeasColumn` (not `ScalarMeasColumn`) in C++, even for scalar measures stored as 1-element arrays.

@@ -1477,6 +1477,8 @@ pub fn call_function(
             Ok(ExprValue::String(sql_like_to_regex(&s)))
         }
 
+        _ if lower.starts_with("meas.") => super::meas_udf::call_meas_function(&lower, args),
+
         _ => Err(TaqlError::UnknownFunction {
             name: name.to_string(),
         }),

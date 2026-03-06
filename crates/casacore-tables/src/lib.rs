@@ -247,6 +247,8 @@ pub(crate) mod lock;
 pub(crate) mod storage;
 
 pub mod demo;
+pub mod table_measures;
+pub mod table_quantum;
 pub mod taql;
 
 pub use concat_table::ConcatTable;

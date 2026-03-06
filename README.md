@@ -90,6 +90,78 @@ Demo source lives in each crate's `examples/` directory. The demo logic
 is in a `demo` module within the crate, so `cargo doc` renders it alongside
 the API docs.
 
+## IERS Earth Orientation Parameter Data
+
+casa-rs bundles a snapshot of the IERS `finals2000A.data` file for automatic
+dUT1 and polar motion lookup during coordinate conversions. This data is
+compiled into the binary so no external files or network access are needed
+at runtime.
+
+### How it works
+
+When you create a `MeasFrame` with `.with_bundled_eop()`, the bundled EOP
+table is used automatically for UT1↔UTC conversions and polar motion in
+celestial-to-terrestrial coordinate transforms.
+
+The runtime search order for EOP data (via `load_eop()`) is:
+
+1. `$CASA_RS_DATA/finals2000A.data` — environment variable override
+2. `~/.casa-rs/data/finals2000A.data` — user-local data directory
+3. Bundled snapshot (always available)
+
+### Updating EOP data
+
+The bundled snapshot should be refreshed periodically (the
+`bundled_data_not_stale` test will fail when the data is older than 6 months).
+
+**Command-line update** — download the latest data to `~/.casa-rs/data/`:
+
+```bash
+cargo run --example update_eop -p casacore-measures-data --features update
+```
+
+Or specify a custom directory:
+
+```bash
+cargo run --example update_eop -p casacore-measures-data --features update -- --data-dir /path/to/data
+```
+
+**Programmatic update:**
+
+```rust
+use casacore_measures_data::update::{download_and_install, UpdateResult};
+use std::path::Path;
+
+match download_and_install(Path::new("/path/to/data"))? {
+    UpdateResult::Updated(path, summary) => println!("Updated: {}", path.display()),
+    UpdateResult::AlreadyCurrent(summary) => println!("Already current"),
+}
+```
+
+**Refreshing the bundled snapshot** (for maintainers preparing a release):
+
+```bash
+# Download latest to a temp directory
+cargo run --example update_eop -p casacore-measures-data --features update -- --data-dir /tmp/eop
+
+# Copy into the crate's data directory and commit
+cp /tmp/eop/finals2000A.data crates/casacore-measures-data/data/finals2000A.data
+git add crates/casacore-measures-data/data/finals2000A.data
+git commit -m "data: refresh bundled IERS EOP snapshot"
+```
+
+### Release checklist
+
+The bundled data staleness test runs automatically with `cargo test --workspace`:
+
+```bash
+cargo test -p casacore-measures-data bundled_data_not_stale
+```
+
+This test fails when the bundled data's last measured entry is older than
+180 days. If it fails during a release, refresh the bundled snapshot before
+publishing.
+
 ## License
 
 Licensed under the [GNU Lesser General Public License v3.0 or later](COPYING.LESSER)

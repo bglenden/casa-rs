@@ -1480,6 +1480,178 @@ fn demo_taql(out: &mut String) -> Result<(), TableError> {
     Ok(())
 }
 
+// ─── TableQuantum demo ─────────────────────────────────────────────────────
+
+/// Run the table quantum demo (Rust equivalent of key parts of C++ `tTableQuantum`).
+///
+/// Demonstrates fixed-unit and variable-unit quantum columns for both
+/// scalar and array column types.
+pub fn run_table_quantum_demo() -> Result<String, TableError> {
+    use crate::table_quantum::{
+        ArrayQuantColumn, ArrayQuantColumnMut, ScalarQuantColumn, ScalarQuantColumnMut,
+        TableQuantumDesc,
+    };
+    use casacore_types::quanta::Quantity;
+
+    let mut out = String::new();
+    appendln(
+        &mut out,
+        "=== TableQuantum Demo (cf. casacore tTableQuantum.cc) ===",
+    );
+    appendln(&mut out, "");
+
+    // ── 1. Fixed-unit scalar column ─────────────────────────────────────
+
+    appendln(&mut out, "--- Fixed-unit scalar quantum column");
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ra", PrimitiveType::Float64),
+        ColumnSchema::scalar("dec", PrimitiveType::Float64),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+
+    // Attach quantum descriptors.
+    TableQuantumDesc::with_unit("ra", "deg").write(&mut table)?;
+    TableQuantumDesc::with_unit("dec", "deg").write(&mut table)?;
+    appendln(&mut out, "  Attached 'deg' units to ra, dec columns");
+
+    // Add rows.
+    for (ra, dec) in [(83.633, 22.015), (201.365, -43.019), (10.684, 41.269)] {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("ra", Value::Scalar(ScalarValue::Float64(ra))),
+                RecordField::new("dec", Value::Scalar(ScalarValue::Float64(dec))),
+            ]))
+            .unwrap();
+    }
+
+    // Read back with on-read conversion to radians.
+    let col_ra = ScalarQuantColumn::with_unit(&table, "ra", "rad")?;
+    for i in 0..table.row_count() {
+        let q = col_ra.get(i)?;
+        appendln(
+            &mut out,
+            &format!("  Row {i}: ra = {:.6} {}", q.value(), q.unit().name()),
+        );
+    }
+
+    // ── 2. Variable-unit scalar column ──────────────────────────────────
+
+    appendln(&mut out, "");
+    appendln(&mut out, "--- Variable-unit scalar quantum column");
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("flux", PrimitiveType::Float64),
+        ColumnSchema::scalar("flux_unit", PrimitiveType::String),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+
+    TableQuantumDesc::with_variable_units("flux", "flux_unit").write(&mut table)?;
+    appendln(&mut out, "  Attached variable units via 'flux_unit' column");
+
+    // Add rows with different units.
+    for (v, u) in [(1.5, "Jy"), (250.0, "mJy"), (0.003, "Jy")] {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("flux", Value::Scalar(ScalarValue::Float64(v))),
+                RecordField::new(
+                    "flux_unit",
+                    Value::Scalar(ScalarValue::String(u.to_owned())),
+                ),
+            ]))
+            .unwrap();
+    }
+
+    let col = ScalarQuantColumn::new(&table, "flux")?;
+    for i in 0..table.row_count() {
+        let q = col.get(i)?;
+        appendln(
+            &mut out,
+            &format!("  Row {i}: flux = {} {}", q.value(), q.unit().name()),
+        );
+    }
+
+    // Write a new value using the mutable accessor.
+    {
+        let mut mcol = ScalarQuantColumnMut::new(&mut table, "flux")?;
+        mcol.put(1, &Quantity::new(0.25, "Jy").unwrap())?;
+        appendln(&mut out, "  Updated row 1 to 0.25 Jy");
+    }
+
+    let q = ScalarQuantColumn::new(&table, "flux")?.get(1)?;
+    appendln(
+        &mut out,
+        &format!("  Row 1 readback: {} {}", q.value(), q.unit().name()),
+    );
+
+    // ── 3. Fixed-unit array column ──────────────────────────────────────
+
+    appendln(&mut out, "");
+    appendln(&mut out, "--- Fixed-unit array quantum column");
+
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "freq",
+        PrimitiveType::Float64,
+        vec![4],
+    )])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+
+    TableQuantumDesc::with_unit("freq", "MHz").write(&mut table)?;
+    appendln(&mut out, "  Attached 'MHz' units to freq column");
+
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "freq",
+            Value::Array(ArrayValue::from_f64_vec(vec![100.0, 200.0, 300.0, 400.0])),
+        )]))
+        .unwrap();
+
+    let col = ArrayQuantColumn::new(&table, "freq")?;
+    let quanta = col.get(0)?;
+    let vals: Vec<String> = quanta
+        .iter()
+        .map(|q| format!("{} {}", q.value(), q.unit().name()))
+        .collect();
+    appendln(&mut out, &format!("  Row 0: [{}]", vals.join(", ")));
+
+    // Read with conversion to GHz.
+    let col_ghz = ArrayQuantColumn::with_unit(&table, "freq", "GHz")?;
+    let quanta_ghz = col_ghz.get(0)?;
+    let vals_ghz: Vec<String> = quanta_ghz
+        .iter()
+        .map(|q| format!("{:.4} {}", q.value(), q.unit().name()))
+        .collect();
+    appendln(
+        &mut out,
+        &format!("  Row 0 in GHz: [{}]", vals_ghz.join(", ")),
+    );
+
+    // Write with unit conversion.
+    {
+        let mut mcol = ArrayQuantColumnMut::new(&mut table, "freq")?;
+        let quanta: Vec<Quantity> = vec![1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(|v| Quantity::new(v, "GHz").unwrap())
+            .collect();
+        mcol.put(0, &quanta)?;
+        appendln(&mut out, "  Wrote [1, 2, 3, 4] GHz → stored as MHz");
+    }
+
+    let readback = ArrayQuantColumn::new(&table, "freq")?.get(0)?;
+    let vals_back: Vec<String> = readback
+        .iter()
+        .map(|q| format!("{} {}", q.value(), q.unit().name()))
+        .collect();
+    appendln(&mut out, &format!("  Readback: [{}]", vals_back.join(", ")));
+
+    appendln(&mut out, "");
+    appendln(&mut out, "=== TableQuantum Demo complete ===");
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::run_ttable_like_demo;
@@ -1506,5 +1678,14 @@ mod tests {
         assert!(output.contains("--- Tiled storage managers"));
         assert!(output.contains("--- Virtual column engines"));
         assert!(output.ends_with("end\n"));
+    }
+
+    #[test]
+    fn table_quantum_demo_runs() {
+        let output = super::run_table_quantum_demo().expect("demo should succeed");
+        assert!(output.contains("Fixed-unit scalar quantum column"));
+        assert!(output.contains("Variable-unit scalar quantum column"));
+        assert!(output.contains("Fixed-unit array quantum column"));
+        assert!(output.contains("TableQuantum Demo complete"));
     }
 }

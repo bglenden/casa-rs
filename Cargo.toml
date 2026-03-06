@@ -4,6 +4,7 @@ members = [
     "crates/casacore-types",
     "crates/casacore-aipsio",
     "crates/casacore-tables",
+    "crates/casacore-measures-data",
     "crates/casacore-test-support",
 ]
 
@@ -16,6 +17,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 ndarray = "0.17"
 num-complex = "0.4"
+sofars = "0.6"
 thiserror = "2.0"
 
 [workspace.lints.rust]
