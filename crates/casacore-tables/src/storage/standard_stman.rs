@@ -616,15 +616,17 @@ pub(crate) fn read_ssm_file(
 
             let dt =
                 CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
-            let reader = array_reader.as_mut().ok_or_else(|| {
-                StorageError::FormatMismatch(
-                    "SSM indirect column but no array file found".to_string(),
-                )
-            })?;
-
             let mut per_row = Vec::with_capacity(nrrow);
-            for &off in &offset_values {
-                per_row.push(reader.read_array_at(off, dt)?);
+            if let Some(reader) = array_reader.as_mut() {
+                for &off in &offset_values {
+                    per_row.push(reader.read_array_at(off, dt)?);
+                }
+            } else if nrrow == 0 || offset_values.iter().all(|&off| off == 0) {
+                per_row.resize(nrrow, None);
+            } else {
+                return Err(StorageError::FormatMismatch(
+                    "SSM indirect column but no array file found".to_string(),
+                ));
             }
 
             result.push((

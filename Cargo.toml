@@ -6,6 +6,7 @@ members = [
     "crates/casacore-tables",
     "crates/casacore-measures-data",
     "crates/casacore-test-support",
+    "crates/casacore-ms",
 ]
 
 [workspace.package]
@@ -19,6 +20,27 @@ ndarray = "0.17"
 num-complex = "0.4"
 sofars = "0.6"
 thiserror = "2.0"
+
+# Performance benchmarks compare Rust vs C++ (compiled optimized by cc::Build).
+# Without these overrides, Rust tests run at opt-level=0 (debug), producing
+# misleading 1000x+ ratios. Enable optimization for the hot-path crates and
+# their key dependencies so perf comparisons are apples-to-apples.
+[profile.test.package.sofars]
+opt-level = 2
+[profile.test.package.casacore-types]
+opt-level = 2
+[profile.test.package.casacore-tables]
+opt-level = 2
+[profile.test.package.casacore-aipsio]
+opt-level = 2
+[profile.test.package.casacore-ms]
+opt-level = 2
+[profile.test.package.casacore-test-support]
+opt-level = 2
+[profile.test.package.ndarray]
+opt-level = 2
+[profile.test.package.num-complex]
+opt-level = 2
 
 [workspace.lints.rust]
 unused_must_use = "deny"

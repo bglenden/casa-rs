@@ -205,6 +205,9 @@ fn apply_real_scale_offset(
             };
             Ok(Value::Array(out))
         }
+        Value::TableRef(_) => Err(StorageError::FormatMismatch(
+            "ScaledArrayEngine: cannot scale a TableRef value".to_string(),
+        )),
         Value::Record(_) => Err(StorageError::FormatMismatch(
             "ScaledArrayEngine: cannot scale a Record value".to_string(),
         )),

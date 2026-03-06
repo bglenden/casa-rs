@@ -731,14 +731,8 @@ fn read_record_field_value(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Valu
             let record = read_table_record(io)?;
             Ok(Value::Record(record))
         }
-        // Table reference keyword — stores a subtable path as a string.
-        // C++ casacore writes these via `TableKeywordSet::toRecord()` and
-        // the `TableAttr` class. We represent them as plain string values
-        // so the keyword name→path mapping is preserved.
-        CasacoreDataType::TpTable => {
-            let path = io.get_string()?;
-            Ok(Value::Scalar(ScalarValue::String(path)))
-        }
+        // Table reference keyword — stores a related table path.
+        CasacoreDataType::TpTable => Ok(Value::TableRef(io.get_string()?)),
         // Array types — used in hypercolumn definitions and cube metadata.
         CasacoreDataType::TpArrayBool
         | CasacoreDataType::TpArrayUChar
@@ -1306,6 +1300,9 @@ fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), Storag
                 let shape: Vec<i32> = av.shape().iter().map(|&d| d as i32).collect();
                 write_iposition(io, &shape)?;
             }
+        } else if dt == CasacoreDataType::TpTable {
+            // A blank table-desc name means any referenced table descriptor is accepted.
+            io.put_string("")?;
         }
 
         io.put_string("")?; // comment
@@ -1331,6 +1328,7 @@ fn write_record_field_value(io: &mut AipsIo, value: &Value) -> Result<(), Storag
             ScalarValue::Complex64(v) => io.put_complex64(*v)?,
             ScalarValue::String(v) => io.put_string(v)?,
         },
+        Value::TableRef(path) => io.put_string(path)?,
         Value::Record(record) => {
             write_table_record(io, record)?;
         }
@@ -1458,6 +1456,7 @@ fn value_to_casacore_data_type(value: &Value) -> Result<CasacoreDataType, Storag
             let pt = sv.primitive_type();
             Ok(CasacoreDataType::from_primitive_type(pt, false))
         }
+        Value::TableRef(_) => Ok(CasacoreDataType::TpTable),
         Value::Record(_) => Ok(CasacoreDataType::TpRecord),
         Value::Array(av) => {
             let pt = av.primitive_type();
@@ -2270,6 +2269,22 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn table_reference_keywords_roundtrip_in_table_record() {
+        let record = RecordValue::new(vec![RecordField::new(
+            "ANTENNA",
+            Value::table_ref("ANTENNA"),
+        )]);
+
+        let encoded = serialize_record_to_uchar(&record).unwrap();
+        let decoded = deserialize_record_from_uchar(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.get("ANTENNA"),
+            Some(&Value::TableRef("ANTENNA".to_string()))
+        );
     }
 
     /// Write a minimal table.dat + empty data file, then compare with C++-written version.

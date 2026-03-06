@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 pub mod measures_interop;
+pub mod ms_interop;
 pub mod quanta_interop;
 pub mod table_interop;
 pub mod table_measures_interop;
@@ -233,6 +234,9 @@ fn prepare_primitive_case(value: &Value) -> Result<PreparedPrimitiveCase, AipsIo
         }
         Value::Record(_) => Err(AipsIoCrossError::UnsupportedValue(
             "record values are not part of primitive AipsIO cross-checks",
+        )),
+        Value::TableRef(_) => Err(AipsIoCrossError::UnsupportedValue(
+            "table-ref values are not part of primitive AipsIO cross-checks",
         )),
     }
 }
@@ -775,6 +779,9 @@ fn value_to_payload(value: &Value) -> Result<FfiPayload, AipsIoCrossError> {
         }
         Value::Record(_) => Err(AipsIoCrossError::UnsupportedValue(
             "record values are not part of primitive AipsIO cross-checks",
+        )),
+        Value::TableRef(_) => Err(AipsIoCrossError::UnsupportedValue(
+            "table-ref values are not part of primitive AipsIO cross-checks",
         )),
     }
 }
@@ -1382,6 +1389,23 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    fn cpp_table_write_aipsio_complex_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_complex_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_complex_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_complex_variable_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn cpp_vararray_bench_write_read(
         path: *const std::ffi::c_char,
         nrows: u64,
@@ -1758,6 +1782,12 @@ pub enum CppTableFixture {
     /// SSM typed arrays: 3 rows × 3 cols (Int\[4\], Double\[2,2\], Complex32\[2\])
     /// stored with `StandardStMan`.
     SsmTypedArrays,
+    /// AipsIO Complex32 variable-shape array: 4 rows with shapes \[2,4\], \[4,2\],
+    /// \[4,2\], \[2,4\], values (1,0.5)..(32,16.0). Matches MS DATA column pattern.
+    AipsIOComplexVariableArray,
+    /// SSM Complex32 variable-shape array: same data as `AipsIOComplexVariableArray`
+    /// but stored with `StandardStMan`.
+    SsmComplexVariableArray,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -1860,6 +1890,12 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             }
             CppTableFixture::SsmTypedArrays => {
                 cpp_table_write_ssm_typed_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsIOComplexVariableArray => {
+                cpp_table_write_aipsio_complex_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmComplexVariableArray => {
+                cpp_table_write_ssm_complex_variable_array(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -1998,6 +2034,12 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             }
             CppTableFixture::SsmTypedArrays => {
                 cpp_table_verify_ssm_typed_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsIOComplexVariableArray => {
+                cpp_table_verify_aipsio_complex_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmComplexVariableArray => {
+                cpp_table_verify_ssm_complex_variable_array(c_path.as_ptr(), &mut error)
             }
         }
     };

@@ -14,10 +14,11 @@
 //! routing graph (matching C++ `MCEpoch::ToRef_p`) and applies each hop
 //! sequentially.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::ops;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use super::error::MeasureError;
 use super::frame::MeasFrame;
@@ -464,13 +465,62 @@ const ROUTING_EDGES: &[(EpochRef, EpochRef)] = &[
 /// Deferred edges that are not yet implemented.
 const DEFERRED_EDGES: &[(EpochRef, EpochRef)] = &[(EpochRef::UT1, EpochRef::UT2)];
 
+/// Pre-computed BFS paths for all reachable (source, target) pairs.
+///
+/// The routing graph is static, so paths never change. Computing them once
+/// at startup avoids per-call BFS overhead.
+type EpochPathMap = HashMap<(EpochRef, EpochRef), Result<Vec<EpochRef>, PathError>>;
+
+static PATH_CACHE: LazyLock<EpochPathMap> = LazyLock::new(|| {
+    let all_refs = [
+        EpochRef::LAST,
+        EpochRef::LMST,
+        EpochRef::GMST1,
+        EpochRef::GAST,
+        EpochRef::UT1,
+        EpochRef::UT2,
+        EpochRef::UTC,
+        EpochRef::TAI,
+        EpochRef::TT,
+        EpochRef::TCG,
+        EpochRef::TDB,
+        EpochRef::TCB,
+    ];
+    let mut cache = HashMap::new();
+    for &src in &all_refs {
+        for &tgt in &all_refs {
+            if src != tgt {
+                cache.insert((src, tgt), bfs_find_path(src, tgt));
+            }
+        }
+    }
+    cache
+});
+
+/// Error from BFS path finding (before conversion to `MeasureError`).
+#[derive(Clone, Debug)]
+enum PathError {
+    Deferred(String),
+    NoRoute(String),
+}
+
 /// Finds the shortest path from `source` to `target` in the routing graph.
 ///
 /// Returns the sequence of intermediate + final reference types to visit
-/// (excluding the source).
+/// (excluding the source). Results are cached in `PATH_CACHE`.
 fn find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, MeasureError> {
-    // Check if the target is reachable only through deferred edges.
-    // First, try BFS on the implemented graph.
+    PATH_CACHE
+        .get(&(source, target))
+        .expect("all pairs pre-computed")
+        .clone()
+        .map_err(|e| match e {
+            PathError::Deferred(route) => MeasureError::NotYetImplemented { route },
+            PathError::NoRoute(route) => MeasureError::NotYetImplemented { route },
+        })
+}
+
+/// BFS implementation used to populate the path cache.
+fn bfs_find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, PathError> {
     let mut visited = [false; 12];
     let mut parent: [Option<EpochRef>; 12] = [None; 12];
     let mut queue = VecDeque::new();
@@ -505,7 +555,6 @@ fn find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, Measur
     }
 
     if found {
-        // Reconstruct path from target back to source.
         let mut path = Vec::new();
         let mut cur = target;
         while cur != source {
@@ -525,15 +574,13 @@ fn find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, Measur
             || (a == source && visited[epoch_ref_index(b)])
             || (b == source && visited[epoch_ref_index(a)])
         {
-            return Err(MeasureError::NotYetImplemented {
-                route: format!("{source} → {target}"),
-            });
+            return Err(PathError::Deferred(format!("{source} → {target}")));
         }
     }
 
-    Err(MeasureError::NotYetImplemented {
-        route: format!("{source} → {target} (no route found)"),
-    })
+    Err(PathError::NoRoute(format!(
+        "{source} → {target} (no route found)"
+    )))
 }
 
 /// Maps an `EpochRef` variant to a unique index 0..11 for the BFS arrays.
@@ -794,31 +841,15 @@ fn apply_hop(
     }
 }
 
-/// Computes the TDB−TT approximation (`dtr`) for the sofars `tttdb`/`tdbtt`
-/// functions.
+/// Computes the TDB−TT approximation in seconds.
 ///
-/// When a position is available in the frame, uses the observatory coordinates.
-/// Otherwise, uses zero position (like C++ casacore does when no frame is set).
-fn compute_dtdb(value: MjdHighPrec, frame: &MeasFrame) -> f64 {
-    let (jd1, jd2) = value.as_jd_pair();
-    let ut_frac = value.frac();
-
-    let (elong, u_km, v_km) = if let Some(pos) = frame.position() {
-        // Get ITRF coordinates for dtdb.
-        let itrf = pos.as_itrf();
-        let x = itrf[0];
-        let y = itrf[1];
-        let z = itrf[2];
-        // Compute cylindrical coords: u = distance from spin axis, v = z
-        let u = (x * x + y * y).sqrt() / 1000.0; // m → km
-        let v = z / 1000.0; // m → km
-        let elong = y.atan2(x);
-        (elong, u, v)
-    } else {
-        (0.0, 0.0, 0.0)
-    };
-
-    sofars::ts::dtdb(jd1, jd2, ut_frac, elong, u_km, v_km)
+/// Uses the same 2-term Fairhead & Bretagnon approximation as C++ casacore's
+/// `MeasTable::dTDT()`, which is accurate to ~30 µs. This is vastly faster
+/// than SOFA's full 791-term `dtdb` series while matching casacore's precision.
+fn compute_dtdb(value: MjdHighPrec, _frame: &MeasFrame) -> f64 {
+    const MJD2000: f64 = 51544.5;
+    let g = (357.53 + 0.985_600_3 * (value.as_mjd() - MJD2000)).to_radians();
+    0.001_658 * g.sin() + 0.000_014 * (2.0 * g).sin()
 }
 
 #[cfg(test)]

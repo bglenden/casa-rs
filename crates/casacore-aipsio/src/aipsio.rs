@@ -241,6 +241,7 @@ const MAGIC_VALUE: u32 = 0xbebebebe;
 const VALUE_KIND_SCALAR: u8 = 0;
 const VALUE_KIND_ARRAY: u8 = 1;
 const VALUE_KIND_RECORD: u8 = 2;
+const VALUE_KIND_TABLE_REF: u8 = 3;
 
 /// Object-safe byte stream used as the backing store for [`AipsIo`].
 ///
@@ -1250,7 +1251,7 @@ impl AipsIo {
         Ok(out)
     }
 
-    /// Put one dynamically-typed casacore value (scalar, array, or record).
+    /// Put one dynamically-typed casacore value (scalar, array, table ref, or record).
     ///
     /// The encoded payload contains a small value-kind tag and type metadata,
     /// so [`get_value`](Self::get_value) can reconstruct the value without
@@ -1266,6 +1267,10 @@ impl AipsIo {
                 self.put_u8(VALUE_KIND_ARRAY)?;
                 self.put_u8(primitive_type_tag(array.primitive_type()))?;
                 self.put_array_value(array)
+            }
+            Value::TableRef(path) => {
+                self.put_u8(VALUE_KIND_TABLE_REF)?;
+                self.put_string(path)
             }
             Value::Record(record) => {
                 self.put_u8(VALUE_KIND_RECORD)?;
@@ -1286,6 +1291,7 @@ impl AipsIo {
                 let primitive = primitive_type_from_tag(self.get_u8()?)?;
                 Ok(Value::Array(self.get_array_value(primitive)?))
             }
+            VALUE_KIND_TABLE_REF => Ok(Value::TableRef(self.get_string()?)),
             VALUE_KIND_RECORD => Ok(Value::Record(self.get_record_value()?)),
             _ => Err(AipsIoObjectError::InvalidValueKindTag(kind)),
         }

@@ -64,9 +64,11 @@
 //! **Epoch + position** (need both):
 //! APP ↔ HADEC (sidereal time), HADEC ↔ AZEL, HADEC ↔ AZELGEO
 
-use std::collections::VecDeque;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use super::epoch::EpochRef;
 use super::error::MeasureError;
@@ -375,7 +377,8 @@ impl MDirection {
     /// Converts this direction to a different reference frame.
     ///
     /// Uses BFS on the routing graph to find the shortest conversion path,
-    /// then applies each hop sequentially.
+    /// then applies each hop sequentially. Epoch-derived values (TT, UT1,
+    /// GAST) are computed once and cached across all hops via `ConvCtx`.
     pub fn convert_to(
         &self,
         target: DirectionRef,
@@ -385,11 +388,12 @@ impl MDirection {
             return Ok(self.clone());
         }
         let path = find_path(self.refer, target)?;
+        let ctx = ConvCtx::new();
         let mut cosines = self.cosines;
         let mut current_ref = self.refer;
 
         for next_ref in path {
-            cosines = apply_hop(cosines, current_ref, next_ref, frame)?;
+            cosines = apply_hop(cosines, current_ref, next_ref, frame, &ctx)?;
             current_ref = next_ref;
         }
 
@@ -501,17 +505,20 @@ fn supergal_to_gal_matrix() -> [[f64; 3]; 3] {
 // ---------------------------------------------------------------------------
 
 /// Get TT JD pair from the frame epoch, converting if needed.
-fn get_tt_jd(frame: &MeasFrame) -> Result<(f64, f64), MeasureError> {
+fn get_tt_jd(frame: &MeasFrame, ctx: &ConvCtx) -> Result<(f64, f64), MeasureError> {
+    ctx.get_tt_jd(frame)
+}
+
+/// Compute TT JD pair (uncached, used by ConvCtx).
+fn compute_tt_jd(frame: &MeasFrame) -> Result<(f64, f64), MeasureError> {
     let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
         what: "epoch (for precession/nutation)",
     })?;
 
-    // Convert to TT if not already
     if epoch.refer() == EpochRef::TT {
         return Ok(epoch.value().as_jd_pair());
     }
 
-    // Try to convert epoch to TT
     let tt = epoch.convert_to(EpochRef::TT, frame)?;
     Ok(tt.value().as_jd_pair())
 }
@@ -523,12 +530,8 @@ fn get_tt_jd(frame: &MeasFrame) -> Result<(f64, f64), MeasureError> {
 /// - [`Iau2006_2000A`](IauModel::Iau2006_2000A): `sofars::pnp::pmat00` — IAU 2000
 ///   bias-precession matrix (GCRS → mean of date), matching C++ casacore's
 ///   `frameBias00 * Precession(IAU2000)`.
-fn precession_matrix(frame: &MeasFrame) -> Result<[[f64; 3]; 3], MeasureError> {
-    let (tt1, tt2) = get_tt_jd(frame)?;
-    Ok(match frame.iau_model() {
-        IauModel::Iau1976_1980 => sofars::pnp::pmat76(tt1, tt2),
-        IauModel::Iau2006_2000A => sofars::pnp::pmat00(tt1, tt2),
-    })
+fn precession_matrix(frame: &MeasFrame, ctx: &ConvCtx) -> Result<[[f64; 3]; 3], MeasureError> {
+    ctx.get_precession(frame)
 }
 
 /// Nutation matrix: JMEAN → JTRUE (true equator of date).
@@ -536,17 +539,13 @@ fn precession_matrix(frame: &MeasFrame) -> Result<[[f64; 3]; 3], MeasureError> {
 /// Dispatches on the IAU model:
 /// - [`Iau1976_1980`](IauModel::Iau1976_1980): `sofars::pnp::nutm80` (Wahr 1981)
 /// - [`Iau2006_2000A`](IauModel::Iau2006_2000A): `sofars::pnp::num00a` (Mathews 2002)
-fn nutation_matrix(frame: &MeasFrame) -> Result<[[f64; 3]; 3], MeasureError> {
-    let (tt1, tt2) = get_tt_jd(frame)?;
-    Ok(match frame.iau_model() {
-        IauModel::Iau1976_1980 => sofars::pnp::nutm80(tt1, tt2),
-        IauModel::Iau2006_2000A => sofars::pnp::num00a(tt1, tt2),
-    })
+fn nutation_matrix(frame: &MeasFrame, ctx: &ConvCtx) -> Result<[[f64; 3]; 3], MeasureError> {
+    ctx.get_nutation(frame)
 }
 
 /// Mean obliquity of the ecliptic at the frame epoch.
-fn mean_obliquity(frame: &MeasFrame) -> Result<f64, MeasureError> {
-    let (tt1, tt2) = get_tt_jd(frame)?;
+fn mean_obliquity(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
+    let (tt1, tt2) = get_tt_jd(frame, ctx)?;
     Ok(match frame.iau_model() {
         IauModel::Iau1976_1980 => sofars::pnp::obl80(tt1, tt2),
         IauModel::Iau2006_2000A => sofars::pnp::obl80(tt1, tt2),
@@ -572,13 +571,11 @@ fn obliquity_rotation(eps: f64) -> [[f64; 3]; 3] {
 }
 
 /// Get the Earth's barycentric velocity in AU/day for aberration.
-fn earth_velocity_au_per_day(frame: &MeasFrame) -> Result<([f64; 3], f64), MeasureError> {
-    let (tt1, tt2) = get_tt_jd(frame)?;
-    let (pvh, pvb) = sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
-    // pvb[1] = Earth barycentric velocity in AU/day
-    // pvh[0] = Earth heliocentric position — magnitude = distance from Sun in AU
-    let sun_dist = sofars::vm::pm(pvh[0]);
-    Ok((pvb[1], sun_dist))
+fn earth_velocity_au_per_day(
+    frame: &MeasFrame,
+    ctx: &ConvCtx,
+) -> Result<([f64; 3], f64), MeasureError> {
+    ctx.get_earth_vel(frame)
 }
 
 /// Get GAST (Greenwich Apparent Sidereal Time) from the frame.
@@ -592,29 +589,18 @@ fn earth_velocity_au_per_day(frame: &MeasFrame) -> Result<([f64; 3], f64), Measu
 ///   This matches C++ casacore's `MCEpoch::UT1_GAST` conversion, which always
 ///   uses GMST82 for the mean sidereal time even in IAU 2000 mode, combined
 ///   with the IAU 2000A equation of equinoxes (including complementary terms).
-fn get_gast(frame: &MeasFrame) -> Result<f64, MeasureError> {
-    let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
-        what: "epoch (for sidereal time)",
-    })?;
+fn get_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
+    ctx.get_gast(frame)
+}
 
-    // Need UT1 for GAST.
-    let ut1 = if epoch.refer() == EpochRef::UT1 {
-        epoch.clone()
-    } else {
-        epoch.convert_to(EpochRef::UT1, frame)?
-    };
-    let (ut_a, ut_b) = ut1.value().as_jd_pair();
+/// Compute GAST (uncached, used by ConvCtx).
+fn compute_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
+    let (ut_a, ut_b) = ctx.get_ut1_jd(frame)?;
 
     Ok(match frame.iau_model() {
         IauModel::Iau1976_1980 => sofars::erst::gst94(ut_a, ut_b),
         IauModel::Iau2006_2000A => {
-            let tt = if epoch.refer() == EpochRef::TT {
-                epoch.clone()
-            } else {
-                epoch.convert_to(EpochRef::TT, frame)?
-            };
-            let (tt_a, tt_b) = tt.value().as_jd_pair();
-            // Match C++ casacore: GMST82(UT1) + equation of equinoxes IAU 2000A(TT)
+            let (tt_a, tt_b) = ctx.get_tt_jd(frame)?;
             let gmst = sofars::erst::gmst82(ut_a, ut_b);
             let ee = sofars::erst::ee00a(tt_a, tt_b);
             sofars::vm::anp(gmst + ee)
@@ -642,7 +628,12 @@ fn get_geocentric_latitude(frame: &MeasFrame) -> Result<f64, MeasureError> {
 }
 
 /// Get UT1 JD pair from the frame epoch, converting if needed.
-fn get_ut1_jd(frame: &MeasFrame) -> Result<(f64, f64), MeasureError> {
+fn get_ut1_jd(frame: &MeasFrame, ctx: &ConvCtx) -> Result<(f64, f64), MeasureError> {
+    ctx.get_ut1_jd(frame)
+}
+
+/// Compute UT1 JD pair (uncached, used by ConvCtx).
+fn compute_ut1_jd(frame: &MeasFrame) -> Result<(f64, f64), MeasureError> {
     let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
         what: "epoch (for Earth rotation)",
     })?;
@@ -798,11 +789,38 @@ fn dir_ref_index(r: DirectionRef) -> usize {
     }
 }
 
+/// Pre-computed BFS paths for all reachable (source, target) pairs.
+type DirPathMap = HashMap<(DirectionRef, DirectionRef), Option<Vec<DirectionRef>>>;
+
+static DIR_PATH_CACHE: LazyLock<DirPathMap> = LazyLock::new(|| {
+    let mut cache = HashMap::new();
+    for &src in &DirectionRef::ALL {
+        for &tgt in &DirectionRef::ALL {
+            if src != tgt {
+                cache.insert((src, tgt), bfs_find_dir_path(src, tgt));
+            }
+        }
+    }
+    cache
+});
+
 /// Finds the shortest path from `source` to `target` in the routing graph.
+/// Results are cached in `DIR_PATH_CACHE`.
 fn find_path(
     source: DirectionRef,
     target: DirectionRef,
 ) -> Result<Vec<DirectionRef>, MeasureError> {
+    DIR_PATH_CACHE
+        .get(&(source, target))
+        .expect("all pairs pre-computed")
+        .clone()
+        .ok_or_else(|| MeasureError::NotYetImplemented {
+            route: format!("{source} → {target} (no route found)"),
+        })
+}
+
+/// BFS implementation used to populate the path cache.
+fn bfs_find_dir_path(source: DirectionRef, target: DirectionRef) -> Option<Vec<DirectionRef>> {
     let mut visited = [false; NUM_DIR_REFS];
     let mut parent: [Option<DirectionRef>; NUM_DIR_REFS] = [None; NUM_DIR_REFS];
     let mut queue = VecDeque::new();
@@ -844,12 +862,104 @@ fn find_path(
             cur = parent[dir_ref_index(cur)].expect("BFS parent must be set");
         }
         path.reverse();
-        return Ok(path);
+        Some(path)
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Conversion context: caches epoch-derived values across hops
+// ---------------------------------------------------------------------------
+
+/// Caches expensive epoch-derived values (TT JD pair, UT1 JD pair, GAST)
+/// so they are computed at most once per `convert_to` call.
+struct ConvCtx {
+    tt_jd: RefCell<Option<(f64, f64)>>,
+    ut1_jd: RefCell<Option<(f64, f64)>>,
+    gast: RefCell<Option<f64>>,
+    precession: RefCell<Option<[[f64; 3]; 3]>>,
+    nutation: RefCell<Option<[[f64; 3]; 3]>>,
+    earth_vel: RefCell<Option<([f64; 3], f64)>>,
+}
+
+impl ConvCtx {
+    fn new() -> Self {
+        Self {
+            tt_jd: RefCell::new(None),
+            ut1_jd: RefCell::new(None),
+            gast: RefCell::new(None),
+            precession: RefCell::new(None),
+            nutation: RefCell::new(None),
+            earth_vel: RefCell::new(None),
+        }
     }
 
-    Err(MeasureError::NotYetImplemented {
-        route: format!("{source} → {target} (no route found)"),
-    })
+    fn get_tt_jd(&self, frame: &MeasFrame) -> Result<(f64, f64), MeasureError> {
+        if let Some(v) = *self.tt_jd.borrow() {
+            return Ok(v);
+        }
+        let v = compute_tt_jd(frame)?;
+        *self.tt_jd.borrow_mut() = Some(v);
+        Ok(v)
+    }
+
+    fn get_ut1_jd(&self, frame: &MeasFrame) -> Result<(f64, f64), MeasureError> {
+        if let Some(v) = *self.ut1_jd.borrow() {
+            return Ok(v);
+        }
+        let v = compute_ut1_jd(frame)?;
+        *self.ut1_jd.borrow_mut() = Some(v);
+        Ok(v)
+    }
+
+    fn get_gast(&self, frame: &MeasFrame) -> Result<f64, MeasureError> {
+        if let Some(v) = *self.gast.borrow() {
+            return Ok(v);
+        }
+        let v = compute_gast(frame, self)?;
+        *self.gast.borrow_mut() = Some(v);
+        Ok(v)
+    }
+
+    fn get_precession(&self, frame: &MeasFrame) -> Result<[[f64; 3]; 3], MeasureError> {
+        if let Some(v) = *self.precession.borrow() {
+            return Ok(v);
+        }
+        let (tt1, tt2) = self.get_tt_jd(frame)?;
+        let v = match frame.iau_model() {
+            IauModel::Iau1976_1980 => sofars::pnp::pmat76(tt1, tt2),
+            IauModel::Iau2006_2000A => sofars::pnp::pmat00(tt1, tt2),
+        };
+        *self.precession.borrow_mut() = Some(v);
+        Ok(v)
+    }
+
+    fn get_nutation(&self, frame: &MeasFrame) -> Result<[[f64; 3]; 3], MeasureError> {
+        if let Some(v) = *self.nutation.borrow() {
+            return Ok(v);
+        }
+        let (tt1, tt2) = self.get_tt_jd(frame)?;
+        let v = match frame.iau_model() {
+            IauModel::Iau1976_1980 => sofars::pnp::nutm80(tt1, tt2),
+            IauModel::Iau2006_2000A => sofars::pnp::num00a(tt1, tt2),
+        };
+        *self.nutation.borrow_mut() = Some(v);
+        Ok(v)
+    }
+
+    fn get_earth_vel(&self, frame: &MeasFrame) -> Result<([f64; 3], f64), MeasureError> {
+        if let Some(v) = *self.earth_vel.borrow() {
+            return Ok(v);
+        }
+        let (tt1, tt2) = self.get_tt_jd(frame)?;
+        let (pvh, pvb) =
+            sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
+        let sun_dist = sofars::vm::pm(pvh[0]);
+        let v = (pvb[1], sun_dist);
+        *self.earth_vel.borrow_mut() = Some(v);
+        Ok(v)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -862,6 +972,7 @@ fn apply_hop(
     from: DirectionRef,
     to: DirectionRef,
     frame: &MeasFrame,
+    ctx: &ConvCtx,
 ) -> Result<[f64; 3], MeasureError> {
     use DirectionRef::*;
 
@@ -906,21 +1017,21 @@ fn apply_hop(
 
         // J2000 → JMEAN (precession with frame bias)
         (J2000, JMEAN) => {
-            let rp = precession_matrix(frame)?;
+            let rp = precession_matrix(frame, ctx)?;
             Ok(rotate(&rp, &cosines))
         }
         (JMEAN, J2000) => {
-            let rp = precession_matrix(frame)?;
+            let rp = precession_matrix(frame, ctx)?;
             Ok(rotate_t(&rp, &cosines))
         }
 
         // JMEAN → JTRUE (nutation)
         (JMEAN, JTRUE) => {
-            let rn = nutation_matrix(frame)?;
+            let rn = nutation_matrix(frame, ctx)?;
             Ok(rotate(&rn, &cosines))
         }
         (JTRUE, JMEAN) => {
-            let rn = nutation_matrix(frame)?;
+            let rn = nutation_matrix(frame, ctx)?;
             Ok(rotate_t(&rn, &cosines))
         }
 
@@ -936,19 +1047,19 @@ fn apply_hop(
 
         // JMEAN ↔ MECLIPTIC (mean obliquity at epoch)
         (JMEAN, MECLIPTIC) => {
-            let eps = mean_obliquity(frame)?;
+            let eps = mean_obliquity(frame, ctx)?;
             let m = obliquity_rotation(eps);
             Ok(rotate(&m, &cosines))
         }
         (MECLIPTIC, JMEAN) => {
-            let eps = mean_obliquity(frame)?;
+            let eps = mean_obliquity(frame, ctx)?;
             let m = obliquity_rotation(eps);
             Ok(rotate_t(&m, &cosines))
         }
 
         // JTRUE ↔ TECLIPTIC (true obliquity = mean + nutation)
         (JTRUE, TECLIPTIC) => {
-            let (tt1, tt2) = get_tt_jd(frame)?;
+            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
             let eps0 = sofars::pnp::obl06(tt1, tt2);
             let (dpsi, deps) = sofars::pnp::nut06a(tt1, tt2);
             let eps_true = eps0 + deps;
@@ -957,7 +1068,7 @@ fn apply_hop(
             Ok(rotate(&m, &cosines))
         }
         (TECLIPTIC, JTRUE) => {
-            let (tt1, tt2) = get_tt_jd(frame)?;
+            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
             let eps0 = sofars::pnp::obl06(tt1, tt2);
             let (_, deps) = sofars::pnp::nut06a(tt1, tt2);
             let eps_true = eps0 + deps;
@@ -967,7 +1078,7 @@ fn apply_hop(
 
         // JTRUE → APP (aberration)
         (JTRUE, APP) => {
-            let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame)?;
+            let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame, ctx)?;
             // Convert velocity to units of c
             let v = [
                 v_au_day[0] / C_AU_PER_DAY,
@@ -975,7 +1086,7 @@ fn apply_hop(
                 v_au_day[2] / C_AU_PER_DAY,
             ];
             // Rotate velocity to true equatorial frame
-            let (tt1, tt2) = get_tt_jd(frame)?;
+            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
             let rbpn = bias_precession_nutation(frame, tt1, tt2);
             let v_true = rotate(&rbpn, &v);
             // Reciprocal of Lorentz factor: sqrt(1 - |v|²)
@@ -985,13 +1096,13 @@ fn apply_hop(
         }
         // APP → JTRUE (inverse aberration — iterative)
         (APP, JTRUE) => {
-            let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame)?;
+            let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame, ctx)?;
             let v = [
                 v_au_day[0] / C_AU_PER_DAY,
                 v_au_day[1] / C_AU_PER_DAY,
                 v_au_day[2] / C_AU_PER_DAY,
             ];
-            let (tt1, tt2) = get_tt_jd(frame)?;
+            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
             let rbpn = bias_precession_nutation(frame, tt1, tt2);
             let v_true = rotate(&rbpn, &v);
             let v2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
@@ -1020,7 +1131,7 @@ fn apply_hop(
         //   2. Polar motion + LAST rotation via Euler R = Ry(xp)×Rx(yp)×Rz(LAST)
         //   3. Apply R^T and negate y to get (HA, Dec)
         (APP, HADEC) => {
-            let gast = get_gast(frame)?;
+            let gast = get_gast(frame, ctx)?;
             let lon = get_longitude(frame)?;
             let last = gast + lon;
 
@@ -1039,7 +1150,7 @@ fn apply_hop(
             // Polar motion + LAST rotation + y-negate via Euler matrix
             // C++ uses: in *= R(xp, Ry, yp, Rx, LAST, Rz); in.y = -in.y
             // which is: in = R^T * in, then negate y
-            let (_, ut2) = get_ut1_jd(frame)?;
+            let (_, ut2) = get_ut1_jd(frame, ctx)?;
             let (xp, yp) = get_polar_motion_rad(frame, ut2);
             let r = polar_motion_euler(-xp, -yp, last);
             let result = rotate_t(&r, &unit);
@@ -1048,12 +1159,12 @@ fn apply_hop(
 
         // HADEC → APP (inverse of above)
         (HADEC, APP) => {
-            let gast = get_gast(frame)?;
+            let gast = get_gast(frame, ctx)?;
             let lon = get_longitude(frame)?;
             let last = gast + lon;
 
             // applyPolarMotion: negate y, then apply R
-            let (_, ut2) = get_ut1_jd(frame)?;
+            let (_, ut2) = get_ut1_jd(frame, ctx)?;
             let (xp, yp) = get_polar_motion_rad(frame, ut2);
             let r = polar_motion_euler(-xp, -yp, last);
             let negated = [cosines[0], -cosines[1], cosines[2]];
@@ -1172,7 +1283,7 @@ fn apply_hop(
             let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
 
             // Get GAST for rotation to equatorial (dispatches on IAU model)
-            let gast = get_gast(frame)?;
+            let gast = get_gast(frame, ctx)?;
             let lon = get_longitude(frame)?;
             let last = gast + lon;
 

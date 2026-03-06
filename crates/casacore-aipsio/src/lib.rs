@@ -130,7 +130,7 @@ pub enum AipsIoError {
     #[error("unsupported array rank {0}; primitive AipsIO currently supports rank-1 arrays only")]
     UnsupportedArrayRank(usize),
     /// [`AipsWriter::write_value`] was called with a [`Value`] variant that the
-    /// primitive codec does not support (currently `Record`).
+    /// primitive codec does not support (currently `Record` or `TableRef`).
     #[error("unsupported value kind for primitive AipsIO codec: {0:?}")]
     UnsupportedValueKind(ValueKind),
     /// A catch-all error for miscellaneous string-described failures.
@@ -338,15 +338,16 @@ impl<W: Write> AipsWriter<W> {
         }
     }
 
-    /// Write a dynamically-typed value (scalar or rank-1 array); records are not supported.
+    /// Write a dynamically-typed value (scalar or rank-1 array).
     ///
     /// Returns [`AipsIoError::UnsupportedValueKind`] if `value` is a
-    /// `Value::Record`.
+    /// `Value::Record` or `Value::TableRef`.
     pub fn write_value(&mut self, value: &Value) -> AipsIoResult<()> {
         match value {
             Value::Scalar(v) => self.write_scalar(v),
             Value::Array(v) => self.write_array(v),
             Value::Record(_) => Err(AipsIoError::UnsupportedValueKind(ValueKind::Record)),
+            Value::TableRef(_) => Err(AipsIoError::UnsupportedValueKind(ValueKind::TableRef)),
         }
     }
 }

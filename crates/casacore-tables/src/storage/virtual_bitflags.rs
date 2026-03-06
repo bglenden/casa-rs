@@ -112,6 +112,9 @@ fn apply_bitmask(stored: &Value, mask: u32) -> Result<Value, StorageError> {
             let bool_arr = array_to_bool(av, mask)?;
             Ok(Value::Array(ArrayValue::Bool(bool_arr)))
         }
+        Value::TableRef(_) => Err(StorageError::FormatMismatch(
+            "BitFlagsEngine: cannot apply bitmask to a TableRef value".to_string(),
+        )),
         Value::Record(_) => Err(StorageError::FormatMismatch(
             "BitFlagsEngine: cannot apply bitmask to a Record value".to_string(),
         )),

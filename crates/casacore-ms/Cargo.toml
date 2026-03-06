@@ -1,0 +1,25 @@
+[package]
+name = "casacore-ms"
+description = "Typed MeasurementSet (MS) API for radio interferometry data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+casacore-tables = { path = "../casacore-tables" }
+casacore-types = { path = "../casacore-types" }
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+casacore-test-support = { path = "../casacore-test-support" }
+tempfile = "3"
+
+[[bin]]
+name = "msinfo"
+path = "src/bin/msinfo.rs"
+
+[lints]
+workspace = true

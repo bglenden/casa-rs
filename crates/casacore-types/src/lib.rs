@@ -208,17 +208,19 @@ impl TypeTag {
     }
 }
 
-/// The broad kind of a [`Value`]: scalar, array, or record.
+/// The broad kind of a [`Value`]: scalar, array, table reference, or record.
 ///
-/// `ValueKind` extends [`ValueRank`] with a third variant for record-typed
-/// values. Records have no [`TypeTag`] because they do not have a single
-/// primitive element type.
+/// `ValueKind` extends [`ValueRank`] with variants for table-reference and
+/// record-typed values. Table references and records have no [`TypeTag`]
+/// because they are not described by a primitive element type plus rank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueKind {
     /// A single typed scalar value.
     Scalar,
     /// An N-dimensional typed array.
     Array,
+    /// A casacore `TpTable` keyword referencing another table on disk.
+    TableRef,
     /// An ordered collection of named [`Value`] fields (a record).
     Record,
 }
@@ -767,9 +769,10 @@ impl From<Vec<RecordField>> for RecordValue {
 /// The top-level value type for casacore table cells and keywords.
 ///
 /// A `Value` is either a single typed scalar ([`ScalarValue`]), an
-/// N-dimensional typed array ([`ArrayValue`]), or a named-field record
-/// ([`RecordValue`]). This mirrors the three possible column cell kinds in C++
-/// casacore: scalar columns, array columns, and record-typed keywords.
+/// N-dimensional typed array ([`ArrayValue`]), a casacore table reference, or
+/// a named-field record ([`RecordValue`]). This mirrors the value kinds used by
+/// C++ casacore table cells and keyword records, including `TpTable`
+/// references between tables.
 ///
 /// `From` implementations allow `ScalarValue`, `ArrayValue`, and `RecordValue`
 /// to be converted into `Value` with `.into()`.
@@ -789,29 +792,46 @@ pub enum Value {
     Scalar(ScalarValue),
     /// An N-dimensional typed array value.
     Array(ArrayValue),
+    /// A casacore `TpTable` keyword payload, usually a relative subtable path.
+    TableRef(String),
     /// An ordered collection of named fields.
     Record(RecordValue),
 }
 
 impl Value {
-    /// Returns the [`ValueKind`] of this value (scalar, array, or record).
+    /// Creates a table-reference value from a relative or absolute table path.
+    pub fn table_ref(path: impl Into<String>) -> Self {
+        Self::TableRef(path.into())
+    }
+
+    /// Returns the [`ValueKind`] of this value.
     pub fn kind(&self) -> ValueKind {
         match self {
             Self::Scalar(_) => ValueKind::Scalar,
             Self::Array(_) => ValueKind::Array,
+            Self::TableRef(_) => ValueKind::TableRef,
             Self::Record(_) => ValueKind::Record,
         }
     }
 
     /// Returns the [`TypeTag`] for this value, if one exists.
     ///
-    /// Returns `Some` for scalar and array values, and `None` for record values
-    /// because records do not have a single primitive element type.
+    /// Returns `Some` for scalar and array values, and `None` for table
+    /// references and record values because they do not have a primitive
+    /// element type.
     pub fn type_tag(&self) -> Option<TypeTag> {
         match self {
             Self::Scalar(v) => Some(v.type_tag()),
             Self::Array(v) => Some(v.type_tag()),
-            Self::Record(_) => None,
+            Self::TableRef(_) | Self::Record(_) => None,
+        }
+    }
+
+    /// Returns the referenced table path for `Value::TableRef`.
+    pub fn as_table_ref(&self) -> Option<&str> {
+        match self {
+            Self::TableRef(path) => Some(path.as_str()),
+            _ => None,
         }
     }
 }
@@ -886,6 +906,14 @@ mod tests {
     fn value_kind_includes_record() {
         let value = Value::Record(RecordValue::new(vec![]));
         assert_eq!(value.kind(), ValueKind::Record);
+    }
+
+    #[test]
+    fn table_ref_has_no_primitive_type_tag() {
+        let value = Value::table_ref("ANTENNA");
+        assert_eq!(value.kind(), ValueKind::TableRef);
+        assert_eq!(value.type_tag(), None);
+        assert_eq!(value.as_table_ref(), Some("ANTENNA"));
     }
 
     #[test]

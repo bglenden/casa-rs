@@ -88,6 +88,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "casacore-ms"
+version = "0.1.0"
+dependencies = [
+ "casacore-tables",
+ "casacore-test-support",
+ "casacore-types",
+ "ndarray",
+ "num-complex",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "casacore-tables"
 version = "0.1.0"
 dependencies = [

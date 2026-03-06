@@ -8,7 +8,7 @@ use casacore_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
 };
 use casacore_test_support::{cpp_backend_available, cpp_vararray_bench};
-use casacore_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
+use casacore_types::{ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::ShapeBuilder;
 
 /// Build the standard 4-row Float32 variable-shape fixture.
@@ -148,6 +148,113 @@ fn ssm_variable_array_endian_cross_matrix() {
     let fixture = ssm_variable_array_fixture();
     assert_matrix_results(
         "SSM-vararray-endian",
+        &run_endian_cross_matrix(&fixture, ManagerKind::StandardStMan),
+    );
+}
+
+// ---- Complex32 variable-shape array tests (MS DATA column pattern) ----
+
+/// Build 4-row Complex32 variable-shape fixture matching MS DATA column pattern.
+///
+/// Row 0: shape [2,4], values (1,0.5), (2,1.0), ..., (8,4.0)
+/// Row 1: shape [4,2], values (9,4.5), ..., (16,8.0)
+/// Row 2: shape [4,2], values (17,8.5), ..., (24,12.0)
+/// Row 3: shape [2,4], values (25,12.5), ..., (32,16.0)
+fn complex_variable_array_rows() -> Vec<RecordValue> {
+    let mut re = 1.0f32;
+    let mut im = 0.5f32;
+    let shapes: &[(usize, usize)] = &[(2, 4), (4, 2), (4, 2), (2, 4)];
+
+    shapes
+        .iter()
+        .map(|&(d0, d1)| {
+            let count = d0 * d1;
+            let vals: Vec<Complex32> = (0..count)
+                .map(|_| {
+                    let c = Complex32::new(re, im);
+                    re += 1.0;
+                    im += 0.5;
+                    c
+                })
+                .collect();
+            RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Complex32(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[d0, d1]).f(), vals).unwrap(),
+                )),
+            )])
+        })
+        .collect()
+}
+
+fn aipsio_complex_variable_array_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "data",
+        PrimitiveType::Complex32,
+        Some(2),
+    )])
+    .expect("schema");
+
+    TableFixture {
+        schema,
+        rows: complex_variable_array_rows(),
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::AipsIOComplexVariableArray),
+        tile_shape: None,
+    }
+}
+
+fn ssm_complex_variable_array_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "data",
+        PrimitiveType::Complex32,
+        Some(2),
+    )])
+    .expect("schema");
+
+    TableFixture {
+        schema,
+        rows: complex_variable_array_rows(),
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::SsmComplexVariableArray),
+        tile_shape: None,
+    }
+}
+
+#[test]
+fn aipsio_complex_variable_array_cross_matrix() {
+    let fixture = aipsio_complex_variable_array_fixture();
+    assert_matrix_results(
+        "AipsIO-complex-vararray",
+        &run_full_cross_matrix(&fixture, ManagerKind::StManAipsIO),
+    );
+}
+
+#[test]
+fn aipsio_complex_variable_array_endian_cross_matrix() {
+    let fixture = aipsio_complex_variable_array_fixture();
+    assert_matrix_results(
+        "AipsIO-complex-vararray-endian",
+        &run_endian_cross_matrix(&fixture, ManagerKind::StManAipsIO),
+    );
+}
+
+#[test]
+fn ssm_complex_variable_array_cross_matrix() {
+    let fixture = ssm_complex_variable_array_fixture();
+    assert_matrix_results(
+        "SSM-complex-vararray",
+        &run_full_cross_matrix(&fixture, ManagerKind::StandardStMan),
+    );
+}
+
+#[test]
+fn ssm_complex_variable_array_endian_cross_matrix() {
+    let fixture = ssm_complex_variable_array_fixture();
+    assert_matrix_results(
+        "SSM-complex-vararray-endian",
         &run_endian_cross_matrix(&fixture, ManagerKind::StandardStMan),
     );
 }
