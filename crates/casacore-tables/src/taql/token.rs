@@ -21,161 +21,239 @@ use logos::Logos;
 #[logos(skip r"#[^\n]*")] // skip # comments to EOL
 pub enum Token {
     // ── Keywords ────────────────────────────────────────────────────
+    /// The `SELECT` keyword.
     #[token("SELECT", ignore(ascii_case))]
     Select,
+    /// The `FROM` keyword.
     #[token("FROM", ignore(ascii_case))]
     From,
+    /// The `WHERE` keyword.
     #[token("WHERE", ignore(ascii_case))]
     Where,
+    /// The `ORDER` keyword.
     #[token("ORDER", ignore(ascii_case))]
     Order,
+    /// The `BY` keyword.
     #[token("BY", ignore(ascii_case))]
     By,
+    /// The `GROUP` keyword.
     #[token("GROUP", ignore(ascii_case))]
     Group,
+    /// The `HAVING` keyword.
     #[token("HAVING", ignore(ascii_case))]
     Having,
+    /// The `LIMIT` keyword.
     #[token("LIMIT", ignore(ascii_case))]
     Limit,
+    /// The `OFFSET` keyword.
     #[token("OFFSET", ignore(ascii_case))]
     Offset,
+    /// The `DISTINCT` keyword.
     #[token("DISTINCT", ignore(ascii_case))]
     Distinct,
+    /// The `AS` keyword.
     #[token("AS", ignore(ascii_case))]
     As,
+    /// The `AND` keyword.
     #[token("AND", ignore(ascii_case))]
     And,
+    /// The `OR` keyword.
     #[token("OR", ignore(ascii_case))]
     Or,
+    /// The `NOT` keyword.
     #[token("NOT", ignore(ascii_case))]
     Not,
+    /// The `IN` keyword.
     #[token("IN", ignore(ascii_case))]
     In,
+    /// The `BETWEEN` keyword.
     #[token("BETWEEN", ignore(ascii_case))]
     Between,
+    /// The `LIKE` keyword.
     #[token("LIKE", ignore(ascii_case))]
     Like,
+    /// The `ILIKE` keyword (case-insensitive LIKE).
     #[token("ILIKE", ignore(ascii_case))]
     Ilike,
+    /// The `IS` keyword.
     #[token("IS", ignore(ascii_case))]
     Is,
+    /// The `NULL` keyword.
     #[token("NULL", ignore(ascii_case))]
     Null,
+    /// The `TRUE` keyword.
     #[token("TRUE", ignore(ascii_case))]
     True,
+    /// The `FALSE` keyword.
     #[token("FALSE", ignore(ascii_case))]
     False,
+    /// The `ASC` keyword.
     #[token("ASC", ignore(ascii_case))]
     Asc,
+    /// The `DESC` keyword.
     #[token("DESC", ignore(ascii_case))]
     Desc,
+    /// The `UPDATE` keyword.
     #[token("UPDATE", ignore(ascii_case))]
     Update,
+    /// The `SET` keyword.
     #[token("SET", ignore(ascii_case))]
     Set,
+    /// The `INSERT` keyword.
     #[token("INSERT", ignore(ascii_case))]
     Insert,
+    /// The `INTO` keyword.
     #[token("INTO", ignore(ascii_case))]
     Into,
+    /// The `VALUES` keyword.
     #[token("VALUES", ignore(ascii_case))]
     Values,
+    /// The `DELETE` keyword.
     #[token("DELETE", ignore(ascii_case))]
     Delete,
+    /// The `JOIN` keyword.
     #[token("JOIN", ignore(ascii_case))]
     Join,
+    /// The `INNER` keyword.
     #[token("INNER", ignore(ascii_case))]
     Inner,
+    /// The `LEFT` keyword.
     #[token("LEFT", ignore(ascii_case))]
     Left,
+    /// The `RIGHT` keyword.
     #[token("RIGHT", ignore(ascii_case))]
     Right,
+    /// The `CROSS` keyword.
     #[token("CROSS", ignore(ascii_case))]
     Cross,
+    /// The `ON` keyword.
     #[token("ON", ignore(ascii_case))]
     On,
+    /// The `COUNT` keyword.
     #[token("COUNT", ignore(ascii_case))]
     Count,
+    /// The `SUM` keyword.
     #[token("SUM", ignore(ascii_case))]
     Sum,
+    /// The `AVG` keyword.
     #[token("AVG", ignore(ascii_case))]
     Avg,
+    /// The `MIN` keyword.
     #[token("MIN", ignore(ascii_case))]
     Min,
+    /// The `MAX` keyword.
     #[token("MAX", ignore(ascii_case))]
     Max,
+    /// The `ROWID` keyword.
     #[token("ROWID", ignore(ascii_case))]
     Rowid,
+    /// The `CALC` keyword.
     #[token("CALC", ignore(ascii_case))]
     Calc,
+    /// The `ALTER` keyword.
     #[token("ALTER", ignore(ascii_case))]
     Alter,
+    /// The `TABLE` keyword.
     #[token("TABLE", ignore(ascii_case))]
     Table,
+    /// The `COLUMN` keyword.
     #[token("COLUMN", ignore(ascii_case))]
     Column,
+    /// The `RENAME` keyword.
     #[token("RENAME", ignore(ascii_case))]
     Rename,
+    /// The `ADD` keyword.
     #[token("ADD", ignore(ascii_case))]
     Add,
+    /// The `DROP` keyword.
     #[token("DROP", ignore(ascii_case))]
     Drop,
+    /// The `KEYWORD` keyword.
     #[token("KEYWORD", ignore(ascii_case))]
     Keyword,
+    /// The `TO` keyword.
     #[token("TO", ignore(ascii_case))]
     To,
+    /// The `ROW` keyword.
     #[token("ROW", ignore(ascii_case))]
     Row,
+    /// The `USING` keyword.
     #[token("USING", ignore(ascii_case))]
     Using,
+    /// The `STYLE` keyword.
     #[token("STYLE", ignore(ascii_case))]
     Style,
+    /// The `CREATE` keyword.
     #[token("CREATE", ignore(ascii_case))]
     Create,
+    /// The `GIVING` keyword.
     #[token("GIVING", ignore(ascii_case))]
     Giving,
     // ── Operators ───────────────────────────────────────────────────
+    /// Addition operator `+`.
     #[token("+")]
     Plus,
+    /// Subtraction operator `-`.
     #[token("-")]
     Minus,
+    /// Multiplication operator `*`.
     #[token("*")]
     Star,
+    /// Division operator `/`.
     #[token("/")]
     Slash,
+    /// Modulo operator `%`.
     #[token("%")]
     Percent,
+    /// Exponentiation operator `**`.
     #[token("**")]
     DoubleStar,
+    /// Assignment or equality operator `=`.
     #[token("=")]
     Eq,
+    /// Equality operator `==`.
     #[token("==")]
     EqEq,
+    /// Inequality operator `!=`.
     #[token("!=")]
     Ne,
+    /// Inequality operator `<>`.
     #[token("<>")]
     LtGt,
+    /// Less-than operator `<`.
     #[token("<")]
     Lt,
+    /// Less-than-or-equal operator `<=`.
     #[token("<=")]
     Le,
+    /// Greater-than operator `>`.
     #[token(">")]
     Gt,
+    /// Greater-than-or-equal operator `>=`.
     #[token(">=")]
     Ge,
+    /// Logical AND operator `&&`.
     #[token("&&")]
     AmpAmp,
+    /// Logical OR operator `||`.
     #[token("||")]
     PipePipe,
+    /// Logical NOT operator `!`.
     #[token("!")]
     Bang,
+    /// Bitwise NOT operator `~`.
     #[token("~")]
     Tilde,
+    /// Bitwise AND operator `&`.
     #[token("&")]
     Amp,
+    /// Bitwise OR operator `|`.
     #[token("|")]
     Pipe,
+    /// Bitwise XOR operator `^`.
     #[token("^")]
     Caret,
+    /// Colon `:` (used in slice syntax).
     #[token(":")]
     Colon,
     /// Regex match operator `=~`
@@ -186,16 +264,22 @@ pub enum Token {
     BangTilde,
 
     // ── Delimiters ──────────────────────────────────────────────────
+    /// Left parenthesis `(`.
     #[token("(")]
     LParen,
+    /// Right parenthesis `)`.
     #[token(")")]
     RParen,
+    /// Left bracket `[`.
     #[token("[")]
     LBracket,
+    /// Right bracket `]`.
     #[token("]")]
     RBracket,
+    /// Comma `,`.
     #[token(",")]
     Comma,
+    /// Dot `.` (used for qualified column references).
     #[token(".")]
     Dot,
 

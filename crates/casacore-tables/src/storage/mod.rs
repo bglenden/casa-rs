@@ -45,22 +45,33 @@ pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
 pub(crate) const TABLE_INFO_FILE: &str = "table.info";
 
+/// Errors arising from table storage operations (I/O, format, schema).
+///
+/// C++ equivalent: various exceptions in `DataManager.h` and `Table.h`.
 #[derive(Debug, Error)]
 pub enum StorageError {
+    /// The table directory does not exist on the filesystem.
     #[error("table path does not exist: {0}")]
     MissingPath(PathBuf),
+    /// The `table.dat` control file is absent.
     #[error("table control file is missing: {0}")]
     MissingControlFile(PathBuf),
+    /// A required `table.f*` data file is absent.
     #[error("table data file is missing: {0}")]
     MissingDataFile(PathBuf),
+    /// On-disk format does not match the expected version or layout.
     #[error("format mismatch: {0}")]
     FormatMismatch(String),
+    /// Column schema validation failed.
     #[error("schema error: {0}")]
     Schema(String),
+    /// The data manager type is not recognised or not yet implemented.
     #[error("unsupported data manager: {0}")]
     UnsupportedDataManager(String),
+    /// An underlying I/O error.
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+    /// An error from the AipsIO serialisation layer.
     #[error("aipsio error: {0}")]
     AipsIo(#[from] casacore_aipsio::AipsIoObjectError),
 }
@@ -544,38 +555,46 @@ impl CompositeStorage {
         }
 
         // Pass 2: Materialize virtual columns.
-        // Take a snapshot of stored rows so virtual engines can read from them
-        // while we mutate the main rows vector.
-        let stored_rows = rows.clone();
-        for dm in &table_dat.column_set.data_managers {
-            if !is_virtual_engine(&dm.type_name) {
-                continue; // Already handled in pass 1.
+        // Only clone rows if there are virtual engines that need the stored
+        // snapshot — avoids an O(rows × cols) clone for tables with no
+        // virtual columns (the common case for MS subtables).
+        let has_virtual = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name));
+
+        if has_virtual {
+            let stored_rows = rows.clone();
+            for dm in &table_dat.column_set.data_managers {
+                if !is_virtual_engine(&dm.type_name) {
+                    continue;
+                }
+
+                let engine = lookup_engine(&dm.type_name)
+                    .ok_or_else(|| StorageError::UnsupportedDataManager(dm.type_name.clone()))?;
+
+                let bound_cols: Vec<(usize, &_)> = table_dat
+                    .column_set
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+                    .collect();
+
+                for &(desc_idx, _) in &bound_cols {
+                    virtual_columns.insert(table_dat.table_desc.columns[desc_idx].col_name.clone());
+                }
+
+                let ctx = VirtualContext {
+                    col_descs: &table_dat.table_desc.columns,
+                    rows: &stored_rows,
+                    table_path,
+                    nrrow,
+                };
+
+                engine.materialize(&ctx, &bound_cols, &mut rows)?;
             }
-
-            let engine = lookup_engine(&dm.type_name)
-                .ok_or_else(|| StorageError::UnsupportedDataManager(dm.type_name.clone()))?;
-
-            let bound_cols: Vec<(usize, &_)> = table_dat
-                .column_set
-                .columns
-                .iter()
-                .enumerate()
-                .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
-                .collect();
-
-            // Record which columns are virtual.
-            for &(desc_idx, _) in &bound_cols {
-                virtual_columns.insert(table_dat.table_desc.columns[desc_idx].col_name.clone());
-            }
-
-            let ctx = VirtualContext {
-                col_descs: &table_dat.table_desc.columns,
-                rows: &stored_rows,
-                table_path,
-                nrrow,
-            };
-
-            engine.materialize(&ctx, &bound_cols, &mut rows)?;
         }
 
         let table_info = load_table_info(table_path);

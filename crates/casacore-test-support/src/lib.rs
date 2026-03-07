@@ -1455,6 +1455,24 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    #[link_name = "cpp_bulk_scalar_io_bench"]
+    fn ffi_bulk_scalar_io_bench(
+        path: *const std::ffi::c_char,
+        nrows: u64,
+        out_write_ns: *mut u64,
+        out_read_ns: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    #[link_name = "cpp_deep_copy_bench"]
+    fn ffi_deep_copy_bench(
+        dir: *const std::ffi::c_char,
+        nrows: u64,
+        out_write_ns: *mut u64,
+        out_copy_ns: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn casacore_cpp_aipsio_encode(
         primitive: u8,
         is_array: u8,
@@ -2581,6 +2599,104 @@ pub fn cpp_cell_slice_bench(
     _path: &std::path::Path,
     _params: &CellSliceBenchParams,
 ) -> Result<CellSliceBenchResult, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Result from `cpp_bulk_scalar_io_bench`.
+pub struct BulkScalarIoBenchResult {
+    pub write_ns: u64,
+    pub read_ns: u64,
+}
+
+/// Result from `cpp_deep_copy_bench`.
+pub struct DeepCopyBenchResult {
+    pub write_ns: u64,
+    pub copy_ns: u64,
+}
+
+#[cfg(has_casacore_cpp)]
+pub fn cpp_bulk_scalar_io_bench(
+    path: &std::path::Path,
+    nrows: u64,
+) -> Result<BulkScalarIoBenchResult, String> {
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut write_ns: u64 = 0;
+    let mut read_ns: u64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        ffi_bulk_scalar_io_bench(
+            c_path.as_ptr(),
+            nrows,
+            &mut write_ns,
+            &mut read_ns,
+            &mut error,
+        )
+    };
+    if rc != 0 {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        return Err(msg);
+    }
+    Ok(BulkScalarIoBenchResult { write_ns, read_ns })
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_bulk_scalar_io_bench(
+    _path: &std::path::Path,
+    _nrows: u64,
+) -> Result<BulkScalarIoBenchResult, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+#[cfg(has_casacore_cpp)]
+pub fn cpp_deep_copy_bench(
+    dir: &std::path::Path,
+    nrows: u64,
+) -> Result<DeepCopyBenchResult, String> {
+    let c_dir = std::ffi::CString::new(dir.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+    let mut write_ns: u64 = 0;
+    let mut copy_ns: u64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        ffi_deep_copy_bench(
+            c_dir.as_ptr(),
+            nrows,
+            &mut write_ns,
+            &mut copy_ns,
+            &mut error,
+        )
+    };
+    if rc != 0 {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        return Err(msg);
+    }
+    Ok(DeepCopyBenchResult { write_ns, copy_ns })
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_deep_copy_bench(
+    _dir: &std::path::Path,
+    _nrows: u64,
+) -> Result<DeepCopyBenchResult, String> {
     Err("C++ casacore backend unavailable".to_string())
 }
 

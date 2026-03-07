@@ -209,6 +209,121 @@ void cell_slice_bench_impl(
         std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 }
 
+// ===== Bulk scalar I/O benchmark =====
+//
+// Creates a table with `nrows` rows of Int32, Float64, String columns,
+// times the write (create + fill) and then the read (open + iterate).
+
+void bulk_scalar_io_bench_impl(
+    const std::string& path,
+    uint64_t nrows,
+    uint64_t* out_write_ns,
+    uint64_t* out_read_ns)
+{
+    // Write
+    {
+        casacore::TableDesc td("", casacore::TableDesc::Scratch);
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("col_i32"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Double>("col_f64"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::String>("col_str"));
+
+        casacore::SetupNewTable setup(path, td, casacore::Table::New);
+        casacore::StManAipsIO stman;
+        setup.bindAll(stman);
+
+        auto t0 = std::chrono::steady_clock::now();
+        casacore::Table table(setup, nrows);
+        casacore::ScalarColumn<casacore::Int> c1(table, "col_i32");
+        casacore::ScalarColumn<casacore::Double> c2(table, "col_f64");
+        casacore::ScalarColumn<casacore::String> c3(table, "col_str");
+        for (uint64_t i = 0; i < nrows; ++i) {
+            c1.put(i, static_cast<casacore::Int>(i));
+            c2.put(i, static_cast<casacore::Double>(i) * 0.5);
+            c3.put(i, "row_" + std::to_string(i));
+        }
+        table.flush();
+        auto t1 = std::chrono::steady_clock::now();
+        *out_write_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    }
+
+    // Read
+    {
+        auto t0 = std::chrono::steady_clock::now();
+        casacore::Table table(path, casacore::Table::Old);
+        casacore::ScalarColumn<casacore::Int> c1(table, "col_i32");
+        casacore::ScalarColumn<casacore::Double> c2(table, "col_f64");
+        casacore::ScalarColumn<casacore::String> c3(table, "col_str");
+        volatile int64_t sum = 0;
+        for (uint64_t i = 0; i < table.nrow(); ++i) {
+            sum += c1(i);
+            sum += static_cast<int64_t>(c2(i));
+            sum += static_cast<int64_t>(c3(i).size());
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        *out_read_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        (void)sum; // prevent unused warning
+    }
+}
+
+// ===== Deep copy benchmark =====
+//
+// Creates a table with `nrows` rows (Int32, Float64, String), then
+// times Table::deepCopy to a new path.
+
+void deep_copy_bench_impl(
+    const std::string& dir,
+    uint64_t nrows,
+    uint64_t* out_write_ns,
+    uint64_t* out_copy_ns)
+{
+    std::string srcPath = dir + "/source.tbl";
+    std::string dstPath = dir + "/copy.tbl";
+
+    // Write source
+    {
+        casacore::TableDesc td("", casacore::TableDesc::Scratch);
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("col_i32"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::Double>("col_f64"));
+        td.addColumn(casacore::ScalarColumnDesc<casacore::String>("col_str"));
+
+        casacore::SetupNewTable setup(srcPath, td, casacore::Table::New);
+        casacore::StManAipsIO stman;
+        setup.bindAll(stman);
+
+        auto t0 = std::chrono::steady_clock::now();
+        casacore::Table table(setup, nrows);
+        casacore::ScalarColumn<casacore::Int> c1(table, "col_i32");
+        casacore::ScalarColumn<casacore::Double> c2(table, "col_f64");
+        casacore::ScalarColumn<casacore::String> c3(table, "col_str");
+        for (uint64_t i = 0; i < nrows; ++i) {
+            c1.put(i, static_cast<casacore::Int>(i));
+            c2.put(i, static_cast<casacore::Double>(i) * 0.5);
+            c3.put(i, "row_" + std::to_string(i));
+        }
+        table.flush();
+        auto t1 = std::chrono::steady_clock::now();
+        *out_write_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    }
+
+    // Deep copy
+    {
+        casacore::Table src(srcPath, casacore::Table::Old);
+        auto t0 = std::chrono::steady_clock::now();
+        src.deepCopy(dstPath, casacore::Table::New);
+        auto t1 = std::chrono::steady_clock::now();
+        *out_copy_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+
+        casacore::Table dst(dstPath, casacore::Table::Old);
+        if (dst.nrow() != nrows) {
+            throw std::runtime_error("deep_copy row count mismatch");
+        }
+    }
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -273,6 +388,40 @@ int32_t cpp_cell_slice_bench(
         *out_error = make_error(e.what()); return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in cell_slice_bench"); return -1;
+    }
+}
+
+int32_t cpp_bulk_scalar_io_bench(
+    const char* path,
+    uint64_t nrows,
+    uint64_t* out_write_ns,
+    uint64_t* out_read_ns,
+    char** out_error)
+{
+    try {
+        bulk_scalar_io_bench_impl(path, nrows, out_write_ns, out_read_ns);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what()); return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in bulk_scalar_io_bench"); return -1;
+    }
+}
+
+int32_t cpp_deep_copy_bench(
+    const char* dir,
+    uint64_t nrows,
+    uint64_t* out_write_ns,
+    uint64_t* out_copy_ns,
+    char** out_error)
+{
+    try {
+        deep_copy_bench_impl(dir, nrows, out_write_ns, out_copy_ns);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what()); return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in deep_copy_bench"); return -1;
     }
 }
 

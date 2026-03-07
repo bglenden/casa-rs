@@ -44,9 +44,13 @@ impl fmt::Display for IndexStyle {
 /// A complete TaQL statement.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
+    /// A `SELECT` query.
     Select(SelectStatement),
+    /// An `UPDATE` statement.
     Update(UpdateStatement),
+    /// An `INSERT` statement.
     Insert(InsertStatement),
+    /// A `DELETE` statement.
     Delete(DeleteStatement),
     /// `CALC expr` — evaluate an expression and return the result.
     Calc(CalcStatement),
@@ -294,9 +298,13 @@ pub struct JoinClause {
 /// Type of a JOIN operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinType {
+    /// Inner join — rows matching in both tables.
     Inner,
+    /// Left outer join — all rows from the left table.
     Left,
+    /// Right outer join — all rows from the right table.
     Right,
+    /// Cross join — Cartesian product of both tables.
     Cross,
 }
 
@@ -408,18 +416,21 @@ pub enum IndexElement {
 /// A literal value in an expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
+    /// Integer value.
     Int(i64),
+    /// Floating-point value.
     Float(f64),
+    /// String value.
     String(String),
+    /// Boolean value.
     Bool(bool),
+    /// Complex number value.
     Complex(Complex64),
     /// Regex pattern literal: `p/pattern/flags` or `m/pattern/flags`.
     ///
     /// C++ reference: `TaQLRegexNode`.
-    Regex {
-        pattern: String,
-        flags: String,
-    },
+    Regex { pattern: String, flags: String },
+    /// SQL NULL value.
     Null,
 }
 
@@ -435,20 +446,35 @@ pub struct ColumnRef {
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
+    /// Addition `+`.
     Add,
+    /// Subtraction `-`.
     Sub,
+    /// Multiplication `*`.
     Mul,
+    /// Division `/`.
     Div,
+    /// Integer division `//`.
     IntDiv,
+    /// Modulo `%`.
     Modulo,
+    /// Exponentiation `**`.
     Power,
+    /// Equality `=`.
     Eq,
+    /// Inequality `!=`.
     Ne,
+    /// Less than `<`.
     Lt,
+    /// Less than or equal `<=`.
     Le,
+    /// Greater than `>`.
     Gt,
+    /// Greater than or equal `>=`.
     Ge,
+    /// Logical AND.
     And,
+    /// Logical OR.
     Or,
     /// Bitwise AND (`&`).
     BitAnd,
@@ -461,8 +487,11 @@ pub enum BinaryOp {
 /// Unary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
+    /// Arithmetic negation `-`.
     Negate,
+    /// Logical NOT.
     Not,
+    /// Bitwise NOT `~`.
     BitNot,
 }
 

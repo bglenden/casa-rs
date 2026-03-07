@@ -924,6 +924,20 @@ impl std::fmt::Debug for LockState {
     }
 }
 
+/// A casacore table — the fundamental persistent data container.
+///
+/// A `Table` holds a set of named columns (scalar or array) plus keyword
+/// metadata, backed either by on-disk storage or an in-memory buffer.
+///
+/// # Lifecycle
+///
+/// * **Open** — [`Table::open`] reads an existing table directory.
+/// * **Create** — [`Table::create`] builds a new table from a schema.
+/// * **Save** — [`Table::save`] flushes deferred writes to disk.
+///
+/// # C++ equivalent
+///
+/// `casacore::Table` — the main user-facing class in the Tables module.
 #[derive(Default)]
 pub struct Table {
     inner: TableImpl,
