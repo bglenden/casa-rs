@@ -467,6 +467,243 @@ fn ssm_column_keywords_cross_matrix() {
     ));
 }
 
+// --- Unsigned integer arrays (Task 1.1) ---
+
+fn ssm_unsigned_arrays_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("arr_u8", PrimitiveType::UInt8, vec![4]),
+        ColumnSchema::array_fixed("arr_u16", PrimitiveType::UInt16, vec![4]),
+        ColumnSchema::array_fixed("arr_u32", PrimitiveType::UInt32, vec![4]),
+    ])
+    .expect("schema");
+
+    let rows = vec![
+        RecordValue::new(vec![
+            RecordField::new(
+                "arr_u8",
+                Value::Array(ArrayValue::UInt8(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[4]), vec![255, 128, 0, 1])
+                        .unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "arr_u16",
+                Value::Array(ArrayValue::UInt16(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[4]), vec![65535, 32768, 0, 1])
+                        .unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "arr_u32",
+                Value::Array(ArrayValue::UInt32(
+                    ndarray::Array::from_shape_vec(
+                        ndarray::IxDyn(&[4]),
+                        vec![u32::MAX, 100_000, 0, 1],
+                    )
+                    .unwrap(),
+                )),
+            ),
+        ]),
+        RecordValue::new(vec![
+            RecordField::new(
+                "arr_u8",
+                Value::Array(ArrayValue::UInt8(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[4]), vec![0, 0, 0, 0]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "arr_u16",
+                Value::Array(ArrayValue::UInt16(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[4]), vec![0, 0, 0, 0]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "arr_u32",
+                Value::Array(ArrayValue::UInt32(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[4]), vec![0, 0, 0, 0]).unwrap(),
+                )),
+            ),
+        ]),
+        RecordValue::new(vec![
+            RecordField::new(
+                "arr_u8",
+                Value::Array(ArrayValue::UInt8(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[4]), vec![1, 2, 3, 4]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "arr_u16",
+                Value::Array(ArrayValue::UInt16(
+                    ndarray::Array::from_shape_vec(ndarray::IxDyn(&[4]), vec![100, 200, 300, 400])
+                        .unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "arr_u32",
+                Value::Array(ArrayValue::UInt32(
+                    ndarray::Array::from_shape_vec(
+                        ndarray::IxDyn(&[4]),
+                        vec![1000, 2000, 3000, 4000],
+                    )
+                    .unwrap(),
+                )),
+            ),
+        ]),
+    ];
+
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::SsmUnsignedArrays),
+        tile_shape: None,
+    }
+}
+
+#[test]
+fn ssm_unsigned_arrays_cross_matrix() {
+    let fixture = ssm_unsigned_arrays_fixture();
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
+}
+
+// --- String arrays (Task 1.2) ---
+
+fn ssm_string_array_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "arr_str",
+        PrimitiveType::String,
+        vec![3],
+    )])
+    .expect("schema");
+
+    let rows = vec![
+        RecordValue::new(vec![RecordField::new(
+            "arr_str",
+            Value::Array(ArrayValue::String(
+                ndarray::Array::from_shape_vec(
+                    ndarray::IxDyn(&[3]),
+                    vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
+                )
+                .unwrap(),
+            )),
+        )]),
+        RecordValue::new(vec![RecordField::new(
+            "arr_str",
+            Value::Array(ArrayValue::String(
+                ndarray::Array::from_shape_vec(
+                    ndarray::IxDyn(&[3]),
+                    vec![String::new(), String::new(), String::new()],
+                )
+                .unwrap(),
+            )),
+        )]),
+        RecordValue::new(vec![RecordField::new(
+            "arr_str",
+            Value::Array(ArrayValue::String(
+                ndarray::Array::from_shape_vec(
+                    ndarray::IxDyn(&[3]),
+                    vec![
+                        "hello world".to_string(),
+                        "café".to_string(),
+                        "line\nnewline".to_string(),
+                    ],
+                )
+                .unwrap(),
+            )),
+        )]),
+    ];
+
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::SsmStringArray),
+        tile_shape: None,
+    }
+}
+
+#[test]
+fn ssm_string_array_cross_matrix() {
+    let fixture = ssm_string_array_fixture();
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
+}
+
+// --- Complex64 2D arrays (Task 1.3) ---
+
+fn ssm_complex64_2d_array_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "arr_c64",
+        PrimitiveType::Complex64,
+        vec![2, 2],
+    )])
+    .expect("schema");
+
+    let rows = vec![
+        RecordValue::new(vec![RecordField::new(
+            "arr_c64",
+            Value::Array(ArrayValue::Complex64(
+                ndarray::Array::from_shape_vec(
+                    ndarray::IxDyn(&[2, 2]).f(),
+                    vec![
+                        Complex64::new(1.0, 2.0),
+                        Complex64::new(3.0, 4.0),
+                        Complex64::new(5.0, 6.0),
+                        Complex64::new(7.0, 8.0),
+                    ],
+                )
+                .unwrap(),
+            )),
+        )]),
+        RecordValue::new(vec![RecordField::new(
+            "arr_c64",
+            Value::Array(ArrayValue::Complex64(
+                ndarray::Array::from_shape_vec(
+                    ndarray::IxDyn(&[2, 2]).f(),
+                    vec![
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                    ],
+                )
+                .unwrap(),
+            )),
+        )]),
+        RecordValue::new(vec![RecordField::new(
+            "arr_c64",
+            Value::Array(ArrayValue::Complex64(
+                ndarray::Array::from_shape_vec(
+                    ndarray::IxDyn(&[2, 2]).f(),
+                    vec![
+                        Complex64::new(-1.0, 0.5),
+                        Complex64::new(1e10, -1e10),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(-0.25, 0.75),
+                    ],
+                )
+                .unwrap(),
+            )),
+        )]),
+    ];
+
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::SsmComplex64Array2D),
+        tile_shape: None,
+    }
+}
+
+#[test]
+fn ssm_complex64_2d_array_cross_matrix() {
+    let fixture = ssm_complex64_2d_array_fixture();
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
+}
+
 // --- Explicit big-endian / little-endian cross-matrix tests ---
 //
 // These exercise the endian-aware write path: Rust writes the table in an

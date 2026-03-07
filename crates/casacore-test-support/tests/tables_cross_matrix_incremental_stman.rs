@@ -303,12 +303,12 @@ fn ism_typed_arrays_fixture() -> TableFixture {
         rows,
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
-        cpp_fixture: None,
+        cpp_fixture: Some(CppTableFixture::IsmTypedArrays),
         tile_shape: None,
     }
 }
 
-// --- RR-only: complex arrays ---
+// --- ISM complex arrays (upgraded to full cross-matrix) ---
 
 fn ism_complex_arrays_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
@@ -391,12 +391,12 @@ fn ism_complex_arrays_fixture() -> TableFixture {
         rows,
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
-        cpp_fixture: None,
+        cpp_fixture: Some(CppTableFixture::IsmComplexArrays),
         tile_shape: None,
     }
 }
 
-// --- RR-only: column keywords ---
+// --- ISM column keywords (upgraded to full cross-matrix) ---
 
 fn ism_column_keywords_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
@@ -446,7 +446,7 @@ fn ism_column_keywords_fixture() -> TableFixture {
         rows,
         table_keywords,
         column_keywords,
-        cpp_fixture: None,
+        cpp_fixture: Some(CppTableFixture::IsmColumnKeywords),
         tile_shape: None,
     }
 }
@@ -521,30 +521,30 @@ fn ism_complex_scalars_endian_cross_matrix() {
     ));
 }
 
-// --- RR-only cross-matrix tests ---
+// --- Full cross-matrix tests (upgraded from RR-only) ---
 
 #[test]
-fn ism_typed_arrays_rr() {
+fn ism_typed_arrays_cross_matrix() {
     let fixture = ism_typed_arrays_fixture();
-    assert_matrix_results(&run_table_cross_matrix(
+    assert_matrix_results(&run_full_cross_matrix(
         &fixture,
         ManagerKind::IncrementalStMan,
     ));
 }
 
 #[test]
-fn ism_complex_arrays_rr() {
+fn ism_complex_arrays_cross_matrix() {
     let fixture = ism_complex_arrays_fixture();
-    assert_matrix_results(&run_table_cross_matrix(
+    assert_matrix_results(&run_full_cross_matrix(
         &fixture,
         ManagerKind::IncrementalStMan,
     ));
 }
 
 #[test]
-fn ism_column_keywords_rr() {
+fn ism_column_keywords_cross_matrix() {
     let fixture = ism_column_keywords_fixture();
-    assert_matrix_results(&run_table_cross_matrix(
+    assert_matrix_results(&run_full_cross_matrix(
         &fixture,
         ManagerKind::IncrementalStMan,
     ));

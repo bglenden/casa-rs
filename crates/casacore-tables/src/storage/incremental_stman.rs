@@ -691,7 +691,14 @@ fn read_array_at(
 
     let arr_val = match dt {
         CasacoreDataType::TpBool => {
-            let v: Vec<bool> = (0..nrelem).map(|i| d[i] != 0).collect();
+            // C++ ISM stores bools bit-packed (1 bit per element).
+            let v: Vec<bool> = (0..nrelem)
+                .map(|i| {
+                    let byte_idx = i / 8;
+                    let bit_idx = i % 8;
+                    (d[byte_idx] >> bit_idx) & 1 != 0
+                })
+                .collect();
             ArrayValue::Bool(
                 ArrayD::from_shape_vec(IxDyn(&shape_usize).f(), v)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
@@ -1242,24 +1249,33 @@ fn encode_value_bytes(
         return encode_string_value(value, nrelem, big_endian);
     }
 
+    // Bool is bit-packed (1 bit per element), matching C++ canonical conversion.
+    if dt == CasacoreDataType::TpBool {
+        let total = nrelem.div_ceil(8);
+        let mut buf = vec![0u8; total];
+        if nrelem == 1 {
+            let v = match value {
+                Some(Value::Scalar(ScalarValue::Bool(b))) => *b,
+                _ => false,
+            };
+            if v {
+                buf[0] = 1;
+            }
+        } else if let Some(Value::Array(ArrayValue::Bool(arr))) = value {
+            for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
+                if v {
+                    buf[i / 8] |= 1 << (i % 8);
+                }
+            }
+        }
+        return buf;
+    }
+
     let elem_size = ism_element_size(dt);
     let total = elem_size * nrelem;
     let mut buf = vec![0u8; total];
 
     match dt {
-        CasacoreDataType::TpBool => {
-            if nrelem == 1 {
-                let v = match value {
-                    Some(Value::Scalar(ScalarValue::Bool(b))) => *b,
-                    _ => false,
-                };
-                buf[0] = u8::from(v);
-            } else if let Some(Value::Array(ArrayValue::Bool(arr))) = value {
-                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
-                    buf[i] = u8::from(v);
-                }
-            }
-        }
         CasacoreDataType::TpUChar => {
             let v = match value {
                 Some(Value::Scalar(ScalarValue::UInt8(v))) => *v,
@@ -1517,12 +1533,16 @@ pub(crate) fn write_ism_file(
     let fixed_bytes_per_row: usize = col_info
         .iter()
         .map(|&(dt, nrelem)| {
-            let elem = ism_element_size(dt);
-            if elem > 0 {
-                elem * nrelem
+            if dt == CasacoreDataType::TpBool {
+                nrelem.div_ceil(8) // bit-packed
             } else {
-                // String: estimate 12 bytes per string value
-                nrelem * 12
+                let elem = ism_element_size(dt);
+                if elem > 0 {
+                    elem * nrelem
+                } else {
+                    // String: estimate 12 bytes per string value
+                    nrelem * 12
+                }
             }
         })
         .sum();

@@ -303,6 +303,82 @@ void verify_tiled_cell_stman_impl(const std::string& path) {
     }
 }
 
+// ===== TiledColumnStMan 3D array fixture =====
+// Fixed-shape Float32 [2,3,4], 3 rows, tile shape [2,3,2].
+
+void write_tiled_column_3d_array_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    casacore::IPosition shape(3, 2, 3, 4);
+    td.addColumn(
+        casacore::ArrayColumnDesc<casacore::Float>("data", shape,
+                                                    casacore::ColumnDesc::Direct |
+                                                    casacore::ColumnDesc::FixedShape));
+
+    td.defineHypercolumn("TiledData", 4,
+        casacore::Vector<casacore::String>(1, "data"));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::IPosition tileShape(4, 2, 3, 2, 2);
+    casacore::TiledColumnStMan tsm("TiledData", tileShape);
+    setup.bindAll(tsm);
+
+    casacore::Table table(setup, 3);
+    casacore::ArrayColumn<casacore::Float> colData(table, "data");
+
+    // Row 0: values 1..24 in Fortran order
+    {
+        casacore::Array<casacore::Float> arr(shape);
+        casacore::Float val = 1.0f;
+        for (int k = 0; k < 4; ++k)
+            for (int j = 0; j < 3; ++j)
+                for (int i = 0; i < 2; ++i)
+                    arr(casacore::IPosition(3, i, j, k)) = val++;
+        colData.put(0, arr);
+    }
+    // Row 1: values 25..48
+    {
+        casacore::Array<casacore::Float> arr(shape);
+        casacore::Float val = 25.0f;
+        for (int k = 0; k < 4; ++k)
+            for (int j = 0; j < 3; ++j)
+                for (int i = 0; i < 2; ++i)
+                    arr(casacore::IPosition(3, i, j, k)) = val++;
+        colData.put(1, arr);
+    }
+    // Row 2: all zeros
+    {
+        casacore::Array<casacore::Float> arr(shape, 0.0f);
+        colData.put(2, arr);
+    }
+
+    table.flush();
+}
+
+void verify_tiled_column_3d_array_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 3) throw std::runtime_error("expected 3 rows");
+
+    casacore::ArrayColumn<casacore::Float> colData(table, "data");
+    casacore::IPosition expectedShape(3, 2, 3, 4);
+
+    {
+        casacore::Array<casacore::Float> arr = colData(0);
+        if (!arr.shape().isEqual(expectedShape)) throw std::runtime_error("row 0 shape mismatch");
+        if (arr(casacore::IPosition(3, 0, 0, 0)) != 1.0f) throw std::runtime_error("row 0 [0,0,0] mismatch");
+        if (arr(casacore::IPosition(3, 1, 2, 3)) != 24.0f) throw std::runtime_error("row 0 [1,2,3] mismatch");
+    }
+    {
+        casacore::Array<casacore::Float> arr = colData(1);
+        if (arr(casacore::IPosition(3, 0, 0, 0)) != 25.0f) throw std::runtime_error("row 1 [0,0,0] mismatch");
+        if (arr(casacore::IPosition(3, 1, 2, 3)) != 48.0f) throw std::runtime_error("row 1 [1,2,3] mismatch");
+    }
+    {
+        casacore::Array<casacore::Float> arr = colData(2);
+        if (arr(casacore::IPosition(3, 0, 0, 0)) != 0.0f) throw std::runtime_error("row 2 [0,0,0] mismatch");
+        if (arr(casacore::IPosition(3, 1, 2, 3)) != 0.0f) throw std::runtime_error("row 2 [1,2,3] mismatch");
+    }
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -381,6 +457,32 @@ int32_t cpp_table_verify_tiled_cell_stman(const char* path, char** out_error) {
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in verify_tiled_cell_stman");
+        return -1;
+    }
+}
+
+int32_t cpp_table_write_tiled_column_3d_array(const char* path, char** out_error) {
+    try {
+        write_tiled_column_3d_array_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_tiled_column_3d_array");
+        return -1;
+    }
+}
+
+int32_t cpp_table_verify_tiled_column_3d_array(const char* path, char** out_error) {
+    try {
+        verify_tiled_column_3d_array_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in verify_tiled_column_3d_array");
         return -1;
     }
 }

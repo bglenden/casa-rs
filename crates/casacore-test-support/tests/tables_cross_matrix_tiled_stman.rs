@@ -192,6 +192,52 @@ fn tiled_cell_stman_fixture() -> TableFixture {
     }
 }
 
+// ===== TiledColumnStMan 3D array fixture (Task 1.4) =====
+// Fixed-shape Float32 [2,3,4], 3 rows, tile shape [2,3,2,2].
+
+fn tiled_column_3d_array_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 3, 4],
+    )])
+    .expect("schema");
+
+    let row0_vals: Vec<f32> = (1..=24).map(|v| v as f32).collect();
+    let row1_vals: Vec<f32> = (25..=48).map(|v| v as f32).collect();
+
+    let rows = vec![
+        RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::Float32(
+                ndarray::Array::from_shape_vec(ndarray::IxDyn(&[2, 3, 4]).f(), row0_vals).unwrap(),
+            )),
+        )]),
+        RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::Float32(
+                ndarray::Array::from_shape_vec(ndarray::IxDyn(&[2, 3, 4]).f(), row1_vals).unwrap(),
+            )),
+        )]),
+        RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::Float32(
+                ndarray::Array::from_shape_vec(ndarray::IxDyn(&[2, 3, 4]).f(), vec![0.0; 24])
+                    .unwrap(),
+            )),
+        )]),
+    ];
+
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::TiledColumn3DArray),
+        tile_shape: Some(vec![2, 3, 2]),
+    }
+}
+
 fn assert_matrix_results(results: &[casacore_test_support::table_interop::MatrixCellResult]) {
     for result in results {
         assert!(
@@ -229,6 +275,15 @@ fn tiled_cell_stman_cross_matrix() {
     assert_matrix_results(&run_full_cross_matrix(
         &fixture,
         ManagerKind::TiledCellStMan,
+    ));
+}
+
+#[test]
+fn tiled_column_3d_array_cross_matrix() {
+    let fixture = tiled_column_3d_array_fixture();
+    assert_matrix_results(&run_full_cross_matrix(
+        &fixture,
+        ManagerKind::TiledColumnStMan,
     ));
 }
 

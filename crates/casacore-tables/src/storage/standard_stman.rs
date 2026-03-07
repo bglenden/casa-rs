@@ -536,6 +536,46 @@ fn read_ssm_string(
         .map_err(|e| StorageError::FormatMismatch(format!("SSM string is not valid UTF-8: {e}")))
 }
 
+/// Read raw bytes from the SSM string bucket chain (for string array deserialization).
+fn read_ssm_string_bytes(
+    file: &mut File,
+    header: &SsmHeader,
+    bucket_nr: i32,
+    offset: i32,
+    length: i32,
+) -> Result<Vec<u8>, StorageError> {
+    if length == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut result = Vec::with_capacity(length as usize);
+    let mut remaining = length as usize;
+    let mut cur_bucket = bucket_nr;
+    let mut cur_offset = offset as usize;
+
+    while remaining > 0 {
+        let bucket = read_bucket(file, header, cur_bucket as u32)?;
+        let data_start = STRING_BUCKET_HEADER + cur_offset;
+        let available = bucket.len() - data_start;
+        let chunk = remaining.min(available);
+        result.extend_from_slice(&bucket[data_start..data_start + chunk]);
+        remaining -= chunk;
+
+        if remaining > 0 {
+            let next_bucket = read_i32_be(&bucket[12..16]);
+            if next_bucket < 0 {
+                return Err(StorageError::FormatMismatch(
+                    "SSM string chain ended prematurely".to_string(),
+                ));
+            }
+            cur_bucket = next_bucket;
+            cur_offset = 0;
+        }
+    }
+
+    Ok(result)
+}
+
 // ---------------------------------------------------------------------------
 // Column data reader
 // ---------------------------------------------------------------------------
@@ -912,6 +952,10 @@ fn read_column_from_buckets(
             Ok(ColumnRawData::Complex64(values))
         }
         CasacoreDataType::TpString => {
+            // C++ SSM stores ONE 12-byte reference per row for strings.
+            // Scalars (nrelem=1): short strings (<=8 bytes) inline, long in bucket.
+            // Arrays (nrelem>1): all elements serialized as [BE_i32_len][data]
+            // pairs in a string bucket, one reference per row.
             let mut values = Vec::with_capacity(nrrow * nrelem);
             for row in 0..nrrow {
                 let (bucket_nr, start_row, _end_row) =
@@ -927,18 +971,49 @@ fn read_column_from_buckets(
                 let str_offset = read_i32_canonical(&bucket[ref_offset + 4..], be);
                 let str_length = read_i32_canonical(&bucket[ref_offset + 8..], be);
 
-                let s = if str_length <= 8 {
-                    let inline_start = ref_offset;
-                    String::from_utf8(
-                        bucket[inline_start..inline_start + str_length as usize].to_vec(),
-                    )
-                    .map_err(|e| StorageError::FormatMismatch(format!("invalid UTF-8: {e}")))?
+                if nrelem == 1 {
+                    let s = if str_length <= 8 {
+                        String::from_utf8(
+                            bucket[ref_offset..ref_offset + str_length as usize].to_vec(),
+                        )
+                        .map_err(|e| StorageError::FormatMismatch(format!("invalid UTF-8: {e}")))?
+                    } else {
+                        read_ssm_string(file, header, str_bucket, str_offset, str_length)?
+                    };
+                    values.push(s);
+                } else if str_length == 0 {
+                    for _ in 0..nrelem {
+                        values.push(String::new());
+                    }
                 } else {
-                    read_ssm_string(file, header, str_bucket, str_offset, str_length)?
-                };
-
-                for _ in 0..nrelem {
-                    values.push(s.clone());
+                    let block =
+                        read_ssm_string_bytes(file, header, str_bucket, str_offset, str_length)?;
+                    let mut pos = 0usize;
+                    for _ in 0..nrelem {
+                        if pos + 4 > block.len() {
+                            return Err(StorageError::FormatMismatch(
+                                "SSM string array: block too short for length prefix".to_string(),
+                            ));
+                        }
+                        let slen = u32::from_be_bytes([
+                            block[pos],
+                            block[pos + 1],
+                            block[pos + 2],
+                            block[pos + 3],
+                        ]) as usize;
+                        pos += 4;
+                        if pos + slen > block.len() {
+                            return Err(StorageError::FormatMismatch(
+                                "SSM string array: block too short for string data".to_string(),
+                            ));
+                        }
+                        let s =
+                            String::from_utf8(block[pos..pos + slen].to_vec()).map_err(|e| {
+                                StorageError::FormatMismatch(format!("invalid UTF-8: {e}"))
+                            })?;
+                        pos += slen;
+                        values.push(s);
+                    }
                 }
             }
             Ok(ColumnRawData::String(values))
@@ -1019,12 +1094,16 @@ pub(crate) fn write_ssm_file(
 
     // 1. Compute column sizes in bits (for Bool bit-packing)
     // For indirect columns: 8 bytes (i64 offset) per row.
+    // String columns always use 96 bits (12 bytes) per row for a 3-int reference,
+    // regardless of array element count — all string data goes to string buckets.
     let col_sizes_bits: Vec<usize> = col_descs
         .iter()
         .map(|c| {
             let is_indirect = c.is_array && c.nrdim > 0 && c.shape.is_empty();
             if is_indirect {
                 64 // i64 offset = 8 bytes = 64 bits
+            } else if c.data_type == CasacoreDataType::TpString {
+                96 // 12 bytes = 3 ints (bucketNr, offset, length) per row
             } else {
                 let nrelem = if c.is_array && !c.shape.is_empty() {
                     c.shape.iter().map(|&s| s as usize).product()
@@ -1157,6 +1236,7 @@ pub(crate) fn write_ssm_file(
                     nrelem,
                     value,
                     &mut string_buckets,
+                    nr_data_buckets,
                     bucket_size as usize,
                     big_endian,
                 );
@@ -1273,10 +1353,11 @@ fn write_cell_to_bucket(
     nrelem: usize,
     value: Option<&casacore_types::Value>,
     string_buckets: &mut Vec<Vec<u8>>,
+    string_bucket_base: usize,
     bucket_size: usize,
     big_endian: bool,
 ) {
-    use casacore_types::{ScalarValue, Value};
+    use casacore_types::{ArrayValue, ScalarValue, Value};
 
     match data_type {
         CasacoreDataType::TpBool => {
@@ -1290,35 +1371,73 @@ fn write_cell_to_bucket(
             write_bool_bits(&mut bucket[byte_offset..], sub_bit, &bools);
         }
         CasacoreDataType::TpString => {
-            // String reference: 3 ints (bucket_nr, offset, length) in bucket byte order.
-            // Short strings (<=8 bytes) stored inline. String bucket metadata stays BE.
+            // C++ SSM stores ONE 12-byte reference (bucketNr, offset, length)
+            // per row, regardless of nrelem. For scalars (nrelem=1), short
+            // strings (<=8 bytes) are inlined in the reference slot. For arrays
+            // or long scalars, all element data goes to a string bucket as
+            // [BE_i32_len][string_bytes] pairs. String bucket metadata is BE.
             let ref_offset = col_offset + row_in_bucket * 12;
-            let s = match value {
-                Some(Value::Scalar(ScalarValue::String(s))) => s.as_str(),
-                _ => "",
-            };
-            let len = s.len() as i32;
-            if len <= 8 {
-                // Inline: write string bytes at ref_offset, then zeros, then length at +8
-                bucket[ref_offset..ref_offset + s.len()].copy_from_slice(s.as_bytes());
-                // Zero remaining bytes in the 12-byte slot (already zeroed)
-                if big_endian {
-                    write_i32_be(&mut bucket[ref_offset + 8..], len);
+
+            if nrelem == 1 {
+                // Scalar string
+                let s = match value {
+                    Some(Value::Scalar(ScalarValue::String(s))) => s.as_str(),
+                    _ => "",
+                };
+                let len = s.len() as i32;
+                if len <= 8 {
+                    bucket[ref_offset..ref_offset + s.len()].copy_from_slice(s.as_bytes());
+                    if big_endian {
+                        write_i32_be(&mut bucket[ref_offset + 8..], len);
+                    } else {
+                        write_i32_le(&mut bucket[ref_offset + 8..], len);
+                    }
                 } else {
-                    write_i32_le(&mut bucket[ref_offset + 8..], len);
+                    let (sb_nr, sb_offset) =
+                        allocate_string_in_bucket(string_buckets, s.as_bytes(), bucket_size);
+                    let abs_bucket = (string_bucket_base + sb_nr) as i32;
+                    if big_endian {
+                        write_i32_be(&mut bucket[ref_offset..], abs_bucket);
+                        write_i32_be(&mut bucket[ref_offset + 4..], sb_offset as i32);
+                        write_i32_be(&mut bucket[ref_offset + 8..], len);
+                    } else {
+                        write_i32_le(&mut bucket[ref_offset..], abs_bucket);
+                        write_i32_le(&mut bucket[ref_offset + 4..], sb_offset as i32);
+                        write_i32_le(&mut bucket[ref_offset + 8..], len);
+                    }
                 }
             } else {
-                // Store in string bucket
-                let (sb_nr, sb_offset) =
-                    allocate_string_in_bucket(string_buckets, s.as_bytes(), bucket_size);
-                if big_endian {
-                    write_i32_be(&mut bucket[ref_offset..], sb_nr as i32);
-                    write_i32_be(&mut bucket[ref_offset + 4..], sb_offset as i32);
-                    write_i32_be(&mut bucket[ref_offset + 8..], len);
+                // String array: serialize all elements as [BE_i32_len][data]
+                // pairs into one string bucket entry, like C++ SSMStringHandler.
+                let strings: Vec<String> = match value {
+                    Some(Value::Array(ArrayValue::String(arr))) => {
+                        arr.t().iter().take(nrelem).cloned().collect()
+                    }
+                    _ => vec![String::new(); nrelem],
+                };
+                let total_len: usize = strings.iter().map(|s| 4 + s.len()).sum();
+                if total_len == 0 {
+                    // All empty strings — leave reference as zeroes
                 } else {
-                    write_i32_le(&mut bucket[ref_offset..], sb_nr as i32);
-                    write_i32_le(&mut bucket[ref_offset + 4..], sb_offset as i32);
-                    write_i32_le(&mut bucket[ref_offset + 8..], len);
+                    // Build serialized block
+                    let mut block = Vec::with_capacity(total_len);
+                    for s in &strings {
+                        block.extend_from_slice(&(s.len() as u32).to_be_bytes());
+                        block.extend_from_slice(s.as_bytes());
+                    }
+                    let (sb_nr, sb_offset) =
+                        allocate_string_in_bucket(string_buckets, &block, bucket_size);
+                    let abs_bucket = (string_bucket_base + sb_nr) as i32;
+                    let total = total_len as i32;
+                    if big_endian {
+                        write_i32_be(&mut bucket[ref_offset..], abs_bucket);
+                        write_i32_be(&mut bucket[ref_offset + 4..], sb_offset as i32);
+                        write_i32_be(&mut bucket[ref_offset + 8..], total);
+                    } else {
+                        write_i32_le(&mut bucket[ref_offset..], abs_bucket);
+                        write_i32_le(&mut bucket[ref_offset + 4..], sb_offset as i32);
+                        write_i32_le(&mut bucket[ref_offset + 8..], total);
+                    }
                 }
             }
         }
@@ -1350,11 +1469,17 @@ fn write_value_canonical(
 
     match data_type {
         CasacoreDataType::TpUChar => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::UInt8(v))) => *v,
-                _ => 0,
-            };
-            dst[0] = v;
+            if nrelem == 1 {
+                let v = match value {
+                    Some(Value::Scalar(ScalarValue::UInt8(v))) => *v,
+                    _ => 0,
+                };
+                dst[0] = v;
+            } else if let Some(Value::Array(ArrayValue::UInt8(arr))) = value {
+                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
+                    dst[i] = v;
+                }
+            }
         }
         CasacoreDataType::TpShort => {
             let v = match value {
@@ -1368,14 +1493,24 @@ fn write_value_canonical(
             }
         }
         CasacoreDataType::TpUShort => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::UInt16(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_u16_be(dst, v);
-            } else {
-                write_u16_le(dst, v);
+            if nrelem == 1 {
+                let v = match value {
+                    Some(Value::Scalar(ScalarValue::UInt16(v))) => *v,
+                    _ => 0,
+                };
+                if big_endian {
+                    write_u16_be(dst, v);
+                } else {
+                    write_u16_le(dst, v);
+                }
+            } else if let Some(Value::Array(ArrayValue::UInt16(arr))) = value {
+                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
+                    if big_endian {
+                        write_u16_be(&mut dst[i * 2..], v);
+                    } else {
+                        write_u16_le(&mut dst[i * 2..], v);
+                    }
+                }
             }
         }
         CasacoreDataType::TpInt => {
@@ -1400,14 +1535,24 @@ fn write_value_canonical(
             }
         }
         CasacoreDataType::TpUInt => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::UInt32(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_u32_be(dst, v);
-            } else {
-                write_u32_le(dst, v);
+            if nrelem == 1 {
+                let v = match value {
+                    Some(Value::Scalar(ScalarValue::UInt32(v))) => *v,
+                    _ => 0,
+                };
+                if big_endian {
+                    write_u32_be(dst, v);
+                } else {
+                    write_u32_le(dst, v);
+                }
+            } else if let Some(Value::Array(ArrayValue::UInt32(arr))) = value {
+                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
+                    if big_endian {
+                        write_u32_be(&mut dst[i * 4..], v);
+                    } else {
+                        write_u32_le(&mut dst[i * 4..], v);
+                    }
+                }
             }
         }
         CasacoreDataType::TpFloat => {
@@ -1453,14 +1598,24 @@ fn write_value_canonical(
             }
         }
         CasacoreDataType::TpInt64 => {
-            let v = match value {
-                Some(Value::Scalar(ScalarValue::Int64(v))) => *v,
-                _ => 0,
-            };
-            if big_endian {
-                write_i64_be(dst, v);
-            } else {
-                write_i64_le(dst, v);
+            if nrelem == 1 {
+                let v = match value {
+                    Some(Value::Scalar(ScalarValue::Int64(v))) => *v,
+                    _ => 0,
+                };
+                if big_endian {
+                    write_i64_be(dst, v);
+                } else {
+                    write_i64_le(dst, v);
+                }
+            } else if let Some(Value::Array(ArrayValue::Int64(arr))) = value {
+                for (i, &v) in arr.t().iter().enumerate().take(nrelem) {
+                    if big_endian {
+                        write_i64_be(&mut dst[i * 8..], v);
+                    } else {
+                        write_i64_le(&mut dst[i * 8..], v);
+                    }
+                }
             }
         }
         CasacoreDataType::TpComplex => {

@@ -146,6 +146,203 @@ void verify_ssm_keywords_impl(const std::string& path) {
     if (kw.asInt("version") != 3) throw std::runtime_error("keyword 'version' mismatch");
 }
 
+// ===== Unsigned integer arrays: 3 rows × 3 cols (uChar[4], uShort[4], uInt[4]) =====
+
+void write_ssm_unsigned_arrays_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ArrayColumnDesc<casacore::uChar>("arr_u8",
+        casacore::IPosition(1, 4), casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
+    td.addColumn(casacore::ArrayColumnDesc<casacore::uShort>("arr_u16",
+        casacore::IPosition(1, 4), casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
+    td.addColumn(casacore::ArrayColumnDesc<casacore::uInt>("arr_u32",
+        casacore::IPosition(1, 4), casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StandardStMan stman;
+    setup.bindAll(stman);
+    casacore::Table table(setup, 3);
+
+    casacore::ArrayColumn<casacore::uChar> colU8(table, "arr_u8");
+    casacore::ArrayColumn<casacore::uShort> colU16(table, "arr_u16");
+    casacore::ArrayColumn<casacore::uInt> colU32(table, "arr_u32");
+
+    // Row 0
+    {
+        casacore::Vector<casacore::uChar> v(4); v(0)=255; v(1)=128; v(2)=0; v(3)=1;
+        colU8.put(0, v);
+        casacore::Vector<casacore::uShort> vs(4); vs(0)=65535; vs(1)=32768; vs(2)=0; vs(3)=1;
+        colU16.put(0, vs);
+        casacore::Vector<casacore::uInt> vi(4); vi(0)=UINT_MAX; vi(1)=100000; vi(2)=0; vi(3)=1;
+        colU32.put(0, vi);
+    }
+    // Row 1: all zeros
+    {
+        casacore::Vector<casacore::uChar> v(4, 0); colU8.put(1, v);
+        casacore::Vector<casacore::uShort> vs(4, 0); colU16.put(1, vs);
+        casacore::Vector<casacore::uInt> vi(4, 0u); colU32.put(1, vi);
+    }
+    // Row 2
+    {
+        casacore::Vector<casacore::uChar> v(4); v(0)=1; v(1)=2; v(2)=3; v(3)=4;
+        colU8.put(2, v);
+        casacore::Vector<casacore::uShort> vs(4); vs(0)=100; vs(1)=200; vs(2)=300; vs(3)=400;
+        colU16.put(2, vs);
+        casacore::Vector<casacore::uInt> vi(4); vi(0)=1000; vi(1)=2000; vi(2)=3000; vi(3)=4000;
+        colU32.put(2, vi);
+    }
+    table.flush();
+}
+
+void verify_ssm_unsigned_arrays_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 3) throw std::runtime_error("expected 3 rows, got " + std::to_string(table.nrow()));
+
+    casacore::ArrayColumn<casacore::uChar> colU8(table, "arr_u8");
+    casacore::ArrayColumn<casacore::uShort> colU16(table, "arr_u16");
+    casacore::ArrayColumn<casacore::uInt> colU32(table, "arr_u32");
+
+    // Row 0
+    { casacore::Vector<casacore::uChar> v(colU8(0)); if (v(0)!=255||v(1)!=128||v(2)!=0||v(3)!=1) throw std::runtime_error("row 0 arr_u8 mismatch"); }
+    { casacore::Vector<casacore::uShort> v(colU16(0)); if (v(0)!=65535||v(1)!=32768||v(2)!=0||v(3)!=1) throw std::runtime_error("row 0 arr_u16 mismatch"); }
+    { casacore::Vector<casacore::uInt> v(colU32(0)); if (v(0)!=UINT_MAX||v(1)!=100000||v(2)!=0||v(3)!=1) throw std::runtime_error("row 0 arr_u32 mismatch"); }
+
+    // Row 1: all zeros
+    { casacore::Vector<casacore::uChar> v(colU8(1)); if (v(0)!=0||v(1)!=0||v(2)!=0||v(3)!=0) throw std::runtime_error("row 1 arr_u8 mismatch"); }
+    { casacore::Vector<casacore::uShort> v(colU16(1)); if (v(0)!=0||v(1)!=0||v(2)!=0||v(3)!=0) throw std::runtime_error("row 1 arr_u16 mismatch"); }
+    { casacore::Vector<casacore::uInt> v(colU32(1)); if (v(0)!=0||v(1)!=0||v(2)!=0||v(3)!=0) throw std::runtime_error("row 1 arr_u32 mismatch"); }
+
+    // Row 2
+    { casacore::Vector<casacore::uChar> v(colU8(2)); if (v(0)!=1||v(1)!=2||v(2)!=3||v(3)!=4) throw std::runtime_error("row 2 arr_u8 mismatch"); }
+    { casacore::Vector<casacore::uShort> v(colU16(2)); if (v(0)!=100||v(1)!=200||v(2)!=300||v(3)!=400) throw std::runtime_error("row 2 arr_u16 mismatch"); }
+    { casacore::Vector<casacore::uInt> v(colU32(2)); if (v(0)!=1000||v(1)!=2000||v(2)!=3000||v(3)!=4000) throw std::runtime_error("row 2 arr_u32 mismatch"); }
+}
+
+// ===== String arrays: 3 rows × 1 col (String[3]) =====
+
+void write_ssm_string_array_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ArrayColumnDesc<casacore::String>("arr_str",
+        casacore::IPosition(1, 3), casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StandardStMan stman;
+    setup.bindAll(stman);
+    casacore::Table table(setup, 3);
+
+    casacore::ArrayColumn<casacore::String> col(table, "arr_str");
+
+    { casacore::Vector<casacore::String> v(3); v(0)="alpha"; v(1)="beta"; v(2)="gamma"; col.put(0, v); }
+    { casacore::Vector<casacore::String> v(3); v(0)=""; v(1)=""; v(2)=""; col.put(1, v); }
+    { casacore::Vector<casacore::String> v(3); v(0)="hello world"; v(1)="café"; v(2)="line\nnewline"; col.put(2, v); }
+
+    table.flush();
+}
+
+void verify_ssm_string_array_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 3) throw std::runtime_error("expected 3 rows");
+
+    casacore::ArrayColumn<casacore::String> col(table, "arr_str");
+
+    { casacore::Vector<casacore::String> v(col(0)); if (v(0)!="alpha"||v(1)!="beta"||v(2)!="gamma") throw std::runtime_error("row 0 mismatch"); }
+    { casacore::Vector<casacore::String> v(col(1)); if (v(0)!=""||v(1)!=""||v(2)!="") throw std::runtime_error("row 1 mismatch"); }
+    { casacore::Vector<casacore::String> v(col(2)); if (v(0)!="hello world"||v(1)!="café"||v(2)!="line\nnewline") throw std::runtime_error("row 2 mismatch"); }
+}
+
+// ===== Complex64 2D arrays: 3 rows × 1 col (DComplex[2,2]) =====
+
+void write_ssm_complex64_2d_array_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    casacore::IPosition shape(2, 2, 2);
+    td.addColumn(casacore::ArrayColumnDesc<casacore::DComplex>("arr_c64", shape,
+        casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StandardStMan stman;
+    setup.bindAll(stman);
+    casacore::Table table(setup, 3);
+
+    casacore::ArrayColumn<casacore::DComplex> col(table, "arr_c64");
+
+    // Row 0
+    {
+        casacore::Array<casacore::DComplex> a(shape);
+        a(casacore::IPosition(2,0,0)) = casacore::DComplex(1.0, 2.0);
+        a(casacore::IPosition(2,1,0)) = casacore::DComplex(3.0, 4.0);
+        a(casacore::IPosition(2,0,1)) = casacore::DComplex(5.0, 6.0);
+        a(casacore::IPosition(2,1,1)) = casacore::DComplex(7.0, 8.0);
+        col.put(0, a);
+    }
+    // Row 1: all zeros
+    {
+        casacore::Array<casacore::DComplex> a(shape, casacore::DComplex(0.0, 0.0));
+        col.put(1, a);
+    }
+    // Row 2
+    {
+        casacore::Array<casacore::DComplex> a(shape);
+        a(casacore::IPosition(2,0,0)) = casacore::DComplex(-1.0, 0.5);
+        a(casacore::IPosition(2,1,0)) = casacore::DComplex(1e10, -1e10);
+        a(casacore::IPosition(2,0,1)) = casacore::DComplex(0.0, 0.0);
+        a(casacore::IPosition(2,1,1)) = casacore::DComplex(-0.25, 0.75);
+        col.put(2, a);
+    }
+    table.flush();
+}
+
+void verify_ssm_complex64_2d_array_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 3) throw std::runtime_error("expected 3 rows");
+
+    casacore::ArrayColumn<casacore::DComplex> col(table, "arr_c64");
+    casacore::IPosition shape(2, 2, 2);
+
+    // Row 0
+    {
+        casacore::Array<casacore::DComplex> a = col(0);
+        if (!a.shape().isEqual(shape)) throw std::runtime_error("row 0 shape mismatch");
+        if (a(casacore::IPosition(2,0,0)) != casacore::DComplex(1.0, 2.0)) throw std::runtime_error("row 0 [0,0] mismatch");
+        if (a(casacore::IPosition(2,1,1)) != casacore::DComplex(7.0, 8.0)) throw std::runtime_error("row 0 [1,1] mismatch");
+    }
+    // Row 1: zeros
+    {
+        casacore::Array<casacore::DComplex> a = col(1);
+        if (a(casacore::IPosition(2,0,0)) != casacore::DComplex(0.0, 0.0)) throw std::runtime_error("row 1 [0,0] mismatch");
+        if (a(casacore::IPosition(2,1,1)) != casacore::DComplex(0.0, 0.0)) throw std::runtime_error("row 1 [1,1] mismatch");
+    }
+    // Row 2
+    {
+        casacore::Array<casacore::DComplex> a = col(2);
+        if (a(casacore::IPosition(2,0,0)) != casacore::DComplex(-1.0, 0.5)) throw std::runtime_error("row 2 [0,0] mismatch");
+        if (a(casacore::IPosition(2,1,0)) != casacore::DComplex(1e10, -1e10)) throw std::runtime_error("row 2 [1,0] mismatch");
+        if (a(casacore::IPosition(2,1,1)) != casacore::DComplex(-0.25, 0.75)) throw std::runtime_error("row 2 [1,1] mismatch");
+    }
+}
+
+// ===== Empty table: 0 rows, Int32 scalar + Float32[4] array =====
+
+void write_ssm_empty_table_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("col_i32"));
+    td.addColumn(casacore::ArrayColumnDesc<casacore::Float>("arr_f32",
+        casacore::IPosition(1, 4), casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StandardStMan stman;
+    setup.bindAll(stman);
+    casacore::Table table(setup, 0);  // zero rows
+    table.flush();
+}
+
+void verify_ssm_empty_table_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 0) throw std::runtime_error("expected 0 rows, got " + std::to_string(table.nrow()));
+
+    // Verify schema exists
+    if (!table.tableDesc().isColumn("col_i32")) throw std::runtime_error("col_i32 missing");
+    if (!table.tableDesc().isColumn("arr_f32")) throw std::runtime_error("arr_f32 missing");
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -447,6 +644,47 @@ int32_t cpp_table_write_ssm_typed_arrays(const char* path, char** out_error) {
 }
 int32_t cpp_table_verify_ssm_typed_arrays(const char* path, char** out_error) {
     try { verify_ssm_typed_arrays_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+
+int32_t cpp_table_write_ssm_unsigned_arrays(const char* path, char** out_error) {
+    try { write_ssm_unsigned_arrays_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_verify_ssm_unsigned_arrays(const char* path, char** out_error) {
+    try { verify_ssm_unsigned_arrays_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_write_ssm_string_array(const char* path, char** out_error) {
+    try { write_ssm_string_array_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_verify_ssm_string_array(const char* path, char** out_error) {
+    try { verify_ssm_string_array_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_write_ssm_complex64_2d_array(const char* path, char** out_error) {
+    try { write_ssm_complex64_2d_array_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_verify_ssm_complex64_2d_array(const char* path, char** out_error) {
+    try { verify_ssm_complex64_2d_array_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_write_ssm_empty_table(const char* path, char** out_error) {
+    try { write_ssm_empty_table_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_verify_ssm_empty_table(const char* path, char** out_error) {
+    try { verify_ssm_empty_table_impl(path); return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }

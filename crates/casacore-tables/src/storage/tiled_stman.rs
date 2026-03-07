@@ -1647,11 +1647,18 @@ fn save_tiled_column_stman(
     let mut cube_shape = cell_shape.clone();
     cube_shape.push(nrrow);
 
-    let tile_shape: Vec<usize> = if let Some(ts) = user_tile_shape {
+    let mut tile_shape: Vec<usize> = if let Some(ts) = user_tile_shape {
         ts.to_vec()
     } else {
         default_tile_shape_for(&cell_shape, nrrow)
     };
+
+    // TiledColumnStMan tile shape must include the row dimension. If the user
+    // supplied only cell dimensions, pad with a default row-tile size.
+    if tile_shape.len() == cell_ndim {
+        let default_row_tile = nrrow.clamp(1, 32);
+        tile_shape.push(default_row_tile);
+    }
 
     // Collect column data types.
     let col_data_types: Vec<CasacoreDataType> = col_descs

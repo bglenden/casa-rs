@@ -1408,6 +1408,105 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 
+    // --- Stream 1 interop additions ---
+
+    fn cpp_table_write_aipsio_unsigned_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_unsigned_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_unsigned_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_unsigned_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_aipsio_string_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_string_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_string_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_string_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_aipsio_complex64_2d_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_complex64_2d_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_complex64_2d_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_complex64_2d_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_aipsio_empty_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_aipsio_empty_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ssm_empty_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ssm_empty_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_tiled_column_3d_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_tiled_column_3d_array(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ism_typed_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ism_typed_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ism_complex_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ism_complex_arrays(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_write_ism_column_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_ism_column_keywords(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
     fn cpp_vararray_bench_write_read(
         path: *const std::ffi::c_char,
         nrows: u64,
@@ -2051,6 +2150,39 @@ pub enum CppTableFixture {
     /// SSM Complex32 variable-shape array: same data as `AipsIOComplexVariableArray`
     /// but stored with `StandardStMan`.
     SsmComplexVariableArray,
+    /// AipsIO unsigned integer arrays: 3 rows × 3 cols (uChar\[4\], uShort\[4\],
+    /// uInt\[4\]) stored with `StManAipsIO`.
+    AipsioUnsignedArrays,
+    /// SSM unsigned integer arrays: same as `AipsioUnsignedArrays` but stored
+    /// with `StandardStMan`.
+    SsmUnsignedArrays,
+    /// AipsIO string array: 3 rows × 1 col (String\[3\]) stored with `StManAipsIO`.
+    AipsioStringArray,
+    /// SSM string array: same as `AipsioStringArray` but stored with `StandardStMan`.
+    SsmStringArray,
+    /// AipsIO Complex64 2D array: 3 rows × 1 col (DComplex\[2,2\]) stored with
+    /// `StManAipsIO`.
+    AipsioComplex64Array2D,
+    /// SSM Complex64 2D array: same as `AipsioComplex64Array2D` but stored with
+    /// `StandardStMan`.
+    SsmComplex64Array2D,
+    /// AipsIO empty table: schema with Int32 scalar + Float32\[4\] array, 0 rows,
+    /// stored with `StManAipsIO`.
+    AipsioEmptyTable,
+    /// SSM empty table: same schema as `AipsioEmptyTable` but stored with
+    /// `StandardStMan`.
+    SsmEmptyTable,
+    /// TiledColumnStMan 3D array: Float32 \[2,3,4\], 3 rows, tile shape \[2,3,2,2\].
+    TiledColumn3DArray,
+    /// ISM typed arrays: 3 rows × 3 cols (Int\[4\], Double\[2,2\], Bool\[3\])
+    /// stored with `IncrementalStMan`. Full CC/CR/RC cross-matrix.
+    IsmTypedArrays,
+    /// ISM complex arrays: 3 rows × 2 cols (Complex32\[2\], Complex64\[2\])
+    /// stored with `IncrementalStMan`. Full CC/CR/RC cross-matrix.
+    IsmComplexArrays,
+    /// ISM column keywords: 2-row table (flux: Double, id: Int) with per-column
+    /// keywords, stored with `IncrementalStMan`. Full CC/CR/RC cross-matrix.
+    IsmColumnKeywords,
 }
 
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
@@ -2159,6 +2291,42 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
             }
             CppTableFixture::SsmComplexVariableArray => {
                 cpp_table_write_ssm_complex_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioUnsignedArrays => {
+                cpp_table_write_aipsio_unsigned_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmUnsignedArrays => {
+                cpp_table_write_ssm_unsigned_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioStringArray => {
+                cpp_table_write_aipsio_string_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmStringArray => {
+                cpp_table_write_ssm_string_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioComplex64Array2D => {
+                cpp_table_write_aipsio_complex64_2d_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmComplex64Array2D => {
+                cpp_table_write_ssm_complex64_2d_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioEmptyTable => {
+                cpp_table_write_aipsio_empty_table(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmEmptyTable => {
+                cpp_table_write_ssm_empty_table(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledColumn3DArray => {
+                cpp_table_write_tiled_column_3d_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmTypedArrays => {
+                cpp_table_write_ism_typed_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmComplexArrays => {
+                cpp_table_write_ism_complex_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmColumnKeywords => {
+                cpp_table_write_ism_column_keywords(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::MutationRemovedColumn
             | CppTableFixture::MutationRemovedRows
@@ -2303,6 +2471,42 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
             }
             CppTableFixture::SsmComplexVariableArray => {
                 cpp_table_verify_ssm_complex_variable_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioUnsignedArrays => {
+                cpp_table_verify_aipsio_unsigned_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmUnsignedArrays => {
+                cpp_table_verify_ssm_unsigned_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioStringArray => {
+                cpp_table_verify_aipsio_string_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmStringArray => {
+                cpp_table_verify_ssm_string_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioComplex64Array2D => {
+                cpp_table_verify_aipsio_complex64_2d_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmComplex64Array2D => {
+                cpp_table_verify_ssm_complex64_2d_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::AipsioEmptyTable => {
+                cpp_table_verify_aipsio_empty_table(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmEmptyTable => {
+                cpp_table_verify_ssm_empty_table(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledColumn3DArray => {
+                cpp_table_verify_tiled_column_3d_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmTypedArrays => {
+                cpp_table_verify_ism_typed_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmComplexArrays => {
+                cpp_table_verify_ism_complex_arrays(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::IsmColumnKeywords => {
+                cpp_table_verify_ism_column_keywords(c_path.as_ptr(), &mut error)
             }
         }
     };

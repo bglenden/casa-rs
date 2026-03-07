@@ -576,17 +576,35 @@ fn extract_fixed_array_value(
                 .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
             ArrayValue::UInt8(arr)
         }
+        ColumnRawData::UInt16(v) => {
+            let slice = &v[offset..offset + elements_per_row];
+            let arr = ArrayD::from_shape_vec(IxDyn(&shape).f(), slice.to_vec())
+                .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
+            ArrayValue::UInt16(arr)
+        }
         ColumnRawData::Int16(v) => {
             let slice = &v[offset..offset + elements_per_row];
             let arr = ArrayD::from_shape_vec(IxDyn(&shape).f(), slice.to_vec())
                 .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
             ArrayValue::Int16(arr)
         }
+        ColumnRawData::UInt32(v) => {
+            let slice = &v[offset..offset + elements_per_row];
+            let arr = ArrayD::from_shape_vec(IxDyn(&shape).f(), slice.to_vec())
+                .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
+            ArrayValue::UInt32(arr)
+        }
         ColumnRawData::Int32(v) => {
             let slice = &v[offset..offset + elements_per_row];
             let arr = ArrayD::from_shape_vec(IxDyn(&shape).f(), slice.to_vec())
                 .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
             ArrayValue::Int32(arr)
+        }
+        ColumnRawData::Int64(v) => {
+            let slice = &v[offset..offset + elements_per_row];
+            let arr = ArrayD::from_shape_vec(IxDyn(&shape).f(), slice.to_vec())
+                .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
+            ArrayValue::Int64(arr)
         }
         ColumnRawData::Float32(v) => {
             let slice = &v[offset..offset + elements_per_row];
@@ -617,11 +635,6 @@ fn extract_fixed_array_value(
             let arr = ArrayD::from_shape_vec(IxDyn(&shape).f(), slice.to_vec())
                 .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
             ArrayValue::String(arr)
-        }
-        _ => {
-            return Err(StorageError::FormatMismatch(
-                "unsupported array element type".to_string(),
-            ));
         }
     };
 
@@ -1147,10 +1160,101 @@ fn write_flat_array_column_raw(
             }
             io.put_bool_slice(&flat, false)?;
         }
-        other => {
-            return Err(StorageError::FormatMismatch(format!(
-                "fixed array write not yet implemented for {other:?}"
-            )));
+        PrimitiveType::UInt8 => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::UInt8(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected UInt8 array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_u8_slice(&flat, false)?;
+        }
+        PrimitiveType::UInt16 => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::UInt16(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected UInt16 array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_u16_slice(&flat, false)?;
+        }
+        PrimitiveType::UInt32 => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::UInt32(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected UInt32 array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_u32_slice(&flat, false)?;
+        }
+        PrimitiveType::Int64 => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::Int64(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected Int64 array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_i64_slice(&flat, false)?;
+        }
+        PrimitiveType::Complex64 => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::Complex64(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected Complex64 array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_complex64_slice(&flat, false)?;
+        }
+        PrimitiveType::String => {
+            let mut flat = Vec::with_capacity(rows.len() * elements_per_row);
+            for row in rows {
+                match row.get(col_name) {
+                    Some(Value::Array(ArrayValue::String(arr))) => {
+                        flat.extend(fortran_flat_iter(arr));
+                    }
+                    _ => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "expected String array for column {col_name}"
+                        )));
+                    }
+                }
+            }
+            io.put_string_slice(&flat, false)?;
         }
     }
     Ok(())
