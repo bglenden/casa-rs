@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 use super::columns::{validate_cell_against_schema_column, validate_row_against_schema};
 use super::*;
 
