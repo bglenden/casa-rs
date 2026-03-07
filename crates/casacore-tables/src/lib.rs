@@ -259,7 +259,7 @@ pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };
 pub use sorting::{TableGroup, TableIterator};
-pub use storage::{DataManagerInfo, TableInfo};
+pub use storage::{DataManagerInfo, StorageError, TableInfo, TilePixel, TiledFileIO};
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
     QueryResult, RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table,

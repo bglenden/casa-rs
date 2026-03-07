@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "Cross-language test infrastructure (internal)"
+repository.workspace = true
 publish = false
 
 [lints]
@@ -11,6 +13,9 @@ workspace = true
 
 [dependencies]
 casacore-aipsio = { path = "../casacore-aipsio" }
+casacore-images = { path = "../casacore-images" }
+casacore-coordinates = { path = "../casacore-coordinates" }
+casacore-lattices = { path = "../casacore-lattices" }
 casacore-measures-data = { path = "../casacore-measures-data" }
 casacore-tables = { path = "../casacore-tables" }
 casacore-types = { path = "../casacore-types" }

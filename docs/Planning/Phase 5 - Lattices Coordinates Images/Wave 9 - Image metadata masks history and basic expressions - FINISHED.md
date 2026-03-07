@@ -1,47 +1,54 @@
-# Wave 5 - Complete coordinates and coordinate system parity
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 9 - Image metadata masks history and basic expressions
 
 ## Origin
 
-- Backlog items: 5.1, 5.2, 5.3, 5.4.
+- Backlog items: 9.1, 9.2, 9.3.
 
 ## Goal
 
-- Complete deferred coordinate parity: `DirectionCoordinate`,
-  `SpectralCoordinate`, `StokesCoordinate`, and `CoordinateSystem` behavior.
+- Implement image metadata/mask/history handling and a minimal expression layer
+  suitable for interoperability and basic workflows.
 
 ## Non-goals
 
-- Image storage and iteration APIs.
-- Full nonlinear image reprojection workflows.
+- Advanced deconvolution/imaging algorithms.
+- Full expression parser parity.
 
 ## Scope
 
 ### Read path
 
-- Decode and apply full coordinate metadata and axis mapping behavior.
+- Read metadata, history records, and mask state with image payload.
 
 ### Write path
 
-- Persist full coordinate metadata with C++-compatible semantics.
+- Persist metadata/history updates and mask changes.
 
 ### API/docs/demo
 
-- Public coordinate APIs including full `CoordinateSystem` manipulation support.
+- APIs for metadata/history operations and minimal expression use cases.
 
 ## Dependencies
 
-- Waves 1-4 completed.
+- Wave 4 completed.
+- Wave 7 completed.
 
 ## Ordering constraints
 
-- Must run after Wave 4.
-- Required before Waves 6-10.
+- Must run after Waves 4 and 7.
+- Required before Wave 10.
 
 ## Files likely touched
 
-- `crates/casacore-coordinates/`
-- workspace wiring if new crate is introduced
-- `crates/casacore-test-support/tests/`
+- `crates/casacore-images/src/`
+- `crates/casacore-images/tests/`
+- `crates/casacore-types/src/`
 
 ## Definition of Ready
 
@@ -55,9 +62,9 @@
 
 ## Implementation checklist
 
-- [ ] Implement full coordinate and coordinate-system type coverage.
-- [ ] Add axis map/transpose/remove behavior parity tests.
-- [ ] Add interop fixtures for coordinate metadata round-trips.
+- [ ] Implement metadata/history persistence and retrieval.
+- [ ] Implement mask state APIs and updates.
+- [ ] Add minimal expression support and regression tests.
 
 ## Test plan
 
@@ -70,9 +77,9 @@
 
 ## Performance plan
 
-- Workload: repeated pixel/world conversion and axis-map operations.
-- Rust command: release benchmark for coordinate conversion throughput.
-- C++ command: matching coordinate conversion benchmark.
+- Workload: metadata/mask-heavy open-update-save loop.
+- Rust command: release benchmark for metadata and mask updates.
+- C++ command: matching image metadata update benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

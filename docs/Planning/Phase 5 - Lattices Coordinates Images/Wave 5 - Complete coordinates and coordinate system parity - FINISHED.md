@@ -1,46 +1,52 @@
-# Wave 2 - Lattice storage backends and paged tiling
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 5 - Complete coordinates and coordinate system parity
 
 ## Origin
 
-- Backlog items: 2.1, 2.2, 2.3, 2.4.
+- Backlog items: 5.1, 5.2, 5.3, 5.4.
 
 ## Goal
 
-- Implement lattice storage backends: memory-backed and paged/tiled disk-backed
-  lattices with compatible metadata semantics.
+- Complete deferred coordinate parity: `DirectionCoordinate`,
+  `SpectralCoordinate`, `StokesCoordinate`, and `CoordinateSystem` behavior.
 
 ## Non-goals
 
-- Iterator APIs beyond minimal internal traversal.
-- Region/mask algebra.
+- Image storage and iteration APIs.
+- Full nonlinear image reprojection workflows.
 
 ## Scope
 
 ### Read path
 
-- Open and read lattice data from memory and paged/tiled storage.
+- Decode and apply full coordinate metadata and axis mapping behavior.
 
 ### Write path
 
-- Persist lattice data and storage metadata to disk.
+- Persist full coordinate metadata with C++-compatible semantics.
 
 ### API/docs/demo
 
-- Backend selection APIs and simple read/write demo.
+- Public coordinate APIs including full `CoordinateSystem` manipulation support.
 
 ## Dependencies
 
-- Wave 1 completed.
+- Waves 1-4 completed.
 
 ## Ordering constraints
 
-- Must run after Wave 1.
-- Required before Waves 3, 4, 7, and 8.
+- Must run after Wave 4.
+- Required before Waves 6-10.
 
 ## Files likely touched
 
-- `crates/casacore-lattices/src/`
-- `crates/casacore-lattices/tests/`
+- `crates/casacore-coordinates/`
+- workspace wiring if new crate is introduced
 - `crates/casacore-test-support/tests/`
 
 ## Definition of Ready
@@ -55,9 +61,9 @@
 
 ## Implementation checklist
 
-- [ ] Implement memory and paged/tiled lattice backends.
-- [ ] Add metadata serialization/deserialization support.
-- [ ] Add interop tests for persistence and reopen behavior.
+- [ ] Implement full coordinate and coordinate-system type coverage.
+- [ ] Add axis map/transpose/remove behavior parity tests.
+- [ ] Add interop fixtures for coordinate metadata round-trips.
 
 ## Test plan
 
@@ -70,9 +76,9 @@
 
 ## Performance plan
 
-- Workload: large array read/write with varied tile shapes.
-- Rust command: release benchmark for backend throughput.
-- C++ command: matching paged lattice storage benchmark.
+- Workload: repeated pixel/world conversion and axis-map operations.
+- Rust command: release benchmark for coordinate conversion throughput.
+- C++ command: matching coordinate conversion benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(has_casacore_cpp)");
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/cpp/casacore_cpp_image_shim.cpp");
 
     let casacore = pkg_config::Config::new().probe("casacore");
     let casacore = match casacore {
@@ -34,6 +36,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_measures_shim.cpp");
     build.file("src/cpp/casacore_cpp_table_complex_vararray.cpp");
     build.file("src/cpp/casacore_cpp_ms.cpp");
+    build.file("src/cpp/casacore_cpp_image_shim.cpp");
 
     for include in &casacore.include_paths {
         build.include(include);

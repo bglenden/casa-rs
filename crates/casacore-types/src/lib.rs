@@ -33,7 +33,8 @@
 //! - [`ScalarValue`] — a single typed value (bool, integer, float, complex, or string).
 //! - [`ArrayValue`] — an N-dimensional array backed by [`ndarray::ArrayD`].
 //! - [`RecordValue`] — an ordered collection of named [`Value`] fields.
-//! - [`Value`] — the top-level enum unifying scalars, arrays, and records.
+//! - [`Value`] — the top-level enum unifying scalars, arrays, records, and
+//!   table references.
 //!
 //! Type metadata is captured by [`PrimitiveType`] and [`TypeTag`].
 //!
@@ -208,21 +209,21 @@ impl TypeTag {
     }
 }
 
-/// The broad kind of a [`Value`]: scalar, array, table reference, or record.
+/// The broad kind of a [`Value`]: scalar, array, record, or table reference.
 ///
-/// `ValueKind` extends [`ValueRank`] with variants for table-reference and
-/// record-typed values. Table references and records have no [`TypeTag`]
-/// because they are not described by a primitive element type plus rank.
+/// `ValueKind` extends [`ValueRank`] with variants for record-typed values
+/// and table references. Records and table references have no [`TypeTag`]
+/// because they do not have a single primitive element type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueKind {
     /// A single typed scalar value.
     Scalar,
     /// An N-dimensional typed array.
     Array,
-    /// A casacore `TpTable` keyword referencing another table on disk.
-    TableRef,
     /// An ordered collection of named [`Value`] fields (a record).
     Record,
+    /// A reference to another casacore table, typically a subtable.
+    TableRef,
 }
 
 /// A runtime container for a single typed scalar value.
@@ -792,10 +793,12 @@ pub enum Value {
     Scalar(ScalarValue),
     /// An N-dimensional typed array value.
     Array(ArrayValue),
-    /// A casacore `TpTable` keyword payload, usually a relative subtable path.
-    TableRef(String),
     /// An ordered collection of named fields.
     Record(RecordValue),
+    /// A reference to another casacore table.
+    ///
+    /// C++ casacore stores these in `TableRecord` values as `TpTable` fields.
+    TableRef(String),
 }
 
 impl Value {
@@ -809,21 +812,21 @@ impl Value {
         match self {
             Self::Scalar(_) => ValueKind::Scalar,
             Self::Array(_) => ValueKind::Array,
-            Self::TableRef(_) => ValueKind::TableRef,
             Self::Record(_) => ValueKind::Record,
+            Self::TableRef(_) => ValueKind::TableRef,
         }
     }
 
     /// Returns the [`TypeTag`] for this value, if one exists.
     ///
-    /// Returns `Some` for scalar and array values, and `None` for table
-    /// references and record values because they do not have a primitive
-    /// element type.
+    /// Returns `Some` for scalar and array values, and `None` for record values
+    /// and table references because they do not have a single primitive element
+    /// type.
     pub fn type_tag(&self) -> Option<TypeTag> {
         match self {
             Self::Scalar(v) => Some(v.type_tag()),
             Self::Array(v) => Some(v.type_tag()),
-            Self::TableRef(_) | Self::Record(_) => None,
+            Self::Record(_) | Self::TableRef(_) => None,
         }
     }
 
@@ -854,6 +857,20 @@ impl From<RecordValue> for Value {
     /// Wraps a [`RecordValue`] in the `Value::Record` variant.
     fn from(value: RecordValue) -> Self {
         Self::Record(value)
+    }
+}
+
+impl From<String> for Value {
+    /// Wraps a table path in the `Value::TableRef` variant.
+    fn from(value: String) -> Self {
+        Self::TableRef(value)
+    }
+}
+
+impl From<&str> for Value {
+    /// Wraps a table path in the `Value::TableRef` variant.
+    fn from(value: &str) -> Self {
+        Self::TableRef(value.to_string())
     }
 }
 

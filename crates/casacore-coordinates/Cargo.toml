@@ -1,0 +1,16 @@
+[package]
+name = "casacore-coordinates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Coordinate systems for astronomical images"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casacore-types = { path = "../casacore-types" }
+ndarray.workspace = true
+thiserror.workspace = true

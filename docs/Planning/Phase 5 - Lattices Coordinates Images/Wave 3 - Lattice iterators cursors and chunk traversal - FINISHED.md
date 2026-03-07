@@ -1,48 +1,52 @@
-# Wave 7 - Image crate scaffold and core image model
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 3 - Lattice iterators cursors and chunk traversal
 
 ## Origin
 
-- Backlog items: 7.1, 7.2, 7.3.
+- Backlog items: 3.1, 3.2, 3.3.
 
 ## Goal
 
-- Create `casacore-images` crate and core image model built on lattices plus
-  attached coordinate systems and metadata.
+- Implement first-class lattice iteration APIs: full traversal, strided
+  traversal, cursor-based access, and chunk/tile iteration.
 
 ## Non-goals
 
-- Image iteration APIs.
-- Image expression engine and advanced math.
+- Region/mask-aware iteration.
+- Image-level wrappers.
 
 ## Scope
 
 ### Read path
 
-- Open and inspect image metadata and core lattice payload.
+- Read lattice values through iterator/cursor/chunk APIs.
 
 ### Write path
 
-- Create and persist core image metadata/payload.
+- Mutable iterator/cursor/chunk updates where safe.
 
 ### API/docs/demo
 
-- Public `Image` type with open/create/save lifecycle and metadata access.
+- Expose ergonomic iterator APIs with explicit axis-order behavior.
 
 ## Dependencies
 
-- Wave 4 completed.
-- Wave 6 completed.
+- Wave 2 completed.
 
 ## Ordering constraints
 
-- Must run after Waves 4 and 6.
-- Required before Waves 8-10.
+- Must run after Wave 2.
+- Required before Waves 4, 8, and 10.
 
 ## Files likely touched
 
-- `Cargo.toml`
-- `crates/casacore-images/`
-- `crates/casacore-test-support/tests/`
+- `crates/casacore-lattices/src/`
+- `crates/casacore-lattices/tests/`
 
 ## Definition of Ready
 
@@ -56,9 +60,9 @@
 
 ## Implementation checklist
 
-- [ ] Add crate and workspace wiring.
-- [ ] Implement core image model and metadata integration.
-- [ ] Add basic interop fixtures for open/create/save.
+- [ ] Implement iterator/cursor/chunk traversal primitives.
+- [ ] Document traversal order and mutation semantics.
+- [ ] Add correctness tests for full and strided traversal.
 
 ## Test plan
 
@@ -71,9 +75,9 @@
 
 ## Performance plan
 
-- Workload: image open/save on representative array sizes.
-- Rust command: release benchmark for image lifecycle operations.
-- C++ command: matching image open/save benchmark.
+- Workload: linear, strided, and chunked scans over large lattices.
+- Rust command: release iterator throughput benchmark suite.
+- C++ command: matching lattice iterator benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

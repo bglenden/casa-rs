@@ -4,6 +4,9 @@ members = [
     "crates/casacore-types",
     "crates/casacore-aipsio",
     "crates/casacore-tables",
+    "crates/casacore-lattices",
+    "crates/casacore-coordinates",
+    "crates/casacore-images",
     "crates/casacore-measures-data",
     "crates/casacore-test-support",
     "crates/casacore-ms",
@@ -14,6 +17,8 @@ version = "0.1.0"
 edition = "2024"
 license = "LGPL-3.0-or-later"
 rust-version = "1.85"
+description = "Rust implementation of casacore-compatible persistent data I/O"
+repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]
 ndarray = "0.17"

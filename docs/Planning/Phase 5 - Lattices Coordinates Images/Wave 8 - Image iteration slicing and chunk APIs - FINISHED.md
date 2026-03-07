@@ -1,46 +1,53 @@
-# Wave 1 - Lattice crate scaffold and core abstractions
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 8 - Image iteration slicing and chunk APIs
 
 ## Origin
 
-- Backlog items: 1.1, 1.2, 1.3.
+- Backlog items: 8.1, 8.2, 8.3.
 
 ## Goal
 
-- Create `casacore-lattices` crate and core lattice abstractions
-  (shape, element access contract, coordinate attachment points).
+- Implement image-level iteration/slicing/chunk APIs with coordinate-aware
+  axis-order helpers.
 
 ## Non-goals
 
-- Storage backend implementation.
-- Iteration APIs.
+- Full image math/expression framework.
+- Reprojection/mosaicking.
 
 ## Scope
 
 ### Read path
 
-- N/A (abstractions only).
+- Iterate image data via full, strided, and chunk traversals.
 
 ### Write path
 
-- N/A (abstractions only).
+- Mutable chunk/slice updates through iterator APIs.
 
 ### API/docs/demo
 
-- Public lattice trait/types and basic in-memory constructor stubs.
+- Image iterator API docs and examples for common scans.
 
 ## Dependencies
 
-- Phase 3 completed.
+- Wave 3 completed.
+- Wave 7 completed.
 
 ## Ordering constraints
 
-- First wave in Phase 5.
-- Required before Waves 2-10.
+- Must run after Waves 3 and 7.
+- Required before Wave 10.
 
 ## Files likely touched
 
-- `Cargo.toml`
-- `crates/casacore-lattices/`
+- `crates/casacore-images/src/`
+- `crates/casacore-images/tests/`
 
 ## Definition of Ready
 
@@ -54,9 +61,9 @@
 
 ## Implementation checklist
 
-- [ ] Add crate and workspace wiring.
-- [ ] Define core lattice traits and shape/index types.
-- [ ] Add baseline docs and compile tests.
+- [ ] Implement image iterators for full/strided/chunked traversal.
+- [ ] Add slicing APIs with coordinate-axis helpers.
+- [ ] Add iterator correctness tests across axis-order variants.
 
 ## Test plan
 
@@ -69,10 +76,10 @@
 
 ## Performance plan
 
-- Workload: N/A.
-- Rust command: N/A.
-- C++ command: N/A.
-- Alert threshold: N/A.
+- Workload: image sweep and chunked plane extraction workloads.
+- Rust command: release benchmark for iterator throughput.
+- C++ command: matching image iterator benchmark.
+- Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria
 

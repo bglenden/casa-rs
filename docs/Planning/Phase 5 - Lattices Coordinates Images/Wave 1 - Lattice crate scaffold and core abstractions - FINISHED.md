@@ -1,50 +1,52 @@
-# Wave 10 - Lattice and image interop matrix demos and perf closeout
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 1 - Lattice crate scaffold and core abstractions
 
 ## Origin
 
-- Backlog items: 10.1, 10.2, 10.3.
+- Backlog items: 1.1, 1.2, 1.3.
 
 ## Goal
 
-- Close Phase 5 with end-to-end lattice/image interop fixtures, iterator
-  correctness matrix, demos, and performance closeout evidence.
+- Create `casacore-lattices` crate and core lattice abstractions
+  (shape, element access contract, coordinate attachment points).
 
 ## Non-goals
 
-- New core features.
-- Advanced science algorithms.
+- Storage backend implementation.
+- Iteration APIs.
 
 ## Scope
 
 ### Read path
 
-- Validate complete read workflows for lattice/image fixtures authored by
-  Rust and C++.
+- N/A (abstractions only).
 
 ### Write path
 
-- Validate complete write workflows with round-trip parity.
+- N/A (abstractions only).
 
 ### API/docs/demo
 
-- Add/update lattice/image demos and phase closeout documentation.
+- Public lattice trait/types and basic in-memory constructor stubs.
 
 ## Dependencies
 
-- Waves 8 and 9 completed.
+- Phase 3 completed.
 
 ## Ordering constraints
 
-- Final wave.
-- Must run after Waves 8 and 9.
+- First wave in Phase 5.
+- Required before Waves 2-10.
 
 ## Files likely touched
 
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/tests/`
-- `crates/casacore-lattices/examples/`
-- `crates/casacore-images/examples/`
-- `docs/`
+- `Cargo.toml`
+- `crates/casacore-lattices/`
 
 ## Definition of Ready
 
@@ -58,9 +60,9 @@
 
 ## Implementation checklist
 
-- [ ] Build canonical lattice/image fixture matrix.
-- [ ] Add iterator correctness matrix and perf evidence.
-- [ ] Publish/update demos and closeout docs.
+- [ ] Add crate and workspace wiring.
+- [ ] Define core lattice traits and shape/index types.
+- [ ] Add baseline docs and compile tests.
 
 ## Test plan
 
@@ -73,10 +75,10 @@
 
 ## Performance plan
 
-- Workload: end-to-end image/lattice workflows with iteration-heavy phases.
-- Rust command: release benchmark pipeline for open/iterate/update/save.
-- C++ command: matching lattice/image pipeline benchmark.
-- Alert threshold: Rust > 2x C++.
+- Workload: N/A.
+- Rust command: N/A.
+- C++ command: N/A.
+- Alert threshold: N/A.
 
 ## Closeout criteria
 

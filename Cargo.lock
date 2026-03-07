@@ -81,6 +81,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "casacore-coordinates"
+version = "0.1.0"
+dependencies = [
+ "casacore-types",
+ "ndarray",
+ "thiserror",
+]
+
+[[package]]
+name = "casacore-images"
+version = "0.1.0"
+dependencies = [
+ "casacore-coordinates",
+ "casacore-lattices",
+ "casacore-tables",
+ "casacore-types",
+ "ndarray",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "casacore-lattices"
+version = "0.1.0"
+dependencies = [
+ "casacore-tables",
+ "casacore-types",
+ "ndarray",
+ "num-complex",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "casacore-measures-data"
 version = "0.1.0"
 dependencies = [
@@ -121,6 +156,9 @@ name = "casacore-test-support"
 version = "0.1.0"
 dependencies = [
  "casacore-aipsio",
+ "casacore-coordinates",
+ "casacore-images",
+ "casacore-lattices",
  "casacore-measures-data",
  "casacore-tables",
  "casacore-types",

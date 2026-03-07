@@ -1,46 +1,53 @@
-# Wave 4 - Lattice regions masks and subviews
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 6 - FITS and WCS coordinate interoperability
 
 ## Origin
 
-- Backlog items: 4.1, 4.2, 4.3, 4.4.
+- Backlog items: 6.1, 6.2, 6.3.
 
 ## Goal
 
-- Add lattice regions, masks, and subview composition with region/mask-aware
-  iteration semantics.
+- Implement FITS/WCS coordinate import/export parity and conversion utilities
+  required for image interoperability.
 
 ## Non-goals
 
-- Full image expression engine.
-- Coordinate reprojection workflows.
+- Full imaging algorithm suite.
+- Mosaic reprojection workflows.
 
 ## Scope
 
 ### Read path
 
-- Region and mask constrained reads and view materialization.
+- Parse FITS/WCS coordinate metadata into coordinate-system types.
 
 ### Write path
 
-- Mask-aware updates and region-scoped writes.
+- Emit FITS/WCS metadata from coordinate-system definitions.
 
 ### API/docs/demo
 
-- Region/mask/subview APIs and iteration examples.
+- Utility APIs and demo for FITS/WCS coordinate round-trips.
 
 ## Dependencies
 
-- Wave 3 completed.
+- Wave 5 completed.
 
 ## Ordering constraints
 
-- Must run after Wave 3.
-- Required before Waves 7, 8, 9, and 10.
+- Must run after Wave 5.
+- Required before Waves 7-10.
 
 ## Files likely touched
 
-- `crates/casacore-lattices/src/`
-- `crates/casacore-lattices/tests/`
+- `crates/casacore-coordinates/src/`
+- `crates/casacore-coordinates/tests/`
+- `crates/casacore-test-support/tests/`
 
 ## Definition of Ready
 
@@ -54,9 +61,9 @@
 
 ## Implementation checklist
 
-- [ ] Implement region and mask model types.
-- [ ] Integrate region/mask behavior with lattice iterators.
-- [ ] Add correctness tests for nested and degenerate regions.
+- [ ] Implement FITS/WCS parse/emit helpers.
+- [ ] Add round-trip interoperability tests.
+- [ ] Add error-path tests for unsupported/invalid metadata.
 
 ## Test plan
 
@@ -69,9 +76,9 @@
 
 ## Performance plan
 
-- Workload: masked and regioned scans with varied sparsity.
-- Rust command: release benchmark for region/mask iteration overhead.
-- C++ command: matching lattice region benchmark.
+- Workload: batch FITS/WCS metadata parse/emit on representative headers.
+- Rust command: release benchmark for conversion utility throughput.
+- C++ command: matching FITS coordinate utility benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

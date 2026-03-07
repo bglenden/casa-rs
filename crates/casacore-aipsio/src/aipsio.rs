@@ -203,7 +203,7 @@ use thiserror::Error;
 
 use crate::{
     ArrayValue, ByteOrder, Complex32, Complex64, PrimitiveType, RecordField, RecordValue,
-    ScalarValue, Value,
+    ScalarValue, Value, ValueKind,
 };
 
 pub type AipsIoObjectResult<T> = Result<T, AipsIoObjectError>;
@@ -366,6 +366,10 @@ pub enum AipsIoObjectError {
     /// The wire-encoded value-kind tag byte did not match any known variant.
     #[error("invalid value kind tag {0}")]
     InvalidValueKindTag(u8),
+    /// [`AipsIo::put_value`] was called with a [`Value`] variant this object
+    /// codec does not support.
+    #[error("unsupported value kind for AipsIO object codec: {0:?}")]
+    UnsupportedValueKind(ValueKind),
     /// The wire-encoded primitive-type tag byte did not match any known variant.
     #[error("invalid primitive type tag {0}")]
     InvalidPrimitiveTypeTag(u8),

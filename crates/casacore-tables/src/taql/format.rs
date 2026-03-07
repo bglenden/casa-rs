@@ -32,8 +32,8 @@ pub fn format_value(val: &Value) -> String {
             ScalarValue::String(s) => s.clone(),
         },
         Value::Array(arr) => format_array_value(arr),
-        Value::TableRef(path) => format!("table({path})"),
         Value::Record(rec) => format!("{rec:?}"),
+        Value::TableRef(path) => format!("table({path})"),
     }
 }
 

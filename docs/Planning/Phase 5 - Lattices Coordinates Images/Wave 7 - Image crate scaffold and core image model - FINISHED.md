@@ -1,46 +1,53 @@
-# Wave 6 - FITS and WCS coordinate interoperability
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 7 - Image crate scaffold and core image model
 
 ## Origin
 
-- Backlog items: 6.1, 6.2, 6.3.
+- Backlog items: 7.1, 7.2, 7.3.
 
 ## Goal
 
-- Implement FITS/WCS coordinate import/export parity and conversion utilities
-  required for image interoperability.
+- Create `casacore-images` crate and core image model built on lattices plus
+  attached coordinate systems and metadata.
 
 ## Non-goals
 
-- Full imaging algorithm suite.
-- Mosaic reprojection workflows.
+- Image iteration APIs.
+- Image expression engine and advanced math.
 
 ## Scope
 
 ### Read path
 
-- Parse FITS/WCS coordinate metadata into coordinate-system types.
+- Open and inspect image metadata and core lattice payload.
 
 ### Write path
 
-- Emit FITS/WCS metadata from coordinate-system definitions.
+- Create and persist core image metadata/payload.
 
 ### API/docs/demo
 
-- Utility APIs and demo for FITS/WCS coordinate round-trips.
+- Public `Image` type with open/create/save lifecycle and metadata access.
 
 ## Dependencies
 
-- Wave 5 completed.
+- Wave 4 completed.
+- Wave 6 completed.
 
 ## Ordering constraints
 
-- Must run after Wave 5.
-- Required before Waves 7-10.
+- Must run after Waves 4 and 6.
+- Required before Waves 8-10.
 
 ## Files likely touched
 
-- `crates/casacore-coordinates/src/`
-- `crates/casacore-coordinates/tests/`
+- `Cargo.toml`
+- `crates/casacore-images/`
 - `crates/casacore-test-support/tests/`
 
 ## Definition of Ready
@@ -55,9 +62,9 @@
 
 ## Implementation checklist
 
-- [ ] Implement FITS/WCS parse/emit helpers.
-- [ ] Add round-trip interoperability tests.
-- [ ] Add error-path tests for unsupported/invalid metadata.
+- [ ] Add crate and workspace wiring.
+- [ ] Implement core image model and metadata integration.
+- [ ] Add basic interop fixtures for open/create/save.
 
 ## Test plan
 
@@ -70,9 +77,9 @@
 
 ## Performance plan
 
-- Workload: batch FITS/WCS metadata parse/emit on representative headers.
-- Rust command: release benchmark for conversion utility throughput.
-- C++ command: matching FITS coordinate utility benchmark.
+- Workload: image open/save on representative array sizes.
+- Rust command: release benchmark for image lifecycle operations.
+- C++ command: matching image open/save benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

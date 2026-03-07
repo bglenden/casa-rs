@@ -1,46 +1,56 @@
-# Wave 3 - Lattice iterators cursors and chunk traversal
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 10 - Lattice and image interop matrix demos and perf closeout
 
 ## Origin
 
-- Backlog items: 3.1, 3.2, 3.3.
+- Backlog items: 10.1, 10.2, 10.3.
 
 ## Goal
 
-- Implement first-class lattice iteration APIs: full traversal, strided
-  traversal, cursor-based access, and chunk/tile iteration.
+- Close Phase 5 with end-to-end lattice/image interop fixtures, iterator
+  correctness matrix, demos, and performance closeout evidence.
 
 ## Non-goals
 
-- Region/mask-aware iteration.
-- Image-level wrappers.
+- New core features.
+- Advanced science algorithms.
 
 ## Scope
 
 ### Read path
 
-- Read lattice values through iterator/cursor/chunk APIs.
+- Validate complete read workflows for lattice/image fixtures authored by
+  Rust and C++.
 
 ### Write path
 
-- Mutable iterator/cursor/chunk updates where safe.
+- Validate complete write workflows with round-trip parity.
 
 ### API/docs/demo
 
-- Expose ergonomic iterator APIs with explicit axis-order behavior.
+- Add/update lattice/image demos and phase closeout documentation.
 
 ## Dependencies
 
-- Wave 2 completed.
+- Waves 8 and 9 completed.
 
 ## Ordering constraints
 
-- Must run after Wave 2.
-- Required before Waves 4, 8, and 10.
+- Final wave.
+- Must run after Waves 8 and 9.
 
 ## Files likely touched
 
-- `crates/casacore-lattices/src/`
-- `crates/casacore-lattices/tests/`
+- `crates/casacore-test-support/src/cpp/`
+- `crates/casacore-test-support/tests/`
+- `crates/casacore-lattices/examples/`
+- `crates/casacore-images/examples/`
+- `docs/`
 
 ## Definition of Ready
 
@@ -54,9 +64,9 @@
 
 ## Implementation checklist
 
-- [ ] Implement iterator/cursor/chunk traversal primitives.
-- [ ] Document traversal order and mutation semantics.
-- [ ] Add correctness tests for full and strided traversal.
+- [ ] Build canonical lattice/image fixture matrix.
+- [ ] Add iterator correctness matrix and perf evidence.
+- [ ] Publish/update demos and closeout docs.
 
 ## Test plan
 
@@ -69,9 +79,9 @@
 
 ## Performance plan
 
-- Workload: linear, strided, and chunked scans over large lattices.
-- Rust command: release iterator throughput benchmark suite.
-- C++ command: matching lattice iterator benchmark.
+- Workload: end-to-end image/lattice workflows with iteration-heavy phases.
+- Rust command: release benchmark pipeline for open/iterate/update/save.
+- C++ command: matching lattice/image pipeline benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

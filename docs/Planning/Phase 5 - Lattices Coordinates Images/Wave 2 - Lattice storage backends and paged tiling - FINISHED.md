@@ -1,48 +1,53 @@
-# Wave 9 - Image metadata masks history and basic expressions
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 2 - Lattice storage backends and paged tiling
 
 ## Origin
 
-- Backlog items: 9.1, 9.2, 9.3.
+- Backlog items: 2.1, 2.2, 2.3, 2.4.
 
 ## Goal
 
-- Implement image metadata/mask/history handling and a minimal expression layer
-  suitable for interoperability and basic workflows.
+- Implement lattice storage backends: memory-backed and paged/tiled disk-backed
+  lattices with compatible metadata semantics.
 
 ## Non-goals
 
-- Advanced deconvolution/imaging algorithms.
-- Full expression parser parity.
+- Iterator APIs beyond minimal internal traversal.
+- Region/mask algebra.
 
 ## Scope
 
 ### Read path
 
-- Read metadata, history records, and mask state with image payload.
+- Open and read lattice data from memory and paged/tiled storage.
 
 ### Write path
 
-- Persist metadata/history updates and mask changes.
+- Persist lattice data and storage metadata to disk.
 
 ### API/docs/demo
 
-- APIs for metadata/history operations and minimal expression use cases.
+- Backend selection APIs and simple read/write demo.
 
 ## Dependencies
 
-- Wave 4 completed.
-- Wave 7 completed.
+- Wave 1 completed.
 
 ## Ordering constraints
 
-- Must run after Waves 4 and 7.
-- Required before Wave 10.
+- Must run after Wave 1.
+- Required before Waves 3, 4, 7, and 8.
 
 ## Files likely touched
 
-- `crates/casacore-images/src/`
-- `crates/casacore-images/tests/`
-- `crates/casacore-types/src/`
+- `crates/casacore-lattices/src/`
+- `crates/casacore-lattices/tests/`
+- `crates/casacore-test-support/tests/`
 
 ## Definition of Ready
 
@@ -56,9 +61,9 @@
 
 ## Implementation checklist
 
-- [ ] Implement metadata/history persistence and retrieval.
-- [ ] Implement mask state APIs and updates.
-- [ ] Add minimal expression support and regression tests.
+- [ ] Implement memory and paged/tiled lattice backends.
+- [ ] Add metadata serialization/deserialization support.
+- [ ] Add interop tests for persistence and reopen behavior.
 
 ## Test plan
 
@@ -71,9 +76,9 @@
 
 ## Performance plan
 
-- Workload: metadata/mask-heavy open-update-save loop.
-- Rust command: release benchmark for metadata and mask updates.
-- C++ command: matching image metadata update benchmark.
+- Workload: large array read/write with varied tile shapes.
+- Rust command: release benchmark for backend throughput.
+- C++ command: matching paged lattice storage benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

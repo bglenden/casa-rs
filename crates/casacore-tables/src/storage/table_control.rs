@@ -731,7 +731,10 @@ fn read_record_field_value(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Valu
             let record = read_table_record(io)?;
             Ok(Value::Record(record))
         }
-        // Table reference keyword — stores a related table path.
+        // Table reference keyword — stores a subtable path as a string.
+        // C++ casacore writes these via `TableKeywordSet::toRecord()` and
+        // the `TableAttr` class. We represent them as plain string values
+        // so the keyword name→path mapping is preserved.
         CasacoreDataType::TpTable => Ok(Value::TableRef(io.get_string()?)),
         // Array types — used in hypercolumn definitions and cube metadata.
         CasacoreDataType::TpArrayBool
@@ -1294,15 +1297,17 @@ fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), Storag
             // The actual fields are written in write_record_field_value as
             // a full TableRecord (Variable record type).
             write_empty_record_desc(io)?;
+        } else if dt == CasacoreDataType::TpTable {
+            // Table keyword entries carry an additional table-desc name slot.
+            // We do not model named table descriptors, so persist an empty name
+            // while keeping the wire layout aligned with casacore.
+            io.put_string("")?;
         } else if is_array_data_type(dt) {
             // Array field: write IPosition shape.
             if let Value::Array(av) = &field.value {
                 let shape: Vec<i32> = av.shape().iter().map(|&d| d as i32).collect();
                 write_iposition(io, &shape)?;
             }
-        } else if dt == CasacoreDataType::TpTable {
-            // A blank table-desc name means any referenced table descriptor is accepted.
-            io.put_string("")?;
         }
 
         io.put_string("")?; // comment

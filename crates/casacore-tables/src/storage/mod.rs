@@ -9,6 +9,7 @@ pub(crate) mod stman_aipsio;
 pub(crate) mod stman_array_file;
 pub(crate) mod table_control;
 pub(crate) mod tiled_stman;
+pub use tiled_stman::{TilePixel, TiledFileIO};
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;
 pub(crate) mod virtual_engine;
@@ -45,7 +46,7 @@ pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
 pub(crate) const TABLE_INFO_FILE: &str = "table.info";
 
 #[derive(Debug, Error)]
-pub(crate) enum StorageError {
+pub enum StorageError {
     #[error("table path does not exist: {0}")]
     MissingPath(PathBuf),
     #[error("table control file is missing: {0}")]
@@ -196,6 +197,20 @@ impl StorageManager for CompositeStorage {
         tile_shape: Option<&[usize]>,
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
+
+        // Clean up old data files before re-saving to prevent stale data
+        // from a previous save with a different storage manager.
+        if table_path.is_dir() {
+            if let Ok(entries) = fs::read_dir(table_path) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("table.f") {
+                        let _ = fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
 
         fs::create_dir_all(table_path)?;
 
@@ -381,7 +396,7 @@ impl StorageManager for CompositeStorage {
                 }
                 .to_string();
                 dm_data = Vec::new(); // Tiled managers write empty DM blobs.
-                let table_dat = TableDatContents::from_snapshot(
+                let mut table_dat = TableDatContents::from_snapshot(
                     schema,
                     &snapshot.keywords,
                     &snapshot.column_keywords,
@@ -390,9 +405,26 @@ impl StorageManager for CompositeStorage {
                     &dm_data,
                     big_endian,
                 );
+                let dm_group_name = table_dat
+                    .table_desc
+                    .columns
+                    .first()
+                    .map(|c| c.col_name.clone())
+                    .unwrap_or_default();
+                for desc in &mut table_dat.table_desc.columns {
+                    desc.data_manager_type = dm_type_name.clone();
+                    desc.data_manager_group = dm_group_name.clone();
+                }
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
                 // Write tiled data to table.f0 header + table.f0_TSM* data files.
+                // Use the first column name as the hypercolumn/DM name.
+                let first_col_name = table_dat
+                    .table_desc
+                    .columns
+                    .first()
+                    .map(|c| c.col_name.as_str())
+                    .unwrap_or("");
                 tiled_stman::save_tiled_columns(
                     table_path,
                     0, // dm_seq_nr
@@ -401,6 +433,7 @@ impl StorageManager for CompositeStorage {
                     &snapshot.rows,
                     big_endian,
                     tile_shape,
+                    first_col_name,
                 )?;
             }
         }
@@ -887,7 +920,25 @@ impl CompositeStorage {
             .cloned()
             .collect();
 
-        table_dat.column_set.data_managers = dm_entries;
+        // Update each PlainColumnEntry's dm_seq_nr.
+        for pc in &mut table_dat.column_set.columns {
+            if let Some(&seq) = col_dm_map.get(&pc.original_name) {
+                pc.dm_seq_nr = seq;
+            }
+        }
+
+        // Override DM entries, filtering out empty groups that have no
+        // columns and no data file to avoid "missing table.f<N>" errors.
+        let non_empty_groups: Vec<&DmGroup> =
+            groups.iter().filter(|g| !g.col_names.is_empty()).collect();
+        table_dat.column_set.data_managers = non_empty_groups
+            .iter()
+            .map(|g| table_control::DataManagerEntry {
+                type_name: g.dm_type_name.clone(),
+                seq_nr: g.seq_nr,
+                data: Vec::new(),
+            })
+            .collect();
         table_dat
             .column_set
             .data_managers
@@ -899,13 +950,6 @@ impl CompositeStorage {
             .map(|e| e.seq_nr + 1)
             .max()
             .unwrap_or(1);
-
-        // Update each PlainColumnEntry's dm_seq_nr.
-        for pc in &mut table_dat.column_set.columns {
-            if let Some(&seq) = col_dm_map.get(&pc.original_name) {
-                pc.dm_seq_nr = seq;
-            }
-        }
 
         // Write data files per group.
         for group in &groups {
@@ -975,6 +1019,8 @@ impl CompositeStorage {
                 | DataManagerKind::TiledShapeStMan
                 | DataManagerKind::TiledCellStMan
                 | DataManagerKind::TiledDataStMan => {
+                    // Use the first column name as the hypercolumn/DM name.
+                    let first_col = group.col_names.first().map(|s| s.as_str()).unwrap_or("");
                     tiled_stman::save_tiled_columns(
                         table_path,
                         group.seq_nr,
@@ -983,6 +1029,7 @@ impl CompositeStorage {
                         &group_rows,
                         big_endian,
                         group.tile_shape.as_deref(),
+                        first_col,
                     )?;
                 }
             }

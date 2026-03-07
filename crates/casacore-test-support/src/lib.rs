@@ -9,6 +9,8 @@ pub mod taql_interop;
 
 #[cfg(has_casacore_cpp)]
 use std::ffi::CStr;
+#[cfg(has_casacore_cpp)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use casacore_aipsio::{
     AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64, ScalarValue, TypeTag,
@@ -236,7 +238,7 @@ fn prepare_primitive_case(value: &Value) -> Result<PreparedPrimitiveCase, AipsIo
             "record values are not part of primitive AipsIO cross-checks",
         )),
         Value::TableRef(_) => Err(AipsIoCrossError::UnsupportedValue(
-            "table-ref values are not part of primitive AipsIO cross-checks",
+            "table references are not part of primitive AipsIO cross-checks",
         )),
     }
 }
@@ -781,7 +783,7 @@ fn value_to_payload(value: &Value) -> Result<FfiPayload, AipsIoCrossError> {
             "record values are not part of primitive AipsIO cross-checks",
         )),
         Value::TableRef(_) => Err(AipsIoCrossError::UnsupportedValue(
-            "table-ref values are not part of primitive AipsIO cross-checks",
+            "table references are not part of primitive AipsIO cross-checks",
         )),
     }
 }
@@ -1506,6 +1508,249 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
     fn cpp_taql_free_result(ptr: *mut std::ffi::c_char);
+
+    // PagedImage shim
+    fn cpp_create_pagedimage_float(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        ndim: i32,
+        data: *const f32,
+        ndata: i64,
+        units: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_create_tempimage_float_materialized(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        ndim: i32,
+        data: *const f32,
+        ndata: i64,
+        units: *const std::ffi::c_char,
+        object_name: *const std::ffi::c_char,
+        image_type: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_float(
+        path: *const std::ffi::c_char,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_create_pagedimage_double(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        ndim: i32,
+        data: *const f64,
+        ndata: i64,
+        units: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_double(
+        path: *const std::ffi::c_char,
+        data_out: *mut f64,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_create_pagedimage_complex32(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        ndim: i32,
+        data: *const f32,
+        ncomplex: i64,
+        units: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_complex32(
+        path: *const std::ffi::c_char,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_create_pagedimage_complex64(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        ndim: i32,
+        data: *const f64,
+        ncomplex: i64,
+        units: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_complex64(
+        path: *const std::ffi::c_char,
+        data_out: *mut f64,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_shape(
+        path: *const std::ffi::c_char,
+        shape_out: *mut i32,
+        max_ndim: i32,
+        ndim_out: *mut i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_units(
+        path: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_coordinate_count(
+        path: *const std::ffi::c_char,
+        count_out: *mut i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_default_mask_name(
+        path: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_default_mask(
+        path: *const std::ffi::c_char,
+        data_out: *mut u8,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_imageinfo_object_name(
+        path: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_imageinfo_type(
+        path: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_read_pagedimage_slice(
+        path: *const std::ffi::c_char,
+        start: *const i32,
+        length: *const i32,
+        ndim: i32,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_eval_pagedimage_float_unary_expr(
+        path: *const std::ffi::c_char,
+        op: i32,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_eval_pagedimage_float_binary_expr(
+        lhs_path: *const std::ffi::c_char,
+        rhs_path: *const std::ffi::c_char,
+        op: i32,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_eval_pagedimage_float_scalar_expr(
+        path: *const std::ffi::c_char,
+        scalar: f32,
+        op: i32,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_eval_pagedimage_float_range_mask_expr(
+        path: *const std::ffi::c_char,
+        lower_cmp: i32,
+        lower: f32,
+        logical_op: i32,
+        upper_cmp: i32,
+        upper: f32,
+        data_out: *mut u8,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_eval_pagedimage_float_closeout_expr_slice(
+        path: *const std::ffi::c_char,
+        start: *const i32,
+        length: *const i32,
+        ndim: i32,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_eval_lel_expr_float(
+        expr: *const std::ffi::c_char,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        shape_out: *mut i32,
+        max_ndim: i32,
+        ndim_out: *mut i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_eval_lel_expr_bool(
+        expr: *const std::ffi::c_char,
+        data_out: *mut u8,
+        max_size: i64,
+        nread_out: *mut i64,
+        shape_out: *mut i32,
+        max_ndim: i32,
+        ndim_out: *mut i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_save_lel_expr(
+        expr: *const std::ffi::c_char,
+        save_path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_open_lel_expr_float(
+        path: *const std::ffi::c_char,
+        data_out: *mut f32,
+        max_size: i64,
+        nread_out: *mut i64,
+        shape_out: *mut i32,
+        max_ndim: i32,
+        ndim_out: *mut i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    fn cpp_bench_plane_by_plane(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        tile: *const i32,
+        ndim: i32,
+        max_cache_mib: i32,
+        timings_out: *mut f64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    fn cpp_bench_spectrum_by_spectrum(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        tile: *const i32,
+        ndim: i32,
+        max_cache_mib: i32,
+        timings_out: *mut f64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    fn cpp_bench_plane_by_plane_complex(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        tile: *const i32,
+        ndim: i32,
+        max_cache_mib: i32,
+        timings_out: *mut f64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
 }
 
 #[cfg(has_casacore_cpp)]
@@ -2347,5 +2592,1249 @@ pub fn cpp_table_write(_fixture: CppTableFixture, _path: &std::path::Path) -> Re
 
 #[cfg(not(has_casacore_cpp))]
 pub fn cpp_table_verify(_fixture: CppTableFixture, _path: &std::path::Path) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// PagedImage interop helpers
+// ---------------------------------------------------------------------------
+
+#[cfg(has_casacore_cpp)]
+fn take_cpp_error_message(error: *mut std::ffi::c_char) -> String {
+    if error.is_null() {
+        "unknown C++ error".to_string()
+    } else {
+        let s = unsafe { CStr::from_ptr(error) }
+            .to_string_lossy()
+            .to_string();
+        unsafe { cpp_table_free_error(error) };
+        s
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+fn lock_cpp_image_ffi() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("cpp image ffi lock poisoned")
+}
+
+/// Creates a C++ `PagedImage<Float>` with the given shape, data, and units.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_create_image(
+    path: &std::path::Path,
+    shape: &[i32],
+    data: &[f32],
+    units: &str,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_units = std::ffi::CString::new(units).expect("units must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_create_pagedimage_float(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            shape.len() as i32,
+            data.as_ptr(),
+            data.len() as i64,
+            c_units.as_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_create_image(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _data: &[f32],
+    _units: &str,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads all pixel data from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_data(path: &std::path::Path, max_size: usize) -> Result<Vec<f32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut data = vec![0.0f32; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_float(
+            c_path.as_ptr(),
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_data(_path: &std::path::Path, _max_size: usize) -> Result<Vec<f32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Creates a C++ `PagedImage<Double>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_create_image_f64(
+    path: &std::path::Path,
+    shape: &[i32],
+    data: &[f64],
+    units: &str,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_units = std::ffi::CString::new(units).expect("units must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_create_pagedimage_double(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            shape.len() as i32,
+            data.as_ptr(),
+            data.len() as i64,
+            c_units.as_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_create_image_f64(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _data: &[f64],
+    _units: &str,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads all pixel data from a C++ `PagedImage<Double>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_data_f64(
+    path: &std::path::Path,
+    max_size: usize,
+) -> Result<Vec<f64>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut data = vec![0.0f64; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_double(
+            c_path.as_ptr(),
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_data_f64(
+    _path: &std::path::Path,
+    _max_size: usize,
+) -> Result<Vec<f64>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Creates a C++ `PagedImage<Complex>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_create_image_complex32(
+    path: &std::path::Path,
+    shape: &[i32],
+    data: &[Complex32],
+    units: &str,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_units = std::ffi::CString::new(units).expect("units must be valid C string");
+    let flat: Vec<f32> = data.iter().flat_map(|v| [v.re, v.im]).collect();
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_create_pagedimage_complex32(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            shape.len() as i32,
+            flat.as_ptr(),
+            data.len() as i64,
+            c_units.as_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_create_image_complex32(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _data: &[Complex32],
+    _units: &str,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads all pixel data from a C++ `PagedImage<Complex>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_data_complex32(
+    path: &std::path::Path,
+    max_size: usize,
+) -> Result<Vec<Complex32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut flat = vec![0.0f32; max_size * 2];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_complex32(
+            c_path.as_ptr(),
+            flat.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok((0..nread as usize)
+            .map(|i| Complex32::new(flat[2 * i], flat[2 * i + 1]))
+            .collect())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_data_complex32(
+    _path: &std::path::Path,
+    _max_size: usize,
+) -> Result<Vec<Complex32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Creates a C++ `PagedImage<DComplex>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_create_image_complex64(
+    path: &std::path::Path,
+    shape: &[i32],
+    data: &[Complex64],
+    units: &str,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_units = std::ffi::CString::new(units).expect("units must be valid C string");
+    let flat: Vec<f64> = data.iter().flat_map(|v| [v.re, v.im]).collect();
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_create_pagedimage_complex64(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            shape.len() as i32,
+            flat.as_ptr(),
+            data.len() as i64,
+            c_units.as_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_create_image_complex64(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _data: &[Complex64],
+    _units: &str,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads all pixel data from a C++ `PagedImage<DComplex>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_data_complex64(
+    path: &std::path::Path,
+    max_size: usize,
+) -> Result<Vec<Complex64>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut flat = vec![0.0f64; max_size * 2];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_complex64(
+            c_path.as_ptr(),
+            flat.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok((0..nread as usize)
+            .map(|i| Complex64::new(flat[2 * i], flat[2 * i + 1]))
+            .collect())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_data_complex64(
+    _path: &std::path::Path,
+    _max_size: usize,
+) -> Result<Vec<Complex64>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the shape of a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_shape(path: &std::path::Path) -> Result<Vec<i32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut shape = vec![0i32; 8];
+    let mut ndim: i32 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_shape(
+            c_path.as_ptr(),
+            shape.as_mut_ptr(),
+            8,
+            &mut ndim,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        shape.truncate(ndim as usize);
+        Ok(shape)
+    } else {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        Err(msg)
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_shape(_path: &std::path::Path) -> Result<Vec<i32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the units string from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_units(path: &std::path::Path) -> Result<String, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut buf = vec![0i8; 256];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_units(
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            256,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const std::ffi::c_char) }
+            .to_string_lossy()
+            .to_string();
+        Ok(s)
+    } else {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        Err(msg)
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_units(_path: &std::path::Path) -> Result<String, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Creates a C++ `TempImage<Float>`, fills metadata, and materializes it to disk.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_create_temp_image_materialized(
+    path: &std::path::Path,
+    shape: &[i32],
+    data: &[f32],
+    units: &str,
+    object_name: &str,
+    image_type: &str,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_units = std::ffi::CString::new(units).expect("units must be valid C string");
+    let c_object = std::ffi::CString::new(object_name).expect("object name must be valid C string");
+    let c_image_type =
+        std::ffi::CString::new(image_type).expect("image type must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_create_tempimage_float_materialized(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            shape.len() as i32,
+            data.as_ptr(),
+            data.len() as i64,
+            c_units.as_ptr(),
+            c_object.as_ptr(),
+            c_image_type.as_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_create_temp_image_materialized(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _data: &[f32],
+    _units: &str,
+    _object_name: &str,
+    _image_type: &str,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the number of coordinates from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_coordinate_count(path: &std::path::Path) -> Result<i32, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut count: i32 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc =
+        unsafe { cpp_read_pagedimage_coordinate_count(c_path.as_ptr(), &mut count, &mut error) };
+    if rc == 0 {
+        Ok(count)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_coordinate_count(_path: &std::path::Path) -> Result<i32, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the default mask name from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_default_mask_name(path: &std::path::Path) -> Result<String, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut buf = vec![0i8; 256];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_default_mask_name(
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            256,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const std::ffi::c_char) }
+            .to_string_lossy()
+            .to_string();
+        Ok(s)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_default_mask_name(_path: &std::path::Path) -> Result<String, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the default pixel-mask contents from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_default_mask(
+    path: &std::path::Path,
+    max_size: usize,
+) -> Result<Vec<bool>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut data = vec![0u8; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_default_mask(
+            c_path.as_ptr(),
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data.into_iter().map(|value| value != 0).collect())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_default_mask(
+    _path: &std::path::Path,
+    _max_size: usize,
+) -> Result<Vec<bool>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the image-info object name from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_info_object_name(path: &std::path::Path) -> Result<String, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut buf = vec![0i8; 256];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_imageinfo_object_name(
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            256,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const std::ffi::c_char) }
+            .to_string_lossy()
+            .to_string();
+        Ok(s)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_info_object_name(_path: &std::path::Path) -> Result<String, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the image-info type from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_info_type(path: &std::path::Path) -> Result<String, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut buf = vec![0i8; 256];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_imageinfo_type(
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            256,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const std::ffi::c_char) }
+            .to_string_lossy()
+            .to_string();
+        Ok(s)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_info_type(_path: &std::path::Path) -> Result<String, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads a sub-cube slice from a C++ `PagedImage<Float>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_image_slice(
+    path: &std::path::Path,
+    start: &[i32],
+    length: &[i32],
+) -> Result<Vec<f32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let max_size: i64 = length.iter().map(|&l| l as i64).product();
+    let mut data = vec![0.0f32; max_size as usize];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_read_pagedimage_slice(
+            c_path.as_ptr(),
+            start.as_ptr(),
+            length.as_ptr(),
+            start.len() as i32,
+            data.as_mut_ptr(),
+            max_size,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data)
+    } else {
+        let msg = if error.is_null() {
+            "unknown C++ error".to_string()
+        } else {
+            let s = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .to_string();
+            unsafe { cpp_table_free_error(error) };
+            s
+        };
+        Err(msg)
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_image_slice(
+    _path: &std::path::Path,
+    _start: &[i32],
+    _length: &[i32],
+) -> Result<Vec<f32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Evaluates a unary `ImageExpr<Float>` in C++ and returns the materialized pixels.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_eval_image_expr_unary(
+    path: &std::path::Path,
+    op: CppImageExprUnaryOp,
+    max_size: usize,
+) -> Result<Vec<f32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut data = vec![0.0f32; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_eval_pagedimage_float_unary_expr(
+            c_path.as_ptr(),
+            op as i32,
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_eval_image_expr_unary(
+    _path: &std::path::Path,
+    _op: CppImageExprUnaryOp,
+    _max_size: usize,
+) -> Result<Vec<f32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Evaluates a binary `ImageExpr<Float>` in C++ and returns the materialized pixels.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_eval_image_expr_binary(
+    lhs_path: &std::path::Path,
+    rhs_path: &std::path::Path,
+    op: CppImageExprBinaryOp,
+    max_size: usize,
+) -> Result<Vec<f32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_lhs = std::ffi::CString::new(lhs_path.to_str().unwrap())
+        .expect("lhs path must be valid C string");
+    let c_rhs = std::ffi::CString::new(rhs_path.to_str().unwrap())
+        .expect("rhs path must be valid C string");
+    let mut data = vec![0.0f32; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_eval_pagedimage_float_binary_expr(
+            c_lhs.as_ptr(),
+            c_rhs.as_ptr(),
+            op as i32,
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_eval_image_expr_binary(
+    _lhs_path: &std::path::Path,
+    _rhs_path: &std::path::Path,
+    _op: CppImageExprBinaryOp,
+    _max_size: usize,
+) -> Result<Vec<f32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Evaluates an image/scalar `ImageExpr<Float>` in C++ and returns the materialized pixels.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_eval_image_expr_scalar(
+    path: &std::path::Path,
+    scalar: f32,
+    op: CppImageExprBinaryOp,
+    max_size: usize,
+) -> Result<Vec<f32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut data = vec![0.0f32; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_eval_pagedimage_float_scalar_expr(
+            c_path.as_ptr(),
+            scalar,
+            op as i32,
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_eval_image_expr_scalar(
+    _path: &std::path::Path,
+    _scalar: f32,
+    _op: CppImageExprBinaryOp,
+    _max_size: usize,
+) -> Result<Vec<f32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Evaluates a representative comparison/logical `ImageExpr<Bool>` in C++.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_eval_image_mask_range(
+    path: &std::path::Path,
+    lower_cmp: CppImageExprCompareOp,
+    lower: f32,
+    logical_op: CppMaskLogicalOp,
+    upper_cmp: CppImageExprCompareOp,
+    upper: f32,
+    max_size: usize,
+) -> Result<Vec<bool>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut data = vec![0u8; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_eval_pagedimage_float_range_mask_expr(
+            c_path.as_ptr(),
+            lower_cmp as i32,
+            lower,
+            logical_op as i32,
+            upper_cmp as i32,
+            upper,
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data.into_iter().map(|value| value != 0).collect())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_eval_image_mask_range(
+    _path: &std::path::Path,
+    _lower_cmp: CppImageExprCompareOp,
+    _lower: f32,
+    _logical_op: CppMaskLogicalOp,
+    _upper_cmp: CppImageExprCompareOp,
+    _upper: f32,
+    _max_size: usize,
+) -> Result<Vec<bool>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Evaluates the fixed Wave 11c closeout expression in C++ and returns a slice.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_eval_image_expr_closeout_slice(
+    path: &std::path::Path,
+    start: &[i32],
+    length: &[i32],
+) -> Result<Vec<f32>, String> {
+    let _guard = lock_cpp_image_ffi();
+    assert_eq!(start.len(), length.len(), "start/length ndim mismatch");
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let max_size = length
+        .iter()
+        .fold(1usize, |acc, &dim| acc.saturating_mul(dim as usize));
+    let mut data = vec![0.0f32; max_size];
+    let mut nread: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_eval_pagedimage_float_closeout_expr_slice(
+            c_path.as_ptr(),
+            start.as_ptr(),
+            length.as_ptr(),
+            start.len() as i32,
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        Ok(data)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_eval_image_expr_closeout_slice(
+    _path: &std::path::Path,
+    _start: &[i32],
+    _length: &[i32],
+) -> Result<Vec<f32>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+/// Unary operators supported by the C++ image-expression shim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CppImageExprUnaryOp {
+    Negate = 0,
+    Exp = 1,
+    Sin = 2,
+    Cos = 3,
+    Tan = 4,
+    Asin = 5,
+    Acos = 6,
+    Atan = 7,
+    Sinh = 8,
+    Cosh = 9,
+    Tanh = 10,
+    Log = 11,
+    Log10 = 12,
+    Sqrt = 13,
+    Abs = 14,
+    Ceil = 15,
+    Floor = 16,
+    Round = 17,
+    Sign = 18,
+    Conj = 19,
+}
+
+/// Binary operators supported by the C++ image-expression shim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CppImageExprBinaryOp {
+    Add = 0,
+    Multiply = 1,
+    Subtract = 2,
+    Divide = 3,
+    Pow = 4,
+    Fmod = 5,
+    Atan2 = 6,
+    Min = 7,
+    Max = 8,
+}
+
+/// Comparison operators supported by the C++ image-expression shim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CppImageExprCompareOp {
+    GreaterThan = 0,
+    LessThan = 1,
+    GreaterEqual = 2,
+    LessEqual = 3,
+    Equal = 4,
+    NotEqual = 5,
+}
+
+/// Logical operators supported by the C++ mask-expression shim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CppMaskLogicalOp {
+    And = 0,
+    Or = 1,
+}
+
+/// Evaluate a LEL expression string using the C++ `ImageExprParse::command`
+/// parser and return the result as a flat (Fortran-order) `Vec<f32>`.
+///
+/// The expression string may reference on-disk images by their filesystem path.
+/// The `max_size` parameter is the maximum number of output elements.
+///
+/// Returns the data, shape, and ndim on success.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_eval_lel_expr(expr: &str, max_size: usize) -> Result<(Vec<f32>, Vec<i32>), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_expr = std::ffi::CString::new(expr).expect("expression must be valid C string");
+    let mut data = vec![0.0f32; max_size];
+    let mut nread: i64 = 0;
+    let mut shape = vec![0i32; 8];
+    let mut ndim: i32 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_eval_lel_expr_float(
+            c_expr.as_ptr(),
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            shape.as_mut_ptr(),
+            8,
+            &mut ndim,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        shape.truncate(ndim as usize);
+        Ok((data, shape))
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_eval_lel_expr(_expr: &str, _max_size: usize) -> Result<(Vec<f32>, Vec<i32>), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Evaluate a boolean LEL expression string using C++ `ImageExprParse::command`
+/// and return the result as a flat (Fortran-order) `Vec<bool>`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_eval_lel_expr_mask(
+    expr: &str,
+    max_size: usize,
+) -> Result<(Vec<bool>, Vec<i32>), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_expr = std::ffi::CString::new(expr).expect("expression must be valid C string");
+    let mut data = vec![0u8; max_size];
+    let mut nread: i64 = 0;
+    let mut shape = vec![0i32; 8];
+    let mut ndim: i32 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_eval_lel_expr_bool(
+            c_expr.as_ptr(),
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            shape.as_mut_ptr(),
+            8,
+            &mut ndim,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        shape.truncate(ndim as usize);
+        let bools: Vec<bool> = data.into_iter().map(|v| v != 0).collect();
+        Ok((bools, shape))
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_eval_lel_expr_mask(
+    _expr: &str,
+    _max_size: usize,
+) -> Result<(Vec<bool>, Vec<i32>), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Save a LEL expression as an `.imgexpr` file using C++.
+///
+/// The C++ parser evaluates the expression and then `ImageExpr<Float>::save()`
+/// writes the `imageexpr.json` file.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_save_lel_expr_file(expr: &str, save_path: &std::path::Path) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_expr = std::ffi::CString::new(expr).expect("expression must be valid C string");
+    let c_path = std::ffi::CString::new(save_path.to_str().expect("path must be UTF-8"))
+        .expect("path must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { cpp_save_lel_expr(c_expr.as_ptr(), c_path.as_ptr(), &mut error) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_save_lel_expr_file(_expr: &str, _save_path: &std::path::Path) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Open an `.imgexpr` file using C++ and return the pixel data.
+///
+/// Uses `ImageOpener::openImageExpr()` to open the file and reads all pixels
+/// as `f32`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_open_lel_expr_file(
+    path: &std::path::Path,
+    max_size: usize,
+) -> Result<(Vec<f32>, Vec<i32>), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path = std::ffi::CString::new(path.to_str().expect("path must be UTF-8"))
+        .expect("path must be valid C string");
+    let mut data = vec![0.0f32; max_size];
+    let mut nread: i64 = 0;
+    let mut shape = vec![0i32; 8];
+    let mut ndim: i32 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_open_lel_expr_float(
+            c_path.as_ptr(),
+            data.as_mut_ptr(),
+            max_size as i64,
+            &mut nread,
+            shape.as_mut_ptr(),
+            8,
+            &mut ndim,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        data.truncate(nread as usize);
+        shape.truncate(ndim as usize);
+        Ok((data, shape))
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_open_lel_expr_file(
+    _path: &std::path::Path,
+    _max_size: usize,
+) -> Result<(Vec<f32>, Vec<i32>), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Benchmarks C++ `PagedImage<Float>` plane-by-plane I/O.
+///
+/// Creates a 3D image with the given shape and tile shape, writes all z-planes
+/// sequentially with a unique pixel pattern, then reopens and reads them back.
+///
+/// Returns `(create_ms, write_ms, read_ms)`.
+/// Benchmarks plane-by-plane image I/O using C++ casacore.
+///
+/// `max_cache_mib`: when > 0, limits the C++ tile cache to this many MiB
+/// via `ROTiledStManAccessor`. Pass 0 for unlimited (default behaviour).
+#[cfg(has_casacore_cpp)]
+pub fn cpp_bench_image_plane_by_plane(
+    path: &std::path::Path,
+    shape: &[i32],
+    tile: &[i32],
+    max_cache_mib: i32,
+) -> Result<(f64, f64, f64), String> {
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut timings = [0.0f64; 3];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_bench_plane_by_plane(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            tile.as_ptr(),
+            shape.len() as i32,
+            max_cache_mib,
+            timings.as_mut_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok((timings[0], timings[1], timings[2]))
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_bench_image_plane_by_plane(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _tile: &[i32],
+    _max_cache_mib: i32,
+) -> Result<(f64, f64, f64), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Returns `(create_ms, write_ms, read_ms)`.
+/// Benchmarks spectrum-by-spectrum (1,1,nz) image I/O using C++ casacore.
+///
+/// `max_cache_mib`: when > 0, limits the C++ tile cache to this many MiB
+/// via `ROTiledStManAccessor`. Pass 0 for unlimited (default behaviour).
+#[cfg(has_casacore_cpp)]
+pub fn cpp_bench_image_spectrum_by_spectrum(
+    path: &std::path::Path,
+    shape: &[i32],
+    tile: &[i32],
+    max_cache_mib: i32,
+) -> Result<(f64, f64, f64), String> {
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut timings = [0.0f64; 3];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_bench_spectrum_by_spectrum(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            tile.as_ptr(),
+            shape.len() as i32,
+            max_cache_mib,
+            timings.as_mut_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok((timings[0], timings[1], timings[2]))
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_bench_image_spectrum_by_spectrum(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _tile: &[i32],
+    _max_cache_mib: i32,
+) -> Result<(f64, f64, f64), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Returns `(create_ms, write_ms, read_ms)`.
+/// Benchmarks plane-by-plane Complex32 image I/O using C++ casacore.
+///
+/// `max_cache_mib`: when > 0, limits the C++ tile cache to this many MiB
+/// via `ROTiledStManAccessor`. Pass 0 for unlimited (default behaviour).
+#[cfg(has_casacore_cpp)]
+pub fn cpp_bench_image_plane_by_plane_complex(
+    path: &std::path::Path,
+    shape: &[i32],
+    tile: &[i32],
+    max_cache_mib: i32,
+) -> Result<(f64, f64, f64), String> {
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut timings = [0.0f64; 3];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_bench_plane_by_plane_complex(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            tile.as_ptr(),
+            shape.len() as i32,
+            max_cache_mib,
+            timings.as_mut_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok((timings[0], timings[1], timings[2]))
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_bench_image_plane_by_plane_complex(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _tile: &[i32],
+    _max_cache_mib: i32,
+) -> Result<(f64, f64, f64), String> {
     Err("C++ casacore backend unavailable".to_string())
 }

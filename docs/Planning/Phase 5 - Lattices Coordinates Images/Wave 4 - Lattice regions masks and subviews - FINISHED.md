@@ -1,47 +1,52 @@
-# Wave 8 - Image iteration slicing and chunk APIs
+> **Closed Wave Record**
+>
+> This wave is finished and kept only as historical record.
+> Do not plan or implement new work from this file.
+> Use Phase 5 Waves 11a-15 for current Phase 5 parity work.
+
+# Wave 4 - Lattice regions masks and subviews
 
 ## Origin
 
-- Backlog items: 8.1, 8.2, 8.3.
+- Backlog items: 4.1, 4.2, 4.3, 4.4.
 
 ## Goal
 
-- Implement image-level iteration/slicing/chunk APIs with coordinate-aware
-  axis-order helpers.
+- Add lattice regions, masks, and subview composition with region/mask-aware
+  iteration semantics.
 
 ## Non-goals
 
-- Full image math/expression framework.
-- Reprojection/mosaicking.
+- Full image expression engine.
+- Coordinate reprojection workflows.
 
 ## Scope
 
 ### Read path
 
-- Iterate image data via full, strided, and chunk traversals.
+- Region and mask constrained reads and view materialization.
 
 ### Write path
 
-- Mutable chunk/slice updates through iterator APIs.
+- Mask-aware updates and region-scoped writes.
 
 ### API/docs/demo
 
-- Image iterator API docs and examples for common scans.
+- Region/mask/subview APIs and iteration examples.
 
 ## Dependencies
 
 - Wave 3 completed.
-- Wave 7 completed.
 
 ## Ordering constraints
 
-- Must run after Waves 3 and 7.
-- Required before Wave 10.
+- Must run after Wave 3.
+- Required before Waves 7, 8, 9, and 10.
 
 ## Files likely touched
 
-- `crates/casacore-images/src/`
-- `crates/casacore-images/tests/`
+- `crates/casacore-lattices/src/`
+- `crates/casacore-lattices/tests/`
 
 ## Definition of Ready
 
@@ -55,9 +60,9 @@
 
 ## Implementation checklist
 
-- [ ] Implement image iterators for full/strided/chunked traversal.
-- [ ] Add slicing APIs with coordinate-axis helpers.
-- [ ] Add iterator correctness tests across axis-order variants.
+- [ ] Implement region and mask model types.
+- [ ] Integrate region/mask behavior with lattice iterators.
+- [ ] Add correctness tests for nested and degenerate regions.
 
 ## Test plan
 
@@ -70,9 +75,9 @@
 
 ## Performance plan
 
-- Workload: image sweep and chunked plane extraction workloads.
-- Rust command: release benchmark for iterator throughput.
-- C++ command: matching image iterator benchmark.
+- Workload: masked and regioned scans with varied sparsity.
+- Rust command: release benchmark for region/mask iteration overhead.
+- C++ command: matching lattice region benchmark.
 - Alert threshold: Rust > 2x C++.
 
 ## Closeout criteria

@@ -15,11 +15,47 @@
 //! `TiledColumnStMan`, `TiledShapeStMan`, `TiledCellStMan`, `TiledStMan`,
 //! `TSMCube`, `TSMFile`.
 
-use std::path::Path;
+use std::fs::OpenOptions;
+use std::io::{Read as IoRead, Seek, SeekFrom, Write as IoWrite};
+#[cfg(unix)]
+use std::os::unix::fs::FileExt;
+use std::path::{Path, PathBuf};
 
 use casacore_aipsio::{AipsIo, AipsOpenOption};
-use casacore_types::{ArrayValue, Complex32, Complex64, RecordField, RecordValue, Value};
+use casacore_types::{
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, Value,
+};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+
+/// Maximum number of dimensions supported by stack-allocated arrays in
+/// tile iteration loops.  casacore images are at most 5-D.
+const MAX_NDIM: usize = 8;
+
+/// Pixel types supported by the generic tile I/O path.
+///
+/// Implemented for `f32`, `f64`, `Complex32`, and `Complex64`.
+/// `ELEM_SIZE` is the on-disk element size; `SWAP_SIZE` is the component
+/// size for byte-swapping (4 for f32/Complex32, 8 for f64/Complex64).
+pub trait TilePixel: Copy + Default + 'static {
+    const ELEM_SIZE: usize;
+    const SWAP_SIZE: usize;
+}
+impl TilePixel for f32 {
+    const ELEM_SIZE: usize = 4;
+    const SWAP_SIZE: usize = 4;
+}
+impl TilePixel for f64 {
+    const ELEM_SIZE: usize = 8;
+    const SWAP_SIZE: usize = 8;
+}
+impl TilePixel for Complex32 {
+    const ELEM_SIZE: usize = 8;
+    const SWAP_SIZE: usize = 4;
+}
+impl TilePixel for Complex64 {
+    const ELEM_SIZE: usize = 16;
+    const SWAP_SIZE: usize = 8;
+}
 
 use super::StorageError;
 use super::canonical::*;
@@ -102,9 +138,7 @@ enum TiledVariant {
 // Tile element size (different from SSM canonical size)
 // ---------------------------------------------------------------------------
 
-/// Returns the external (on-disk) element size in bytes for tile data.
-///
-/// Unlike SSM bit-packing, tiled storage uses one full byte per Bool.
+/// Returns the unpacked element size used while reconstructing typed tile data.
 fn tile_element_size(dt: CasacoreDataType) -> usize {
     match dt {
         CasacoreDataType::TpBool | CasacoreDataType::TpUChar | CasacoreDataType::TpChar => 1,
@@ -116,33 +150,55 @@ fn tile_element_size(dt: CasacoreDataType) -> usize {
     }
 }
 
+/// Returns the number of on-disk bytes a column occupies within one tile.
+fn tile_storage_bytes(dt: CasacoreDataType, nrpixels: usize) -> usize {
+    match dt {
+        CasacoreDataType::TpBool => nrpixels.div_ceil(8),
+        _ => nrpixels * tile_element_size(dt),
+    }
+}
+
 /// Compute tile layout: per-column offsets within a tile and total bucket size.
 ///
-/// C++ casacore sorts columns by descending pixel size for alignment, then
-/// assigns sequential offsets within the tile.
+/// C++ casacore stores tiled columns sequentially in schema order.
 fn compute_tile_layout(
     col_data_types: &[CasacoreDataType],
     tile_shape: &[usize],
 ) -> (usize, Vec<usize>) {
     let nrpixels: usize = tile_shape.iter().product();
 
-    let pixel_sizes: Vec<usize> = col_data_types
-        .iter()
-        .map(|dt| tile_element_size(*dt))
-        .collect();
-
-    // Sort column indices by descending pixel size (stable for determinism).
-    let mut indices: Vec<usize> = (0..col_data_types.len()).collect();
-    indices.sort_by(|&a, &b| pixel_sizes[b].cmp(&pixel_sizes[a]));
-
     let mut offsets = vec![0usize; col_data_types.len()];
     let mut offset = 0usize;
-    for &col in &indices {
+    for (col, &dt) in col_data_types.iter().enumerate() {
         offsets[col] = offset;
-        offset += nrpixels * pixel_sizes[col];
+        offset += tile_storage_bytes(dt, nrpixels);
     }
 
     (offset, offsets)
+}
+
+fn read_tile_storage(src: &[u8], dt: CasacoreDataType, nrpixels: usize) -> Vec<u8> {
+    match dt {
+        CasacoreDataType::TpBool => read_bool_bits(src, 0, nrpixels)
+            .into_iter()
+            .map(|value| if value { 1 } else { 0 })
+            .collect(),
+        _ => src.to_vec(),
+    }
+}
+
+fn write_tile_storage(dst: &mut [u8], dt: CasacoreDataType, unpacked: &[u8], nrpixels: usize) {
+    match dt {
+        CasacoreDataType::TpBool => {
+            let values: Vec<bool> = unpacked
+                .iter()
+                .take(nrpixels)
+                .map(|&value| value != 0)
+                .collect();
+            write_bool_bits(dst, 0, &values);
+        }
+        _ => dst.copy_from_slice(unpacked),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +683,7 @@ fn copy_tile_to_cube(
 /// Reconstruct a single column's full cube data from tiled storage.
 ///
 /// Returns raw bytes in column-major order, in the on-disk byte order.
+#[allow(clippy::too_many_arguments)]
 fn reconstruct_cube_column(
     file_data: &[u8],
     file_offset: usize,
@@ -634,11 +691,12 @@ fn reconstruct_cube_column(
     tile_shape: &[usize],
     col_offset_in_tile: usize,
     bucket_size: usize,
+    dt: CasacoreDataType,
     elem_size: usize,
 ) -> Result<Vec<u8>, StorageError> {
     let ndim = cube_shape.len();
     let nrpixels: usize = tile_shape.iter().product();
-    let col_bytes_per_tile = nrpixels * elem_size;
+    let col_bytes_per_tile = tile_storage_bytes(dt, nrpixels);
 
     let tiles_per_dim: Vec<usize> = (0..ndim)
         .map(|i| cube_shape[i].div_ceil(tile_shape[i]))
@@ -664,10 +722,10 @@ fn reconstruct_cube_column(
                 file_data.len()
             )));
         }
-        let tile_bytes = &file_data[tile_data_start..tile_data_end];
-
+        let tile_bytes =
+            read_tile_storage(&file_data[tile_data_start..tile_data_end], dt, nrpixels);
         copy_tile_to_cube(
-            tile_bytes,
+            &tile_bytes,
             tile_shape,
             &mut result,
             cube_shape,
@@ -836,24 +894,26 @@ fn encode_array_value(
         }
     };
 
-    // IMPORTANT: We must iterate in memory (Fortran/column-major) order, not
-    // the default logical (C/row-major) order that ndarray's `.iter()` uses.
-    // Tile data is stored in column-major order, matching the array's memory layout.
+    // IMPORTANT: Tile data is stored in Fortran (column-major) order.
+    // For arrays already in Fortran layout, `as_slice_memory_order()` provides
+    // a zero-copy fast path. For C-order arrays, `t().as_standard_layout()`
+    // creates a contiguous Fortran-order copy (avoids cache-unfriendly strided
+    // iteration that causes ~100× slowdowns on large arrays).
     match arr {
         ArrayValue::Bool(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous after as_standard_layout");
             let data: Vec<u8> = slice.iter().map(|&b| if b { 1u8 } else { 0u8 }).collect();
             Ok((data, CasacoreDataType::TpBool))
         }
         ArrayValue::UInt8(a) => {
-            let data: Vec<u8> = a
-                .as_slice_memory_order()
-                .expect("contiguous array")
-                .to_vec();
+            let f = a.t().as_standard_layout().into_owned();
+            let data = f.as_slice().expect("contiguous").to_vec();
             Ok((data, CasacoreDataType::TpUChar))
         }
         ArrayValue::Int16(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 2];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -865,7 +925,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpShort))
         }
         ArrayValue::UInt16(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 2];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -877,7 +938,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpUShort))
         }
         ArrayValue::Int32(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 4];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -889,7 +951,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpInt))
         }
         ArrayValue::UInt32(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 4];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -901,7 +964,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpUInt))
         }
         ArrayValue::Float32(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 4];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -913,7 +977,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpFloat))
         }
         ArrayValue::Float64(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 8];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -925,7 +990,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpDouble))
         }
         ArrayValue::Int64(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 8];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -937,7 +1003,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpInt64))
         }
         ArrayValue::Complex32(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 8];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -951,7 +1018,8 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpComplex))
         }
         ArrayValue::Complex64(a) => {
-            let slice = a.as_slice_memory_order().expect("contiguous array");
+            let f = a.t().as_standard_layout().into_owned();
+            let slice = f.as_slice().expect("contiguous");
             let mut data = vec![0u8; slice.len() * 16];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1081,6 +1149,7 @@ fn load_tiled_column_stman(
             &cube.tile_shape,
             col_offsets[col_idx],
             bucket_size,
+            dt,
             elem_size,
         )?;
 
@@ -1195,6 +1264,7 @@ fn load_tiled_shape_stman(
                 &cube.tile_shape,
                 layout.col_offsets[col_idx],
                 layout.bucket_size,
+                dt,
                 elem_size,
             )?;
             cols.push(Some(CubeColumnData {
@@ -1342,6 +1412,7 @@ fn load_tiled_data_stman(
                 &cube.tile_shape,
                 layout.col_offsets[col_idx],
                 layout.bucket_size,
+                dt,
                 elem_size,
             )?;
             cols.push(Some(CubeColumnData {
@@ -1449,6 +1520,7 @@ fn load_tiled_cell_stman(
                 &cube.tile_shape,
                 col_offsets[col_idx],
                 bucket_size,
+                dt,
                 elem_size,
             )?;
             let value = decode_array_value(&raw, cell_shape, dt, header.big_endian)?;
@@ -1472,6 +1544,11 @@ fn tsm_data_path(table_path: &Path, dm_seq_nr: u32, file_seq_nr: u32) -> std::pa
 ///
 /// Determines the appropriate variant from the `DataManagerKind` and writes
 /// header + tile data files.
+///
+/// `dm_name` is the hypercolumn / data-manager name written into the
+/// TiledStMan header. C++ uses this to look up the DM when opening the
+/// table. Pass the column name (or an explicit name) to match C++ behaviour.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn save_tiled_columns(
     table_path: &Path,
     dm_seq_nr: u32,
@@ -1480,6 +1557,7 @@ pub(crate) fn save_tiled_columns(
     rows: &[RecordValue],
     big_endian: bool,
     default_tile_shape: Option<&[usize]>,
+    dm_name: &str,
 ) -> Result<(), StorageError> {
     match dm_type_name {
         "TiledColumnStMan" => save_tiled_column_stman(
@@ -1489,6 +1567,7 @@ pub(crate) fn save_tiled_columns(
             rows,
             big_endian,
             default_tile_shape,
+            dm_name,
         ),
         "TiledShapeStMan" => save_tiled_shape_stman(
             table_path,
@@ -1497,6 +1576,7 @@ pub(crate) fn save_tiled_columns(
             rows,
             big_endian,
             default_tile_shape,
+            dm_name,
         ),
         "TiledCellStMan" => save_tiled_cell_stman(
             table_path,
@@ -1505,6 +1585,7 @@ pub(crate) fn save_tiled_columns(
             rows,
             big_endian,
             default_tile_shape,
+            dm_name,
         ),
         other => Err(StorageError::FormatMismatch(format!(
             "unknown tiled DM type: {other}"
@@ -1535,6 +1616,7 @@ fn save_tiled_column_stman(
     rows: &[RecordValue],
     big_endian: bool,
     user_tile_shape: Option<&[usize]>,
+    dm_name: &str,
 ) -> Result<(), StorageError> {
     let nrrow = rows.len();
     if nrrow == 0 || col_descs.is_empty() {
@@ -1544,7 +1626,7 @@ fn save_tiled_column_stman(
             seq_nr: dm_seq_nr,
             nrrow: 0,
             col_data_types: vec![],
-            hypercolumn_name: String::new(),
+            hypercolumn_name: dm_name.to_string(),
             max_cache_size: 0,
             nrdim: 0,
             files: vec![],
@@ -1628,10 +1710,10 @@ fn save_tiled_column_stman(
         for (col_idx, _) in col_descs.iter().enumerate() {
             let dt = col_data_types[col_idx];
             let elem_size = tile_element_size(dt);
-            let col_tile_bytes = nrpixels * elem_size;
+            let col_tile_bytes = tile_storage_bytes(dt, nrpixels);
 
             // Extract tile data from cube (reverse of copy_tile_to_cube).
-            let mut tile_col = vec![0u8; col_tile_bytes];
+            let mut tile_col = vec![0u8; nrpixels * elem_size];
             copy_cube_to_tile(
                 &col_cube_data[col_idx],
                 &cube_shape,
@@ -1643,7 +1725,12 @@ fn save_tiled_column_stman(
             );
 
             let dst_start = tile_idx * bucket_size + col_offsets[col_idx];
-            tsm_data[dst_start..dst_start + col_tile_bytes].copy_from_slice(&tile_col);
+            write_tile_storage(
+                &mut tsm_data[dst_start..dst_start + col_tile_bytes],
+                dt,
+                &tile_col,
+                nrpixels,
+            );
         }
     }
 
@@ -1658,7 +1745,7 @@ fn save_tiled_column_stman(
         seq_nr: dm_seq_nr,
         nrrow: nrrow as u64,
         col_data_types,
-        hypercolumn_name: String::new(),
+        hypercolumn_name: dm_name.to_string(),
         max_cache_size: 0,
         nrdim,
         files: vec![Some(TsmFileInfo {
@@ -1691,6 +1778,7 @@ fn save_tiled_shape_stman(
     rows: &[RecordValue],
     big_endian: bool,
     user_tile_shape: Option<&[usize]>,
+    dm_name: &str,
 ) -> Result<(), StorageError> {
     let nrrow = rows.len();
     let col_data_types: Vec<CasacoreDataType> = col_descs
@@ -1709,7 +1797,7 @@ fn save_tiled_shape_stman(
             seq_nr: dm_seq_nr,
             nrrow: 0,
             col_data_types: col_data_types.clone(),
-            hypercolumn_name: String::new(),
+            hypercolumn_name: dm_name.to_string(),
             max_cache_size: 0,
             nrdim: if col_descs.is_empty() {
                 0
@@ -1839,8 +1927,8 @@ fn save_tiled_shape_stman(
             for (col_idx, _) in col_descs.iter().enumerate() {
                 let dt = col_data_types[col_idx];
                 let elem_size = tile_element_size(dt);
-                let col_tile_bytes = nrpixels * elem_size;
-                let mut tile_col = vec![0u8; col_tile_bytes];
+                let col_tile_bytes = tile_storage_bytes(dt, nrpixels);
+                let mut tile_col = vec![0u8; nrpixels * elem_size];
                 copy_cube_to_tile(
                     &col_cube_data[col_idx],
                     &cube_shape,
@@ -1851,7 +1939,12 @@ fn save_tiled_shape_stman(
                     elem_size,
                 );
                 let dst_start = tile_idx * bucket_size + col_offsets[col_idx];
-                tsm_data[dst_start..dst_start + col_tile_bytes].copy_from_slice(&tile_col);
+                write_tile_storage(
+                    &mut tsm_data[dst_start..dst_start + col_tile_bytes],
+                    dt,
+                    &tile_col,
+                    nrpixels,
+                );
             }
         }
 
@@ -1936,7 +2029,7 @@ fn save_tiled_shape_stman(
         seq_nr: dm_seq_nr,
         nrrow: nrrow as u64,
         col_data_types,
-        hypercolumn_name: String::new(),
+        hypercolumn_name: dm_name.to_string(),
         max_cache_size: 0,
         nrdim,
         files: all_files,
@@ -1963,6 +2056,7 @@ fn save_tiled_cell_stman(
     rows: &[RecordValue],
     big_endian: bool,
     user_tile_shape: Option<&[usize]>,
+    dm_name: &str,
 ) -> Result<(), StorageError> {
     let nrrow = rows.len();
     let col_data_types: Vec<CasacoreDataType> = col_descs
@@ -2039,6 +2133,25 @@ fn save_tiled_cell_stman(
         let file_offset = tsm_data.len() as i64;
         let mut tile_data = vec![0u8; nr_tiles * bucket_size];
 
+        // Pre-encode each column's data once (outside the tile loop).
+        let encoded_cols: Vec<Vec<u8>> = col_descs
+            .iter()
+            .enumerate()
+            .map(|(col_idx, col_desc)| {
+                let dt = col_data_types[col_idx];
+                let elem_size = tile_element_size(dt);
+                let mut cube_bytes = vec![0u8; cell_nelem * elem_size];
+                if let Some(value) = row.get(&col_desc.col_name) {
+                    if let Ok((encoded, _)) = encode_array_value(value, big_endian) {
+                        if encoded.len() == cube_bytes.len() {
+                            cube_bytes = encoded;
+                        }
+                    }
+                }
+                cube_bytes
+            })
+            .collect();
+
         for tile_idx in 0..nr_tiles {
             let tile_pos = linear_to_nd(tile_idx, &tiles_per_dim);
             let cube_start: Vec<usize> = cube_shape
@@ -2054,23 +2167,14 @@ fn save_tiled_cell_stman(
                 .map(|((&cs, &st), &ts)| std::cmp::min(ts, cs - st))
                 .collect();
 
-            for (col_idx, col_desc) in col_descs.iter().enumerate() {
+            for (col_idx, _col_desc) in col_descs.iter().enumerate() {
                 let dt = col_data_types[col_idx];
                 let elem_size = tile_element_size(dt);
-                let col_tile_bytes = nrpixels * elem_size;
+                let col_tile_bytes = tile_storage_bytes(dt, nrpixels);
 
-                // Encode this cell's data.
-                let mut cube_bytes = vec![0u8; cell_nelem * elem_size];
-                if let Some(value) = row.get(&col_desc.col_name) {
-                    let (encoded, _) = encode_array_value(value, big_endian)?;
-                    if encoded.len() == cube_bytes.len() {
-                        cube_bytes = encoded;
-                    }
-                }
-
-                let mut tile_col = vec![0u8; col_tile_bytes];
+                let mut tile_col = vec![0u8; nrpixels * elem_size];
                 copy_cube_to_tile(
-                    &cube_bytes,
+                    &encoded_cols[col_idx],
                     &cube_shape,
                     &mut tile_col,
                     &tile_shape,
@@ -2079,7 +2183,12 @@ fn save_tiled_cell_stman(
                     elem_size,
                 );
                 let dst_start = tile_idx * bucket_size + col_offsets[col_idx];
-                tile_data[dst_start..dst_start + col_tile_bytes].copy_from_slice(&tile_col);
+                write_tile_storage(
+                    &mut tile_data[dst_start..dst_start + col_tile_bytes],
+                    dt,
+                    &tile_col,
+                    nrpixels,
+                );
             }
         }
 
@@ -2113,7 +2222,7 @@ fn save_tiled_cell_stman(
         seq_nr: dm_seq_nr,
         nrrow: nrrow as u64,
         col_data_types,
-        hypercolumn_name: String::new(),
+        hypercolumn_name: dm_name.to_string(),
         max_cache_size: 0,
         nrdim,
         files: all_files,
@@ -2199,6 +2308,1471 @@ fn array_shape(av: &ArrayValue) -> Vec<usize> {
 }
 
 // ---------------------------------------------------------------------------
+// TiledFileIO — random-access tile I/O for on-disk TiledCellStMan
+// ---------------------------------------------------------------------------
+
+/// Flat tile cache: one contiguous byte buffer for all tiles.
+/// Allocated lazily on first access, either zeroed (fresh image)
+/// or filled from disk (open). Single allocation eliminates
+/// per-tile malloc overhead.
+struct FlatTileCache {
+    /// Contiguous byte buffer: `data[i * tile_bytes .. (i+1) * tile_bytes]`.
+    data: Vec<u8>,
+    /// Per-tile dirty flag.
+    dirty: Vec<bool>,
+    tile_bytes: usize,
+    nr_tiles: usize,
+    allocated: bool,
+}
+
+/// LRU tile cache with a bounded number of slots.
+///
+/// Tiles are loaded on demand and evicted (flushing dirty tiles to disk)
+/// when the cache is full. This is used when `max_cache_bytes` is set and
+/// smaller than the total tile data, forcing real disk I/O.
+struct LruTileCache {
+    /// Fixed-size byte buffer: `max_slots × tile_bytes`.
+    data: Vec<u8>,
+    /// For each slot: the tile index it holds (`usize::MAX` = empty).
+    slot_tile: Vec<usize>,
+    /// Dirty flag per slot.
+    slot_dirty: Vec<bool>,
+    /// Reverse lookup: tile_index → slot (−1 = not cached).
+    /// Sized to `nr_tiles` for O(1) direct-indexed access (like C++ `Block<Int>`).
+    tile_to_slot: Vec<i32>,
+    /// Access counter per slot for LRU eviction.
+    slot_access: Vec<u64>,
+    /// Monotonically increasing access counter.
+    access_counter: u64,
+    /// Maximum number of tile slots.
+    max_slots: usize,
+    /// Number of currently occupied slots.
+    used_slots: usize,
+    /// File handle kept open for reads and writes.
+    file: std::fs::File,
+}
+
+enum TileCache {
+    Flat(FlatTileCache),
+    Lru(LruTileCache),
+}
+
+/// Random-access tile I/O for a `TiledCellStMan` data file.
+///
+/// Provides direct read/write of individual tiles without loading the entire
+/// array into memory. Uses an in-memory tile cache (modeled on C++ casacore's
+/// `BucketCache`) to avoid redundant disk I/O. Tiles are byte-swapped on
+/// cache load/flush, so the hot path operates on native-endian data.
+///
+/// # C++ equivalent
+///
+/// `TSMCube` + `BucketCache` in casacore's tiled storage manager.
+pub struct TiledFileIO {
+    tsm_path: PathBuf,
+    #[allow(dead_code)]
+    header_path: PathBuf,
+    table_path: PathBuf,
+    cube_shape: Vec<usize>,
+    tile_shape: Vec<usize>,
+    tiles_per_dim: Vec<usize>,
+    nr_tiles: usize,
+    elem_size: usize,
+    tile_bytes: usize,
+    tile_nelem: usize,
+    big_endian: bool,
+    file_offset: usize,
+    dm_seq_nr: u32,
+    /// Precomputed Fortran-order strides for tile indexing.
+    tile_strides: Vec<usize>,
+    /// Precomputed Fortran-order strides for tile-grid indexing.
+    tiles_per_dim_strides: Vec<usize>,
+    /// Tile cache: flat (all-in-memory) or LRU (bounded).
+    cache: TileCache,
+    /// Whether this platform needs byte-swapping for the on-disk format.
+    needs_swap: bool,
+    /// Byte-swap component size (4 for f32/Complex32, 8 for f64/Complex64).
+    swap_size: usize,
+    /// Per-tile flag: `true` when the tile has been written to disk (via
+    /// eviction or flush) and must be read back on cache miss. `false` for
+    /// tiles that have never been written — these are zero-initialized
+    /// without disk I/O.
+    tile_on_disk: Vec<bool>,
+    /// Persistent read file handle (used by flat cache bulk load).
+    read_file: Option<std::fs::File>,
+}
+
+impl TiledFileIO {
+    /// Creates a new `TiledFileIO`, writing the TSM header and allocating
+    /// a zeroed data file on disk.
+    pub fn create(
+        table_path: &Path,
+        cube_shape: &[usize],
+        tile_shape: &[usize],
+        pixel_type: PrimitiveType,
+        big_endian: bool,
+        dm_seq_nr: u32,
+        dm_name: &str,
+    ) -> Result<Self, StorageError> {
+        Self::create_impl(
+            table_path, cube_shape, tile_shape, pixel_type, big_endian, dm_seq_nr, dm_name, 0,
+        )
+    }
+
+    /// Creates a new `TiledFileIO` with an explicit cache size limit.
+    ///
+    /// When `max_cache_bytes > 0` and smaller than the total tile data,
+    /// an LRU tile cache is used, forcing real disk I/O on eviction/load.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_with_cache_limit(
+        table_path: &Path,
+        cube_shape: &[usize],
+        tile_shape: &[usize],
+        pixel_type: PrimitiveType,
+        big_endian: bool,
+        dm_seq_nr: u32,
+        dm_name: &str,
+        max_cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        Self::create_impl(
+            table_path,
+            cube_shape,
+            tile_shape,
+            pixel_type,
+            big_endian,
+            dm_seq_nr,
+            dm_name,
+            max_cache_bytes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_impl(
+        table_path: &Path,
+        cube_shape: &[usize],
+        tile_shape: &[usize],
+        pixel_type: PrimitiveType,
+        big_endian: bool,
+        dm_seq_nr: u32,
+        dm_name: &str,
+        max_cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        let dt = CasacoreDataType::from_primitive_type(pixel_type, false);
+        let ndim = cube_shape.len();
+        let elem_size = tile_element_size(dt);
+        let tile_nelem: usize = tile_shape.iter().product();
+        let tile_bytes = tile_nelem * elem_size;
+
+        let tiles_per_dim: Vec<usize> = (0..ndim)
+            .map(|d| cube_shape[d].div_ceil(tile_shape[d]))
+            .collect();
+        let nr_tiles: usize = tiles_per_dim.iter().product();
+        let total_bytes = nr_tiles * tile_bytes;
+
+        // Write zeroed TSM data file.
+        let tsm_path = tsm_data_path(table_path, dm_seq_nr, 0);
+        {
+            let f = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tsm_path)?;
+            f.set_len(total_bytes as u64)?;
+        }
+
+        // Write AipsIO header file.
+        let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+        let tile_shape_i32: Vec<i32> = tile_shape.iter().map(|&v| v as i32).collect();
+        let header = TiledStManHeader {
+            big_endian,
+            seq_nr: dm_seq_nr,
+            nrrow: 1,
+            col_data_types: vec![dt],
+            hypercolumn_name: dm_name.to_string(),
+            max_cache_size: 0,
+            nrdim: ndim as u32,
+            files: vec![Some(TsmFileInfo {
+                seq_nr: 0,
+                length: total_bytes as i64,
+            })],
+            cubes: vec![TsmCubeInfo {
+                values: RecordValue::default(),
+                extensible: false,
+                cube_shape: cube_shape.to_vec(),
+                tile_shape: tile_shape.to_vec(),
+                file_seq_nr: 0,
+                file_offset: 0,
+            }],
+        };
+        let variant = TiledVariant::Cell {
+            default_tile_shape: tile_shape_i32,
+        };
+        write_tiled_header(&header_path, &variant, &header)?;
+
+        let tile_strides = fortran_order_strides(tile_shape);
+        let tiles_per_dim_strides = fortran_order_strides(&tiles_per_dim);
+        let needs_swap = big_endian != cfg!(target_endian = "big");
+
+        let total_data_bytes = nr_tiles * tile_bytes;
+        let use_lru = max_cache_bytes > 0 && max_cache_bytes < total_data_bytes;
+        let cache = if use_lru {
+            let max_slots = max_cache_bytes / tile_bytes;
+            let max_slots = max_slots.max(1);
+            let file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
+            TileCache::Lru(LruTileCache {
+                data: vec![0u8; max_slots * tile_bytes],
+                slot_tile: vec![usize::MAX; max_slots],
+                slot_dirty: vec![false; max_slots],
+                tile_to_slot: vec![-1i32; nr_tiles],
+                slot_access: vec![0u64; max_slots],
+                access_counter: 0,
+                max_slots,
+                used_slots: 0,
+                file,
+            })
+        } else {
+            TileCache::Flat(FlatTileCache {
+                data: Vec::new(),
+                dirty: vec![false; nr_tiles],
+                tile_bytes,
+                nr_tiles,
+                allocated: false,
+            })
+        };
+
+        let swap_size = match dt {
+            CasacoreDataType::TpComplex => 4,
+            CasacoreDataType::TpDComplex => 8,
+            _ => elem_size,
+        };
+
+        Ok(Self {
+            tsm_path,
+            header_path,
+            table_path: table_path.to_path_buf(),
+            cube_shape: cube_shape.to_vec(),
+            tile_shape: tile_shape.to_vec(),
+            tiles_per_dim,
+            nr_tiles,
+            elem_size,
+            tile_bytes,
+            tile_nelem,
+            big_endian,
+            file_offset: 0,
+            dm_seq_nr,
+            tile_strides,
+            tiles_per_dim_strides,
+            cache,
+            needs_swap,
+            swap_size,
+            tile_on_disk: vec![false; nr_tiles],
+            read_file: None,
+        })
+    }
+
+    /// Opens an existing `TiledFileIO` by reading the TSM header file.
+    pub fn open(table_path: &Path, dm_seq_nr: u32) -> Result<Self, StorageError> {
+        Self::open_impl(table_path, dm_seq_nr, 0)
+    }
+
+    /// Opens an existing `TiledFileIO` with an explicit cache size limit.
+    pub fn open_with_cache_limit(
+        table_path: &Path,
+        dm_seq_nr: u32,
+        max_cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        Self::open_impl(table_path, dm_seq_nr, max_cache_bytes)
+    }
+
+    fn open_impl(
+        table_path: &Path,
+        dm_seq_nr: u32,
+        max_cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+        let (_variant, header) = read_tiled_header(&header_path)?;
+
+        if header.cubes.is_empty() {
+            return Err(StorageError::FormatMismatch(
+                "TiledFileIO: no cubes in header".to_string(),
+            ));
+        }
+        let cube = &header.cubes[0];
+        if cube.file_seq_nr < 0 {
+            return Err(StorageError::FormatMismatch(
+                "TiledFileIO: invalid file_seq_nr".to_string(),
+            ));
+        }
+        if header.col_data_types.is_empty() {
+            return Err(StorageError::FormatMismatch(
+                "TiledFileIO: no column data types".to_string(),
+            ));
+        }
+
+        let dt = header.col_data_types[0];
+        let elem_size = tile_element_size(dt);
+        let tile_nelem: usize = cube.tile_shape.iter().product();
+        let tile_bytes = tile_nelem * elem_size;
+        let ndim = cube.cube_shape.len();
+
+        let tiles_per_dim: Vec<usize> = (0..ndim)
+            .map(|d| cube.cube_shape[d].div_ceil(cube.tile_shape[d]))
+            .collect();
+        let nr_tiles: usize = tiles_per_dim.iter().product();
+
+        let tsm_path = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
+
+        let tile_strides = fortran_order_strides(&cube.tile_shape);
+        let tiles_per_dim_strides = fortran_order_strides(&tiles_per_dim);
+        let needs_swap = header.big_endian != cfg!(target_endian = "big");
+
+        let swap_size = match dt {
+            CasacoreDataType::TpComplex => 4,
+            CasacoreDataType::TpDComplex => 8,
+            _ => elem_size,
+        };
+
+        let total_data_bytes = nr_tiles * tile_bytes;
+        let use_lru = max_cache_bytes > 0 && max_cache_bytes < total_data_bytes;
+        let (cache, read_file) = if use_lru {
+            let max_slots = (max_cache_bytes / tile_bytes).max(1);
+            let file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
+            (
+                TileCache::Lru(LruTileCache {
+                    data: vec![0u8; max_slots * tile_bytes],
+                    slot_tile: vec![usize::MAX; max_slots],
+                    slot_dirty: vec![false; max_slots],
+                    tile_to_slot: vec![-1i32; nr_tiles],
+                    slot_access: vec![0u64; max_slots],
+                    access_counter: 0,
+                    max_slots,
+                    used_slots: 0,
+                    file,
+                }),
+                None,
+            )
+        } else {
+            let read_file = OpenOptions::new().read(true).open(&tsm_path).ok();
+            (
+                TileCache::Flat(FlatTileCache {
+                    data: Vec::new(),
+                    dirty: vec![false; nr_tiles],
+                    tile_bytes,
+                    nr_tiles,
+                    allocated: false,
+                }),
+                read_file,
+            )
+        };
+
+        Ok(Self {
+            tsm_path,
+            header_path,
+            table_path: table_path.to_path_buf(),
+            cube_shape: cube.cube_shape.clone(),
+            tile_shape: cube.tile_shape.clone(),
+            tiles_per_dim,
+            nr_tiles,
+            elem_size,
+            tile_bytes,
+            tile_nelem,
+            big_endian: header.big_endian,
+            file_offset: cube.file_offset as usize,
+            dm_seq_nr,
+            tile_strides,
+            tiles_per_dim_strides,
+            cache,
+            needs_swap,
+            swap_size,
+            tile_on_disk: vec![true; nr_tiles],
+            read_file,
+        })
+    }
+
+    /// Returns the cube shape.
+    pub fn cube_shape(&self) -> &[usize] {
+        &self.cube_shape
+    }
+
+    /// Returns the tile shape.
+    pub fn tile_shape(&self) -> &[usize] {
+        &self.tile_shape
+    }
+
+    /// Whether the on-disk byte order is big-endian.
+    pub fn big_endian(&self) -> bool {
+        self.big_endian
+    }
+
+    /// Returns the DM sequence number.
+    pub fn dm_seq_nr(&self) -> u32 {
+        self.dm_seq_nr
+    }
+
+    /// Returns the path to the table directory.
+    pub fn table_path(&self) -> &Path {
+        &self.table_path
+    }
+
+    // -----------------------------------------------------------------------
+    // Tile cache
+    // -----------------------------------------------------------------------
+
+    /// Ensures the flat cache is allocated (zeroed for fresh, loaded from disk otherwise).
+    fn ensure_flat_cache_allocated(&mut self) -> Result<(), StorageError> {
+        let flat = match &mut self.cache {
+            TileCache::Flat(f) => f,
+            _ => return Ok(()),
+        };
+        if flat.allocated {
+            return Ok(());
+        }
+        let total_bytes = flat.nr_tiles * flat.tile_bytes;
+        let all_fresh = self.tile_on_disk.iter().all(|&on| !on);
+        if all_fresh {
+            flat.data = vec![0u8; total_bytes];
+        } else {
+            let needs_swap = self.needs_swap;
+            let swap_size = self.swap_size;
+
+            flat.data = vec![0u8; total_bytes];
+            {
+                let f: &mut std::fs::File;
+                let mut temp_file;
+                if let Some(ref mut rf) = self.read_file {
+                    f = rf;
+                } else {
+                    temp_file = OpenOptions::new().read(true).open(&self.tsm_path)?;
+                    f = &mut temp_file;
+                }
+                f.seek(SeekFrom::Start(self.file_offset as u64))?;
+                f.read_exact(&mut flat.data)?;
+
+                if needs_swap {
+                    swap_bytes_inplace(&mut flat.data, swap_size);
+                }
+            }
+        }
+        flat.allocated = true;
+        Ok(())
+    }
+
+    /// Ensures a tile is available in the LRU cache, loading it from disk
+    /// and evicting the least-recently-used tile if necessary.
+    /// Returns the slot index holding the tile.
+    fn ensure_lru_tile_loaded(&mut self, tile_index: usize) -> Result<usize, StorageError> {
+        // Check if already loaded via direct-indexed Vec (O(1)).
+        let cached_slot = match &self.cache {
+            TileCache::Lru(lru) => lru.tile_to_slot[tile_index],
+            _ => return Ok(0), // flat cache — not used
+        };
+        if cached_slot >= 0 {
+            return Ok(cached_slot as usize);
+        }
+
+        let tile_bytes = self.tile_bytes;
+        let file_offset = self.file_offset;
+        let needs_swap = self.needs_swap;
+        let swap_size = self.swap_size;
+        let tile_needs_read = self.tile_on_disk[tile_index];
+
+        let lru = match &mut self.cache {
+            TileCache::Lru(lru) => lru,
+            _ => unreachable!(),
+        };
+
+        let slot = if lru.used_slots < lru.max_slots {
+            let s = lru.used_slots;
+            lru.used_slots += 1;
+            s
+        } else {
+            // Try batch flush (dirty contiguous tiles → single write).
+            if Self::try_batch_flush_lru_inner(
+                lru,
+                &mut self.tile_on_disk,
+                tile_bytes,
+                file_offset,
+                needs_swap,
+                swap_size,
+            )? {
+                let s = lru.used_slots;
+                lru.used_slots += 1;
+                s
+            }
+            // Try batch load (clean contiguous tiles → single read prefetch).
+            else if Self::try_batch_load_lru_inner(
+                lru,
+                &self.tile_on_disk,
+                tile_index,
+                self.nr_tiles,
+                tile_bytes,
+                file_offset,
+                needs_swap,
+                swap_size,
+            )? {
+                // Tile is already loaded at slot 0 by the batch load.
+                return Ok(0);
+            } else {
+                // Find least-recently-used slot.
+                let mut min_slot = 0;
+                let mut min_access = u64::MAX;
+                for i in 0..lru.max_slots {
+                    if lru.slot_access[i] < min_access {
+                        min_access = lru.slot_access[i];
+                        min_slot = i;
+                    }
+                }
+
+                // Evict: write dirty tile to disk if needed.
+                let old_tile = lru.slot_tile[min_slot];
+                if old_tile != usize::MAX && lru.slot_dirty[min_slot] {
+                    let off = min_slot * tile_bytes;
+                    let file_pos = (file_offset + old_tile * tile_bytes) as u64;
+                    if needs_swap {
+                        let mut buf = lru.data[off..off + tile_bytes].to_vec();
+                        swap_bytes_inplace(&mut buf, swap_size);
+                        lru.file.seek(SeekFrom::Start(file_pos))?;
+                        lru.file.write_all(&buf)?;
+                    } else {
+                        lru.file.seek(SeekFrom::Start(file_pos))?;
+                        lru.file.write_all(&lru.data[off..off + tile_bytes])?;
+                    }
+                    self.tile_on_disk[old_tile] = true;
+                }
+                if old_tile != usize::MAX {
+                    lru.tile_to_slot[old_tile] = -1;
+                }
+                min_slot
+            }
+        };
+
+        // Load tile data into the slot.
+        let off = slot * tile_bytes;
+        if !tile_needs_read {
+            lru.data[off..off + tile_bytes].fill(0);
+        } else {
+            let file_pos = (file_offset + tile_index * tile_bytes) as u64;
+            #[cfg(unix)]
+            lru.file
+                .read_exact_at(&mut lru.data[off..off + tile_bytes], file_pos)?;
+            #[cfg(not(unix))]
+            {
+                lru.file.seek(SeekFrom::Start(file_pos))?;
+                lru.file.read_exact(&mut lru.data[off..off + tile_bytes])?;
+            }
+            if needs_swap {
+                swap_bytes_inplace(&mut lru.data[off..off + tile_bytes], swap_size);
+            }
+        }
+
+        // Update mappings.
+        lru.slot_tile[slot] = tile_index;
+        lru.tile_to_slot[tile_index] = slot as i32;
+        lru.slot_dirty[slot] = false;
+        lru.slot_access[slot] = lru.access_counter;
+        lru.access_counter += 1;
+        Ok(slot)
+    }
+
+    /// Attempts to batch-flush all dirty LRU tiles in a single write when
+    /// they form a contiguous range of tile indices mapped to sequential slots.
+    ///
+    /// Returns `true` if the flush was performed (cache is now empty and ready
+    /// for reuse), `false` if conditions weren't met (caller should fall back
+    /// to per-tile LRU eviction).
+    fn try_batch_flush_lru_inner(
+        lru: &mut LruTileCache,
+        tile_on_disk: &mut [bool],
+        tile_bytes: usize,
+        file_offset: usize,
+        needs_swap: bool,
+        swap_size: usize,
+    ) -> Result<bool, StorageError> {
+        // All slots must be used and dirty, and tiles must be in sequential
+        // slot order (slot i holds tile base+i) for a single contiguous write.
+        let max_slots = lru.max_slots;
+        let mut all_dirty = true;
+        let base_tile = lru.slot_tile[0];
+        let mut contiguous = base_tile != usize::MAX;
+        for i in 0..max_slots {
+            if !lru.slot_dirty[i] {
+                all_dirty = false;
+                break;
+            }
+            if lru.slot_tile[i] != base_tile + i {
+                contiguous = false;
+                break;
+            }
+        }
+        if !all_dirty || !contiguous {
+            return Ok(false);
+        }
+
+        // Single write of the entire cache buffer.
+        let total_bytes = max_slots * tile_bytes;
+        let file_pos = (file_offset + base_tile * tile_bytes) as u64;
+        if needs_swap {
+            let mut buf = lru.data[..total_bytes].to_vec();
+            swap_bytes_inplace(&mut buf, swap_size);
+            lru.file.seek(SeekFrom::Start(file_pos))?;
+            lru.file.write_all(&buf)?;
+        } else {
+            lru.file.seek(SeekFrom::Start(file_pos))?;
+            lru.file.write_all(&lru.data[..total_bytes])?;
+        }
+
+        // Mark all flushed tiles as on-disk and reset cache state.
+        for i in 0..max_slots {
+            tile_on_disk[base_tile + i] = true;
+            lru.tile_to_slot[base_tile + i] = -1;
+        }
+        lru.slot_tile.fill(usize::MAX);
+        lru.slot_dirty.fill(false);
+        lru.used_slots = 0;
+        lru.access_counter = 0;
+        Ok(true)
+    }
+
+    /// Batch-loads a contiguous range of tiles into the LRU cache with a
+    /// single read when the cache holds clean, contiguous tiles and the
+    /// requested tile continues sequentially.
+    ///
+    /// Returns `true` if the batch load was performed (requested tile is now
+    /// at slot 0), `false` if conditions weren't met.
+    #[allow(clippy::too_many_arguments)]
+    fn try_batch_load_lru_inner(
+        lru: &mut LruTileCache,
+        tile_on_disk: &[bool],
+        tile_index: usize,
+        nr_tiles: usize,
+        tile_bytes: usize,
+        file_offset: usize,
+        needs_swap: bool,
+        swap_size: usize,
+    ) -> Result<bool, StorageError> {
+        let max_slots = lru.max_slots;
+
+        // Check: current slots hold contiguous clean tiles, and the requested
+        // tile continues right after them (sequential scan pattern).
+        let base_tile = lru.slot_tile[0];
+        if base_tile == usize::MAX || tile_index != base_tile + max_slots {
+            return Ok(false);
+        }
+        for i in 0..max_slots {
+            if lru.slot_dirty[i] || lru.slot_tile[i] != base_tile + i {
+                return Ok(false);
+            }
+        }
+
+        // All tiles on disk from tile_index onward? (Required for bulk read.)
+        let load_count = max_slots.min(nr_tiles - tile_index);
+        let all_on_disk = tile_on_disk[tile_index..tile_index + load_count]
+            .iter()
+            .all(|&d| d);
+        if !all_on_disk {
+            return Ok(false);
+        }
+
+        // Clear old mappings.
+        for i in 0..max_slots {
+            lru.tile_to_slot[base_tile + i] = -1;
+        }
+
+        // Single read of the contiguous tile range.
+        let total_bytes = load_count * tile_bytes;
+        let file_pos = (file_offset + tile_index * tile_bytes) as u64;
+        lru.file.seek(SeekFrom::Start(file_pos))?;
+        lru.file.read_exact(&mut lru.data[..total_bytes])?;
+        if needs_swap {
+            swap_bytes_inplace(&mut lru.data[..total_bytes], swap_size);
+        }
+
+        // Set up new mappings.
+        for i in 0..load_count {
+            lru.slot_tile[i] = tile_index + i;
+            lru.tile_to_slot[tile_index + i] = i as i32;
+            lru.slot_dirty[i] = false;
+            lru.slot_access[i] = i as u64;
+        }
+        // Mark any remaining slots as empty (when load_count < max_slots).
+        for i in load_count..max_slots {
+            lru.slot_tile[i] = usize::MAX;
+        }
+        lru.used_slots = load_count;
+        lru.access_counter = load_count as u64;
+        Ok(true)
+    }
+
+    /// Gets a tile from the cache (read-only), returned as `&[u8]`.
+    #[inline]
+    fn get_cached_tile(&mut self, tile_index: usize) -> Result<&[u8], StorageError> {
+        match &self.cache {
+            TileCache::Flat(flat) => {
+                if !flat.allocated {
+                    self.ensure_flat_cache_allocated()?;
+                }
+                let tile_bytes = self.tile_bytes;
+                let flat = match &self.cache {
+                    TileCache::Flat(f) => f,
+                    _ => unreachable!(),
+                };
+                let off = tile_index * tile_bytes;
+                Ok(&flat.data[off..off + tile_bytes])
+            }
+            TileCache::Lru(_) => {
+                let slot = self.ensure_lru_tile_loaded(tile_index)?;
+                let tile_bytes = self.tile_bytes;
+                let lru = match &mut self.cache {
+                    TileCache::Lru(l) => l,
+                    _ => unreachable!(),
+                };
+                lru.slot_access[slot] = lru.access_counter;
+                lru.access_counter += 1;
+                let off = slot * tile_bytes;
+                Ok(&lru.data[off..off + tile_bytes])
+            }
+        }
+    }
+
+    /// Gets a mutable tile from the cache. Marks it dirty.
+    #[inline]
+    fn get_cached_tile_mut(&mut self, tile_index: usize) -> Result<&mut [u8], StorageError> {
+        match &self.cache {
+            TileCache::Flat(flat) => {
+                if !flat.allocated {
+                    self.ensure_flat_cache_allocated()?;
+                }
+                let tile_bytes = self.tile_bytes;
+                let flat = match &mut self.cache {
+                    TileCache::Flat(f) => f,
+                    _ => unreachable!(),
+                };
+                flat.dirty[tile_index] = true;
+                let off = tile_index * tile_bytes;
+                Ok(&mut flat.data[off..off + tile_bytes])
+            }
+            TileCache::Lru(_) => {
+                let slot = self.ensure_lru_tile_loaded(tile_index)?;
+                let tile_bytes = self.tile_bytes;
+                let lru = match &mut self.cache {
+                    TileCache::Lru(l) => l,
+                    _ => unreachable!(),
+                };
+                lru.slot_dirty[slot] = true;
+                lru.slot_access[slot] = lru.access_counter;
+                lru.access_counter += 1;
+                let off = slot * tile_bytes;
+                Ok(&mut lru.data[off..off + tile_bytes])
+            }
+        }
+    }
+
+    /// Flushes all dirty tiles to disk and clears the cache.
+    pub fn flush(&mut self) -> Result<(), StorageError> {
+        match &mut self.cache {
+            TileCache::Flat(flat) => {
+                if !flat.allocated {
+                    return Ok(());
+                }
+                let has_dirty = flat.dirty.iter().any(|&d| d);
+                if has_dirty {
+                    let mut f = std::io::BufWriter::new(
+                        OpenOptions::new().write(true).open(&self.tsm_path)?,
+                    );
+
+                    if self.needs_swap {
+                        let tile_bytes = self.tile_bytes;
+                        let swap_size = self.swap_size;
+                        let mut raw = vec![0u8; tile_bytes];
+                        for tile_index in 0..self.nr_tiles {
+                            if !flat.dirty[tile_index] {
+                                continue;
+                            }
+                            let off = tile_index * tile_bytes;
+                            raw.copy_from_slice(&flat.data[off..off + tile_bytes]);
+                            swap_bytes_inplace(&mut raw, swap_size);
+                            let offset = self.file_offset + tile_index * tile_bytes;
+                            f.seek(SeekFrom::Start(offset as u64))?;
+                            f.write_all(&raw)?;
+                        }
+                    } else {
+                        let tile_bytes = self.tile_bytes;
+                        let mut run_start: Option<usize> = None;
+                        for tile_index in 0..=self.nr_tiles {
+                            let is_dirty = tile_index < self.nr_tiles && flat.dirty[tile_index];
+                            if is_dirty && run_start.is_none() {
+                                run_start = Some(tile_index);
+                            } else if !is_dirty {
+                                if let Some(start) = run_start {
+                                    let byte_start = self.file_offset + start * tile_bytes;
+                                    let src_start = start * tile_bytes;
+                                    let src_end = tile_index * tile_bytes;
+                                    f.seek(SeekFrom::Start(byte_start as u64))?;
+                                    f.write_all(&flat.data[src_start..src_end])?;
+                                    run_start = None;
+                                }
+                            }
+                        }
+                    }
+                }
+                flat.data.clear();
+                flat.data.shrink_to_fit();
+                flat.dirty.fill(false);
+                flat.allocated = false;
+            }
+            TileCache::Lru(lru) => {
+                let tile_bytes = self.tile_bytes;
+                let file_offset = self.file_offset;
+                let needs_swap = self.needs_swap;
+                let swap_size = self.swap_size;
+                // Try batch flush first (single write if tiles are contiguous).
+                if !Self::try_batch_flush_lru_inner(
+                    lru,
+                    &mut self.tile_on_disk,
+                    tile_bytes,
+                    file_offset,
+                    needs_swap,
+                    swap_size,
+                )? {
+                    // Fall back to per-tile flush.
+                    for slot in 0..lru.used_slots {
+                        let tile_idx = lru.slot_tile[slot];
+                        if tile_idx == usize::MAX || !lru.slot_dirty[slot] {
+                            continue;
+                        }
+                        let off = slot * tile_bytes;
+                        let file_pos = (file_offset + tile_idx * tile_bytes) as u64;
+                        if needs_swap {
+                            let mut buf = lru.data[off..off + tile_bytes].to_vec();
+                            swap_bytes_inplace(&mut buf, swap_size);
+                            lru.file.seek(SeekFrom::Start(file_pos))?;
+                            lru.file.write_all(&buf)?;
+                        } else {
+                            lru.file.seek(SeekFrom::Start(file_pos))?;
+                            lru.file.write_all(&lru.data[off..off + tile_bytes])?;
+                        }
+                        lru.slot_dirty[slot] = false;
+                    }
+                    // Reset cache state.
+                    for slot in 0..lru.used_slots {
+                        let tile_idx = lru.slot_tile[slot];
+                        if tile_idx != usize::MAX {
+                            lru.tile_to_slot[tile_idx] = -1;
+                        }
+                    }
+                    lru.slot_tile.fill(usize::MAX);
+                    lru.slot_dirty.fill(false);
+                    lru.used_slots = 0;
+                    lru.access_counter = 0;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Generic typed slice access
+    // -----------------------------------------------------------------------
+
+    /// Writes a rectangular slice from an ndarray into the tile file.
+    ///
+    /// Accepts any ndarray layout (C-order or Fortran-order).
+    pub fn put_slice_ndarray<T: TilePixel>(
+        &mut self,
+        data: &ArrayD<T>,
+        start: &[usize],
+    ) -> Result<(), StorageError> {
+        let shape: Vec<usize> = data.shape().to_vec();
+        let fortran_view = data.t();
+        let maybe_fortran_slice = fortran_view.as_slice();
+        if let Some(f_data) = maybe_fortran_slice {
+            return self.put_slice_fortran::<T>(f_data, start, &shape);
+        }
+        // Fallback: array is C-order. Use per-element scatter.
+        let ndim = self.cube_shape.len();
+        let tile_strides = self.tile_strides.clone();
+        let tiles_per_dim_strides = self.tiles_per_dim_strides.clone();
+        let tile_shape = self.tile_shape.clone();
+        let cube_shape = self.cube_shape.clone();
+
+        let mut tile_start = vec![0usize; ndim];
+        let mut tile_end = vec![0usize; ndim];
+        for d in 0..ndim {
+            tile_start[d] = start[d] / tile_shape[d];
+            tile_end[d] = (start[d] + shape[d] - 1) / tile_shape[d] + 1;
+        }
+
+        let mut tile_pos = tile_start.clone();
+        loop {
+            let tile_index = dot_product(&tile_pos, &tiles_per_dim_strides);
+            let tile_origin: Vec<usize> = (0..ndim).map(|d| tile_pos[d] * tile_shape[d]).collect();
+
+            let mut overlap_lo = vec![0usize; ndim];
+            let mut overlap_hi = vec![0usize; ndim];
+            let mut valid = true;
+            for d in 0..ndim {
+                let tile_end_d = std::cmp::min(tile_origin[d] + tile_shape[d], cube_shape[d]);
+                overlap_lo[d] = std::cmp::max(start[d], tile_origin[d]);
+                overlap_hi[d] = std::cmp::min(start[d] + shape[d], tile_end_d);
+                if overlap_lo[d] >= overlap_hi[d] {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if valid {
+                let tile_bytes = self.get_cached_tile_mut(tile_index)?;
+                let tile_data = tile_as_typed_mut::<T>(tile_bytes);
+                let inner_count = overlap_hi[0] - overlap_lo[0];
+
+                let outer_dims: Vec<usize> =
+                    (1..ndim).map(|d| overlap_hi[d] - overlap_lo[d]).collect();
+                let outer_total: usize = outer_dims.iter().product();
+
+                for outer_lin in 0..outer_total {
+                    let mut tile_off = (overlap_lo[0] - tile_origin[0]) * tile_strides[0];
+                    let mut remaining = outer_lin;
+                    let mut nd_idx = vec![0usize; ndim];
+                    for d in 1..ndim {
+                        let ext = overlap_hi[d] - overlap_lo[d];
+                        let coord = remaining % ext;
+                        remaining /= ext;
+                        tile_off += (overlap_lo[d] - tile_origin[d] + coord) * tile_strides[d];
+                        nd_idx[d] = overlap_lo[d] - start[d] + coord;
+                    }
+
+                    let x_start = overlap_lo[0] - start[0];
+                    for i in 0..inner_count {
+                        nd_idx[0] = x_start + i;
+                        tile_data[tile_off + i] = data[IxDyn(&nd_idx)];
+                    }
+                }
+            }
+
+            let mut carry = true;
+            for d in 0..ndim {
+                if carry {
+                    tile_pos[d] += 1;
+                    if tile_pos[d] < tile_end[d] {
+                        carry = false;
+                    } else {
+                        tile_pos[d] = tile_start[d];
+                    }
+                }
+            }
+            if carry {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes a rectangular slice of C-order (row-major) data into tiles.
+    pub fn put_slice_c_order<T: TilePixel>(
+        &mut self,
+        data: &[T],
+        start: &[usize],
+        shape: &[usize],
+    ) -> Result<(), StorageError> {
+        let ndim = self.cube_shape.len();
+        assert!(ndim <= MAX_NDIM, "ndim exceeds MAX_NDIM");
+        let c_strides = c_order_strides(shape);
+
+        // Pick inner axis: axis 0 gives contiguous tile writes (Fortran order),
+        // but axis 0's C-stride may be too large at high resolutions.
+        // Use axis 0 when the read footprint fits in L1 (~64KB); otherwise
+        // fall back to the first non-singleton axis from the end (C-contiguous).
+        let l1_threshold = 64 * 1024 / T::ELEM_SIZE; // ~64KB in elements
+        let inner_axis = if c_strides[0] * self.tile_shape[0] <= l1_threshold {
+            0
+        } else {
+            // Find the C-contiguous non-singleton axis (walk from end).
+            let mut ia = ndim - 1;
+            while ia > 0 && shape[ia] <= 1 {
+                ia -= 1;
+            }
+            ia
+        };
+        let inner_c_stride = c_strides[inner_axis];
+        let inner_t_stride = self.tile_strides[inner_axis];
+
+        // Copy self fields into stack arrays before the tile loop to avoid
+        // borrow conflicts with get_cached_tile_mut.
+        let mut ts = [0usize; MAX_NDIM]; // tile_strides
+        let mut tpds = [0usize; MAX_NDIM]; // tiles_per_dim_strides
+        let mut tsh = [0usize; MAX_NDIM]; // tile_shape
+        let mut csh = [0usize; MAX_NDIM]; // cube_shape
+        ts[..ndim].copy_from_slice(&self.tile_strides[..ndim]);
+        tpds[..ndim].copy_from_slice(&self.tiles_per_dim_strides[..ndim]);
+        tsh[..ndim].copy_from_slice(&self.tile_shape[..ndim]);
+        csh[..ndim].copy_from_slice(&self.cube_shape[..ndim]);
+
+        let mut tile_start_pos = [0usize; MAX_NDIM];
+        let mut tile_end_pos = [0usize; MAX_NDIM];
+        let mut tile_origin = [0usize; MAX_NDIM];
+        let mut overlap_lo = [0usize; MAX_NDIM];
+        let mut overlap_hi = [0usize; MAX_NDIM];
+        let mut outer_axes = [0usize; MAX_NDIM];
+        let mut outer_dims = [0usize; MAX_NDIM];
+        let mut n_outer = 0usize;
+
+        for d in 0..ndim {
+            tile_start_pos[d] = start[d] / tsh[d];
+            tile_end_pos[d] = (start[d] + shape[d] - 1) / tsh[d] + 1;
+            if d != inner_axis {
+                outer_axes[n_outer] = d;
+                n_outer += 1;
+            }
+        }
+
+        let mut tile_pos = tile_start_pos;
+        loop {
+            let mut tile_index = 0usize;
+            let mut valid = true;
+            for d in 0..ndim {
+                tile_origin[d] = tile_pos[d] * tsh[d];
+                tile_index += tile_pos[d] * tpds[d];
+                let tile_end_d = std::cmp::min(tile_origin[d] + tsh[d], csh[d]);
+                overlap_lo[d] = std::cmp::max(start[d], tile_origin[d]);
+                overlap_hi[d] = std::cmp::min(start[d] + shape[d], tile_end_d);
+                if overlap_lo[d] >= overlap_hi[d] {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if valid {
+                let inner_count = overlap_hi[inner_axis] - overlap_lo[inner_axis];
+                let base_tile_off =
+                    (overlap_lo[inner_axis] - tile_origin[inner_axis]) * inner_t_stride;
+                let base_c_off = (overlap_lo[inner_axis] - start[inner_axis]) * inner_c_stride;
+
+                let mut outer_total = 1usize;
+                for oi in 0..n_outer {
+                    outer_dims[oi] = overlap_hi[outer_axes[oi]] - overlap_lo[outer_axes[oi]];
+                    outer_total *= outer_dims[oi];
+                }
+
+                let tile_bytes = self.get_cached_tile_mut(tile_index)?;
+                let tile_data = tile_as_typed_mut::<T>(tile_bytes);
+
+                let mut outer_coord = [0usize; MAX_NDIM];
+                for _ in 0..outer_total {
+                    let mut tile_off = base_tile_off;
+                    let mut c_off = base_c_off;
+                    for oi in 0..n_outer {
+                        let d = outer_axes[oi];
+                        tile_off += (overlap_lo[d] - tile_origin[d] + outer_coord[oi]) * ts[d];
+                        c_off += (overlap_lo[d] - start[d] + outer_coord[oi]) * c_strides[d];
+                    }
+
+                    if inner_c_stride == 1 && inner_t_stride == 1 {
+                        tile_data[tile_off..tile_off + inner_count]
+                            .copy_from_slice(&data[c_off..c_off + inner_count]);
+                    } else if inner_t_stride == 1 {
+                        unsafe {
+                            let tp = tile_data.as_mut_ptr().add(tile_off);
+                            let dp = data.as_ptr().add(c_off);
+                            for i in 0..inner_count {
+                                *tp.add(i) = *dp.add(i * inner_c_stride);
+                            }
+                        }
+                    } else if inner_c_stride == 1 {
+                        unsafe {
+                            let tp = tile_data.as_mut_ptr().add(tile_off);
+                            let dp = data.as_ptr().add(c_off);
+                            for i in 0..inner_count {
+                                *tp.add(i * inner_t_stride) = *dp.add(i);
+                            }
+                        }
+                    } else {
+                        for i in 0..inner_count {
+                            tile_data[tile_off + i * inner_t_stride] =
+                                data[c_off + i * inner_c_stride];
+                        }
+                    }
+
+                    let mut carry = true;
+                    for oi in 0..n_outer {
+                        if carry {
+                            outer_coord[oi] += 1;
+                            if outer_coord[oi] < outer_dims[oi] {
+                                carry = false;
+                            } else {
+                                outer_coord[oi] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut carry = true;
+            for d in 0..ndim {
+                if carry {
+                    tile_pos[d] += 1;
+                    if tile_pos[d] < tile_end_pos[d] {
+                        carry = false;
+                    } else {
+                        tile_pos[d] = tile_start_pos[d];
+                    }
+                }
+            }
+            if carry {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes a rectangular slice of Fortran-order data into the tile file.
+    pub fn put_slice_fortran<T: TilePixel>(
+        &mut self,
+        data: &[T],
+        start: &[usize],
+        shape: &[usize],
+    ) -> Result<(), StorageError> {
+        let ndim = self.cube_shape.len();
+        assert!(ndim <= MAX_NDIM, "ndim exceeds MAX_NDIM");
+        let input_strides = fortran_order_strides(shape);
+
+        // Copy self fields to stack arrays to avoid borrow conflicts.
+        let mut ts = [0usize; MAX_NDIM];
+        let mut tpds = [0usize; MAX_NDIM];
+        let mut tsh = [0usize; MAX_NDIM];
+        let mut csh = [0usize; MAX_NDIM];
+        ts[..ndim].copy_from_slice(&self.tile_strides[..ndim]);
+        tpds[..ndim].copy_from_slice(&self.tiles_per_dim_strides[..ndim]);
+        tsh[..ndim].copy_from_slice(&self.tile_shape[..ndim]);
+        csh[..ndim].copy_from_slice(&self.cube_shape[..ndim]);
+
+        let mut tile_start = [0usize; MAX_NDIM];
+        let mut tile_end = [0usize; MAX_NDIM];
+        let mut tile_origin = [0usize; MAX_NDIM];
+        let mut overlap_lo = [0usize; MAX_NDIM];
+        let mut overlap_hi = [0usize; MAX_NDIM];
+
+        for d in 0..ndim {
+            tile_start[d] = start[d] / tsh[d];
+            tile_end[d] = (start[d] + shape[d] - 1) / tsh[d] + 1;
+        }
+
+        let mut tile_pos = tile_start;
+        loop {
+            let mut tile_index = 0usize;
+            let mut valid = true;
+            for d in 0..ndim {
+                tile_origin[d] = tile_pos[d] * tsh[d];
+                tile_index += tile_pos[d] * tpds[d];
+                let tile_end_d = std::cmp::min(tile_origin[d] + tsh[d], csh[d]);
+                overlap_lo[d] = std::cmp::max(start[d], tile_origin[d]);
+                overlap_hi[d] = std::cmp::min(start[d] + shape[d], tile_end_d);
+                if overlap_lo[d] >= overlap_hi[d] {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if valid {
+                let inner_count = overlap_hi[0] - overlap_lo[0];
+                let base_tile_off = overlap_lo[0] - tile_origin[0];
+                let base_input_off = (overlap_lo[0] - start[0]) * input_strides[0];
+
+                let mut outer_dims = [0usize; MAX_NDIM];
+                let mut outer_total = 1usize;
+                for d in 1..ndim {
+                    outer_dims[d - 1] = overlap_hi[d] - overlap_lo[d];
+                    outer_total *= outer_dims[d - 1];
+                }
+
+                let tile_bytes = self.get_cached_tile_mut(tile_index)?;
+                let tile_data = tile_as_typed_mut::<T>(tile_bytes);
+
+                let mut outer_coord = [0usize; MAX_NDIM];
+                for _ in 0..outer_total {
+                    let mut tile_off = base_tile_off;
+                    let mut input_off = base_input_off;
+                    for d in 1..ndim {
+                        tile_off += (overlap_lo[d] - tile_origin[d] + outer_coord[d - 1]) * ts[d];
+                        input_off +=
+                            (overlap_lo[d] - start[d] + outer_coord[d - 1]) * input_strides[d];
+                    }
+
+                    tile_data[tile_off..tile_off + inner_count]
+                        .copy_from_slice(&data[input_off..input_off + inner_count]);
+
+                    let mut carry = true;
+                    for d in 0..ndim.saturating_sub(1) {
+                        if carry {
+                            outer_coord[d] += 1;
+                            if outer_coord[d] < outer_dims[d] {
+                                carry = false;
+                            } else {
+                                outer_coord[d] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut carry = true;
+            for d in 0..ndim {
+                if carry {
+                    tile_pos[d] += 1;
+                    if tile_pos[d] < tile_end[d] {
+                        carry = false;
+                    } else {
+                        tile_pos[d] = tile_start[d];
+                    }
+                }
+            }
+            if carry {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Reads a rectangular slice from the tile file.
+    ///
+    /// Returns a Fortran-order `ArrayD<T>` of the given `shape`.
+    pub fn get_slice<T: TilePixel>(
+        &mut self,
+        start: &[usize],
+        shape: &[usize],
+    ) -> Result<ArrayD<T>, StorageError> {
+        let ndim = self.cube_shape.len();
+        assert!(ndim <= MAX_NDIM, "ndim exceeds MAX_NDIM");
+        let nelem: usize = shape.iter().product();
+        let mut result = vec![T::default(); nelem];
+        let result_strides = fortran_order_strides(shape);
+
+        let inner_axis = {
+            let (best, _) = shape[..ndim]
+                .iter()
+                .enumerate()
+                .max_by_key(|&(_, &ext)| ext)
+                .unwrap();
+            if shape[best] > shape[0] { best } else { 0 }
+        };
+        let inner_t_stride = self.tile_strides[inner_axis];
+        let inner_r_stride = result_strides[inner_axis];
+
+        let mut ts = [0usize; MAX_NDIM];
+        let mut tpds = [0usize; MAX_NDIM];
+        let mut tsh = [0usize; MAX_NDIM];
+        let mut csh = [0usize; MAX_NDIM];
+        ts[..ndim].copy_from_slice(&self.tile_strides[..ndim]);
+        tpds[..ndim].copy_from_slice(&self.tiles_per_dim_strides[..ndim]);
+        tsh[..ndim].copy_from_slice(&self.tile_shape[..ndim]);
+        csh[..ndim].copy_from_slice(&self.cube_shape[..ndim]);
+
+        let mut tile_start = [0usize; MAX_NDIM];
+        let mut tile_end_pos = [0usize; MAX_NDIM];
+        let mut tile_origin = [0usize; MAX_NDIM];
+        let mut overlap_lo = [0usize; MAX_NDIM];
+        let mut overlap_hi = [0usize; MAX_NDIM];
+        let mut outer_axes = [0usize; MAX_NDIM];
+        let mut outer_dims = [0usize; MAX_NDIM];
+        let mut n_outer = 0usize;
+
+        for d in 0..ndim {
+            tile_start[d] = start[d] / tsh[d];
+            tile_end_pos[d] = (start[d] + shape[d] - 1) / tsh[d] + 1;
+            if d != inner_axis {
+                outer_axes[n_outer] = d;
+                n_outer += 1;
+            }
+        }
+
+        let mut tile_pos = tile_start;
+        loop {
+            let mut tile_index = 0usize;
+            let mut valid = true;
+            for d in 0..ndim {
+                tile_origin[d] = tile_pos[d] * tsh[d];
+                tile_index += tile_pos[d] * tpds[d];
+                let tile_end_d = std::cmp::min(tile_origin[d] + tsh[d], csh[d]);
+                overlap_lo[d] = std::cmp::max(start[d], tile_origin[d]);
+                overlap_hi[d] = std::cmp::min(start[d] + shape[d], tile_end_d);
+                if overlap_lo[d] >= overlap_hi[d] {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if valid {
+                let inner_count = overlap_hi[inner_axis] - overlap_lo[inner_axis];
+                let base_tile_off =
+                    (overlap_lo[inner_axis] - tile_origin[inner_axis]) * inner_t_stride;
+                let base_result_off = (overlap_lo[inner_axis] - start[inner_axis]) * inner_r_stride;
+
+                let mut outer_total = 1usize;
+                for oi in 0..n_outer {
+                    outer_dims[oi] = overlap_hi[outer_axes[oi]] - overlap_lo[outer_axes[oi]];
+                    outer_total *= outer_dims[oi];
+                }
+
+                let tile_bytes = self.get_cached_tile(tile_index)?;
+                let tile_data = tile_as_typed::<T>(tile_bytes);
+
+                let mut outer_coord = [0usize; MAX_NDIM];
+                for _ in 0..outer_total {
+                    let mut tile_off = base_tile_off;
+                    let mut result_off = base_result_off;
+                    for oi in 0..n_outer {
+                        let d = outer_axes[oi];
+                        tile_off += (overlap_lo[d] - tile_origin[d] + outer_coord[oi]) * ts[d];
+                        result_off +=
+                            (overlap_lo[d] - start[d] + outer_coord[oi]) * result_strides[d];
+                    }
+
+                    if inner_t_stride == 1 && inner_r_stride == 1 {
+                        result[result_off..result_off + inner_count]
+                            .copy_from_slice(&tile_data[tile_off..tile_off + inner_count]);
+                    } else {
+                        unsafe {
+                            let rp = result.as_mut_ptr().add(result_off);
+                            let tp = tile_data.as_ptr().add(tile_off);
+                            for i in 0..inner_count {
+                                *rp.add(i * inner_r_stride) = *tp.add(i * inner_t_stride);
+                            }
+                        }
+                    }
+
+                    let mut carry = true;
+                    for oi in 0..n_outer {
+                        if carry {
+                            outer_coord[oi] += 1;
+                            if outer_coord[oi] < outer_dims[oi] {
+                                carry = false;
+                            } else {
+                                outer_coord[oi] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut carry = true;
+            for d in 0..ndim {
+                if carry {
+                    tile_pos[d] += 1;
+                    if tile_pos[d] < tile_end_pos[d] {
+                        carry = false;
+                    } else {
+                        tile_pos[d] = tile_start[d];
+                    }
+                }
+            }
+            if carry {
+                break;
+            }
+        }
+
+        ArrayD::from_shape_vec(IxDyn(shape).f(), result)
+            .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))
+    }
+
+    /// Reads the full cube as a Fortran-order `ArrayD<T>`.
+    pub fn get_all<T: TilePixel>(&mut self) -> Result<ArrayD<T>, StorageError> {
+        let start = vec![0; self.cube_shape.len()];
+        let shape = self.cube_shape.clone();
+        self.get_slice::<T>(&start, &shape)
+    }
+}
+
+impl Drop for TiledFileIO {
+    fn drop(&mut self) {
+        // Best-effort flush on drop.
+        let _ = self.flush();
+    }
+}
+
+/// Reinterpret a byte slice as a typed slice (read-only).
+///
+/// # Safety
+/// The caller must ensure the byte slice is aligned for `T` and that
+/// `bytes.len()` is a multiple of `T::ELEM_SIZE`.
+#[inline]
+fn tile_as_typed<T: TilePixel>(bytes: &[u8]) -> &[T] {
+    debug_assert_eq!(bytes.len() % T::ELEM_SIZE, 0);
+    debug_assert_eq!(
+        (bytes.as_ptr() as usize) % std::mem::align_of::<T>(),
+        0,
+        "tile buffer misaligned for {}",
+        std::any::type_name::<T>()
+    );
+    unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / T::ELEM_SIZE) }
+}
+
+/// Reinterpret a byte slice as a typed mutable slice.
+#[inline]
+fn tile_as_typed_mut<T: TilePixel>(bytes: &mut [u8]) -> &mut [T] {
+    debug_assert_eq!(bytes.len() % T::ELEM_SIZE, 0);
+    debug_assert_eq!(
+        (bytes.as_ptr() as usize) % std::mem::align_of::<T>(),
+        0,
+        "tile buffer misaligned for {}",
+        std::any::type_name::<T>()
+    );
+    unsafe {
+        std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut T, bytes.len() / T::ELEM_SIZE)
+    }
+}
+
+/// Byte-swap in place: reverse bytes within each `component_size`-byte chunk.
+fn swap_bytes_inplace(data: &mut [u8], component_size: usize) {
+    match component_size {
+        4 => {
+            for chunk in data.chunks_exact_mut(4) {
+                chunk.swap(0, 3);
+                chunk.swap(1, 2);
+            }
+        }
+        8 => {
+            for chunk in data.chunks_exact_mut(8) {
+                chunk.swap(0, 7);
+                chunk.swap(1, 6);
+                chunk.swap(2, 5);
+                chunk.swap(3, 4);
+            }
+        }
+        _ => {
+            for chunk in data.chunks_exact_mut(component_size) {
+                chunk.reverse();
+            }
+        }
+    }
+}
+
+/// Compute C-order (row-major) strides for a given shape.
+/// stride[last] = 1, stride[i] = product of shape[i+1..].
+fn c_order_strides(shape: &[usize]) -> Vec<usize> {
+    let ndim = shape.len();
+    let mut strides = vec![1usize; ndim];
+    for i in (0..ndim.saturating_sub(1)).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
+}
+
+/// Compute Fortran-order (column-major) strides for a given shape.
+/// stride[0] = 1, stride[i] = product of shape[0..i].
+fn fortran_order_strides(shape: &[usize]) -> Vec<usize> {
+    let ndim = shape.len();
+    let mut strides = vec![1usize; ndim];
+    for i in 1..ndim {
+        strides[i] = strides[i - 1] * shape[i - 1];
+    }
+    strides
+}
+
+/// Dot product of two equal-length slices.
+fn dot_product(a: &[usize], b: &[usize]) -> usize {
+    a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2226,6 +3800,12 @@ mod tests {
     }
 
     #[test]
+    fn bool_tile_storage_is_bit_packed() {
+        assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 4), 1);
+        assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 9), 2);
+    }
+
+    #[test]
     fn linear_to_nd_round_trip() {
         let dims = [3, 4, 2];
         for i in 0..24 {
@@ -2245,16 +3825,13 @@ mod tests {
 
     #[test]
     fn compute_tile_layout_two_columns() {
-        // Float32 (4 bytes) and Double (8 bytes).
-        // Double should come first (larger pixel size).
         let types = [CasacoreDataType::TpFloat, CasacoreDataType::TpDouble];
         let tile = [2, 3];
         let nrpixels = 6;
         let (bucket, offsets) = compute_tile_layout(&types, &tile);
-        // Double at offset 0, Float at offset 6*8=48.
-        assert_eq!(offsets[1], 0); // Double
-        assert_eq!(offsets[0], nrpixels * 8); // Float after Double
-        assert_eq!(bucket, nrpixels * 8 + nrpixels * 4);
+        assert_eq!(offsets[0], 0);
+        assert_eq!(offsets[1], nrpixels * 4);
+        assert_eq!(bucket, nrpixels * 4 + nrpixels * 8);
     }
 
     #[test]

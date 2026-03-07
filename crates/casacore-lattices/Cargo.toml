@@ -1,0 +1,19 @@
+[package]
+name = "casacore-lattices"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "N-dimensional lattice abstractions for casacore-compatible data"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casacore-tables = { path = "../casacore-tables" }
+casacore-types = { path = "../casacore-types" }
+ndarray.workspace = true
+num-complex.workspace = true
+tempfile = "3"
+thiserror.workspace = true
