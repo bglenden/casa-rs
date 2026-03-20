@@ -51,9 +51,6 @@ if [[ -n "$(git status --short)" ]]; then
   die "worktree must be clean before cutting a release"
 fi
 
-tag="v$version"
-git rev-parse --verify "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
-
 current_version="$(
   sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1
 )"
@@ -85,6 +82,9 @@ case "$version_arg" in
 esac
 
 [[ "$current_version" != "$version" ]] || die "workspace version is already $version"
+
+tag="v$version"
+git rev-parse --verify "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
 
 echo "==> Running quality gates"
 cargo fmt --all -- --check
