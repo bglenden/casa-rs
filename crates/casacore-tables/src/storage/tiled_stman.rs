@@ -2677,13 +2677,11 @@ impl TiledFileIO {
             tsm_path,
             header_path,
             table_path: table_path.to_path_buf(),
-            pixel_type: dt
-                .to_primitive_type()
-                .ok_or_else(|| {
-                    StorageError::FormatMismatch(
-                        "TiledFileIO: unsupported primitive type in header".to_string(),
-                    )
-                })?,
+            pixel_type: dt.to_primitive_type().ok_or_else(|| {
+                StorageError::FormatMismatch(
+                    "TiledFileIO: unsupported primitive type in header".to_string(),
+                )
+            })?,
             cube_shape: cube.cube_shape.clone(),
             tile_shape: cube.tile_shape.clone(),
             tiles_per_dim,

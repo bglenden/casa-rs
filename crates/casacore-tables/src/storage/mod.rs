@@ -470,7 +470,9 @@ impl CompositeStorage {
         }
 
         match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => self.load_plain_table_metadata(table_path, &table_dat),
+            TableDatResult::Plain(table_dat) => {
+                self.load_plain_table_metadata(table_path, &table_dat)
+            }
             // Metadata-only open is primarily for plain tiled tables. Fall back
             // to the full loader for more complex table types.
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
