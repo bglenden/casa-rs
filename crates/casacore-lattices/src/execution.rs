@@ -870,4 +870,164 @@ mod tests {
         assert_eq!(seen[0], (vec![0, 0], vec![2, 3]));
         assert_eq!(seen[5], (vec![4, 3], vec![1, 1]));
     }
+
+    #[test]
+    fn map_traversal_cursors_serial_propagates_consume_error() {
+        let err = try_map_traversal_cursors_with_strategy(
+            &[4, 4],
+            &[2, 2],
+            crate::TraversalSpec::chunks(vec![2, 2]),
+            CursorMapWriteExecutionStrategy::Serial,
+            Ok,
+            |_cursor| {
+                Err(LatticeError::InvalidTraversal(
+                    "synthetic consume failure".into(),
+                ))
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, LatticeError::InvalidTraversal(_)));
+    }
+
+    #[test]
+    fn map_traversal_cursors_pipelined_propagates_produce_error() {
+        let err = try_map_traversal_cursors_with_strategy(
+            &[4, 4],
+            &[2, 2],
+            crate::TraversalSpec::chunks(vec![2, 2]),
+            CursorMapWriteExecutionStrategy::Pipelined(CursorMapWriteConfig { prefetch_depth: 2 }),
+            |cursor| {
+                if cursor.position == vec![2, 2] {
+                    Err(LatticeError::InvalidTraversal(
+                        "synthetic produce failure".into(),
+                    ))
+                } else {
+                    Ok(cursor)
+                }
+            },
+            |_cursor| Ok(()),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LatticeError::InvalidTraversal(_)));
+    }
+
+    #[test]
+    fn ordered_map_traversal_cursors_pipelined_preserves_order() {
+        let seen = std::sync::Mutex::new(Vec::new());
+        try_map_traversal_cursors_ordered_with_strategy(
+            &[5, 4],
+            &[2, 3],
+            crate::TraversalSpec::chunks(vec![2, 3]),
+            OrderedCursorMapWriteExecutionStrategy::Pipelined(CursorMapWriteConfig {
+                prefetch_depth: 2,
+            }),
+            || (),
+            |_state, cursor| Ok((cursor.position, cursor.shape)),
+            |item| {
+                seen.lock().expect("lock not poisoned").push(item);
+                Ok(())
+            },
+        )
+        .unwrap();
+        let seen = seen.into_inner().expect("lock not poisoned");
+        assert_eq!(seen.len(), 6);
+        assert_eq!(seen[0], (vec![0, 0], vec![2, 3]));
+        assert_eq!(seen[5], (vec![4, 3], vec![1, 1]));
+    }
+
+    #[test]
+    fn ordered_map_traversal_cursors_parallel_preserves_order() {
+        let expected = std::sync::Mutex::new(Vec::new());
+        try_map_traversal_cursors_ordered_with_strategy(
+            &[6, 4],
+            &[2, 2],
+            crate::TraversalSpec::chunks(vec![2, 2]),
+            OrderedCursorMapWriteExecutionStrategy::Serial,
+            || (),
+            |_state, cursor| Ok((cursor.position, cursor.shape)),
+            |item| {
+                expected.lock().expect("lock not poisoned").push(item);
+                Ok(())
+            },
+        )
+        .unwrap();
+        let expected = expected.into_inner().expect("lock not poisoned");
+
+        let seen = std::sync::Mutex::new(Vec::new());
+        try_map_traversal_cursors_ordered_with_strategy(
+            &[6, 4],
+            &[2, 2],
+            crate::TraversalSpec::chunks(vec![2, 2]),
+            OrderedCursorMapWriteExecutionStrategy::Parallel(ParallelReadChunkConfig {
+                workers: 3,
+                prefetch_depth: 4,
+            }),
+            || (),
+            |_state, cursor| {
+                // Force some out-of-order worker completion so the writer path
+                // has to reorder before consuming.
+                let delay_ms = (cursor.position[0] % 3) as u64;
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                Ok((cursor.position, cursor.shape))
+            },
+            |item| {
+                seen.lock().expect("lock not poisoned").push(item);
+                Ok(())
+            },
+        )
+        .unwrap();
+        let seen = seen.into_inner().expect("lock not poisoned");
+        assert_eq!(seen, expected);
+    }
+
+    #[test]
+    fn ordered_map_traversal_cursors_parallel_propagates_map_error() {
+        let err = try_map_traversal_cursors_ordered_with_strategy(
+            &[6, 4],
+            &[2, 2],
+            crate::TraversalSpec::chunks(vec![2, 2]),
+            OrderedCursorMapWriteExecutionStrategy::Parallel(ParallelReadChunkConfig {
+                workers: 2,
+                prefetch_depth: 2,
+            }),
+            || (),
+            |_state, cursor| {
+                if cursor.position == vec![2, 2] {
+                    Err(LatticeError::InvalidTraversal(
+                        "synthetic ordered map failure".into(),
+                    ))
+                } else {
+                    Ok(cursor.position)
+                }
+            },
+            |_item| Ok(()),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LatticeError::InvalidTraversal(_)));
+    }
+
+    #[test]
+    fn ordered_map_traversal_cursors_pipelined_propagates_consume_error() {
+        let err = try_map_traversal_cursors_ordered_with_strategy(
+            &[4, 4],
+            &[2, 2],
+            crate::TraversalSpec::chunks(vec![2, 2]),
+            OrderedCursorMapWriteExecutionStrategy::Pipelined(CursorMapWriteConfig {
+                prefetch_depth: 2,
+            }),
+            || (),
+            |_state, cursor| Ok(cursor.position),
+            |position| {
+                if position == vec![2, 0] {
+                    Err(LatticeError::InvalidTraversal(
+                        "synthetic ordered consume failure".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, LatticeError::InvalidTraversal(_)));
+    }
 }
