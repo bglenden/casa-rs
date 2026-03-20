@@ -105,7 +105,10 @@ if git diff --quiet -- Cargo.toml; then
   die "version update did not modify Cargo.toml"
 fi
 
-git add Cargo.toml
+echo "==> Refreshing Cargo.lock"
+cargo metadata --format-version=1 >/dev/null
+
+git add Cargo.toml Cargo.lock
 git commit -m "Release $version"
 git tag "$tag"
 
