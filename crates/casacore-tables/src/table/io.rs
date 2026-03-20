@@ -40,6 +40,41 @@ impl Table {
         Ok(table)
     }
 
+    /// Opens only table metadata from disk, without materializing rows.
+    ///
+    /// This loads schema, keywords, column keywords, table info, and data
+    /// manager metadata, but intentionally leaves the row store empty.
+    ///
+    /// It is primarily intended for layered APIs such as paged images that
+    /// need cheap access to table metadata while reading pixel data through a
+    /// separate tiled I/O path. Row- and cell-level accessors on the returned
+    /// table therefore behave as if the table has zero rows.
+    ///
+    /// This is a Rust-specific optimization; casacore C++ does not expose a
+    /// direct equivalent on `Table`.
+    pub fn open_metadata_only(options: TableOptions) -> Result<Self, TableError> {
+        let storage = CompositeStorage;
+        let snapshot = storage.load_metadata_only(&options.path)?;
+        Ok(Self {
+            inner: TableImpl::with_rows_keywords_and_schema(
+                snapshot.rows,
+                snapshot.keywords,
+                snapshot.column_keywords,
+                snapshot.schema,
+            ),
+            source_path: Some(options.path.clone()),
+            kind: TableKind::Plain,
+            virtual_columns: snapshot.virtual_columns,
+            virtual_bindings: Vec::new(),
+            table_info: snapshot.table_info,
+            dm_info: snapshot.dm_info,
+            external_sync: None,
+            marked_for_delete: false,
+            #[cfg(unix)]
+            lock_state: None,
+        })
+    }
+
     /// Saves the table to disk.
     ///
     /// Validates the table against its schema (if any), then writes all rows,

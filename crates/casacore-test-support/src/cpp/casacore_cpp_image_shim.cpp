@@ -79,6 +79,41 @@ void create_real_pagedimage_impl(
 }
 
 template <typename Pixel>
+void create_real_pagedimage_tiled_impl(
+    const std::string& path,
+    const int32_t* shape_ptr,
+    const int32_t* tile_ptr,
+    int32_t ndim,
+    const Pixel* data_ptr,
+    int64_t ndata,
+    const char* units
+) {
+    const auto shape = make_shape(shape_ptr, ndim);
+    casacore::IPosition tile(ndim);
+    for (int32_t i = 0; i < ndim; ++i) {
+        tile[i] = tile_ptr[i];
+    }
+    const auto cs = make_default_coords(ndim);
+    casacore::PagedImage<Pixel> img(casacore::TiledShape(shape, tile), cs, path);
+
+    if (units && units[0] != '\0') {
+        img.setUnits(casacore::Unit(units));
+    }
+
+    if (data_ptr && ndata > 0) {
+        casacore::Array<Pixel> arr(shape);
+        const int64_t n = std::min(ndata, static_cast<int64_t>(arr.nelements()));
+        casacore::Bool deleteIt;
+        Pixel* storage = arr.getStorage(deleteIt);
+        std::memcpy(storage, data_ptr, n * sizeof(Pixel));
+        arr.putStorage(storage, deleteIt);
+        img.put(arr);
+    }
+
+    img.flush();
+}
+
+template <typename Pixel>
 void read_real_pagedimage_impl(
     const std::string& path,
     Pixel* data_out,
@@ -611,6 +646,31 @@ int32_t cpp_create_pagedimage_float(
     }
 }
 
+int32_t cpp_create_pagedimage_float_tiled(
+    const char* path,
+    const int32_t* shape,
+    const int32_t* tile,
+    int32_t ndim,
+    const float* data,
+    int64_t ndata,
+    const char* units,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        create_real_pagedimage_tiled_impl<casacore::Float>(
+            path, shape, tile, ndim, data, ndata, units
+        );
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception creating tiled PagedImage<Float>");
+        return -1;
+    }
+}
+
 int32_t cpp_create_tempimage_float_materialized(
     const char* path,
     const int32_t* shape,
@@ -1136,6 +1196,82 @@ int32_t cpp_eval_lel_expr_float(
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in eval_lel_expr_float");
+        return -1;
+    }
+}
+
+int32_t cpp_profile_lel_scalar_expr_float(
+    const char* expr,
+    int32_t passes,
+    double* timings_out,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        auto eval_scalar = [](casacore::LatticeExprNode& node) -> float {
+            switch (node.dataType()) {
+            case casacore::TpFloat:
+                return node.getFloat();
+            case casacore::TpDouble:
+                return static_cast<float>(node.getDouble());
+            default:
+                throw(casacore::AipsError(
+                    "cpp_profile_lel_scalar_expr_float - unsupported scalar data type"));
+            }
+        };
+
+        volatile float sink = 0.0f;
+
+        auto t0 = std::chrono::steady_clock::now();
+        for (int32_t i = 0; i < passes; ++i) {
+            casacore::Block<casacore::LatticeExprNode> temps;
+            casacore::PtrBlock<const casacore::ImageRegion*> tempRegs;
+            casacore::LatticeExprNode node = casacore::ImageExprParse::command(
+                expr, temps, tempRegs);
+            if (!node.isScalar()) {
+                throw(casacore::AipsError(
+                    "cpp_profile_lel_scalar_expr_float - expression is not scalar"));
+            }
+            sink += eval_scalar(node);
+        }
+        auto parse_each_total = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0
+        ).count();
+
+        t0 = std::chrono::steady_clock::now();
+        casacore::Block<casacore::LatticeExprNode> temps;
+        casacore::PtrBlock<const casacore::ImageRegion*> tempRegs;
+        casacore::LatticeExprNode node = casacore::ImageExprParse::command(
+            expr, temps, tempRegs);
+        if (!node.isScalar()) {
+            throw(casacore::AipsError(
+                "cpp_profile_lel_scalar_expr_float - expression is not scalar"));
+        }
+        for (int32_t i = 0; i < passes; ++i) {
+            sink += eval_scalar(node);
+        }
+        auto parse_once_total = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0
+        ).count();
+
+        t0 = std::chrono::steady_clock::now();
+        for (int32_t i = 0; i < passes; ++i) {
+            sink += eval_scalar(node);
+        }
+        auto eval_only = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0
+        ).count();
+
+        (void)sink;
+        timings_out[0] = parse_each_total;
+        timings_out[1] = parse_once_total;
+        timings_out[2] = eval_only;
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_profile_lel_scalar_expr_float");
         return -1;
     }
 }

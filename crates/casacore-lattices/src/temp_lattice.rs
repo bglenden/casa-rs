@@ -9,6 +9,7 @@ use crate::error::LatticeError;
 use crate::lattice::{Lattice, LatticeMut};
 use crate::paged_array::PagedArray;
 use crate::tiled_shape::TiledShape;
+use crate::traversal::{TraversalCacheHint, TraversalCacheScope};
 
 /// Default threshold in elements: lattices below this use in-memory storage.
 ///
@@ -126,6 +127,41 @@ impl<T: LatticeElement> TempLattice<T> {
     pub fn is_temp_closed(&self) -> bool {
         self.paged_array().is_some_and(|pa| pa.is_temp_closed())
     }
+
+    /// Returns the configured maximum tile-cache size in pixels.
+    ///
+    /// Returns `0` for in-memory lattices and for paged lattices with no
+    /// explicit maximum.
+    pub fn maximum_cache_size_pixels(&self) -> usize {
+        self.paged_array()
+            .map(PagedArray::maximum_cache_size_pixels)
+            .unwrap_or(0)
+    }
+
+    /// Sets the maximum tile-cache size in pixels for the paged variant.
+    ///
+    /// No-op for in-memory lattices. A value of `0` removes the explicit
+    /// maximum. Mirrors C++ `TempLattice::setMaximumCacheSize`.
+    pub fn set_maximum_cache_size_pixels(
+        &mut self,
+        how_many_pixels: usize,
+    ) -> Result<(), LatticeError> {
+        match self.paged_array_mut() {
+            Some(pa) => pa.set_maximum_cache_size_pixels(how_many_pixels),
+            None => Ok(()),
+        }
+    }
+
+    /// Sets the tile cache to hold approximately `how_many_tiles` tiles.
+    ///
+    /// No-op for in-memory lattices. A value of `0` removes the explicit
+    /// maximum. Mirrors C++ `TempLattice::setCacheSizeInTiles`.
+    pub fn set_cache_size_in_tiles(&mut self, how_many_tiles: usize) -> Result<(), LatticeError> {
+        match self.paged_array_mut() {
+            Some(pa) => pa.set_cache_size_in_tiles(how_many_tiles),
+            None => Ok(()),
+        }
+    }
 }
 
 impl<T: LatticeElement> Lattice<T> for TempLattice<T> {
@@ -182,9 +218,58 @@ impl<T: LatticeElement> Lattice<T> for TempLattice<T> {
             Self::Paged { array, .. } => array.nice_cursor_shape(),
         }
     }
+
+    fn enter_traversal_cache_scope<'a>(
+        &'a self,
+        hint: &TraversalCacheHint,
+    ) -> Result<Option<Box<dyn TraversalCacheScope + 'a>>, LatticeError> {
+        match self {
+            Self::Memory(_) => Ok(None),
+            Self::Paged { array, .. } => array.enter_traversal_cache_scope(hint),
+        }
+    }
 }
 
 impl<T: LatticeElement> LatticeMut<T> for TempLattice<T> {
+    fn with_traversal_cache_hint_mut<R>(
+        &mut self,
+        hint: &TraversalCacheHint,
+        f: impl FnOnce(&mut Self) -> Result<R, LatticeError>,
+    ) -> Result<R, LatticeError>
+    where
+        Self: Sized,
+    {
+        if self.is_in_memory() {
+            return f(self);
+        }
+        let previous_cache_pixels = self.maximum_cache_size_pixels();
+        let recommended_pixels = match self.paged_array() {
+            Some(array) => {
+                let recommended_tiles = crate::traversal::recommended_tile_cache_size(
+                    array.shape(),
+                    &array.nice_cursor_shape(),
+                    hint,
+                    None,
+                )
+                .max(1);
+                recommended_tiles
+                    .saturating_mul(array.nice_cursor_shape().iter().product::<usize>())
+            }
+            None => return f(self),
+        };
+        if previous_cache_pixels == recommended_pixels {
+            return f(self);
+        }
+        self.set_maximum_cache_size_pixels(recommended_pixels)?;
+        let result = f(self);
+        let restore = self.set_maximum_cache_size_pixels(previous_cache_pixels);
+        match (result, restore) {
+            (Err(err), _) => Err(err),
+            (Ok(_), Err(err)) => Err(err),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+
     fn put_at(&mut self, value: T, position: &[usize]) -> Result<(), LatticeError> {
         match self {
             Self::Memory(l) => l.put_at(value, position),
@@ -283,8 +368,11 @@ mod tests {
         lat.temp_close().unwrap();
         assert!(lat.is_temp_closed());
 
-        // Reading transparently reopens via PagedArray's auto_reopen.
+        // Reading transparently reopens tiled payload access, but the backing
+        // table remains temp-closed until an explicit reopen.
         assert_eq!(lat.get_at(&[0, 0]).unwrap(), 7.0);
+        assert!(lat.is_temp_closed());
+        lat.reopen().unwrap();
         assert!(!lat.is_temp_closed());
     }
 
@@ -295,5 +383,18 @@ mod tests {
         lat.temp_close().unwrap();
         assert!(!lat.is_temp_closed());
         assert_eq!(lat.get_at(&[0, 0]).unwrap(), 5.0);
+    }
+
+    #[test]
+    fn paged_cache_size_controls_forward_to_paged_array() {
+        let mut lat = TempLattice::<f32>::new(vec![16, 16, 16], Some(1)).unwrap();
+        assert!(lat.is_paged());
+        assert_eq!(lat.maximum_cache_size_pixels(), 0);
+
+        lat.set_cache_size_in_tiles(2).unwrap();
+        assert_eq!(lat.maximum_cache_size_pixels(), 2 * 16 * 16 * 16);
+
+        lat.set_maximum_cache_size_pixels(512).unwrap();
+        assert_eq!(lat.maximum_cache_size_pixels(), 512);
     }
 }

@@ -12,9 +12,11 @@ use casacore_images::expr_file;
 use casacore_images::expr_parser::{HashMapResolver, parse_image_expr};
 use casacore_images::image::ImageInterface;
 use casacore_images::{Image, ImageExpr, ImageIter, PagedImage};
+use casacore_lattices::{ExecutionPolicy, Lattice, LatticeStatistics, Statistic};
 use casacore_test_support::{
-    cpp_backend_available, cpp_create_image, cpp_eval_image_expr_closeout_slice, cpp_eval_lel_expr,
-    cpp_open_lel_expr_file, cpp_save_lel_expr_file,
+    cpp_backend_available, cpp_create_image, cpp_create_image_tiled,
+    cpp_eval_image_expr_closeout_slice, cpp_eval_lel_expr, cpp_open_lel_expr_file,
+    cpp_profile_lel_scalar_expr, cpp_save_lel_expr_file,
 };
 use casacore_types::Complex32;
 use ndarray::{ArrayD, IxDyn};
@@ -315,20 +317,12 @@ fn complex32_lifecycle_perf() {
     }
 }
 
-#[test]
-fn lazy_image_expr_closeout_slice_perf_vs_cpp() {
+fn run_lazy_image_expr_closeout_slice_perf_vs_cpp(case_name: &str, size: usize, passes: usize) {
     if !cpp_backend_available() {
-        eprintln!(
-            "skipping lazy_image_expr_closeout_slice_perf_vs_cpp: C++ casacore not available"
-        );
+        eprintln!("skipping {case_name}: C++ casacore not available");
         return;
     }
 
-    let size: usize = if std::env::var("CASA_RS_LARGE_PERF").is_ok() {
-        192
-    } else {
-        96
-    };
     let shape = vec![size, size];
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&s| s as i32).collect();
@@ -337,7 +331,6 @@ fn lazy_image_expr_closeout_slice_perf_vs_cpp() {
     let start_usize: Vec<usize> = start.iter().map(|&v| v as usize).collect();
     let length_usize: Vec<usize> = length.iter().map(|&v| v as usize).collect();
     let slice_n: usize = length.iter().map(|&v| v as usize).product();
-    let passes = 25usize;
 
     let dir = tempfile::tempdir().unwrap();
     let rust_path = dir.path().join("rust_expr_perf.image");
@@ -389,9 +382,10 @@ fn lazy_image_expr_closeout_slice_perf_vs_cpp() {
 
     let ratio = rust_ms / cpp_ms.max(0.001);
     let delta = (rust_total - cpp_total).abs();
+    let delta_tol = 5.0e-6 * slice_n as f64 * passes as f64;
     assert!(
-        delta < 1.0e-2 * passes as f64,
-        "closeout expression sums diverged: rust={rust_total}, cpp={cpp_total}, delta={delta}"
+        delta < delta_tol,
+        "closeout expression sums diverged: rust={rust_total}, cpp={cpp_total}, delta={delta}, tol={delta_tol}"
     );
 
     eprintln!(
@@ -413,6 +407,25 @@ fn lazy_image_expr_closeout_slice_perf_vs_cpp() {
             "Rust lazy ImageExpr slice ratio {ratio:.2}× exceeds 2.0×"
         );
     }
+}
+
+#[test]
+fn lazy_image_expr_closeout_slice_perf_vs_cpp() {
+    run_lazy_image_expr_closeout_slice_perf_vs_cpp(
+        "lazy_image_expr_closeout_slice_perf_vs_cpp",
+        96,
+        25,
+    );
+}
+
+#[test]
+#[ignore = "large lazy ImageExpr slice perf comparison; run explicitly when evaluating steady-state performance"]
+fn lazy_image_expr_closeout_slice_large_perf_vs_cpp() {
+    run_lazy_image_expr_closeout_slice_perf_vs_cpp(
+        "lazy_image_expr_closeout_slice_large_perf_vs_cpp",
+        384,
+        10,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -682,14 +695,12 @@ fn imgexpr_save_open_perf_vs_cpp() {
 // Wave 14 perf: reduction, conditional, type projection
 // =========================================================================
 
-#[test]
-fn perf_wave14_reduction_64_cube() {
+fn run_perf_wave14_reduction_vs_cpp(case_name: &str, size: usize, passes: usize) {
     if !cpp_backend_available() {
-        eprintln!("skipping: C++ casacore not available");
+        eprintln!("skipping {case_name}: C++ casacore not available");
         return;
     }
 
-    let size = 64usize;
     let n = size * size * size;
     let shape_i32 = [size as i32, size as i32, size as i32];
     let dir = tempfile::tempdir().unwrap();
@@ -705,30 +716,37 @@ fn perf_wave14_reduction_64_cube() {
         HashMapResolver(map)
     };
 
-    // Rust: sum + mean embedded in shape-preserving expression
-    let passes = 5;
-    let expr_sum = format!("'{a_str}' * 0.0 + sum('{a_str}')");
-    let expr_mean = format!("'{a_str}' * 0.0 + mean('{a_str}')");
+    // Compare direct scalar reductions on both sides.
+    let expr_sum = format!("sum('{a_str}')");
+    let expr_mean = format!("mean('{a_str}')");
 
     let t0 = Instant::now();
     for _ in 0..passes {
         let e = parse_image_expr(&expr_sum, &resolver).unwrap();
-        let _ = e.get_at(&[0, 0, 0]).unwrap();
+        let _ = e.get_at(&[]).unwrap();
         let e = parse_image_expr(&expr_mean, &resolver).unwrap();
-        let _ = e.get_at(&[0, 0, 0]).unwrap();
+        let _ = e.get_at(&[]).unwrap();
     }
     let rust_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let t0 = Instant::now();
     for _ in 0..passes {
-        let _ = cpp_eval_lel_expr(&expr_sum, n).unwrap();
-        let _ = cpp_eval_lel_expr(&expr_mean, n).unwrap();
+        let (_vals, shape) = cpp_eval_lel_expr(&expr_sum, 1).unwrap();
+        assert!(
+            shape.is_empty(),
+            "C++ sum should be scalar, got shape {shape:?}"
+        );
+        let (_vals, shape) = cpp_eval_lel_expr(&expr_mean, 1).unwrap();
+        assert!(
+            shape.is_empty(),
+            "C++ mean should be scalar, got shape {shape:?}"
+        );
     }
     let cpp_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let ratio = rust_ms / cpp_ms.max(0.001);
     eprintln!(
-        "wave14 reduction perf ({size}³, {passes} passes sum+mean):\n  \
+        "wave14 scalar reduction perf ({size}³, {passes} passes sum+mean):\n  \
          C++:  {cpp_ms:.1} ms\n  \
          Rust: {rust_ms:.1} ms\n  \
          Ratio: {ratio:.2}×"
@@ -736,6 +754,388 @@ fn perf_wave14_reduction_64_cube() {
     if ratio > 2.0 {
         eprintln!("WARNING: Rust reduction is {ratio:.1}× slower than C++ (threshold: 2.0×)");
     }
+}
+
+fn run_compiled_expr_get_vs_cpp_shape(
+    case_name: &str,
+    shape_usize: &[usize],
+    tile_usize: &[usize],
+    passes: usize,
+    masked: bool,
+) {
+    if !cpp_backend_available() {
+        eprintln!("skipping {case_name}: C++ casacore not available");
+        return;
+    }
+
+    assert_eq!(
+        shape_usize.len(),
+        tile_usize.len(),
+        "{case_name}: shape/tile rank mismatch"
+    );
+    let n: usize = shape_usize.iter().product();
+    let shape_i32: Vec<i32> = shape_usize.iter().map(|&dim| dim as i32).collect();
+    let tile_i32: Vec<i32> = tile_usize.iter().map(|&dim| dim as i32).collect();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("compiled_cube_cpp.image");
+    let rust_path = dir.path().join("compiled_cube_rust.image");
+    let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001 - 64.0).collect();
+    cpp_create_image_tiled(&path, &shape_i32, &tile_i32, &data, "").unwrap();
+
+    {
+        let mut rust_image = PagedImage::<f32>::create_with_tile_shape(
+            shape_usize.to_vec(),
+            tile_usize.to_vec(),
+            CoordinateSystem::new(),
+            &rust_path,
+        )
+        .unwrap();
+        let rust_data = ArrayD::from_shape_vec(IxDyn(shape_usize), data.clone()).unwrap();
+        rust_image
+            .put_slice(&rust_data, &vec![0; shape_usize.len()])
+            .unwrap();
+        rust_image.save().unwrap();
+    }
+
+    let benchmark_rust = |image_path: &std::path::Path, policy: ExecutionPolicy| -> (f64, f64) {
+        let image = PagedImage::<f32>::open(image_path).unwrap();
+        let image_str = image_path.to_str().unwrap();
+        let resolver = {
+            let mut map = HashMap::new();
+            map.insert(image_str.to_string(), &image as &dyn ImageInterface<f32>);
+            HashMapResolver(map)
+        };
+
+        let expr_str = if masked {
+            format!(
+                "iif('{image_str}' > 0.0, sin('{image_str}' * 2.0 + 1.0), '{image_str}' * -1.0)"
+            )
+        } else {
+            format!("exp(sin('{image_str}' * 2.0 + 1.0))")
+        };
+
+        let parsed = parse_image_expr(&expr_str, &resolver).unwrap();
+        let compiled = parsed.compile().unwrap();
+        let mut compiled = compiled.clone();
+        compiled.set_execution_policy(policy);
+        let t0 = Instant::now();
+        let mut sum = 0.0f64;
+        for _ in 0..passes {
+            let arr = compiled.get().unwrap();
+            sum += arr.iter().map(|&value| value as f64).sum::<f64>();
+        }
+        (t0.elapsed().as_secs_f64() * 1000.0, sum)
+    };
+
+    let image_str = path.to_str().unwrap();
+    let expr_str = if masked {
+        format!("iif('{image_str}' > 0.0, sin('{image_str}' * 2.0 + 1.0), '{image_str}' * -1.0)")
+    } else {
+        format!("exp(sin('{image_str}' * 2.0 + 1.0))")
+    };
+    let workers = std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(2)
+        .max(2);
+
+    let (rust_serial_ms, rust_serial_sum) = benchmark_rust(&path, ExecutionPolicy::Serial);
+    let (rust_pipelined_ms, rust_pipelined_sum) = benchmark_rust(
+        &path,
+        ExecutionPolicy::Pipelined {
+            prefetch_depth: workers * 2,
+        },
+    );
+    let (rust_parallel_ms, rust_parallel_sum) = benchmark_rust(
+        &path,
+        ExecutionPolicy::Parallel {
+            workers,
+            prefetch_depth: workers * 2,
+        },
+    );
+    let (rust_auto_ms, rust_auto_sum) = benchmark_rust(&path, ExecutionPolicy::Auto);
+    let (rust_native_serial_ms, _) = benchmark_rust(&rust_path, ExecutionPolicy::Serial);
+    let (rust_native_pipelined_ms, _) = benchmark_rust(
+        &rust_path,
+        ExecutionPolicy::Pipelined {
+            prefetch_depth: workers * 2,
+        },
+    );
+    let (rust_native_parallel_ms, _) = benchmark_rust(
+        &rust_path,
+        ExecutionPolicy::Parallel {
+            workers,
+            prefetch_depth: workers * 2,
+        },
+    );
+    let (rust_native_auto_ms, _) = benchmark_rust(&rust_path, ExecutionPolicy::Auto);
+    let measure_open_and_slice = |image_path: &std::path::Path| -> (f64, f64) {
+        let t0 = Instant::now();
+        let image = PagedImage::<f32>::open(image_path).unwrap();
+        let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let slice_shape = shape_usize
+            .iter()
+            .zip(tile_usize.iter())
+            .map(|(&shape, &tile)| shape.min(tile.saturating_mul(4).max(1)))
+            .collect::<Vec<_>>();
+        let t0 = Instant::now();
+        let _ = image
+            .get_slice(&vec![0; shape_usize.len()], &slice_shape)
+            .unwrap();
+        let first_slice_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        (open_ms, first_slice_ms)
+    };
+    let (rust_native_open_ms, rust_native_first_slice_ms) = measure_open_and_slice(&rust_path);
+    let (rust_cpp_open_ms, rust_cpp_first_slice_ms) = measure_open_and_slice(&path);
+
+    let (rust_ms, rust_sum, rust_policy) = [
+        (rust_serial_ms, rust_serial_sum, "Serial"),
+        (rust_pipelined_ms, rust_pipelined_sum, "Pipelined"),
+        (rust_parallel_ms, rust_parallel_sum, "Parallel"),
+        (rust_auto_ms, rust_auto_sum, "Auto"),
+    ]
+    .into_iter()
+    .min_by(|lhs, rhs| lhs.0.total_cmp(&rhs.0))
+    .unwrap();
+
+    let t0 = Instant::now();
+    let mut cpp_sum = 0.0f64;
+    for _ in 0..passes {
+        let (vals, shape) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+        assert_eq!(shape, shape_i32, "{case_name}: C++ shape mismatch");
+        cpp_sum += vals.iter().map(|&value| value as f64).sum::<f64>();
+    }
+    let cpp_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let ratio = rust_ms / cpp_ms.max(0.001);
+    let abs_delta = (rust_sum - cpp_sum).abs();
+    let tol = (n * passes) as f64 * 1e-3;
+    assert!(
+        abs_delta <= tol,
+        "{case_name}: sums diverged too much: rust={rust_sum}, cpp={cpp_sum}, delta={abs_delta}, tol={tol}"
+    );
+
+    eprintln!(
+        "{case_name} (shape={shape_usize:?}, tile={tile_usize:?}, {passes} passes):\n  \
+         C++:        {cpp_ms:.1} ms\n  \
+         Rust src open/slice {rust_native_open_ms:.1}/{rust_native_first_slice_ms:.1} ms\n  \
+         C++ src open/slice  {rust_cpp_open_ms:.1}/{rust_cpp_first_slice_ms:.1} ms\n  \
+         Rust src(serial/pipe/par/auto) {rust_native_serial_ms:.1}/{rust_native_pipelined_ms:.1}/{rust_native_parallel_ms:.1}/{rust_native_auto_ms:.1} ms\n  \
+         Rust serial {rust_serial_ms:.1} ms\n  \
+         Rust pipe   {rust_pipelined_ms:.1} ms\n  \
+         Rust par    {rust_parallel_ms:.1} ms\n  \
+         Rust auto   {rust_auto_ms:.1} ms\n  \
+         Rust best   {rust_ms:.1} ms ({rust_policy})\n  \
+         Ratio:      {ratio:.2}×"
+    );
+}
+
+fn run_compiled_expr_get_vs_cpp(case_name: &str, size: usize, passes: usize, masked: bool) {
+    run_compiled_expr_get_vs_cpp_shape(
+        case_name,
+        &[size, size, size],
+        &[16, 16, 16],
+        passes,
+        masked,
+    );
+}
+
+#[test]
+fn perf_wave14_reduction_64_cube() {
+    run_perf_wave14_reduction_vs_cpp("perf_wave14_reduction_64_cube", 64, 5);
+}
+
+#[test]
+#[ignore = "large reduction perf comparison; run explicitly when evaluating steady-state performance"]
+fn perf_wave14_reduction_128_cube() {
+    run_perf_wave14_reduction_vs_cpp("perf_wave14_reduction_128_cube", 128, 3);
+}
+
+#[test]
+fn compiled_expr_get_64_cube_vs_cpp() {
+    run_compiled_expr_get_vs_cpp("compiled_expr_get_64_cube_vs_cpp", 64, 4, false);
+}
+
+#[test]
+fn compiled_masked_expr_get_64_cube_vs_cpp() {
+    run_compiled_expr_get_vs_cpp("compiled_masked_expr_get_64_cube_vs_cpp", 64, 4, true);
+}
+
+#[test]
+#[ignore = "large compiled expression get perf comparison; run explicitly when evaluating steady-state performance"]
+fn compiled_expr_get_128_cube_vs_cpp() {
+    run_compiled_expr_get_vs_cpp("compiled_expr_get_128_cube_vs_cpp", 128, 2, false);
+}
+
+#[test]
+#[ignore = "large compiled masked expression get perf comparison; run explicitly when evaluating steady-state performance"]
+fn compiled_masked_expr_get_128_cube_vs_cpp() {
+    run_compiled_expr_get_vs_cpp("compiled_masked_expr_get_128_cube_vs_cpp", 128, 2, true);
+}
+
+#[test]
+#[ignore = "large compiled expression get perf comparison; run explicitly when evaluating large paged workloads"]
+fn compiled_expr_get_1024_1024_256_vs_cpp() {
+    run_compiled_expr_get_vs_cpp_shape(
+        "compiled_expr_get_1024_1024_256_vs_cpp",
+        &[1024, 1024, 256],
+        &[16, 16, 16],
+        1,
+        false,
+    );
+}
+
+#[test]
+#[ignore = "large compiled masked expression get perf comparison; run explicitly when evaluating large paged workloads"]
+fn compiled_masked_expr_get_1024_1024_256_vs_cpp() {
+    run_compiled_expr_get_vs_cpp_shape(
+        "compiled_masked_expr_get_1024_1024_256_vs_cpp",
+        &[1024, 1024, 256],
+        &[16, 16, 16],
+        1,
+        true,
+    );
+}
+
+fn run_reduction_breakdown(size: usize, passes: usize) {
+    let n = size * size * size;
+    let shape_i32 = [size as i32, size as i32, size as i32];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cube.image");
+    let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001).collect();
+    cpp_create_image(&path, &shape_i32, &data, "").unwrap();
+
+    let image = PagedImage::<f32>::open(&path).unwrap();
+    let image_ref = &image as &dyn ImageInterface<f32>;
+    let a_str = path.to_str().unwrap();
+    let resolver = {
+        let mut map = HashMap::new();
+        map.insert(a_str.to_string(), image_ref);
+        HashMapResolver(map)
+    };
+
+    let expr_sum = format!("sum('{a_str}')");
+    let expr_mean = format!("mean('{a_str}')");
+
+    let t0 = Instant::now();
+    for _ in 0..passes {
+        let stats = LatticeStatistics::new(&image as &dyn Lattice<f32>);
+        let _ = stats.get_statistic(Statistic::Sum).unwrap();
+        let stats = LatticeStatistics::new(&image as &dyn Lattice<f32>);
+        let _ = stats.get_statistic(Statistic::Mean).unwrap();
+    }
+    let stats_cold_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let t0 = Instant::now();
+    for _ in 0..passes {
+        let chunk = image.get().unwrap();
+        let mut sum = 0.0f64;
+        for &v in &chunk {
+            sum += f64::from(v);
+        }
+        let _ = sum as f32;
+
+        let chunk = image.get().unwrap();
+        let mut sum = 0.0f64;
+        let mut n = 0usize;
+        for &v in &chunk {
+            sum += f64::from(v);
+            n += 1;
+        }
+        let _ = (sum / n as f64) as f32;
+    }
+    let full_read_cold_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let t0 = Instant::now();
+    for _ in 0..passes {
+        let stats = LatticeStatistics::new(&image as &dyn Lattice<f32>);
+        let _ = stats.get_statistic(Statistic::Sum).unwrap();
+        let _ = stats.get_statistic(Statistic::Mean).unwrap();
+    }
+    let stats_reused_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let sum_expr = ImageExpr::from_image(&image).unwrap().sum_reduce();
+    let mean_expr = ImageExpr::from_image(&image).unwrap().mean_reduce();
+    let t0 = Instant::now();
+    for _ in 0..passes {
+        let _ = sum_expr.get_at(&[]).unwrap();
+        let _ = mean_expr.get_at(&[]).unwrap();
+    }
+    let typed_expr_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let parsed_sum = parse_image_expr(&expr_sum, &resolver).unwrap();
+    let parsed_mean = parse_image_expr(&expr_mean, &resolver).unwrap();
+    let t0 = Instant::now();
+    for _ in 0..passes {
+        let _ = parsed_sum.get_at(&[]).unwrap();
+        let _ = parsed_mean.get_at(&[]).unwrap();
+    }
+    let parsed_once_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let t0 = Instant::now();
+    for _ in 0..passes {
+        let e = parse_image_expr(&expr_sum, &resolver).unwrap();
+        let _ = e.get_at(&[]).unwrap();
+        let e = parse_image_expr(&expr_mean, &resolver).unwrap();
+        let _ = e.get_at(&[]).unwrap();
+    }
+    let parse_each_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    eprintln!(
+        "wave14 reduction breakdown ({size}^3, {passes} passes sum+mean):\n  \
+         stats cold:   {stats_cold_ms:.1} ms\n  \
+         full read:    {full_read_cold_ms:.1} ms\n  \
+         stats reused: {stats_reused_ms:.1} ms\n  \
+         typed expr:   {typed_expr_ms:.1} ms\n  \
+         parsed once:  {parsed_once_ms:.1} ms\n  \
+         parse+eval:   {parse_each_ms:.1} ms"
+    );
+}
+
+#[test]
+#[ignore = "diagnostic reduction breakdown; run explicitly when investigating scaling"]
+fn perf_wave14_reduction_breakdown_64_cube() {
+    run_reduction_breakdown(64, 5);
+}
+
+#[test]
+#[ignore = "diagnostic reduction breakdown; run explicitly when investigating scaling"]
+fn perf_wave14_reduction_breakdown_128_cube() {
+    run_reduction_breakdown(128, 3);
+}
+
+#[test]
+#[ignore = "diagnostic C++ scalar reduction profile; run explicitly when investigating medium-size gap"]
+fn perf_wave14_reduction_cpp_profile_64_cube() {
+    if !cpp_backend_available() {
+        eprintln!("skipping: C++ casacore not available");
+        return;
+    }
+
+    let size = 64usize;
+    let passes = 5usize;
+    let n = size * size * size;
+    let shape_i32 = [size as i32, size as i32, size as i32];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cube.image");
+    let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001).collect();
+    cpp_create_image(&path, &shape_i32, &data, "").unwrap();
+
+    let expr_sum = format!("sum('{}')", path.display());
+    let expr_mean = format!("mean('{}')", path.display());
+
+    let sum = cpp_profile_lel_scalar_expr(&expr_sum, passes).unwrap();
+    let mean = cpp_profile_lel_scalar_expr(&expr_mean, passes).unwrap();
+
+    eprintln!(
+        "wave14 C++ scalar profile (64^3, {passes} passes):\n  \
+         sum parse+eval each: {:.1} ms\n  \
+         sum parse once total: {:.1} ms\n  \
+         sum eval only: {:.1} ms\n  \
+         mean parse+eval each: {:.1} ms\n  \
+         mean parse once total: {:.1} ms\n  \
+         mean eval only: {:.1} ms",
+        sum[0], sum[1], sum[2], mean[0], mean[1], mean[2],
+    );
 }
 
 #[test]

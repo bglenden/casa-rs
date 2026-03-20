@@ -60,18 +60,41 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
 
 use casacore_coordinates::CoordinateSystem;
-use casacore_lattices::{Lattice, LatticeError};
+use casacore_lattices::execution::{
+    ParallelReadChunkConfig, ReadChunkExecutionStrategy, try_fold_traversal_cursors,
+    try_for_each_traversal_cursor, try_reduce_read_chunks,
+};
+use casacore_lattices::{
+    Lattice, LatticeError, LatticeStatistics, Statistic, TraversalCursorIter, TraversalSpec,
+};
 use casacore_types::ArrayD;
-use ndarray::IxDyn;
+use ndarray::{IxDyn, Zip};
 
 use crate::error::ImageError;
 use crate::image::{ImageInterface, ImagePixel, PagedImage};
 use crate::image_info::ImageInfo;
 
+#[path = "image_expr_compiled.rs"]
+mod compiled;
+pub use compiled::{CompiledImageExpr, CompiledMaskExpr};
+
 type UnaryExprFn<T> = Arc<dyn Fn(T) -> T + Send + Sync>;
 type BinaryExprFn<T> = Arc<dyn Fn(T, T) -> T + Send + Sync>;
+
+#[derive(Clone, Copy)]
+struct ExprReductionPartial<T> {
+    seen: bool,
+    value: T,
+}
+
+impl<T> ExprReductionPartial<T> {
+    fn new(value: T) -> Self {
+        Self { seen: false, value }
+    }
+}
 
 /// Numeric operations supported by the lazy image expression DAG.
 ///
@@ -127,6 +150,20 @@ pub trait ImageExprValue:
 
     /// Lossily convert to `f64`.  Used by sorting in median/fractile.
     fn to_f64_lossy(&self) -> f64;
+
+    /// Optional fast path for direct source-backed global reductions.
+    fn reduction_from_source(
+        _op: ReductionOp,
+        _image: &dyn ImageInterface<Self>,
+    ) -> Option<Result<Self, LatticeError>>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    /// Compare two values using LEL-style scalar comparison semantics.
+    fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool;
 }
 
 impl ImageExprValue for f32 {
@@ -217,6 +254,24 @@ impl ImageExprValue for f32 {
     fn to_f64_lossy(&self) -> f64 {
         *self as f64
     }
+
+    fn reduction_from_source(
+        op: ReductionOp,
+        image: &dyn ImageInterface<Self>,
+    ) -> Option<Result<Self, LatticeError>> {
+        Some(source_numeric_reduction_value(op, image))
+    }
+
+    fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool {
+        match op {
+            ImageExprCompareOp::GreaterThan => self > rhs,
+            ImageExprCompareOp::LessThan => self < rhs,
+            ImageExprCompareOp::GreaterEqual => self >= rhs,
+            ImageExprCompareOp::LessEqual => self <= rhs,
+            ImageExprCompareOp::Equal => self == rhs,
+            ImageExprCompareOp::NotEqual => self != rhs,
+        }
+    }
 }
 
 impl ImageExprValue for f64 {
@@ -306,6 +361,24 @@ impl ImageExprValue for f64 {
     }
     fn to_f64_lossy(&self) -> f64 {
         *self
+    }
+
+    fn reduction_from_source(
+        op: ReductionOp,
+        image: &dyn ImageInterface<Self>,
+    ) -> Option<Result<Self, LatticeError>> {
+        Some(source_numeric_reduction_value(op, image))
+    }
+
+    fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool {
+        match op {
+            ImageExprCompareOp::GreaterThan => self > rhs,
+            ImageExprCompareOp::LessThan => self < rhs,
+            ImageExprCompareOp::GreaterEqual => self >= rhs,
+            ImageExprCompareOp::LessEqual => self <= rhs,
+            ImageExprCompareOp::Equal => self == rhs,
+            ImageExprCompareOp::NotEqual => self != rhs,
+        }
     }
 }
 
@@ -404,6 +477,17 @@ impl ImageExprValue for casacore_types::Complex32 {
     fn to_f64_lossy(&self) -> f64 {
         self.norm() as f64
     }
+
+    fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool {
+        match op {
+            ImageExprCompareOp::Equal => self == rhs,
+            ImageExprCompareOp::NotEqual => self != rhs,
+            ImageExprCompareOp::GreaterThan => self.norm_sqr() > rhs.norm_sqr(),
+            ImageExprCompareOp::LessThan => self.norm_sqr() < rhs.norm_sqr(),
+            ImageExprCompareOp::GreaterEqual => self.norm_sqr() >= rhs.norm_sqr(),
+            ImageExprCompareOp::LessEqual => self.norm_sqr() <= rhs.norm_sqr(),
+        }
+    }
 }
 
 impl ImageExprValue for casacore_types::Complex64 {
@@ -500,6 +584,17 @@ impl ImageExprValue for casacore_types::Complex64 {
     }
     fn to_f64_lossy(&self) -> f64 {
         self.norm()
+    }
+
+    fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool {
+        match op {
+            ImageExprCompareOp::Equal => self == rhs,
+            ImageExprCompareOp::NotEqual => self != rhs,
+            ImageExprCompareOp::GreaterThan => self.norm_sqr() > rhs.norm_sqr(),
+            ImageExprCompareOp::LessThan => self.norm_sqr() < rhs.norm_sqr(),
+            ImageExprCompareOp::GreaterEqual => self.norm_sqr() >= rhs.norm_sqr(),
+            ImageExprCompareOp::LessEqual => self.norm_sqr() <= rhs.norm_sqr(),
+        }
     }
 }
 
@@ -704,18 +799,15 @@ enum NumericExprNode<'a, T: ImageExprValue> {
         fraction2: f64,
     },
     /// Conditional: `iif(cond, true_val, false_val)`.
-    /// The condition is type-erased to avoid requiring `PartialOrd` on T
-    /// (Complex types lack `PartialOrd`).
     Conditional {
-        condition_eval: SliceEvalFn<'a, bool>,
+        condition: Box<MaskExprNode<'a, T>>,
         if_true: Box<NumericExprNode<'a, T>>,
         if_false: Box<NumericExprNode<'a, T>>,
     },
     /// Count of true or false values in a boolean mask, cast to T.
-    /// The mask is type-erased to avoid requiring `PartialOrd` on T.
     MaskCount {
         count_true: bool,
-        mask_eval: SliceEvalFn<'a, bool>,
+        mask: Box<MaskExprNode<'a, T>>,
         mask_shape: Vec<usize>,
     },
     /// Replace pixels where mask is false with a replacement value.
@@ -731,6 +823,25 @@ enum NumericExprNode<'a, T: ImageExprValue> {
 }
 
 impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
+    fn preferred_cursor_shape(&self, full_shape: &[usize]) -> Vec<usize> {
+        match self {
+            Self::Source(image) => clamp_cursor_shape(&image.nice_cursor_shape(), full_shape),
+            Self::UnaryOp { child, .. }
+            | Self::CustomUnary { child, .. }
+            | Self::Reduction { child, .. }
+            | Self::Fractile { child, .. }
+            | Self::FractileRange { child, .. } => child.preferred_cursor_shape(full_shape),
+            Self::BinaryOp { lhs, .. } | Self::CustomBinary { lhs, .. } => {
+                lhs.preferred_cursor_shape(full_shape)
+            }
+            Self::Conditional { if_true, .. } => if_true.preferred_cursor_shape(full_shape),
+            Self::Replace { primary, .. } => primary.preferred_cursor_shape(full_shape),
+            Self::Scalar(_) | Self::MaskCount { .. } | Self::TypeBridge { .. } => {
+                advised_cursor_shape(full_shape)
+            }
+        }
+    }
+
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
             Self::Source(image) => Some(image.shape().to_vec()),
@@ -746,11 +857,15 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
             | Self::FractileRange { .. }
             | Self::MaskCount { .. } => Some(vec![]),
             Self::Conditional {
-                if_true, if_false, ..
+                condition,
+                if_true,
+                if_false,
             } => {
+                let condition_shape = condition.try_shape()?;
                 let if_true_shape = if_true.try_shape()?;
                 let if_false_shape = if_false.try_shape()?;
-                broadcast_shapes(&if_true_shape, &if_false_shape).ok()
+                let value_shape = broadcast_shapes(&if_true_shape, &if_false_shape).ok()?;
+                broadcast_shapes(&condition_shape, &value_shape).ok()
             }
             Self::Replace { primary, .. } => primary.try_shape(),
             Self::TypeBridge { .. } => None,
@@ -825,10 +940,9 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
             Self::BinaryOp { op, lhs, rhs } => {
                 let lhs_data = lhs.eval_slice(start, shape, stride)?;
                 let rhs_data = rhs.eval_slice(start, shape, stride)?;
-                Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                    let left = lhs_data[idx.clone()];
-                    let right = rhs_data[idx];
-                    match op {
+                Ok(Zip::from(&lhs_data)
+                    .and(&rhs_data)
+                    .map_collect(|&left, &right| match op {
                         ImageExprBinaryOp::Add => left + right,
                         ImageExprBinaryOp::Subtract => left - right,
                         ImageExprBinaryOp::Multiply => left * right,
@@ -838,8 +952,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                         ImageExprBinaryOp::Atan2 => left.expr_atan2(right),
                         ImageExprBinaryOp::Min => left.expr_min(right),
                         ImageExprBinaryOp::Max => left.expr_max(right),
-                    }
-                }))
+                    }))
             }
             Self::CustomUnary {
                 name: _name,
@@ -860,54 +973,150 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 let lhs_data = lhs.eval_slice(start, shape, stride)?;
                 let rhs_data = rhs.eval_slice(start, shape, stride)?;
                 let func = Arc::clone(func);
-                Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                    (func)(lhs_data[idx.clone()], rhs_data[idx])
-                }))
+                Ok(Zip::from(&lhs_data)
+                    .and(&rhs_data)
+                    .map_collect(|&lhs, &rhs| (func)(lhs, rhs)))
             }
             Self::Reduction {
                 op,
                 child,
                 child_shape,
             } => {
-                let ones: Vec<usize> = child_shape.iter().map(|_| 1).collect();
-                let zeros: Vec<usize> = child_shape.iter().map(|_| 0).collect();
-                let full = child.eval_slice(&zeros, child_shape, &ones)?;
                 let result = match op {
-                    ReductionOp::Sum => {
-                        let mut acc = T::default_value();
-                        for &v in full.iter() {
-                            acc = acc + v;
-                        }
-                        acc
-                    }
+                    ReductionOp::Sum => reduce_numeric_expr(
+                        child,
+                        Some(ReductionOp::Sum),
+                        child_shape,
+                        std::mem::size_of::<T>(),
+                        1_048_576,
+                        T::default_value,
+                        |acc, chunk| {
+                            for &v in chunk.iter() {
+                                *acc = *acc + v;
+                            }
+                            Ok(())
+                        },
+                        |acc, other| {
+                            *acc = *acc + other;
+                            Ok(())
+                        },
+                    )?,
                     ReductionOp::Min => {
-                        let mut acc = full.iter().next().copied().unwrap_or_else(T::default_value);
-                        for &v in full.iter().skip(1) {
-                            acc = acc.expr_min(v);
+                        let partial = reduce_numeric_expr(
+                            child,
+                            Some(ReductionOp::Min),
+                            child_shape,
+                            std::mem::size_of::<ExprReductionPartial<T>>(),
+                            1_048_576,
+                            || ExprReductionPartial::new(T::default_value()),
+                            |partial, chunk| {
+                                for &v in chunk.iter() {
+                                    if !partial.seen {
+                                        partial.value = v;
+                                        partial.seen = true;
+                                    } else {
+                                        partial.value = partial.value.expr_min(v);
+                                    }
+                                }
+                                Ok(())
+                            },
+                            |partial, other| {
+                                if other.seen {
+                                    if !partial.seen {
+                                        *partial = other;
+                                    } else {
+                                        partial.value = partial.value.expr_min(other.value);
+                                    }
+                                }
+                                Ok(())
+                            },
+                        )?;
+                        if partial.seen {
+                            partial.value
+                        } else {
+                            T::default_value()
                         }
-                        acc
                     }
                     ReductionOp::Max => {
-                        let mut acc = full.iter().next().copied().unwrap_or_else(T::default_value);
-                        for &v in full.iter().skip(1) {
-                            acc = acc.expr_max(v);
+                        let partial = reduce_numeric_expr(
+                            child,
+                            Some(ReductionOp::Max),
+                            child_shape,
+                            std::mem::size_of::<ExprReductionPartial<T>>(),
+                            1_048_576,
+                            || ExprReductionPartial::new(T::default_value()),
+                            |partial, chunk| {
+                                for &v in chunk.iter() {
+                                    if !partial.seen {
+                                        partial.value = v;
+                                        partial.seen = true;
+                                    } else {
+                                        partial.value = partial.value.expr_max(v);
+                                    }
+                                }
+                                Ok(())
+                            },
+                            |partial, other| {
+                                if other.seen {
+                                    if !partial.seen {
+                                        *partial = other;
+                                    } else {
+                                        partial.value = partial.value.expr_max(other.value);
+                                    }
+                                }
+                                Ok(())
+                            },
+                        )?;
+                        if partial.seen {
+                            partial.value
+                        } else {
+                            T::default_value()
                         }
-                        acc
                     }
                     ReductionOp::Mean => {
-                        let mut acc = T::default_value();
-                        let n = full.len();
-                        for &v in full.iter() {
-                            acc = acc + v;
-                        }
+                        let (mut acc, n) = reduce_numeric_expr(
+                            child,
+                            Some(ReductionOp::Mean),
+                            child_shape,
+                            std::mem::size_of::<T>() + std::mem::size_of::<usize>(),
+                            1_048_576,
+                            || (T::default_value(), 0usize),
+                            |partial, chunk| {
+                                partial.1 += chunk.len();
+                                for &v in chunk.iter() {
+                                    partial.0 = partial.0 + v;
+                                }
+                                Ok(())
+                            },
+                            |partial, other| {
+                                partial.0 = partial.0 + other.0;
+                                partial.1 += other.1;
+                                Ok(())
+                            },
+                        )?;
                         if n > 0 {
                             acc = acc * T::from_f64_lossy(1.0 / n as f64);
                         }
                         acc
                     }
                     ReductionOp::Median => {
-                        // Collect values, sort by f64 magnitude, pick middle.
-                        let mut vals: Vec<T> = full.iter().copied().collect();
+                        let reserve = child_shape.iter().product::<usize>();
+                        let mut vals = reduce_numeric_expr(
+                            child,
+                            Some(ReductionOp::Median),
+                            child_shape,
+                            reserve.saturating_mul(std::mem::size_of::<T>()),
+                            4 * 1024 * 1024,
+                            || Vec::with_capacity(reserve / thread_parallelism().max(1)),
+                            |vals, chunk| {
+                                vals.extend(chunk.iter().copied());
+                                Ok(())
+                            },
+                            |vals, other| {
+                                vals.extend(other);
+                                Ok(())
+                            },
+                        )?;
                         vals.sort_by(|a, b| {
                             a.to_f64_lossy()
                                 .partial_cmp(&b.to_f64_lossy())
@@ -932,10 +1141,23 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 child_shape,
                 fraction,
             } => {
-                let ones: Vec<usize> = child_shape.iter().map(|_| 1).collect();
-                let zeros: Vec<usize> = child_shape.iter().map(|_| 0).collect();
-                let full = child.eval_slice(&zeros, child_shape, &ones)?;
-                let mut vals: Vec<T> = full.iter().cloned().collect();
+                let reserve = child_shape.iter().product::<usize>();
+                let mut vals = reduce_numeric_expr(
+                    child,
+                    None,
+                    child_shape,
+                    reserve.saturating_mul(std::mem::size_of::<T>()),
+                    4 * 1024 * 1024,
+                    || Vec::with_capacity(reserve / thread_parallelism().max(1)),
+                    |vals, chunk| {
+                        vals.extend(chunk.iter().copied());
+                        Ok(())
+                    },
+                    |vals, other| {
+                        vals.extend(other);
+                        Ok(())
+                    },
+                )?;
                 vals.sort_by(|a, b| {
                     a.to_f64_lossy()
                         .partial_cmp(&b.to_f64_lossy())
@@ -955,10 +1177,23 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 fraction1,
                 fraction2,
             } => {
-                let ones: Vec<usize> = child_shape.iter().map(|_| 1).collect();
-                let zeros: Vec<usize> = child_shape.iter().map(|_| 0).collect();
-                let full = child.eval_slice(&zeros, child_shape, &ones)?;
-                let mut vals: Vec<T> = full.iter().cloned().collect();
+                let reserve = child_shape.iter().product::<usize>();
+                let mut vals = reduce_numeric_expr(
+                    child,
+                    None,
+                    child_shape,
+                    reserve.saturating_mul(std::mem::size_of::<T>()),
+                    4 * 1024 * 1024,
+                    || Vec::with_capacity(reserve / thread_parallelism().max(1)),
+                    |vals, chunk| {
+                        vals.extend(chunk.iter().copied());
+                        Ok(())
+                    },
+                    |vals, other| {
+                        vals.extend(other);
+                        Ok(())
+                    },
+                )?;
                 vals.sort_by(|a, b| {
                     a.to_f64_lossy()
                         .partial_cmp(&b.to_f64_lossy())
@@ -979,34 +1214,41 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 Ok(ArrayD::from_elem(IxDyn(shape), result))
             }
             Self::Conditional {
-                condition_eval,
+                condition,
                 if_true,
                 if_false,
             } => {
-                let cond = condition_eval(start, shape, stride)?;
+                let cond = condition.eval_slice(start, shape, stride)?;
                 let t_data = if_true.eval_slice(start, shape, stride)?;
                 let f_data = if_false.eval_slice(start, shape, stride)?;
-                Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                    if cond[idx.clone()] {
-                        t_data[idx]
-                    } else {
-                        f_data[idx]
-                    }
-                }))
+                Ok(Zip::from(&cond).and(&t_data).and(&f_data).map_collect(
+                    |&cond, &if_true, &if_false| {
+                        if cond { if_true } else { if_false }
+                    },
+                ))
             }
             Self::MaskCount {
                 count_true,
-                mask_eval,
+                mask,
                 mask_shape,
             } => {
-                let ones: Vec<usize> = mask_shape.iter().map(|_| 1).collect();
-                let zeros: Vec<usize> = mask_shape.iter().map(|_| 0).collect();
-                let full = mask_eval(&zeros, mask_shape, &ones)?;
-                let count = if *count_true {
-                    full.iter().filter(|&&v| v).count()
-                } else {
-                    full.iter().filter(|&&v| !v).count()
-                };
+                let mut count = 0usize;
+                let cursor_shape = advised_cursor_shape(mask_shape);
+                let cursors = TraversalCursorIter::new(
+                    mask_shape.to_vec(),
+                    cursor_shape.clone(),
+                    TraversalSpec::chunks(cursor_shape),
+                );
+                for cursor in cursors {
+                    let cursor = cursor?;
+                    let stride = vec![1; cursor.position.len()];
+                    let chunk = mask.eval_slice(&cursor.position, &cursor.shape, &stride)?;
+                    count += if *count_true {
+                        chunk.iter().filter(|&&v| v).count()
+                    } else {
+                        chunk.iter().filter(|&&v| !v).count()
+                    };
+                }
                 Ok(ArrayD::from_elem(
                     IxDyn(shape),
                     T::from_f64_lossy(count as f64),
@@ -1032,13 +1274,14 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                     })
                     .collect();
                 let mask_slice = mask.slice(slice_info.as_slice());
-                Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                    if mask_slice[idx.clone()] {
-                        p_data[idx]
-                    } else {
-                        r_data[idx]
-                    }
-                }))
+                Ok(Zip::from(&mask_slice)
+                    .and(&p_data)
+                    .and(&r_data)
+                    .map_collect(
+                        |&mask, &primary, &replacement| {
+                            if mask { primary } else { replacement }
+                        },
+                    ))
             }
             Self::TypeBridge { eval_fn } => eval_fn(start, shape, stride),
         }
@@ -1098,7 +1341,33 @@ enum MaskExprNode<'a, T: ImageExprValue> {
     },
 }
 
-impl<'a, T: ImageExprValue + PartialOrd> MaskExprNode<'a, T> {
+impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
+    fn preferred_cursor_shape(&self, full_shape: &[usize]) -> Vec<usize> {
+        match self {
+            Self::CompareScalar { expr, .. } => expr.preferred_cursor_shape(full_shape),
+            Self::Logical { lhs, .. } => lhs.preferred_cursor_shape(full_shape),
+            Self::Not { child } | Self::AllReduce { child, .. } | Self::AnyReduce { child, .. } => {
+                child.preferred_cursor_shape(full_shape)
+            }
+            Self::IsNan { child } => child.preferred_cursor_shape(full_shape),
+            Self::ConstantMask { .. } => advised_cursor_shape(full_shape),
+        }
+    }
+
+    fn try_shape(&self) -> Option<Vec<usize>> {
+        match self {
+            Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => expr.try_shape(),
+            Self::Logical { lhs, rhs, .. } => {
+                let lhs_shape = lhs.try_shape()?;
+                let rhs_shape = rhs.try_shape()?;
+                broadcast_shapes(&lhs_shape, &rhs_shape).ok()
+            }
+            Self::Not { child } => child.try_shape(),
+            Self::ConstantMask { mask } => Some(mask.shape().to_vec()),
+            Self::AllReduce { .. } | Self::AnyReduce { .. } => Some(vec![]),
+        }
+    }
+
     fn eval_slice(
         &self,
         start: &[usize],
@@ -1108,25 +1377,17 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprNode<'a, T> {
         match self {
             Self::CompareScalar { op, expr, scalar } => {
                 let data = expr.eval_slice(start, shape, stride)?;
-                Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                    let value = data[idx];
-                    match op {
-                        ImageExprCompareOp::GreaterThan => value > *scalar,
-                        ImageExprCompareOp::LessThan => value < *scalar,
-                        ImageExprCompareOp::GreaterEqual => value >= *scalar,
-                        ImageExprCompareOp::LessEqual => value <= *scalar,
-                        ImageExprCompareOp::Equal => value == *scalar,
-                        ImageExprCompareOp::NotEqual => value != *scalar,
-                    }
-                }))
+                Ok(data.mapv(|value| value.expr_compare(*scalar, *op)))
             }
             Self::Logical { op, lhs, rhs } => {
                 let lhs_mask = lhs.eval_slice(start, shape, stride)?;
                 let rhs_mask = rhs.eval_slice(start, shape, stride)?;
-                Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| match op {
-                    MaskLogicalOp::And => lhs_mask[idx.clone()] && rhs_mask[idx],
-                    MaskLogicalOp::Or => lhs_mask[idx.clone()] || rhs_mask[idx],
-                }))
+                Ok(Zip::from(&lhs_mask)
+                    .and(&rhs_mask)
+                    .map_collect(|&lhs, &rhs| match op {
+                        MaskLogicalOp::And => lhs && rhs,
+                        MaskLogicalOp::Or => lhs || rhs,
+                    }))
             }
             Self::Not { child } => {
                 let mut out = child.eval_slice(start, shape, stride)?;
@@ -1153,17 +1414,23 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprNode<'a, T> {
                 Ok(mask.slice(slice_info.as_slice()).to_owned())
             }
             Self::AllReduce { child, child_shape } => {
-                let ones: Vec<usize> = child_shape.iter().map(|_| 1).collect();
-                let zeros: Vec<usize> = child_shape.iter().map(|_| 0).collect();
-                let full = child.eval_slice(&zeros, child_shape, &ones)?;
-                let result = full.iter().all(|&v| v);
+                let mut result = true;
+                for_each_mask_chunk(child, child_shape, |chunk| {
+                    if !chunk.iter().all(|&v| v) {
+                        result = false;
+                    }
+                    Ok(())
+                })?;
                 Ok(ArrayD::from_elem(IxDyn(shape), result))
             }
             Self::AnyReduce { child, child_shape } => {
-                let ones: Vec<usize> = child_shape.iter().map(|_| 1).collect();
-                let zeros: Vec<usize> = child_shape.iter().map(|_| 0).collect();
-                let full = child.eval_slice(&zeros, child_shape, &ones)?;
-                let result = full.iter().any(|&v| v);
+                let mut result = false;
+                for_each_mask_chunk(child, child_shape, |chunk| {
+                    if chunk.iter().any(|&v| v) {
+                        result = true;
+                    }
+                    Ok(())
+                })?;
                 Ok(ArrayD::from_elem(IxDyn(shape), result))
             }
         }
@@ -1287,11 +1554,431 @@ fn combine_optional_masks(
         (Some(lhs), Some(rhs)) => {
             let lhs = broadcast_mask(lhs, lhs_shape, &out_shape)?;
             let rhs = broadcast_mask(rhs, rhs_shape, &out_shape)?;
-            Ok(Some(ArrayD::from_shape_fn(IxDyn(&out_shape), |idx| {
-                lhs[idx.clone()] && rhs[idx]
-            })))
+            Ok(Some(
+                Zip::from(&lhs)
+                    .and(&rhs)
+                    .map_collect(|&lhs, &rhs| lhs && rhs),
+            ))
         }
     }
+}
+
+fn advised_cursor_shape(shape: &[usize]) -> Vec<usize> {
+    let max_pixels = 1_048_576usize;
+    if shape.is_empty() {
+        return vec![];
+    }
+    let mut cursor = vec![1usize; shape.len()];
+    let mut product = 1usize;
+    for (axis, &extent) in shape.iter().enumerate() {
+        let can_fit = max_pixels / product;
+        if can_fit == 0 {
+            break;
+        }
+        cursor[axis] = extent.min(can_fit);
+        product *= cursor[axis];
+    }
+    cursor
+}
+
+fn clamp_cursor_shape(cursor_shape: &[usize], full_shape: &[usize]) -> Vec<usize> {
+    if cursor_shape.len() != full_shape.len() {
+        return advised_cursor_shape(full_shape);
+    }
+    cursor_shape
+        .iter()
+        .zip(full_shape.iter())
+        .map(|(&cursor, &extent)| cursor.clamp(1, extent.max(1)))
+        .collect()
+}
+
+fn thread_parallelism() -> usize {
+    thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(1)
+}
+
+fn reduction_execution_strategy(
+    full_shape: &[usize],
+    cursor_shape: &[usize],
+    per_worker_state_bytes: usize,
+    large_work_threshold: usize,
+) -> ReadChunkExecutionStrategy {
+    let available = thread_parallelism();
+    if available < 2 {
+        return ReadChunkExecutionStrategy::Serial;
+    }
+
+    let task_count = TraversalCursorIter::new(
+        full_shape.to_vec(),
+        cursor_shape.to_vec(),
+        TraversalSpec::chunks(cursor_shape.to_vec()),
+    )
+    .size_hint()
+    .1
+    .unwrap_or(0);
+    if task_count < 4 || full_shape.iter().product::<usize>() < large_work_threshold {
+        return ReadChunkExecutionStrategy::Serial;
+    }
+
+    if per_worker_state_bytes > 256 * 1024 * 1024 {
+        return ReadChunkExecutionStrategy::Serial;
+    }
+
+    let workers = available.min(task_count.max(1));
+    ReadChunkExecutionStrategy::Parallel(ParallelReadChunkConfig {
+        workers,
+        prefetch_depth: workers * 2,
+    })
+}
+
+fn source_stats_reduction_value<T>(
+    op: ReductionOp,
+    image: &dyn ImageInterface<T>,
+) -> Result<T, LatticeError>
+where
+    T: ImageExprValue + casacore_lattices::statistics::StatsElement,
+{
+    let stats = LatticeStatistics::new(image as &dyn Lattice<T>);
+    let stat = match op {
+        ReductionOp::Sum => Statistic::Sum,
+        ReductionOp::Min => Statistic::Min,
+        ReductionOp::Max => Statistic::Max,
+        ReductionOp::Mean => Statistic::Mean,
+        ReductionOp::Median => Statistic::Median,
+    };
+    let value = stats
+        .get_statistic(stat)?
+        .iter()
+        .copied()
+        .next()
+        .unwrap_or_default();
+    Ok(T::from_f64_lossy(value))
+}
+
+fn source_numeric_reduction_value<T>(
+    op: ReductionOp,
+    image: &dyn ImageInterface<T>,
+) -> Result<T, LatticeError>
+where
+    T: ImageExprValue + casacore_lattices::statistics::StatsElement + Send + Sync,
+{
+    if image.shape().is_empty() {
+        return image.get_at(&[]);
+    }
+
+    let full_shape = image.shape();
+    let payload_bytes = full_shape
+        .iter()
+        .product::<usize>()
+        .saturating_mul(std::mem::size_of::<T>());
+    // TODO: Replace this small-image fallback with a dedicated serial scalar
+    // source-reduction kernel. A simple direct full-read kernel regressed the
+    // 64^3 Rust/C++ comparison, so the remaining optimization needs a tighter
+    // loop that does not give up the medium-size win from the current path.
+    if !matches!(op, ReductionOp::Median) && payload_bytes <= 4 * 1024 * 1024 {
+        return source_stats_reduction_value(op, image);
+    }
+
+    let cursor_shape = clamp_cursor_shape(&image.nice_cursor_shape(), full_shape);
+    let spec = TraversalSpec::chunks(cursor_shape.clone());
+
+    match op {
+        ReductionOp::Sum => try_reduce_read_chunks(
+            image,
+            spec,
+            reduction_execution_strategy(
+                full_shape,
+                &cursor_shape,
+                std::mem::size_of::<T>(),
+                1_048_576,
+            ),
+            T::default_value,
+            |acc, chunk| {
+                for &v in &chunk.data {
+                    *acc = *acc + v;
+                }
+                Ok(())
+            },
+            |acc, other| {
+                *acc = *acc + other;
+                Ok(())
+            },
+        ),
+        ReductionOp::Mean => {
+            let (mut sum, count) = try_reduce_read_chunks(
+                image,
+                spec,
+                reduction_execution_strategy(
+                    full_shape,
+                    &cursor_shape,
+                    std::mem::size_of::<T>() + std::mem::size_of::<usize>(),
+                    1_048_576,
+                ),
+                || (T::default_value(), 0usize),
+                |partial, chunk| {
+                    partial.1 += chunk.data.len();
+                    for &v in &chunk.data {
+                        partial.0 = partial.0 + v;
+                    }
+                    Ok(())
+                },
+                |partial, other| {
+                    partial.0 = partial.0 + other.0;
+                    partial.1 += other.1;
+                    Ok(())
+                },
+            )?;
+            if count > 0 {
+                sum = sum * T::from_f64_lossy(1.0 / count as f64);
+            }
+            Ok(sum)
+        }
+        ReductionOp::Min => {
+            let partial = try_reduce_read_chunks(
+                image,
+                spec,
+                reduction_execution_strategy(
+                    full_shape,
+                    &cursor_shape,
+                    std::mem::size_of::<ExprReductionPartial<T>>(),
+                    1_048_576,
+                ),
+                || ExprReductionPartial::new(T::default_value()),
+                |partial, chunk| {
+                    for &v in &chunk.data {
+                        if !partial.seen {
+                            partial.value = v;
+                            partial.seen = true;
+                        } else {
+                            partial.value = partial.value.expr_min(v);
+                        }
+                    }
+                    Ok(())
+                },
+                |partial, other| {
+                    if other.seen {
+                        if !partial.seen {
+                            *partial = other;
+                        } else {
+                            partial.value = partial.value.expr_min(other.value);
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+            Ok(if partial.seen {
+                partial.value
+            } else {
+                T::default_value()
+            })
+        }
+        ReductionOp::Max => {
+            let partial = try_reduce_read_chunks(
+                image,
+                spec,
+                reduction_execution_strategy(
+                    full_shape,
+                    &cursor_shape,
+                    std::mem::size_of::<ExprReductionPartial<T>>(),
+                    1_048_576,
+                ),
+                || ExprReductionPartial::new(T::default_value()),
+                |partial, chunk| {
+                    for &v in &chunk.data {
+                        if !partial.seen {
+                            partial.value = v;
+                            partial.seen = true;
+                        } else {
+                            partial.value = partial.value.expr_max(v);
+                        }
+                    }
+                    Ok(())
+                },
+                |partial, other| {
+                    if other.seen {
+                        if !partial.seen {
+                            *partial = other;
+                        } else {
+                            partial.value = partial.value.expr_max(other.value);
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+            Ok(if partial.seen {
+                partial.value
+            } else {
+                T::default_value()
+            })
+        }
+        ReductionOp::Median => source_stats_reduction_value(op, image),
+    }
+}
+
+fn for_each_numeric_chunk<'a, T: ImageExprValue>(
+    node: &NumericExprNode<'a, T>,
+    full_shape: &[usize],
+    mut f: impl FnMut(&ArrayD<T>) -> Result<(), LatticeError>,
+) -> Result<(), LatticeError> {
+    if full_shape.is_empty() {
+        let empty = node.eval_slice(&[], &[], &[])?;
+        return f(&empty);
+    }
+    let cursor_shape = node.preferred_cursor_shape(full_shape);
+    try_for_each_traversal_cursor(
+        full_shape,
+        &cursor_shape,
+        TraversalSpec::chunks(cursor_shape.clone()),
+        |cursor| {
+            let stride = vec![1; cursor.position.len()];
+            let chunk = node.eval_slice(&cursor.position, &cursor.shape, &stride)?;
+            f(&chunk)?;
+            Ok(())
+        },
+    )
+}
+
+fn reduce_source_lattice<T, Part, Init, Process, Merge>(
+    image: &dyn ImageInterface<T>,
+    full_shape: &[usize],
+    per_worker_state_bytes: usize,
+    large_work_threshold: usize,
+    make_partial: Init,
+    process_chunk: Process,
+    merge_partials: Merge,
+) -> Result<Part, LatticeError>
+where
+    T: ImageExprValue,
+    Part: Send,
+    Init: Fn() -> Part + Sync + Send,
+    Process: Fn(&mut Part, &ArrayD<T>) -> Result<(), LatticeError> + Sync + Send,
+    Merge: Fn(&mut Part, Part) -> Result<(), LatticeError> + Sync,
+{
+    if full_shape.is_empty() {
+        let chunk = image.get_slice(&[], &[], &[])?;
+        let mut partial = make_partial();
+        process_chunk(&mut partial, &chunk)?;
+        return Ok(partial);
+    }
+
+    let payload_bytes = full_shape
+        .iter()
+        .product::<usize>()
+        .saturating_mul(std::mem::size_of::<T>());
+    if payload_bytes <= 16 * 1024 * 1024 {
+        let chunk = image.get()?;
+        let mut partial = make_partial();
+        process_chunk(&mut partial, &chunk)?;
+        return Ok(partial);
+    }
+
+    let cursor_shape = clamp_cursor_shape(&image.nice_cursor_shape(), full_shape);
+    try_reduce_read_chunks(
+        image,
+        TraversalSpec::chunks(cursor_shape.clone()),
+        reduction_execution_strategy(
+            full_shape,
+            &cursor_shape,
+            per_worker_state_bytes,
+            large_work_threshold,
+        ),
+        make_partial,
+        |partial, chunk| process_chunk(partial, &chunk.data),
+        merge_partials,
+    )
+}
+
+fn reduce_numeric_expr<'a, T, Part, Init, Process, Merge>(
+    node: &NumericExprNode<'a, T>,
+    source_stat_op: Option<ReductionOp>,
+    full_shape: &[usize],
+    per_worker_state_bytes: usize,
+    large_work_threshold: usize,
+    make_partial: Init,
+    process_chunk: Process,
+    merge_partials: Merge,
+) -> Result<Part, LatticeError>
+where
+    T: ImageExprValue,
+    Part: Send,
+    Init: Fn() -> Part + Sync + Send,
+    Process: Fn(&mut Part, &ArrayD<T>) -> Result<(), LatticeError> + Sync + Send,
+    Merge: Fn(&mut Part, Part) -> Result<(), LatticeError> + Sync,
+{
+    if let NumericExprNode::Source(image) = node {
+        if let Some(op) = source_stat_op
+            && let Some(result) = T::reduction_from_source(op, *image)
+        {
+            let value = result?;
+            let mut partial = make_partial();
+            let chunk = ArrayD::from_elem(IxDyn(&[]), value);
+            process_chunk(&mut partial, &chunk)?;
+            return Ok(partial);
+        }
+        return reduce_source_lattice(
+            *image,
+            full_shape,
+            per_worker_state_bytes,
+            large_work_threshold,
+            make_partial,
+            process_chunk,
+            merge_partials,
+        );
+    }
+
+    let mut partial = make_partial();
+    for_each_numeric_chunk(node, full_shape, |chunk| process_chunk(&mut partial, chunk))?;
+    Ok(partial)
+}
+
+fn for_each_mask_chunk<'a, T: ImageExprValue>(
+    node: &MaskExprNode<'a, T>,
+    full_shape: &[usize],
+    mut f: impl FnMut(&ArrayD<bool>) -> Result<(), LatticeError>,
+) -> Result<(), LatticeError> {
+    if full_shape.is_empty() {
+        let empty = node.eval_slice(&[], &[], &[])?;
+        return f(&empty);
+    }
+    let cursor_shape = node.preferred_cursor_shape(full_shape);
+    let cursors = TraversalCursorIter::new(
+        full_shape.to_vec(),
+        cursor_shape.clone(),
+        TraversalSpec::chunks(cursor_shape),
+    );
+    for cursor in cursors {
+        let cursor = cursor?;
+        let stride = vec![1; cursor.position.len()];
+        let chunk = node.eval_slice(&cursor.position, &cursor.shape, &stride)?;
+        f(&chunk)?;
+    }
+    Ok(())
+}
+
+fn write_chunk_into_array<T: Clone>(
+    out: &mut ArrayD<T>,
+    start: &[usize],
+    chunk: &ArrayD<T>,
+) -> Result<(), LatticeError> {
+    let ndim = out.ndim();
+    if start.len() != ndim || chunk.ndim() != ndim {
+        return Err(LatticeError::NdimMismatch {
+            expected: ndim,
+            got: start.len().max(chunk.ndim()),
+        });
+    }
+    let slice_info: Vec<ndarray::SliceInfoElem> = start
+        .iter()
+        .zip(chunk.shape().iter())
+        .map(|(&start, &extent)| ndarray::SliceInfoElem::Slice {
+            start: start as isize,
+            end: Some((start + extent) as isize),
+            step: 1,
+        })
+        .collect();
+    out.slice_mut(slice_info.as_slice()).assign(chunk);
+    Ok(())
 }
 
 /// Read-only lazy image expression over typed image-like sources.
@@ -2027,9 +2714,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
         meta.shape = out_shape;
         Ok(Self {
             node: NumericExprNode::Conditional {
-                condition_eval: Arc::new(move |start, shape, stride| {
-                    cond_node.eval_slice(start, shape, stride)
-                }),
+                condition: Box::new(cond_node),
                 if_true: Box::new(if_true.node),
                 if_false: Box::new(if_false.node),
             },
@@ -2067,9 +2752,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
         Self {
             node: NumericExprNode::MaskCount {
                 count_true,
-                mask_eval: Arc::new(move |start, shape, stride| {
-                    mask_node.eval_slice(start, shape, stride)
-                }),
+                mask: Box::new(mask_node),
                 mask_shape,
             },
             meta: ImageExprMeta {
@@ -2126,18 +2809,11 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
 
     /// Persists the evaluated expression as a new paged image.
     ///
-    /// This materializes the full expression into pixel data and writes it
-    /// as a regular `PagedImage` table.  The resulting image is fully
-    /// independent of the expression sources.
+    /// This compiles the borrowed expression into an owned execution form,
+    /// then materializes it chunk by chunk as a regular `PagedImage` table.
+    /// The resulting image is fully independent of the expression sources.
     pub fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, ImageError> {
-        let mut image =
-            PagedImage::create(self.meta.shape.clone(), self.meta.coords.clone(), path)?;
-        image.put_slice(&self.get()?, &vec![0; self.meta.shape.len()])?;
-        image.set_units(self.meta.units.clone())?;
-        image.set_misc_info(self.meta.misc_info.clone())?;
-        image.set_image_info(&self.meta.image_info)?;
-        image.save()?;
-        Ok(image)
+        self.compile()?.save_as(path)
     }
 
     /// Persists the expression string in casacore-compatible `.imgexpr` format.
@@ -2348,9 +3024,9 @@ impl<'a> ImageExpr<'a, f32> {
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let re = real_node.eval_slice(start, shape, stride)?;
                     let im = imag_node.eval_slice(start, shape, stride)?;
-                    Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                        casacore_types::Complex32::new(re[idx.clone()], im[idx])
-                    }))
+                    Ok(Zip::from(&re)
+                        .and(&im)
+                        .map_collect(|&re, &im| casacore_types::Complex32::new(re, im)))
                 }),
             },
             meta: ImageExprMeta {
@@ -2381,9 +3057,9 @@ impl<'a> ImageExpr<'a, f64> {
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let re = real_node.eval_slice(start, shape, stride)?;
                     let im = imag_node.eval_slice(start, shape, stride)?;
-                    Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                        casacore_types::Complex64::new(re[idx.clone()], im[idx])
-                    }))
+                    Ok(Zip::from(&re)
+                        .and(&im)
+                        .map_collect(|&re, &im| casacore_types::Complex64::new(re, im)))
                 }),
             },
             meta: ImageExprMeta {
@@ -2430,9 +3106,35 @@ impl<'a, T: ImageExprValue> Lattice<T> for ImageExpr<'a, T> {
         validate_slice_request(self.shape(), start, shape, stride)?;
         self.node.eval_slice(start, shape, stride)
     }
+
+    fn get(&self) -> Result<ArrayD<T>, LatticeError> {
+        if self.ndim() == 0 {
+            return self.node.eval_slice(&[], &[], &[]);
+        }
+
+        let full_shape = self.shape().to_vec();
+        let cursor_shape = self.node.preferred_cursor_shape(&full_shape);
+        try_fold_traversal_cursors(
+            &full_shape,
+            &cursor_shape,
+            TraversalSpec::chunks(cursor_shape.clone()),
+            ArrayD::from_elem(IxDyn(&full_shape), T::default_value()),
+            |out, cursor| {
+                let stride = vec![1; cursor.position.len()];
+                let chunk = self
+                    .node
+                    .eval_slice(&cursor.position, &cursor.shape, &stride)?;
+                write_chunk_into_array(out, &cursor.position, &chunk)
+            },
+        )
+    }
 }
 
 impl<'a, T: ImageExprValue> ImageInterface<T> for ImageExpr<'a, T> {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
     fn coordinates(&self) -> &CoordinateSystem {
         &self.meta.coords
     }
@@ -2599,6 +3301,28 @@ impl<'a, T: ImageExprValue + PartialOrd> Lattice<bool> for MaskExpr<'a, T> {
         validate_slice_request(self.shape(), start, shape, stride)?;
         self.node.eval_slice(start, shape, stride)
     }
+
+    fn get(&self) -> Result<ArrayD<bool>, LatticeError> {
+        if self.ndim() == 0 {
+            return self.node.eval_slice(&[], &[], &[]);
+        }
+
+        let full_shape = self.shape().to_vec();
+        let cursor_shape = self.node.preferred_cursor_shape(&full_shape);
+        try_fold_traversal_cursors(
+            &full_shape,
+            &cursor_shape,
+            TraversalSpec::chunks(cursor_shape.clone()),
+            ArrayD::from_elem(IxDyn(&full_shape), false),
+            |out, cursor| {
+                let stride = vec![1; cursor.position.len()];
+                let chunk = self
+                    .node
+                    .eval_slice(&cursor.position, &cursor.shape, &stride)?;
+                write_chunk_into_array(out, &cursor.position, &chunk)
+            },
+        )
+    }
 }
 
 #[cfg(test)]
@@ -2614,16 +3338,25 @@ mod tests {
     struct CountingImage<T: ImageExprValue> {
         data: ArrayD<T>,
         coords: CoordinateSystem,
+        cursor_shape: Option<Vec<usize>>,
         slice_shapes: Rc<RefCell<Vec<Vec<usize>>>>,
     }
 
     impl<T: ImageExprValue> CountingImage<T> {
         fn new(data: ArrayD<T>) -> (Self, Rc<RefCell<Vec<Vec<usize>>>>) {
+            Self::new_with_cursor_shape(data, None)
+        }
+
+        fn new_with_cursor_shape(
+            data: ArrayD<T>,
+            cursor_shape: Option<Vec<usize>>,
+        ) -> (Self, Rc<RefCell<Vec<Vec<usize>>>>) {
             let slice_shapes = Rc::new(RefCell::new(Vec::new()));
             (
                 Self {
                     data,
                     coords: CoordinateSystem::new(),
+                    cursor_shape,
                     slice_shapes: Rc::clone(&slice_shapes),
                 },
                 slice_shapes,
@@ -2666,9 +3399,19 @@ mod tests {
             }
             Ok(out)
         }
+
+        fn nice_cursor_shape(&self) -> Vec<usize> {
+            self.cursor_shape
+                .clone()
+                .unwrap_or_else(|| self.data.shape().to_vec())
+        }
     }
 
     impl<T: ImageExprValue> ImageInterface<T> for CountingImage<T> {
+        fn as_any(&self) -> Option<&dyn std::any::Any> {
+            None
+        }
+
         fn coordinates(&self) -> &CoordinateSystem {
             &self.coords
         }
@@ -2692,6 +3435,25 @@ mod tests {
 
     fn make_persistent_image<T: ImageExprValue>(shape: Vec<usize>) -> crate::TempImage<T> {
         crate::TempImage::new(shape, CoordinateSystem::new()).unwrap()
+    }
+
+    #[test]
+    fn reduction_reads_source_in_chunks() {
+        let shape = vec![4097, 1024];
+        let data = ArrayD::from_elem(IxDyn(&shape), 1.0f32);
+        let (image, slice_shapes) =
+            CountingImage::new_with_cursor_shape(data, Some(vec![256, 128]));
+        let expr = ImageExpr::from_image(&image)
+            .unwrap()
+            .add_scalar(0.0)
+            .sum_reduce();
+
+        let got = expr.get().unwrap();
+        assert_eq!(got[IxDyn(&[])], (shape[0] * shape[1]) as f32);
+
+        let seen = slice_shapes.borrow();
+        assert!(seen.len() > 1);
+        assert!(seen.iter().all(|shape| shape[0] <= 256 && shape[1] <= 128));
     }
 
     #[test]
@@ -2835,9 +3597,49 @@ mod tests {
         image.set(2.0).unwrap();
 
         let expr = ImageExpr::from_image(&image).unwrap().multiply_scalar(3.0);
-        let saved = expr.save_as(&out).unwrap();
+        let compiled = expr.compile().unwrap();
+        assert_eq!(compiled.get().unwrap().sum(), 24.0);
+        let saved = compiled.save_as(&out).unwrap();
 
         assert_eq!(saved.get().unwrap().sum(), 24.0);
+    }
+
+    #[test]
+    fn compiled_save_as_carries_propagated_default_mask() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("masked_expr.image");
+        let mut image = crate::TempImage::<f32>::new(vec![2, 2], CoordinateSystem::new()).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.make_mask("quality", true, true).unwrap();
+        image
+            .put_mask(
+                "quality",
+                &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, true, false]).unwrap(),
+            )
+            .unwrap();
+
+        let expr = ImageExpr::from_image(&image).unwrap().multiply_scalar(2.0);
+        let compiled = expr.compile().unwrap();
+        assert_eq!(
+            compiled.source_mask().unwrap(),
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, true, false]).unwrap()
+        );
+        let saved = compiled.save_as(&out).unwrap();
+
+        assert_eq!(
+            saved.get().unwrap(),
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![2.0, 4.0, 6.0, 8.0]).unwrap()
+        );
+        assert_eq!(saved.default_mask_name().as_deref(), Some("compiled_mask"));
+        assert_eq!(
+            saved.get_mask().unwrap().unwrap(),
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, true, false]).unwrap()
+        );
     }
 
     #[test]

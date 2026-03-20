@@ -29,11 +29,14 @@
 //! assert_eq!(img.get_at(&[0, 0]).unwrap(), 3.14);
 //! ```
 
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use casacore_coordinates::{CoordinateSystem, CoordinateType};
-use casacore_lattices::{Lattice, LatticeError, LatticeMut, TempLattice};
+use casacore_lattices::{
+    Lattice, LatticeError, LatticeMut, TempLattice, TraversalCacheHint, TraversalCacheScope,
+};
 use casacore_types::{ArrayD, RecordValue};
 
 use crate::error::ImageError;
@@ -576,9 +579,55 @@ impl<T: ImagePixel> Lattice<T> for TempImage<T> {
     fn nice_cursor_shape(&self) -> Vec<usize> {
         self.lattice.nice_cursor_shape()
     }
+
+    fn enter_traversal_cache_scope<'a>(
+        &'a self,
+        hint: &TraversalCacheHint,
+    ) -> Result<Option<Box<dyn TraversalCacheScope + 'a>>, LatticeError> {
+        self.lattice.enter_traversal_cache_scope(hint)
+    }
 }
 
 impl<T: ImagePixel> LatticeMut<T> for TempImage<T> {
+    fn with_traversal_cache_hint_mut<R>(
+        &mut self,
+        hint: &TraversalCacheHint,
+        f: impl FnOnce(&mut Self) -> Result<R, LatticeError>,
+    ) -> Result<R, LatticeError>
+    where
+        Self: Sized,
+    {
+        let previous_cache_pixels = self.lattice.maximum_cache_size_pixels();
+        if !self.lattice.is_paged() {
+            return f(self);
+        }
+        let recommended_pixels = {
+            let cursor_shape = self.lattice.nice_cursor_shape();
+            let recommended_tiles = casacore_lattices::recommended_tile_cache_size(
+                self.lattice.shape(),
+                &cursor_shape,
+                hint,
+                None,
+            )
+            .max(1);
+            recommended_tiles.saturating_mul(cursor_shape.iter().product::<usize>())
+        };
+        if previous_cache_pixels == recommended_pixels {
+            return f(self);
+        }
+        self.lattice
+            .set_maximum_cache_size_pixels(recommended_pixels)?;
+        let result = f(self);
+        let restore = self
+            .lattice
+            .set_maximum_cache_size_pixels(previous_cache_pixels);
+        match (result, restore) {
+            (Err(err), _) => Err(err),
+            (Ok(_), Err(err)) => Err(err),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+
     fn put_at(&mut self, value: T, position: &[usize]) -> Result<(), LatticeError> {
         self.lattice.put_at(value, position)
     }
@@ -593,6 +642,10 @@ impl<T: ImagePixel> LatticeMut<T> for TempImage<T> {
 }
 
 impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
+
     fn coordinates(&self) -> &CoordinateSystem {
         &self.coords
     }

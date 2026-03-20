@@ -1636,6 +1636,16 @@ unsafe extern "C" {
         units: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_create_pagedimage_float_tiled(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        tile: *const i32,
+        ndim: i32,
+        data: *const f32,
+        ndata: i64,
+        units: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     fn cpp_create_tempimage_float_materialized(
         path: *const std::ffi::c_char,
         shape: *const i32,
@@ -1811,6 +1821,12 @@ unsafe extern "C" {
         shape_out: *mut i32,
         max_ndim: i32,
         ndim_out: *mut i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_profile_lel_scalar_expr_float(
+        expr: *const std::ffi::c_char,
+        passes: i32,
+        timings_out: *mut f64,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
     fn cpp_eval_lel_expr_bool(
@@ -2981,6 +2997,57 @@ pub fn cpp_create_image(
     Err("C++ casacore backend unavailable".to_string())
 }
 
+/// Creates a C++ `PagedImage<Float>` with an explicit tile shape.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_create_image_tiled(
+    path: &std::path::Path,
+    shape: &[i32],
+    tile_shape: &[i32],
+    data: &[f32],
+    units: &str,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    if shape.len() != tile_shape.len() {
+        return Err(format!(
+            "shape/tile ndim mismatch: {} vs {}",
+            shape.len(),
+            tile_shape.len()
+        ));
+    }
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_units = std::ffi::CString::new(units).expect("units must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_create_pagedimage_float_tiled(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            tile_shape.as_ptr(),
+            shape.len() as i32,
+            data.as_ptr(),
+            data.len() as i64,
+            c_units.as_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_create_image_tiled(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _tile_shape: &[i32],
+    _data: &[f32],
+    _units: &str,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
 /// Reads all pixel data from a C++ `PagedImage<Float>`.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_read_image_data(path: &std::path::Path, max_size: usize) -> Result<Vec<f32>, String> {
@@ -3908,6 +3975,32 @@ pub fn cpp_eval_lel_expr(_expr: &str, _max_size: usize) -> Result<(Vec<f32>, Vec
     Err("C++ casacore backend unavailable".to_string())
 }
 
+#[cfg(has_casacore_cpp)]
+pub fn cpp_profile_lel_scalar_expr(expr: &str, passes: usize) -> Result<[f64; 3], String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_expr = std::ffi::CString::new(expr).expect("expression must be valid C string");
+    let mut timings = [0.0f64; 3];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_profile_lel_scalar_expr_float(
+            c_expr.as_ptr(),
+            passes as i32,
+            timings.as_mut_ptr(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(timings)
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_profile_lel_scalar_expr(_expr: &str, _passes: usize) -> Result<[f64; 3], String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
 /// Evaluate a boolean LEL expression string using C++ `ImageExprParse::command`
 /// and return the result as a flat (Fortran-order) `Vec<bool>`.
 #[cfg(has_casacore_cpp)]
@@ -4156,5 +4249,203 @@ pub fn cpp_bench_image_plane_by_plane_complex(
     _tile: &[i32],
     _max_cache_mib: i32,
 ) -> Result<(f64, f64, f64), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Result of the C++ forced-I/O lattice statistics benchmark.
+pub struct CppLatticeStatisticsBenchResult {
+    pub basic_ns: u64,
+    pub order_ns: u64,
+    pub mean: Vec<f64>,
+    pub sigma: Vec<f64>,
+    pub median: Vec<f64>,
+    pub q1: Vec<f64>,
+    pub q3: Vec<f64>,
+}
+
+#[cfg(has_casacore_cpp)]
+unsafe extern "C" {
+    fn cpp_lattice_stats_float_forced_io(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        ndim: i32,
+        tile_shape: *const i32,
+        tile_ndim: i32,
+        cache_tiles: u64,
+        mean_out: *mut f64,
+        sigma_out: *mut f64,
+        median_out: *mut f64,
+        q1_out: *mut f64,
+        q3_out: *mut f64,
+        output_len: i64,
+        basic_ns_out: *mut u64,
+        order_ns_out: *mut u64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    fn cpp_lattice_stats_float_forced_io_repeated_basic(
+        path: *const std::ffi::c_char,
+        shape: *const i32,
+        ndim: i32,
+        tile_shape: *const i32,
+        tile_ndim: i32,
+        cache_tiles: u64,
+        iterations: u32,
+        total_ns_out: *mut u64,
+        checksum_out: *mut f64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+}
+
+#[cfg(has_casacore_cpp)]
+fn lock_cpp_lattice_ffi() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("cpp lattice ffi lock poisoned")
+}
+
+/// Run the C++ forced-I/O paged-lattice statistics benchmark.
+///
+/// The shim creates a C++ `PagedArray<Float>` at `path`, fills it with the
+/// deterministic ramp `x + y*nx + z*(nx*ny)`, constrains the tile cache to
+/// `cache_tiles`, temp-closes it, and then times:
+/// - basic stats: `NPTS`, `MEAN`, `SIGMA`
+/// - order stats: `MEDIAN`, `Q1`, `Q3`
+///
+/// The benchmark currently expects a 3-D shape and uses `axes=[0,1]`, so the
+/// returned vectors have length `shape[2]`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_lattice_statistics_forced_io_bench(
+    path: &std::path::Path,
+    shape: &[i32],
+    tile_shape: &[i32],
+    cache_tiles: u64,
+) -> Result<CppLatticeStatisticsBenchResult, String> {
+    let _guard = lock_cpp_lattice_ffi();
+    if shape.len() != tile_shape.len() {
+        return Err(format!(
+            "shape/tile ndim mismatch: {} vs {}",
+            shape.len(),
+            tile_shape.len()
+        ));
+    }
+    let output_len = shape
+        .last()
+        .copied()
+        .ok_or_else(|| "shape must not be empty".to_string())? as usize;
+
+    let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
+        .map_err(|e| format!("CString: {e}"))?;
+
+    let mut basic_ns = 0u64;
+    let mut order_ns = 0u64;
+    let mut mean = vec![0.0f64; output_len];
+    let mut sigma = vec![0.0f64; output_len];
+    let mut median = vec![0.0f64; output_len];
+    let mut q1 = vec![0.0f64; output_len];
+    let mut q3 = vec![0.0f64; output_len];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        cpp_lattice_stats_float_forced_io(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            shape.len() as i32,
+            tile_shape.as_ptr(),
+            tile_shape.len() as i32,
+            cache_tiles,
+            mean.as_mut_ptr(),
+            sigma.as_mut_ptr(),
+            median.as_mut_ptr(),
+            q1.as_mut_ptr(),
+            q3.as_mut_ptr(),
+            output_len as i64,
+            &mut basic_ns,
+            &mut order_ns,
+            &mut error,
+        )
+    };
+
+    if rc != 0 {
+        return Err(take_cpp_error_message(error));
+    }
+
+    Ok(CppLatticeStatisticsBenchResult {
+        basic_ns,
+        order_ns,
+        mean,
+        sigma,
+        median,
+        q1,
+        q3,
+    })
+}
+
+/// Run only the C++ basic-family forced-I/O lattice-statistics workload
+/// repeatedly on one prepared paged lattice.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_lattice_statistics_forced_io_repeated_basic(
+    path: &std::path::Path,
+    shape: &[i32],
+    tile_shape: &[i32],
+    cache_tiles: u64,
+    iterations: u32,
+) -> Result<(u64, f64), String> {
+    let _guard = lock_cpp_lattice_ffi();
+    if shape.len() != tile_shape.len() {
+        return Err(format!(
+            "shape/tile ndim mismatch: {} vs {}",
+            shape.len(),
+            tile_shape.len()
+        ));
+    }
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut total_ns = 0u64;
+    let mut checksum = 0.0f64;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        cpp_lattice_stats_float_forced_io_repeated_basic(
+            c_path.as_ptr(),
+            shape.as_ptr(),
+            shape.len() as i32,
+            tile_shape.as_ptr(),
+            tile_shape.len() as i32,
+            cache_tiles,
+            iterations,
+            &mut total_ns,
+            &mut checksum,
+            &mut error,
+        )
+    };
+
+    if rc == 0 {
+        Ok((total_ns, checksum))
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_lattice_statistics_forced_io_repeated_basic(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _tile_shape: &[i32],
+    _cache_tiles: u64,
+    _iterations: u32,
+) -> Result<(u64, f64), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Stub for when C++ is unavailable.
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_lattice_statistics_forced_io_bench(
+    _path: &std::path::Path,
+    _shape: &[i32],
+    _tile_shape: &[i32],
+    _cache_tiles: u64,
+) -> Result<CppLatticeStatisticsBenchResult, String> {
     Err("C++ casacore backend unavailable".to_string())
 }

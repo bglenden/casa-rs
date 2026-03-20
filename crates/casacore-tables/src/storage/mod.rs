@@ -457,6 +457,30 @@ impl StorageManager for CompositeStorage {
 }
 
 impl CompositeStorage {
+    pub(crate) fn load_metadata_only(
+        &self,
+        table_path: &Path,
+    ) -> Result<StorageSnapshot, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => self.load_plain_table_metadata(table_path, &table_dat),
+            // Metadata-only open is primarily for plain tiled tables. Fall back
+            // to the full loader for more complex table types.
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                let mut snapshot = self.load(table_path)?;
+                snapshot.rows.clear();
+                Ok(snapshot)
+            }
+        }
+    }
+
     /// Load a PlainTable from table.dat contents and data files.
     ///
     /// Uses two-pass loading:
@@ -611,6 +635,45 @@ impl CompositeStorage {
             virtual_columns,
             virtual_bindings: Vec::new(),
             dm_info,
+        })
+    }
+
+    fn load_plain_table_metadata(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+    ) -> Result<StorageSnapshot, StorageError> {
+        let schema = table_dat.to_table_schema()?;
+        let keywords = table_dat.table_desc.table_keywords.clone();
+        let column_keywords: HashMap<String, RecordValue> = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .filter(|c| !c.keywords.fields().is_empty())
+            .map(|c| (c.col_name.clone(), c.keywords.clone()))
+            .collect();
+        let mut virtual_columns = HashSet::new();
+        for dm in &table_dat.column_set.data_managers {
+            if !is_virtual_engine(&dm.type_name) {
+                continue;
+            }
+            for plain_col in &table_dat.column_set.columns {
+                if plain_col.dm_seq_nr != dm.seq_nr {
+                    continue;
+                }
+                virtual_columns.insert(plain_col.original_name.clone());
+            }
+        }
+
+        Ok(StorageSnapshot {
+            rows: Vec::new(),
+            keywords,
+            column_keywords,
+            schema: Some(schema),
+            table_info: load_table_info(table_path),
+            virtual_columns,
+            virtual_bindings: Vec::new(),
+            dm_info: extract_dm_info(table_dat),
         })
     }
 

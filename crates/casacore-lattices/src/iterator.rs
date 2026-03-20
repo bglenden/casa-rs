@@ -6,6 +6,7 @@ use ndarray::ArrayD;
 use crate::element::LatticeElement;
 use crate::lattice::{Lattice, LatticeMut};
 use crate::navigator::LatticeNavigator;
+use crate::traversal::{TraversalIter, TraversalSpec};
 
 /// A read-only iterator over chunks of a lattice.
 ///
@@ -174,10 +175,19 @@ impl<T> LatticeChunk<T> {
 
 /// Extension trait providing convenience iterator methods on lattices.
 pub trait LatticeIterExt<T: LatticeElement>: Lattice<T> {
+    /// Returns a general traversal iterator configured by `spec`.
+    fn traverse(&self, spec: TraversalSpec) -> TraversalIter<'_, T, Self>
+    where
+        Self: Sized,
+    {
+        TraversalIter::new(self, spec)
+    }
+
     /// Returns an iterator that yields lines along the specified axis.
     ///
-    /// Each yielded chunk is a 1-D array (the line) at successive
-    /// positions along the other axes.
+    /// This compatibility helper preserves the historical tile-grouped line
+    /// stepping behavior. For full logical line traversal, prefer
+    /// [`TraversalSpec::lines`](crate::TraversalSpec) with [`traverse`](Self::traverse).
     fn iter_lines(&self, axis: usize) -> LatticeIter<'_, T, Self, crate::TiledLineStepper>
     where
         Self: Sized,

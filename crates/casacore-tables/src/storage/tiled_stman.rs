@@ -2379,6 +2379,7 @@ pub struct TiledFileIO {
     #[allow(dead_code)]
     header_path: PathBuf,
     table_path: PathBuf,
+    pixel_type: PrimitiveType,
     cube_shape: Vec<usize>,
     tile_shape: Vec<usize>,
     tiles_per_dim: Vec<usize>,
@@ -2556,6 +2557,7 @@ impl TiledFileIO {
             tsm_path,
             header_path,
             table_path: table_path.to_path_buf(),
+            pixel_type,
             cube_shape: cube_shape.to_vec(),
             tile_shape: tile_shape.to_vec(),
             tiles_per_dim,
@@ -2675,6 +2677,13 @@ impl TiledFileIO {
             tsm_path,
             header_path,
             table_path: table_path.to_path_buf(),
+            pixel_type: dt
+                .to_primitive_type()
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch(
+                        "TiledFileIO: unsupported primitive type in header".to_string(),
+                    )
+                })?,
             cube_shape: cube.cube_shape.clone(),
             tile_shape: cube.tile_shape.clone(),
             tiles_per_dim,
@@ -2703,6 +2712,12 @@ impl TiledFileIO {
     /// Returns the tile shape.
     pub fn tile_shape(&self) -> &[usize] {
         &self.tile_shape
+    }
+
+    /// Returns the first cube column's pixel type when it maps to a supported
+    /// primitive type.
+    pub fn pixel_type(&self) -> Option<PrimitiveType> {
+        Some(self.pixel_type)
     }
 
     /// Whether the on-disk byte order is big-endian.

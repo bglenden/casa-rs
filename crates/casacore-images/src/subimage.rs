@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Image subviews corresponding to C++ `SubImage<T>`.
 
+use std::any::Any;
 use std::path::Path;
 
 use casacore_coordinates::CoordinateSystem;
@@ -139,6 +140,10 @@ impl<'a, T: ImagePixel, I: ImageInterface<T>> Lattice<T> for SubImage<'a, T, I> 
 }
 
 impl<'a, T: ImagePixel, I: ImageInterface<T>> ImageInterface<T> for SubImage<'a, T, I> {
+    fn as_any(&self) -> Option<&dyn Any> {
+        None
+    }
+
     fn coordinates(&self) -> &CoordinateSystem {
         &self.coords
     }
@@ -292,6 +297,10 @@ impl<'a, T: ImagePixel, I: ImageInterface<T> + LatticeMut<T>> LatticeMut<T>
 impl<'a, T: ImagePixel, I: ImageInterface<T> + LatticeMut<T>> ImageInterface<T>
     for SubImageMut<'a, T, I>
 {
+    fn as_any(&self) -> Option<&dyn Any> {
+        None
+    }
+
     fn coordinates(&self) -> &CoordinateSystem {
         &self.coords
     }

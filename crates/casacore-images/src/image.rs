@@ -9,15 +9,16 @@
 //! The convenience alias [`Image`] is retained for the common
 //! `PagedImage<f32>` case, matching C++ `PagedImage<Float>`.
 
-use std::any::TypeId;
-use std::cell::RefCell;
+use std::any::{Any, TypeId};
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use casacore_coordinates::{CoordinateSystem, CoordinateType};
 use casacore_lattices::{
-    Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape,
+    Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape, TraversalCacheHint,
+    TraversalCacheScope, recommended_tile_cache_size,
 };
 use casacore_tables::{
     ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema, TilePixel,
@@ -133,6 +134,14 @@ impl AnyPagedImage {
 
 /// Common image metadata behavior shared by persistent and temporary images.
 pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
+    /// Returns this image as [`Any`] for crate-level downcasting when the
+    /// concrete type is `'static`.
+    ///
+    /// The compiled image-expression runtime uses this to recognize concrete,
+    /// `'static` source types such as [`PagedImage<T>`]. Borrowed view-like
+    /// sources that are not `'static` still fall back to snapshot compilation.
+    fn as_any(&self) -> Option<&dyn Any>;
+
     fn coordinates(&self) -> &CoordinateSystem;
     fn units(&self) -> &str;
     fn misc_info(&self) -> RecordValue;
@@ -186,7 +195,21 @@ pub struct PagedImage<T: ImagePixel> {
     /// Wrapped in `RefCell` for interior mutability since the tile cache
     /// needs mutation even through `&self` trait methods.
     tiled_io: Option<RefCell<TiledFileIO>>,
+    max_cache_bytes: Cell<usize>,
     _pixel: PhantomData<T>,
+}
+
+struct PagedImageTraversalCacheScope<'a, T: ImagePixel> {
+    image: &'a PagedImage<T>,
+    previous_cache_bytes: usize,
+}
+
+impl<T: ImagePixel> TraversalCacheScope for PagedImageTraversalCacheScope<'_, T> {}
+
+impl<T: ImagePixel> Drop for PagedImageTraversalCacheScope<'_, T> {
+    fn drop(&mut self) {
+        let _ = self.image.set_cache_bytes_shared(self.previous_cache_bytes);
+    }
 }
 
 impl<T: ImagePixel> std::fmt::Debug for PagedImage<T> {
@@ -201,6 +224,84 @@ impl<T: ImagePixel> std::fmt::Debug for PagedImage<T> {
 }
 
 impl<T: ImagePixel> PagedImage<T> {
+    fn map_column_primitive_type(
+        table: &Table,
+        tiled_io: Option<&RefCell<TiledFileIO>>,
+    ) -> Result<PrimitiveType, ImageError> {
+        if let Some(tiled_io) = tiled_io
+            && let Some(data_type) = tiled_io.borrow().pixel_type()
+        {
+            return Ok(data_type);
+        }
+        if let Some(schema) = table.schema()
+            && let Some(column) = schema.column(MAP_COLUMN)
+            && let Some(data_type) = column.data_type()
+        {
+            return Ok(data_type);
+        }
+
+        let cell = table.cell(0, MAP_COLUMN).ok_or_else(|| {
+            ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
+        })?;
+        match cell {
+            Value::Array(array) => Ok(array.primitive_type()),
+            _ => Err(ImageError::InvalidMetadata(
+                "'map' column is not an array".to_string(),
+            )),
+        }
+    }
+
+    fn map_column_shape(table: &Table) -> Result<Vec<usize>, ImageError> {
+        let cell = table.cell(0, MAP_COLUMN).ok_or_else(|| {
+            ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
+        })?;
+        match cell {
+            Value::Array(array) => Ok(array.shape().to_vec()),
+            _ => Err(ImageError::InvalidMetadata(
+                "'map' column is not an array".to_string(),
+            )),
+        }
+    }
+
+    fn open_tiled_io(path: &Path, max_cache_bytes: usize) -> Result<TiledFileIO, ImageError> {
+        if max_cache_bytes == 0 {
+            TiledFileIO::open(path, 1)
+                .or_else(|_| TiledFileIO::open(path, 0))
+                .map_err(|e| ImageError::Io(e.to_string()))
+        } else {
+            TiledFileIO::open_with_cache_limit(path, 1, max_cache_bytes)
+                .or_else(|_| TiledFileIO::open_with_cache_limit(path, 0, max_cache_bytes))
+                .map_err(|e| ImageError::Io(e.to_string()))
+        }
+    }
+
+    fn tile_pixels(&self) -> usize {
+        self.tile_shape.iter().product()
+    }
+
+    fn element_size_bytes() -> usize {
+        T::PRIMITIVE_TYPE.fixed_width_bytes().unwrap_or(0)
+    }
+
+    fn refresh_tiled_io(&self) -> Result<(), ImageError> {
+        if self.path.is_none() || self.tiled_io.is_none() {
+            return Ok(());
+        }
+        let path = self.path.as_ref().expect("persistent image path");
+        let tiled_io = Self::open_tiled_io(path, self.max_cache_bytes.get())?;
+        *self
+            .tiled_io
+            .as_ref()
+            .expect("tile-aware image")
+            .borrow_mut() = tiled_io;
+        Ok(())
+    }
+
+    fn set_cache_bytes_shared(&self, max_cache_bytes: usize) -> Result<(), ImageError> {
+        self.max_cache_bytes.set(max_cache_bytes);
+        self.refresh_tiled_io()
+    }
+
     /// Creates a new persistent image on disk.
     pub fn create(
         shape: Vec<usize>,
@@ -239,6 +340,7 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io: None,
+            max_cache_bytes: Cell::new(0),
             _pixel: PhantomData,
         })
     }
@@ -320,6 +422,7 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
+            max_cache_bytes: Cell::new(0),
             _pixel: PhantomData,
         })
     }
@@ -386,6 +489,7 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
+            max_cache_bytes: Cell::new(max_cache_bytes),
             _pixel: PhantomData,
         })
     }
@@ -396,44 +500,31 @@ impl<T: ImagePixel> PagedImage<T> {
         max_cache_bytes: usize,
     ) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
-        let table = Table::open(TableOptions::new(&path))?;
-        let cell = table.cell(0, MAP_COLUMN).ok_or_else(|| {
-            ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
-        })?;
-        let shape = match &cell {
-            Value::Array(array) => {
-                if array.primitive_type() != T::PRIMITIVE_TYPE {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "image pixel type mismatch: requested {:?}, found {:?}",
-                        T::PRIMITIVE_TYPE,
-                        array.primitive_type()
-                    )));
-                }
-                array.shape().to_vec()
-            }
-            _ => {
-                return Err(ImageError::InvalidMetadata(
-                    "'map' column is not an array".to_string(),
-                ));
-            }
+        let tiled_io = Self::open_tiled_io(&path, max_cache_bytes)
+            .ok()
+            .map(RefCell::new);
+        let table = if tiled_io.is_some() {
+            Table::open_metadata_only(TableOptions::new(&path))?
+        } else {
+            Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)?,
             _ => CoordinateSystem::new(),
         };
-        let tiled_io = match table.keywords().get("_tiled_io") {
-            Some(Value::Scalar(ScalarValue::Bool(true))) => {
-                TiledFileIO::open_with_cache_limit(&path, 1, max_cache_bytes)
-                    .or_else(|_| TiledFileIO::open_with_cache_limit(&path, 0, max_cache_bytes))
-                    .ok()
-                    .map(RefCell::new)
-            }
-            _ => None,
-        };
+        let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
+        if map_primitive != T::PRIMITIVE_TYPE {
+            return Err(ImageError::InvalidMetadata(format!(
+                "image pixel type mismatch: requested {:?}, found {:?}",
+                T::PRIMITIVE_TYPE,
+                map_primitive
+            )));
+        }
         let (shape, tile_shape) = if let Some(ref tio) = tiled_io {
             let tio_ref = tio.borrow();
             (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
         } else {
+            let shape = Self::map_column_shape(&table)?;
             let ts = TiledShape::new(shape.clone()).tile_shape();
             (shape, ts)
         };
@@ -448,6 +539,7 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io,
+            max_cache_bytes: Cell::new(max_cache_bytes),
             _pixel: PhantomData,
         })
     }
@@ -484,6 +576,7 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io: None,
+            max_cache_bytes: Cell::new(0),
             _pixel: PhantomData,
         })
     }
@@ -491,26 +584,11 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Opens an existing image from disk as the requested typed image.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
-        let table = Table::open(TableOptions::new(&path))?;
-        let cell = table.cell(0, MAP_COLUMN).ok_or_else(|| {
-            ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
-        })?;
-        let shape = match &cell {
-            Value::Array(array) => {
-                if array.primitive_type() != T::PRIMITIVE_TYPE {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "image pixel type mismatch: requested {:?}, found {:?}",
-                        T::PRIMITIVE_TYPE,
-                        array.primitive_type()
-                    )));
-                }
-                array.shape().to_vec()
-            }
-            _ => {
-                return Err(ImageError::InvalidMetadata(
-                    "'map' column is not an array".to_string(),
-                ));
-            }
+        let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
+        let table = if tiled_io.is_some() {
+            Table::open_metadata_only(TableOptions::new(&path))?
+        } else {
+            Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)?,
@@ -525,15 +603,17 @@ impl<T: ImagePixel> PagedImage<T> {
             _ => RecordValue::default(),
         };
 
-        // Enable tile-aware I/O only if the image was created with create_with_tile_shape.
-        // Try dm_seq_nr=1 first (new format with variable-shape column), then 0 (old format).
-        let tiled_io = match table.keywords().get("_tiled_io") {
-            Some(Value::Scalar(ScalarValue::Bool(true))) => TiledFileIO::open(&path, 1)
-                .or_else(|_| TiledFileIO::open(&path, 0))
-                .ok()
-                .map(RefCell::new),
-            _ => None,
-        };
+        // Enable tile-aware I/O whenever the on-disk image has a compatible
+        // tiled payload. Rust-created `_tiled_io` images are the fast-path,
+        // but standard casacore images created by C++ may also be compatible.
+        let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
+        if map_primitive != T::PRIMITIVE_TYPE {
+            return Err(ImageError::InvalidMetadata(format!(
+                "image pixel type mismatch: requested {:?}, found {:?}",
+                T::PRIMITIVE_TYPE,
+                map_primitive
+            )));
+        }
 
         // When tile-aware I/O is active, the real shape comes from the TSM header
         // (the table cell may hold only a placeholder array).
@@ -541,6 +621,7 @@ impl<T: ImagePixel> PagedImage<T> {
             let tio_ref = tio.borrow();
             (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
         } else {
+            let shape = Self::map_column_shape(&table)?;
             let ts = TiledShape::new(shape.clone()).tile_shape();
             (shape, ts)
         };
@@ -556,6 +637,7 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io,
+            max_cache_bytes: Cell::new(0),
             _pixel: PhantomData,
         })
     }
@@ -563,16 +645,16 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Detects the pixel type of an image on disk without opening it as a
     /// specific `PagedImage<T>`.
     pub fn pixel_type(path: impl AsRef<Path>) -> Result<ImagePixelType, ImageError> {
-        let table = Table::open(TableOptions::new(path.as_ref()))?;
-        let cell = table.cell(0, MAP_COLUMN).ok_or_else(|| {
-            ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
-        })?;
-        match cell {
-            Value::Array(array) => ImagePixelType::from_primitive_type(array.primitive_type()),
-            _ => Err(ImageError::InvalidMetadata(
-                "'map' column is not an array".to_string(),
-            )),
-        }
+        let tiled_io = Self::open_tiled_io(path.as_ref(), 0).ok().map(RefCell::new);
+        let table = if tiled_io.is_some() {
+            Table::open_metadata_only(TableOptions::new(path.as_ref()))?
+        } else {
+            Table::open(TableOptions::new(path.as_ref()))?
+        };
+        ImagePixelType::from_primitive_type(Self::map_column_primitive_type(
+            &table,
+            tiled_io.as_ref(),
+        )?)
     }
 
     /// Returns the shape of the image payload.
@@ -622,6 +704,10 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Returns the tile shape used by the backing table.
     pub fn tile_shape(&self) -> &[usize] {
         &self.tile_shape
+    }
+
+    pub(crate) fn cache_bytes(&self) -> usize {
+        self.max_cache_bytes.get()
     }
 
     /// Reads the full pixel array.
@@ -1080,7 +1166,13 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
-    /// Returns a reference to the underlying table.
+    /// Returns a reference to the underlying table metadata.
+    ///
+    /// For tiled images opened from disk, the table may have been loaded via a
+    /// metadata-only fast path. In that case schema, keywords, column
+    /// keywords, and table info are available, but row/cell access behaves as
+    /// if the table has zero rows because the pixel payload is read through the
+    /// image's tiled I/O path instead of materializing the `"map"` cell.
     pub fn table(&self) -> &Table {
         &self.table
     }
@@ -1328,6 +1420,10 @@ impl<T: ImagePixel> PagedImage<T> {
 }
 
 impl<T: ImagePixel> ImageInterface<T> for PagedImage<T> {
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
+
     fn coordinates(&self) -> &CoordinateSystem {
         self.coordinates()
     }
@@ -1450,9 +1546,69 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
     fn nice_cursor_shape(&self) -> Vec<usize> {
         self.tile_shape.clone()
     }
+
+    fn enter_traversal_cache_scope<'a>(
+        &'a self,
+        hint: &TraversalCacheHint,
+    ) -> Result<Option<Box<dyn TraversalCacheScope + 'a>>, LatticeError> {
+        if self.path.is_none() || self.tiled_io.is_none() {
+            return Ok(None);
+        }
+        let previous_cache_bytes = self.max_cache_bytes.get();
+        let elem_size = Self::element_size_bytes().max(1);
+        let recommended_tiles =
+            recommended_tile_cache_size(&self.shape, &self.tile_shape, hint, None).max(1);
+        let recommended_bytes = recommended_tiles
+            .saturating_mul(self.tile_pixels())
+            .saturating_mul(elem_size);
+        if previous_cache_bytes == recommended_bytes {
+            return Ok(None);
+        }
+        self.set_cache_bytes_shared(recommended_bytes)
+            .map_err(|e| LatticeError::Table(e.to_string()))?;
+        Ok(Some(Box::new(PagedImageTraversalCacheScope {
+            image: self,
+            previous_cache_bytes,
+        })))
+    }
 }
 
 impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
+    fn with_traversal_cache_hint_mut<R>(
+        &mut self,
+        hint: &TraversalCacheHint,
+        f: impl FnOnce(&mut Self) -> Result<R, LatticeError>,
+    ) -> Result<R, LatticeError>
+    where
+        Self: Sized,
+    {
+        if self.path.is_none() || self.tiled_io.is_none() {
+            return f(self);
+        }
+        let previous_cache_bytes = self.max_cache_bytes.get();
+        let elem_size = Self::element_size_bytes().max(1);
+        let recommended_tiles =
+            recommended_tile_cache_size(&self.shape, &self.tile_shape, hint, None).max(1);
+        let recommended_bytes = recommended_tiles
+            .saturating_mul(self.tile_pixels())
+            .saturating_mul(elem_size);
+        if previous_cache_bytes == recommended_bytes {
+            return f(self);
+        }
+
+        self.set_cache_bytes_shared(recommended_bytes)
+            .map_err(|e| LatticeError::Table(e.to_string()))?;
+        let result = f(self);
+        let restore = self
+            .set_cache_bytes_shared(previous_cache_bytes)
+            .map_err(|e| LatticeError::Table(e.to_string()));
+        match (result, restore) {
+            (Err(err), _) => Err(err),
+            (Ok(_), Err(err)) => Err(err),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+
     fn put_at(&mut self, value: T, position: &[usize]) -> Result<(), LatticeError> {
         if position.len() != self.shape.len() {
             return Err(LatticeError::NdimMismatch {

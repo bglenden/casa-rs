@@ -521,6 +521,44 @@ fn table_keywords_round_trip_through_disk_storage() {
 }
 
 #[test]
+fn metadata_only_open_loads_schema_and_keywords_without_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema.clone());
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(42))),
+            RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))),
+        ]))
+        .expect("push schema-compliant row");
+    table.keywords_mut().push(RecordField::new(
+        "observer",
+        Value::Scalar(ScalarValue::String("rust-test".to_string())),
+    ));
+
+    let root = unique_test_dir("table_metadata_only_open");
+    std::fs::create_dir_all(&root).expect("create test dir");
+
+    table
+        .save(TableOptions::new(&root))
+        .expect("save disk-backed table");
+    let reopened = Table::open_metadata_only(TableOptions::new(&root)).expect("metadata-only");
+
+    assert_eq!(reopened.row_count(), 0);
+    assert_eq!(reopened.schema(), Some(&schema));
+    assert_eq!(
+        reopened.keywords().get("observer"),
+        Some(&Value::Scalar(ScalarValue::String("rust-test".to_string())))
+    );
+    assert_eq!(reopened.data_manager_info().len(), 1);
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
 fn iter_column_chunks_batches_rows() {
     let rows: Vec<RecordValue> = (0..7)
         .map(|v| {

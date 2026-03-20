@@ -7,13 +7,17 @@
 //! - [`ArrayLattice<T>`] — in-memory lattice wrapping an `ArrayD<T>`.
 //! - [`PagedArray<T>`] — disk-backed lattice using tiled table storage.
 //! - [`TempLattice<T>`] — automatic memory/disk switching lattice.
+//! - [`LatticeStatistics<T>`] — cached statistics over lattices, with explicit
+//!   Rust execution-policy control via [`ExecutionPolicy`].
 //!
 //! # Iteration
 //!
 //! Navigators ([`LatticeStepper`], [`TiledLineStepper`], [`TileStepper`])
-//! define stepping strategies. [`LatticeIter`] and [`LatticeIterMut`]
-//! wrap them as standard Rust iterators. The [`LatticeIterExt`] trait
-//! provides convenience methods (`iter_lines`, `iter_tiles`, `iter_chunks`).
+//! define low-level stepping strategies. [`TraversalSpec`] provides a
+//! higher-level traversal API, while [`LatticeIter`] and [`LatticeIterMut`]
+//! remain available for explicit navigator-based iteration. The
+//! [`LatticeIterExt`] trait provides convenience methods
+//! (`traverse`, `iter_lines`, `iter_tiles`, `iter_chunks`).
 //!
 //! # Regions and masks
 //!
@@ -38,8 +42,11 @@
 //! C++ template instantiations of `Lattice<T>`.
 
 mod array_lattice;
+pub mod array_math;
 mod element;
 mod error;
+#[doc(hidden)]
+pub mod execution;
 mod iterator;
 mod lattice;
 mod lattice_stepper;
@@ -49,14 +56,19 @@ mod lc_operations;
 mod navigator;
 mod paged_array;
 mod region;
+pub mod statistics;
 mod sub_lattice;
 mod temp_lattice;
 mod tile_stepper;
 mod tiled_line_stepper;
 mod tiled_shape;
+mod traversal;
 pub(crate) mod value_bridge;
 
 pub use array_lattice::ArrayLattice;
+pub use array_math::{
+    array_fractile, array_madfm, array_median, near, near_abs, near_f32, near_tol,
+};
 pub use element::LatticeElement;
 pub use error::LatticeError;
 pub use iterator::{LatticeChunk, LatticeIter, LatticeIterExt, LatticeIterMut};
@@ -68,8 +80,13 @@ pub use lc_operations::{LCComplement, LCDifference, LCIntersection, LCUnion};
 pub use navigator::LatticeNavigator;
 pub use paged_array::PagedArray;
 pub use region::LCRegion;
+pub use statistics::{ExecutionPolicy, LatticeStatistics, Statistic, StatsElement};
 pub use sub_lattice::{SubLattice, SubLatticeMut};
 pub use temp_lattice::TempLattice;
 pub use tile_stepper::TileStepper;
 pub use tiled_line_stepper::TiledLineStepper;
 pub use tiled_shape::TiledShape;
+pub use traversal::{
+    TraversalCacheHint, TraversalCacheMode, TraversalCacheScope, TraversalChunk, TraversalCursor,
+    TraversalCursorIter, TraversalIter, TraversalSpec, recommended_tile_cache_size,
+};

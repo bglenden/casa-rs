@@ -193,6 +193,10 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> Lattice<T> for SourceIma
 }
 
 impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for SourceImage<T> {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
     fn coordinates(&self) -> &CoordinateSystem {
         match self {
             Self::Native(img) => img.coordinates(),
@@ -563,6 +567,10 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> Lattice<T> for OwnedImag
 }
 
 impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for OwnedImageExpr<T> {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
     fn coordinates(&self) -> &CoordinateSystem {
         &self.coords
     }

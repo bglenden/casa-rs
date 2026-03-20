@@ -13,7 +13,23 @@ workspace = true
 [dependencies]
 casacore-tables = { path = "../casacore-tables" }
 casacore-types = { path = "../casacore-types" }
+crossbeam-channel = "0.5"
 ndarray.workspace = true
+ndarray-stats = "0.7"
+noisy_float = "0.2"
 num-complex.workspace = true
+ordered-float = "5.1"
 tempfile = "3"
 thiserror.workspace = true
+
+[[example]]
+name = "t_lattice"
+
+[[example]]
+name = "t_temp_lattice"
+
+[[example]]
+name = "t_sub_lattice"
+
+[[example]]
+name = "t_lattice_statistics"

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Chunk iterators for typed images and image-like views.
 //!
-//! These iterators are the Rust equivalent of the C++ `ImageIterator`
-//! pattern. They operate on any [`Lattice`] whose element type satisfies
+//! These iterators are compatibility wrappers over the lattice traversal API.
+//! They operate on any [`Lattice`] whose element type satisfies
 //! [`ImagePixel`].
 
 use ndarray::ArrayD;
 
-use casacore_lattices::{Lattice, LatticeMut};
+use casacore_lattices::{Lattice, LatticeMut, TraversalCursorIter, TraversalIter, TraversalSpec};
 
 use crate::error::ImageError;
 use crate::image::ImagePixel;
@@ -25,36 +25,15 @@ pub struct ImageChunk<T: ImagePixel> {
 
 /// Read-only chunk iterator over any typed image-like lattice.
 pub struct ImageIter<'a, T: ImagePixel, I: Lattice<T>> {
-    image: &'a I,
-    cursor_shape: Vec<usize>,
-    position: Vec<usize>,
-    done: bool,
-    _pixel: std::marker::PhantomData<T>,
+    inner: TraversalIter<'a, T, I>,
 }
 
 impl<'a, T: ImagePixel, I: Lattice<T>> ImageIter<'a, T, I> {
     /// Creates a new read-only chunk iterator.
     pub fn new(image: &'a I, cursor_shape: Vec<usize>) -> Self {
-        let done = image.shape().is_empty() || image.shape().iter().product::<usize>() == 0;
         Self {
-            image,
-            position: vec![0; image.ndim()],
-            cursor_shape,
-            done,
-            _pixel: std::marker::PhantomData,
+            inner: TraversalIter::new(image, TraversalSpec::chunks(cursor_shape)),
         }
-    }
-
-    fn advance(&mut self) {
-        let shape = self.image.shape();
-        for (axis, &axis_len) in shape.iter().enumerate() {
-            self.position[axis] += self.cursor_shape[axis];
-            if self.position[axis] < axis_len {
-                return;
-            }
-            self.position[axis] = 0;
-        }
-        self.done = true;
     }
 }
 
@@ -62,96 +41,55 @@ impl<'a, T: ImagePixel, I: Lattice<T>> Iterator for ImageIter<'a, T, I> {
     type Item = Result<ImageChunk<T>, ImageError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-
-        let img_shape = self.image.shape();
-        let chunk_shape: Vec<usize> = self
-            .position
-            .iter()
-            .zip(self.cursor_shape.iter())
-            .zip(img_shape.iter())
-            .map(|((&pos, &cs), &is)| cs.min(is - pos))
-            .collect();
-
-        let origin = self.position.clone();
-        let result = self
-            .image
-            .get_slice(&origin, &chunk_shape, &vec![1; img_shape.len()])
-            .map_err(ImageError::from);
-
-        self.advance();
-
-        Some(result.map(|data| ImageChunk {
-            data,
-            origin,
-            shape: chunk_shape,
-        }))
+        self.inner.next().map(|chunk| {
+            chunk
+                .map(|chunk| ImageChunk {
+                    data: chunk.data,
+                    origin: chunk.cursor.position,
+                    shape: chunk.cursor.shape,
+                })
+                .map_err(ImageError::from)
+        })
     }
 }
 
 /// Mutable chunk iterator over any writable typed image-like lattice.
 pub struct ImageIterMut<'a, T: ImagePixel, I: LatticeMut<T>> {
     image: &'a mut I,
-    cursor_shape: Vec<usize>,
-    position: Vec<usize>,
-    done: bool,
+    cursors: TraversalCursorIter,
     _pixel: std::marker::PhantomData<T>,
 }
 
 impl<'a, T: ImagePixel, I: LatticeMut<T>> ImageIterMut<'a, T, I> {
     /// Creates a new mutable chunk iterator.
     pub fn new(image: &'a mut I, cursor_shape: Vec<usize>) -> Self {
-        let ndim = image.ndim();
-        let done = image.shape().is_empty() || image.shape().iter().product::<usize>() == 0;
+        let cursors = TraversalCursorIter::new(
+            image.shape().to_vec(),
+            image.nice_cursor_shape(),
+            TraversalSpec::chunks(cursor_shape),
+        );
         Self {
             image,
-            position: vec![0; ndim],
-            cursor_shape,
-            done,
+            cursors,
             _pixel: std::marker::PhantomData,
         }
     }
 
     /// Reads the next chunk and advances the iterator.
     pub fn next_chunk(&mut self) -> Option<Result<ImageChunk<T>, ImageError>> {
-        if self.done {
-            return None;
-        }
-
-        let img_shape = self.image.shape().to_vec();
-        let chunk_shape: Vec<usize> = self
-            .position
-            .iter()
-            .zip(self.cursor_shape.iter())
-            .zip(img_shape.iter())
-            .map(|((&pos, &cs), &is)| cs.min(is - pos))
-            .collect();
-
-        let origin = self.position.clone();
-        let result = self
-            .image
-            .get_slice(&origin, &chunk_shape, &vec![1; img_shape.len()])
-            .map_err(ImageError::from);
-
-        for (axis, &axis_len) in img_shape.iter().enumerate() {
-            self.position[axis] += self.cursor_shape[axis];
-            if self.position[axis] < axis_len {
-                break;
-            }
-            if axis + 1 < img_shape.len() {
-                self.position[axis] = 0;
-            } else {
-                self.done = true;
-            }
-        }
-
-        Some(result.map(|data| ImageChunk {
-            data,
-            origin,
-            shape: chunk_shape,
-        }))
+        self.cursors.next().map(|cursor| {
+            cursor.map_err(ImageError::from).and_then(|cursor| {
+                let stride = vec![1; cursor.position.len()];
+                self.image
+                    .get_slice(&cursor.position, &cursor.shape, &stride)
+                    .map(|data| ImageChunk {
+                        data,
+                        origin: cursor.position,
+                        shape: cursor.shape,
+                    })
+                    .map_err(ImageError::from)
+            })
+        })
     }
 
     /// Writes a modified chunk back to the parent image.

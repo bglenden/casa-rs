@@ -70,6 +70,10 @@ pub enum LatticeError {
         axis: usize,
     },
 
+    /// A traversal specification is invalid for the target lattice.
+    #[error("invalid traversal: {0}")]
+    InvalidTraversal(String),
+
     /// A table-level error (propagated from `casacore-tables`).
     #[error("table error: {0}")]
     Table(String),

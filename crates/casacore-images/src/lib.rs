@@ -78,8 +78,8 @@ pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, PagedImage, image_pixel_type,
 };
 pub use image_expr::{
-    ImageExpr, ImageExprBinaryOp, ImageExprCompareOp, ImageExprUnaryOp, MaskExpr, MaskLogicalOp,
-    ReductionOp,
+    CompiledImageExpr, CompiledMaskExpr, ImageExpr, ImageExprBinaryOp, ImageExprCompareOp,
+    ImageExprUnaryOp, MaskExpr, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
 pub use iterator::{ImageChunk, ImageIter, ImageIterMut};
