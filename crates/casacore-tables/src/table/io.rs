@@ -107,6 +107,31 @@ impl Table {
         Ok(())
     }
 
+    /// Saves only table metadata back to disk without rewriting row storage.
+    ///
+    /// This updates `table.dat` keyword records, column keyword records, and
+    /// `table.info`, while preserving the existing on-disk data-manager layout.
+    /// It is intended for layered APIs such as tiled images that mutate table
+    /// metadata but keep their payload in a separate storage manager.
+    ///
+    /// This is a Rust-specific optimization and currently supports only plain
+    /// tables on disk.
+    pub fn save_metadata_only(&self, options: TableOptions) -> Result<(), TableError> {
+        let snapshot = StorageSnapshot {
+            rows: Vec::new(),
+            keywords: self.inner.keywords().clone(),
+            column_keywords: self.inner.all_column_keywords().clone(),
+            schema: self.inner.schema().cloned(),
+            table_info: self.table_info.clone(),
+            virtual_columns: self.virtual_columns.clone(),
+            virtual_bindings: self.virtual_bindings.clone(),
+            dm_info: self.dm_info.clone(),
+        };
+        let storage = CompositeStorage;
+        storage.save_metadata_only(&options.path, &snapshot)?;
+        Ok(())
+    }
+
     /// Save the table with per-column data manager bindings.
     ///
     /// Columns listed in `bindings` are stored using their specified DM;

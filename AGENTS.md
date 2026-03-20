@@ -44,6 +44,17 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - `cargo test --workspace`
 - `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
 
+## Releases
+
+- Use `scripts/release.sh <version>` for every release tag; do not create release
+  tags directly with `git tag`.
+- Common bumps:
+  `scripts/release.sh --patch` and `scripts/release.sh --minor`.
+- Use `scripts/release.sh <version> --push` to push the release commit and tag.
+- When asking for a release, say something like `use the release script to cut
+  and push release 0.3.1` or `use the release script to cut the next patch
+  release` rather than `tag as 0.3.1`.
+
 ## Architecture Decisions (Condensed)
 
 - Public API surface: `casacore-types` and `casacore-tables`.

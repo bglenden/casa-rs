@@ -559,6 +559,59 @@ fn metadata_only_open_loads_schema_and_keywords_without_rows() {
 }
 
 #[test]
+fn metadata_only_save_updates_keywords_without_rewriting_row_storage() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema.clone());
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(42))),
+            RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))),
+        ]))
+        .expect("push schema-compliant row");
+    table.keywords_mut().push(RecordField::new(
+        "observer",
+        Value::Scalar(ScalarValue::String("before".to_string())),
+    ));
+
+    let root = unique_test_dir("table_metadata_only_save");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root))
+        .expect("save disk-backed table");
+
+    let mut metadata_only =
+        Table::open_metadata_only(TableOptions::new(&root)).expect("metadata-only");
+    metadata_only.keywords_mut().upsert(
+        "observer",
+        Value::Scalar(ScalarValue::String("after".to_string())),
+    );
+    metadata_only
+        .save_metadata_only(TableOptions::new(&root))
+        .expect("save metadata only");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("full reopen");
+    assert_eq!(reopened.row_count(), 1);
+    assert_eq!(
+        reopened.keywords().get("observer"),
+        Some(&Value::Scalar(ScalarValue::String("after".to_string())))
+    );
+    assert_eq!(
+        reopened.cell(0, "id"),
+        Some(&Value::Scalar(ScalarValue::Int32(42)))
+    );
+    assert_eq!(
+        reopened.cell(0, "data"),
+        Some(&Value::Array(ArrayValue::from_i32_vec(vec![7, 9])))
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
 fn iter_column_chunks_batches_rows() {
     let rows: Vec<RecordValue> = (0..7)
         .map(|v| {

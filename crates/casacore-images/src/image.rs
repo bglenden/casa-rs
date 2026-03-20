@@ -1134,7 +1134,9 @@ impl<T: ImagePixel> PagedImage<T> {
             tio.borrow_mut()
                 .flush()
                 .map_err(|e| ImageError::Io(e.to_string()))?;
-            // Save only metadata: table.dat, table.info, keywords.
+            // Save only metadata: table.dat keywords/column keywords and
+            // table.info. This preserves the existing tiled storage-manager
+            // layout instead of rewriting the placeholder map cell.
             self.save_metadata_only(&path)?;
         } else {
             if !self.temp_masks.is_empty() {
@@ -1222,9 +1224,6 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Save only metadata (table.dat, table.info, keywords) when tile data is
     /// already on disk.
     fn save_metadata_only(&mut self, path: &Path) -> Result<(), ImageError> {
-        // The table directory already exists (created by create_with_tile_shape).
-        // Re-save the table to update table.dat, table.info, keywords.
-        // The pixel data in the TSM file is untouched.
         if !self.temp_masks.is_empty() {
             self.write_all_masks(path)?;
         }
@@ -1234,10 +1233,7 @@ impl<T: ImagePixel> PagedImage<T> {
                 Self::append_logtable_row(&Self::logtable_path(path), &entry)?;
             }
         }
-        // Write table.info.
-        let info_path = path.join("table.info");
-        let info = self.table.info();
-        std::fs::write(&info_path, info.to_string()).map_err(|e| ImageError::Io(e.to_string()))?;
+        self.table.save_metadata_only(TableOptions::new(path))?;
         Ok(())
     }
 
@@ -2017,5 +2013,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn metadata_only_open_can_update_history_and_masks_then_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metadata_only.image");
+        let mut image =
+            PagedImage::<f32>::create_with_tile_shape(vec![4, 4], vec![2, 2], make_coords(), &path)
+                .unwrap();
+        image
+            .put_slice(&ArrayD::from_elem(IxDyn(&[4, 4]), 1.0f32), &[0, 0])
+            .unwrap();
+        image.save().unwrap();
+
+        let mut reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reopened.table().row_count(), 0);
+        reopened.add_history("after-open").unwrap();
+        reopened.save().unwrap();
+
+        let reread = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reread.history().unwrap(), vec!["after-open".to_string()]);
+        assert_eq!(
+            reread.get().unwrap(),
+            ArrayD::from_elem(IxDyn(&[4, 4]), 1.0f32)
+        );
     }
 }

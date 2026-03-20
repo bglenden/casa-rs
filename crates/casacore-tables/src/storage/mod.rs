@@ -457,6 +457,42 @@ impl StorageManager for CompositeStorage {
 }
 
 impl CompositeStorage {
+    pub(crate) fn save_metadata_only(
+        &self,
+        table_path: &Path,
+        snapshot: &StorageSnapshot,
+    ) -> Result<(), StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(mut table_dat) => {
+                table_dat.table_desc.table_keywords = snapshot.keywords.clone();
+                for column in &mut table_dat.table_desc.columns {
+                    column.keywords = snapshot
+                        .column_keywords
+                        .get(&column.col_name)
+                        .cloned()
+                        .unwrap_or_default();
+                }
+                write_table_dat(&control_path, &table_dat)?;
+                let info_path = table_path.join(TABLE_INFO_FILE);
+                fs::write(&info_path, snapshot.table_info.to_string())?;
+                Ok(())
+            }
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                Err(StorageError::FormatMismatch(
+                    "metadata-only save is only supported for PlainTable storage".to_string(),
+                ))
+            }
+        }
+    }
+
     pub(crate) fn load_metadata_only(
         &self,
         table_path: &Path,

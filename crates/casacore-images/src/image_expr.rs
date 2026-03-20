@@ -985,10 +985,12 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 let result = match op {
                     ReductionOp::Sum => reduce_numeric_expr(
                         child,
-                        Some(ReductionOp::Sum),
-                        child_shape,
-                        std::mem::size_of::<T>(),
-                        1_048_576,
+                        ReductionPlan {
+                            source_stat_op: Some(ReductionOp::Sum),
+                            full_shape: child_shape,
+                            per_worker_state_bytes: std::mem::size_of::<T>(),
+                            large_work_threshold: 1_048_576,
+                        },
                         T::default_value,
                         |acc, chunk| {
                             for &v in chunk.iter() {
@@ -1004,10 +1006,13 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                     ReductionOp::Min => {
                         let partial = reduce_numeric_expr(
                             child,
-                            Some(ReductionOp::Min),
-                            child_shape,
-                            std::mem::size_of::<ExprReductionPartial<T>>(),
-                            1_048_576,
+                            ReductionPlan {
+                                source_stat_op: Some(ReductionOp::Min),
+                                full_shape: child_shape,
+                                per_worker_state_bytes: std::mem::size_of::<ExprReductionPartial<T>>(
+                                ),
+                                large_work_threshold: 1_048_576,
+                            },
                             || ExprReductionPartial::new(T::default_value()),
                             |partial, chunk| {
                                 for &v in chunk.iter() {
@@ -1040,10 +1045,13 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                     ReductionOp::Max => {
                         let partial = reduce_numeric_expr(
                             child,
-                            Some(ReductionOp::Max),
-                            child_shape,
-                            std::mem::size_of::<ExprReductionPartial<T>>(),
-                            1_048_576,
+                            ReductionPlan {
+                                source_stat_op: Some(ReductionOp::Max),
+                                full_shape: child_shape,
+                                per_worker_state_bytes: std::mem::size_of::<ExprReductionPartial<T>>(
+                                ),
+                                large_work_threshold: 1_048_576,
+                            },
                             || ExprReductionPartial::new(T::default_value()),
                             |partial, chunk| {
                                 for &v in chunk.iter() {
@@ -1076,10 +1084,13 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                     ReductionOp::Mean => {
                         let (mut acc, n) = reduce_numeric_expr(
                             child,
-                            Some(ReductionOp::Mean),
-                            child_shape,
-                            std::mem::size_of::<T>() + std::mem::size_of::<usize>(),
-                            1_048_576,
+                            ReductionPlan {
+                                source_stat_op: Some(ReductionOp::Mean),
+                                full_shape: child_shape,
+                                per_worker_state_bytes: std::mem::size_of::<T>()
+                                    + std::mem::size_of::<usize>(),
+                                large_work_threshold: 1_048_576,
+                            },
                             || (T::default_value(), 0usize),
                             |partial, chunk| {
                                 partial.1 += chunk.len();
@@ -1103,10 +1114,13 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                         let reserve = child_shape.iter().product::<usize>();
                         let mut vals = reduce_numeric_expr(
                             child,
-                            Some(ReductionOp::Median),
-                            child_shape,
-                            reserve.saturating_mul(std::mem::size_of::<T>()),
-                            4 * 1024 * 1024,
+                            ReductionPlan {
+                                source_stat_op: Some(ReductionOp::Median),
+                                full_shape: child_shape,
+                                per_worker_state_bytes: reserve
+                                    .saturating_mul(std::mem::size_of::<T>()),
+                                large_work_threshold: 4 * 1024 * 1024,
+                            },
                             || Vec::with_capacity(reserve / thread_parallelism().max(1)),
                             |vals, chunk| {
                                 vals.extend(chunk.iter().copied());
@@ -1144,10 +1158,12 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 let reserve = child_shape.iter().product::<usize>();
                 let mut vals = reduce_numeric_expr(
                     child,
-                    None,
-                    child_shape,
-                    reserve.saturating_mul(std::mem::size_of::<T>()),
-                    4 * 1024 * 1024,
+                    ReductionPlan {
+                        source_stat_op: None,
+                        full_shape: child_shape,
+                        per_worker_state_bytes: reserve.saturating_mul(std::mem::size_of::<T>()),
+                        large_work_threshold: 4 * 1024 * 1024,
+                    },
                     || Vec::with_capacity(reserve / thread_parallelism().max(1)),
                     |vals, chunk| {
                         vals.extend(chunk.iter().copied());
@@ -1180,10 +1196,12 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 let reserve = child_shape.iter().product::<usize>();
                 let mut vals = reduce_numeric_expr(
                     child,
-                    None,
-                    child_shape,
-                    reserve.saturating_mul(std::mem::size_of::<T>()),
-                    4 * 1024 * 1024,
+                    ReductionPlan {
+                        source_stat_op: None,
+                        full_shape: child_shape,
+                        per_worker_state_bytes: reserve.saturating_mul(std::mem::size_of::<T>()),
+                        large_work_threshold: 4 * 1024 * 1024,
+                    },
                     || Vec::with_capacity(reserve / thread_parallelism().max(1)),
                     |vals, chunk| {
                         vals.extend(chunk.iter().copied());
@@ -1841,9 +1859,7 @@ fn for_each_numeric_chunk<'a, T: ImageExprValue>(
 
 fn reduce_source_lattice<T, Part, Init, Process, Merge>(
     image: &dyn ImageInterface<T>,
-    full_shape: &[usize],
-    per_worker_state_bytes: usize,
-    large_work_threshold: usize,
+    plan: ReductionPlan<'_>,
     make_partial: Init,
     process_chunk: Process,
     merge_partials: Merge,
@@ -1855,6 +1871,12 @@ where
     Process: Fn(&mut Part, &ArrayD<T>) -> Result<(), LatticeError> + Sync + Send,
     Merge: Fn(&mut Part, Part) -> Result<(), LatticeError> + Sync,
 {
+    let ReductionPlan {
+        full_shape,
+        per_worker_state_bytes,
+        large_work_threshold,
+        ..
+    } = plan;
     if full_shape.is_empty() {
         let chunk = image.get_slice(&[], &[], &[])?;
         let mut partial = make_partial();
@@ -1889,12 +1911,17 @@ where
     )
 }
 
-fn reduce_numeric_expr<'a, T, Part, Init, Process, Merge>(
-    node: &NumericExprNode<'a, T>,
+#[derive(Clone, Copy)]
+struct ReductionPlan<'a> {
     source_stat_op: Option<ReductionOp>,
-    full_shape: &[usize],
+    full_shape: &'a [usize],
     per_worker_state_bytes: usize,
     large_work_threshold: usize,
+}
+
+fn reduce_numeric_expr<'a, T, Part, Init, Process, Merge>(
+    node: &NumericExprNode<'a, T>,
+    plan: ReductionPlan<'_>,
     make_partial: Init,
     process_chunk: Process,
     merge_partials: Merge,
@@ -1907,7 +1934,7 @@ where
     Merge: Fn(&mut Part, Part) -> Result<(), LatticeError> + Sync,
 {
     if let NumericExprNode::Source(image) = node {
-        if let Some(op) = source_stat_op
+        if let Some(op) = plan.source_stat_op
             && let Some(result) = T::reduction_from_source(op, *image)
         {
             let value = result?;
@@ -1916,19 +1943,13 @@ where
             process_chunk(&mut partial, &chunk)?;
             return Ok(partial);
         }
-        return reduce_source_lattice(
-            *image,
-            full_shape,
-            per_worker_state_bytes,
-            large_work_threshold,
-            make_partial,
-            process_chunk,
-            merge_partials,
-        );
+        return reduce_source_lattice(*image, plan, make_partial, process_chunk, merge_partials);
     }
 
     let mut partial = make_partial();
-    for_each_numeric_chunk(node, full_shape, |chunk| process_chunk(&mut partial, chunk))?;
+    for_each_numeric_chunk(node, plan.full_shape, |chunk| {
+        process_chunk(&mut partial, chunk)
+    })?;
     Ok(partial)
 }
 
@@ -2809,11 +2830,27 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
 
     /// Persists the evaluated expression as a new paged image.
     ///
-    /// This compiles the borrowed expression into an owned execution form,
-    /// then materializes it chunk by chunk as a regular `PagedImage` table.
-    /// The resulting image is fully independent of the expression sources.
+    /// This materializes the expression into a standard `PagedImage` table
+    /// that remains readable by casacore C++.
+    ///
+    /// The compiled expression runtime has a faster output path for some
+    /// workloads, but its on-disk layout is still an internal optimization.
+    /// The borrowed API stays on the conservative compatibility path here.
     pub fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, ImageError> {
-        self.compile()?.save_as(path)
+        let path = path.as_ref();
+        let data = self.get()?;
+        let mut image =
+            PagedImage::create(self.meta.shape.clone(), self.meta.coords.clone(), path)?;
+        image.put_slice(&data, &vec![0; self.meta.shape.len()])?;
+        image.set_units(self.meta.units.clone())?;
+        image.set_misc_info(self.meta.misc_info.clone())?;
+        image.set_image_info(&self.meta.image_info)?;
+        if let Some(mask) = self.source_mask()? {
+            image.put_mask("expr_mask", &mask)?;
+            image.set_default_mask("expr_mask")?;
+        }
+        image.save()?;
+        PagedImage::open(path)
     }
 
     /// Persists the expression string in casacore-compatible `.imgexpr` format.
@@ -3639,6 +3676,39 @@ mod tests {
         assert_eq!(
             saved.get_mask().unwrap().unwrap(),
             ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, true, false]).unwrap()
+        );
+    }
+
+    #[test]
+    fn borrowed_save_as_materializes_cpp_compatible_masked_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("borrowed_expr.image");
+        let mut image = crate::TempImage::<f32>::new(vec![2, 2], CoordinateSystem::new()).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.make_mask("quality", true, true).unwrap();
+        image
+            .put_mask(
+                "quality",
+                &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, false, true]).unwrap(),
+            )
+            .unwrap();
+
+        let expr = ImageExpr::from_image(&image).unwrap().multiply_scalar(3.0);
+        let saved = expr.save_as(&out).unwrap();
+
+        assert_eq!(
+            saved.get().unwrap(),
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![3.0, 6.0, 9.0, 12.0]).unwrap()
+        );
+        assert_eq!(saved.default_mask_name().as_deref(), Some("expr_mask"));
+        assert_eq!(
+            saved.get_mask().unwrap().unwrap(),
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, false, true]).unwrap()
         );
     }
 
