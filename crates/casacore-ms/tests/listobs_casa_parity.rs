@@ -243,7 +243,7 @@ fn casa_environment_available() -> bool {
 }
 
 fn run_rust_listobs(extra_args: &[&str]) -> Result<RunResult, String> {
-    let ms_path = ngc5921_ms_path().ok_or_else(|| missing_testdata_message())?;
+    let ms_path = ngc5921_ms_path().ok_or_else(missing_testdata_message)?;
     let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
     let output = temp.path().join("rust-listobs.txt");
     let start = Instant::now();
@@ -270,7 +270,7 @@ fn run_casa_listobs(
     timerange: Option<&str>,
     listunfl: bool,
 ) -> Result<RunResult, String> {
-    let ms_path = ngc5921_ms_path().ok_or_else(|| missing_testdata_message())?;
+    let ms_path = ngc5921_ms_path().ok_or_else(missing_testdata_message)?;
     let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
     let output = temp.path().join("casa-listobs.txt");
     let script = r#"
