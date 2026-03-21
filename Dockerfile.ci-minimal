@@ -1,0 +1,33 @@
+# Minimal local reproduction image for the GitHub Actions CI jobs.
+#
+# Build:
+#   docker build -f Dockerfile.ci-minimal -t casa-rs-ci-minimal .
+#
+# Run:
+#   docker run --rm -it -v "$(pwd)":/workspace casa-rs-ci-minimal
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV PATH=/usr/local/cargo/bin:${PATH}
+ENV CARGO_TERM_COLOR=always
+ENV CARGO_INCREMENTAL=0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    pkg-config \
+    libssl-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable \
+  && rustup component add rustfmt clippy \
+  && cargo install cargo-tarpaulin
+
+WORKDIR /workspace
+
+CMD ["bash"]

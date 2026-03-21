@@ -2,3 +2,5 @@ target/
 target-clippy/
 .DS_Store
 crates/casacore-test-support/tAipsIO_tmp.*
+tarpaulin-ci/
+crates/casacore-ms/casa-*.log

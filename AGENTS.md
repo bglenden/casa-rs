@@ -28,6 +28,7 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - Shared CASA dataset root defaults to `../casatestdata`.
 - Override the shared dataset root with `CASA_RS_TESTDATA_ROOT`.
 - Do not treat `/private/tmp` as the canonical home for shared CASA datasets.
+- Small bundled real-MS CI fixtures live in `crates/casacore-ms/tests/fixtures/`.
 - If C++ has a demo for a supported module, provide a Rust equivalent demo.
 - When implementing new casacore-c++ functionality, document all public types and
   methods at a level comparable to the C++ doxygen in the corresponding .h files.
@@ -48,6 +49,9 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
 - Small performance guards stay in the default `cargo test --workspace` path.
 - Long coverage/perf work should run less often, usually via CI or explicit full runs.
+- To reproduce the GitHub Actions environment locally, use
+  `scripts/ci-local.sh build` and then `scripts/ci-local.sh lint_test`,
+  `scripts/ci-local.sh coverage`, or `scripts/ci-local.sh all`.
 
 ## Releases
 

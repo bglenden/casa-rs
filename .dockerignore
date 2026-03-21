@@ -1,0 +1,6 @@
+.git
+target
+cov
+**/*.profraw
+**/*.profdata
+**/*.log
