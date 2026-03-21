@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,6 +10,8 @@ use casacore_ms::{MeasurementSet, MeasurementSetBuilder, SubtableId};
 use casacore_types::{
     ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use flate2::read::GzDecoder;
+use tar::Archive;
 use tempfile::tempdir;
 
 #[test]
@@ -279,6 +282,83 @@ fn listobs_cachesize_is_rejected_until_backed_by_real_cache_control() {
     assert!(stderr.contains("cache"));
 }
 
+#[test]
+fn listobs_real_small_fixture_json_smoke() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small.ms.tgz");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--format", "json"])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs");
+    assert!(output.status.success(), "{output:?}");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse json");
+    assert_eq!(json["measurement_set"]["row_count"], 1058);
+    assert_eq!(json["fields"].as_array().unwrap().len(), 2);
+    assert_eq!(json["fields"][0]["name"], "J1617-7717");
+    assert_eq!(json["fields"][1]["name"], "J1423-7829");
+}
+
+#[test]
+fn listobs_real_multifield_fixture_field_selection_filters_json_summary() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small_multifield_spw.ms.tgz");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--format", "json", "--field", "NGC4826-F3"])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs");
+    assert!(output.status.success(), "{output:?}");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse json");
+    assert_eq!(json["measurement_set"]["row_count"], 1440);
+    assert_eq!(json["fields"].as_array().unwrap().len(), 1);
+    assert_eq!(json["fields"][0]["name"], "NGC4826-F3");
+    assert_eq!(
+        json["spectral_windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|spw| spw["spectral_window_id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![2, 3, 4, 5]
+    );
+}
+
+#[test]
+fn listobs_real_multifield_fixture_spw_selection_filters_json_summary() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small_multifield_spw.ms.tgz");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--format", "json", "--spw", "5"])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs");
+    assert!(output.status.success(), "{output:?}");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse json");
+    assert_eq!(json["measurement_set"]["row_count"], 2430);
+    assert_eq!(
+        json["spectral_windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|spw| spw["spectral_window_id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![5]
+    );
+    assert_eq!(
+        json["data_descriptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|ddid| ddid["data_description_id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![5]
+    );
+}
+
 fn create_fixture_ms(root: &Path) -> PathBuf {
     let ms_path = root.join("listobs_fixture.ms");
     let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).expect("create MS");
@@ -308,6 +388,28 @@ fn create_fixture_ms(root: &Path) -> PathBuf {
     );
     ms.save().expect("save MS");
     ms_path
+}
+
+fn unpack_fixture_ms(archive_name: &str) -> (tempfile::TempDir, PathBuf) {
+    let temp = tempdir().expect("tempdir");
+    let archive_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(archive_name);
+    let archive_file = File::open(&archive_path).expect("open fixture archive");
+    let mut archive = Archive::new(GzDecoder::new(archive_file));
+    archive.unpack(temp.path()).expect("unpack fixture archive");
+
+    let ms_dir_name = archive_name
+        .strip_suffix(".tgz")
+        .expect("fixture archive suffix");
+    let ms_path = temp.path().join(ms_dir_name);
+    assert!(
+        ms_path.is_dir(),
+        "expected unpacked MS at {}",
+        ms_path.display()
+    );
+    (temp, ms_path)
 }
 
 fn add_observation_row(ms: &mut MeasurementSet, start: f64, end: f64) {

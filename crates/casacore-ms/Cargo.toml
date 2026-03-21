@@ -17,6 +17,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 casacore-test-support = { path = "../casacore-test-support" }
+flate2 = "1"
+tar = "0.4"
 tempfile = "3"
 
 [[bin]]
