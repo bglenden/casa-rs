@@ -1583,4 +1583,149 @@ mod tests {
         assert_eq!(max_pos, Some(vec![63]));
         assert_eq!(lat.slice_calls(), 1);
     }
+
+    #[test]
+    fn duplicate_or_out_of_bounds_axes_error_cleanly() {
+        let lat = ArrayLattice::new(ArrayD::from_shape_fn(IxDyn(&[4, 5]), |idx| {
+            (idx[0] * 10 + idx[1]) as f32
+        }));
+        let mut stats = LatticeStatistics::new(&lat);
+
+        stats.set_axes(vec![0, 0]);
+        assert!(matches!(
+            stats.get_statistic(Statistic::Mean),
+            Err(LatticeError::InvalidTraversal(message))
+                if message.contains("duplicate axis")
+        ));
+
+        stats.set_axes(vec![2]);
+        assert!(matches!(
+            stats.get_statistic(Statistic::Mean),
+            Err(LatticeError::IndexOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn empty_selection_returns_nan_stats_and_no_positions() {
+        let lat = ArrayLattice::new(ArrayD::from_shape_fn(IxDyn(&[8]), |idx| idx[0] as f32));
+        let mut stats = LatticeStatistics::new(&lat);
+        stats.set_include_range(100.0, 200.0);
+
+        let mean = stats.get_statistic(Statistic::Mean).unwrap();
+        let sigma = stats.get_statistic(Statistic::Sigma).unwrap();
+        let median = stats.get_statistic(Statistic::Median).unwrap();
+        let (min_pos, max_pos) = stats.get_min_max_pos().unwrap();
+
+        assert!(stats.get_statistic(Statistic::Npts).unwrap().is_empty());
+        assert!(mean.is_empty());
+        assert!(sigma.is_empty());
+        assert!(median.is_empty());
+        assert_eq!(min_pos, None);
+        assert_eq!(max_pos, None);
+    }
+
+    #[test]
+    fn exclude_range_and_clear_range_restore_unfiltered_results() {
+        let lat = ArrayLattice::new(ArrayD::from_shape_fn(IxDyn(&[6]), |idx| idx[0] as f32));
+        let mut stats = LatticeStatistics::new(&lat);
+        stats.set_include_range(1.0, 4.0);
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            2.5
+        );
+
+        stats.set_exclude_range(1.0, 4.0);
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            2.5
+        );
+
+        stats.clear_range();
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            2.5
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Npts).unwrap()[IxDyn(&[0])],
+            6.0
+        );
+    }
+
+    #[test]
+    fn clear_pixel_mask_restores_masked_values() {
+        let lat = ArrayLattice::new(ArrayD::from_shape_fn(IxDyn(&[4]), |idx| idx[0] as f32));
+        let mut stats = LatticeStatistics::new(&lat);
+        stats.set_pixel_mask(
+            ArrayD::from_shape_vec(IxDyn(&[4]), vec![true, false, false, true]).unwrap(),
+        );
+
+        assert_eq!(
+            stats.get_statistic(Statistic::Npts).unwrap()[IxDyn(&[0])],
+            2.0
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            1.5
+        );
+
+        stats.clear_pixel_mask();
+        assert_eq!(
+            stats.get_statistic(Statistic::Npts).unwrap()[IxDyn(&[0])],
+            4.0
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            1.5
+        );
+    }
+
+    #[test]
+    fn set_new_lattice_resets_filters_but_keeps_policy() {
+        let first = CountingLattice::new(ArrayD::from_shape_fn(IxDyn(&[64]), |idx| idx[0] as f32));
+        let second = CountingLattice::new(ArrayD::from_shape_fn(IxDyn(&[64]), |idx| {
+            (idx[0] * 2) as f32
+        }));
+        let mut stats = LatticeStatistics::new(&first);
+        stats.set_include_range(8.0, 15.0);
+        stats.set_execution_policy(ExecutionPolicy::Pipelined { prefetch_depth: 2 });
+
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            11.5
+        );
+        assert!(first.slice_calls() >= 1);
+
+        stats.set_new_lattice(&second);
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            63.0
+        );
+        assert!(second.slice_calls() >= 1);
+    }
+
+    #[test]
+    fn bool_statistics_match_expected_fraction() {
+        let lat = ArrayLattice::new(
+            ArrayD::from_shape_vec(IxDyn(&[6]), vec![true, false, true, false, true, false])
+                .unwrap(),
+        );
+        let stats = LatticeStatistics::new(&lat);
+
+        assert_eq!(
+            stats.get_statistic(Statistic::Npts).unwrap()[IxDyn(&[0])],
+            6.0
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Sum).unwrap()[IxDyn(&[0])],
+            3.0
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],
+            0.5
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Median).unwrap()[IxDyn(&[0])],
+            0.5
+        );
+    }
 }

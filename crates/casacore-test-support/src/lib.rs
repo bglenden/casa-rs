@@ -2063,6 +2063,8 @@ fn cpp_decode_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casacore_types::{PrimitiveType, RecordValue};
+    use tempfile::tempdir;
 
     #[test]
     fn primitive_case_set_is_non_empty() {
@@ -2107,6 +2109,308 @@ mod tests {
                 assert_eq!(decoded, case.expected_value);
             }
         }
+    }
+
+    #[test]
+    fn primitive_case_preparation_rejects_non_primitive_values() {
+        let record = Value::Record(RecordValue::default());
+        let table_ref = Value::TableRef("ANTENNA".to_string());
+
+        assert!(matches!(
+            prepare_primitive_case(&record),
+            Err(AipsIoCrossError::UnsupportedValue(message))
+                if message.contains("record values")
+        ));
+        assert!(matches!(
+            prepare_primitive_case(&table_ref),
+            Err(AipsIoCrossError::UnsupportedValue(message))
+                if message.contains("table references")
+        ));
+    }
+
+    #[test]
+    fn restore_decoded_shape_requires_array_when_shape_is_present() {
+        let decoded = Value::Scalar(ScalarValue::Int32(42));
+        assert!(matches!(
+            restore_decoded_shape(decoded, Some(&[2, 2])),
+            Err(AipsIoCrossError::UnsupportedValue(message))
+                if message.contains("expected to be an array")
+        ));
+    }
+
+    #[test]
+    fn casatestdata_candidates_include_repo_sibling() {
+        let candidates = casatestdata_root_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].ends_with("../casatestdata"));
+    }
+
+    #[test]
+    fn normalize_existing_path_preserves_missing_paths() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert_eq!(normalize_existing_path(&missing), missing);
+    }
+
+    #[test]
+    fn casatestdata_env_override_and_path_join_are_honored() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("casatestdata");
+        std::fs::create_dir(&root).unwrap();
+
+        unsafe { std::env::set_var("CASA_RS_TESTDATA_ROOT", &root) };
+        assert_eq!(casatestdata_root(), Some(normalize_existing_path(&root)));
+        assert_eq!(
+            casatestdata_path("measurementset/demo.ms"),
+            Some(normalize_existing_path(&root).join("measurementset/demo.ms"))
+        );
+        unsafe { std::env::remove_var("CASA_RS_TESTDATA_ROOT") };
+    }
+
+    #[test]
+    fn cpp_backend_matches_build_configuration() {
+        assert_eq!(cpp_backend_available(), cfg!(has_casacore_cpp));
+
+        let value = Value::Scalar(ScalarValue::Int32(7));
+        let rust_backend = RustBackend::new();
+        assert!(
+            rust_backend
+                .encode_value(&value, ByteOrder::BigEndian)
+                .is_ok()
+        );
+
+        let cpp_backend = CppBackend::new();
+        let encoded = cpp_backend.encode_value(&value, ByteOrder::BigEndian);
+        let decoded = cpp_backend.decode_value(
+            &[0, 0, 0, 7],
+            TypeTag::scalar(PrimitiveType::Int32),
+            ByteOrder::BigEndian,
+        );
+
+        if cfg!(has_casacore_cpp) {
+            assert!(encoded.is_ok());
+            assert!(decoded.is_ok());
+        } else {
+            assert_eq!(rust_backend.name(), "rust");
+            assert_eq!(cpp_backend.name(), "cpp");
+            assert!(
+                encoded
+                    .unwrap_err()
+                    .contains("casacore C++ backend unavailable")
+            );
+            assert!(
+                decoded
+                    .unwrap_err()
+                    .contains("casacore C++ backend unavailable")
+            );
+        }
+    }
+
+    #[test]
+    fn flatten_and_reshape_cover_all_array_variants() {
+        use casacore_types::{Complex32, Complex64};
+
+        let cases = vec![
+            ArrayValue::Bool(
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, true, false]).unwrap(),
+            ),
+            ArrayValue::UInt8(ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1u8, 2, 3, 4]).unwrap()),
+            ArrayValue::UInt16(
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1u16, 2, 3, 4]).unwrap(),
+            ),
+            ArrayValue::UInt32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1u32, 2, 3, 4]).unwrap(),
+            ),
+            ArrayValue::Int16(ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1i16, 2, 3, 4]).unwrap()),
+            ArrayValue::Int32(ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1i32, 2, 3, 4]).unwrap()),
+            ArrayValue::Int64(ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1i64, 2, 3, 4]).unwrap()),
+            ArrayValue::Float32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, 2.0, 3.0, 4.0]).unwrap(),
+            ),
+            ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f64, 2.0, 3.0, 4.0]).unwrap(),
+            ),
+            ArrayValue::Complex32(
+                ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2]),
+                    vec![
+                        Complex32::new(1.0, 0.5),
+                        Complex32::new(2.0, 0.5),
+                        Complex32::new(3.0, 0.5),
+                        Complex32::new(4.0, 0.5),
+                    ],
+                )
+                .unwrap(),
+            ),
+            ArrayValue::Complex64(
+                ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2]),
+                    vec![
+                        Complex64::new(1.0, 0.5),
+                        Complex64::new(2.0, 0.5),
+                        Complex64::new(3.0, 0.5),
+                        Complex64::new(4.0, 0.5),
+                    ],
+                )
+                .unwrap(),
+            ),
+            ArrayValue::String(
+                ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2]),
+                    vec![
+                        "a".to_string(),
+                        "b".to_string(),
+                        "c".to_string(),
+                        "d".to_string(),
+                    ],
+                )
+                .unwrap(),
+            ),
+        ];
+
+        for case in cases {
+            let flattened = flatten_array_value_fortran(&case);
+            assert_eq!(flattened.ndim(), 1);
+            let reshaped = reshape_array_value_from_fortran(flattened, &[2, 2]).unwrap();
+            assert_eq!(reshaped, case);
+        }
+    }
+
+    #[test]
+    fn reshape_helpers_validate_lengths_and_index_conversions() {
+        let err = reshape_from_fortran(&[1u8, 2u8, 3u8], &[2, 2]).unwrap_err();
+        assert!(
+            matches!(err, AipsIoCrossError::UnsupportedValue(message) if message.contains("length"))
+        );
+
+        assert_eq!(unravel_fortran_index(4, &[2, 3]), vec![0, 2]);
+        assert_eq!(unravel_c_index(4, &[2, 3]), vec![1, 1]);
+        assert_eq!(ravel_fortran_index(&[1, 2], &[2, 3]), 5);
+        assert_eq!(
+            flatten_ndarray_fortran(
+                &ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![0, 1, 2, 3, 4, 5]).unwrap()
+            ),
+            vec![0, 3, 1, 4, 2, 5]
+        );
+    }
+
+    #[cfg(not(has_casacore_cpp))]
+    fn assert_cpp_unavailable<T>(result: Result<T, String>) {
+        match result {
+            Err(err) => assert_eq!(err, "C++ casacore backend unavailable".to_string()),
+            Ok(_) => panic!("expected unavailable C++ backend error"),
+        }
+    }
+
+    #[cfg(not(has_casacore_cpp))]
+    #[test]
+    fn cpp_unavailable_fallbacks_are_explicit_for_image_and_lattice_helpers() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("fixture.image");
+        let shape = [2, 2];
+        let tile = [1, 1];
+        let data_f32 = [1.0f32, 2.0, 3.0, 4.0];
+        let data_f64 = [1.0f64, 2.0, 3.0, 4.0];
+        let data_c32 = [Complex32::new(1.0, 0.5), Complex32::new(2.0, -0.5)];
+        let data_c64 = [Complex64::new(1.0, 0.5), Complex64::new(2.0, -0.5)];
+        let cell_slice = CellSliceBenchParams {
+            nrows: 4,
+            dim0: 4,
+            dim1: 4,
+            slice_start0: 1,
+            slice_start1: 1,
+            slice_end0: 3,
+            slice_end1: 3,
+        };
+
+        assert_cpp_unavailable(cpp_table_write(CppTableFixture::ScalarPrimitives, &path));
+        assert_cpp_unavailable(cpp_table_verify(CppTableFixture::ScalarPrimitives, &path));
+        assert_cpp_unavailable(cpp_columns_index_time_lookups(&path, 1, 4));
+        assert_cpp_unavailable(cpp_vararray_bench(&path, 4));
+        assert_cpp_unavailable(cpp_set_algebra_bench(&path, 8, 3, 5));
+        assert_cpp_unavailable(cpp_copy_rows_bench(&path, 8));
+        assert_cpp_unavailable(cpp_cell_slice_bench(&path, &cell_slice));
+        assert_cpp_unavailable(cpp_bulk_scalar_io_bench(&path, 8));
+        assert_cpp_unavailable(cpp_deep_copy_bench(&path, 8));
+        assert_cpp_unavailable(cpp_create_image(&path, &shape, &data_f32, "Jy"));
+        assert_cpp_unavailable(cpp_create_image_tiled(
+            &path, &shape, &tile, &data_f32, "Jy",
+        ));
+        assert_cpp_unavailable(cpp_read_image_data(&path, 16));
+        assert_cpp_unavailable(cpp_create_image_f64(&path, &shape, &data_f64, "Jy"));
+        assert_cpp_unavailable(cpp_read_image_data_f64(&path, 16));
+        assert_cpp_unavailable(cpp_create_image_complex32(&path, &shape, &data_c32, "Jy"));
+        assert_cpp_unavailable(cpp_read_image_data_complex32(&path, 16));
+        assert_cpp_unavailable(cpp_create_image_complex64(&path, &shape, &data_c64, "Jy"));
+        assert_cpp_unavailable(cpp_read_image_data_complex64(&path, 16));
+        assert_cpp_unavailable(cpp_read_image_shape(&path));
+        assert_cpp_unavailable(cpp_read_image_units(&path));
+        assert_cpp_unavailable(cpp_create_temp_image_materialized(
+            &path,
+            &shape,
+            &data_f32,
+            "Jy",
+            "obj",
+            "Intensity",
+        ));
+        assert_cpp_unavailable(cpp_read_image_coordinate_count(&path));
+        assert_cpp_unavailable(cpp_read_image_default_mask_name(&path));
+        assert_cpp_unavailable(cpp_read_image_default_mask(&path, 16));
+        assert_cpp_unavailable(cpp_read_image_info_object_name(&path));
+        assert_cpp_unavailable(cpp_read_image_info_type(&path));
+        assert_cpp_unavailable(cpp_read_image_slice(&path, &[0, 0], &[1, 2]));
+        assert_cpp_unavailable(cpp_eval_image_expr_unary(
+            &path,
+            CppImageExprUnaryOp::Exp,
+            16,
+        ));
+        assert_cpp_unavailable(cpp_eval_image_expr_binary(
+            &path,
+            &path,
+            CppImageExprBinaryOp::Add,
+            16,
+        ));
+        assert_cpp_unavailable(cpp_eval_image_expr_scalar(
+            &path,
+            2.0,
+            CppImageExprBinaryOp::Multiply,
+            16,
+        ));
+        assert_cpp_unavailable(cpp_eval_image_mask_range(
+            &path,
+            CppImageExprCompareOp::GreaterThan,
+            1.0,
+            CppMaskLogicalOp::And,
+            CppImageExprCompareOp::LessEqual,
+            4.0,
+            16,
+        ));
+        assert_cpp_unavailable(cpp_eval_image_expr_closeout_slice(&path, &[0, 0], &[1, 2]));
+        assert_cpp_unavailable(cpp_eval_lel_expr("1+2", 8));
+        assert_cpp_unavailable(cpp_profile_lel_scalar_expr("1+2", 2));
+        assert_cpp_unavailable(cpp_eval_lel_expr_mask("1>0", 8));
+        assert_cpp_unavailable(cpp_save_lel_expr_file("1+2", &path));
+        assert_cpp_unavailable(cpp_open_lel_expr_file(&path, 8));
+        assert_cpp_unavailable(cpp_bench_image_plane_by_plane(&path, &shape, &tile, 0));
+        assert_cpp_unavailable(cpp_bench_image_spectrum_by_spectrum(
+            &path, &shape, &tile, 0,
+        ));
+        assert_cpp_unavailable(cpp_bench_image_plane_by_plane_complex(
+            &path, &shape, &tile, 0,
+        ));
+        assert_cpp_unavailable(cpp_lattice_statistics_forced_io_bench(
+            &path,
+            &[2, 2, 2],
+            &[1, 1, 1],
+            1,
+        ));
+        assert_cpp_unavailable(cpp_lattice_statistics_forced_io_repeated_basic(
+            &path,
+            &[2, 2, 2],
+            &[1, 1, 1],
+            1,
+            2,
+        ));
     }
 }
 

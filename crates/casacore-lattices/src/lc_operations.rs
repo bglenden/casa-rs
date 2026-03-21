@@ -303,6 +303,14 @@ mod tests {
         assert!(!region.contains(&[3, 3]));
         assert!(region.contains(&[0, 0]));
         assert!(region.contains(&[9, 9]));
+        assert_eq!(region.bounding_box_start(), vec![0, 0]);
+        assert_eq!(region.bounding_box_shape(), vec![10, 10]);
+
+        let mask = region.get_mask();
+        assert!(mask[[0, 0]]);
+        assert!(!mask[[2, 2]]);
+        assert!(!mask[[5, 5]]);
+        assert!(mask[[9, 9]]);
     }
 
     #[test]
@@ -313,6 +321,13 @@ mod tests {
         assert!(region.contains(&[5, 5])); // in both
         assert!(!region.contains(&[2, 2])); // only in a
         assert!(!region.contains(&[7, 7])); // only in b
+        assert_eq!(region.bounding_box_start(), vec![4, 4]);
+        assert_eq!(region.bounding_box_shape(), vec![3, 3]);
+
+        let mask = region.get_mask();
+        assert_eq!(mask.shape(), &[3, 3]);
+        assert!(mask[[0, 0]]);
+        assert!(mask[[2, 2]]);
     }
 
     #[test]
@@ -323,6 +338,13 @@ mod tests {
         assert!(region.contains(&[1, 1]));
         assert!(region.contains(&[7, 7]));
         assert!(!region.contains(&[5, 5]));
+        assert_eq!(region.bounding_box_start(), vec![0, 0]);
+        assert_eq!(region.bounding_box_shape(), vec![10, 10]);
+
+        let mask = region.get_mask();
+        assert!(mask[[0, 0]]);
+        assert!(mask[[7, 7]]);
+        assert!(!mask[[5, 5]]);
     }
 
     #[test]
@@ -332,5 +354,11 @@ mod tests {
         let region = LCDifference::new(a, b);
         assert!(region.contains(&[1, 1])); // in a, not in b
         assert!(!region.contains(&[4, 4])); // in both
+        assert_eq!(region.bounding_box_start(), vec![0, 0]);
+        assert_eq!(region.bounding_box_shape(), vec![7, 7]);
+
+        let mask = region.get_mask();
+        assert!(mask[[1, 1]]);
+        assert!(!mask[[4, 4]]);
     }
 }

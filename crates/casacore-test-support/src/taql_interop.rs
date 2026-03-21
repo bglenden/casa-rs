@@ -798,3 +798,176 @@ pub fn build_array_fixture_n(n: usize, shape: &[usize]) -> Table {
     }
     table
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn query_result(columns: &[&str], rows: &[&[&str]]) -> TaqlQueryResult {
+        TaqlQueryResult {
+            columns: columns.iter().map(|s| (*s).to_string()).collect(),
+            rows: rows
+                .iter()
+                .map(|row| row.iter().map(|s| (*s).to_string()).collect())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn fixture_builders_have_expected_shapes() {
+        let simple = build_simple_fixture();
+        assert_eq!(simple.row_count(), 50);
+        assert_eq!(
+            simple
+                .schema()
+                .unwrap()
+                .columns()
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "id", "name", "ra", "dec", "flux", "category", "flag", "bigid", "vis"
+            ]
+        );
+
+        let arrays = build_array_fixture();
+        assert_eq!(arrays.row_count(), 10);
+        assert_eq!(
+            match arrays.cell(0, "idata").unwrap().unwrap() {
+                Value::Array(array) => array.shape().to_vec(),
+                other => panic!("expected array value, got {other:?}"),
+            },
+            vec![2, 3]
+        );
+
+        let varshape = build_varshape_fixture();
+        assert_eq!(varshape.row_count(), 10);
+        assert_eq!(
+            match varshape.cell(9, "vardata").unwrap().unwrap() {
+                Value::Array(array) => array.shape().to_vec(),
+                other => panic!("expected array value, got {other:?}"),
+            },
+            vec![10]
+        );
+
+        let simple_n = build_simple_fixture_n(7);
+        assert_eq!(simple_n.row_count(), 7);
+
+        let arrays_n = build_array_fixture_n(3, &[2, 2, 2]);
+        assert_eq!(arrays_n.row_count(), 3);
+        assert_eq!(
+            match arrays_n.cell(2, "data").unwrap().unwrap() {
+                Value::Array(array) => array.shape().to_vec(),
+                other => panic!("expected array value, got {other:?}"),
+            },
+            vec![2, 2, 2]
+        );
+    }
+
+    #[test]
+    fn results_match_handles_tolerance_auto_names_and_errors() {
+        let baseline = query_result(&["flux"], &[&["1.000"], &["2.5"]]);
+        let within_tolerance = query_result(&["flux"], &[&["1.001"], &["2.5004"]]);
+        results_match(&baseline, &within_tolerance, 0.01).unwrap();
+
+        let auto_names = query_result(&["Col_1"], &[&["1.000"], &["2.5"]]);
+        results_match(&baseline, &auto_names, 0.01).unwrap();
+
+        let column_count = query_result(&["a", "b"], &[&["1", "2"]]);
+        assert!(
+            results_match(&baseline, &column_count, 0.0)
+                .unwrap_err()
+                .contains("column count mismatch")
+        );
+
+        let column_mismatch = query_result(&["other"], &[&["1.000"], &["2.5"]]);
+        assert!(
+            results_match(&baseline, &column_mismatch, 0.0)
+                .unwrap_err()
+                .contains("column mismatch")
+        );
+
+        let row_count = query_result(&["flux"], &[&["1.0"]]);
+        assert!(
+            results_match(&baseline, &row_count, 0.0)
+                .unwrap_err()
+                .contains("row count mismatch")
+        );
+
+        let row_width = query_result(&["flux"], &[&["1.0", "2.0"], &["2.5"]]);
+        assert!(
+            results_match(&baseline, &row_width, 0.0)
+                .unwrap_err()
+                .contains("column count mismatch")
+        );
+
+        let cell_value = query_result(&["flux"], &[&["9.0"], &["2.5"]]);
+        assert!(
+            results_match(&baseline, &cell_value, 0.0)
+                .unwrap_err()
+                .contains("row 0, col 0")
+        );
+
+        assert!(has_auto_column_names(&["Col_1".into(), "name".into()]));
+        assert!(!has_auto_column_names(&["Col_x".into()]));
+        assert!(values_close("2.0", "2.001", 0.01));
+        assert!(values_close("abc", "abc", 0.0));
+        assert!(!values_close("abc", "def", 0.0));
+    }
+
+    #[test]
+    fn rust_taql_query_and_exec_cover_rr_only_cross_matrix_paths() {
+        let mut table = build_simple_fixture();
+        let queried = rust_taql_query(&mut table, "SELECT id, name WHERE id >= 48").unwrap();
+        assert_eq!(queried.columns, vec!["id".to_string(), "name".to_string()]);
+        assert_eq!(queried.rows.len(), 2);
+        assert_eq!(queried.rows[0][0], "48");
+
+        rust_taql_exec_ok(&mut table, "SELECT category, COUNT(*) GROUP BY category").unwrap();
+
+        let rr_only = run_taql_cross_matrix(
+            TaqlFixtureKind::Simple,
+            "SELECT id WHERE id < 3",
+            "SELECT id FROM $1 WHERE id < 3",
+            0.0,
+        );
+        assert!(!rr_only.is_empty());
+        assert_eq!(rr_only[0].label, "RR");
+        assert!(rr_only[0].passed, "{rr_only:?}");
+        if !crate::cpp_backend_available() {
+            assert_eq!(rr_only.len(), 1);
+        }
+    }
+
+    #[test]
+    fn compare_and_exec_matrix_helpers_report_rr_failures_without_cpp() {
+        let bad_compare = run_taql_cross_matrix_compare(
+            TaqlFixtureKind::Simple,
+            "select missing",
+            "select missing from $1",
+            0.0,
+        );
+        assert_eq!(bad_compare.len(), 1);
+        assert_eq!(bad_compare[0].label, "RR");
+        assert!(!bad_compare[0].passed);
+        assert!(
+            bad_compare[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("Rust query error")
+        );
+
+        let exec = run_taql_cross_matrix_exec(
+            TaqlFixtureKind::Array,
+            "select shape(idata) as dims, shape(fdata) as fdims",
+            "select shape(idata) as dims, shape(fdata) as fdims from $1",
+        );
+        assert!(!exec.is_empty());
+        assert_eq!(exec[0].label, "RR");
+        assert!(exec[0].passed, "{exec:?}");
+        if !crate::cpp_backend_available() {
+            assert_eq!(exec.len(), 1);
+        }
+    }
+}

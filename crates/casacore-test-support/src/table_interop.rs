@@ -562,3 +562,200 @@ fn compare_table_to_fixture(table: &Table, fixture: &TableFixture) -> Result<(),
 fn values_equal(a: &Value, b: &Value) -> bool {
     a == b
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casacore_types::{PrimitiveType, RecordField, ScalarValue};
+
+    fn scalar_fixture() -> TableFixture {
+        let schema = TableSchema::new(vec![
+            casacore_tables::ColumnSchema::scalar("id", PrimitiveType::Int32),
+            casacore_tables::ColumnSchema::scalar("name", PrimitiveType::String),
+        ])
+        .unwrap();
+        let rows = vec![
+            RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("name", Value::Scalar(ScalarValue::String("one".into()))),
+            ]),
+            RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                RecordField::new("name", Value::Scalar(ScalarValue::String("two".into()))),
+            ]),
+        ];
+        let table_keywords = RecordValue::new(vec![RecordField::new(
+            "observer",
+            Value::Scalar(ScalarValue::String("Rust".into())),
+        )]);
+        let column_keywords = vec![(
+            "id".to_string(),
+            RecordValue::new(vec![RecordField::new(
+                "UNIT",
+                Value::Scalar(ScalarValue::String("count".into())),
+            )]),
+        )];
+        TableFixture {
+            schema,
+            rows,
+            table_keywords,
+            column_keywords,
+            cpp_fixture: None,
+            tile_shape: None,
+        }
+    }
+
+    #[test]
+    fn rust_roundtrip_and_matrix_helpers_cover_rr_paths() {
+        let fixture = scalar_fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("roundtrip.tbl");
+
+        rust_write_rust_read(&fixture, ManagerKind::StandardStMan, &path).unwrap();
+        read_and_verify(&fixture, ManagerKind::StandardStMan, &path).unwrap();
+
+        let rr = run_table_cross_matrix(&fixture, ManagerKind::StandardStMan);
+        assert_eq!(rr.len(), 1);
+        assert_eq!(rr[0].label, "RR");
+        assert!(rr[0].passed);
+
+        let full = run_full_cross_matrix(&fixture, ManagerKind::StandardStMan);
+        assert_eq!(full.len(), 1);
+        assert_eq!(full[0].label, "RR");
+        assert!(full[0].passed);
+
+        let endian = run_endian_cross_matrix(&fixture, ManagerKind::StandardStMan);
+        assert_eq!(endian.len(), 2);
+        assert!(endian.iter().all(|result| result.passed));
+        assert_eq!(endian[0].label, "RR-BE");
+        assert_eq!(endian[1].label, "RR-LE");
+        assert!(run_cc_only(&fixture).is_none());
+    }
+
+    #[test]
+    fn local_endian_rr_helper_and_label_roundtrip() {
+        let fixture = scalar_fixture();
+        let rr = run_rr_with_endian(
+            &fixture,
+            ManagerKind::StandardStMan,
+            EndianFormat::LocalEndian,
+        );
+        assert_eq!(rr.label, "RR-Local");
+        assert!(rr.passed, "{rr:?}");
+
+        let leaked = leak_label("hello");
+        assert_eq!(leaked, "hello");
+    }
+
+    #[test]
+    fn read_and_verify_reports_missing_table() {
+        let fixture = scalar_fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let err = read_and_verify(&fixture, ManagerKind::StandardStMan, dir.path()).unwrap_err();
+        assert!(err.contains("open:"));
+    }
+
+    #[test]
+    fn compare_table_to_fixture_reports_mismatches() {
+        let fixture = scalar_fixture();
+        let table = build_table_from_fixture(&fixture).unwrap();
+
+        let mut schema_mismatch = fixture.clone();
+        schema_mismatch.schema = TableSchema::new(vec![casacore_tables::ColumnSchema::scalar(
+            "id",
+            PrimitiveType::Int32,
+        )])
+        .unwrap();
+        assert!(
+            compare_table_to_fixture(&table, &schema_mismatch)
+                .unwrap_err()
+                .contains("schema mismatch")
+        );
+
+        let mut row_count_mismatch = fixture.clone();
+        row_count_mismatch.rows.pop();
+        assert!(
+            compare_table_to_fixture(&table, &row_count_mismatch)
+                .unwrap_err()
+                .contains("row count mismatch")
+        );
+
+        let mut keyword_mismatch = fixture.clone();
+        keyword_mismatch.table_keywords = RecordValue::new(vec![RecordField::new(
+            "observer",
+            Value::Scalar(ScalarValue::String("Other".into())),
+        )]);
+        assert!(
+            compare_table_to_fixture(&table, &keyword_mismatch)
+                .unwrap_err()
+                .contains("table keyword")
+        );
+
+        let mut missing_table_keyword = fixture.clone();
+        missing_table_keyword.table_keywords = RecordValue::new(vec![RecordField::new(
+            "missing",
+            Value::Scalar(ScalarValue::String("x".into())),
+        )]);
+        assert!(
+            compare_table_to_fixture(&table, &missing_table_keyword)
+                .unwrap_err()
+                .contains("missing")
+        );
+
+        let mut column_keyword_mismatch = fixture.clone();
+        column_keyword_mismatch.column_keywords = vec![(
+            "id".to_string(),
+            RecordValue::new(vec![RecordField::new(
+                "UNIT",
+                Value::Scalar(ScalarValue::String("seconds".into())),
+            )]),
+        )];
+        assert!(
+            compare_table_to_fixture(&table, &column_keyword_mismatch)
+                .unwrap_err()
+                .contains("column keyword")
+        );
+
+        let mut missing_column_keywords = fixture.clone();
+        missing_column_keywords.column_keywords = vec![(
+            "name".to_string(),
+            RecordValue::new(vec![RecordField::new(
+                "UNIT",
+                Value::Scalar(ScalarValue::String("n/a".into())),
+            )]),
+        )];
+        assert!(
+            compare_table_to_fixture(&table, &missing_column_keywords)
+                .unwrap_err()
+                .contains("column keywords missing")
+        );
+    }
+
+    #[test]
+    fn compare_table_to_fixture_detects_cell_mismatch_paths() {
+        let fixture = scalar_fixture();
+        let table = build_table_from_fixture(&fixture).unwrap();
+
+        let mut wrong_value = fixture.clone();
+        wrong_value.rows[0] = RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(99))),
+            RecordField::new("name", Value::Scalar(ScalarValue::String("one".into()))),
+        ]);
+        assert!(
+            compare_table_to_fixture(&table, &wrong_value)
+                .unwrap_err()
+                .contains("cell mismatch")
+        );
+
+        let mut missing_cell = fixture.clone();
+        missing_cell.rows[0] = RecordValue::new(vec![RecordField::new(
+            "name",
+            Value::Scalar(ScalarValue::String("one".into())),
+        )]);
+        assert!(
+            compare_table_to_fixture(&table, &missing_cell)
+                .unwrap_err()
+                .contains("unexpected cell")
+        );
+    }
+}
