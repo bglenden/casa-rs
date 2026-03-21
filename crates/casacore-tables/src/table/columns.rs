@@ -63,6 +63,11 @@ impl Table {
         self.inner.rows()
     }
 
+    /// Returns per-row sets of column names that are explicitly undefined.
+    pub fn undefined_cells(&self) -> &[std::collections::HashSet<String>] {
+        self.inner.undefined_cells()
+    }
+
     /// Appends a row to the table.
     ///
     /// If a schema is attached, the row is validated before insertion.
@@ -325,6 +330,16 @@ impl Table {
     pub fn is_cell_defined(&self, row_index: usize, column: &str) -> Result<bool, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
+        if let Some(undefined) = self
+            .inner
+            .undefined_cells()
+            .get(row_index)
+            .map(|set| set.contains(column))
+        {
+            if undefined {
+                return Ok(false);
+            }
+        }
         if self.cell(row_index, column).is_some() {
             return Ok(true);
         }
@@ -402,6 +417,12 @@ impl Table {
         };
         if let Some(column_schema) = &schema_column {
             validate_cell_against_schema_column(row_index, column_schema, Some(&value))?;
+        }
+
+        {
+            if let Some(set) = self.inner.undefined_for_row_mut(row_index) {
+                set.remove(column);
+            }
         }
 
         let row_count = self.row_count();

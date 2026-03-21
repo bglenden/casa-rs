@@ -149,7 +149,10 @@ pub struct DataManagerInfo {
 
 #[derive(Debug, Clone)]
 pub(crate) struct StorageSnapshot {
+    pub(crate) row_count: usize,
     pub(crate) rows: Vec<RecordValue>,
+    /// per-row set of column names that are undefined cells
+    pub(crate) undefined_cells: Vec<HashSet<String>>,
     pub(crate) keywords: RecordValue,
     pub(crate) column_keywords: HashMap<String, RecordValue>,
     pub(crate) schema: Option<TableSchema>,
@@ -174,6 +177,25 @@ pub(crate) trait StorageManager {
     ) -> Result<(), StorageError>;
 }
 
+fn filter_rows_for_save(
+    rows: &[RecordValue],
+    undefined_cells: &[HashSet<String>],
+) -> Vec<RecordValue> {
+    rows.iter()
+        .enumerate()
+        .map(|(idx, row)| {
+            let undef = undefined_cells.get(idx);
+            let fields: Vec<_> = row
+                .fields()
+                .iter()
+                .filter(|f| undef.map_or(true, |u| !u.contains(&f.name)))
+                .cloned()
+                .collect();
+            RecordValue::new(fields)
+        })
+        .collect()
+}
+
 /// Composite storage manager that dispatches per data manager type.
 ///
 /// Reads `table.dat` once, then routes each DM's columns to the appropriate
@@ -183,20 +205,7 @@ pub(crate) struct CompositeStorage;
 
 impl StorageManager for CompositeStorage {
     fn load(&self, table_path: &Path) -> Result<StorageSnapshot, StorageError> {
-        if !table_path.exists() {
-            return Err(StorageError::MissingPath(table_path.to_path_buf()));
-        }
-
-        let control_path = table_path.join(TABLE_CONTROL_FILE);
-        if !control_path.is_file() {
-            return Err(StorageError::MissingControlFile(control_path));
-        }
-
-        match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => self.load_plain_table(table_path, &table_dat),
-            TableDatResult::Ref(ref_dat) => self.load_ref_table(table_path, &ref_dat),
-            TableDatResult::Concat(concat_dat) => self.load_concat_table(table_path, &concat_dat),
-        }
+        self.load_with_row_hint(table_path, None)
     }
 
     fn save(
@@ -229,7 +238,8 @@ impl StorageManager for CompositeStorage {
             StorageError::FormatMismatch("cannot save without schema".to_string())
         })?;
 
-        let nrrow = snapshot.rows.len() as u64;
+        let filtered_rows = filter_rows_for_save(&snapshot.rows, &snapshot.undefined_cells);
+        let nrrow = filtered_rows.len() as u64;
         let data_path = table_path.join(format!("{}0", TABLE_DATA_FILE_PREFIX));
         let has_virtual = !snapshot.virtual_bindings.is_empty();
 
@@ -239,11 +249,14 @@ impl StorageManager for CompositeStorage {
             stored_rows = snapshot
                 .rows
                 .iter()
-                .map(|row| {
+                .zip(&snapshot.undefined_cells)
+                .map(|(row, undef)| {
                     let stored_fields: Vec<_> = row
                         .fields()
                         .iter()
-                        .filter(|f| !snapshot.virtual_columns.contains(&f.name))
+                        .filter(|f| {
+                            !snapshot.virtual_columns.contains(&f.name) && !undef.contains(&f.name)
+                        })
                         .cloned()
                         .collect();
                     RecordValue::new(stored_fields)
@@ -251,7 +264,7 @@ impl StorageManager for CompositeStorage {
                 .collect();
             &stored_rows
         } else {
-            &snapshot.rows
+            &filtered_rows
         };
 
         let dm_type_name;
@@ -457,6 +470,29 @@ impl StorageManager for CompositeStorage {
 }
 
 impl CompositeStorage {
+    pub(crate) fn load_with_row_hint(
+        &self,
+        table_path: &Path,
+        row_hint: Option<u64>,
+    ) -> Result<StorageSnapshot, StorageError> {
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !control_path.is_file() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => {
+                self.load_plain_table(table_path, &table_dat, row_hint)
+            }
+            TableDatResult::Ref(ref_dat) => self.load_ref_table(table_path, &ref_dat),
+            TableDatResult::Concat(concat_dat) => self.load_concat_table(table_path, &concat_dat),
+        }
+    }
+
     pub(crate) fn save_metadata_only(
         &self,
         table_path: &Path,
@@ -529,6 +565,7 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
+        row_hint: Option<u64>,
     ) -> Result<StorageSnapshot, StorageError> {
         let schema = table_dat.to_table_schema()?;
         let keywords = table_dat.table_desc.table_keywords.clone();
@@ -539,9 +576,19 @@ impl CompositeStorage {
             .filter(|c| !c.keywords.fields().is_empty())
             .map(|c| (c.col_name.clone(), c.keywords.clone()))
             .collect();
-        let nrrow = table_dat.nrrow as usize;
+        // Real-world casacore tables can carry a stale or zero row count in
+        // the outer "Table" envelope while the nested ColumnSet/storage-
+        // manager state still reflects the actual number of rows. Upstream
+        // C++ lets the ColumnSet/data-manager layer override the caller's
+        // row count during open, so use the larger of the two counts here.
+        let nrrow = table_dat
+            .nrrow
+            .max(table_dat.column_set.nrrow)
+            .max(row_hint.unwrap_or(0)) as usize;
 
         let mut rows: Vec<RecordValue> = (0..nrrow).map(|_| RecordValue::default()).collect();
+        let mut undefined_cells: Vec<HashSet<String>> =
+            (0..nrrow).map(|_| HashSet::new()).collect();
         let mut virtual_columns = HashSet::new();
 
         // Pass 1: Load stored columns from storage managers.
@@ -570,9 +617,18 @@ impl CompositeStorage {
                         &table_dat.table_desc.columns,
                         &bound_cols,
                         &mut rows,
+                        &mut undefined_cells,
                         nrrow,
                         ByteOrder::BigEndian,
-                    )?;
+                    )
+                    .map_err(|err| {
+                        StorageError::FormatMismatch(format!(
+                            "while loading {} seq {} from {}: {err}",
+                            dm.type_name,
+                            dm.seq_nr,
+                            data_path.display()
+                        ))
+                    })?;
                 }
                 "StandardStMan" => {
                     if !data_path.is_file() {
@@ -584,8 +640,17 @@ impl CompositeStorage {
                         &table_dat.table_desc.columns,
                         &bound_cols,
                         &mut rows,
+                        &mut undefined_cells,
                         nrrow,
-                    )?;
+                    )
+                    .map_err(|err| {
+                        StorageError::FormatMismatch(format!(
+                            "while loading {} seq {} from {}: {err}",
+                            dm.type_name,
+                            dm.seq_nr,
+                            data_path.display()
+                        ))
+                    })?;
                 }
                 "IncrementalStMan" => {
                     if !data_path.is_file() {
@@ -597,8 +662,17 @@ impl CompositeStorage {
                         &table_dat.table_desc.columns,
                         &bound_cols,
                         &mut rows,
+                        &mut undefined_cells,
                         nrrow,
-                    )?;
+                    )
+                    .map_err(|err| {
+                        StorageError::FormatMismatch(format!(
+                            "while loading {} seq {} from {}: {err}",
+                            dm.type_name,
+                            dm.seq_nr,
+                            data_path.display()
+                        ))
+                    })?;
                 }
                 "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
                     tiled_stman::load_tiled_columns(
@@ -607,8 +681,17 @@ impl CompositeStorage {
                         &table_dat.table_desc.columns,
                         &bound_cols,
                         &mut rows,
+                        &mut undefined_cells,
                         nrrow,
-                    )?;
+                    )
+                    .map_err(|err| {
+                        StorageError::FormatMismatch(format!(
+                            "while loading {} seq {} from {}: {err}",
+                            dm.type_name,
+                            dm.seq_nr,
+                            data_path.display()
+                        ))
+                    })?;
                 }
                 other => {
                     return Err(StorageError::UnsupportedDataManager(other.to_string()));
@@ -665,7 +748,9 @@ impl CompositeStorage {
         let dm_info = extract_dm_info(table_dat);
 
         Ok(StorageSnapshot {
+            row_count: rows.len(),
             rows,
+            undefined_cells,
             keywords,
             column_keywords,
             schema: Some(schema),
@@ -704,7 +789,9 @@ impl CompositeStorage {
         }
 
         Ok(StorageSnapshot {
+            row_count: table_dat.nrrow.max(table_dat.column_set.nrrow) as usize,
             rows: Vec::new(),
+            undefined_cells: Vec::new(),
             keywords,
             column_keywords,
             schema: Some(schema),
@@ -741,6 +828,7 @@ impl CompositeStorage {
 
         // Extract referenced rows.
         let mut rows = Vec::with_capacity(ref_dat.row_map.len());
+        let mut undefined_cells = Vec::with_capacity(ref_dat.row_map.len());
         for &parent_row in &ref_dat.row_map {
             let idx = parent_row as usize;
             if idx >= parent.rows.len() {
@@ -752,6 +840,7 @@ impl CompositeStorage {
             // Apply column projection if the view uses a subset of columns.
             if ref_dat.column_names.len() < parent.rows[idx].fields().len() {
                 let mut projected = RecordValue::default();
+                let mut projected_undefined = HashSet::new();
                 for view_col in &ref_dat.column_names {
                     // Resolve view column name to parent column name.
                     let parent_col = ref_dat
@@ -763,10 +852,15 @@ impl CompositeStorage {
                     if let Some(val) = parent.rows[idx].get(parent_col) {
                         projected.push(RecordField::new(view_col.clone(), val.clone()));
                     }
+                    if parent.undefined_cells[idx].contains(parent_col) {
+                        projected_undefined.insert(view_col.clone());
+                    }
                 }
                 rows.push(projected);
+                undefined_cells.push(projected_undefined);
             } else {
                 rows.push(parent.rows[idx].clone());
+                undefined_cells.push(parent.undefined_cells[idx].clone());
             }
         }
 
@@ -798,7 +892,9 @@ impl CompositeStorage {
         let table_info = load_table_info(table_path);
 
         Ok(StorageSnapshot {
+            row_count: rows.len(),
             rows,
+            undefined_cells,
             keywords: parent.keywords,
             column_keywords: parent.column_keywords,
             schema,
@@ -838,6 +934,7 @@ impl CompositeStorage {
         let mut schema = None;
         let mut keywords = RecordValue::default();
         let mut column_keywords = HashMap::new();
+        let mut undefined_cells = Vec::new();
 
         for (i, rel_path) in concat_dat.table_paths.iter().enumerate() {
             let abs_path = add_directory(rel_path, table_path)?;
@@ -849,12 +946,15 @@ impl CompositeStorage {
                 column_keywords = sub_snapshot.column_keywords;
             }
             all_rows.extend(sub_snapshot.rows);
+            undefined_cells.extend(sub_snapshot.undefined_cells);
         }
 
         let table_info = load_table_info(table_path);
 
         Ok(StorageSnapshot {
+            row_count: all_rows.len(),
             rows: all_rows,
+            undefined_cells,
             keywords,
             column_keywords,
             schema,
@@ -902,8 +1002,8 @@ impl CompositeStorage {
         let schema = snapshot.schema.as_ref().ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
         })?;
-
-        let nrrow = snapshot.rows.len() as u64;
+        let filtered_rows = filter_rows_for_save(&snapshot.rows, &snapshot.undefined_cells);
+        let nrrow = filtered_rows.len() as u64;
         let has_virtual = !snapshot.virtual_bindings.is_empty();
 
         // Group columns by DM kind. Columns in `bindings` get their own DM;
@@ -1080,8 +1180,7 @@ impl CompositeStorage {
 
             // Filter rows and col_descs to only this group's columns.
             let group_col_set: HashSet<&str> = group.col_names.iter().map(|s| s.as_str()).collect();
-            let group_rows: Vec<RecordValue> = snapshot
-                .rows
+            let group_rows: Vec<RecordValue> = filtered_rows
                 .iter()
                 .map(|row| {
                     let fields: Vec<_> = row
@@ -1170,6 +1269,7 @@ fn load_stman_aipsio_columns(
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
     rows: &mut [RecordValue],
+    undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
     byte_order: ByteOrder,
 ) -> Result<(), StorageError> {
@@ -1201,6 +1301,9 @@ fn load_stman_aipsio_columns(
             StManColumnData::Flat(raw) => {
                 for (row_idx, row) in rows.iter_mut().enumerate() {
                     let value = extract_row_value(raw, col_desc, row_idx, nrrow)?;
+                    if matches!(&value, Value::Array(_)) {
+                        undefined_cells[row_idx].insert(col_desc.col_name.clone());
+                    }
                     row.push(RecordField::new(col_desc.col_name.clone(), value));
                 }
             }
@@ -1244,7 +1347,8 @@ fn load_stman_aipsio_columns(
                                     col_desc.require_primitive_type()?,
                                     false,
                                 );
-                                make_undefined_array(dt, col_desc.nrdim as usize)
+                                undefined_cells[row_idx].insert(col_desc.col_name.clone());
+                                make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
                             }
                         }
                     };
@@ -1264,6 +1368,7 @@ fn load_ssm_columns(
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
     rows: &mut [RecordValue],
+    undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
 ) -> Result<(), StorageError> {
     let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
@@ -1302,7 +1407,8 @@ fn load_ssm_columns(
                                     col_desc.require_primitive_type()?,
                                     false,
                                 );
-                                make_undefined_array(dt, col_desc.nrdim as usize)
+                                undefined_cells[row_idx].insert(col_desc.col_name.clone());
+                                make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
                             }
                         }
                     };
@@ -1322,6 +1428,7 @@ fn load_ism_columns(
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
     rows: &mut [RecordValue],
+    _undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
 ) -> Result<(), StorageError> {
     let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
@@ -1354,11 +1461,11 @@ fn load_ism_columns(
 ///
 /// For ndim > 0, returns a zero-sized array with `ndim` dimensions (all sizes 0).
 /// For ndim == 0, returns a 0-D empty array.
-fn make_undefined_array(dt: CasacoreDataType, ndim: usize) -> casacore_types::Value {
+pub(crate) fn make_undefined_array(dt: CasacoreDataType, ndim: usize) -> casacore_types::Value {
     use casacore_types::{ArrayValue, Value};
     use ndarray::{ArrayD, IxDyn};
 
-    let shape = vec![0usize; ndim.max(1)];
+    let shape = vec![0usize; ndim];
     let s = IxDyn(&shape);
     let av = match dt {
         CasacoreDataType::TpBool => ArrayValue::Bool(ArrayD::default(s)),

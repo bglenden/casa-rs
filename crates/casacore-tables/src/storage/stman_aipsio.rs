@@ -655,11 +655,11 @@ pub(crate) fn write_stman_file(
     let ncol = columns.len() as u32;
     let big_endian = byte_order == ByteOrder::BigEndian;
 
-    // Check if any columns are variable-shape (indirect) or record.
+    // Check if any columns are stored indirectly or are record columns.
     // Record columns use indirect Vector<uChar> storage (like C++ ScaRecordColData).
     let has_indirect = columns
         .iter()
-        .any(|c| c.is_record() || (c.is_array && c.nrdim > 0 && c.shape.is_empty()));
+        .any(|c| c.is_record() || (c.is_array && (c.option & 1) == 0));
 
     // Create shared array file for indirect columns (version 2 format: path + "i").
     let mut array_writer = if has_indirect {
@@ -720,16 +720,18 @@ fn write_stman_column(
     array_writer: &mut Option<StManArrayFileWriter>,
 ) -> Result<(), StorageError> {
     let col_name = &col_desc.col_name;
-    let is_fixed_array = col_desc.is_array && col_desc.nrdim > 0 && !col_desc.shape.is_empty();
-    let is_variable_array = col_desc.is_array && col_desc.nrdim > 0 && col_desc.shape.is_empty();
+    let is_direct_array = col_desc.is_array && (col_desc.option & 1) != 0;
+    let is_indirect_array = col_desc.is_array && !is_direct_array;
 
     if col_desc.is_record() {
         // Record column: serialize as indirect Vector<uChar>, matching C++ ScaRecordColData.
         write_stman_record_as_indirect(io, rows, col_name, array_writer)?;
-    } else if is_variable_array {
-        // Variable-shape (indirect) column: StManColumnIndArrayAipsIO
+    } else if is_indirect_array {
+        // Non-direct array column: StManColumnIndArrayAipsIO. This includes
+        // both variable-shape arrays and fixed-shape arrays without the Direct
+        // option bit.
         write_stman_indirect_column(io, col_desc, rows, col_name, array_writer)?;
-    } else if is_fixed_array {
+    } else if is_direct_array {
         // Fixed-shape array: StManColumnArrayAipsIO wrapping StManColumnAipsIO
         let nrrow = rows.len() as u32;
         let elements_per_row: usize = col_desc.shape.iter().map(|&s| s as usize).product();

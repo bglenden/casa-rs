@@ -869,6 +869,49 @@ fn ssm_be_round_trip() {
 }
 
 #[test]
+fn fixed_shape_indirect_array_round_trips_through_disk() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float64,
+        vec![3],
+    )])
+    .expect("schema");
+    let rows = vec![
+        RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::from_f64_vec(vec![1.0, 2.0, 3.0])),
+        )]),
+        RecordValue::new(vec![RecordField::new(
+            "data",
+            Value::Array(ArrayValue::from_f64_vec(vec![4.0, 5.0, 6.0])),
+        )]),
+    ];
+    let table = Table::from_rows_with_schema(rows, schema).expect("table");
+
+    for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+        let root = unique_test_dir(&format!("fixed_indirect_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open");
+        match reopened.cell(0, "data").expect("row0 data") {
+            Value::Array(ArrayValue::Float64(a)) => {
+                assert_eq!(a.as_slice().unwrap(), &[1.0, 2.0, 3.0])
+            }
+            other => panic!("unexpected row0 value: {other:?}"),
+        }
+        match reopened.cell(1, "data").expect("row1 data") {
+            Value::Array(ArrayValue::Float64(a)) => {
+                assert_eq!(a.as_slice().unwrap(), &[4.0, 5.0, 6.0])
+            }
+            other => panic!("unexpected row1 value: {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+}
+
+#[test]
 fn ism_le_round_trip() {
     let table = build_endian_test_table();
     let root = unique_test_dir("ism_le_rt");

@@ -2073,9 +2073,16 @@ fn scaled_complex_dm_type_name(
 
 impl ColumnDescContents {
     fn to_column_schema(&self) -> Result<ColumnSchema, StorageError> {
+        let options = crate::schema::ColumnOptions {
+            direct: (self.option & 1) != 0,
+            undefined: (self.option & 2) != 0,
+        };
+
         // Record columns have data_type = TpRecord and no primitive type.
         if self.data_type == CasacoreDataType::TpRecord {
-            return Ok(ColumnSchema::record(&self.col_name));
+            return ColumnSchema::record(&self.col_name)
+                .with_options(options)
+                .map_err(|err| StorageError::FormatMismatch(err.to_string()));
         }
 
         let pt = self.primitive_type.ok_or_else(|| {
@@ -2088,18 +2095,22 @@ impl ColumnDescContents {
         if self.is_array {
             if self.nrdim > 0 && !self.shape.is_empty() {
                 let shape: Vec<usize> = self.shape.iter().map(|&s| s as usize).collect();
-                Ok(ColumnSchema::array_fixed(&self.col_name, pt, shape))
+                ColumnSchema::array_fixed(&self.col_name, pt, shape)
+                    .with_options(options)
+                    .map_err(|err| StorageError::FormatMismatch(err.to_string()))
             } else if self.nrdim > 0 {
-                Ok(ColumnSchema::array_variable(
-                    &self.col_name,
-                    pt,
-                    Some(self.nrdim as usize),
-                ))
+                ColumnSchema::array_variable(&self.col_name, pt, Some(self.nrdim as usize))
+                    .with_options(options)
+                    .map_err(|err| StorageError::FormatMismatch(err.to_string()))
             } else {
-                Ok(ColumnSchema::array_variable(&self.col_name, pt, None))
+                ColumnSchema::array_variable(&self.col_name, pt, None)
+                    .with_options(options)
+                    .map_err(|err| StorageError::FormatMismatch(err.to_string()))
             }
         } else {
-            Ok(ColumnSchema::scalar(&self.col_name, pt))
+            ColumnSchema::scalar(&self.col_name, pt)
+                .with_options(options)
+                .map_err(|err| StorageError::FormatMismatch(err.to_string()))
         }
     }
 
@@ -2152,15 +2163,24 @@ impl ColumnDescContents {
 
         // Column option flags per casacore ColumnDesc.h:
         //   Direct = 1, Undefined = 2, FixedShape = 4
-        let option = if is_array
+        //
+        // Fixed-shape arrays are not necessarily direct in casacore; preserve
+        // the caller's Direct flag instead of forcing it on every fixed array.
+        let mut option = 0;
+        if col.options().direct {
+            option |= 1;
+        }
+        if col.options().undefined {
+            option |= 2;
+        }
+        if is_array
             && matches!(
                 col.column_type(),
                 ColumnType::Array(ArrayShapeContract::Fixed { .. })
-            ) {
-            5 // ColumnDesc::Direct | ColumnDesc::FixedShape
-        } else {
-            0
-        };
+            )
+        {
+            option |= 4;
+        }
 
         ColumnDescContents {
             class_name,
@@ -2274,6 +2294,15 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn fixed_array_schema_preserves_indirect_option_bit() {
+        let schema = crate::ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![3]);
+        let desc = ColumnDescContents::from_column_schema(&schema);
+        assert_eq!(desc.option, 4);
+        assert_eq!(desc.nrdim, 1);
+        assert_eq!(desc.shape, vec![3]);
     }
 
     #[test]

@@ -15,6 +15,7 @@
 //! `TiledColumnStMan`, `TiledShapeStMan`, `TiledCellStMan`, `TiledStMan`,
 //! `TSMCube`, `TSMFile`.
 
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{Read as IoRead, Seek, SeekFrom, Write as IoWrite};
 #[cfg(unix)]
@@ -1051,6 +1052,7 @@ pub(crate) fn load_tiled_columns(
     all_col_descs: &[ColumnDescContents],
     bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
     rows: &mut [RecordValue],
+    undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
 ) -> Result<(), StorageError> {
     let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
@@ -1063,9 +1065,15 @@ pub(crate) fn load_tiled_columns(
         .collect();
 
     match variant {
-        TiledVariant::Column { .. } => {
-            load_tiled_column_stman(table_path, dm.seq_nr, &header, &col_descs, rows, nrrow)
-        }
+        TiledVariant::Column { .. } => load_tiled_column_stman(
+            table_path,
+            dm.seq_nr,
+            &header,
+            &col_descs,
+            rows,
+            undefined_cells,
+            nrrow,
+        ),
         TiledVariant::Shape {
             nr_used_row_map,
             ref row_map,
@@ -1078,6 +1086,7 @@ pub(crate) fn load_tiled_columns(
             &header,
             &col_descs,
             rows,
+            undefined_cells,
             nrrow,
             &ShapeRowMapping {
                 nr_used_row_map,
@@ -1086,16 +1095,31 @@ pub(crate) fn load_tiled_columns(
                 pos_map,
             },
         ),
-        TiledVariant::Cell { .. } => {
-            load_tiled_cell_stman(table_path, dm.seq_nr, &header, &col_descs, rows, nrrow)
-        }
+        TiledVariant::Cell { .. } => load_tiled_cell_stman(
+            table_path,
+            dm.seq_nr,
+            &header,
+            &col_descs,
+            rows,
+            undefined_cells,
+            nrrow,
+        ),
         TiledVariant::Data {
             ref row_map,
             ref cube_map,
             ref pos_map,
             ..
         } => load_tiled_data_stman(
-            table_path, dm.seq_nr, &header, &col_descs, rows, nrrow, row_map, cube_map, pos_map,
+            table_path,
+            dm.seq_nr,
+            &header,
+            &col_descs,
+            rows,
+            undefined_cells,
+            nrrow,
+            row_map,
+            cube_map,
+            pos_map,
         ),
     }
 }
@@ -1107,6 +1131,7 @@ fn load_tiled_column_stman(
     header: &TiledStManHeader,
     col_descs: &[&ColumnDescContents],
     rows: &mut [RecordValue],
+    _undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
 ) -> Result<(), StorageError> {
     if header.cubes.is_empty() {
@@ -1185,6 +1210,7 @@ fn load_tiled_shape_stman(
     header: &TiledStManHeader,
     col_descs: &[&ColumnDescContents],
     rows: &mut [RecordValue],
+    undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
     mapping: &ShapeRowMapping<'_>,
 ) -> Result<(), StorageError> {
@@ -1278,38 +1304,70 @@ fn load_tiled_shape_stman(
 
     // Map rows to cubes and extract values.
     let n_intervals = mapping.nr_used_row_map as usize;
-    for (row_idx, row) in rows.iter_mut().enumerate().take(nrrow) {
-        // Find the interval containing this row.
-        let interval = mapping.row_map[..n_intervals]
-            .iter()
-            .position(|&rm| rm >= row_idx as u32)
-            .unwrap_or(n_intervals - 1);
+    if n_intervals != 0 {
+        let row_map = &mapping.row_map[..n_intervals];
+        let cube_map = &mapping.cube_map[..n_intervals];
+        let pos_map = &mapping.pos_map[..n_intervals];
+        for (row_idx, row) in rows.iter_mut().enumerate().take(nrrow) {
+            // C++ TiledShapeStMan stores upper bounds for row intervals in rowMap.
+            // The containing interval is the first entry whose upper bound is >= row.
+            let interval = row_map.partition_point(|&rm| rm < row_idx as u32);
+            if interval >= n_intervals {
+                continue;
+            }
 
-        let cube_idx = mapping.cube_map[interval] as usize;
-        let pos_in_cube =
-            mapping.pos_map[interval] as usize - (mapping.row_map[interval] as usize - row_idx);
+            let cube_idx = cube_map[interval] as usize;
+            if cube_idx == 0 || cube_idx >= cube_col_data.len() {
+                continue; // dummy hypercube used for undefined rows
+            }
 
-        if cube_idx >= cube_col_data.len() {
-            continue; // undefined cell (cube 0 is dummy)
-        }
+            let diff = row_map[interval] as usize - row_idx;
+            let Some(pos_in_cube) = (pos_map[interval] as usize).checked_sub(diff) else {
+                return Err(StorageError::FormatMismatch(format!(
+                    "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
+                    pos_map[interval]
+                )));
+            };
 
-        for (col_idx, col_desc) in col_descs.iter().enumerate() {
-            if let Some(ref ccd) = cube_col_data[cube_idx][col_idx] {
-                let dt = header.col_data_types[col_idx];
-                let elem_size = tile_element_size(dt);
-                let row_bytes = ccd.cell_nelem * elem_size;
-                let start = pos_in_cube * row_bytes;
-                let end = start + row_bytes;
-                if end <= ccd.raw.len() {
-                    let value = decode_array_value(
-                        &ccd.raw[start..end],
-                        &ccd.cell_shape,
-                        dt,
-                        header.big_endian,
-                    )?;
-                    row.push(RecordField::new(col_desc.col_name.clone(), value));
+            for (col_idx, col_desc) in col_descs.iter().enumerate() {
+                if let Some(ref ccd) = cube_col_data[cube_idx][col_idx] {
+                    let dt = header.col_data_types[col_idx];
+                    let elem_size = tile_element_size(dt);
+                    let row_bytes = ccd.cell_nelem * elem_size;
+                    let start = pos_in_cube * row_bytes;
+                    let end = start + row_bytes;
+                    if end <= ccd.raw.len() {
+                        let value = decode_array_value(
+                            &ccd.raw[start..end],
+                            &ccd.cell_shape,
+                            dt,
+                            header.big_endian,
+                        )?;
+                        row.upsert(col_desc.col_name.clone(), value);
+                    }
                 }
             }
+        }
+    }
+
+    for (row_idx, row) in rows.iter_mut().enumerate().take(nrrow) {
+        for col_desc in col_descs {
+            if row.get(&col_desc.col_name).is_some() {
+                continue;
+            }
+            let value = if col_desc.is_record() {
+                Value::Record(RecordValue::default())
+            } else {
+                let dt = CasacoreDataType::from_primitive_type(
+                    col_desc.require_primitive_type()?,
+                    false,
+                );
+                if let Some(set) = undefined_cells.get_mut(row_idx) {
+                    set.insert(col_desc.col_name.clone());
+                }
+                super::make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
+            };
+            row.push(RecordField::new(col_desc.col_name.clone(), value));
         }
     }
 
@@ -1332,6 +1390,7 @@ fn load_tiled_data_stman(
     header: &TiledStManHeader,
     col_descs: &[&ColumnDescContents],
     rows: &mut [RecordValue],
+    _undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
     row_map: &[u64],
     cube_map: &[u32],
@@ -1479,6 +1538,7 @@ fn load_tiled_cell_stman(
     header: &TiledStManHeader,
     col_descs: &[&ColumnDescContents],
     rows: &mut [RecordValue],
+    _undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
 ) -> Result<(), StorageError> {
     let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();

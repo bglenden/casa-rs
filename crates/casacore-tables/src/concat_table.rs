@@ -277,12 +277,16 @@ impl ConcatTable {
     /// `TableCopy::makeEmptyTable` + `TableCopy::copyRows`.
     pub fn deep_copy(&self, opts: TableOptions) -> Result<(), TableError> {
         let mut all_rows = Vec::with_capacity(self.row_count());
+        let mut all_undef = Vec::with_capacity(self.row_count());
         for table in &self.tables {
             all_rows.extend(table.rows().iter().cloned());
+            all_undef.extend(table.undefined_cells().iter().cloned());
         }
 
         let snapshot = StorageSnapshot {
+            row_count: all_rows.len(),
             rows: all_rows,
+            undefined_cells: all_undef,
             keywords: self.keywords.clone(),
             column_keywords: self.column_keywords.clone(),
             schema: Some(self.schema.clone()),

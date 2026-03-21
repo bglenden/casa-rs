@@ -18,6 +18,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use casacore_aipsio::{AipsIo, ByteOrder};
+use ndarray::ShapeBuilder;
 
 use casacore_types::Value;
 
@@ -44,6 +45,14 @@ const AIPSIO_MAGIC: u32 = 0xbebebebe;
 pub(crate) enum SsmColumnResult {
     Flat(ColumnRawData),
     Indirect(Vec<Option<Value>>),
+}
+
+fn is_ssm_variable_string(col_desc: &ColumnDescContents) -> bool {
+    col_desc.data_type == CasacoreDataType::TpString && col_desc.max_length == 0
+}
+
+fn is_ssm_array_file_indirect(col_desc: &ColumnDescContents) -> bool {
+    col_desc.is_array && (col_desc.option & 1) == 0 && !is_ssm_variable_string(col_desc)
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +354,13 @@ fn read_bucket(
     bucket_nr: u32,
 ) -> Result<Vec<u8>, StorageError> {
     let offset = SSM_HEADER_SIZE + (bucket_nr as u64) * (header.bucket_size as u64);
+    let file_len = file.metadata()?.len();
+    if offset + header.bucket_size as u64 > file_len {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM bucket {bucket_nr} out of range: offset={offset}, bucket_size={}, file_len={file_len}",
+            header.bucket_size
+        )));
+    }
     file.seek(SeekFrom::Start(offset))?;
     let mut buf = vec![0u8; header.bucket_size as usize];
     file.read_exact(&mut buf)?;
@@ -504,6 +520,12 @@ fn read_ssm_string(
     if length == 0 {
         return Ok(String::new());
     }
+    if bucket_nr < 0 || offset < 0 || length < 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "invalid SSM string locator bucket={} offset={} length={}",
+            bucket_nr, offset, length
+        )));
+    }
 
     let mut result = Vec::with_capacity(length as usize);
     let mut remaining = length as usize;
@@ -547,6 +569,12 @@ fn read_ssm_string_bytes(
     if length == 0 {
         return Ok(Vec::new());
     }
+    if bucket_nr < 0 || offset < 0 || length < 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "invalid SSM string locator bucket={} offset={} length={}",
+            bucket_nr, offset, length
+        )));
+    }
 
     let mut result = Vec::with_capacity(length as usize);
     let mut remaining = length as usize;
@@ -576,6 +604,96 @@ fn read_ssm_string_bytes(
     Ok(result)
 }
 
+fn read_ssm_string_array_value(
+    file: &mut File,
+    header: &SsmHeader,
+    bucket_nr: i32,
+    offset: i32,
+    length: i32,
+    fixed_shape: Option<&[i32]>,
+) -> Result<Option<Value>, StorageError> {
+    if length == 0 {
+        return Ok(None);
+    }
+
+    let block = read_ssm_string_bytes(file, header, bucket_nr, offset, length)?;
+    let (shape, mut pos, filled_flag) = if let Some(shape) = fixed_shape {
+        (
+            shape.iter().map(|&dim| dim as usize).collect::<Vec<_>>(),
+            0usize,
+            true,
+        )
+    } else {
+        if block.len() < 8 {
+            return Err(StorageError::FormatMismatch(
+                "SSM string array block too short for shape header".to_string(),
+            ));
+        }
+        let ndim = u32::from_be_bytes([block[0], block[1], block[2], block[3]]) as usize;
+        let shape_bytes = 4 + ndim * 4 + 4;
+        if block.len() < shape_bytes {
+            return Err(StorageError::FormatMismatch(
+                "SSM string array block too short for declared shape".to_string(),
+            ));
+        }
+
+        let mut shape = Vec::with_capacity(ndim);
+        let mut pos = 4usize;
+        for _ in 0..ndim {
+            let dim =
+                i32::from_be_bytes([block[pos], block[pos + 1], block[pos + 2], block[pos + 3]]);
+            if dim < 0 {
+                return Err(StorageError::FormatMismatch(
+                    "SSM string array shape contains negative extent".to_string(),
+                ));
+            }
+            shape.push(dim as usize);
+            pos += 4;
+        }
+        let filled_flag =
+            i32::from_be_bytes([block[pos], block[pos + 1], block[pos + 2], block[pos + 3]]) != 0;
+        (shape, pos + 4, filled_flag)
+    };
+
+    let nrelem = shape.iter().try_fold(1usize, |acc, &dim| {
+        acc.checked_mul(dim).ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "SSM string array shape product overflow for shape {:?}",
+                shape
+            ))
+        })
+    })?;
+    let mut values = Vec::with_capacity(nrelem);
+    if filled_flag {
+        for _ in 0..nrelem {
+            if pos + 4 > block.len() {
+                return Err(StorageError::FormatMismatch(
+                    "SSM string array: block too short for element length prefix".to_string(),
+                ));
+            }
+            let slen =
+                u32::from_be_bytes([block[pos], block[pos + 1], block[pos + 2], block[pos + 3]])
+                    as usize;
+            pos += 4;
+            if pos + slen > block.len() {
+                return Err(StorageError::FormatMismatch(
+                    "SSM string array: block too short for element payload".to_string(),
+                ));
+            }
+            let s = String::from_utf8(block[pos..pos + slen].to_vec())
+                .map_err(|e| StorageError::FormatMismatch(format!("invalid UTF-8: {e}")))?;
+            pos += slen;
+            values.push(s);
+        }
+    } else {
+        values.resize(nrelem, String::new());
+    }
+
+    let arr = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&shape).f(), values)
+        .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
+    Ok(Some(Value::Array(casacore_types::ArrayValue::String(arr))))
+}
+
 // ---------------------------------------------------------------------------
 // Column data reader
 // ---------------------------------------------------------------------------
@@ -591,10 +709,8 @@ pub(crate) fn read_ssm_file(
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
 
-    // Check if any columns are variable-shape (indirect).
-    let has_indirect = col_descs
-        .iter()
-        .any(|c| c.is_array && c.nrdim > 0 && c.shape.is_empty());
+    // Check if any array columns are stored indirectly via the shared array file.
+    let has_indirect = col_descs.iter().any(|c| is_ssm_array_file_indirect(c));
 
     // Lazily open the shared array file for indirect columns.
     let mut array_reader: Option<StManArrayFileReader> = if has_indirect {
@@ -631,9 +747,62 @@ pub(crate) fn read_ssm_file(
         }
         let index = &indices[index_nr];
 
-        let is_indirect = col_desc.is_array && col_desc.nrdim > 0 && col_desc.shape.is_empty();
+        let is_indirect = is_ssm_array_file_indirect(col_desc);
+        let is_string_array = col_desc.is_array && is_ssm_variable_string(col_desc);
 
-        if is_indirect {
+        if is_string_array {
+            let refs = read_column_from_buckets(
+                &mut file,
+                &header,
+                index,
+                column_offset,
+                CasacoreDataType::TpInt,
+                3,
+                nrrow,
+            )?;
+
+            let ref_values = match refs {
+                ColumnRawData::Int32(v) => v,
+                _ => {
+                    return Err(StorageError::FormatMismatch(
+                        "SSM string array: expected Int32 bucket/offset/length references"
+                            .to_string(),
+                    ));
+                }
+            };
+
+            let mut per_row = Vec::with_capacity(nrrow);
+            for row_idx in 0..nrrow {
+                let base = row_idx * 3;
+                let bucket_nr = ref_values[base];
+                let str_offset = ref_values[base + 1];
+                let str_length = ref_values[base + 2];
+                let value = read_ssm_string_array_value(
+                    &mut file,
+                    &header,
+                    bucket_nr,
+                    str_offset,
+                    str_length,
+                    if col_desc.shape.is_empty() {
+                        None
+                    } else {
+                        Some(&col_desc.shape)
+                    },
+                )
+                .map_err(|err| {
+                    StorageError::FormatMismatch(format!(
+                        "SSM string array column '{}' row {} locator ({}, {}, {}): {}",
+                        col_desc.col_name, row_idx, bucket_nr, str_offset, str_length, err
+                    ))
+                })?;
+                per_row.push(value);
+            }
+
+            result.push((
+                col_desc.col_name.clone(),
+                SsmColumnResult::Indirect(per_row),
+            ));
+        } else if is_indirect {
             // Read i64 offsets from bucket data (8 bytes per row).
             let offsets = read_column_from_buckets(
                 &mut file,
@@ -658,8 +827,14 @@ pub(crate) fn read_ssm_file(
                 CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
             let mut per_row = Vec::with_capacity(nrrow);
             if let Some(reader) = array_reader.as_mut() {
-                for &off in &offset_values {
-                    per_row.push(reader.read_array_at(off, dt)?);
+                for (row_idx, &off) in offset_values.iter().enumerate() {
+                    let value = reader.read_array_at(off, dt).map_err(|err| {
+                        StorageError::FormatMismatch(format!(
+                            "SSM indirect column '{}' row {} offset {} type {:?}: {}",
+                            col_desc.col_name, row_idx, off, dt, err
+                        ))
+                    })?;
+                    per_row.push(value);
                 }
             } else if nrrow == 0 || offset_values.iter().all(|&off| off == 0) {
                 per_row.resize(nrrow, None);
@@ -1074,10 +1249,8 @@ pub(crate) fn write_ssm_file(
     let nrrow = rows.len();
     let ncol = col_descs.len();
 
-    // Check if any columns are variable-shape (indirect).
-    let has_indirect = col_descs
-        .iter()
-        .any(|c| c.is_array && c.nrdim > 0 && c.shape.is_empty());
+    // Check if any array columns are stored indirectly.
+    let has_indirect = col_descs.iter().any(|c| is_ssm_array_file_indirect(c));
 
     // Create shared array file for indirect columns (SSM uses version 0, no refcount).
     let mut array_writer = if has_indirect {
@@ -1099,11 +1272,10 @@ pub(crate) fn write_ssm_file(
     let col_sizes_bits: Vec<usize> = col_descs
         .iter()
         .map(|c| {
-            let is_indirect = c.is_array && c.nrdim > 0 && c.shape.is_empty();
-            if is_indirect {
-                64 // i64 offset = 8 bytes = 64 bits
-            } else if c.data_type == CasacoreDataType::TpString {
+            if is_ssm_variable_string(c) {
                 96 // 12 bytes = 3 ints (bucketNr, offset, length) per row
+            } else if is_ssm_array_file_indirect(c) {
+                64 // i64 offset = 8 bytes = 64 bits
             } else {
                 let nrelem = if c.is_array && !c.shape.is_empty() {
                     c.shape.iter().map(|&s| s as usize).product()
@@ -1172,7 +1344,7 @@ pub(crate) fn write_ssm_file(
     let mut string_buckets: Vec<Vec<u8>> = Vec::new();
 
     for (col_idx, col_desc) in col_descs.iter().enumerate() {
-        let is_indirect = col_desc.is_array && col_desc.nrdim > 0 && col_desc.shape.is_empty();
+        let is_indirect = is_ssm_array_file_indirect(col_desc);
         let nrelem = if is_indirect {
             1usize
         } else if col_desc.is_array && !col_desc.shape.is_empty() {
@@ -1232,6 +1404,7 @@ pub(crate) fn write_ssm_file(
                     bucket,
                     col_off,
                     row_in_bucket,
+                    col_desc,
                     col_desc.data_type,
                     nrelem,
                     value,
@@ -1349,6 +1522,7 @@ fn write_cell_to_bucket(
     bucket: &mut [u8],
     col_offset: usize,
     row_in_bucket: usize,
+    col_desc: &ColumnDescContents,
     data_type: CasacoreDataType,
     nrelem: usize,
     value: Option<&casacore_types::Value>,
@@ -1378,7 +1552,7 @@ fn write_cell_to_bucket(
             // [BE_i32_len][string_bytes] pairs. String bucket metadata is BE.
             let ref_offset = col_offset + row_in_bucket * 12;
 
-            if nrelem == 1 {
+            if !col_desc.is_array {
                 // Scalar string
                 let s = match value {
                     Some(Value::Scalar(ScalarValue::String(s))) => s.as_str(),
@@ -1407,28 +1581,54 @@ fn write_cell_to_bucket(
                     }
                 }
             } else {
-                // String array: serialize all elements as [BE_i32_len][data]
-                // pairs into one string bucket entry, like C++ SSMStringHandler.
-                let strings: Vec<String> = match value {
-                    Some(Value::Array(ArrayValue::String(arr))) => {
-                        arr.t().iter().take(nrelem).cloned().collect()
+                // String arrays also use one 12-byte locator per row.
+                // Fixed-shape arrays store only the element data; variable-shape
+                // arrays prefix ndim, shape, and a filled flag.
+                let (shape, strings) = match value {
+                    Some(Value::Array(ArrayValue::String(arr))) => (
+                        arr.shape().to_vec(),
+                        arr.t().iter().cloned().collect::<Vec<_>>(),
+                    ),
+                    _ => {
+                        let shape = if col_desc.shape.is_empty() {
+                            Vec::new()
+                        } else {
+                            col_desc.shape.iter().map(|&dim| dim as usize).collect()
+                        };
+                        let count = if shape.is_empty() {
+                            0
+                        } else {
+                            shape.iter().product()
+                        };
+                        (shape, vec![String::new(); count])
                     }
-                    _ => vec![String::new(); nrelem],
                 };
-                let total_len: usize = strings.iter().map(|s| 4 + s.len()).sum();
-                if total_len == 0 {
+
+                let mut block = Vec::new();
+                if col_desc.shape.is_empty() {
+                    block.extend_from_slice(&(shape.len() as u32).to_be_bytes());
+                    for &dim in &shape {
+                        block.extend_from_slice(&(dim as i32).to_be_bytes());
+                    }
+                    let filled = if strings.iter().any(|s| !s.is_empty()) {
+                        1u32
+                    } else {
+                        0u32
+                    };
+                    block.extend_from_slice(&filled.to_be_bytes());
+                }
+                for s in &strings {
+                    block.extend_from_slice(&(s.len() as u32).to_be_bytes());
+                    block.extend_from_slice(s.as_bytes());
+                }
+
+                if block.is_empty() {
                     // All empty strings — leave reference as zeroes
                 } else {
-                    // Build serialized block
-                    let mut block = Vec::with_capacity(total_len);
-                    for s in &strings {
-                        block.extend_from_slice(&(s.len() as u32).to_be_bytes());
-                        block.extend_from_slice(s.as_bytes());
-                    }
                     let (sb_nr, sb_offset) =
                         allocate_string_in_bucket(string_buckets, &block, bucket_size);
                     let abs_bucket = (string_bucket_base + sb_nr) as i32;
-                    let total = total_len as i32;
+                    let total = block.len() as i32;
                     if big_endian {
                         write_i32_be(&mut bucket[ref_offset..], abs_bucket);
                         write_i32_be(&mut bucket[ref_offset + 4..], sb_offset as i32);

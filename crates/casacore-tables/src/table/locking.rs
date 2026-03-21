@@ -29,11 +29,18 @@ impl Table {
         }
 
         let storage = CompositeStorage;
-        let snapshot = storage.load(&options.path)?;
+        let row_hint = crate::lock::read_sync_data_from_table_dir(&options.path)
+            .map_err(|e| TableError::LockIo {
+                path: options.path.display().to_string(),
+                message: e.to_string(),
+            })?
+            .map(|sync| sync.nrrow);
+        let snapshot = storage.load_with_row_hint(&options.path, row_hint)?;
         let info = snapshot.table_info;
         let mut table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 snapshot.rows,
+                snapshot.undefined_cells,
                 snapshot.keywords,
                 snapshot.column_keywords,
                 snapshot.schema,
@@ -184,13 +191,16 @@ impl Table {
                 if state.sync_data.needs_reload(&new_sync) {
                     // Another process modified the table — reload.
                     let storage = CompositeStorage;
-                    let snapshot = storage.load(&state.path).map_err(|e| TableError::LockIo {
-                        path: state.path.display().to_string(),
-                        message: e.to_string(),
-                    })?;
+                    let snapshot = storage
+                        .load_with_row_hint(&state.path, Some(new_sync.nrrow))
+                        .map_err(|e| TableError::LockIo {
+                            path: state.path.display().to_string(),
+                            message: e.to_string(),
+                        })?;
                     self.virtual_columns = snapshot.virtual_columns;
                     self.inner.replace_from_snapshot(
                         snapshot.rows,
+                        snapshot.undefined_cells,
                         snapshot.keywords,
                         snapshot.column_keywords,
                         snapshot.schema,

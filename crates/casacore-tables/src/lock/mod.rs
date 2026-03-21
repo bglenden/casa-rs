@@ -15,6 +15,8 @@ mod sync_data;
 
 #[cfg(unix)]
 pub(crate) use lock_file::LockFile;
+#[cfg(unix)]
+pub(crate) use lock_file::read_sync_data_from_table_dir;
 pub(crate) use sync_data::SyncData;
 
 /// Lock mode options for a table.

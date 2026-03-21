@@ -1016,6 +1016,7 @@ impl Table {
         let table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 rows,
+                Vec::new(),
                 RecordValue::default(),
                 std::collections::HashMap::new(),
                 Some(schema),
@@ -1118,6 +1119,7 @@ impl Table {
         let table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 rows,
+                Vec::new(),
                 RecordValue::default(),
                 std::collections::HashMap::new(),
                 Some(schema),
@@ -1169,6 +1171,7 @@ impl Table {
         Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 self.inner.rows().to_vec(),
+                self.inner.undefined_cells().to_vec(),
                 self.inner.keywords().clone(),
                 self.inner.all_column_keywords().clone(),
                 self.inner.schema().cloned(),

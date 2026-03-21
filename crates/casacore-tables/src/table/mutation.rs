@@ -200,6 +200,9 @@ impl Table {
             for row in self.inner.rows_mut() {
                 row.remove(name);
             }
+            for set in self.inner.undefined_cells_mut() {
+                set.remove(name);
+            }
             self.inner.remove_column_keywords(name);
             Ok(())
         })();
@@ -225,6 +228,11 @@ impl Table {
 
             for row in self.inner.rows_mut() {
                 row.rename_field(old, new);
+            }
+            for set in self.inner.undefined_cells_mut() {
+                if set.remove(old) {
+                    set.insert(new.to_string());
+                }
             }
             self.inner.rename_column_keywords(old, new.to_string());
             Ok(())

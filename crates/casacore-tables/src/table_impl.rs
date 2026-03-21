@@ -1,13 +1,44 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::PathBuf;
 
 use casacore_types::RecordValue;
 
 use crate::schema::TableSchema;
+use crate::storage::CompositeStorage;
+
+#[derive(Debug, Clone)]
+struct LazyRowsSource {
+    path: PathBuf,
+    row_count_hint: usize,
+}
+
+#[derive(Debug)]
+struct LoadedRows {
+    rows: Vec<RecordValue>,
+    undefined_cells: Vec<HashSet<String>>,
+}
+
+fn eager_loaded_rows(
+    rows: Vec<RecordValue>,
+    mut undefined_cells: Vec<HashSet<String>>,
+) -> LoadedRows {
+    if undefined_cells.len() != rows.len() {
+        undefined_cells = (0..rows.len()).map(|_| HashSet::new()).collect();
+    }
+    LoadedRows {
+        rows,
+        undefined_cells,
+    }
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct TableImpl {
-    rows: Vec<RecordValue>,
+    loaded_rows: OnceCell<LoadedRows>,
+    lazy_rows: Option<LazyRowsSource>,
+    persisted_row_count: usize,
     keywords: RecordValue,
     column_keywords: HashMap<String, RecordValue>,
     schema: Option<TableSchema>,
@@ -15,12 +46,33 @@ pub(crate) struct TableImpl {
 
 impl TableImpl {
     pub(crate) fn new() -> Self {
-        Self::default()
+        let loaded_rows = OnceCell::new();
+        loaded_rows
+            .set(LoadedRows {
+                rows: Vec::new(),
+                undefined_cells: Vec::new(),
+            })
+            .expect("initialize empty row store");
+        Self {
+            loaded_rows,
+            lazy_rows: None,
+            persisted_row_count: 0,
+            keywords: RecordValue::default(),
+            column_keywords: HashMap::new(),
+            schema: None,
+        }
     }
 
     pub(crate) fn from_rows(rows: Vec<RecordValue>) -> Self {
+        let persisted_row_count = rows.len();
+        let loaded_rows = OnceCell::new();
+        loaded_rows
+            .set(eager_loaded_rows(rows, Vec::new()))
+            .expect("initialize eager row store");
         Self {
-            rows,
+            loaded_rows,
+            lazy_rows: None,
+            persisted_row_count,
             keywords: RecordValue::default(),
             column_keywords: HashMap::new(),
             schema: None,
@@ -29,48 +81,152 @@ impl TableImpl {
 
     pub(crate) fn with_rows_keywords_and_schema(
         rows: Vec<RecordValue>,
+        undefined_cells: Vec<HashSet<String>>,
         keywords: RecordValue,
         column_keywords: HashMap<String, RecordValue>,
         schema: Option<TableSchema>,
     ) -> Self {
+        let persisted_row_count = rows.len();
+        let loaded_rows = OnceCell::new();
+        loaded_rows
+            .set(eager_loaded_rows(rows, undefined_cells))
+            .expect("initialize eager row store");
         Self {
-            rows,
+            loaded_rows,
+            lazy_rows: None,
+            persisted_row_count,
             keywords,
             column_keywords,
             schema,
         }
     }
 
+    pub(crate) fn with_lazy_rows_keywords_and_schema(
+        row_count: usize,
+        keywords: RecordValue,
+        column_keywords: HashMap<String, RecordValue>,
+        schema: Option<TableSchema>,
+        path: PathBuf,
+    ) -> Self {
+        Self {
+            loaded_rows: OnceCell::new(),
+            lazy_rows: Some(LazyRowsSource {
+                path,
+                row_count_hint: row_count,
+            }),
+            persisted_row_count: row_count,
+            keywords,
+            column_keywords,
+            schema,
+        }
+    }
+
+    fn load_rows_now(source: &LazyRowsSource) -> Result<LoadedRows, String> {
+        let storage = CompositeStorage;
+        let snapshot = storage
+            .load_with_row_hint(&source.path, Some(source.row_count_hint as u64))
+            .map_err(|err| err.to_string())?;
+        Ok(eager_loaded_rows(snapshot.rows, snapshot.undefined_cells))
+    }
+
+    fn ensure_loaded(&self) -> &LoadedRows {
+        self.loaded_rows.get_or_init(|| match &self.lazy_rows {
+            Some(source) => Self::load_rows_now(source).unwrap_or_else(|err| {
+                panic!(
+                    "failed to materialize rows for table {}: {err}",
+                    source.path.display()
+                )
+            }),
+            None => LoadedRows {
+                rows: Vec::new(),
+                undefined_cells: Vec::new(),
+            },
+        })
+    }
+
+    fn ensure_loaded_mut(&mut self) -> &mut LoadedRows {
+        if self.loaded_rows.get().is_none() {
+            let loaded = match &self.lazy_rows {
+                Some(source) => Self::load_rows_now(source).unwrap_or_else(|err| {
+                    panic!(
+                        "failed to materialize rows for table {}: {err}",
+                        source.path.display()
+                    )
+                }),
+                None => LoadedRows {
+                    rows: Vec::new(),
+                    undefined_cells: Vec::new(),
+                },
+            };
+            self.loaded_rows
+                .set(loaded)
+                .expect("initialize mutable row store");
+        }
+        self.loaded_rows
+            .get_mut()
+            .expect("row store initialized before mutable access")
+    }
+
     pub(crate) fn add_row(&mut self, row: RecordValue) {
-        self.rows.push(row);
+        let loaded = self.ensure_loaded_mut();
+        loaded.rows.push(row);
+        loaded.undefined_cells.push(HashSet::new());
+        self.persisted_row_count = loaded.rows.len();
+        self.lazy_rows = None;
     }
 
     pub(crate) fn rows(&self) -> &[RecordValue] {
-        &self.rows
+        self.ensure_loaded().rows.as_slice()
+    }
+
+    pub(crate) fn undefined_cells(&self) -> &[HashSet<String>] {
+        self.ensure_loaded().undefined_cells.as_slice()
+    }
+
+    pub(crate) fn undefined_cells_mut(&mut self) -> &mut [HashSet<String>] {
+        self.ensure_loaded_mut().undefined_cells.as_mut_slice()
     }
 
     pub(crate) fn row_count(&self) -> usize {
-        self.rows.len()
+        self.loaded_rows
+            .get()
+            .map_or(self.persisted_row_count, |loaded| loaded.rows.len())
     }
 
     pub(crate) fn row(&self, row_index: usize) -> Option<&RecordValue> {
-        self.rows.get(row_index)
+        self.ensure_loaded().rows.get(row_index)
     }
 
     pub(crate) fn row_mut(&mut self, row_index: usize) -> Option<&mut RecordValue> {
-        self.rows.get_mut(row_index)
+        self.ensure_loaded_mut().rows.get_mut(row_index)
     }
 
     pub(crate) fn rows_mut(&mut self) -> &mut [RecordValue] {
-        &mut self.rows
+        self.ensure_loaded_mut().rows.as_mut_slice()
+    }
+
+    pub(crate) fn undefined_for_row_mut(
+        &mut self,
+        row_index: usize,
+    ) -> Option<&mut HashSet<String>> {
+        self.ensure_loaded_mut().undefined_cells.get_mut(row_index)
     }
 
     pub(crate) fn remove_row(&mut self, index: usize) -> RecordValue {
-        self.rows.remove(index)
+        let loaded = self.ensure_loaded_mut();
+        loaded.undefined_cells.remove(index);
+        let removed = loaded.rows.remove(index);
+        self.persisted_row_count = loaded.rows.len();
+        self.lazy_rows = None;
+        removed
     }
 
     pub(crate) fn insert_row(&mut self, index: usize, row: RecordValue) {
-        self.rows.insert(index, row);
+        let loaded = self.ensure_loaded_mut();
+        loaded.rows.insert(index, row);
+        loaded.undefined_cells.insert(index, HashSet::new());
+        self.persisted_row_count = loaded.rows.len();
+        self.lazy_rows = None;
     }
 
     pub(crate) fn keywords(&self) -> &RecordValue {
@@ -118,11 +274,20 @@ impl TableImpl {
     pub(crate) fn replace_from_snapshot(
         &mut self,
         rows: Vec<RecordValue>,
+        undefined_cells: Vec<HashSet<String>>,
         keywords: RecordValue,
         column_keywords: HashMap<String, RecordValue>,
         schema: Option<TableSchema>,
     ) {
-        self.rows = rows;
+        self.loaded_rows = {
+            let loaded_rows = OnceCell::new();
+            loaded_rows
+                .set(eager_loaded_rows(rows, undefined_cells))
+                .expect("replace eager row store");
+            loaded_rows
+        };
+        self.persisted_row_count = self.loaded_rows.get().map_or(0, |loaded| loaded.rows.len());
+        self.lazy_rows = None;
         self.keywords = keywords;
         self.column_keywords = column_keywords;
         self.schema = schema;

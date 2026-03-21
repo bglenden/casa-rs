@@ -424,6 +424,55 @@ impl LockFile {
     }
 }
 
+/// Read `TableSyncData` from an existing `table.lock` file without acquiring
+/// or holding any locks.
+///
+/// This mirrors the information that C++ `PlainTable` consults during open
+/// before deciding which row count to trust for the subsequent table-data
+/// load.
+pub(crate) fn read_sync_data_from_table_dir(table_dir: &Path) -> io::Result<Option<SyncData>> {
+    let path = table_dir.join(LOCK_FILE_NAME);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let c_path = path_to_cstring(&path)?;
+    let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    struct FdGuard(i32);
+    impl Drop for FdGuard {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.0) };
+        }
+    }
+    let _guard = FdGuard(fd);
+
+    let mut len_buf = [0u8; SIZEINT];
+    let n = read_at(fd, &mut len_buf, SIZEREQID as i64)?;
+    if n < SIZEINT {
+        return Ok(None);
+    }
+    let info_len = u32::from_be_bytes(len_buf) as usize;
+    if info_len == 0 {
+        return Ok(None);
+    }
+
+    let mut payload = vec![0u8; info_len];
+    let offset = (SIZEREQID + SIZEINT) as i64;
+    let n = read_at(fd, &mut payload, offset)?;
+    if n < info_len {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!("sync data truncated: expected {info_len}, got {n}"),
+        ));
+    }
+
+    SyncData::decode(&payload).map(Some)
+}
+
 impl Drop for LockFile {
     fn drop(&mut self) {
         if self.fd >= 0 {

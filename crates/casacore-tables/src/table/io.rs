@@ -1,29 +1,41 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use super::*;
+#[cfg(unix)]
+use crate::lock::read_sync_data_from_table_dir;
 
 impl Table {
     /// Opens an existing table from disk.
     ///
-    /// Reads all rows, keywords, column keywords, and schema from the directory
-    /// identified by `options.path()`. After loading, the table is validated
-    /// against its schema (if one was persisted). Returns [`TableError::Storage`]
-    /// if the directory cannot be read, or a schema error if the on-disk data
-    /// violates the stored schema.
+    /// Reads schema, keywords, column keywords, and table metadata eagerly from
+    /// the directory identified by `options.path()`. Row payloads are
+    /// materialized lazily on first row access.
+    ///
+    /// This keeps `open()` much closer to C++ casacore's lazy table-open
+    /// behavior for large persistent tables such as MeasurementSets.
     ///
     /// If the on-disk table is a reference table (`RefTable` type marker), the
     /// parent table is opened automatically and the referenced rows are
     /// materialized into this table.
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
         let storage = CompositeStorage;
-        let snapshot = storage.load(&options.path)?;
+        let snapshot = storage.load_metadata_only(&options.path)?;
+        #[cfg(unix)]
+        let row_hint = read_sync_data_from_table_dir(&options.path)
+            .ok()
+            .flatten()
+            .map(|sync| sync.nrrow as usize)
+            .unwrap_or(0);
+        #[cfg(not(unix))]
+        let row_hint = 0;
         let virtual_cols = snapshot.virtual_columns;
         let info = snapshot.table_info;
-        let table = Self {
-            inner: TableImpl::with_rows_keywords_and_schema(
-                snapshot.rows,
+        Ok(Self {
+            inner: TableImpl::with_lazy_rows_keywords_and_schema(
+                snapshot.row_count.max(row_hint),
                 snapshot.keywords,
                 snapshot.column_keywords,
                 snapshot.schema,
+                options.path.clone(),
             ),
             source_path: Some(options.path.clone()),
             kind: TableKind::Plain,
@@ -35,9 +47,7 @@ impl Table {
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
-        };
-        table.validate()?;
-        Ok(table)
+        })
     }
 
     /// Opens only table metadata from disk, without materializing rows.
@@ -58,6 +68,7 @@ impl Table {
         Ok(Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 snapshot.rows,
+                snapshot.undefined_cells,
                 snapshot.keywords,
                 snapshot.column_keywords,
                 snapshot.schema,
@@ -87,7 +98,9 @@ impl Table {
     pub fn save(&self, options: TableOptions) -> Result<(), TableError> {
         self.validate()?;
         let snapshot = StorageSnapshot {
+            row_count: self.inner.row_count(),
             rows: self.inner.rows().to_vec(),
+            undefined_cells: self.inner.undefined_cells().to_vec(),
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
@@ -118,7 +131,9 @@ impl Table {
     /// tables on disk.
     pub fn save_metadata_only(&self, options: TableOptions) -> Result<(), TableError> {
         let snapshot = StorageSnapshot {
+            row_count: 0,
             rows: Vec::new(),
+            undefined_cells: Vec::new(),
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
@@ -167,7 +182,9 @@ impl Table {
     ) -> Result<(), TableError> {
         self.validate()?;
         let snapshot = StorageSnapshot {
+            row_count: self.inner.row_count(),
             rows: self.inner.rows().to_vec(),
+            undefined_cells: self.inner.undefined_cells().to_vec(),
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
@@ -446,7 +463,9 @@ impl Table {
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
         self.validate()?;
         let snapshot = StorageSnapshot {
+            row_count: 0,
             rows: Vec::new(),
+            undefined_cells: Vec::new(),
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
