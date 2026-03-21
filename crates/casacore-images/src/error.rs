@@ -108,6 +108,26 @@ mod tests {
     }
 
     #[test]
+    fn image_specific_variant_displays() {
+        assert_eq!(
+            ImageError::MaskNotFound("m".into()).to_string(),
+            "mask not found: m"
+        );
+        assert_eq!(
+            ImageError::InvalidMetadata("bad keyword".into()).to_string(),
+            "invalid metadata: bad keyword"
+        );
+        assert_eq!(
+            ImageError::Io("disk full".into()).to_string(),
+            "I/O error: disk full"
+        );
+        assert_eq!(
+            ImageError::Lattice("bad slice".into()).to_string(),
+            "lattice error: bad slice"
+        );
+    }
+
+    #[test]
     fn from_coordinate_error() {
         let ce = CoordinateError::DimensionMismatch {
             expected: 2,

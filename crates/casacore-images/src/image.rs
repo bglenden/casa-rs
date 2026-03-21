@@ -2119,9 +2119,93 @@ pub fn image_pixel_type(path: impl AsRef<Path>) -> Result<ImagePixelType, ImageE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casacore_lattices::LatticeError;
+    use ndarray::Dimension;
 
     fn make_coords() -> CoordinateSystem {
         CoordinateSystem::new()
+    }
+
+    struct BareImage<T: ImagePixel> {
+        data: ArrayD<T>,
+    }
+
+    impl<T: ImagePixel> BareImage<T> {
+        fn new(data: ArrayD<T>) -> Self {
+            Self { data }
+        }
+    }
+
+    impl<T: ImagePixel> Lattice<T> for BareImage<T> {
+        fn shape(&self) -> &[usize] {
+            self.data.shape()
+        }
+
+        fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {
+            self.data
+                .get(IxDyn(position))
+                .copied()
+                .ok_or_else(|| LatticeError::IndexOutOfBounds {
+                    index: position.to_vec(),
+                    shape: self.data.shape().to_vec(),
+                })
+        }
+
+        fn get_slice(
+            &self,
+            start: &[usize],
+            shape: &[usize],
+            stride: &[usize],
+        ) -> Result<ArrayD<T>, LatticeError> {
+            if start.len() != self.ndim()
+                || shape.len() != self.ndim()
+                || stride.len() != self.ndim()
+            {
+                return Err(LatticeError::NdimMismatch {
+                    expected: self.ndim(),
+                    got: start.len().max(shape.len()).max(stride.len()),
+                });
+            }
+            let mut out = ArrayD::from_elem(IxDyn(shape), T::default_value());
+            for (idx, value) in out.indexed_iter_mut() {
+                let src: Vec<usize> = idx
+                    .slice()
+                    .iter()
+                    .zip(start.iter())
+                    .zip(stride.iter())
+                    .map(|((&i, &s), &step)| s + i * step)
+                    .collect();
+                *value = self.get_at(&src)?;
+            }
+            Ok(out)
+        }
+    }
+
+    impl<T: ImagePixel> ImageInterface<T> for BareImage<T> {
+        fn as_any(&self) -> Option<&dyn Any> {
+            None
+        }
+
+        fn coordinates(&self) -> &CoordinateSystem {
+            static COORDS: std::sync::OnceLock<CoordinateSystem> = std::sync::OnceLock::new();
+            COORDS.get_or_init(CoordinateSystem::new)
+        }
+
+        fn units(&self) -> &str {
+            ""
+        }
+
+        fn misc_info(&self) -> RecordValue {
+            RecordValue::default()
+        }
+
+        fn image_info(&self) -> Result<ImageInfo, ImageError> {
+            Ok(ImageInfo::default())
+        }
+
+        fn name(&self) -> Option<&Path> {
+            None
+        }
     }
 
     #[test]
@@ -2306,6 +2390,338 @@ mod tests {
         assert_eq!(
             reread.get().unwrap(),
             ArrayD::from_elem(IxDyn(&[4, 4]), 1.0f32)
+        );
+    }
+
+    #[test]
+    fn image_interface_defaults_cover_axes_plane_names_and_masks() {
+        let mut image = crate::TempImage::<f32>::new(vec![3, 4], make_coords()).unwrap();
+        image.set_units("K").unwrap();
+        image.make_mask("quality", true, true).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[3, 4]), (0..12).map(|v| v as f32).collect())
+                    .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+
+        assert_eq!(
+            image.axis_types(),
+            vec![CoordinateType::Linear, CoordinateType::Linear]
+        );
+        assert_eq!(
+            image.axis_names(),
+            vec!["Axis0".to_string(), "Axis1".to_string()]
+        );
+        assert_eq!(image.find_axis(CoordinateType::Linear), None);
+        assert_eq!(image.find_axis_by_name("axis1"), Some(1));
+        assert_eq!(
+            image.get_plane(1, 2).unwrap(),
+            ArrayD::from_shape_vec(IxDyn(&[3, 1]), vec![2.0, 6.0, 10.0]).unwrap()
+        );
+        assert!(matches!(
+            image.get_plane(4, 0),
+            Err(ImageError::ShapeMismatch { .. })
+        ));
+        assert_eq!(image.mask_names(), vec!["quality".to_string()]);
+        assert_eq!(
+            image.get_named_mask("quality").unwrap(),
+            ArrayD::from_elem(IxDyn(&[3, 4]), true)
+        );
+        assert!(matches!(
+            image.get_named_mask("missing"),
+            Err(ImageError::MaskNotFound(_))
+        ));
+        assert_eq!(image.name_string(false), None);
+    }
+
+    #[test]
+    fn paged_image_wrappers_cover_name_subimage_expr_and_mutation_helpers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wrappers.image");
+        let mut image = PagedImage::<f32>::create(vec![4, 4], make_coords(), &path).unwrap();
+        image.set_units("Jy").unwrap();
+        image.set(1.0).unwrap();
+
+        assert_eq!(image.name_string(true).as_deref(), Some("wrappers.image"));
+        assert_eq!(
+            image.name_string(false).as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
+
+        let sub = image.sub_image(vec![1, 1], vec![2, 2]).unwrap();
+        assert_eq!(sub.get().unwrap(), ArrayD::from_elem(IxDyn(&[2, 2]), 1.0));
+
+        let strided = image
+            .sub_image_with_stride(vec![0, 0], vec![2, 2], vec![2, 2])
+            .unwrap();
+        assert_eq!(
+            strided.get().unwrap(),
+            ArrayD::from_elem(IxDyn(&[2, 2]), 1.0)
+        );
+
+        let expr = image.expr().unwrap().multiply_scalar(2.0);
+        assert_eq!(expr.get().unwrap(), ArrayD::from_elem(IxDyn(&[4, 4]), 2.0));
+        drop(expr);
+        let expr_map = image.expr_map(|value| value + 3.0).unwrap();
+        assert_eq!(expr_map.get_at(&[0, 0]).unwrap(), 4.0);
+        drop(expr_map);
+
+        {
+            let mut sub_mut = image
+                .sub_image_mut_with_stride(vec![0, 0], vec![2, 2], vec![2, 2])
+                .unwrap();
+            sub_mut.set(5.0).unwrap();
+        }
+        assert_eq!(image.get_at(&[0, 0]).unwrap(), 5.0);
+        assert_eq!(image.get_at(&[2, 2]).unwrap(), 5.0);
+        assert_eq!(image.get_at(&[1, 1]).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn paged_image_metadata_mask_and_history_wrappers_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metadata_mask.image");
+        let mut image = PagedImage::<f32>::create(vec![3, 3], make_coords(), &path).unwrap();
+
+        assert_eq!(image.channel_plane(0).unwrap(), None);
+        assert_eq!(image.stokes_plane(0).unwrap(), None);
+        assert!(!image.has_pixel_mask());
+        assert_eq!(image.get_mask().unwrap(), None);
+        assert!(image.mask_names().is_empty());
+
+        image.set_coordinates(CoordinateSystem::new()).unwrap();
+        image.set_units("K").unwrap();
+        let info = ImageInfo {
+            image_type: crate::image_info::ImageType::Intensity,
+            object_name: "NGC5921".to_string(),
+            ..ImageInfo::default()
+        };
+        image.set_image_info(&info).unwrap();
+        let misc = RecordValue::new(vec![RecordField::new(
+            "observer",
+            Value::Scalar(ScalarValue::String("Rusty".to_string())),
+        )]);
+        image.set_misc_info(misc.clone()).unwrap();
+
+        image.make_mask("quality", true, false).unwrap();
+        assert!(image.has_pixel_mask());
+        assert_eq!(image.default_mask_name().as_deref(), Some("quality"));
+        assert_eq!(image.mask_names(), vec!["quality".to_string()]);
+        assert_eq!(
+            image.get_mask().unwrap(),
+            Some(ArrayD::from_elem(IxDyn(&[3, 3]), false))
+        );
+
+        image.unset_default_mask().unwrap();
+        assert!(!image.has_pixel_mask());
+        assert_eq!(image.get_mask().unwrap(), None);
+        image.set_default_mask("quality").unwrap();
+
+        image.add_history("first").unwrap();
+        image.add_history("second").unwrap();
+        assert_eq!(
+            image.history().unwrap(),
+            vec!["first".to_string(), "second".to_string()]
+        );
+        image.clear_history().unwrap();
+        assert!(image.history().unwrap().is_empty());
+        image.add_history("kept").unwrap();
+
+        let replacement = ArrayD::from_shape_vec(
+            IxDyn(&[3, 3]),
+            vec![true, false, true, false, true, false, true, false, true],
+        )
+        .unwrap();
+        image.put_mask("quality", &replacement).unwrap();
+        assert_eq!(image.get_named_mask("quality").unwrap(), replacement);
+        assert!(path.join("quality").exists());
+
+        image.remove_mask("quality").unwrap();
+        assert_eq!(image.default_mask_name(), None);
+        assert!(image.mask_names().is_empty());
+        assert!(!path.join("quality").exists());
+
+        image.make_mask("restored", true, true).unwrap();
+        image.save().unwrap();
+
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reopened.units(), "K");
+        assert_eq!(reopened.image_info().unwrap(), info);
+        assert_eq!(reopened.misc_info(), misc);
+        assert_eq!(reopened.default_mask_name().as_deref(), Some("restored"));
+        assert_eq!(
+            reopened.get_mask().unwrap(),
+            Some(ArrayD::from_elem(IxDyn(&[3, 3]), true))
+        );
+        assert_eq!(reopened.history().unwrap(), vec!["kept".to_string()]);
+    }
+
+    #[test]
+    fn paged_image_mask_error_paths_are_explicit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_errors.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2], make_coords(), &path).unwrap();
+
+        assert!(matches!(
+            image.set_default_mask("missing"),
+            Err(ImageError::MaskNotFound(_))
+        ));
+        assert!(matches!(
+            image.get_named_mask("missing"),
+            Err(ImageError::MaskNotFound(_))
+        ));
+        assert!(matches!(
+            image.remove_mask("missing"),
+            Err(ImageError::MaskNotFound(_))
+        ));
+        assert!(matches!(
+            image.put_mask("bad", &ArrayD::from_elem(IxDyn(&[1, 2]), true)),
+            Err(ImageError::ShapeMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn paged_image_cache_and_basic_identity_wrappers_are_consistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache_wrappers.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 3],
+            vec![2, 2],
+            make_coords(),
+            &path,
+            4096,
+        )
+        .unwrap();
+
+        assert_eq!(
+            PagedImage::<f32>::pixel_type(&path).unwrap(),
+            ImagePixelType::Float32
+        );
+        assert_eq!(image.shape(), &[4, 3]);
+        assert_eq!(image.ndim(), 2);
+        assert_eq!(image.nelements(), 12);
+        assert!(image.is_persistent());
+        assert!(image.is_paged());
+        assert!(image.is_writable());
+        assert_eq!(image.image_type_name(), "PagedImage");
+        assert_eq!(image.name(), Some(path.as_path()));
+        assert_eq!(
+            image.name_string(true).as_deref(),
+            Some("cache_wrappers.image")
+        );
+        assert_eq!(image.tile_shape(), &[2, 2]);
+        assert_eq!(image.cache_bytes(), 4096);
+
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[4, 3]), (0..12).map(|v| v as f32).collect())
+                    .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let reopened = PagedImage::<f32>::open_with_cache(&path, 2048).unwrap();
+        assert_eq!(reopened.cache_bytes(), 2048);
+        assert_eq!(reopened.shape(), &[4, 3]);
+        assert_eq!(reopened.table().row_count(), 0);
+    }
+
+    #[test]
+    fn temp_and_any_image_wrappers_cover_remaining_public_variants() {
+        #[allow(deprecated)]
+        let mut temp = PagedImage::<f32>::create_temp(vec![2, 3], make_coords()).unwrap();
+        assert_eq!(temp.shape(), &[2, 3]);
+        assert_eq!(temp.ndim(), 2);
+        assert_eq!(temp.nelements(), 6);
+        assert!(!temp.is_persistent());
+        assert!(!temp.is_paged());
+        assert!(temp.is_writable());
+        assert_eq!(temp.image_type_name(), "TempImage");
+        assert_eq!(temp.name(), None);
+        temp.add_history("temp-entry").unwrap();
+        assert_eq!(temp.history().unwrap(), vec!["temp-entry".to_string()]);
+
+        let dir = tempfile::tempdir().unwrap();
+        let save_as_path = dir.path().join("save_as.image");
+        temp.save_as(&save_as_path).unwrap();
+        assert!(temp.is_persistent());
+        assert_eq!(temp.name(), Some(save_as_path.as_path()));
+        assert_eq!(temp.image_type_name(), "PagedImage");
+
+        let variants = [
+            (dir.path().join("any_f32.image"), ImagePixelType::Float32),
+            (dir.path().join("any_f64.image"), ImagePixelType::Float64),
+            (dir.path().join("any_c32.image"), ImagePixelType::Complex32),
+            (dir.path().join("any_c64.image"), ImagePixelType::Complex64),
+        ];
+
+        let mut f32_image =
+            PagedImage::<f32>::create(vec![1, 1], make_coords(), &variants[0].0).unwrap();
+        f32_image.save().unwrap();
+        let mut f64_image =
+            PagedImage::<f64>::create(vec![1, 1], make_coords(), &variants[1].0).unwrap();
+        f64_image.save().unwrap();
+        let mut c32_image =
+            PagedImage::<Complex32>::create(vec![1, 1], make_coords(), &variants[2].0).unwrap();
+        c32_image.save().unwrap();
+        let mut c64_image =
+            PagedImage::<Complex64>::create(vec![1, 1], make_coords(), &variants[3].0).unwrap();
+        c64_image.save().unwrap();
+
+        for (path, expected) in variants {
+            let any = AnyPagedImage::open(&path).unwrap();
+            assert_eq!(any.pixel_type(), expected);
+            assert_eq!(any.shape(), &[1, 1]);
+        }
+    }
+
+    #[test]
+    fn default_mask_keyword_empty_string_is_treated_as_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty_default_mask.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2], make_coords(), &path).unwrap();
+        image.table.keywords_mut().upsert(
+            DEFAULT_MASK_KEYWORD,
+            Value::Scalar(ScalarValue::String(String::new())),
+        );
+        assert_eq!(image.default_mask_name(), None);
+        assert!(!image.has_pixel_mask());
+    }
+
+    #[test]
+    fn image_interface_default_fallbacks_and_invalid_pixel_type_are_explicit() {
+        let image = BareImage::new(
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, 2.0, 3.0, 4.0]).unwrap(),
+        );
+
+        assert!(matches!(
+            ImagePixelType::from_primitive_type(PrimitiveType::Int32),
+            Err(ImageError::InvalidMetadata(_))
+        ));
+        assert_eq!(image.default_mask().unwrap(), None);
+        assert_eq!(image.default_mask_name(), None);
+        assert!(image.mask_names().is_empty());
+        assert!(matches!(
+            image.get_named_mask("missing"),
+            Err(ImageError::MaskNotFound(_))
+        ));
+        assert_eq!(image.history().unwrap(), Vec::<String>::new());
+        assert_eq!(image.name_string(false), None);
+        assert_eq!(
+            image.axis_types(),
+            vec![CoordinateType::Linear, CoordinateType::Linear]
+        );
+        assert_eq!(
+            image.axis_names(),
+            vec!["Axis0".to_string(), "Axis1".to_string()]
+        );
+        assert_eq!(image.find_axis_by_name("axis0"), Some(0));
+        assert_eq!(
+            image.get_plane(0, 1).unwrap(),
+            ArrayD::from_shape_vec(IxDyn(&[1, 2]), vec![3.0, 4.0]).unwrap()
         );
     }
 }

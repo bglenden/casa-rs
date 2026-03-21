@@ -519,4 +519,68 @@ mod tests {
         let back = ImageBeamSet::from_record(&beams.to_record()).unwrap();
         assert_eq!(beams, back);
     }
+
+    #[test]
+    fn aliases_default_and_error_paths_work() {
+        let beam = GaussianBeam::new(1.0, 0.5, 0.25);
+        assert!(!beam.is_null());
+        assert!(GaussianBeam::default().is_null());
+
+        let empty = ImageBeamSet::default();
+        assert!(empty.is_empty());
+        assert_eq!(empty.shape(), (0, 0));
+        assert_eq!(empty.min_area_beam(), None);
+        assert_eq!(empty.max_area_beam(), None);
+        assert_eq!(empty.median_area_beam(), None);
+        assert!(empty.subset(&[], &[]).unwrap().is_empty());
+        assert!(matches!(
+            ImageBeamSet::empty().set_beam(Some(0), Some(0), beam),
+            Err(ImageError::InvalidMetadata(_))
+        ));
+
+        let multi = ImageBeamSet::with_shape(2, 3, beam);
+        assert!(multi.has_multi_beam());
+        assert!(!multi.has_single_beam());
+        assert_eq!(multi.size(), 6);
+        assert_eq!(multi.nchan(), 2);
+        assert_eq!(multi.nstokes(), 3);
+        assert!(matches!(
+            multi.get_beam(),
+            Err(ImageError::InvalidMetadata(_))
+        ));
+    }
+
+    #[test]
+    fn set_beam_broadcast_and_record_error_paths_work() {
+        let mut set = ImageBeamSet::with_shape(2, 2, GaussianBeam::new(1.0, 0.5, 0.0));
+        let global = GaussianBeam::new(3.0, 1.5, 0.1);
+        set.set_beam(None, None, global).unwrap();
+        assert_eq!(set.single_beam(), Some(global));
+
+        set.resize(2, 2);
+        let per_stokes = GaussianBeam::new(2.0, 1.0, 0.0);
+        set.set_beam(None, Some(1), per_stokes).unwrap();
+        assert_eq!(*set.beam(0, 1), per_stokes);
+        assert_eq!(*set.beam(1, 1), per_stokes);
+
+        assert!(matches!(
+            set.set_beam(Some(9), Some(0), per_stokes),
+            Err(ImageError::InvalidMetadata(_))
+        ));
+
+        let mut legacy = RecordValue::default();
+        legacy.upsert("nChannels", Value::Scalar(ScalarValue::Int32(1)));
+        legacy.upsert("nStokes", Value::Scalar(ScalarValue::Int32(1)));
+        legacy.upsert("*0_0", Value::Record(global.to_record()));
+        let parsed = ImageBeamSet::from_record(&legacy).unwrap();
+        assert_eq!(parsed.single_beam(), Some(global));
+
+        let mut missing = RecordValue::default();
+        missing.upsert("nChannels", Value::Scalar(ScalarValue::Int32(1)));
+        missing.upsert("nStokes", Value::Scalar(ScalarValue::Int32(1)));
+        assert!(matches!(
+            ImageBeamSet::from_record(&missing),
+            Err(ImageError::InvalidMetadata(msg)) if msg.contains("missing beam record")
+        ));
+    }
 }
