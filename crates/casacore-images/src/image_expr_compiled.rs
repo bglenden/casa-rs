@@ -1690,6 +1690,8 @@ mod tests {
 
     #[test]
     fn compiled_helper_functions_choose_expected_values() {
+        let available = thread_parallelism();
+
         assert_eq!(
             compiled_source_cache_bytes::<f32>(&[16, 16, 16], 1234),
             1234
@@ -1711,16 +1713,30 @@ mod tests {
         ));
 
         let pipe = compiled_map_strategy(ExecutionPolicy::Auto, &[512, 512], &[256, 256], true);
-        assert!(matches!(
-            pipe,
-            OrderedCursorMapWriteExecutionStrategy::Pipelined(_)
-        ));
+        if available < 2 {
+            assert!(matches!(
+                pipe,
+                OrderedCursorMapWriteExecutionStrategy::Serial
+            ));
+        } else {
+            assert!(matches!(
+                pipe,
+                OrderedCursorMapWriteExecutionStrategy::Pipelined(_)
+            ));
+        }
 
         let par = compiled_map_strategy(ExecutionPolicy::Auto, &[2048, 2048], &[256, 256], true);
-        assert!(matches!(
-            par,
-            OrderedCursorMapWriteExecutionStrategy::Parallel(_)
-        ));
+        if available < 2 {
+            assert!(matches!(
+                par,
+                OrderedCursorMapWriteExecutionStrategy::Serial
+            ));
+        } else {
+            assert!(matches!(
+                par,
+                OrderedCursorMapWriteExecutionStrategy::Parallel(_)
+            ));
+        }
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 #[cfg(has_casacore_cpp)]
 use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
+#[cfg(has_casacore_cpp)]
 use std::ffi::CString;
 
 #[cfg(has_casacore_cpp)]

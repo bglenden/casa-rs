@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! C++ cross-validation helpers for the quanta module.
 
+#[cfg(has_casacore_cpp)]
 use std::ffi::CString;
 
 #[cfg(has_casacore_cpp)]
