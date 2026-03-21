@@ -46,6 +46,8 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
+- Small performance guards stay in the default `cargo test --workspace` path.
+- Long coverage/perf work should run less often, usually via CI or explicit full runs.
 
 ## Releases
 
@@ -53,10 +55,20 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   tags directly with `git tag`.
 - Common bumps:
   `scripts/release.sh --patch` and `scripts/release.sh --minor`.
+- The default release script runs the fast local gates:
+  `fmt`, `clippy`, and `cargo test --workspace`.
+- Use `scripts/release.sh <version> --full` to also run local coverage.
 - Use `scripts/release.sh <version> --push` to push the release commit and tag.
 - When asking for a release, say something like `use the release script to cut
   and push release 0.3.1` or `use the release script to cut the next patch
   release` rather than `tag as 0.3.1`.
+- To mirror the full suite locally, run:
+  `cargo fmt --all -- --check`
+  `cargo clippy --workspace --all-targets -- -D warnings`
+  `cargo test --workspace`
+  `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
+  `cargo run -p casacore-aipsio --example t_aipsio`
+  `cargo run -p casacore-tables --example t_table`
 
 ## Architecture Decisions (Condensed)
 

@@ -4,22 +4,31 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/release.sh <version> [--push]
-       scripts/release.sh --patch [--push]
-       scripts/release.sh --minor [--push]
+Usage: scripts/release.sh <version> [--push] [--full]
+       scripts/release.sh --patch [--push] [--full]
+       scripts/release.sh --minor [--push] [--full]
 
 Runs the repository release process:
   1. Verifies a clean worktree
-  2. Runs the AGENTS.md quality gates
+  2. Runs the default local release gates
   3. Bumps [workspace.package].version in Cargo.toml
   4. Commits the version bump as "Release <version>"
   5. Creates tag "v<version>"
   6. Optionally pushes the commit and tag when --push is given
 
+Default local release gates:
+  - cargo fmt --all -- --check
+  - cargo clippy --workspace --all-targets -- -D warnings
+  - cargo test --workspace
+
+Use --full to additionally run:
+  - cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+
 Examples:
   scripts/release.sh 0.3.1
   scripts/release.sh --patch
   scripts/release.sh --minor --push
+  scripts/release.sh --minor --full
   scripts/release.sh 0.3.1 --push
 EOF
 }
@@ -29,20 +38,29 @@ die() {
   exit 1
 }
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -lt 1 || $# -gt 3 ]]; then
   usage
   exit 1
 fi
 
 version_arg="$1"
 push_release="false"
-if [[ $# -eq 2 ]]; then
-  if [[ "$2" != "--push" ]]; then
-    usage
-    exit 1
-  fi
-  push_release="true"
-fi
+run_full="false"
+shift
+for flag in "$@"; do
+  case "$flag" in
+    --push)
+      push_release="true"
+      ;;
+    --full)
+      run_full="true"
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
@@ -86,11 +104,15 @@ esac
 tag="v$version"
 git rev-parse --verify "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
 
-echo "==> Running quality gates"
+echo "==> Running default local release gates"
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+
+if [[ "$run_full" == "true" ]]; then
+  echo "==> Running full coverage gate"
+  cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+fi
 
 for cargo_toml in crates/*/Cargo.toml; do
   if ! grep -Eq '^version\.workspace = true$' "$cargo_toml"; then
