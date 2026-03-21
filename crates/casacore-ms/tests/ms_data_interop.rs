@@ -9,6 +9,7 @@ mod common;
 
 use casacore_ms::builder::MeasurementSetBuilder;
 use casacore_ms::ms::MeasurementSet;
+use casacore_ms::{OptionalMainColumn, VisibilityDataColumn};
 use casacore_test_support::cpp_backend_available;
 use casacore_test_support::ms_interop::{cpp_ms_verify_basic_fixture, cpp_ms_write_basic_fixture};
 use common::{NUM_CHAN, NUM_CORR, populate_main_rows, populate_subtables, verify_vis_data};
@@ -24,7 +25,7 @@ fn ms_data_column_rust_round_trip() {
     let num_rows = 6;
 
     {
-        let builder = MeasurementSetBuilder::new().with_main_column("DATA");
+        let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
         let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
         populate_subtables(&mut ms);
         populate_main_rows(&mut ms, num_rows);
@@ -37,7 +38,7 @@ fn ms_data_column_rust_round_trip() {
     assert_eq!(ms.antenna().unwrap().row_count(), 2);
     assert_eq!(ms.field().unwrap().name(0).unwrap(), "TEST_FIELD");
 
-    let data_col = ms.data_column("DATA").unwrap();
+    let data_col = ms.data_column(VisibilityDataColumn::Data).unwrap();
     for row in 0..num_rows {
         assert_eq!(data_col.shape(row).unwrap(), vec![NUM_CORR, NUM_CHAN]);
         verify_vis_data(data_col.get(row).unwrap(), row);
@@ -47,7 +48,7 @@ fn ms_data_column_rust_round_trip() {
 /// Rust write → Rust read: verify DataColumnMut::put overwrites correctly.
 #[test]
 fn ms_data_column_mut_put() {
-    let builder = MeasurementSetBuilder::new().with_main_column("DATA");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     let mut ms = MeasurementSet::create_memory(builder).unwrap();
     populate_subtables(&mut ms);
 
@@ -67,11 +68,11 @@ fn ms_data_column_mut_put() {
     );
 
     {
-        let mut col = ms.data_column_mut("DATA").unwrap();
+        let mut col = ms.data_column_mut(VisibilityDataColumn::Data).unwrap();
         col.put(0, common::make_vis_data(42)).unwrap();
     }
 
-    let col = ms.data_column("DATA").unwrap();
+    let col = ms.data_column(VisibilityDataColumn::Data).unwrap();
     verify_vis_data(col.get(0).unwrap(), 42);
 }
 
@@ -87,7 +88,7 @@ fn ms_data_column_rust_to_cpp_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let ms_path = dir.path().join("rust_to_cpp.ms");
 
-    let builder = MeasurementSetBuilder::new().with_main_column("DATA");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
     populate_subtables(&mut ms);
     populate_main_rows(&mut ms, 6);
@@ -135,7 +136,7 @@ fn ms_data_column_cpp_to_rust_round_trip() {
     assert_eq!(spw.num_chan(0).unwrap(), NUM_CHAN as i32);
     assert_eq!(spw.name(0).unwrap(), "SPW0");
 
-    let data_col = ms.data_column("DATA").unwrap();
+    let data_col = ms.data_column(VisibilityDataColumn::Data).unwrap();
     verify_vis_data(data_col.get(0).unwrap(), 0);
     verify_vis_data(data_col.get(5).unwrap(), 5);
 }

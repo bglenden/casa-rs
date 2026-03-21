@@ -87,6 +87,7 @@ impl<'a> TableIterator<'a> {
         for &col in key_columns {
             validate_sort_column(table, col)?;
         }
+        let _ = table.rows()?;
         let sorted_indices: Vec<usize> = (0..table.row_count()).collect();
         let key_columns: Vec<String> = key_columns.iter().map(|s| s.to_string()).collect();
         Ok(Self {
@@ -104,6 +105,7 @@ impl<'a> TableIterator<'a> {
             let value = self
                 .table
                 .cell(row_index, col_name)
+                .expect("table rows were validated when the iterator was created")
                 .cloned()
                 .unwrap_or(Value::Scalar(ScalarValue::Bool(false)));
             fields.push(RecordField::new(col_name.as_str(), value));
@@ -156,17 +158,34 @@ pub(crate) fn argsort(table: &Table, keys: &[(&str, SortOrder)]) -> Result<Vec<u
 
     let n = table.row_count();
     let mut indices: Vec<usize> = (0..n).collect();
+    let error = std::cell::RefCell::new(None);
 
     indices.sort_by(|&a, &b| {
+        if error.borrow().is_some() {
+            return Ordering::Equal;
+        }
+
         for &(col_name, order) in keys {
-            let val_a = table.cell(a, col_name).and_then(|v| match v {
-                Value::Scalar(s) => Some(s),
-                _ => None,
-            });
-            let val_b = table.cell(b, col_name).and_then(|v| match v {
-                Value::Scalar(s) => Some(s),
-                _ => None,
-            });
+            let val_a = match table.cell(a, col_name) {
+                Ok(value) => value.and_then(|v| match v {
+                    Value::Scalar(s) => Some(s),
+                    _ => None,
+                }),
+                Err(err) => {
+                    *error.borrow_mut() = Some(err);
+                    return Ordering::Equal;
+                }
+            };
+            let val_b = match table.cell(b, col_name) {
+                Ok(value) => value.and_then(|v| match v {
+                    Value::Scalar(s) => Some(s),
+                    _ => None,
+                }),
+                Err(err) => {
+                    *error.borrow_mut() = Some(err);
+                    return Ordering::Equal;
+                }
+            };
 
             let cmp = match (val_a, val_b) {
                 (Some(a), Some(b)) => a.sort_cmp(b).unwrap_or(Ordering::Equal),
@@ -186,6 +205,10 @@ pub(crate) fn argsort(table: &Table, keys: &[(&str, SortOrder)]) -> Result<Vec<u
         }
         Ordering::Equal
     });
+
+    if let Some(err) = error.into_inner() {
+        return Err(err);
+    }
 
     Ok(indices)
 }
@@ -221,7 +244,7 @@ pub(crate) fn validate_sort_column(table: &Table, col_name: &str) -> Result<(), 
 
     // Without schema, check the first row dynamically.
     if table.row_count() > 0 {
-        match table.cell(0, col_name) {
+        match table.cell(0, col_name)? {
             Some(Value::Scalar(sv)) => {
                 if sv.sort_cmp(sv).is_none() {
                     return Err(TableError::SortKeyUnsortable {
@@ -276,25 +299,28 @@ mod tests {
 
     #[test]
     fn sort_single_column_ascending() {
-        let mut table = test_table();
+        let table = test_table();
         let view = table.sort(&[("id", SortOrder::Ascending)]).unwrap();
         assert_eq!(view.row_count(), 5);
         // Should be 0,1,2,3,4.
         for i in 0..5 {
             let val = view.cell(i, "id").unwrap();
-            assert_eq!(val, &Value::Scalar(ScalarValue::Int32(i as i32)));
+            assert_eq!(val, Some(&Value::Scalar(ScalarValue::Int32(i as i32))));
         }
     }
 
     #[test]
     fn sort_single_column_descending() {
-        let mut table = test_table();
+        let table = test_table();
         let view = table.sort(&[("id", SortOrder::Descending)]).unwrap();
         assert_eq!(view.row_count(), 5);
         // Should be 4,3,2,1,0.
         for i in 0..5 {
             let val = view.cell(i, "id").unwrap();
-            assert_eq!(val, &Value::Scalar(ScalarValue::Int32((4 - i) as i32)));
+            assert_eq!(
+                val,
+                Some(&Value::Scalar(ScalarValue::Int32((4 - i) as i32)))
+            );
         }
     }
 
@@ -329,8 +355,8 @@ mod tests {
         for (i, (eg, ev)) in expected.iter().enumerate() {
             let g = view.cell(i, "group").unwrap();
             let v = view.cell(i, "value").unwrap();
-            assert_eq!(g, &Value::Scalar(ScalarValue::String(eg.to_string())));
-            assert_eq!(v, &Value::Scalar(ScalarValue::Int32(*ev)));
+            assert_eq!(g, Some(&Value::Scalar(ScalarValue::String(eg.to_string()))));
+            assert_eq!(v, Some(&Value::Scalar(ScalarValue::Int32(*ev))));
         }
     }
 
@@ -351,7 +377,7 @@ mod tests {
         let view = table.sort(&[("x", SortOrder::Ascending)]).unwrap();
         // total_cmp order: -0.0 < 0.0 < 1.0 < inf < NaN
         let vals: Vec<f64> = (0..5)
-            .map(|i| match view.cell(i, "x").unwrap() {
+            .map(|i| match view.cell(i, "x").unwrap().unwrap() {
                 Value::Scalar(ScalarValue::Float64(f)) => *f,
                 _ => panic!("expected Float64"),
             })
@@ -367,7 +393,7 @@ mod tests {
     fn sort_complex_rejected() {
         let schema =
             TableSchema::new(vec![ColumnSchema::scalar("z", PrimitiveType::Complex64)]).unwrap();
-        let mut table = Table::with_schema(schema);
+        let table = Table::with_schema(schema);
         let result = table.sort(&[("z", SortOrder::Ascending)]);
         assert!(matches!(result, Err(TableError::SortKeyUnsortable { .. })));
     }
@@ -380,14 +406,14 @@ mod tests {
             Some(1),
         )])
         .unwrap();
-        let mut table = Table::with_schema(schema);
+        let table = Table::with_schema(schema);
         let result = table.sort(&[("arr", SortOrder::Ascending)]);
         assert!(matches!(result, Err(TableError::SortKeyNotScalar { .. })));
     }
 
     #[test]
     fn sort_no_keys() {
-        let mut table = test_table();
+        let table = test_table();
         let result = table.sort(&[]);
         assert!(matches!(result, Err(TableError::SortNoKeys)));
     }
@@ -396,7 +422,7 @@ mod tests {
     fn sort_empty_table() {
         let schema =
             TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
-        let mut table = Table::with_schema(schema);
+        let table = Table::with_schema(schema);
         let view = table.sort(&[("id", SortOrder::Ascending)]).unwrap();
         assert_eq!(view.row_count(), 0);
     }
@@ -431,7 +457,7 @@ mod tests {
             .unwrap();
 
         let names: Vec<&str> = (0..3)
-            .map(|i| match view.cell(i, "name").unwrap() {
+            .map(|i| match view.cell(i, "name").unwrap().unwrap() {
                 Value::Scalar(ScalarValue::String(s)) => s.as_str(),
                 _ => panic!("expected String"),
             })
@@ -586,7 +612,10 @@ mod tests {
         // Should be 4,3,2,1,0.
         for i in 0..5 {
             let val = reopened.cell(i, "id").unwrap();
-            assert_eq!(val, &Value::Scalar(ScalarValue::Int32((4 - i) as i32)));
+            assert_eq!(
+                val,
+                Some(&Value::Scalar(ScalarValue::Int32((4 - i) as i32)))
+            );
         }
     }
 }

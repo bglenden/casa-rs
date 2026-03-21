@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use casacore_ms::OptionalMainColumn;
 use casacore_ms::SubTable;
 use casacore_ms::builder::MeasurementSetBuilder;
 use casacore_ms::ms::MeasurementSet;
@@ -976,7 +977,7 @@ fn ms_full_manifest_matches_cpp_for_basic_fixture() {
     let dir = tempfile::tempdir().unwrap();
     let ms_path = dir.path().join("full_manifest_basic.ms");
 
-    let builder = MeasurementSetBuilder::new().with_main_column("DATA");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
     populate_subtables(&mut ms);
     populate_main_rows(&mut ms, 6);

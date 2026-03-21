@@ -8,6 +8,7 @@ use casacore_types::RecordValue;
 
 use crate::schema::TableSchema;
 use crate::storage::CompositeStorage;
+use crate::table::TableError;
 
 #[derive(Debug, Clone)]
 struct LazyRowsSource {
@@ -121,38 +122,43 @@ impl TableImpl {
         }
     }
 
-    fn load_rows_now(source: &LazyRowsSource) -> Result<LoadedRows, String> {
+    fn load_rows_now(source: &LazyRowsSource) -> Result<LoadedRows, TableError> {
         let storage = CompositeStorage;
         let snapshot = storage
             .load_with_row_hint(&source.path, Some(source.row_count_hint as u64))
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to materialize rows for table {}: {err}",
+                    source.path.display()
+                ))
+            })?;
         Ok(eager_loaded_rows(snapshot.rows, snapshot.undefined_cells))
     }
 
-    fn ensure_loaded(&self) -> &LoadedRows {
-        self.loaded_rows.get_or_init(|| match &self.lazy_rows {
-            Some(source) => Self::load_rows_now(source).unwrap_or_else(|err| {
-                panic!(
-                    "failed to materialize rows for table {}: {err}",
-                    source.path.display()
-                )
-            }),
+    fn ensure_loaded(&self) -> Result<&LoadedRows, TableError> {
+        if let Some(loaded) = self.loaded_rows.get() {
+            return Ok(loaded);
+        }
+        let loaded = match &self.lazy_rows {
+            Some(source) => Self::load_rows_now(source)?,
             None => LoadedRows {
                 rows: Vec::new(),
                 undefined_cells: Vec::new(),
             },
-        })
+        };
+        self.loaded_rows
+            .set(loaded)
+            .expect("initialize immutable row store");
+        Ok(self
+            .loaded_rows
+            .get()
+            .expect("row store initialized before shared access"))
     }
 
-    fn ensure_loaded_mut(&mut self) -> &mut LoadedRows {
+    fn ensure_loaded_mut(&mut self) -> Result<&mut LoadedRows, TableError> {
         if self.loaded_rows.get().is_none() {
             let loaded = match &self.lazy_rows {
-                Some(source) => Self::load_rows_now(source).unwrap_or_else(|err| {
-                    panic!(
-                        "failed to materialize rows for table {}: {err}",
-                        source.path.display()
-                    )
-                }),
+                Some(source) => Self::load_rows_now(source)?,
                 None => LoadedRows {
                     rows: Vec::new(),
                     undefined_cells: Vec::new(),
@@ -162,29 +168,31 @@ impl TableImpl {
                 .set(loaded)
                 .expect("initialize mutable row store");
         }
-        self.loaded_rows
+        Ok(self
+            .loaded_rows
             .get_mut()
-            .expect("row store initialized before mutable access")
+            .expect("row store initialized before mutable access"))
     }
 
-    pub(crate) fn add_row(&mut self, row: RecordValue) {
-        let loaded = self.ensure_loaded_mut();
+    pub(crate) fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
+        let loaded = self.ensure_loaded_mut()?;
         loaded.rows.push(row);
         loaded.undefined_cells.push(HashSet::new());
         self.persisted_row_count = loaded.rows.len();
         self.lazy_rows = None;
+        Ok(())
     }
 
-    pub(crate) fn rows(&self) -> &[RecordValue] {
-        self.ensure_loaded().rows.as_slice()
+    pub(crate) fn rows(&self) -> Result<&[RecordValue], TableError> {
+        Ok(self.ensure_loaded()?.rows.as_slice())
     }
 
-    pub(crate) fn undefined_cells(&self) -> &[HashSet<String>] {
-        self.ensure_loaded().undefined_cells.as_slice()
+    pub(crate) fn undefined_cells(&self) -> Result<&[HashSet<String>], TableError> {
+        Ok(self.ensure_loaded()?.undefined_cells.as_slice())
     }
 
-    pub(crate) fn undefined_cells_mut(&mut self) -> &mut [HashSet<String>] {
-        self.ensure_loaded_mut().undefined_cells.as_mut_slice()
+    pub(crate) fn undefined_cells_mut(&mut self) -> Result<&mut [HashSet<String>], TableError> {
+        Ok(self.ensure_loaded_mut()?.undefined_cells.as_mut_slice())
     }
 
     pub(crate) fn row_count(&self) -> usize {
@@ -193,40 +201,44 @@ impl TableImpl {
             .map_or(self.persisted_row_count, |loaded| loaded.rows.len())
     }
 
-    pub(crate) fn row(&self, row_index: usize) -> Option<&RecordValue> {
-        self.ensure_loaded().rows.get(row_index)
+    pub(crate) fn row(&self, row_index: usize) -> Result<Option<&RecordValue>, TableError> {
+        Ok(self.ensure_loaded()?.rows.get(row_index))
     }
 
-    pub(crate) fn row_mut(&mut self, row_index: usize) -> Option<&mut RecordValue> {
-        self.ensure_loaded_mut().rows.get_mut(row_index)
+    pub(crate) fn row_mut(
+        &mut self,
+        row_index: usize,
+    ) -> Result<Option<&mut RecordValue>, TableError> {
+        Ok(self.ensure_loaded_mut()?.rows.get_mut(row_index))
     }
 
-    pub(crate) fn rows_mut(&mut self) -> &mut [RecordValue] {
-        self.ensure_loaded_mut().rows.as_mut_slice()
+    pub(crate) fn rows_mut(&mut self) -> Result<&mut [RecordValue], TableError> {
+        Ok(self.ensure_loaded_mut()?.rows.as_mut_slice())
     }
 
     pub(crate) fn undefined_for_row_mut(
         &mut self,
         row_index: usize,
-    ) -> Option<&mut HashSet<String>> {
-        self.ensure_loaded_mut().undefined_cells.get_mut(row_index)
+    ) -> Result<Option<&mut HashSet<String>>, TableError> {
+        Ok(self.ensure_loaded_mut()?.undefined_cells.get_mut(row_index))
     }
 
-    pub(crate) fn remove_row(&mut self, index: usize) -> RecordValue {
-        let loaded = self.ensure_loaded_mut();
+    pub(crate) fn remove_row(&mut self, index: usize) -> Result<RecordValue, TableError> {
+        let loaded = self.ensure_loaded_mut()?;
         loaded.undefined_cells.remove(index);
         let removed = loaded.rows.remove(index);
         self.persisted_row_count = loaded.rows.len();
         self.lazy_rows = None;
-        removed
+        Ok(removed)
     }
 
-    pub(crate) fn insert_row(&mut self, index: usize, row: RecordValue) {
-        let loaded = self.ensure_loaded_mut();
+    pub(crate) fn insert_row(&mut self, index: usize, row: RecordValue) -> Result<(), TableError> {
+        let loaded = self.ensure_loaded_mut()?;
         loaded.rows.insert(index, row);
         loaded.undefined_cells.insert(index, HashSet::new());
         self.persisted_row_count = loaded.rows.len();
         self.lazy_rows = None;
+        Ok(())
     }
 
     pub(crate) fn keywords(&self) -> &RecordValue {

@@ -75,7 +75,8 @@ mod mask;
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use error::ImageError;
 pub use image::{
-    AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, PagedImage, image_pixel_type,
+    AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
+    PagedImage, image_pixel_type,
 };
 pub use image_expr::{
     CompiledImageExpr, CompiledMaskExpr, ImageExpr, ImageExprBinaryOp, ImageExprCompareOp,

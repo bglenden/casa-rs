@@ -710,7 +710,7 @@ pub(crate) fn read_ssm_file(
     let indices = parse_ssm_indices(&mut file, &header)?;
 
     // Check if any array columns are stored indirectly via the shared array file.
-    let has_indirect = col_descs.iter().any(|c| is_ssm_array_file_indirect(c));
+    let has_indirect = col_descs.iter().copied().any(is_ssm_array_file_indirect);
 
     // Lazily open the shared array file for indirect columns.
     let mut array_reader: Option<StManArrayFileReader> = if has_indirect {
@@ -1250,7 +1250,7 @@ pub(crate) fn write_ssm_file(
     let ncol = col_descs.len();
 
     // Check if any array columns are stored indirectly.
-    let has_indirect = col_descs.iter().any(|c| is_ssm_array_file_indirect(c));
+    let has_indirect = col_descs.iter().any(is_ssm_array_file_indirect);
 
     // Create shared array file for indirect columns (SSM uses version 0, no refcount).
     let mut array_writer = if has_indirect {

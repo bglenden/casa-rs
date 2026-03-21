@@ -51,7 +51,10 @@ fn cr_columns_index() {
     rows.sort_unstable();
     assert_eq!(rows.len(), 5, "antenna_id=3 should match 5 rows");
     for &r in &rows {
-        let val = table.cell(r, "antenna_id").expect("cell exists");
+        let val = table
+            .cell(r, "antenna_id")
+            .expect("cell lookup")
+            .expect("cell exists");
         assert_eq!(val, &Value::Scalar(ScalarValue::Int32(3)));
     }
 
@@ -78,7 +81,10 @@ fn cr_columns_index() {
     );
     assert_eq!(range.len(), 15, "antenna_id in [2,4] should yield 15 rows");
     for &r in &range {
-        let val = table.cell(r, "antenna_id").expect("cell exists");
+        let val = table
+            .cell(r, "antenna_id")
+            .expect("cell lookup")
+            .expect("cell exists");
         if let Value::Scalar(ScalarValue::Int32(v)) = val {
             assert!(*v >= 2 && *v <= 4, "row {r} value {v} outside [2,4]");
         } else {

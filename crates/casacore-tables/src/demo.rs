@@ -317,7 +317,7 @@ fn demo_column_iteration(out: &mut String) -> Result<(), TableError> {
     );
 
     // column_cells: materialized vector.
-    let cells = table.column_cells("af");
+    let cells = table.column_cells("af")?;
     let defined = cells.iter().filter(|c| c.is_some()).count();
     appendln(out, &format!("column_cells(\"af\"): {defined} values"));
 
@@ -466,20 +466,20 @@ fn demo_ref_tables(out: &mut String) -> Result<(), TableError> {
         row.get("ab")
             .map(|v| matches!(v, Value::Scalar(ScalarValue::Int32(i)) if *i >= 5))
             .unwrap_or(false)
-    });
+    })?;
     appendln(out, &format!("select(ab >= 5): {} rows", view.row_count()));
     drop(view);
 
     // Write-through: modify parent via view.
     {
-        let mut view = table.select_rows(&[0])?;
+        let mut view = table.select_rows_mut(&[0])?;
         view.set_cell(
             0,
             "af",
             Value::Scalar(ScalarValue::String("modified".into())),
         )?;
     }
-    let af = table.cell(0, "af").unwrap();
+    let af = table.cell(0, "af")?;
     appendln(out, &format!("write-through: row 0 af = {af:?}"));
 
     // Save and reopen round-trip.
@@ -517,7 +517,7 @@ fn demo_sorting_and_iteration(out: &mut String) -> Result<(), TableError> {
 
     appendln(out, "--- Sorting and table iteration ---");
 
-    let mut table = build_demo_table()?;
+    let table = build_demo_table()?;
 
     // Sort by "ab" (Int32) ascending.
     {
@@ -899,7 +899,7 @@ fn demo_memory_tables(out: &mut String) -> Result<(), TableError> {
     appendln(out, &format!("  keyword origin={kw:?}"));
 
     // Copy plain table to memory.
-    let mem2 = reopened.to_memory();
+    let mem2 = reopened.to_memory()?;
     appendln(
         out,
         &format!(

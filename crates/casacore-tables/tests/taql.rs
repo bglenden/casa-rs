@@ -55,21 +55,21 @@ fn catalog_table() -> Table {
 
 #[test]
 fn select_star_returns_all_rows() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT *").unwrap();
     assert_eq!(view.row_count(), 50);
 }
 
 #[test]
 fn select_where_simple() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE id > 45").unwrap();
     assert_eq!(view.row_count(), 4); // ids 46,47,48,49
 }
 
 #[test]
 fn select_where_compound_and_or() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table
         .query("SELECT * WHERE flux > 20.0 AND category = 'star'")
         .unwrap();
@@ -80,28 +80,28 @@ fn select_where_compound_and_or() {
 
 #[test]
 fn select_where_like() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE name LIKE 'SRC_00%'").unwrap();
     assert_eq!(view.row_count(), 10); // SRC_000 through SRC_009
 }
 
 #[test]
 fn select_where_between() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE id BETWEEN 10 AND 14").unwrap();
     assert_eq!(view.row_count(), 5);
 }
 
 #[test]
 fn select_where_in() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE id IN (1, 3, 5, 7)").unwrap();
     assert_eq!(view.row_count(), 4);
 }
 
 #[test]
 fn select_where_not_in() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     // Everything except ids 0 and 1
     let view = table.query("SELECT * WHERE id NOT IN (0, 1)").unwrap();
     assert_eq!(view.row_count(), 48);
@@ -109,17 +109,17 @@ fn select_where_not_in() {
 
 #[test]
 fn select_order_by_single() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * ORDER BY flux DESC").unwrap();
     assert_eq!(view.row_count(), 50);
     // First row should have the highest flux (id=49)
     let first = view.cell(0, "id").unwrap();
-    assert_eq!(first, &Value::Scalar(ScalarValue::Int32(49)));
+    assert_eq!(first, Some(&Value::Scalar(ScalarValue::Int32(49))));
 }
 
 #[test]
 fn select_order_by_multiple() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table
         .query("SELECT * ORDER BY category ASC, flux DESC")
         .unwrap();
@@ -128,36 +128,36 @@ fn select_order_by_multiple() {
     let cat = view.cell(0, "category").unwrap();
     assert_eq!(
         cat,
-        &Value::Scalar(ScalarValue::String("galaxy".to_string()))
+        Some(&Value::Scalar(ScalarValue::String("galaxy".to_string())))
     );
 }
 
 #[test]
 fn select_limit_offset() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * LIMIT 5 OFFSET 10").unwrap();
     assert_eq!(view.row_count(), 5);
     let first_id = view.cell(0, "id").unwrap();
-    assert_eq!(first_id, &Value::Scalar(ScalarValue::Int32(10)));
+    assert_eq!(first_id, Some(&Value::Scalar(ScalarValue::Int32(10))));
 }
 
 #[test]
 fn select_distinct() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT DISTINCT category").unwrap();
     assert_eq!(view.row_count(), 5);
 }
 
 #[test]
 fn select_column_projection() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT id, name WHERE flux > 24.0").unwrap();
     assert_eq!(view.column_names(), &["id", "name"]);
 }
 
 #[test]
 fn select_expression_where() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE flux * 2.0 > 48.0").unwrap();
     // flux * 2 > 48 means flux > 24, id * 0.5 + 0.1 > 24, id > 47.8
     assert_eq!(view.row_count(), 2); // ids 48, 49
@@ -165,14 +165,14 @@ fn select_expression_where() {
 
 #[test]
 fn select_empty_result() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE id > 1000").unwrap();
     assert_eq!(view.row_count(), 0);
 }
 
 #[test]
 fn select_with_function_in_where() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE length(name) > 6").unwrap();
     // All names are "SRC_NNN" which is 7 chars, so > 6 matches all
     assert_eq!(view.row_count(), 50);
@@ -180,7 +180,7 @@ fn select_with_function_in_where() {
 
 #[test]
 fn select_with_rowid() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE ROWID() < 3").unwrap();
     assert_eq!(view.row_count(), 3);
 }
@@ -198,7 +198,7 @@ fn update_with_where() {
         _ => panic!("expected Update"),
     }
     let val = table.cell(25, "flux").unwrap();
-    assert_eq!(val, &Value::Scalar(ScalarValue::Float64(999.0)));
+    assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(999.0))));
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn update_expression() {
         _ => panic!("expected Update"),
     }
     let val = table.cell(0, "flux").unwrap();
-    assert_eq!(val, &Value::Scalar(ScalarValue::Float64(1.0))); // 0.1 * 10.0
+    assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(1.0)))); // 0.1 * 10.0
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn parse_roundtrip_update() {
 
 #[test]
 fn error_unknown_column() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let result = table.query("SELECT nonexistent_col");
     assert!(result.is_err());
 }
@@ -351,7 +351,7 @@ fn error_invalid_syntax() {
 
 #[test]
 fn error_query_rejects_update() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let result = table.query("UPDATE SET flux = 1.0");
     assert!(result.is_err());
 }
@@ -360,7 +360,7 @@ fn error_query_rejects_update() {
 
 #[test]
 fn function_sqrt_in_query() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     // sqrt is evaluated per-row via function call
     let view = table.query("SELECT * WHERE sqrt(flux) > 4.5").unwrap();
     // sqrt(flux) > 4.5 means flux > 20.25, i.e. id * 0.5 + 0.1 > 20.25, id >= 41
@@ -369,7 +369,7 @@ fn function_sqrt_in_query() {
 
 #[test]
 fn function_upper_in_query() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table
         .query("SELECT * WHERE upper(category) = 'STAR'")
         .unwrap();
@@ -378,7 +378,7 @@ fn function_upper_in_query() {
 
 #[test]
 fn function_abs_in_query() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE abs(dec) < 10.0").unwrap();
     // dec = -45 + i * 1.8
     // |dec| < 10 means -10 < -45 + i*1.8 < 10, i.e. 35/1.8 < i < 55/1.8
@@ -390,14 +390,14 @@ fn function_abs_in_query() {
 
 #[test]
 fn case_insensitive_keywords() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("select * where id < 5").unwrap();
     assert_eq!(view.row_count(), 5);
 }
 
 #[test]
 fn case_insensitive_functions() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table.query("SELECT * WHERE SQRT(flux) > 4.5").unwrap();
     assert_eq!(view.row_count(), 9);
 }
@@ -428,7 +428,7 @@ fn epoch_table() -> Table {
 #[test]
 fn meas_epoch_in_where() {
     // UTC→TAI adds ~32s = ~0.00037 days. Both MJDs become >51544.5 after conversion.
-    let mut table = epoch_table();
+    let table = epoch_table();
     let view = table
         .query("SELECT * WHERE meas.epoch('TAI', mjd) > 51544.50037")
         .unwrap();
@@ -438,7 +438,7 @@ fn meas_epoch_in_where() {
 
 #[test]
 fn meas_epoch_narrow_filter() {
-    let mut table = epoch_table();
+    let table = epoch_table();
     // Only the first row (mjd=51544.5) converted to TAI ≈ 51544.50037 is < 51544.501
     let view = table
         .query("SELECT * WHERE meas.epoch('TAI', mjd) < 51544.501")
@@ -483,7 +483,7 @@ fn meas_galactic_in_where() {
 
 #[test]
 fn comments_in_query() {
-    let mut table = catalog_table();
+    let table = catalog_table();
     let view = table
         .query("# Select bright sources\nSELECT * WHERE flux > 24.0")
         .unwrap();

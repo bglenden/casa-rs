@@ -379,6 +379,166 @@ pub const OPTIONAL_COLUMNS: &[ColumnDef] = &[
     },
 ];
 
+/// Enum-backed selector for optional MS main-table columns.
+///
+/// This replaces stringly typed column selection in
+/// [`MeasurementSetBuilder`](crate::builder::MeasurementSetBuilder) so callers
+/// get compile-time validation and deterministic output ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum OptionalMainColumn {
+    /// ID of third antenna in triple correlations.
+    Antenna3,
+    /// Reference antenna flag for this baseline.
+    BaselineRef,
+    /// Corrected complex visibility data.
+    CorrectedData,
+    /// Raw complex visibility data.
+    Data,
+    /// Feed index for the third antenna.
+    Feed3,
+    /// Single-dish float visibility data.
+    FloatData,
+    /// Imaging weight column.
+    ImagingWeight,
+    /// Lag-domain visibility data.
+    LagData,
+    /// Model visibility data.
+    ModelData,
+    /// ID for this phase.
+    PhaseId,
+    /// Pulsar bin number.
+    PulsarBin,
+    /// Pulsar gate ID.
+    PulsarGateId,
+    /// Per-channel sigma estimates.
+    SigmaSpectrum,
+    /// Extra precision term for TIME.
+    TimeExtraPrec,
+    /// Secondary UVW coordinates.
+    Uvw2,
+    /// Video-point visibility flag.
+    VideoPoint,
+    /// Per-channel weights.
+    WeightSpectrum,
+    /// Per-channel corrected weights.
+    CorrectedWeightSpectrum,
+}
+
+impl OptionalMainColumn {
+    /// All optional main-table columns in canonical MS schema order.
+    pub const ALL: &[Self] = &[
+        Self::Antenna3,
+        Self::BaselineRef,
+        Self::CorrectedData,
+        Self::Data,
+        Self::Feed3,
+        Self::FloatData,
+        Self::ImagingWeight,
+        Self::LagData,
+        Self::ModelData,
+        Self::PhaseId,
+        Self::PulsarBin,
+        Self::PulsarGateId,
+        Self::SigmaSpectrum,
+        Self::TimeExtraPrec,
+        Self::Uvw2,
+        Self::VideoPoint,
+        Self::WeightSpectrum,
+        Self::CorrectedWeightSpectrum,
+    ];
+
+    /// The on-disk column name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Antenna3 => "ANTENNA3",
+            Self::BaselineRef => "BASELINE_REF",
+            Self::CorrectedData => "CORRECTED_DATA",
+            Self::Data => "DATA",
+            Self::Feed3 => "FEED3",
+            Self::FloatData => "FLOAT_DATA",
+            Self::ImagingWeight => "IMAGING_WEIGHT",
+            Self::LagData => "LAG_DATA",
+            Self::ModelData => "MODEL_DATA",
+            Self::PhaseId => "PHASE_ID",
+            Self::PulsarBin => "PULSAR_BIN",
+            Self::PulsarGateId => "PULSAR_GATE_ID",
+            Self::SigmaSpectrum => "SIGMA_SPECTRUM",
+            Self::TimeExtraPrec => "TIME_EXTRA_PREC",
+            Self::Uvw2 => "UVW2",
+            Self::VideoPoint => "VIDEO_POINT",
+            Self::WeightSpectrum => "WEIGHT_SPECTRUM",
+            Self::CorrectedWeightSpectrum => "CORRECTED_WEIGHT_SPECTRUM",
+        }
+    }
+
+    /// The schema definition for this optional column.
+    pub const fn column_def(self) -> &'static ColumnDef {
+        match self {
+            Self::Antenna3 => &OPTIONAL_COLUMNS[0],
+            Self::BaselineRef => &OPTIONAL_COLUMNS[1],
+            Self::CorrectedData => &OPTIONAL_COLUMNS[2],
+            Self::Data => &OPTIONAL_COLUMNS[3],
+            Self::Feed3 => &OPTIONAL_COLUMNS[4],
+            Self::FloatData => &OPTIONAL_COLUMNS[5],
+            Self::ImagingWeight => &OPTIONAL_COLUMNS[6],
+            Self::LagData => &OPTIONAL_COLUMNS[7],
+            Self::ModelData => &OPTIONAL_COLUMNS[8],
+            Self::PhaseId => &OPTIONAL_COLUMNS[9],
+            Self::PulsarBin => &OPTIONAL_COLUMNS[10],
+            Self::PulsarGateId => &OPTIONAL_COLUMNS[11],
+            Self::SigmaSpectrum => &OPTIONAL_COLUMNS[12],
+            Self::TimeExtraPrec => &OPTIONAL_COLUMNS[13],
+            Self::Uvw2 => &OPTIONAL_COLUMNS[14],
+            Self::VideoPoint => &OPTIONAL_COLUMNS[15],
+            Self::WeightSpectrum => &OPTIONAL_COLUMNS[16],
+            Self::CorrectedWeightSpectrum => &OPTIONAL_COLUMNS[17],
+        }
+    }
+}
+
+/// Enum-backed selector for the complex visibility data columns.
+///
+/// These columns all share the same typed accessor family and differ only by
+/// which optional main-table column is selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum VisibilityDataColumn {
+    /// Corrected complex visibility data.
+    CorrectedData,
+    /// Raw complex visibility data.
+    Data,
+    /// Model visibility data.
+    ModelData,
+}
+
+impl VisibilityDataColumn {
+    /// All complex visibility data columns in canonical schema order.
+    pub const ALL: &[Self] = &[Self::CorrectedData, Self::Data, Self::ModelData];
+
+    /// The on-disk column name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CorrectedData => "CORRECTED_DATA",
+            Self::Data => "DATA",
+            Self::ModelData => "MODEL_DATA",
+        }
+    }
+
+    /// The corresponding optional main-table column selector.
+    pub const fn optional_column(self) -> OptionalMainColumn {
+        match self {
+            Self::CorrectedData => OptionalMainColumn::CorrectedData,
+            Self::Data => OptionalMainColumn::Data,
+            Self::ModelData => OptionalMainColumn::ModelData,
+        }
+    }
+}
+
+impl From<VisibilityDataColumn> for OptionalMainColumn {
+    fn from(value: VisibilityDataColumn) -> Self {
+        value.optional_column()
+    }
+}
+
 /// Required keywords of the MS main table.
 ///
 /// Includes the 12 required subtable references plus MS_VERSION.
@@ -556,6 +716,30 @@ mod tests {
     #[test]
     fn build_schema_succeeds() {
         build_table_schema(REQUIRED_COLUMNS).expect("required schema should build");
+    }
+
+    #[test]
+    fn optional_main_column_enum_matches_schema() {
+        assert_eq!(OptionalMainColumn::ALL.len(), OPTIONAL_COLUMNS.len());
+        for column in OptionalMainColumn::ALL {
+            assert_eq!(column.column_def().name, column.name());
+        }
+    }
+
+    #[test]
+    fn visibility_data_columns_map_to_optional_columns() {
+        assert_eq!(
+            VisibilityDataColumn::Data.optional_column(),
+            OptionalMainColumn::Data
+        );
+        assert_eq!(
+            VisibilityDataColumn::CorrectedData.optional_column().name(),
+            "CORRECTED_DATA"
+        );
+        assert_eq!(
+            VisibilityDataColumn::ModelData.optional_column().name(),
+            "MODEL_DATA"
+        );
     }
 
     #[test]

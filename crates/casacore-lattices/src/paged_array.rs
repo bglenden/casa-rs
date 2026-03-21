@@ -347,9 +347,12 @@ impl<T: LatticeElement> PagedArray<T> {
         let table = Table::open(TableOptions::new(path)).map_err(table_err)?;
 
         // Read the shape from the cell.
-        let cell = table.cell(0, COLUMN_NAME).ok_or_else(|| {
-            LatticeError::Table("PagedArray column not found or no rows".to_string())
-        })?;
+        let cell = table
+            .cell(0, COLUMN_NAME)
+            .map_err(table_err)?
+            .ok_or_else(|| {
+                LatticeError::Table("PagedArray column not found or no rows".to_string())
+            })?;
 
         let shape = match cell {
             Value::Array(av) => av.shape().to_vec(),
@@ -538,6 +541,7 @@ impl<T: LatticeElement> PagedArray<T> {
         let table = table_ref.as_ref().unwrap();
         let cell = table
             .cell(0, COLUMN_NAME)
+            .map_err(table_err)?
             .ok_or_else(|| LatticeError::Table("PagedArray cell not found".to_string()))?;
         match cell {
             Value::Array(av) => value_bridge::from_array_value(av.clone()),

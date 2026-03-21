@@ -188,7 +188,7 @@ fn filter_rows_for_save(
             let fields: Vec<_> = row
                 .fields()
                 .iter()
-                .filter(|f| undef.map_or(true, |u| !u.contains(&f.name)))
+                .filter(|f| undef.is_none_or(|u| !u.contains(&f.name)))
                 .cloned()
                 .collect();
             RecordValue::new(fields)

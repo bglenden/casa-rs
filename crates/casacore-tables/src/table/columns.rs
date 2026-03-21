@@ -47,7 +47,7 @@ impl Table {
             return Ok(());
         };
 
-        for (row_index, row) in self.rows().iter().enumerate() {
+        for (row_index, row) in self.rows()?.iter().enumerate() {
             validate_row_against_schema(row_index, row, schema)?;
         }
         Ok(())
@@ -59,12 +59,12 @@ impl Table {
     }
 
     /// Returns a slice over all rows in insertion order.
-    pub fn rows(&self) -> &[RecordValue] {
+    pub fn rows(&self) -> Result<&[RecordValue], TableError> {
         self.inner.rows()
     }
 
     /// Returns per-row sets of column names that are explicitly undefined.
-    pub fn undefined_cells(&self) -> &[std::collections::HashSet<String>] {
+    pub fn undefined_cells(&self) -> Result<&[std::collections::HashSet<String>], TableError> {
         self.inner.undefined_cells()
     }
 
@@ -79,24 +79,35 @@ impl Table {
             if let Some(schema) = self.schema() {
                 validate_row_against_schema(self.row_count(), &row, schema)?;
             }
-            self.inner.add_row(row);
+            self.inner.add_row(row)?;
             Ok(())
         })();
         self.finish_write_operation(auto_unlock, result)
     }
 
-    /// Returns a shared reference to the row at `row_index`, or `None` if out of bounds.
-    pub fn row(&self, row_index: usize) -> Option<&RecordValue> {
-        self.inner.row(row_index)
+    /// Returns a shared reference to the row at `row_index`.
+    pub fn row(&self, row_index: usize) -> Result<&RecordValue, TableError> {
+        self.inner
+            .row(row_index)?
+            .ok_or(TableError::RowOutOfBounds {
+                row_index,
+                row_count: self.row_count(),
+            })
     }
 
-    /// Returns an exclusive reference to the row at `row_index`, or `None` if out of bounds.
+    /// Returns an exclusive reference to the row at `row_index`.
     ///
     /// Direct mutation through this reference bypasses schema validation.
     /// Use [`set_cell`][Table::set_cell] or [`add_row`][Table::add_row] for
     /// validated writes.
-    pub fn row_mut(&mut self, row_index: usize) -> Option<&mut RecordValue> {
-        self.inner.row_mut(row_index)
+    pub fn row_mut(&mut self, row_index: usize) -> Result<&mut RecordValue, TableError> {
+        let row_count = self.row_count();
+        self.inner
+            .row_mut(row_index)?
+            .ok_or(TableError::RowOutOfBounds {
+                row_index,
+                row_count,
+            })
     }
 
     /// Returns a reference to the value at `(row_index, column)`, or `None` if absent.
@@ -105,8 +116,8 @@ impl Table {
     /// column is simply absent from the row. Use [`get_scalar_cell`][Table::get_scalar_cell]
     /// or [`get_array_cell`][Table::get_array_cell] for type-checked access with
     /// descriptive errors.
-    pub fn cell(&self, row_index: usize, column: &str) -> Option<&Value> {
-        self.row(row_index).and_then(|row| row.get(column))
+    pub fn cell(&self, row_index: usize, column: &str) -> Result<Option<&Value>, TableError> {
+        Ok(self.row(row_index)?.get(column))
     }
 
     /// Returns an iterator over every cell in `column`, covering all rows.
@@ -131,7 +142,7 @@ impl Table {
         self.require_column(column)?;
         row_range.validate(self.row_count())?;
         Ok(ColumnCellIter {
-            row_data: self.rows(),
+            row_data: self.rows()?,
             column,
             rows: row_range.iter(),
         })
@@ -159,7 +170,7 @@ impl Table {
                     column: column.to_string(),
                 });
             }
-            return match self.cell(row_index, column) {
+            return match self.cell(row_index, column)? {
                 Some(Value::Record(record)) => Ok(record.clone()),
                 Some(value) => Err(TableError::ColumnTypeMismatch {
                     row_index,
@@ -171,7 +182,7 @@ impl Table {
             };
         }
 
-        match self.cell(row_index, column) {
+        match self.cell(row_index, column)? {
             Some(Value::Record(record)) => Ok(record.clone()),
             Some(value) => Err(TableError::ColumnTypeMismatch {
                 row_index,
@@ -240,8 +251,9 @@ impl Table {
             false
         };
 
+        let row_data = self.rows()?;
         for row_index in row_range.iter() {
-            match self.rows()[row_index].get(column) {
+            match row_data[row_index].get(column) {
                 Some(Value::Record(_)) => {}
                 Some(value) => {
                     return Err(TableError::ColumnTypeMismatch {
@@ -263,7 +275,7 @@ impl Table {
         }
 
         Ok(RecordColumnIter {
-            row_data: self.rows(),
+            row_data,
             column,
             rows: row_range.iter(),
             default_missing,
@@ -332,7 +344,7 @@ impl Table {
         self.require_column(column)?;
         if let Some(undefined) = self
             .inner
-            .undefined_cells()
+            .undefined_cells()?
             .get(row_index)
             .map(|set| set.contains(column))
         {
@@ -340,7 +352,7 @@ impl Table {
                 return Ok(false);
             }
         }
-        if self.cell(row_index, column).is_some() {
+        if self.cell(row_index, column)?.is_some() {
             return Ok(true);
         }
         if let Some(schema) = self.schema()
@@ -365,7 +377,7 @@ impl Table {
     ) -> Result<Option<Vec<usize>>, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
-        match self.cell(row_index, column) {
+        match self.cell(row_index, column)? {
             None => Ok(None),
             Some(Value::Array(array)) => Ok(Some(array.shape().to_vec())),
             Some(value) => Err(TableError::ColumnTypeMismatch {
@@ -420,16 +432,12 @@ impl Table {
         }
 
         {
-            if let Some(set) = self.inner.undefined_for_row_mut(row_index) {
+            if let Some(set) = self.inner.undefined_for_row_mut(row_index)? {
                 set.remove(column);
             }
         }
 
-        let row_count = self.row_count();
-        let row = self.row_mut(row_index).ok_or(TableError::RowOutOfBounds {
-            row_index,
-            row_count,
-        })?;
+        let row = self.row_mut(row_index)?;
 
         if schema_column.is_some() {
             row.upsert(column.to_string(), value);
@@ -450,11 +458,12 @@ impl Table {
     ///
     /// This materializes the entire column into memory. For large tables,
     /// prefer [`Table::get_column`] or [`Table::iter_column_chunks`] which stream lazily.
-    pub fn column_cells(&self, column: &str) -> Vec<Option<&Value>> {
-        self.rows()
+    pub fn column_cells(&self, column: &str) -> Result<Vec<Option<&Value>>, TableError> {
+        Ok(self
+            .rows()?
             .iter()
             .map(|record| record.get(column))
-            .collect()
+            .collect())
     }
 
     /// Returns a chunked iterator over a column's cells.
@@ -483,8 +492,7 @@ impl Table {
         row_index: usize,
         column: &str,
     ) -> Result<&ArrayValue, TableError> {
-        self.require_row(row_index)?;
-        match self.cell(row_index, column) {
+        match self.cell(row_index, column)? {
             Some(Value::Array(array)) => Ok(array),
             Some(value) => Err(TableError::ColumnTypeMismatch {
                 row_index,
@@ -505,8 +513,7 @@ impl Table {
         row_index: usize,
         column: &str,
     ) -> Result<&ScalarValue, TableError> {
-        self.require_row(row_index)?;
-        match self.cell(row_index, column) {
+        match self.cell(row_index, column)? {
             Some(Value::Scalar(scalar)) => Ok(scalar),
             Some(value) => Err(TableError::ColumnTypeMismatch {
                 row_index,
@@ -579,14 +586,7 @@ impl Table {
     }
 
     fn require_row(&self, row_index: usize) -> Result<(), TableError> {
-        if self.row(row_index).is_some() {
-            Ok(())
-        } else {
-            Err(TableError::RowOutOfBounds {
-                row_index,
-                row_count: self.row_count(),
-            })
-        }
+        self.row(row_index).map(|_| ())
     }
 }
 

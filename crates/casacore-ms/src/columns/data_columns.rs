@@ -150,9 +150,9 @@ impl<'a> DataColumnMut<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::MeasurementSetBuilder;
     use crate::column_def::build_table_schema;
     use crate::schema;
+    use crate::{MeasurementSetBuilder, OptionalMainColumn};
     use casacore_types::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
     use num_complex::Complex32;
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn read_data_column() {
         let schemas = MeasurementSetBuilder::new()
-            .with_main_column("DATA")
+            .with_main_column(OptionalMainColumn::Data)
             .build_schemas()
             .unwrap();
         let mut table = Table::with_schema(schemas.main);
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn write_data_column_mut() {
         let schemas = MeasurementSetBuilder::new()
-            .with_main_column("DATA")
+            .with_main_column(OptionalMainColumn::Data)
             .build_schemas()
             .unwrap();
         let mut table = Table::with_schema(schemas.main);

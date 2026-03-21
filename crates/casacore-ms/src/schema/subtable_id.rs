@@ -19,7 +19,7 @@ use std::fmt;
 /// SCREAMING_SNAKE_CASE (e.g. `SubtableId::Antenna` -> keyword `"ANTENNA"`).
 ///
 /// Cf. C++ `MSMainEnums::PredefinedKeywords`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SubtableId {
     // -- Required (12) --
     /// Antenna characteristics. Cf. C++ `MSAntenna`.

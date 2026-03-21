@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use casacore_ms::builder::MeasurementSetBuilder;
 use casacore_ms::ms::MeasurementSet;
+use casacore_ms::{OptionalMainColumn, VisibilityDataColumn};
 use casacore_test_support::cpp_backend_available;
 use casacore_test_support::ms_interop::cpp_ms_bench_create_open;
 use casacore_types::ArrayValue;
@@ -29,7 +30,7 @@ fn ms_create_open_read_perf_vs_cpp() {
         .expect("C++ MeasurementSet benchmark should succeed");
 
     let t0 = Instant::now();
-    let builder = MeasurementSetBuilder::new().with_main_column("DATA");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     let mut ms = MeasurementSet::create(&rust_path, builder).unwrap();
     populate_subtables(&mut ms);
     populate_main_rows(&mut ms, NROWS);
@@ -40,7 +41,7 @@ fn ms_create_open_read_perf_vs_cpp() {
     let ms = MeasurementSet::open(&rust_path).unwrap();
     let rust_open_ns = t0.elapsed().as_nanos() as u64;
 
-    let data_col = ms.data_column("DATA").unwrap();
+    let data_col = ms.data_column(VisibilityDataColumn::Data).unwrap();
     let mut sink = 0.0f32;
     let t0 = Instant::now();
     for row in 0..NROWS {

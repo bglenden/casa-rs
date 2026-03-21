@@ -1204,6 +1204,7 @@ struct ShapeRowMapping<'a> {
 }
 
 /// Load columns from a `TiledShapeStMan` (one hypercube per unique shape).
+#[allow(clippy::too_many_arguments)]
 fn load_tiled_shape_stman(
     table_path: &Path,
     dm_seq_nr: u32,

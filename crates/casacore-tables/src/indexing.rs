@@ -122,7 +122,7 @@ impl<'a> ColumnsIndex<'a> {
         let mut sorted_keys = Vec::with_capacity(sorted_rows.len() * ncols);
         for &row in &sorted_rows {
             for col in &col_names {
-                match table.cell(row, col) {
+                match table.cell(row, col)? {
                     Some(Value::Scalar(sv)) => sorted_keys.push(sv.clone()),
                     // Validated above — should not occur.
                     _ => unreachable!("index column must be scalar"),
@@ -606,7 +606,7 @@ mod tests {
         // Linear scan for comparison.
         let t2 = Instant::now();
         let linear: Vec<usize> = (0..n)
-            .filter(|&r| table.cell(r, "id") == Some(&Value::Scalar(ScalarValue::Int32(42))))
+            .filter(|&r| table.cell(r, "id") == Ok(Some(&Value::Scalar(ScalarValue::Int32(42)))))
             .collect();
         let linear_ms = t2.elapsed().as_millis();
         assert_eq!(linear.len(), 100);

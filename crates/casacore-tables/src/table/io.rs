@@ -99,8 +99,8 @@ impl Table {
         self.validate()?;
         let snapshot = StorageSnapshot {
             row_count: self.inner.row_count(),
-            rows: self.inner.rows().to_vec(),
-            undefined_cells: self.inner.undefined_cells().to_vec(),
+            rows: self.inner.rows()?.to_vec(),
+            undefined_cells: self.inner.undefined_cells()?.to_vec(),
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),
@@ -183,8 +183,8 @@ impl Table {
         self.validate()?;
         let snapshot = StorageSnapshot {
             row_count: self.inner.row_count(),
-            rows: self.inner.rows().to_vec(),
-            undefined_cells: self.inner.undefined_cells().to_vec(),
+            rows: self.inner.rows()?.to_vec(),
+            undefined_cells: self.inner.undefined_cells()?.to_vec(),
             keywords: self.inner.keywords().clone(),
             column_keywords: self.inner.all_column_keywords().clone(),
             schema: self.inner.schema().cloned(),

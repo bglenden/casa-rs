@@ -12,6 +12,7 @@ use casacore_ms::builder::MeasurementSetBuilder;
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
 use casacore_ms::ms::MeasurementSet;
 use casacore_ms::schema::{self, SubtableId};
+use casacore_ms::{OptionalMainColumn, VisibilityDataColumn};
 use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
@@ -23,7 +24,7 @@ fn main() {
     println!("=== t_ms_create: MeasurementSet creation demo ===\n");
 
     // ---- Create the MS with DATA column ----
-    let builder = MeasurementSetBuilder::new().with_main_column("DATA");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     let mut ms = MeasurementSet::create(&ms_path, builder).expect("create MS");
 
     // ---- Populate ANTENNA subtable (3 antennas, VLA-like) ----
@@ -349,7 +350,9 @@ fn main() {
     }
 
     // Verify DATA column
-    let data_col = ms.data_column("DATA").expect("DATA column");
+    let data_col = ms
+        .data_column(VisibilityDataColumn::Data)
+        .expect("DATA column");
     let shape = data_col.shape(0).expect("shape");
     println!(
         "\nDATA column shape (row 0): {:?} = [num_corr, num_chan]",

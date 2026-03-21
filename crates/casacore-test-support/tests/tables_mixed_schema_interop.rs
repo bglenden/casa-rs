@@ -2,7 +2,7 @@
 //! Wave 17: mixed-schema interop fixture combining scalar, fixed array,
 //! variable array, record column, table keywords, and column keywords.
 
-use casacore_tables::ColumnSchema;
+use casacore_tables::{ColumnOptions, ColumnSchema};
 use casacore_test_support::CppTableFixture;
 use casacore_test_support::table_interop::{
     ManagerKind, MatrixCellResult, TableFixture, run_full_cross_matrix,
@@ -23,7 +23,12 @@ fn mixed_schema_fixture() -> TableFixture {
     let schema = casacore_tables::TableSchema::new(vec![
         ColumnSchema::scalar("id", PrimitiveType::Int32),
         ColumnSchema::scalar("flux", PrimitiveType::Float64),
-        ColumnSchema::array_fixed("spectrum", PrimitiveType::Float32, vec![4]),
+        ColumnSchema::array_fixed("spectrum", PrimitiveType::Float32, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
         ColumnSchema::array_variable("vis", PrimitiveType::Float32, Some(2)),
         ColumnSchema::record("meta"),
     ])

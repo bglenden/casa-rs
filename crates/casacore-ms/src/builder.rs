@@ -5,12 +5,12 @@
 //! and all required (plus selected optional) subtables, ready for use
 //! with [`MeasurementSet::create`](crate::ms::MeasurementSet::create).
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use casacore_tables::{SchemaError, TableSchema};
 
 use crate::column_def::{ColumnDef, build_table_schema};
-use crate::schema::{self, SubtableId};
+use crate::schema::{self, SubtableId, main_table::OptionalMainColumn};
 
 /// Builder for constructing MeasurementSet table schemas.
 ///
@@ -22,17 +22,18 @@ use crate::schema::{self, SubtableId};
 ///
 /// ```rust
 /// use casacore_ms::builder::MeasurementSetBuilder;
+/// use casacore_ms::OptionalMainColumn;
 /// use casacore_ms::schema::SubtableId;
 ///
 /// let builder = MeasurementSetBuilder::new()
 ///     .with_optional_subtable(SubtableId::Source)
-///     .with_main_column("DATA");
+///     .with_main_column(OptionalMainColumn::Data);
 /// let schemas = builder.build_schemas().expect("valid schemas");
 /// assert!(schemas.main.contains_column("DATA"));
 /// ```
 pub struct MeasurementSetBuilder {
-    optional_subtables: HashSet<SubtableId>,
-    extra_main_columns: Vec<&'static str>,
+    optional_subtables: BTreeSet<SubtableId>,
+    extra_main_columns: BTreeSet<OptionalMainColumn>,
 }
 
 /// The output of [`MeasurementSetBuilder::build_schemas`]: a main table schema
@@ -48,8 +49,8 @@ impl MeasurementSetBuilder {
     /// Create a new builder with default settings (all required tables, no optional).
     pub fn new() -> Self {
         Self {
-            optional_subtables: HashSet::new(),
-            extra_main_columns: Vec::new(),
+            optional_subtables: BTreeSet::new(),
+            extra_main_columns: BTreeSet::new(),
         }
     }
 
@@ -59,11 +60,9 @@ impl MeasurementSetBuilder {
         self
     }
 
-    /// Add an optional column to the main table by name.
-    ///
-    /// The column must exist in [`schema::main_table::OPTIONAL_COLUMNS`].
-    pub fn with_main_column(mut self, name: &'static str) -> Self {
-        self.extra_main_columns.push(name);
+    /// Add an optional column to the main table.
+    pub fn with_main_column(mut self, column: OptionalMainColumn) -> Self {
+        self.extra_main_columns.insert(column);
         self
     }
 
@@ -71,12 +70,9 @@ impl MeasurementSetBuilder {
     pub fn build_schemas(&self) -> Result<MsSchemas, SchemaError> {
         // Main table: required + selected optional columns
         let mut main_cols: Vec<ColumnDef> = schema::main_table::REQUIRED_COLUMNS.to_vec();
-        for col_name in &self.extra_main_columns {
-            if let Some(def) = schema::main_table::OPTIONAL_COLUMNS
-                .iter()
-                .find(|c| c.name == *col_name)
-            {
-                main_cols.push(*def);
+        for column in OptionalMainColumn::ALL {
+            if self.extra_main_columns.contains(column) {
+                main_cols.push(*column.column_def());
             }
         }
         let main = build_table_schema(&main_cols)?;
@@ -120,11 +116,45 @@ mod tests {
     #[test]
     fn builder_with_data_column() {
         let schemas = MeasurementSetBuilder::new()
-            .with_main_column("DATA")
+            .with_main_column(OptionalMainColumn::Data)
             .build_schemas()
             .expect("valid schemas");
         assert!(schemas.main.contains_column("DATA"));
         assert_eq!(schemas.main.columns().len(), 22);
+    }
+
+    #[test]
+    fn builder_orders_and_deduplicates_optional_selections() {
+        let schemas = MeasurementSetBuilder::new()
+            .with_optional_subtable(SubtableId::Weather)
+            .with_optional_subtable(SubtableId::Doppler)
+            .with_optional_subtable(SubtableId::Weather)
+            .with_main_column(OptionalMainColumn::ModelData)
+            .with_main_column(OptionalMainColumn::Data)
+            .with_main_column(OptionalMainColumn::ModelData)
+            .build_schemas()
+            .expect("valid schemas");
+
+        let column_names: Vec<_> = schemas.main.columns().iter().map(|c| c.name()).collect();
+        assert!(column_names.contains(&"DATA"));
+        assert!(column_names.contains(&"MODEL_DATA"));
+        let data_idx = column_names
+            .iter()
+            .position(|name| *name == "DATA")
+            .unwrap();
+        let model_idx = column_names
+            .iter()
+            .position(|name| *name == "MODEL_DATA")
+            .unwrap();
+        assert!(data_idx < model_idx);
+
+        let optional_ids: Vec<_> = schemas
+            .subtables
+            .iter()
+            .skip(12)
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(optional_ids, vec![SubtableId::Doppler, SubtableId::Weather]);
     }
 
     #[test]

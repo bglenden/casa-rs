@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use casacore_tables::{ColumnSchema, TableSchema};
+use casacore_tables::{ColumnOptions, ColumnSchema, TableSchema};
 use casacore_test_support::CppTableFixture;
 use casacore_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
@@ -15,11 +15,14 @@ use ndarray::ShapeBuilder;
 // Same cell values as the ssm_fixed_array fixture.
 
 fn tiled_column_stman_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-        "data",
-        PrimitiveType::Float32,
-        vec![2, 3],
-    )])
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2, 3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+    ])
     .expect("schema");
 
     let rows = vec![
@@ -196,11 +199,14 @@ fn tiled_cell_stman_fixture() -> TableFixture {
 // Fixed-shape Float32 [2,3,4], 3 rows, tile shape [2,3,2,2].
 
 fn tiled_column_3d_array_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-        "data",
-        PrimitiveType::Float32,
-        vec![2, 3, 4],
-    )])
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2, 3, 4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+    ])
     .expect("schema");
 
     let row0_vals: Vec<f32> = (1..=24).map(|v| v as f32).collect();
@@ -321,10 +327,30 @@ fn tiled_cell_stman_endian_cross_matrix() {
 // All numeric array types with uniform shape [4] (required by TiledColumnStMan).
 fn tiled_all_numeric_arrays_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_fixed("arr_i16", PrimitiveType::Int16, vec![4]),
-        ColumnSchema::array_fixed("arr_i32", PrimitiveType::Int32, vec![4]),
-        ColumnSchema::array_fixed("arr_f64", PrimitiveType::Float64, vec![4]),
-        ColumnSchema::array_fixed("arr_i64", PrimitiveType::Int64, vec![4]),
+        ColumnSchema::array_fixed("arr_i16", PrimitiveType::Int16, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_i32", PrimitiveType::Int32, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_f64", PrimitiveType::Float64, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_i64", PrimitiveType::Int64, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
     ])
     .expect("schema");
 
@@ -438,8 +464,18 @@ fn tiled_all_numeric_arrays_fixture() -> TableFixture {
 // Complex array types with uniform shape [2].
 fn tiled_complex_arrays_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_fixed("arr_c32", PrimitiveType::Complex32, vec![2]),
-        ColumnSchema::array_fixed("arr_c64", PrimitiveType::Complex64, vec![2]),
+        ColumnSchema::array_fixed("arr_c32", PrimitiveType::Complex32, vec![2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_c64", PrimitiveType::Complex64, vec![2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
     ])
     .expect("schema");
 
@@ -524,11 +560,14 @@ fn tiled_complex_arrays_fixture() -> TableFixture {
 
 // Table keywords with a Float32 [2] column.
 fn tiled_table_keywords_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-        "data",
-        PrimitiveType::Float32,
-        vec![2],
-    )])
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+    ])
     .expect("schema");
 
     let rows = vec![
@@ -567,8 +606,18 @@ fn tiled_table_keywords_fixture() -> TableFixture {
 // Column keywords with two Float64 [4] columns.
 fn tiled_column_keywords_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_fixed("flux", PrimitiveType::Float64, vec![4]),
-        ColumnSchema::array_fixed("data", PrimitiveType::Float64, vec![4]),
+        ColumnSchema::array_fixed("flux", PrimitiveType::Float64, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("data", PrimitiveType::Float64, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
     ])
     .expect("schema");
 

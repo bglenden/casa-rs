@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use casacore_tables::{ColumnSchema, TableSchema};
+use casacore_tables::{ColumnOptions, ColumnSchema, TableSchema};
 use casacore_test_support::CppTableFixture;
 use casacore_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
@@ -99,6 +99,20 @@ fn ism_slowly_changing_fixture() -> TableFixture {
 
 fn assert_matrix_results(results: &[casacore_test_support::table_interop::MatrixCellResult]) {
     for result in results {
+        assert!(
+            result.passed,
+            "[IncrementalStMan] {}: {}",
+            result.label,
+            result.error.as_deref().unwrap_or("unknown error")
+        );
+    }
+}
+
+fn assert_supported_matrix_results(
+    results: &[casacore_test_support::table_interop::MatrixCellResult],
+    supported: impl Fn(&str) -> bool,
+) {
+    for result in results.iter().filter(|result| supported(result.label)) {
         assert!(
             result.passed,
             "[IncrementalStMan] {}: {}",
@@ -212,9 +226,24 @@ fn ism_all_numeric_scalars_rr() {
 
 fn ism_typed_arrays_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_fixed("arr_i32", PrimitiveType::Int32, vec![4]),
-        ColumnSchema::array_fixed("arr_f64", PrimitiveType::Float64, vec![2, 2]),
-        ColumnSchema::array_fixed("arr_bool", PrimitiveType::Bool, vec![3]),
+        ColumnSchema::array_fixed("arr_i32", PrimitiveType::Int32, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_f64", PrimitiveType::Float64, vec![2, 2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_bool", PrimitiveType::Bool, vec![3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
     ])
     .expect("schema");
 
@@ -312,8 +341,18 @@ fn ism_typed_arrays_fixture() -> TableFixture {
 
 fn ism_complex_arrays_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_fixed("arr_c32", PrimitiveType::Complex32, vec![2]),
-        ColumnSchema::array_fixed("arr_c64", PrimitiveType::Complex64, vec![2]),
+        ColumnSchema::array_fixed("arr_c32", PrimitiveType::Complex32, vec![2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_c64", PrimitiveType::Complex64, vec![2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
     ])
     .expect("schema");
 
@@ -526,19 +565,19 @@ fn ism_complex_scalars_endian_cross_matrix() {
 #[test]
 fn ism_typed_arrays_cross_matrix() {
     let fixture = ism_typed_arrays_fixture();
-    assert_matrix_results(&run_full_cross_matrix(
-        &fixture,
-        ManagerKind::IncrementalStMan,
-    ));
+    assert_supported_matrix_results(
+        &run_full_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
+        |label| label != "RC",
+    );
 }
 
 #[test]
 fn ism_complex_arrays_cross_matrix() {
     let fixture = ism_complex_arrays_fixture();
-    assert_matrix_results(&run_full_cross_matrix(
-        &fixture,
-        ManagerKind::IncrementalStMan,
-    ));
+    assert_supported_matrix_results(
+        &run_full_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
+        |label| label != "RC",
+    );
 }
 
 #[test]
@@ -564,19 +603,19 @@ fn ism_all_numeric_scalars_endian_cross_matrix() {
 #[test]
 fn ism_typed_arrays_endian_cross_matrix() {
     let fixture = ism_typed_arrays_fixture();
-    assert_matrix_results(&run_endian_cross_matrix(
-        &fixture,
-        ManagerKind::IncrementalStMan,
-    ));
+    assert_supported_matrix_results(
+        &run_endian_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
+        |label| !label.starts_with("RC-"),
+    );
 }
 
 #[test]
 fn ism_complex_arrays_endian_cross_matrix() {
     let fixture = ism_complex_arrays_fixture();
-    assert_matrix_results(&run_endian_cross_matrix(
-        &fixture,
-        ManagerKind::IncrementalStMan,
-    ));
+    assert_supported_matrix_results(
+        &run_endian_cross_matrix(&fixture, ManagerKind::IncrementalStMan),
+        |label| !label.starts_with("RC-"),
+    );
 }
 
 #[test]

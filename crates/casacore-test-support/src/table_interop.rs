@@ -479,22 +479,27 @@ fn compare_table_to_fixture(table: &Table, fixture: &TableFixture) -> Result<(),
             let actual = table.cell(row_idx, col_name);
 
             match (expected, actual) {
-                (None, None) => {} // Both undefined — OK
-                (Some(e), Some(a)) => {
+                (None, Ok(None)) => {} // Both undefined — OK
+                (Some(e), Ok(Some(a))) => {
                     if !values_equal(e, a) {
                         return Err(format!(
                             "cell mismatch at row={row_idx}, col=\"{col_name}\":\n  expected: {e:?}\n  found:    {a:?}"
                         ));
                     }
                 }
-                (Some(e), None) => {
+                (Some(e), Ok(None)) => {
                     return Err(format!(
                         "cell missing at row={row_idx}, col=\"{col_name}\": expected {e:?}"
                     ));
                 }
-                (None, Some(a)) => {
+                (None, Ok(Some(a))) => {
                     return Err(format!(
                         "unexpected cell at row={row_idx}, col=\"{col_name}\": found {a:?}"
+                    ));
+                }
+                (_, Err(err)) => {
+                    return Err(format!(
+                        "cell read error at row={row_idx}, col=\"{col_name}\": {err}"
                     ));
                 }
             }

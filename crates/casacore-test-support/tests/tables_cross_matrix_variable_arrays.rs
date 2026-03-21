@@ -325,7 +325,7 @@ fn vararray_perf_10k_vs_cpp() {
     let rust_read_t0 = std::time::Instant::now();
     let table = Table::open(TableOptions::new(&rust_table_path)).unwrap();
     let mut rust_total_elems: u64 = 0;
-    for row in table.rows() {
+    for row in table.rows().unwrap() {
         for field in row.fields() {
             if let Value::Array(av) = &field.value {
                 rust_total_elems += av.shape().iter().product::<usize>() as u64;

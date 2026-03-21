@@ -9,12 +9,19 @@ impl Table {
     /// Creates a reference table containing only the specified rows.
     ///
     /// Row indices are validated against `row_count()`. The returned
-    /// [`RefTable`](crate::RefTable) borrows `self` mutably; drop it to
-    /// regain access to the parent.
+    /// [`RefTable`](crate::RefTable) borrows `self` immutably.
     ///
     /// C++ equivalent: constructing a `RefTable` from a `Vector<rownr_t>`.
-    pub fn select_rows(&mut self, indices: &[usize]) -> Result<crate::RefTable<'_>, TableError> {
+    pub fn select_rows(&self, indices: &[usize]) -> Result<crate::RefTable<'_>, TableError> {
         crate::RefTable::from_rows(self, indices.to_vec())
+    }
+
+    /// Creates a mutable reference table containing only the specified rows.
+    pub fn select_rows_mut(
+        &mut self,
+        indices: &[usize],
+    ) -> Result<crate::RefTableMut<'_>, TableError> {
+        crate::RefTableMut::from_rows(self, indices.to_vec())
     }
 
     /// Creates a reference table containing only the named columns.
@@ -22,19 +29,35 @@ impl Table {
     /// All rows are included. Column names are validated against the schema.
     ///
     /// C++ equivalent: constructing a `RefTable` from a `Vector<String>`.
-    pub fn select_columns(&mut self, names: &[&str]) -> Result<crate::RefTable<'_>, TableError> {
+    pub fn select_columns(&self, names: &[&str]) -> Result<crate::RefTable<'_>, TableError> {
         crate::RefTable::from_columns(self, names)
+    }
+
+    /// Creates a mutable reference table containing only the named columns.
+    pub fn select_columns_mut(
+        &mut self,
+        names: &[&str],
+    ) -> Result<crate::RefTableMut<'_>, TableError> {
+        crate::RefTableMut::from_columns(self, names)
     }
 
     /// Creates a reference table containing rows that satisfy `predicate`.
     ///
     /// Iterates all rows, calling `predicate` on each. Rows for which the
     /// closure returns `true` are included in the view.
-    pub fn select<F>(&mut self, predicate: F) -> crate::RefTable<'_>
+    pub fn select<F>(&self, predicate: F) -> Result<crate::RefTable<'_>, TableError>
     where
         F: Fn(&RecordValue) -> bool,
     {
         crate::RefTable::from_predicate(self, predicate)
+    }
+
+    /// Creates a mutable reference table containing rows that satisfy `predicate`.
+    pub fn select_mut<F>(&mut self, predicate: F) -> Result<crate::RefTableMut<'_>, TableError>
+    where
+        F: Fn(&RecordValue) -> bool,
+    {
+        crate::RefTableMut::from_predicate(self, predicate)
     }
 
     // -----------------------------------------------------------------------
@@ -171,7 +194,7 @@ impl Table {
         slicer: &Slicer,
     ) -> Result<Value, TableError> {
         let cell = self
-            .cell(row, column)
+            .cell(row, column)?
             .ok_or_else(|| TableError::ColumnNotFound {
                 row_index: row,
                 column: column.to_string(),
@@ -205,10 +228,12 @@ impl Table {
         slicer: &Slicer,
         data: &ArrayValue,
     ) -> Result<(), TableError> {
+        let _ = self.row(row)?;
         let cell = self
             .inner
-            .row_mut(row)
-            .and_then(|r| r.get_mut(column))
+            .row_mut(row)?
+            .expect("validated row must exist")
+            .get_mut(column)
             .ok_or_else(|| TableError::ColumnNotFound {
                 row_index: row,
                 column: column.to_string(),
@@ -249,11 +274,9 @@ impl Table {
         row_range: RowRange,
         slicer: &Slicer,
     ) -> Result<Vec<Value>, TableError> {
+        row_range.validate(self.row_count())?;
         let mut results = Vec::new();
         for row in row_range.iter() {
-            if row >= self.row_count() {
-                break;
-            }
             results.push(self.get_cell_slice(column, row, slicer)?);
         }
         Ok(results)
@@ -283,10 +306,8 @@ impl Table {
         slicer: &Slicer,
         data: &[ArrayValue],
     ) -> Result<(), TableError> {
-        let rows: Vec<usize> = row_range
-            .iter()
-            .take_while(|&r| r < self.row_count())
-            .collect();
+        row_range.validate(self.row_count())?;
+        let rows: Vec<usize> = row_range.iter().collect();
         if rows.len() != data.len() {
             return Err(TableError::ColumnSliceLengthMismatch {
                 rows: rows.len(),
@@ -325,9 +346,18 @@ impl Table {
     /// `Table::sort(columnNames, sortOrders)`.
     ///
     /// [`RefTable`]: crate::RefTable
-    pub fn sort(&mut self, keys: &[(&str, SortOrder)]) -> Result<crate::RefTable<'_>, TableError> {
+    pub fn sort(&self, keys: &[(&str, SortOrder)]) -> Result<crate::RefTable<'_>, TableError> {
         let permutation = crate::sorting::argsort(self, keys)?;
         crate::RefTable::from_rows(self, permutation)
+    }
+
+    /// Sorts the table by the given key columns, returning a mutable [`RefTableMut`].
+    pub fn sort_mut(
+        &mut self,
+        keys: &[(&str, SortOrder)],
+    ) -> Result<crate::RefTableMut<'_>, TableError> {
+        let permutation = crate::sorting::argsort(self, keys)?;
+        crate::RefTableMut::from_rows(self, permutation)
     }
 
     /// Sorts the table by a single column using a custom comparison function.
@@ -337,29 +367,25 @@ impl Table {
     /// a `BaseCompare` object to C++ `Table::sort`.
     ///
     /// [`Ordering`]: std::cmp::Ordering
-    pub fn sort_by<F>(
-        &mut self,
-        column: &str,
-        compare: F,
-    ) -> Result<crate::RefTable<'_>, TableError>
+    pub fn sort_by<F>(&self, column: &str, compare: F) -> Result<crate::RefTable<'_>, TableError>
     where
         F: Fn(&Value, &Value) -> std::cmp::Ordering,
     {
-        let n = self.row_count();
-        let mut indices: Vec<usize> = (0..n).collect();
-
-        indices.sort_by(|&a, &b| {
-            let va = self.cell(a, column);
-            let vb = self.cell(b, column);
-            match (va, vb) {
-                (Some(a), Some(b)) => compare(a, b),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-        });
-
+        let indices = sort_indices_by_column(self, column, &compare)?;
         crate::RefTable::from_rows(self, indices)
+    }
+
+    /// Sorts the table by a single column using a custom comparison function, returning a mutable view.
+    pub fn sort_by_mut<F>(
+        &mut self,
+        column: &str,
+        compare: F,
+    ) -> Result<crate::RefTableMut<'_>, TableError>
+    where
+        F: Fn(&Value, &Value) -> std::cmp::Ordering,
+    {
+        let indices = sort_indices_by_column(self, column, &compare)?;
+        crate::RefTableMut::from_rows(self, indices)
     }
 
     /// Returns an iterator that groups rows by equal values in the key columns.
@@ -458,9 +484,9 @@ impl Table {
     /// ```
     ///
     /// C++ equivalent: `tableCommand()` with a SELECT query.
-    pub fn query_result(&mut self, taql: &str) -> Result<QueryResult<'_>, TableError> {
+    pub fn query_result(&self, taql: &str) -> Result<QueryResult<'_>, TableError> {
         let stmt = crate::taql::parse(taql).map_err(|e| TableError::Taql(e.to_string()))?;
-        let result = crate::taql::exec::execute_materializing(&stmt, self)
+        let result = crate::taql::exec::execute_materializing_readonly(&stmt, self)
             .map_err(|e| TableError::Taql(e.to_string()))?;
         match result {
             crate::taql::TaqlResult::Select {
@@ -515,10 +541,10 @@ impl Table {
     /// ```
     ///
     /// C++ equivalent: `tableCommand()` with a SELECT query.
-    pub fn query(&mut self, taql: &str) -> Result<crate::RefTable<'_>, TableError> {
+    pub fn query(&self, taql: &str) -> Result<crate::RefTable<'_>, TableError> {
         let stmt = crate::taql::parse(taql).map_err(|e| TableError::Taql(e.to_string()))?;
-        let result =
-            crate::taql::execute(&stmt, self).map_err(|e| TableError::Taql(e.to_string()))?;
+        let result = crate::taql::exec::execute_readonly(&stmt, self)
+            .map_err(|e| TableError::Taql(e.to_string()))?;
         match result {
             crate::taql::TaqlResult::Select {
                 row_indices,
@@ -537,6 +563,29 @@ impl Table {
         }
     }
 
+    /// Executes a TaQL SELECT query and returns a mutable [`RefTableMut`](crate::RefTableMut) view.
+    pub fn query_mut(&mut self, taql: &str) -> Result<crate::RefTableMut<'_>, TableError> {
+        let stmt = crate::taql::parse(taql).map_err(|e| TableError::Taql(e.to_string()))?;
+        let result = crate::taql::exec::execute_readonly(&stmt, self)
+            .map_err(|e| TableError::Taql(e.to_string()))?;
+        match result {
+            crate::taql::TaqlResult::Select {
+                row_indices,
+                columns,
+            } => {
+                if columns.is_empty() {
+                    crate::RefTableMut::from_rows(self, row_indices)
+                } else {
+                    crate::RefTableMut::from_rows_and_columns(self, row_indices, &columns)
+                }
+            }
+            _ => Err(TableError::Taql(
+                "Table::query_mut() only supports SELECT statements; use execute_taql() for mutations"
+                    .to_string(),
+            )),
+        }
+    }
+
     /// Executes any TaQL statement (SELECT, UPDATE, INSERT, DELETE).
     ///
     /// Returns a [`TaqlResult`](crate::taql::TaqlResult) describing the outcome.
@@ -550,6 +599,53 @@ impl Table {
         let stmt = crate::taql::parse(taql).map_err(|e| TableError::Taql(e.to_string()))?;
         crate::taql::execute(&stmt, self).map_err(|e| TableError::Taql(e.to_string()))
     }
+}
+
+fn sort_indices_by_column<F>(
+    table: &Table,
+    column: &str,
+    compare: &F,
+) -> Result<Vec<usize>, TableError>
+where
+    F: Fn(&Value, &Value) -> std::cmp::Ordering,
+{
+    let n = table.row_count();
+    let mut indices: Vec<usize> = (0..n).collect();
+    let error = std::cell::RefCell::new(None);
+
+    indices.sort_by(|&a, &b| {
+        if error.borrow().is_some() {
+            return std::cmp::Ordering::Equal;
+        }
+
+        let va = match table.cell(a, column) {
+            Ok(value) => value,
+            Err(err) => {
+                *error.borrow_mut() = Some(err);
+                return std::cmp::Ordering::Equal;
+            }
+        };
+        let vb = match table.cell(b, column) {
+            Ok(value) => value,
+            Err(err) => {
+                *error.borrow_mut() = Some(err);
+                return std::cmp::Ordering::Equal;
+            }
+        };
+
+        match (va, vb) {
+            (Some(a), Some(b)) => compare(a, b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+
+    if let Some(err) = error.into_inner() {
+        return Err(err);
+    }
+
+    Ok(indices)
 }
 
 // ── Slicer helpers ────────────────────────────────────────────────────
@@ -663,5 +759,127 @@ fn put_slice_array_value(target: &mut ArrayValue, slicer: &Slicer, data: &ArrayV
         (ArrayValue::Complex64(t), ArrayValue::Complex64(s)) => do_put!(t, s),
         (ArrayValue::String(t), ArrayValue::String(s)) => do_put!(t, s),
         _ => {} // type mismatch silently ignored (validated at higher level)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casacore_types::Array2;
+
+    #[test]
+    fn private_slice_helpers_cover_remaining_integer_variants() {
+        let slicer = Slicer::contiguous(vec![0, 1], vec![2, 3]).unwrap();
+
+        let u32_values = ArrayValue::UInt32(
+            Array2::from_shape_vec((2, 3), vec![1_u32, 2, 3, 4, 5, 6])
+                .unwrap()
+                .into_dyn(),
+        );
+        assert_eq!(
+            slice_array_value(&u32_values, &slicer),
+            ArrayValue::UInt32(
+                Array2::from_shape_vec((2, 2), vec![2_u32, 3, 5, 6])
+                    .unwrap()
+                    .into_dyn(),
+            )
+        );
+
+        let i16_values = ArrayValue::Int16(
+            Array2::from_shape_vec((2, 3), vec![1_i16, 2, 3, 4, 5, 6])
+                .unwrap()
+                .into_dyn(),
+        );
+        assert_eq!(
+            slice_array_value(&i16_values, &slicer),
+            ArrayValue::Int16(
+                Array2::from_shape_vec((2, 2), vec![2_i16, 3, 5, 6])
+                    .unwrap()
+                    .into_dyn(),
+            )
+        );
+
+        let i64_values = ArrayValue::Int64(
+            Array2::from_shape_vec((2, 3), vec![1_i64, 2, 3, 4, 5, 6])
+                .unwrap()
+                .into_dyn(),
+        );
+        assert_eq!(
+            slice_array_value(&i64_values, &slicer),
+            ArrayValue::Int64(
+                Array2::from_shape_vec((2, 2), vec![2_i64, 3, 5, 6])
+                    .unwrap()
+                    .into_dyn(),
+            )
+        );
+    }
+
+    #[test]
+    fn private_put_slice_helpers_cover_remaining_integer_variants() {
+        let slicer = Slicer::contiguous(vec![0, 1], vec![2, 3]).unwrap();
+
+        let mut u32_target = ArrayValue::UInt32(Array2::zeros((2, 3)).into_dyn());
+        let u32_patch = ArrayValue::UInt32(
+            Array2::from_shape_vec((2, 2), vec![7_u32, 8, 9, 10])
+                .unwrap()
+                .into_dyn(),
+        );
+        put_slice_array_value(&mut u32_target, &slicer, &u32_patch);
+        assert_eq!(
+            u32_target,
+            ArrayValue::UInt32(
+                Array2::from_shape_vec((2, 3), vec![0_u32, 7, 8, 0, 9, 10])
+                    .unwrap()
+                    .into_dyn(),
+            )
+        );
+
+        let mut i16_target = ArrayValue::Int16(Array2::zeros((2, 3)).into_dyn());
+        let i16_patch = ArrayValue::Int16(
+            Array2::from_shape_vec((2, 2), vec![7_i16, 8, 9, 10])
+                .unwrap()
+                .into_dyn(),
+        );
+        put_slice_array_value(&mut i16_target, &slicer, &i16_patch);
+        assert_eq!(
+            i16_target,
+            ArrayValue::Int16(
+                Array2::from_shape_vec((2, 3), vec![0_i16, 7, 8, 0, 9, 10])
+                    .unwrap()
+                    .into_dyn(),
+            )
+        );
+
+        let mut i64_target = ArrayValue::Int64(Array2::zeros((2, 3)).into_dyn());
+        let i64_patch = ArrayValue::Int64(
+            Array2::from_shape_vec((2, 2), vec![7_i64, 8, 9, 10])
+                .unwrap()
+                .into_dyn(),
+        );
+        put_slice_array_value(&mut i64_target, &slicer, &i64_patch);
+        assert_eq!(
+            i64_target,
+            ArrayValue::Int64(
+                Array2::from_shape_vec((2, 3), vec![0_i64, 7, 8, 0, 9, 10])
+                    .unwrap()
+                    .into_dyn(),
+            )
+        );
+
+        let mut f32_target = ArrayValue::Float32(Array2::zeros((2, 3)).into_dyn());
+        let f32_patch = ArrayValue::Float32(
+            Array2::from_shape_vec((2, 2), vec![1.5_f32, 2.5, 3.5, 4.5])
+                .unwrap()
+                .into_dyn(),
+        );
+        put_slice_array_value(&mut f32_target, &slicer, &f32_patch);
+        assert_eq!(
+            f32_target,
+            ArrayValue::Float32(
+                Array2::from_shape_vec((2, 3), vec![0.0_f32, 1.5, 2.5, 0.0, 3.5, 4.5])
+                    .unwrap()
+                    .into_dyn(),
+            )
+        );
     }
 }

@@ -60,9 +60,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nVerifying {} rows in the copy...", copy.row_count());
 
     for (i, &(id, flux, name)) in rows.iter().enumerate() {
-        let cell_id = copy.cell(i, "id").expect("id cell exists");
-        let cell_flux = copy.cell(i, "flux").expect("flux cell exists");
-        let cell_name = copy.cell(i, "name").expect("name cell exists");
+        let cell_id = copy.cell(i, "id")?.expect("id cell exists");
+        let cell_flux = copy.cell(i, "flux")?.expect("flux cell exists");
+        let cell_name = copy.cell(i, "name")?.expect("name cell exists");
 
         assert_eq!(
             cell_id,

@@ -169,7 +169,7 @@ pub fn rust_taql_query(table: &mut Table, query: &str) -> Result<TaqlQueryResult
     let columns = qr.column_names();
     let mut rows = Vec::with_capacity(qr.row_count());
     for i in 0..qr.row_count() {
-        let row_rec = qr.row(i).ok_or_else(|| format!("missing row {i}"))?;
+        let row_rec = qr.row(i).map_err(|e| format!("row {i}: {e}"))?;
         let mut cells = Vec::with_capacity(columns.len());
         for col in &columns {
             let val = row_rec

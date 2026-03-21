@@ -86,11 +86,20 @@ pub fn execute(stmt: &Statement, table: &mut crate::Table) -> Result<TaqlResult,
     }
 }
 
+/// Execute a parsed TaQL statement against a table without allowing mutation.
+pub fn execute_readonly(stmt: &Statement, table: &crate::Table) -> Result<TaqlResult, TaqlError> {
+    match stmt {
+        Statement::Select(sel) => execute_select(sel, table),
+        Statement::CountSelect(sel) => execute_count_select(sel, table),
+        Statement::Calc(calc) => execute_calc(calc, table),
+        _ => Err(TaqlError::Table(
+            "statement requires mutable table access".to_string(),
+        )),
+    }
+}
+
 /// Execute a SELECT statement.
-fn execute_select(
-    sel: &SelectStatement,
-    table: &mut crate::Table,
-) -> Result<TaqlResult, TaqlError> {
+fn execute_select(sel: &SelectStatement, table: &crate::Table) -> Result<TaqlResult, TaqlError> {
     // Check for GROUP BY / aggregates
     if !sel.group_by.is_empty() || has_aggregates_in_columns(&sel.columns) {
         return execute_group_by(sel, table);
@@ -104,16 +113,17 @@ fn execute_select(
     let mut row_indices: Vec<usize> = if let Some(ref where_clause) = sel.where_clause {
         let mut indices = Vec::new();
         for i in 0..row_count {
-            if let Some(row) = table.row(i) {
-                let ctx = EvalContext {
-                    row,
-                    row_index: i,
-                    style,
-                };
-                let val = eval_expr(where_clause, &ctx)?;
-                if val.to_bool()? {
-                    indices.push(i);
-                }
+            let row = table
+                .row(i)
+                .map_err(|err| TaqlError::Table(err.to_string()))?;
+            let ctx = EvalContext {
+                row,
+                row_index: i,
+                style,
+            };
+            let val = eval_expr(where_clause, &ctx)?;
+            if val.to_bool()? {
+                indices.push(i);
             }
         }
         indices
@@ -161,22 +171,17 @@ fn execute_select(
     })
 }
 
-/// Execute a parsed TaQL statement, materializing computed SELECTs.
-///
-/// Like [`execute()`], but for SELECT statements with computed columns,
-/// evaluates expressions and returns `TaqlResult::Materialized` instead of
-/// `TaqlResult::Select`. Used by `Table::query_result()`.
-pub(crate) fn execute_materializing(
+/// Execute a parsed TaQL statement against a table, materializing computed SELECTs.
+pub(crate) fn execute_materializing_readonly(
     stmt: &Statement,
-    table: &mut crate::Table,
+    table: &crate::Table,
 ) -> Result<TaqlResult, TaqlError> {
-    let result = execute(stmt, table)?;
+    let result = execute_readonly(stmt, table)?;
     match result {
         TaqlResult::Select {
             ref row_indices,
             columns: _,
         } => {
-            // Check if the original SELECT has computed columns
             if let Statement::Select(sel) = stmt {
                 if !sel.columns.is_empty() && has_computed_columns(&sel.columns) {
                     return materialize_select(sel, row_indices, table);
@@ -225,7 +230,7 @@ fn materialize_select(
     for &row_idx in row_indices {
         let row = table
             .row(row_idx)
-            .ok_or_else(|| TaqlError::Table(format!("row {row_idx} not found")))?;
+            .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
             row,
             row_index: row_idx,
@@ -302,7 +307,7 @@ fn col_schema_from_value(name: &str, val: Option<&Value>) -> crate::schema::Colu
 /// Execute a COUNT SELECT statement — returns the count of matching rows.
 fn execute_count_select(
     sel: &SelectStatement,
-    table: &mut crate::Table,
+    table: &crate::Table,
 ) -> Result<TaqlResult, TaqlError> {
     let result = execute_select(sel, table)?;
     let count = match result {
@@ -336,7 +341,7 @@ fn execute_joins(
         for &left_idx in &result_rows {
             let left_row = table
                 .row(left_idx)
-                .ok_or_else(|| TaqlError::Table(format!("row {left_idx} not found")))?;
+                .map_err(|err| TaqlError::Table(err.to_string()))?;
             let mut found_match = false;
 
             if join.join_type == JoinType::Cross {
@@ -351,7 +356,7 @@ fn execute_joins(
             for right_idx in 0..right_count {
                 let right_row = table
                     .row(right_idx)
-                    .ok_or_else(|| TaqlError::Table(format!("row {right_idx} not found")))?;
+                    .map_err(|err| TaqlError::Table(err.to_string()))?;
 
                 // Merge left and right rows for ON evaluation.
                 // Fields from right are accessible with the join table alias prefix,
@@ -425,16 +430,17 @@ fn execute_update(
     let mut matching_rows: Vec<usize> = if let Some(ref where_clause) = upd.where_clause {
         let mut indices = Vec::new();
         for i in 0..row_count {
-            if let Some(row) = table.row(i) {
-                let ctx = EvalContext {
-                    row,
-                    row_index: i,
-                    style: ast::IndexStyle::default(),
-                };
-                let val = eval_expr(where_clause, &ctx)?;
-                if val.to_bool()? {
-                    indices.push(i);
-                }
+            let row = table
+                .row(i)
+                .map_err(|err| TaqlError::Table(err.to_string()))?;
+            let ctx = EvalContext {
+                row,
+                row_index: i,
+                style: ast::IndexStyle::default(),
+            };
+            let val = eval_expr(where_clause, &ctx)?;
+            if val.to_bool()? {
+                indices.push(i);
             }
         }
         indices
@@ -453,7 +459,7 @@ fn execute_update(
     for &row_idx in &matching_rows {
         let row = table
             .row(row_idx)
-            .ok_or_else(|| TaqlError::Table(format!("row {row_idx} disappeared during UPDATE")))?;
+            .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
             row,
             row_index: row_idx,
@@ -550,16 +556,17 @@ fn execute_delete(
     let mut matching_rows: Vec<usize> = if let Some(ref where_clause) = del.where_clause {
         let mut indices = Vec::new();
         for i in 0..row_count {
-            if let Some(row) = table.row(i) {
-                let ctx = EvalContext {
-                    row,
-                    row_index: i,
-                    style: ast::IndexStyle::default(),
-                };
-                let val = eval_expr(where_clause, &ctx)?;
-                if val.to_bool()? {
-                    indices.push(i);
-                }
+            let row = table
+                .row(i)
+                .map_err(|err| TaqlError::Table(err.to_string()))?;
+            let ctx = EvalContext {
+                row,
+                row_index: i,
+                style: ast::IndexStyle::default(),
+            };
+            let val = eval_expr(where_clause, &ctx)?;
+            if val.to_bool()? {
+                indices.push(i);
             }
         }
         indices
@@ -591,7 +598,7 @@ fn execute_delete(
 ///
 /// Evaluates the expression in the context of the first row (if available)
 /// and returns a single-row, single-column result.
-fn execute_calc(calc: &CalcStatement, table: &mut crate::Table) -> Result<TaqlResult, TaqlError> {
+fn execute_calc(calc: &CalcStatement, table: &crate::Table) -> Result<TaqlResult, TaqlError> {
     // Use row 0 if the table has rows, otherwise an empty context
     let empty_row = casacore_types::RecordValue::default();
     let row = if table.row_count() > 0 {
@@ -776,10 +783,7 @@ fn default_value_for_type(ptype: casacore_types::PrimitiveType) -> casacore_type
 }
 
 /// Execute a SELECT with GROUP BY or aggregates.
-fn execute_group_by(
-    sel: &SelectStatement,
-    table: &mut crate::Table,
-) -> Result<TaqlResult, TaqlError> {
+fn execute_group_by(sel: &SelectStatement, table: &crate::Table) -> Result<TaqlResult, TaqlError> {
     let row_count = table.row_count();
     let style = sel.style;
 
@@ -787,16 +791,17 @@ fn execute_group_by(
     let row_indices: Vec<usize> = if let Some(ref where_clause) = sel.where_clause {
         let mut indices = Vec::new();
         for i in 0..row_count {
-            if let Some(row) = table.row(i) {
-                let ctx = EvalContext {
-                    row,
-                    row_index: i,
-                    style,
-                };
-                let val = eval_expr(where_clause, &ctx)?;
-                if val.to_bool()? {
-                    indices.push(i);
-                }
+            let row = table
+                .row(i)
+                .map_err(|err| TaqlError::Table(err.to_string()))?;
+            let ctx = EvalContext {
+                row,
+                row_index: i,
+                style,
+            };
+            let val = eval_expr(where_clause, &ctx)?;
+            if val.to_bool()? {
+                indices.push(i);
             }
         }
         indices
@@ -887,7 +892,7 @@ fn group_rows(
     for &row_idx in row_indices {
         let row = table
             .row(row_idx)
-            .ok_or_else(|| TaqlError::Table(format!("row {row_idx} not found")))?;
+            .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
             row,
             row_index: row_idx,
@@ -975,7 +980,7 @@ fn eval_aggregate_column(
             for &row_idx in group {
                 let row = table
                     .row(row_idx)
-                    .ok_or_else(|| TaqlError::Table(format!("row {row_idx} not found")))?;
+                    .map_err(|err| TaqlError::Table(err.to_string()))?;
                 let ctx = EvalContext {
                     row,
                     row_index: row_idx,
@@ -1000,7 +1005,7 @@ fn eval_aggregate_column(
             if let Some(&first_row) = group.first() {
                 let row = table
                     .row(first_row)
-                    .ok_or_else(|| TaqlError::Table(format!("row {first_row} not found")))?;
+                    .map_err(|err| TaqlError::Table(err.to_string()))?;
                 let ctx = EvalContext {
                     row,
                     row_index: first_row,
@@ -1016,7 +1021,7 @@ fn eval_aggregate_column(
             if let Some(&first_row) = group.first() {
                 let row = table
                     .row(first_row)
-                    .ok_or_else(|| TaqlError::Table(format!("row {first_row} not found")))?;
+                    .map_err(|err| TaqlError::Table(err.to_string()))?;
                 let ctx = EvalContext {
                     row,
                     row_index: first_row,
@@ -1105,7 +1110,7 @@ fn sort_rows(
     for &row_idx in row_indices.iter() {
         let row = table
             .row(row_idx)
-            .ok_or_else(|| TaqlError::Table(format!("row {row_idx} not found during sort")))?;
+            .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
             row,
             row_index: row_idx,
@@ -1154,7 +1159,7 @@ fn deduplicate_rows(
     for &row_idx in row_indices.iter() {
         let row = table
             .row(row_idx)
-            .ok_or_else(|| TaqlError::Table(format!("row {row_idx} not found during DISTINCT")))?;
+            .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
             row,
             row_index: row_idx,
@@ -1586,7 +1591,7 @@ mod tests {
             _ => panic!("expected Update"),
         }
         let val = table.cell(5, "flux").unwrap();
-        assert_eq!(val, &Value::Scalar(ScalarValue::Float64(99.0)));
+        assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(99.0))));
     }
 
     #[test]
@@ -1601,7 +1606,7 @@ mod tests {
             _ => panic!("expected Update"),
         }
         let val = table.cell(3, "flux").unwrap();
-        assert_eq!(val, &Value::Scalar(ScalarValue::Float64(9.0))); // 3 * 1.5 * 2.0
+        assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(9.0)))); // 3 * 1.5 * 2.0
     }
 
     #[test]
@@ -1618,7 +1623,7 @@ mod tests {
         }
         assert_eq!(table.row_count(), 11);
         let val = table.cell(10, "id").unwrap();
-        assert_eq!(val, &Value::Scalar(ScalarValue::Int32(10)));
+        assert_eq!(val, Some(&Value::Scalar(ScalarValue::Int32(10))));
     }
 
     #[test]

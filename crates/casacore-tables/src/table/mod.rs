@@ -652,8 +652,8 @@ impl QueryResult<'_> {
         }
     }
 
-    /// Returns the row at the given index, or `None` if out of bounds.
-    pub fn row(&self, index: usize) -> Option<&RecordValue> {
+    /// Returns the row at the given index.
+    pub fn row(&self, index: usize) -> Result<&RecordValue, TableError> {
         match self {
             QueryResult::View(v) => v.row(index),
             QueryResult::Materialized(t) => t.row(index),
@@ -1167,11 +1167,11 @@ impl Table {
     /// memory table produces an independent clone.
     ///
     /// C++ equivalent: `Table::copyToMemoryTable`.
-    pub fn to_memory(&self) -> Self {
-        Self {
+    pub fn to_memory(&self) -> Result<Self, TableError> {
+        Ok(Self {
             inner: TableImpl::with_rows_keywords_and_schema(
-                self.inner.rows().to_vec(),
-                self.inner.undefined_cells().to_vec(),
+                self.inner.rows()?.to_vec(),
+                self.inner.undefined_cells()?.to_vec(),
                 self.inner.keywords().clone(),
                 self.inner.all_column_keywords().clone(),
                 self.inner.schema().cloned(),
@@ -1186,7 +1186,7 @@ impl Table {
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
-        }
+        })
     }
 }
 

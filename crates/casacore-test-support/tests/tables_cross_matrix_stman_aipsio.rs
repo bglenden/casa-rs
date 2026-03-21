@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casacore_tables::{ColumnOptions, ColumnSchema, Table, TableOptions, TableSchema};
 use casacore_test_support::CppTableFixture;
 use casacore_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
@@ -61,11 +61,14 @@ fn scalar_primitives_fixture() -> TableFixture {
 }
 
 fn fixed_array_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-        "data",
-        PrimitiveType::Float32,
-        vec![2, 3],
-    )])
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2, 3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+    ])
     .expect("schema");
 
     // Arrays use Fortran (column-major) order to match casacore convention.
@@ -281,9 +284,24 @@ fn complex_scalars_fixture() -> TableFixture {
 
 fn typed_arrays_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_fixed("arr_i32", PrimitiveType::Int32, vec![4]),
-        ColumnSchema::array_fixed("arr_f64", PrimitiveType::Float64, vec![2, 2]),
-        ColumnSchema::array_fixed("arr_f32", PrimitiveType::Float32, vec![3]),
+        ColumnSchema::array_fixed("arr_i32", PrimitiveType::Int32, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_f64", PrimitiveType::Float64, vec![2, 2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_f32", PrimitiveType::Float32, vec![3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
     ])
     .expect("schema");
 
@@ -562,9 +580,24 @@ fn column_keywords_endian_cross_matrix() {
 
 fn unsigned_arrays_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_fixed("arr_u8", PrimitiveType::UInt8, vec![4]),
-        ColumnSchema::array_fixed("arr_u16", PrimitiveType::UInt16, vec![4]),
-        ColumnSchema::array_fixed("arr_u32", PrimitiveType::UInt32, vec![4]),
+        ColumnSchema::array_fixed("arr_u8", PrimitiveType::UInt8, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_u16", PrimitiveType::UInt16, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_fixed("arr_u32", PrimitiveType::UInt32, vec![4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
     ])
     .expect("schema");
 
@@ -661,11 +694,14 @@ fn unsigned_arrays_cross_matrix() {
 // --- String arrays (Task 1.2) ---
 
 fn string_array_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-        "arr_str",
-        PrimitiveType::String,
-        vec![3],
-    )])
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("arr_str", PrimitiveType::String, vec![3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+    ])
     .expect("schema");
 
     let rows = vec![
@@ -724,11 +760,14 @@ fn string_array_cross_matrix() {
 // --- Complex64 2D arrays (Task 1.3) ---
 
 fn complex64_2d_array_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-        "arr_c64",
-        PrimitiveType::Complex64,
-        vec![2, 2],
-    )])
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("arr_c64", PrimitiveType::Complex64, vec![2, 2])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+    ])
     .expect("schema");
 
     let rows = vec![
@@ -798,11 +837,14 @@ fn complex64_2d_array_cross_matrix() {
 // --- 3D fixed-array cross-matrix test ---
 
 fn fixed_array_3d_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-        "data",
-        PrimitiveType::Float32,
-        vec![2, 3, 4],
-    )])
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2, 3, 4])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+    ])
     .expect("schema");
 
     // Values 1..24 and 25..48 in Fortran order
@@ -1095,7 +1137,7 @@ fn record_column_round_trip_values() {
     drop(table);
 
     let table = Table::open(TableOptions::new(&path)).expect("open");
-    assert_eq!(table.rows().len(), 3);
+    assert_eq!(table.rows().unwrap().len(), 3);
 
     // Read record cells via the record column API.
     let records: Vec<_> = table.get_record_column("meta").unwrap().collect();

@@ -77,7 +77,7 @@ fn cr_concat_table() {
 
     let expected_ids = [1, 2, 3, 4, 5, 6];
     for (i, &expected) in expected_ids.iter().enumerate() {
-        let row = table.row(i).unwrap_or_else(|| panic!("row {i} exists"));
+        let row = table.row(i).unwrap_or_else(|_| panic!("row {i} exists"));
         assert_eq!(
             row.get("id").expect("id field"),
             &Value::Scalar(ScalarValue::Int32(expected)),
@@ -157,7 +157,7 @@ fn rr_concat_table() {
 
     let expected_ids = [1, 2, 3, 4, 5, 6];
     for (i, &expected) in expected_ids.iter().enumerate() {
-        let row = reopened.row(i).unwrap_or_else(|| panic!("row {i} exists"));
+        let row = reopened.row(i).unwrap_or_else(|_| panic!("row {i} exists"));
         assert_eq!(
             row.get("id").expect("id field"),
             &Value::Scalar(ScalarValue::Int32(expected)),

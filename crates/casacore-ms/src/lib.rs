@@ -58,9 +58,11 @@ pub mod validate;
 #[cfg(test)]
 pub(crate) mod test_helpers;
 
+pub use builder::{MeasurementSetBuilder, MsSchemas};
 pub use error::{MsError, MsResult};
 pub use ms::MeasurementSet;
 pub use schema::SubtableId;
+pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use subtables::{
     MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
     MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,

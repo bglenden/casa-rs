@@ -82,8 +82,8 @@ fn execute_and_print(table: &mut Table, query: &str) -> Result<(), Box<dyn std::
             let view = table.query(query)?;
             let columns = view.column_names().to_vec();
             let rows: Vec<_> = (0..view.row_count())
-                .filter_map(|i| view.row(i).cloned())
-                .collect();
+                .map(|i| view.row(i).cloned())
+                .collect::<Result<_, _>>()?;
             print!("{}", taql_fmt::format_rows(&columns, &rows));
         }
         _ => {

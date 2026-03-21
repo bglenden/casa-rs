@@ -306,13 +306,13 @@ fn bulk_scalar_io_100k_vs_cpp() {
     let table = Table::open(TableOptions::new(&rust_path)).unwrap();
     let mut sum: i64 = 0;
     for i in 0..table.row_count() {
-        if let Some(Value::Scalar(ScalarValue::Int32(v))) = table.cell(i, "col_i32") {
+        if let Ok(Some(Value::Scalar(ScalarValue::Int32(v)))) = table.cell(i, "col_i32") {
             sum += *v as i64;
         }
-        if let Some(Value::Scalar(ScalarValue::Float64(v))) = table.cell(i, "col_f64") {
+        if let Ok(Some(Value::Scalar(ScalarValue::Float64(v)))) = table.cell(i, "col_f64") {
             sum += *v as i64;
         }
-        if let Some(Value::Scalar(ScalarValue::String(s))) = table.cell(i, "col_str") {
+        if let Ok(Some(Value::Scalar(ScalarValue::String(s)))) = table.cell(i, "col_str") {
             sum += s.len() as i64;
         }
     }

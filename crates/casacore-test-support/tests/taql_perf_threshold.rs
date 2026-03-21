@@ -126,7 +126,7 @@ fn perf_filter_sort_project_limit() {
         return;
     }
     let (_tmp, path) = save_bench_table(5000);
-    let mut table = build_simple_fixture_n(5000);
+    let table = build_simple_fixture_n(5000);
 
     run_threshold(
         "filter_sort_project_limit",
@@ -172,7 +172,7 @@ fn perf_expression_eval() {
         return;
     }
     let (_tmp, path) = save_bench_table(5000);
-    let mut table = build_simple_fixture_n(5000);
+    let table = build_simple_fixture_n(5000);
 
     run_threshold(
         "expression_eval",
@@ -193,7 +193,7 @@ fn perf_order_by() {
         return;
     }
     let (_tmp, path) = save_bench_table(5000);
-    let mut table = build_simple_fixture_n(5000);
+    let table = build_simple_fixture_n(5000);
 
     run_threshold(
         "order_by",
@@ -214,7 +214,7 @@ fn perf_varshape_read() {
         return;
     }
     let (_tmp, path) = save_varshape_bench_table(5000);
-    let mut table = casacore_tables::Table::open(casacore_tables::TableOptions::new(&path))
+    let table = casacore_tables::Table::open(casacore_tables::TableOptions::new(&path))
         .expect("open varshape bench table");
 
     run_threshold(

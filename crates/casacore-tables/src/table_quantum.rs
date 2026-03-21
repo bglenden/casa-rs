@@ -469,7 +469,7 @@ impl<'a> ArrayQuantColumn<'a> {
         let units_col = self.desc.unit_column_name().unwrap();
 
         // Try array units column first (per-element), then scalar (per-row).
-        let cell = self.table.cell(row, units_col);
+        let cell = self.table.cell(row, units_col)?;
         match cell {
             Some(Value::Array(ArrayValue::String(arr))) => {
                 let unit_strs: Vec<&str> = arr.iter().map(|s| s.as_str()).collect();
@@ -712,10 +712,10 @@ mod tests {
         // Read back: the units column should be an array, not a scalar
         let cell = table.cell(0, "DATA_UNITS");
         assert!(
-            matches!(cell, Some(Value::Array(ArrayValue::String(_)))),
+            matches!(cell, Ok(Some(Value::Array(ArrayValue::String(_))))),
             "expected array units but got: {cell:?}"
         );
-        if let Some(Value::Array(ArrayValue::String(arr))) = cell {
+        if let Ok(Some(Value::Array(ArrayValue::String(arr)))) = cell {
             let units: Vec<&str> = arr.iter().map(|s| s.as_str()).collect();
             assert_eq!(units, vec!["Hz", "kHz"]);
         }

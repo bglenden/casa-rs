@@ -58,7 +58,7 @@ fn bench_filter_sort_project(c: &mut Criterion) {
 
     // Wave 14: Full pipeline (filter + sort + project + limit)
     group.bench_function("filter_sort_project_limit_5k", |b| {
-        let mut table = bench_simple_table(5000);
+        let table = bench_simple_table(5000);
         b.iter(|| {
             let _view = table
                 .query("SELECT id, name, flux WHERE flux > 10.0 ORDER BY flux DESC LIMIT 100")
@@ -67,14 +67,14 @@ fn bench_filter_sort_project(c: &mut Criterion) {
     });
 
     group.bench_function("select_all_5k", |b| {
-        let mut table = bench_simple_table(5000);
+        let table = bench_simple_table(5000);
         b.iter(|| {
             let _view = table.query("SELECT *").unwrap();
         });
     });
 
     group.bench_function("where_filter_5k", |b| {
-        let mut table = bench_simple_table(5000);
+        let table = bench_simple_table(5000);
         b.iter(|| {
             let _view = table
                 .query("SELECT * WHERE category = 'star' AND flux > 100.0")
@@ -105,14 +105,14 @@ fn bench_expression_eval(c: &mut Criterion) {
     let mut group = c.benchmark_group("taql_expr");
 
     group.bench_function("sqrt_filter_5k", |b| {
-        let mut table = bench_simple_table(5000);
+        let table = bench_simple_table(5000);
         b.iter(|| {
             let _view = table.query("SELECT * WHERE sqrt(flux) > 20.0").unwrap();
         });
     });
 
     group.bench_function("compound_where_5k", |b| {
-        let mut table = bench_simple_table(5000);
+        let table = bench_simple_table(5000);
         b.iter(|| {
             let _view = table
                 .query("SELECT * WHERE flux > 100.0 AND category = 'star'")
@@ -127,14 +127,14 @@ fn bench_order_by(c: &mut Criterion) {
     let mut group = c.benchmark_group("taql_sort");
 
     group.bench_function("order_by_5k", |b| {
-        let mut table = bench_simple_table(5000);
+        let table = bench_simple_table(5000);
         b.iter(|| {
             let _view = table.query("SELECT * ORDER BY flux DESC").unwrap();
         });
     });
 
     group.bench_function("order_by_multi_5k", |b| {
-        let mut table = bench_simple_table(5000);
+        let table = bench_simple_table(5000);
         b.iter(|| {
             let _view = table
                 .query("SELECT * ORDER BY category ASC, flux DESC")

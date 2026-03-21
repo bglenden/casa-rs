@@ -90,7 +90,7 @@ fn cr_sorted_ref_table() {
     // Should be in descending id order: 50, 40, 30, 20, 10.
     let expected_ids = [50, 40, 30, 20, 10];
     for (i, &expected) in expected_ids.iter().enumerate() {
-        let row = table.row(i).unwrap_or_else(|| panic!("row {i} exists"));
+        let row = table.row(i).unwrap_or_else(|_| panic!("row {i} exists"));
         assert_eq!(
             row.get("id").expect("id field"),
             &Value::Scalar(ScalarValue::Int32(expected)),
@@ -161,7 +161,7 @@ fn rr_sorted_ref_table() {
     // Should be in descending id order: 50, 40, 30, 20, 10.
     let expected_ids = [50, 40, 30, 20, 10];
     for (i, &expected) in expected_ids.iter().enumerate() {
-        let row = reopened.row(i).unwrap_or_else(|| panic!("row {i} exists"));
+        let row = reopened.row(i).unwrap_or_else(|_| panic!("row {i} exists"));
         assert_eq!(
             row.get("id").expect("id field"),
             &Value::Scalar(ScalarValue::Int32(expected)),

@@ -59,7 +59,11 @@ fn cr_forward_column() {
 
     let expected = [1.5, 2.5, 3.5];
     for (i, &exp) in expected.iter().enumerate() {
-        match table.cell(i, "col_value").expect("cell exists") {
+        match table
+            .cell(i, "col_value")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Scalar(ScalarValue::Float64(v)) => {
                 assert!((v - exp).abs() < 1e-10, "row {i}: expected {exp}, got {v}");
             }
@@ -165,7 +169,11 @@ fn rr_forward_column() {
 
     let expected = [1.5, 2.5, 3.5];
     for (i, &exp) in expected.iter().enumerate() {
-        match reopened.cell(i, "col_value").expect("cell exists") {
+        match reopened
+            .cell(i, "col_value")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Scalar(ScalarValue::Float64(v)) => {
                 assert!((v - exp).abs() < 1e-10, "row {i}: expected {exp}, got {v}");
             }
@@ -227,7 +235,11 @@ fn cr_scaled_array() {
     // Verify stored column values (Int32 arrays of shape [2]).
     let expected_stored: [[i32; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
     for (i, exp) in expected_stored.iter().enumerate() {
-        match table.cell(i, "stored_col").expect("cell exists") {
+        match table
+            .cell(i, "stored_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Int32(arr)) => {
                 let flat: Vec<i32> = arr.iter().copied().collect();
                 assert_eq!(flat, exp, "stored_col row {i} mismatch");
@@ -239,7 +251,11 @@ fn cr_scaled_array() {
     // Verify virtual column values: stored * 2.5 + 10.0.
     let expected_virtual: [[f64; 2]; 3] = [[12.5, 15.0], [17.5, 20.0], [22.5, 25.0]];
     for (i, exp) in expected_virtual.iter().enumerate() {
-        match table.cell(i, "virtual_col").expect("cell exists") {
+        match table
+            .cell(i, "virtual_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Float64(arr)) => {
                 let flat: Vec<f64> = arr.iter().copied().collect();
                 for (j, (&got, &want)) in flat.iter().zip(exp.iter()).enumerate() {
@@ -349,7 +365,11 @@ fn rr_scaled_array() {
     // Verify stored column (Int32 arrays of shape [2]).
     let expected_stored: [[i32; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
     for (i, exp) in expected_stored.iter().enumerate() {
-        match reopened.cell(i, "stored_col").expect("cell exists") {
+        match reopened
+            .cell(i, "stored_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Int32(arr)) => {
                 let flat: Vec<i32> = arr.iter().copied().collect();
                 assert_eq!(flat, exp, "stored_col row {i} mismatch");
@@ -361,7 +381,11 @@ fn rr_scaled_array() {
     // Verify virtual column: stored * 2.5 + 10.0.
     let expected_virtual: [[f64; 2]; 3] = [[12.5, 15.0], [17.5, 20.0], [22.5, 25.0]];
     for (i, exp) in expected_virtual.iter().enumerate() {
-        match reopened.cell(i, "virtual_col").expect("cell exists") {
+        match reopened
+            .cell(i, "virtual_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Float64(arr)) => {
                 let flat: Vec<f64> = arr.iter().copied().collect();
                 for (j, (&got, &want)) in flat.iter().zip(exp.iter()).enumerate() {
@@ -442,7 +466,11 @@ fn rr_scaled_complex() {
 
     // Verify stored column shape and values.
     for (i, exp) in stored_data.iter().enumerate() {
-        match reopened.cell(i, "stored_col").expect("cell exists") {
+        match reopened
+            .cell(i, "stored_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Int16(arr)) => {
                 assert_eq!(arr.shape(), &[2, 2], "stored_col row {i} shape");
                 let flat: Vec<i16> = arr.iter().copied().collect();
@@ -469,7 +497,11 @@ fn rr_scaled_complex() {
         [(2.0, 3.5), (3.0, 4.0)],
     ];
     for (i, exp_row) in expected.iter().enumerate() {
-        match reopened.cell(i, "virtual_col").expect("cell exists") {
+        match reopened
+            .cell(i, "virtual_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Complex32(arr)) => {
                 assert_eq!(arr.shape(), &[2], "virtual_col row {i} shape");
                 let flat: Vec<Complex32> = arr.iter().copied().collect();
@@ -542,7 +574,11 @@ fn rr_forward_column_arrays() {
     assert_eq!(reopened.row_count(), 3);
     assert!(reopened.is_virtual_column("data"));
     for (i, exp) in arrays.iter().enumerate() {
-        match reopened.cell(i, "data").expect("cell") {
+        match reopened
+            .cell(i, "data")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Float32(arr)) => {
                 assert_eq!(arr.shape(), &[2, 3], "row {i} shape");
                 // Compare in memory order (Fortran) to match how data was created.
@@ -618,19 +654,31 @@ fn rr_forward_column_multi_type() {
     let expected_str = ["hello", "world", ""];
     let expected_f64 = [3.125, -99.5, 0.0];
     for i in 0..3 {
-        match reopened.cell(i, "col_i32").expect("cell") {
+        match reopened
+            .cell(i, "col_i32")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Scalar(ScalarValue::Int32(v)) => {
                 assert_eq!(*v, expected_i32[i], "row {i} i32")
             }
             other => panic!("row {i}: expected Int32, got {other:?}"),
         }
-        match reopened.cell(i, "col_str").expect("cell") {
+        match reopened
+            .cell(i, "col_str")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Scalar(ScalarValue::String(v)) => {
                 assert_eq!(v, expected_str[i], "row {i} str")
             }
             other => panic!("row {i}: expected String, got {other:?}"),
         }
-        match reopened.cell(i, "col_f64").expect("cell") {
+        match reopened
+            .cell(i, "col_f64")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Scalar(ScalarValue::Float64(v)) => {
                 assert!((*v - expected_f64[i]).abs() < 1e-10, "row {i} f64")
             }
@@ -683,7 +731,11 @@ fn rr_scaled_array_float_to_float() {
     // virtual = stored * 0.1 + 5.0
     let expected: [[f64; 3]; 3] = [[5.1, 5.2, 5.3], [6.0, 7.0, 8.0], [5.0, 4.5, 15.0]];
     for (i, exp) in expected.iter().enumerate() {
-        match reopened.cell(i, "virtual_col").expect("cell") {
+        match reopened
+            .cell(i, "virtual_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Float64(arr)) => {
                 let flat: Vec<f64> = arr.iter().copied().collect();
                 for (j, (&got, &want)) in flat.iter().zip(exp.iter()).enumerate() {
@@ -734,7 +786,11 @@ fn rr_forward_column_bool() {
 
     let expected = [true, false, true];
     for (i, &exp) in expected.iter().enumerate() {
-        match reopened.cell(i, "flag").expect("cell") {
+        match reopened
+            .cell(i, "flag")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Scalar(ScalarValue::Bool(v)) => {
                 assert_eq!(*v, exp, "row {i}: expected {exp}, got {v}");
             }
@@ -811,7 +867,11 @@ fn rr_scaled_complex_nonzero_imag() {
         [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)],
     ];
     for (i, exp_row) in expected.iter().enumerate() {
-        match reopened.cell(i, "virtual_col").expect("cell") {
+        match reopened
+            .cell(i, "virtual_col")
+            .expect("cell lookup")
+            .expect("cell exists")
+        {
             Value::Array(ArrayValue::Complex32(arr)) => {
                 assert_eq!(arr.shape(), &[3], "virtual_col row {i} shape");
                 let flat: Vec<Complex32> = arr.iter().copied().collect();

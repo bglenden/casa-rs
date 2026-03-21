@@ -40,7 +40,7 @@ use casacore_lattices::{
 use casacore_types::{ArrayD, RecordValue};
 
 use crate::error::ImageError;
-use crate::image::{ImageInterface, ImagePixel, PagedImage};
+use crate::image::{ImageInterface, ImagePixel, MutableImageInterface, PagedImage};
 use crate::image_expr::ImageExpr;
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
@@ -244,82 +244,37 @@ impl<T: ImagePixel> TempImage<T> {
 impl<T: ImagePixel> TempImage<T> {
     /// Returns the coordinate type for each image axis.
     pub fn axis_types(&self) -> Vec<CoordinateType> {
-        let mut types = Vec::with_capacity(self.ndim());
-        for i in 0..self.coords.n_coordinates() {
-            let coord = self.coords.coordinate(i);
-            let coord_type = coord.coordinate_type();
-            for _ in 0..coord.n_pixel_axes() {
-                types.push(coord_type);
-            }
-        }
-        while types.len() < self.ndim() {
-            types.push(CoordinateType::Linear);
-        }
-        types
+        <Self as ImageInterface<T>>::axis_types(self)
     }
 
     /// Returns the axis names for the image.
     pub fn axis_names(&self) -> Vec<String> {
-        let mut names = Vec::with_capacity(self.ndim());
-        for i in 0..self.coords.n_coordinates() {
-            names.extend(self.coords.coordinate(i).axis_names());
-        }
-        while names.len() < self.ndim() {
-            names.push(format!("Axis{}", names.len()));
-        }
-        names
+        <Self as ImageInterface<T>>::axis_names(self)
     }
 
     /// Finds the first axis belonging to a given coordinate type.
     pub fn find_axis(&self, coord_type: CoordinateType) -> Option<usize> {
-        let mut offset = 0;
-        for i in 0..self.coords.n_coordinates() {
-            let coord = self.coords.coordinate(i);
-            if coord.coordinate_type() == coord_type {
-                return Some(offset);
-            }
-            offset += coord.n_pixel_axes();
-        }
-        None
+        <Self as ImageInterface<T>>::find_axis(self, coord_type)
     }
 
     /// Finds an axis by case-insensitive name prefix.
     pub fn find_axis_by_name(&self, name: &str) -> Option<usize> {
-        let target = name.to_lowercase();
-        self.axis_names()
-            .iter()
-            .position(|axis| axis.to_lowercase().starts_with(&target))
+        <Self as ImageInterface<T>>::find_axis_by_name(self, name)
     }
 
     /// Extracts a single plane with the target axis fixed to `index`.
     pub fn get_plane(&self, axis: usize, index: usize) -> Result<ArrayD<T>, ImageError> {
-        if axis >= self.ndim() {
-            return Err(ImageError::ShapeMismatch {
-                expected: self.shape().to_vec(),
-                got: vec![axis],
-            });
-        }
-        let mut start = vec![0; self.ndim()];
-        let mut shape: Vec<usize> = self.shape().to_vec();
-        start[axis] = index;
-        shape[axis] = 1;
-        self.get_slice(&start, &shape)
+        <Self as ImageInterface<T>>::get_plane(self, axis, index)
     }
 
     /// Extracts a spectral-channel plane if the image has a spectral axis.
     pub fn channel_plane(&self, chan: usize) -> Result<Option<ArrayD<T>>, ImageError> {
-        match self.find_axis(CoordinateType::Spectral) {
-            Some(axis) => Ok(Some(self.get_plane(axis, chan)?)),
-            None => Ok(None),
-        }
+        <Self as ImageInterface<T>>::channel_plane(self, chan)
     }
 
     /// Extracts a Stokes plane if the image has a Stokes axis.
     pub fn stokes_plane(&self, stokes: usize) -> Result<Option<ArrayD<T>>, ImageError> {
-        match self.find_axis(CoordinateType::Stokes) {
-            Some(axis) => Ok(Some(self.get_plane(axis, stokes)?)),
-            None => Ok(None),
-        }
+        <Self as ImageInterface<T>>::stokes_plane(self, stokes)
     }
 }
 
@@ -333,21 +288,12 @@ impl<T: ImagePixel> TempImage<T> {
         set_default: bool,
         initial: bool,
     ) -> Result<(), ImageError> {
-        let name = name.into();
-        let mask = ArrayD::from_elem(ndarray::IxDyn(self.shape()), initial);
-        self.masks.insert(name.clone(), mask);
-        if set_default {
-            self.default_mask = Some(name);
-        }
-        Ok(())
+        <Self as MutableImageInterface<T>>::make_mask(self, name, set_default, initial)
     }
 
     /// Returns the default mask contents if a default mask is configured.
     pub fn get_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
-        match &self.default_mask {
-            Some(name) => Ok(Some(self.get_named_mask(name)?)),
-            None => Ok(None),
-        }
+        <Self as ImageInterface<T>>::get_mask(self)
     }
 
     /// Returns a named mask as a full-image boolean array.
@@ -398,7 +344,7 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Returns `true` if a default pixel mask is configured.
     pub fn has_pixel_mask(&self) -> bool {
-        self.default_mask.is_some()
+        <Self as ImageInterface<T>>::has_pixel_mask(self)
     }
 
     /// Returns the default mask name if present.
@@ -490,7 +436,7 @@ impl<T: ImagePixel> TempImage<T> {
         start: Vec<usize>,
         shape: Vec<usize>,
     ) -> Result<SubImage<'_, T, Self>, ImageError> {
-        SubImage::new(self, start, shape)
+        <Self as ImageInterface<T>>::sub_image(self, start, shape)
     }
 
     /// Creates a strided subimage view.
@@ -500,7 +446,7 @@ impl<T: ImagePixel> TempImage<T> {
         shape: Vec<usize>,
         stride: Vec<usize>,
     ) -> Result<SubImage<'_, T, Self>, ImageError> {
-        SubImage::with_stride(self, start, shape, stride)
+        <Self as ImageInterface<T>>::sub_image_with_stride(self, start, shape, stride)
     }
 
     /// Creates a mutable unit-stride subimage view.
@@ -509,7 +455,7 @@ impl<T: ImagePixel> TempImage<T> {
         start: Vec<usize>,
         shape: Vec<usize>,
     ) -> Result<SubImageMut<'_, T, Self>, ImageError> {
-        SubImageMut::new(self, start, shape)
+        <Self as MutableImageInterface<T>>::sub_image_mut(self, start, shape)
     }
 
     /// Creates a mutable strided subimage view.
@@ -519,7 +465,7 @@ impl<T: ImagePixel> TempImage<T> {
         shape: Vec<usize>,
         stride: Vec<usize>,
     ) -> Result<SubImageMut<'_, T, Self>, ImageError> {
-        SubImageMut::with_stride(self, start, shape, stride)
+        <Self as MutableImageInterface<T>>::sub_image_mut_with_stride(self, start, shape, stride)
     }
 
     /// Starts a lazy expression rooted at this image.
@@ -527,7 +473,7 @@ impl<T: ImagePixel> TempImage<T> {
     where
         T: crate::image_expr::ImageExprValue + PartialOrd,
     {
-        ImageExpr::from_image(self)
+        <Self as ImageInterface<T>>::expr(self)
     }
 
     /// Creates a lazy expression by mapping a function over this image.
@@ -536,7 +482,7 @@ impl<T: ImagePixel> TempImage<T> {
         T: crate::image_expr::ImageExprValue + PartialOrd,
         F: Fn(T) -> T + Send + Sync + 'static,
     {
-        ImageExpr::map(self, f)
+        <Self as ImageInterface<T>>::expr_map(self, f)
     }
 }
 
@@ -647,27 +593,88 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
     }
 
     fn coordinates(&self) -> &CoordinateSystem {
-        &self.coords
+        TempImage::coordinates(self)
     }
 
     fn units(&self) -> &str {
-        &self.units
+        TempImage::units(self)
     }
 
     fn misc_info(&self) -> RecordValue {
-        self.misc_info.clone()
+        TempImage::misc_info(self)
     }
 
     fn image_info(&self) -> Result<ImageInfo, ImageError> {
-        Ok(self.image_info.clone())
+        TempImage::image_info(self)
     }
 
     fn name(&self) -> Option<&Path> {
-        None
+        TempImage::name(self)
+    }
+
+    fn default_mask_name(&self) -> Option<String> {
+        TempImage::default_mask_name(self)
+    }
+
+    fn mask_names(&self) -> Vec<String> {
+        TempImage::mask_names(self)
+    }
+
+    fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
+        TempImage::get_named_mask(self, name)
+    }
+
+    fn history(&self) -> Result<Vec<String>, ImageError> {
+        TempImage::history(self)
     }
 
     fn default_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
-        self.get_mask()
+        match TempImage::default_mask_name(self) {
+            Some(name) => Ok(Some(TempImage::get_named_mask(self, &name)?)),
+            None => Ok(None),
+        }
+    }
+}
+
+impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
+    fn set_coordinates(&mut self, coords: CoordinateSystem) -> Result<(), ImageError> {
+        TempImage::set_coordinates(self, coords)
+    }
+
+    fn set_units_string(&mut self, units: String) -> Result<(), ImageError> {
+        TempImage::set_units(self, units)
+    }
+
+    fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
+        TempImage::set_image_info(self, info)
+    }
+
+    fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError> {
+        TempImage::set_misc_info(self, rec)
+    }
+
+    fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
+        TempImage::put_mask(self, name, data)
+    }
+
+    fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
+        TempImage::remove_mask(self, name)
+    }
+
+    fn set_default_mask(&mut self, name: &str) -> Result<(), ImageError> {
+        TempImage::set_default_mask(self, name)
+    }
+
+    fn unset_default_mask(&mut self) -> Result<(), ImageError> {
+        TempImage::unset_default_mask(self)
+    }
+
+    fn add_history_entry(&mut self, msg: String) -> Result<(), ImageError> {
+        TempImage::add_history(self, msg)
+    }
+
+    fn clear_history(&mut self) -> Result<(), ImageError> {
+        TempImage::clear_history(self)
     }
 }
 

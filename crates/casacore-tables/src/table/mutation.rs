@@ -21,7 +21,7 @@ impl Table {
     /// `TableCopy::copyRows(target, source)`.
     pub fn copy_rows(&mut self, source: &Table) -> Result<(), TableError> {
         self.validate_schema_compat(source)?;
-        for row in source.rows() {
+        for row in source.rows()? {
             self.add_row(row.clone())?;
         }
         Ok(())
@@ -46,7 +46,7 @@ impl Table {
         row_indices: &[usize],
     ) -> Result<(), TableError> {
         self.validate_schema_compat(source)?;
-        let src_rows = source.rows();
+        let src_rows = source.rows()?;
         let src_count = src_rows.len();
         for &idx in row_indices {
             let row = src_rows.get(idx).ok_or(TableError::RowOutOfBounds {
@@ -171,7 +171,7 @@ impl Table {
 
             // Populate existing rows with the default value.
             if let Some(value) = default {
-                for row in self.inner.rows_mut() {
+                for row in self.inner.rows_mut()? {
                     row.push(RecordField::new(col.name(), value.clone()));
                 }
             }
@@ -197,10 +197,10 @@ impl Table {
             schema.remove_column(name)?;
             self.inner.set_schema(Some(schema));
 
-            for row in self.inner.rows_mut() {
+            for row in self.inner.rows_mut()? {
                 row.remove(name);
             }
-            for set in self.inner.undefined_cells_mut() {
+            for set in self.inner.undefined_cells_mut()? {
                 set.remove(name);
             }
             self.inner.remove_column_keywords(name);
@@ -226,10 +226,10 @@ impl Table {
             schema.rename_column(old, new)?;
             self.inner.set_schema(Some(schema));
 
-            for row in self.inner.rows_mut() {
+            for row in self.inner.rows_mut()? {
                 row.rename_field(old, new);
             }
-            for set in self.inner.undefined_cells_mut() {
+            for set in self.inner.undefined_cells_mut()? {
                 if set.remove(old) {
                     set.insert(new.to_string());
                 }
@@ -270,7 +270,7 @@ impl Table {
             }
             // Remove in reverse order to preserve earlier indices.
             for &idx in indices.iter().rev() {
-                self.inner.remove_row(idx);
+                let _ = self.inner.remove_row(idx)?;
             }
             Ok(())
         })();
@@ -297,7 +297,7 @@ impl Table {
             if let Some(schema) = self.inner.schema() {
                 validate_row_against_schema(index, &row, schema)?;
             }
-            self.inner.insert_row(index, row);
+            self.inner.insert_row(index, row)?;
             Ok(())
         })();
         self.finish_write_operation(auto_unlock, result)

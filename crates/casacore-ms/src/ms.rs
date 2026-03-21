@@ -18,7 +18,7 @@ use crate::builder::{MeasurementSetBuilder, MsSchemas};
 use crate::column_def::ColumnDef;
 use crate::error::{MsError, MsResult};
 use crate::metadata::{measinfo_for, quantum_units_for};
-use crate::schema::SubtableId;
+use crate::schema::{SubtableId, main_table::VisibilityDataColumn};
 use crate::subtables::{
     MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
     MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,
@@ -483,37 +483,43 @@ impl MeasurementSet {
 
     // ---- Main-table column accessors ----
 
-    /// Typed read-only accessor for a visibility DATA column (DATA, CORRECTED_DATA, or MODEL_DATA).
+    /// Typed read-only accessor for a complex visibility data column.
     ///
-    /// Returns `MsError::ColumnNotPresent` if the column is absent.
+    /// Returns `MsError::ColumnNotPresent` if the selected column is absent.
     pub fn data_column(
         &self,
-        name: &'static str,
+        column: VisibilityDataColumn,
     ) -> MsResult<crate::columns::data_columns::DataColumn<'_>> {
-        match name {
-            "DATA" => crate::columns::data_columns::DataColumn::data(&self.main),
-            "CORRECTED_DATA" => {
+        match column {
+            VisibilityDataColumn::Data => {
+                crate::columns::data_columns::DataColumn::data(&self.main)
+            }
+            VisibilityDataColumn::CorrectedData => {
                 crate::columns::data_columns::DataColumn::corrected_data(&self.main)
             }
-            "MODEL_DATA" => crate::columns::data_columns::DataColumn::model_data(&self.main),
-            _ => Err(MsError::ColumnNotPresent(name.to_string())),
+            VisibilityDataColumn::ModelData => {
+                crate::columns::data_columns::DataColumn::model_data(&self.main)
+            }
         }
     }
 
-    /// Typed mutable accessor for a visibility DATA column (DATA, CORRECTED_DATA, or MODEL_DATA).
+    /// Typed mutable accessor for a complex visibility data column.
     ///
-    /// Returns `MsError::ColumnNotPresent` if the column is absent.
+    /// Returns `MsError::ColumnNotPresent` if the selected column is absent.
     pub fn data_column_mut(
         &mut self,
-        name: &'static str,
+        column: VisibilityDataColumn,
     ) -> MsResult<crate::columns::data_columns::DataColumnMut<'_>> {
-        match name {
-            "DATA" => crate::columns::data_columns::DataColumnMut::data(&mut self.main),
-            "CORRECTED_DATA" => {
+        match column {
+            VisibilityDataColumn::Data => {
+                crate::columns::data_columns::DataColumnMut::data(&mut self.main)
+            }
+            VisibilityDataColumn::CorrectedData => {
                 crate::columns::data_columns::DataColumnMut::corrected_data(&mut self.main)
             }
-            "MODEL_DATA" => crate::columns::data_columns::DataColumnMut::model_data(&mut self.main),
-            _ => Err(MsError::ColumnNotPresent(name.to_string())),
+            VisibilityDataColumn::ModelData => {
+                crate::columns::data_columns::DataColumnMut::model_data(&mut self.main)
+            }
         }
     }
 

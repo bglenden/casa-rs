@@ -7,7 +7,7 @@ use casacore_types::{
 
 use crate::schema::{ColumnSchema, TableSchema};
 
-use super::{DataManagerKind, EndianFormat, RowRange, Table, TableError, TableOptions};
+use super::{DataManagerKind, EndianFormat, RowRange, SortOrder, Table, TableError, TableOptions};
 
 #[test]
 fn table_keeps_rows_in_order() {
@@ -22,7 +22,7 @@ fn table_keeps_rows_in_order() {
 
     let table = Table::from_rows(vec![first.clone(), second.clone()]);
     assert_eq!(table.row_count(), 2);
-    assert_eq!(table.rows(), &[first, second]);
+    assert_eq!(table.rows().unwrap(), &[first, second]);
 }
 
 #[test]
@@ -37,10 +37,10 @@ fn table_exposes_row_and_column_cell_access() {
     ]);
     let mut table = Table::from_rows(vec![first.clone(), second.clone()]);
 
-    assert_eq!(table.row(0), Some(&first));
+    assert_eq!(table.row(0).unwrap(), &first);
     assert_eq!(
         table.cell(1, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(2)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
 
     table
@@ -52,10 +52,12 @@ fn table_exposes_row_and_column_cell_access() {
         .expect("set cell");
     assert_eq!(
         table.cell(1, "name"),
-        Some(&Value::Scalar(ScalarValue::String("beta".to_string())))
+        Ok(Some(&Value::Scalar(ScalarValue::String(
+            "beta".to_string()
+        ))))
     );
 
-    let id_cells = table.column_cells("id");
+    let id_cells = table.column_cells("id").unwrap();
     assert_eq!(
         id_cells,
         vec![
@@ -114,6 +116,341 @@ fn column_range_rejects_invalid_ranges() {
             row_count: 1,
         })
     ));
+}
+
+#[test]
+fn query_result_reports_view_and_materialized_results() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("name", PrimitiveType::String),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    for (id, name) in [(0, "alpha"), (1, "beta"), (2, "gamma")] {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                RecordField::new("name", Value::Scalar(ScalarValue::String(name.to_string()))),
+            ]))
+            .unwrap();
+    }
+
+    let view = table.query_result("SELECT id, name WHERE id > 0").unwrap();
+    assert!(format!("{view:?}").contains("QueryResult::View"));
+    assert_eq!(view.row_count(), 2);
+    assert_eq!(
+        view.column_names(),
+        vec!["id".to_string(), "name".to_string()]
+    );
+    assert_eq!(
+        view.row(0).unwrap().get("name"),
+        Some(&Value::Scalar(ScalarValue::String("beta".to_string())))
+    );
+
+    let materialized = table
+        .query_result("SELECT id AS source_id, name AS label WHERE id > 0")
+        .unwrap();
+    assert!(format!("{materialized:?}").contains("QueryResult::Materialized"));
+    assert_eq!(materialized.row_count(), 2);
+    assert_eq!(
+        materialized.column_names(),
+        vec!["source_id".to_string(), "label".to_string()]
+    );
+    assert_eq!(
+        materialized.row(0).unwrap().get("label"),
+        Some(&Value::Scalar(ScalarValue::String("beta".to_string())))
+    );
+
+    let err = table.query_result("COUNT SELECT *").unwrap_err();
+    assert!(
+        matches!(err, TableError::Taql(msg) if msg.contains("only supports SELECT statements"))
+    );
+}
+
+#[test]
+fn mutable_selection_sort_and_query_variants_write_through() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("name", PrimitiveType::String),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    for (id, name) in [(0, "alpha"), (1, "beta"), (2, "gamma")] {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                RecordField::new("name", Value::Scalar(ScalarValue::String(name.to_string()))),
+            ]))
+            .unwrap();
+    }
+
+    {
+        let mut projected = table.select_columns_mut(&["name"]).unwrap();
+        assert_eq!(projected.column_names(), &["name"]);
+        assert_eq!(projected.schema().unwrap().columns().len(), 1);
+        assert_eq!(
+            projected.row(0).unwrap().get("id"),
+            Some(&Value::Scalar(ScalarValue::Int32(0)))
+        );
+        assert!(projected.parent_path().is_none());
+        assert_eq!(projected.as_ref().column_names(), &["name"]);
+        projected
+            .set_cell(
+                1,
+                "name",
+                Value::Scalar(ScalarValue::String("projected".into())),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        table.cell(1, "name").unwrap(),
+        Some(&Value::Scalar(ScalarValue::String("projected".to_string())))
+    );
+
+    {
+        let mut selected = table
+            .select_mut(|row| {
+                matches!(
+                    row.get("id"),
+                    Some(Value::Scalar(ScalarValue::Int32(id))) if *id >= 1
+                )
+            })
+            .unwrap();
+        assert_eq!(selected.row_numbers(), &[1, 2]);
+        selected
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("selected".into())),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        table.cell(1, "name").unwrap(),
+        Some(&Value::Scalar(ScalarValue::String("selected".to_string())))
+    );
+
+    {
+        let mut sorted = table.sort_mut(&[("id", SortOrder::Descending)]).unwrap();
+        assert_eq!(sorted.row_numbers(), &[2, 1, 0]);
+        sorted
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("sorted".into())),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        table.cell(2, "name").unwrap(),
+        Some(&Value::Scalar(ScalarValue::String("sorted".to_string())))
+    );
+
+    {
+        let mut sorted = table
+            .sort_by_mut("id", |a, b| match (a, b) {
+                (Value::Scalar(ScalarValue::Int32(a)), Value::Scalar(ScalarValue::Int32(b))) => {
+                    b.cmp(a)
+                }
+                _ => std::cmp::Ordering::Equal,
+            })
+            .unwrap();
+        assert_eq!(sorted.row_numbers(), &[2, 1, 0]);
+        sorted
+            .set_cell(
+                1,
+                "name",
+                Value::Scalar(ScalarValue::String("custom".into())),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        table.cell(1, "name").unwrap(),
+        Some(&Value::Scalar(ScalarValue::String("custom".to_string())))
+    );
+
+    {
+        let mut queried = table.query_mut("SELECT * WHERE id = 0").unwrap();
+        queried
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("queried".into())),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        table.cell(0, "name").unwrap(),
+        Some(&Value::Scalar(ScalarValue::String("queried".to_string())))
+    );
+
+    {
+        let mut queried = table.query_mut("SELECT name WHERE id = 2").unwrap();
+        assert_eq!(queried.column_names(), &["name"]);
+        queried
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("projected_query".into())),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        table.cell(2, "name").unwrap(),
+        Some(&Value::Scalar(ScalarValue::String(
+            "projected_query".to_string()
+        )))
+    );
+
+    let readonly = table.query("SELECT name WHERE id >= 1").unwrap();
+    assert_eq!(readonly.column_names(), &["name"]);
+    assert_eq!(readonly.row_count(), 2);
+
+    let query_err = match table.query("COUNT SELECT *") {
+        Ok(_) => panic!("COUNT SELECT should not produce a RefTable view"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(query_err, TableError::Taql(msg) if msg.contains("only supports SELECT statements"))
+    );
+
+    let query_mut_err = match table.query_mut("COUNT SELECT *") {
+        Ok(_) => panic!("COUNT SELECT should not produce a mutable RefTable view"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(query_mut_err, TableError::Taql(msg) if msg.contains("only supports SELECT statements"))
+    );
+}
+
+#[test]
+fn lazy_materialization_failures_return_storage_errors() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("name", PrimitiveType::String),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(7))),
+            RecordField::new(
+                "name",
+                Value::Scalar(ScalarValue::String("persisted".to_string())),
+            ),
+        ]))
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lazy_error.tbl");
+    table
+        .save(TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan))
+        .unwrap();
+
+    let mut removed = 0usize;
+    for entry in std::fs::read_dir(&path).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("table.f") {
+            std::fs::remove_file(entry.path()).unwrap();
+            removed += 1;
+        }
+    }
+    assert!(removed > 0, "expected row-storage files to remove");
+
+    let reopened = Table::open(TableOptions::new(&path)).unwrap();
+    assert_eq!(reopened.row_count(), 1);
+    assert!(matches!(
+        reopened.row(0),
+        Err(TableError::Storage(msg)) if msg.contains("failed to materialize rows")
+    ));
+    assert!(matches!(
+        reopened.cell(0, "id"),
+        Err(TableError::Storage(msg)) if msg.contains("failed to materialize rows")
+    ));
+
+    let selected = reopened.select_rows(&[0]).unwrap();
+    assert!(matches!(
+        selected.row(0),
+        Err(TableError::Storage(msg)) if msg.contains("failed to materialize rows")
+    ));
+}
+
+#[test]
+fn sort_by_reports_missing_columns_and_orders_defined_before_undefined() {
+    use crate::schema::ColumnOptions;
+
+    let mut table = Table::with_schema(
+        TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap(),
+    );
+    for id in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "id",
+                Value::Scalar(ScalarValue::Int32(id)),
+            )]))
+            .unwrap();
+    }
+    table
+        .add_column(
+            ColumnSchema::scalar("opt", PrimitiveType::Int32)
+                .with_options(ColumnOptions {
+                    direct: false,
+                    undefined: true,
+                })
+                .unwrap(),
+            None,
+        )
+        .unwrap();
+    table
+        .set_cell(0, "opt", Value::Scalar(ScalarValue::Int32(10)))
+        .unwrap();
+    table
+        .set_cell(2, "opt", Value::Scalar(ScalarValue::Int32(5)))
+        .unwrap();
+
+    let sorted = table
+        .sort_by("opt", |a, b| match (a, b) {
+            (Value::Scalar(ScalarValue::Int32(a)), Value::Scalar(ScalarValue::Int32(b))) => {
+                a.cmp(b)
+            }
+            other => panic!("unexpected comparator inputs: {other:?}"),
+        })
+        .unwrap();
+    assert_eq!(sorted.row_numbers(), &[2, 0, 1, 3]);
+
+    let mut persisted = Table::with_schema(
+        TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap(),
+    );
+    for id in 0..64 {
+        persisted
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "id",
+                Value::Scalar(ScalarValue::Int32(id)),
+            )]))
+            .unwrap();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sort_lazy_error.tbl");
+    persisted
+        .save(TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan))
+        .unwrap();
+    for entry in std::fs::read_dir(&path).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().starts_with("table.f") {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+
+    let reopened = Table::open(TableOptions::new(&path)).unwrap();
+    let err = match reopened.sort_by("id", |_, _| std::cmp::Ordering::Equal) {
+        Ok(_) => panic!("sorting should fail when row materialization fails"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, TableError::Storage(message) if message.contains("failed to materialize rows"))
+    );
 }
 
 #[test]
@@ -289,19 +626,19 @@ fn put_column_range_streams_values_without_column_vecs() {
     assert_eq!(written, 2);
     assert_eq!(
         table.cell(0, "name"),
-        Some(&Value::Scalar(ScalarValue::String("x".to_string())))
+        Ok(Some(&Value::Scalar(ScalarValue::String("x".to_string()))))
     );
     assert_eq!(
         table.cell(1, "name"),
-        Some(&Value::Scalar(ScalarValue::String("b".to_string())))
+        Ok(Some(&Value::Scalar(ScalarValue::String("b".to_string()))))
     );
     assert_eq!(
         table.cell(2, "name"),
-        Some(&Value::Scalar(ScalarValue::String("y".to_string())))
+        Ok(Some(&Value::Scalar(ScalarValue::String("y".to_string()))))
     );
     assert_eq!(
         table.cell(3, "name"),
-        Some(&Value::Scalar(ScalarValue::String("d".to_string())))
+        Ok(Some(&Value::Scalar(ScalarValue::String("d".to_string()))))
     );
 }
 
@@ -472,7 +809,7 @@ fn table_schema_round_trips_through_disk_storage() {
     assert_eq!(reopened.schema(), Some(&schema));
     assert_eq!(
         reopened.cell(0, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(42)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
         reopened.keywords().get("observer"),
@@ -510,7 +847,7 @@ fn table_keywords_round_trip_through_disk_storage() {
     assert_eq!(reopened.row_count(), 1);
     assert_eq!(
         reopened.cell(0, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(42)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
         reopened.keywords().get("observer"),
@@ -601,11 +938,11 @@ fn metadata_only_save_updates_keywords_without_rewriting_row_storage() {
     );
     assert_eq!(
         reopened.cell(0, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(42)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
         reopened.cell(0, "data"),
-        Some(&Value::Array(ArrayValue::from_i32_vec(vec![7, 9])))
+        Ok(Some(&Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))))
     );
 
     std::fs::remove_dir_all(&root).expect("cleanup test dir");
@@ -784,19 +1121,19 @@ fn verify_endian_test_table(t: &Table) {
     assert_eq!(t.row_count(), 2);
     assert_eq!(
         t.cell(0, "i32_col"),
-        Some(&Value::Scalar(ScalarValue::Int32(42)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
         t.cell(0, "f64_col"),
-        Some(&Value::Scalar(ScalarValue::Float64(2.78)))
+        Ok(Some(&Value::Scalar(ScalarValue::Float64(2.78))))
     );
     assert_eq!(
         t.cell(0, "str_col"),
-        Some(&Value::Scalar(ScalarValue::String("hello".into())))
+        Ok(Some(&Value::Scalar(ScalarValue::String("hello".into()))))
     );
     assert_eq!(
         t.cell(1, "i32_col"),
-        Some(&Value::Scalar(ScalarValue::Int32(-7)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(-7))))
     );
 }
 
@@ -895,13 +1232,21 @@ fn fixed_shape_indirect_array_round_trips_through_disk() {
             .save(TableOptions::new(&root).with_data_manager(dm))
             .expect("save");
         let reopened = Table::open(TableOptions::new(&root)).expect("open");
-        match reopened.cell(0, "data").expect("row0 data") {
+        match reopened
+            .cell(0, "data")
+            .expect("row0 data")
+            .expect("row0 data defined")
+        {
             Value::Array(ArrayValue::Float64(a)) => {
                 assert_eq!(a.as_slice().unwrap(), &[1.0, 2.0, 3.0])
             }
             other => panic!("unexpected row0 value: {other:?}"),
         }
-        match reopened.cell(1, "data").expect("row1 data") {
+        match reopened
+            .cell(1, "data")
+            .expect("row1 data")
+            .expect("row1 data defined")
+        {
             Value::Array(ArrayValue::Float64(a)) => {
                 assert_eq!(a.as_slice().unwrap(), &[4.0, 5.0, 6.0])
             }
@@ -1047,7 +1392,7 @@ fn add_column_populates_existing_rows() {
     for i in 0..3 {
         assert_eq!(
             table.cell(i, "score"),
-            Some(&Value::Scalar(ScalarValue::Float64(0.0)))
+            Ok(Some(&Value::Scalar(ScalarValue::Float64(0.0))))
         );
     }
 }
@@ -1073,7 +1418,7 @@ fn add_column_round_trips_through_disk() {
         for i in 0..3 {
             assert_eq!(
                 reopened.cell(i, "score"),
-                Some(&Value::Scalar(ScalarValue::Float64(99.5)))
+                Ok(Some(&Value::Scalar(ScalarValue::Float64(99.5))))
             );
         }
         std::fs::remove_dir_all(&root).expect("cleanup");
@@ -1100,7 +1445,7 @@ fn add_column_none_default_with_undefined() {
     assert_eq!(table.schema().unwrap().columns().len(), 3);
     // Rows should not have the new field.
     for i in 0..3 {
-        assert_eq!(table.cell(i, "opt"), None);
+        assert_eq!(table.cell(i, "opt"), Ok(None));
     }
 }
 
@@ -1143,7 +1488,7 @@ fn remove_column_drops_from_all_rows() {
     assert_eq!(table.schema().unwrap().columns().len(), 1);
     assert!(!table.schema().unwrap().contains_column("name"));
     for i in 0..3 {
-        assert_eq!(table.cell(i, "name"), None);
+        assert_eq!(table.cell(i, "name"), Ok(None));
     }
     assert!(table.column_keywords("name").is_none());
 }
@@ -1164,7 +1509,7 @@ fn remove_column_round_trips_through_disk() {
         assert!(!reopened.schema().unwrap().contains_column("name"));
         assert_eq!(
             reopened.cell(0, "id"),
-            Some(&Value::Scalar(ScalarValue::Int32(0)))
+            Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
         );
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
@@ -1192,8 +1537,8 @@ fn rename_column_updates_rows_and_keywords() {
     assert!(table.schema().unwrap().contains_column("label"));
     assert!(!table.schema().unwrap().contains_column("name"));
     for i in 0..3 {
-        assert!(table.cell(i, "label").is_some());
-        assert_eq!(table.cell(i, "name"), None);
+        assert!(table.cell(i, "label").unwrap().is_some());
+        assert_eq!(table.cell(i, "name"), Ok(None));
     }
     assert!(table.column_keywords("label").is_some());
     assert!(table.column_keywords("name").is_none());
@@ -1215,7 +1560,7 @@ fn rename_column_round_trips_through_disk() {
         assert!(!reopened.schema().unwrap().contains_column("name"));
         assert_eq!(
             reopened.cell(0, "label"),
-            Some(&Value::Scalar(ScalarValue::String("row0".into())))
+            Ok(Some(&Value::Scalar(ScalarValue::String("row0".into()))))
         );
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
@@ -1245,15 +1590,15 @@ fn remove_rows_compacts() {
     // Remaining rows should be ids 0, 2, 4
     assert_eq!(
         table.cell(0, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(0)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
         table.cell(1, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(2)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
     assert_eq!(
         table.cell(2, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(4)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(4))))
     );
 }
 
@@ -1272,11 +1617,11 @@ fn remove_rows_round_trips_through_disk() {
         assert_eq!(reopened.row_count(), 2);
         assert_eq!(
             reopened.cell(0, "id"),
-            Some(&Value::Scalar(ScalarValue::Int32(0)))
+            Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
         );
         assert_eq!(
             reopened.cell(1, "id"),
-            Some(&Value::Scalar(ScalarValue::Int32(2)))
+            Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
         );
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
@@ -1316,19 +1661,19 @@ fn insert_row_at_position() {
     assert_eq!(table.row_count(), 4);
     assert_eq!(
         table.cell(0, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(0)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
         table.cell(1, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(99)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(99))))
     );
     assert_eq!(
         table.cell(2, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(1)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(1))))
     );
     assert_eq!(
         table.cell(3, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(2)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
 }
 
@@ -1346,7 +1691,7 @@ fn insert_row_at_end() {
     assert_eq!(table.row_count(), 4);
     assert_eq!(
         table.cell(3, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(99)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(99))))
     );
 }
 
@@ -1677,7 +2022,7 @@ fn memory_table_full_crud_cycle() {
         .unwrap();
     assert_eq!(
         table.cell(0, "name"),
-        Some(&Value::Scalar(ScalarValue::String("ALICE".into())))
+        Ok(Some(&Value::Scalar(ScalarValue::String("ALICE".into()))))
     );
 
     // remove_rows
@@ -1717,7 +2062,7 @@ fn memory_table_save_materializes_to_disk() {
     assert_eq!(reopened.row_count(), 1);
     assert_eq!(
         reopened.cell(0, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(42)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
         reopened.keywords().get("origin"),
@@ -1751,13 +2096,13 @@ fn to_memory_copies_all_data() {
         Value::Scalar(ScalarValue::Int32(99)),
     ));
 
-    let mem = plain.to_memory();
+    let mem = plain.to_memory().unwrap();
     assert!(mem.is_memory());
     assert!(mem.path().is_none());
     assert_eq!(mem.row_count(), 1);
     assert_eq!(
         mem.cell(0, "id"),
-        Some(&Value::Scalar(ScalarValue::Int32(1)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(1))))
     );
     assert_eq!(
         mem.keywords().get("key"),
@@ -1776,7 +2121,7 @@ fn to_memory_from_disk_table() {
     table.save(TableOptions::new(&path)).unwrap();
 
     let disk = Table::open(TableOptions::new(&path)).unwrap();
-    let mem = disk.to_memory();
+    let mem = disk.to_memory().unwrap();
     assert!(mem.is_memory());
     assert!(mem.path().is_none());
     assert_eq!(mem.row_count(), 1);
@@ -1794,14 +2139,16 @@ fn memory_table_sort_and_select() {
     assert_eq!(sorted.row_count(), 3);
     assert_eq!(
         sorted.cell(0, "id").unwrap(),
-        &Value::Scalar(ScalarValue::Int32(1))
+        Some(&Value::Scalar(ScalarValue::Int32(1)))
     );
     drop(sorted);
 
     // Select by predicate.
-    let view = table.select(
-        |row| matches!(row.get("id"), Some(Value::Scalar(ScalarValue::Int32(i))) if *i >= 2),
-    );
+    let view = table
+        .select(
+            |row| matches!(row.get("id"), Some(Value::Scalar(ScalarValue::Int32(i))) if *i >= 2),
+        )
+        .unwrap();
     assert_eq!(view.row_count(), 2);
 }
 
@@ -1906,7 +2253,7 @@ fn forward_column_round_trip() {
     assert!(reopened.is_virtual_column("value"));
     for (i, expected) in [1.5, 2.5, 3.5].iter().enumerate() {
         let val = reopened.cell(i, "value").unwrap();
-        match val {
+        match val.unwrap() {
             Value::Scalar(ScalarValue::Float64(v)) => {
                 assert!(
                     (v - expected).abs() < 1e-10,
@@ -1957,7 +2304,7 @@ fn scaled_array_round_trip() {
     for (i, stored) in [1i32, 2, 3].iter().enumerate() {
         let expected = (*stored as f64) * scale + offset;
         let val = reopened.cell(i, "virtual_col").unwrap();
-        match val {
+        match val.unwrap() {
             Value::Scalar(ScalarValue::Float64(v)) => {
                 assert!(
                     (v - expected).abs() < 1e-10,
@@ -2028,13 +2375,13 @@ fn multi_dm_round_trip() {
     assert!(reopened.is_virtual_column("scaled_col"));
 
     // stored_int should be 5
-    match reopened.cell(0, "stored_int").unwrap() {
+    match reopened.cell(0, "stored_int").unwrap().unwrap() {
         Value::Scalar(ScalarValue::Int32(v)) => assert_eq!(*v, 5),
         other => panic!("expected Int32(5), got {other:?}"),
     }
 
     // fwd_col should be 42.0 (from base table)
-    match reopened.cell(0, "fwd_col").unwrap() {
+    match reopened.cell(0, "fwd_col").unwrap().unwrap() {
         Value::Scalar(ScalarValue::Float64(v)) => {
             assert!((v - 42.0).abs() < 1e-10, "fwd_col: expected 42.0, got {v}");
         }
@@ -2042,7 +2389,7 @@ fn multi_dm_round_trip() {
     }
 
     // scaled_col should be 5 * 3.0 + 1.0 = 16.0
-    match reopened.cell(0, "scaled_col").unwrap() {
+    match reopened.cell(0, "scaled_col").unwrap().unwrap() {
         Value::Scalar(ScalarValue::Float64(v)) => {
             assert!(
                 (v - 16.0).abs() < 1e-10,
@@ -2123,7 +2470,7 @@ fn table_info_preserved_by_to_memory() {
         table_type: "Catalog".to_string(),
         sub_type: "".to_string(),
     });
-    let mem = table.to_memory();
+    let mem = table.to_memory().unwrap();
     assert_eq!(mem.info().table_type, "Catalog");
 }
 
@@ -2356,6 +2703,17 @@ fn row_set_ops_with_empty() {
     assert_eq!(Table::row_difference(&[5, 3], &[]), vec![3, 5]);
 }
 
+#[test]
+fn row_set_operations_cover_greater_and_unsorted_paths() {
+    assert_eq!(Table::row_intersection(&[2, 4], &[1, 2]), vec![2]);
+    assert_eq!(Table::row_difference(&[2, 4], &[1, 2]), vec![4]);
+    assert_eq!(
+        Table::row_intersection(&[4, 2, 2, 1], &[3, 4, 2]),
+        vec![2, 4]
+    );
+    assert_eq!(Table::row_difference(&[4, 2, 2, 1], &[4, 3]), vec![1, 2]);
+}
+
 // -------------------------------------------------------------------
 // NoSort iteration tests
 // -------------------------------------------------------------------
@@ -2499,7 +2857,7 @@ fn put_cell_slice_2d() {
         .put_cell_slice("data", 0, &slicer, &ArrayValue::Float64(patch))
         .unwrap();
 
-    match table.cell(0, "data").unwrap() {
+    match table.cell(0, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a[[0, 0]], 0.0); // untouched
             assert_eq!(a[[1, 0]], 99.0); // patched
@@ -2559,6 +2917,98 @@ fn get_cell_slice_scalar_cell_fails() {
 
     let slicer = Slicer::contiguous(vec![0], vec![1]).unwrap();
     assert!(table.get_cell_slice("x", 0, &slicer).is_err());
+}
+
+#[test]
+fn slice_errors_cover_missing_columns_and_invalid_bounds() {
+    use super::Slicer;
+    use casacore_types::ArrayD;
+    use ndarray::IxDyn;
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![4]),
+        ColumnSchema::scalar("x", PrimitiveType::Int32),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(IxDyn(&[4]), vec![0, 1, 2, 3]).unwrap(),
+                )),
+            ),
+            RecordField::new("x", Value::Scalar(ScalarValue::Int32(42))),
+        ]))
+        .unwrap();
+
+    let slicer = Slicer::contiguous(vec![0], vec![2]).unwrap();
+    let missing_read = table.get_cell_slice("missing", 0, &slicer).unwrap_err();
+    assert!(matches!(
+        missing_read,
+        TableError::ColumnNotFound {
+            row_index: 0,
+            ref column
+        } if column == "missing"
+    ));
+
+    let missing_write = table
+        .put_cell_slice(
+            "missing",
+            0,
+            &slicer,
+            &ArrayValue::Int32(ArrayD::from_shape_vec(IxDyn(&[2]), vec![9, 9]).unwrap()),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        missing_write,
+        TableError::ColumnNotFound {
+            row_index: 0,
+            ref column
+        } if column == "missing"
+    ));
+
+    let scalar_write = table
+        .put_cell_slice(
+            "x",
+            0,
+            &slicer,
+            &ArrayValue::Int32(ArrayD::from_shape_vec(IxDyn(&[2]), vec![9, 9]).unwrap()),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        scalar_write,
+        TableError::CellNotArray { row: 0, ref column } if column == "x"
+    ));
+
+    let mismatch = table
+        .get_cell_slice(
+            "data",
+            0,
+            &Slicer::contiguous(vec![0, 0], vec![1, 1]).unwrap(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        mismatch,
+        TableError::SlicerDimensionMismatch {
+            start_ndim: 2,
+            end_ndim: 1,
+            stride_ndim: 2
+        }
+    ));
+
+    let out_of_bounds = table
+        .get_cell_slice("data", 0, &Slicer::contiguous(vec![3], vec![5]).unwrap())
+        .unwrap_err();
+    assert!(matches!(
+        out_of_bounds,
+        TableError::SlicerOutOfBounds {
+            axis: 0,
+            index: 5,
+            extent: 4
+        }
+    ));
 }
 
 #[test]
@@ -2637,21 +3087,21 @@ fn put_column_slice_multiple_rows() {
         .unwrap();
 
     // Row 0: [0, 11, 11, 0]
-    match table.cell(0, "data").unwrap() {
+    match table.cell(0, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a.as_slice().unwrap(), &[0.0, 11.0, 11.0, 0.0]);
         }
         other => panic!("unexpected {other:?}"),
     }
     // Row 1: untouched
-    match table.cell(1, "data").unwrap() {
+    match table.cell(1, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a.as_slice().unwrap(), &[0.0, 0.0, 0.0, 0.0]);
         }
         other => panic!("unexpected {other:?}"),
     }
     // Row 2: [0, 22, 22, 0]
-    match table.cell(2, "data").unwrap() {
+    match table.cell(2, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a.as_slice().unwrap(), &[0.0, 22.0, 22.0, 0.0]);
         }
@@ -2690,6 +3140,158 @@ fn put_column_slice_length_mismatch() {
     assert!(result.is_err());
 }
 
+#[test]
+fn slice_helpers_cover_remaining_array_variants() {
+    use super::Slicer;
+    use casacore_types::{ArrayD, Complex32, Complex64};
+    use ndarray::IxDyn;
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("c32", PrimitiveType::Complex32, vec![2]),
+        ColumnSchema::array_fixed("c64", PrimitiveType::Complex64, vec![2]),
+        ColumnSchema::array_fixed("text", PrimitiveType::String, vec![2]),
+        ColumnSchema::array_fixed("ints", PrimitiveType::Int32, vec![2]),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new(
+                "c32",
+                Value::Array(ArrayValue::Complex32(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[2]),
+                        vec![Complex32::new(1.0, 2.0), Complex32::new(3.0, 4.0)],
+                    )
+                    .unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "c64",
+                Value::Array(ArrayValue::Complex64(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[2]),
+                        vec![Complex64::new(5.0, 6.0), Complex64::new(7.0, 8.0)],
+                    )
+                    .unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "text",
+                Value::Array(ArrayValue::String(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[2]),
+                        vec!["alpha".to_string(), "beta".to_string()],
+                    )
+                    .unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "ints",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(IxDyn(&[2]), vec![1, 2]).unwrap(),
+                )),
+            ),
+        ]))
+        .unwrap();
+
+    let slicer = Slicer::contiguous(vec![0], vec![2]).unwrap();
+
+    match table.get_cell_slice("c32", 0, &slicer).unwrap() {
+        Value::Array(ArrayValue::Complex32(values)) => {
+            assert_eq!(values[[1]], Complex32::new(3.0, 4.0));
+        }
+        other => panic!("unexpected sliced complex32 value: {other:?}"),
+    }
+
+    match table.get_cell_slice("c64", 0, &slicer).unwrap() {
+        Value::Array(ArrayValue::Complex64(values)) => {
+            assert_eq!(values[[0]], Complex64::new(5.0, 6.0));
+        }
+        other => panic!("unexpected sliced complex64 value: {other:?}"),
+    }
+
+    match table.get_cell_slice("text", 0, &slicer).unwrap() {
+        Value::Array(ArrayValue::String(values)) => {
+            assert_eq!(values[[1]], "beta");
+        }
+        other => panic!("unexpected sliced string value: {other:?}"),
+    }
+
+    table
+        .put_cell_slice(
+            "c32",
+            0,
+            &slicer,
+            &ArrayValue::Complex32(
+                ArrayD::from_shape_vec(
+                    IxDyn(&[2]),
+                    vec![Complex32::new(9.0, 1.0), Complex32::new(8.0, 2.0)],
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+    match table.cell(0, "c32").unwrap().unwrap() {
+        Value::Array(ArrayValue::Complex32(values)) => {
+            assert_eq!(values[[0]], Complex32::new(9.0, 1.0));
+        }
+        other => panic!("unexpected put complex32 value: {other:?}"),
+    }
+
+    table
+        .put_cell_slice(
+            "c64",
+            0,
+            &slicer,
+            &ArrayValue::Complex64(
+                ArrayD::from_shape_vec(
+                    IxDyn(&[2]),
+                    vec![Complex64::new(6.0, 5.0), Complex64::new(8.0, 7.0)],
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+    match table.cell(0, "c64").unwrap().unwrap() {
+        Value::Array(ArrayValue::Complex64(values)) => {
+            assert_eq!(values[[1]], Complex64::new(8.0, 7.0));
+        }
+        other => panic!("unexpected put complex64 value: {other:?}"),
+    }
+
+    table
+        .put_cell_slice(
+            "text",
+            0,
+            &slicer,
+            &ArrayValue::String(
+                ArrayD::from_shape_vec(IxDyn(&[2]), vec!["delta".to_string(), "gamma".to_string()])
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    match table.cell(0, "text").unwrap().unwrap() {
+        Value::Array(ArrayValue::String(values)) => {
+            assert_eq!(values[[0]], "delta");
+        }
+        other => panic!("unexpected put string value: {other:?}"),
+    }
+
+    table
+        .put_cell_slice(
+            "ints",
+            0,
+            &slicer,
+            &ArrayValue::Float64(ArrayD::from_shape_vec(IxDyn(&[2]), vec![9.0, 9.0]).unwrap()),
+        )
+        .unwrap();
+    match table.cell(0, "ints").unwrap().unwrap() {
+        Value::Array(ArrayValue::Int32(values)) => assert_eq!(values.as_slice().unwrap(), &[1, 2]),
+        other => panic!("unexpected mismatch target value: {other:?}"),
+    }
+}
+
 // ---- Row copy and fill tests ----
 
 #[test]
@@ -2721,7 +3323,7 @@ fn copy_rows_appends_all() {
     assert_eq!(dst.row_count(), 3);
     assert_eq!(
         dst.cell(2, "x"),
-        Some(&Value::Scalar(ScalarValue::Int32(2)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
 }
 
@@ -2761,11 +3363,11 @@ fn copy_rows_with_mapping_selects_rows() {
     assert_eq!(dst.row_count(), 2);
     assert_eq!(
         dst.cell(0, "x"),
-        Some(&Value::Scalar(ScalarValue::Int32(30)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(30))))
     );
     assert_eq!(
         dst.cell(1, "x"),
-        Some(&Value::Scalar(ScalarValue::Int32(10)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(10))))
     );
 }
 
@@ -2811,7 +3413,7 @@ fn fill_column_sets_all_cells() {
     for i in 0..3 {
         assert_eq!(
             table.cell(i, "x"),
-            Some(&Value::Scalar(ScalarValue::Int32(99)))
+            Ok(Some(&Value::Scalar(ScalarValue::Int32(99))))
         );
     }
 }
@@ -2853,19 +3455,19 @@ fn fill_column_range_sets_subset() {
 
     assert_eq!(
         table.cell(0, "x"),
-        Some(&Value::Scalar(ScalarValue::Int32(0)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
         table.cell(1, "x"),
-        Some(&Value::Scalar(ScalarValue::Int32(77)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(77))))
     );
     assert_eq!(
         table.cell(2, "x"),
-        Some(&Value::Scalar(ScalarValue::Int32(0)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
         table.cell(3, "x"),
-        Some(&Value::Scalar(ScalarValue::Int32(77)))
+        Ok(Some(&Value::Scalar(ScalarValue::Int32(77))))
     );
 }
 

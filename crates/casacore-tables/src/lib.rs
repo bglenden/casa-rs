@@ -254,7 +254,7 @@ pub mod taql;
 pub use concat_table::ConcatTable;
 pub use indexing::ColumnsIndex;
 pub use lock::{ExternalLockSync, LockMode, LockOptions, LockType};
-pub use ref_table::RefTable;
+pub use ref_table::{RefTable, RefTableMut};
 pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
 };

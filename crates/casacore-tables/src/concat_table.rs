@@ -204,8 +204,12 @@ impl ConcatTable {
     ///
     /// The global index spans all constituent tables: rows `0..n₀` come from
     /// the first table, `n₀..n₀+n₁` from the second, and so on.
-    pub fn row(&self, index: usize) -> Option<&RecordValue> {
-        let (table_idx, local_row) = self.rows.map_row(index)?;
+    pub fn row(&self, index: usize) -> Result<&RecordValue, TableError> {
+        let (table_idx, local_row) =
+            self.rows.map_row(index).ok_or(TableError::RowOutOfBounds {
+                row_index: index,
+                row_count: self.row_count(),
+            })?;
         self.tables[table_idx].row(local_row)
     }
 
@@ -213,17 +217,12 @@ impl ConcatTable {
     ///
     /// Returns an error if the column name does not exist in the schema or
     /// if the row index is out of range.
-    pub fn cell(&self, row: usize, column: &str) -> Result<&Value, TableError> {
+    pub fn cell(&self, row: usize, column: &str) -> Result<Option<&Value>, TableError> {
         let (table_idx, local_row) = self.rows.map_row(row).ok_or(TableError::RowOutOfBounds {
             row_index: row,
             row_count: self.row_count(),
         })?;
-        self.tables[table_idx]
-            .cell(local_row, column)
-            .ok_or_else(|| TableError::ColumnNotFound {
-                row_index: local_row,
-                column: column.to_string(),
-            })
+        self.tables[table_idx].cell(local_row, column)
     }
 
     /// Saves this concatenated table to disk in C++-compatible format.
@@ -279,8 +278,8 @@ impl ConcatTable {
         let mut all_rows = Vec::with_capacity(self.row_count());
         let mut all_undef = Vec::with_capacity(self.row_count());
         for table in &self.tables {
-            all_rows.extend(table.rows().iter().cloned());
-            all_undef.extend(table.undefined_cells().iter().cloned());
+            all_rows.extend(table.rows()?.iter().cloned());
+            all_undef.extend(table.undefined_cells()?.iter().cloned());
         }
 
         let snapshot = StorageSnapshot {
@@ -376,15 +375,15 @@ mod tests {
 
         assert_eq!(
             concat.cell(0, "id").unwrap(),
-            &Value::Scalar(ScalarValue::Int32(0))
+            Some(&Value::Scalar(ScalarValue::Int32(0)))
         );
         assert_eq!(
             concat.cell(3, "id").unwrap(),
-            &Value::Scalar(ScalarValue::Int32(10))
+            Some(&Value::Scalar(ScalarValue::Int32(10)))
         );
         assert_eq!(
             concat.cell(5, "name").unwrap(),
-            &Value::Scalar(ScalarValue::String("row_12".to_string()))
+            Some(&Value::Scalar(ScalarValue::String("row_12".to_string())))
         );
     }
 
@@ -415,7 +414,7 @@ mod tests {
         for i in 0..5 {
             assert_eq!(
                 concat.cell(i, "id").unwrap(),
-                &Value::Scalar(ScalarValue::Int32(i as i32))
+                Some(&Value::Scalar(ScalarValue::Int32(i as i32)))
             );
         }
     }
@@ -432,19 +431,19 @@ mod tests {
         // Verify dispatch to each table.
         assert_eq!(
             concat.cell(2, "id").unwrap(),
-            &Value::Scalar(ScalarValue::Int32(2))
+            Some(&Value::Scalar(ScalarValue::Int32(2)))
         );
         assert_eq!(
             concat.cell(3, "id").unwrap(),
-            &Value::Scalar(ScalarValue::Int32(10))
+            Some(&Value::Scalar(ScalarValue::Int32(10)))
         );
         assert_eq!(
             concat.cell(5, "id").unwrap(),
-            &Value::Scalar(ScalarValue::Int32(20))
+            Some(&Value::Scalar(ScalarValue::Int32(20)))
         );
         assert_eq!(
             concat.cell(8, "id").unwrap(),
-            &Value::Scalar(ScalarValue::Int32(23))
+            Some(&Value::Scalar(ScalarValue::Int32(23)))
         );
     }
 
@@ -476,7 +475,7 @@ mod tests {
         for (i, &expected) in expected_ids.iter().enumerate() {
             assert_eq!(
                 reopened.cell(i, "id").unwrap(),
-                &Value::Scalar(ScalarValue::Int32(expected)),
+                Some(&Value::Scalar(ScalarValue::Int32(expected))),
                 "row {i} id mismatch"
             );
         }
@@ -520,7 +519,7 @@ mod tests {
         for i in 0..5 {
             assert_eq!(
                 reopened.cell(i, "id").unwrap(),
-                &Value::Scalar(ScalarValue::Int32(i as i32)),
+                Some(&Value::Scalar(ScalarValue::Int32(i as i32))),
                 "row {i} id mismatch after deep copy"
             );
         }
