@@ -47,6 +47,7 @@ pub mod columns;
 pub mod derived;
 pub mod error;
 pub mod grouping;
+pub mod listobs;
 mod metadata;
 pub mod ms;
 pub mod schema;
@@ -60,6 +61,7 @@ pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
 pub use error::{MsError, MsResult};
+pub use listobs::{ListObsOptions, ListObsOutputFormat, ListObsSummary};
 pub use ms::MeasurementSet;
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};

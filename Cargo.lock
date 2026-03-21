@@ -135,6 +135,8 @@ dependencies = [
  "casacore-types",
  "ndarray",
  "num-complex",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]

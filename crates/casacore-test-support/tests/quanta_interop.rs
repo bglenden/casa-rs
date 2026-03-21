@@ -4,9 +4,11 @@
 #![cfg(has_casacore_cpp)]
 
 use casacore_test_support::quanta_interop::{
-    cpp_conformant, cpp_parse_factor, cpp_parse_full, cpp_qc_c, cpp_qc_constant, cpp_qc_h,
+    cpp_conformant, cpp_mvangle_format_angle, cpp_mvangle_format_angle_dig2,
+    cpp_mvangle_format_time, cpp_mvtime_format_dmy, cpp_mvtime_format_dmy_date,
+    cpp_mvtime_format_time, cpp_parse_factor, cpp_parse_full, cpp_qc_c, cpp_qc_constant, cpp_qc_h,
 };
-use casacore_types::quanta::{Unit, constants};
+use casacore_types::quanta::{MvAngle, MvTime, Unit, constants};
 
 fn assert_close(a: f64, b: f64, tol: f64, label: &str) {
     let scale = a.abs().max(b.abs()).max(1e-30);
@@ -261,5 +263,64 @@ fn cross_validate_all_qc_constants() {
                 rust_dims, cpp_dims
             );
         }
+    }
+}
+
+#[test]
+fn cross_validate_mvangle_formatting_subset() {
+    let cases = [
+        (
+            MvAngle::from_radians(-0.25 * std::f64::consts::TAU)
+                .normalized(0.0)
+                .format_time(6),
+            cpp_mvangle_format_time(-0.25 * std::f64::consts::TAU, 0.0, 6).unwrap(),
+            "ra_time_wrap",
+        ),
+        (
+            MvAngle::from_radians((-12.5_f64).to_radians()).format_angle_dig2(5),
+            cpp_mvangle_format_angle_dig2((-12.5_f64).to_radians(), 5).unwrap(),
+            "declination_dig2",
+        ),
+        (
+            MvAngle::from_radians(123.5_f64.to_radians()).format_angle(1),
+            cpp_mvangle_format_angle(123.5_f64.to_radians(), 1).unwrap(),
+            "longitude_angle",
+        ),
+    ];
+
+    for (rust, cpp, label) in cases {
+        assert_eq!(rust, cpp, "{label}: rust={rust:?} cpp={cpp:?}");
+    }
+}
+
+#[test]
+fn cross_validate_mvtime_formatting_subset() {
+    let j2000 = 51_544.5;
+    let rounded_boundary = 51_544.0 + (86_399.96 / 86_400.0);
+    let cases = [
+        (
+            MvTime::from_mjd_days(j2000).format_dmy(1),
+            cpp_mvtime_format_dmy(j2000, 1).unwrap(),
+            "j2000_dmy",
+        ),
+        (
+            MvTime::from_mjd_days(j2000).format_time(1),
+            cpp_mvtime_format_time(j2000, 1).unwrap(),
+            "j2000_time",
+        ),
+        (
+            MvTime::from_mjd_days(j2000).format_dmy_date(),
+            cpp_mvtime_format_dmy_date(j2000).unwrap(),
+            "j2000_date",
+        ),
+        (
+            MvTime::from_mjd_days(rounded_boundary).format_dmy(1),
+            cpp_mvtime_format_dmy(rounded_boundary, 1).unwrap(),
+            "round_day_boundary",
+        ),
+    ];
+
+    for (rust, cpp, label) in cases {
+        assert_eq!(rust, cpp, "{label}: rust={rust:?} cpp={cpp:?}");
     }
 }

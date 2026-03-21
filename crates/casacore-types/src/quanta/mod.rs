@@ -8,6 +8,10 @@
 //! - **[`Unit`]** — a validated unit string with cached [`UnitVal`].
 //! - **[`Quantity`]** — a numeric value paired with a [`Unit`] (equivalent to
 //!   C++ `Quantum<Double>`).
+//! - **[`MvAngle`]** — angle normalization and sexagesimal formatting
+//!   (equivalent to the formatting subset of C++ `MVAngle`).
+//! - **[`MvTime`]** — calendar/time formatting for Modified Julian Date values
+//!   (equivalent to the formatting subset of C++ `MVTime`).
 //! - **[`constants`]** — physical constants as [`Quantity`] values (equivalent
 //!   to C++ `QC`).
 //!
@@ -29,6 +33,7 @@
 //! assert!((v_ms - 500.0).abs() < 1e-10);
 //! ```
 
+pub mod angle;
 pub mod constants;
 pub mod dim;
 pub mod error;
@@ -36,12 +41,15 @@ pub mod parser;
 pub mod quantity;
 pub mod registry;
 pub mod registry_data;
+pub mod time;
 pub mod unit;
 pub mod unit_val;
 
 // Re-exports for convenience.
+pub use angle::MvAngle;
 pub use dim::{Dimension, UnitDim};
 pub use error::UnitError;
 pub use quantity::Quantity;
+pub use time::MvTime;
 pub use unit::Unit;
 pub use unit_val::UnitVal;

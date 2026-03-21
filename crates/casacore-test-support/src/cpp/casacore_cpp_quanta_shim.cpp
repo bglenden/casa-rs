@@ -7,6 +7,8 @@
 #include <casacore/casa/Quanta/UnitVal.h>
 #include <casacore/casa/Quanta/UnitMap.h>
 #include <casacore/casa/Quanta/QC.h>
+#include <casacore/casa/Quanta/MVAngle.h>
+#include <casacore/casa/Quanta/MVTime.h>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -243,6 +245,65 @@ int quanta_shim_bench_convert(double value, const char* from_unit,
     }
     auto end = std::chrono::high_resolution_clock::now();
     *elapsed_ns_out = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    return 0;
+}
+
+int quanta_shim_mvangle_format_angle(
+    double radians, int second_decimals, char* out_buf, int out_buf_len)
+{
+    casacore::MVAngle angle(radians);
+    auto rendered = angle.string(casacore::MVAngle::ANGLE, 6 + second_decimals);
+    std::strncpy(out_buf, rendered.c_str(), out_buf_len - 1);
+    out_buf[out_buf_len - 1] = '\0';
+    return 0;
+}
+
+int quanta_shim_mvangle_format_angle_dig2(
+    double radians, int second_decimals, char* out_buf, int out_buf_len)
+{
+    casacore::MVAngle angle(radians);
+    auto rendered = angle.string(casacore::MVAngle::DIG2, 6 + second_decimals);
+    std::strncpy(out_buf, rendered.c_str(), out_buf_len - 1);
+    out_buf[out_buf_len - 1] = '\0';
+    return 0;
+}
+
+int quanta_shim_mvangle_format_time(
+    double radians, double lower_turns, int second_decimals, char* out_buf, int out_buf_len)
+{
+    casacore::MVAngle angle(radians);
+    auto rendered = angle(lower_turns).string(casacore::MVAngle::TIME, 6 + second_decimals);
+    std::strncpy(out_buf, rendered.c_str(), out_buf_len - 1);
+    out_buf[out_buf_len - 1] = '\0';
+    return 0;
+}
+
+int quanta_shim_mvtime_format_dmy(
+    double mjd_days, int second_decimals, char* out_buf, int out_buf_len)
+{
+    casacore::MVTime time(mjd_days);
+    auto rendered = time.string(casacore::MVTime::DMY, 6 + second_decimals);
+    std::strncpy(out_buf, rendered.c_str(), out_buf_len - 1);
+    out_buf[out_buf_len - 1] = '\0';
+    return 0;
+}
+
+int quanta_shim_mvtime_format_time(
+    double mjd_days, int second_decimals, char* out_buf, int out_buf_len)
+{
+    casacore::MVTime time(mjd_days);
+    auto rendered = time.string(casacore::MVTime::TIME, 6 + second_decimals);
+    std::strncpy(out_buf, rendered.c_str(), out_buf_len - 1);
+    out_buf[out_buf_len - 1] = '\0';
+    return 0;
+}
+
+int quanta_shim_mvtime_format_dmy_date(double mjd_days, char* out_buf, int out_buf_len) {
+    casacore::MVTime time(mjd_days);
+    auto rendered = time.string(
+        casacore::MVTime::formatTypes(casacore::MVTime::DMY + casacore::MVTime::NO_TIME), 0);
+    std::strncpy(out_buf, rendered.c_str(), out_buf_len - 1);
+    out_buf[out_buf_len - 1] = '\0';
     return 0;
 }
 

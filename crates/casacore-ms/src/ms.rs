@@ -163,6 +163,24 @@ impl MeasurementSet {
         validate::validate_ms(&self.main, &self.subtables)
     }
 
+    /// Build a structured `listobs`-style summary for this MeasurementSet.
+    ///
+    /// The returned summary is richer than CASA's returned `listobs` Python
+    /// dictionary and is intended to drive both human-readable text output and
+    /// machine-readable JSON without reparsing formatted text.
+    pub fn listobs_summary(&self) -> MsResult<crate::listobs::ListObsSummary> {
+        crate::listobs::ListObsSummary::from_ms(self)
+    }
+
+    /// Build a structured `listobs`-style summary using explicit task-style
+    /// options.
+    pub fn listobs_summary_with_options(
+        &self,
+        options: &crate::listobs::ListObsOptions,
+    ) -> MsResult<crate::listobs::ListObsSummary> {
+        crate::listobs::ListObsSummary::from_ms_with_options(self, options)
+    }
+
     /// Number of rows in the main table.
     pub fn row_count(&self) -> usize {
         self.main.row_count()

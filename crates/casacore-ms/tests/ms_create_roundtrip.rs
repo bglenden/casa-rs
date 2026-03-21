@@ -174,17 +174,17 @@ fn selection_round_trip() {
 
     // Select field 0
     let sel = MsSelection::new().field(&[0]);
-    let rows = sel.apply(&mut ms).unwrap();
+    let rows = sel.apply(&ms).unwrap();
     assert_eq!(rows.len(), 2);
 
     // Select scan 2
     let sel = MsSelection::new().scan(&[2]);
-    let rows = sel.apply(&mut ms).unwrap();
+    let rows = sel.apply(&ms).unwrap();
     assert_eq!(rows.len(), 2);
 
     // Combined: field 1 AND scan 1
     let sel = MsSelection::new().field(&[1]).scan(&[1]);
-    let rows = sel.apply(&mut ms).unwrap();
+    let rows = sel.apply(&ms).unwrap();
     assert_eq!(rows.len(), 1);
 }
 

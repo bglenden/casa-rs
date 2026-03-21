@@ -25,6 +25,9 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - API docs belong in source (`///`, `//!`) and are rendered by `cargo doc`.
 - Prefer red/green development: add failing regression test first.
 - C++-dependent tests must skip cleanly when `pkg-config casacore` is missing.
+- Shared CASA dataset root defaults to `../casatestdata`.
+- Override the shared dataset root with `CASA_RS_TESTDATA_ROOT`.
+- Do not treat `/private/tmp` as the canonical home for shared CASA datasets.
 - If C++ has a demo for a supported module, provide a Rust equivalent demo.
 - When implementing new casacore-c++ functionality, document all public types and
   methods at a level comparable to the C++ doxygen in the corresponding .h files.

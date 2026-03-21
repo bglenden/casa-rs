@@ -75,7 +75,7 @@ fn main() {
         let sel = MsSelection::new().field(&[0, 1]);
         println!("1. Field selection: fields [0, 1]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!("   Selected rows: {} (expected 24)\n", rows.len());
     }
 
@@ -84,7 +84,7 @@ fn main() {
         let sel = MsSelection::new().scan(&[2]);
         println!("2. Scan selection: scan [2]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!("   Selected rows: {} (expected 18)\n", rows.len());
     }
 
@@ -92,7 +92,7 @@ fn main() {
     {
         let sel = MsSelection::new().antenna_name(&["VLA01"]);
         println!("3. Antenna selection by name: [VLA01]");
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!(
             "   Selected rows: {} (expected 24, baselines 0-1 and 0-2)\n",
             rows.len()
@@ -104,7 +104,7 @@ fn main() {
         let sel = MsSelection::new().antenna(&[2]);
         println!("4. Antenna selection by ID: [2]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!(
             "   Selected rows: {} (expected 24, baselines 0-2 and 1-2)\n",
             rows.len()
@@ -119,7 +119,7 @@ fn main() {
         let sel = MsSelection::new().time_range(t_start, t_end);
         println!("5. Time range selection: [{t_start:.0}, {t_end:.0}]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!("   Selected rows: {}\n", rows.len());
     }
 
@@ -128,7 +128,7 @@ fn main() {
         let sel = MsSelection::new().field(&[0]).scan(&[1]);
         println!("6. Combined selection: field=0 AND scan=1");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!("   Selected rows: {} (expected 6)\n", rows.len());
     }
 
@@ -137,7 +137,7 @@ fn main() {
         let sel = MsSelection::new().baseline(&[(0, 1)]);
         println!("7. Baseline selection: [(0,1)]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!("   Selected rows: {} (expected 12)\n", rows.len());
     }
 
@@ -146,7 +146,7 @@ fn main() {
         let sel = MsSelection::new().taql("FIELD_ID == 2 AND SCAN_NUMBER == 2");
         println!("8. Raw TaQL: FIELD_ID == 2 AND SCAN_NUMBER == 2");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&mut ms).expect("apply");
+        let rows = sel.apply(&ms).expect("apply");
         println!("   Selected rows: {} (expected 6)\n", rows.len());
     }
 

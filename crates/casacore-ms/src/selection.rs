@@ -2,8 +2,8 @@
 //! Builder-pattern MS selection that translates to TaQL queries.
 //!
 //! [`MsSelection`] lets callers build up selection criteria (field, spectral
-//! window, antenna, time range, scan, observation) and then apply them to a
-//! [`MeasurementSet`] via TaQL WHERE clauses.
+//! window, antenna, time range, scan, observation, array) and then apply them
+//! to a [`MeasurementSet`] via TaQL WHERE clauses.
 //!
 //! # Example
 //!
@@ -13,6 +13,7 @@
 //! let sel = MsSelection::new()
 //!     .field(&[0, 1])
 //!     .spw(&[0])
+//!     .state(&[0])
 //!     .scan(&[1, 2, 3]);
 //! assert!(sel.to_taql().contains("FIELD_ID"));
 //! ```
@@ -26,21 +27,24 @@ use crate::ms::MeasurementSet;
 ///
 /// Each method adds a constraint. Constraints are ANDed together when
 /// converted to TaQL. Call [`to_taql`](MsSelection::to_taql) to get the
-/// WHERE clause, or [`apply`](MsSelection::apply) to execute it against
-/// a [`MeasurementSet`].
+/// WHERE clause, or [`apply`](MsSelection::apply) to execute it against a
+/// [`MeasurementSet`].
 ///
 /// Cf. C++ `MSSelection`.
 #[derive(Debug, Clone, Default)]
 pub struct MsSelection {
     field_ids: Vec<i32>,
     spw_ids: Vec<i32>,
+    data_desc_ids: Vec<i32>,
     antenna_ids: Vec<i32>,
     antenna_names: Vec<String>,
     baselines: Vec<(i32, i32)>,
     time_range: Option<(f64, f64)>,
     scan_numbers: Vec<i32>,
+    state_ids: Vec<i32>,
     observation_ids: Vec<i32>,
-    taql_expr: Option<String>,
+    array_ids: Vec<i32>,
+    taql_exprs: Vec<String>,
 }
 
 impl MsSelection {
@@ -62,6 +66,12 @@ impl MsSelection {
     /// direct filter on DATA_DESC_ID.
     pub fn spw(mut self, ids: &[i32]) -> Self {
         self.spw_ids.extend_from_slice(ids);
+        self
+    }
+
+    /// Select rows matching the given DATA_DESC_IDs directly.
+    pub fn data_description(mut self, ids: &[i32]) -> Self {
+        self.data_desc_ids.extend_from_slice(ids);
         self
     }
 
@@ -96,15 +106,27 @@ impl MsSelection {
         self
     }
 
+    /// Select rows matching the given STATE_IDs.
+    pub fn state(mut self, ids: &[i32]) -> Self {
+        self.state_ids.extend_from_slice(ids);
+        self
+    }
+
     /// Select rows matching the given OBSERVATION_IDs.
     pub fn observation(mut self, ids: &[i32]) -> Self {
         self.observation_ids.extend_from_slice(ids);
         self
     }
 
+    /// Select rows matching the given ARRAY_IDs.
+    pub fn array(mut self, ids: &[i32]) -> Self {
+        self.array_ids.extend_from_slice(ids);
+        self
+    }
+
     /// Add a raw TaQL WHERE expression (ANDed with other criteria).
     pub fn taql(mut self, expr: &str) -> Self {
-        self.taql_expr = Some(expr.to_string());
+        self.taql_exprs.push(expr.to_string());
         self
     }
 
@@ -124,7 +146,7 @@ impl MsSelection {
     ///
     /// If antenna names were specified, they are resolved against the ANTENNA
     /// subtable first.
-    pub fn apply(&self, ms: &mut MeasurementSet) -> MsResult<Vec<usize>> {
+    pub fn apply(&self, ms: &MeasurementSet) -> MsResult<Vec<usize>> {
         let mut sel = self.clone();
 
         // Resolve antenna names to IDs
@@ -166,7 +188,7 @@ impl MsSelection {
             }
         };
 
-        let view = ms.main_table_mut().query(&taql)?;
+        let view = ms.main_table().query(&taql)?;
         Ok(view.row_numbers().to_vec())
     }
 
@@ -180,6 +202,13 @@ impl MsSelection {
         if !self.spw_ids.is_empty() {
             // Direct DATA_DESC_ID filter (simple case)
             clauses.push(format!("DATA_DESC_ID IN [{}]", int_list(&self.spw_ids)));
+        }
+
+        if !self.data_desc_ids.is_empty() {
+            clauses.push(format!(
+                "DATA_DESC_ID IN [{}]",
+                int_list(&self.data_desc_ids)
+            ));
         }
 
         if !self.antenna_ids.is_empty() {
@@ -204,6 +233,10 @@ impl MsSelection {
             clauses.push(format!("SCAN_NUMBER IN [{}]", int_list(&self.scan_numbers)));
         }
 
+        if !self.state_ids.is_empty() {
+            clauses.push(format!("STATE_ID IN [{}]", int_list(&self.state_ids)));
+        }
+
         if !self.observation_ids.is_empty() {
             clauses.push(format!(
                 "OBSERVATION_ID IN [{}]",
@@ -211,7 +244,11 @@ impl MsSelection {
             ));
         }
 
-        if let Some(ref expr) = self.taql_expr {
+        if !self.array_ids.is_empty() {
+            clauses.push(format!("ARRAY_ID IN [{}]", int_list(&self.array_ids)));
+        }
+
+        for expr in &self.taql_exprs {
             clauses.push(format!("({expr})"));
         }
 
@@ -311,9 +348,24 @@ mod tests {
 
     #[test]
     fn raw_taql_expression() {
-        let sel = MsSelection::new().taql("UVW[0] > 100");
+        let sel = MsSelection::new().taql("UVW[0] > 100").taql("TIME > 0");
         let taql = sel.to_taql();
         assert!(taql.contains("(UVW[0] > 100)"));
+        assert!(taql.contains("(TIME > 0)"));
+    }
+
+    #[test]
+    fn data_description_selection() {
+        let sel = MsSelection::new().data_description(&[2, 4]);
+        let taql = sel.to_taql();
+        assert!(taql.contains("DATA_DESC_ID IN [2,4]"));
+    }
+
+    #[test]
+    fn state_selection() {
+        let sel = MsSelection::new().state(&[1, 5]);
+        let taql = sel.to_taql();
+        assert!(taql.contains("STATE_ID IN [1,5]"));
     }
 
     #[test]
@@ -344,7 +396,7 @@ mod tests {
         }
 
         let sel = MsSelection::new().field(&[0, 1]);
-        let rows = sel.apply(&mut ms).unwrap();
+        let rows = sel.apply(&ms).unwrap();
         assert_eq!(rows.len(), 4);
     }
 
@@ -375,7 +427,7 @@ mod tests {
         }
 
         let sel = MsSelection::new().time_range(200.0, 400.0);
-        let rows = sel.apply(&mut ms).unwrap();
+        let rows = sel.apply(&ms).unwrap();
         assert_eq!(rows.len(), 3);
     }
 
@@ -443,7 +495,7 @@ mod tests {
         }
 
         let sel = MsSelection::new().antenna_name(&["VLA01"]);
-        let rows = sel.apply(&mut ms).unwrap();
+        let rows = sel.apply(&ms).unwrap();
         // VLA01 is antenna 0, which appears in rows 0 (ant1=0) and 1 (ant1=0)
         assert_eq!(rows.len(), 2);
     }
@@ -489,7 +541,7 @@ mod tests {
             .add_row(RecordValue::new(row_fields))
             .unwrap();
 
-        let rows = MsSelection::new().spw(&[7]).apply(&mut ms).unwrap();
+        let rows = MsSelection::new().spw(&[7]).apply(&ms).unwrap();
         assert!(rows.is_empty());
     }
 }

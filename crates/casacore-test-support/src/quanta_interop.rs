@@ -38,6 +38,39 @@ unsafe extern "C" {
         iterations: i32,
         elapsed_ns_out: *mut u64,
     ) -> i32;
+    fn quanta_shim_mvangle_format_angle(
+        radians: f64,
+        second_decimals: i32,
+        out_buf: *mut u8,
+        out_buf_len: i32,
+    ) -> i32;
+    fn quanta_shim_mvangle_format_angle_dig2(
+        radians: f64,
+        second_decimals: i32,
+        out_buf: *mut u8,
+        out_buf_len: i32,
+    ) -> i32;
+    fn quanta_shim_mvangle_format_time(
+        radians: f64,
+        lower_turns: f64,
+        second_decimals: i32,
+        out_buf: *mut u8,
+        out_buf_len: i32,
+    ) -> i32;
+    fn quanta_shim_mvtime_format_dmy(
+        mjd_days: f64,
+        second_decimals: i32,
+        out_buf: *mut u8,
+        out_buf_len: i32,
+    ) -> i32;
+    fn quanta_shim_mvtime_format_time(
+        mjd_days: f64,
+        second_decimals: i32,
+        out_buf: *mut u8,
+        out_buf_len: i32,
+    ) -> i32;
+    fn quanta_shim_mvtime_format_dmy_date(mjd_days: f64, out_buf: *mut u8, out_buf_len: i32)
+    -> i32;
 }
 
 /// Initialise the C++ unit system (idempotent).
@@ -173,4 +206,77 @@ pub fn cpp_bench_convert(value: f64, from: &str, to: &str, iterations: i32) -> O
         )
     };
     if rc == 0 { Some(elapsed_ns) } else { None }
+}
+
+#[cfg(has_casacore_cpp)]
+fn read_cpp_string<F>(call: F) -> Option<String>
+where
+    F: FnOnce(*mut u8, i32) -> i32,
+{
+    let mut buf = [0u8; 256];
+    let rc = call(buf.as_mut_ptr(), buf.len() as i32);
+    if rc != 0 {
+        return None;
+    }
+    let rendered = std::ffi::CStr::from_bytes_until_nul(&buf)
+        .ok()?
+        .to_str()
+        .ok()?;
+    Some(rendered.to_owned())
+}
+
+/// Format an angle with C++ `MVAngle::ANGLE`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_mvangle_format_angle(radians: f64, second_decimals: usize) -> Option<String> {
+    init_cpp();
+    read_cpp_string(|buf, len| unsafe {
+        quanta_shim_mvangle_format_angle(radians, second_decimals as i32, buf, len)
+    })
+}
+
+/// Format an angle with C++ `MVAngle::DIG2`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_mvangle_format_angle_dig2(radians: f64, second_decimals: usize) -> Option<String> {
+    init_cpp();
+    read_cpp_string(|buf, len| unsafe {
+        quanta_shim_mvangle_format_angle_dig2(radians, second_decimals as i32, buf, len)
+    })
+}
+
+/// Format an angle with C++ `MVAngle::TIME` after normalization.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_mvangle_format_time(
+    radians: f64,
+    lower_turns: f64,
+    second_decimals: usize,
+) -> Option<String> {
+    init_cpp();
+    read_cpp_string(|buf, len| unsafe {
+        quanta_shim_mvangle_format_time(radians, lower_turns, second_decimals as i32, buf, len)
+    })
+}
+
+/// Format an MJD day value with C++ `MVTime::DMY`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_mvtime_format_dmy(mjd_days: f64, second_decimals: usize) -> Option<String> {
+    init_cpp();
+    read_cpp_string(|buf, len| unsafe {
+        quanta_shim_mvtime_format_dmy(mjd_days, second_decimals as i32, buf, len)
+    })
+}
+
+/// Format an MJD day value with C++ `MVTime::TIME`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_mvtime_format_time(mjd_days: f64, second_decimals: usize) -> Option<String> {
+    init_cpp();
+    read_cpp_string(|buf, len| unsafe {
+        quanta_shim_mvtime_format_time(mjd_days, second_decimals as i32, buf, len)
+    })
+}
+
+/// Format an MJD day value with C++ `MVTime::DMY | NO_TIME`.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_mvtime_format_dmy_date(mjd_days: f64) -> Option<String> {
+    init_cpp();
+    read_cpp_string(|buf, len| unsafe { quanta_shim_mvtime_format_dmy_date(mjd_days, buf, len) })
 }

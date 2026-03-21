@@ -2,9 +2,7 @@
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(has_casacore_cpp)");
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/cpp/casacore_cpp_ms.cpp");
-    println!("cargo:rerun-if-changed=src/cpp/casacore_cpp_image_shim.cpp");
-    println!("cargo:rerun-if-changed=src/cpp/casacore_cpp_lattice_stats.cpp");
+    println!("cargo:rerun-if-changed=src/cpp");
 
     let casacore = pkg_config::Config::new().probe("casacore");
     let casacore = match casacore {

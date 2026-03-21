@@ -9,6 +9,7 @@ pub mod taql_interop;
 
 #[cfg(has_casacore_cpp)]
 use std::ffi::CStr;
+use std::path::{Path, PathBuf};
 #[cfg(has_casacore_cpp)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -20,6 +21,67 @@ use casacore_aipsio::{
 use casacore_aipsio::{PrimitiveType, ValueRank};
 use ndarray::{ArrayD, IxDyn};
 use thiserror::Error;
+
+/// Process-global casacore state domains used by the C++ interop shims.
+///
+/// Some casacore APIs are configured through process-wide static state rather
+/// than per-call objects. Rust tests run concurrently in a single process, so
+/// any shim that mutates one of these domains must serialize access here rather
+/// than relying on individual tests to avoid overlap.
+#[cfg(has_casacore_cpp)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum CasacoreGlobalStateDomain {
+    /// IAU 2000 / 2000A mode toggles driven by `AipsrcValue` and `MeasTable`.
+    MeasuresIau2000A,
+}
+
+#[cfg(has_casacore_cpp)]
+pub(crate) fn lock_casacore_global_state(
+    domain: CasacoreGlobalStateDomain,
+) -> MutexGuard<'static, ()> {
+    match domain {
+        CasacoreGlobalStateDomain::MeasuresIau2000A => {
+            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        }
+    }
+}
+
+/// Resolve the shared `casatestdata` checkout used by CASA parity tests.
+///
+/// The lookup order is:
+/// 1. `CASA_RS_TESTDATA_ROOT`
+/// 2. `../casatestdata` relative to the repo root
+pub fn casatestdata_root() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("CASA_RS_TESTDATA_ROOT") {
+        let path = PathBuf::from(root);
+        if path.exists() {
+            return Some(normalize_existing_path(&path));
+        }
+    }
+
+    casatestdata_root_candidates()
+        .into_iter()
+        .find(|path| path.exists())
+        .map(|path| normalize_existing_path(&path))
+}
+
+/// Resolve a path relative to the shared `casatestdata` checkout.
+pub fn casatestdata_path(relative: impl AsRef<Path>) -> Option<PathBuf> {
+    casatestdata_root().map(|root| root.join(relative.as_ref()))
+}
+
+fn casatestdata_root_candidates() -> Vec<PathBuf> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repo root");
+    vec![repo_root.join("../casatestdata")]
+}
+
+fn normalize_existing_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
 
 #[derive(Debug, Error)]
 pub enum AipsIoCrossError {
