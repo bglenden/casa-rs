@@ -46,7 +46,7 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
-- `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
+- `scripts/run-coverage.sh`
 - Small performance guards stay in the default `cargo test --workspace` path.
 - Long coverage/perf work should run less often, usually via CI or explicit full runs.
 - To reproduce the GitHub Actions environment locally, use
@@ -70,7 +70,7 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   `cargo fmt --all -- --check`
   `cargo clippy --workspace --all-targets -- -D warnings`
   `cargo test --workspace`
-  `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75`
+  `scripts/run-coverage.sh`
   `cargo run -p casacore-aipsio --example t_aipsio`
   `cargo run -p casacore-tables --example t_table`
 

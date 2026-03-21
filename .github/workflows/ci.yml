@@ -53,4 +53,4 @@ jobs:
         uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Run coverage (line)
-        run: cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+        run: scripts/run-coverage.sh
