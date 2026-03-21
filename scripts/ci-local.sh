@@ -51,7 +51,7 @@ case "$command" in
     ;;
   coverage)
     run_in_container '
-      cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+      ./scripts/run-coverage.sh
     '
     ;;
   all)
@@ -61,7 +61,7 @@ case "$command" in
       cargo test --workspace &&
       cargo run -p casacore-aipsio --example t_aipsio &&
       cargo run -p casacore-tables --example t_table &&
-      cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+      ./scripts/run-coverage.sh
     '
     ;;
   shell)

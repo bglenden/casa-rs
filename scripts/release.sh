@@ -22,7 +22,7 @@ Default local release gates:
   - cargo test --workspace
 
 Use --full to additionally run:
-  - cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+  - scripts/run-coverage.sh
 
 Examples:
   scripts/release.sh 0.3.1
@@ -111,7 +111,7 @@ cargo test --workspace
 
 if [[ "$run_full" == "true" ]]; then
   echo "==> Running full coverage gate"
-  cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75
+  scripts/run-coverage.sh
 fi
 
 for cargo_toml in crates/*/Cargo.toml; do

@@ -149,3 +149,52 @@ pub fn near_tol(a: f64, b: f64, tol: f64) -> bool {
 pub fn near_abs(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::{ArrayD, IxDyn};
+
+    #[test]
+    fn order_statistics_match_casacore_semantics() {
+        let values = ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![9.0_f32, 1.0, 4.0, 7.0, 3.0, 6.0])
+            .expect("valid test array");
+
+        assert_eq!(array_median(&values), 5.0);
+        assert_eq!(array_fractile(&values, 0.25), 3.0);
+        assert_eq!(array_fractile(&values, 0.75), 6.0);
+        assert_eq!(array_madfm(&values), 2.0);
+    }
+
+    #[test]
+    fn near_wrappers_use_expected_default_tolerances() {
+        assert!(near(1.0, 1.0 + 5.0e-14));
+        assert!(!near(1.0, 1.0 + 5.0e-12));
+
+        assert!(near_f32(1.0, 1.0 + 5.0e-6));
+        assert!(!near_f32(1.0, 1.0 + 5.0e-4));
+    }
+
+    #[test]
+    fn near_tol_handles_special_cases() {
+        assert!(near_tol(3.0, 3.0, 0.0));
+        assert!(!near_tol(3.0, 4.0, 0.0));
+
+        assert!(near_tol(f64::INFINITY, f64::INFINITY, 1.0));
+
+        let tiny = f64::MIN_POSITIVE;
+        assert!(near_tol(0.0, tiny, 0.5));
+        assert!(near_tol(tiny, 0.0, 0.5));
+        assert!(!near_tol(0.0, 1.0e-100, 0.5));
+
+        assert!(!near_tol(1.0, -1.0, 0.1));
+        assert!(near_tol(10.0, 10.5, 0.05));
+        assert!(!near_tol(10.0, 10.6, 0.05));
+    }
+
+    #[test]
+    fn near_abs_uses_absolute_tolerance() {
+        assert!(near_abs(1.0, 1.049, 0.05));
+        assert!(!near_abs(1.0, 1.06, 0.05));
+    }
+}
