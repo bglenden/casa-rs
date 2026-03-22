@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, ExitStatus, Stdio};

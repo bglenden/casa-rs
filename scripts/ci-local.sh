@@ -42,6 +42,7 @@ case "$command" in
     ;;
   lint_test)
     run_in_container '
+      ./scripts/check-spdx.sh &&
       cargo fmt --all -- --check &&
       cargo clippy --workspace --all-targets -- -D warnings &&
       cargo test --workspace &&
@@ -56,6 +57,7 @@ case "$command" in
     ;;
   all)
     run_in_container '
+      ./scripts/check-spdx.sh &&
       cargo fmt --all -- --check &&
       cargo clippy --workspace --all-targets -- -D warnings &&
       cargo test --workspace &&

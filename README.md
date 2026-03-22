@@ -208,6 +208,20 @@ This test fails when the bundled data's last measured entry is older than
 180 days. If it fails during a release, refresh the bundled snapshot before
 publishing.
 
+## Git Hooks
+
+This repo includes a lightweight pre-commit hook in `.githooks/pre-commit`
+that checks staged Rust files for the required SPDX header:
+`// SPDX-License-Identifier: LGPL-3.0-or-later`.
+
+Enable it once per clone with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+CI still runs the full-repo SPDX check as a backstop.
+
 ## License
 
 Licensed under the [GNU Lesser General Public License v3.0 or later](COPYING.LESSER)

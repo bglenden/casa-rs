@@ -17,14 +17,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Check SPDX license headers
-        run: |
-          bad=$(find crates -name '*.rs' -print0 \
-              | xargs -0 grep -rL 'SPDX-License-Identifier' || true)
-          if [ -n "$bad" ]; then
-            echo "::error::Files missing SPDX-License-Identifier header:"
-            echo "$bad"
-            exit 1
-          fi
+        run: scripts/check-spdx.sh
 
       - name: Check formatting
         run: cargo fmt --all -- --check
