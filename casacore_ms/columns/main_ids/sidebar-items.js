@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["antenna1","antenna2","array_id","data_desc_id","feed1","feed2","field_id","observation_id","processor_id","scan_number","state_id"],"struct":["ScalarIdColumn"]};

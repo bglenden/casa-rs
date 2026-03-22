@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["call_function","clear_udfs","register_udf","register_udf_trait","unregister_udf"],"trait":["TaqlUdf"]};

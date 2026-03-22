@@ -1,0 +1,178 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Read and write casacore-compatible tables."><title>casacore_tables - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="casacore_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0 (4a4ef493e 2026-03-02)" data-channel="1.94.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate casacore_tables</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../casacore_tables/index.html">casacore_<wbr>tables</a><span class="version">0.6.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#what-is-a-casacore-table" title="What is a casacore table?">What is a casacore table?</a></li><li><a href="#key-types" title="Key types">Key types</a></li><li><a href="#storage-managers" title="Storage managers">Storage managers</a></li><li><a href="#reference-tables-views" title="Reference tables (views)">Reference tables (views)</a></li><li><a href="#sorting-and-grouped-iteration" title="Sorting and grouped iteration">Sorting and grouped iteration</a></li><li><a href="#table-concatenation-and-copy" title="Table concatenation and copy">Table concatenation and copy</a></li><li><a href="#table-locking-unix" title="Table locking (Unix)">Table locking (Unix)</a></li><li><a href="#memory-tables" title="Memory tables">Memory tables</a></li><li><a href="#typical-workflow" title="Typical workflow">Typical workflow</a></li><li><a href="#relationship-to-c-casacore" title="Relationship to C++ casacore">Relationship to C++ casacore</a></li><li><a href="#demo-program" title="Demo program">Demo program</a></li></ul><h3><a href="#modules">Crate Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>casacore_<wbr>tables</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/casacore_tables/lib.rs.html#2-267">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Read and write casacore-compatible tables.</p>
+<p>This crate is the Rust implementation of the <strong>Casacore Table Data System
+(CTDS)</strong>. It provides a native Rust API for creating, reading, writing, and
+persisting tables in the casacore on-disk format. Tables written by this
+crate can be read by C++ casacore and vice versa; the binary layout of both
+supported storage managers is preserved exactly.</p>
+<h2 id="what-is-a-casacore-table"><a class="doc-anchor" href="#what-is-a-casacore-table">§</a>What is a casacore table?</h2>
+<p>A casacore table is a rectangular data structure: a sequence of rows, each
+of which is a record (a map from column name to typed value). In addition,
+a table carries table-level keywords and per-column keywords — both stored
+as [<code>casacore_types::RecordValue</code>] maps. From C++ casacore’s <code>Tables.h</code>:</p>
+<blockquote>
+<p>“Tables are the fundamental storage mechanism. A table consists of rows
+and columns with keyword/value pairs. Cells can contain scalars, direct
+arrays, or indirect arrays.”</p>
+</blockquote>
+<p>Supported cell types mirror the C++ standard set: <code>Bool</code>, <code>Int32</code>,
+<code>Int64</code>, <code>Float32</code>, <code>Float64</code>, <code>Complex</code>, <code>DComplex</code>, and <code>String</code>, plus
+n-dimensional arrays of each scalar type.</p>
+<h2 id="key-types"><a class="doc-anchor" href="#key-types">§</a>Key types</h2><div><table><thead><tr><th>Type</th><th>Role</th></tr></thead><tbody>
+<tr><td><a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a></td><td>Create, query, and persist a table</td></tr>
+<tr><td><a href="struct.ConcatTable.html" title="struct casacore_tables::ConcatTable"><code>ConcatTable</code></a></td><td>A read-only virtual concatenation of tables</td></tr>
+<tr><td><a href="struct.RefTable.html" title="struct casacore_tables::RefTable"><code>RefTable</code></a></td><td>A view over a parent table’s rows and/or columns</td></tr>
+<tr><td><a href="enum.SortOrder.html" title="enum casacore_tables::SortOrder"><code>SortOrder</code></a></td><td>Ascending or descending sort direction</td></tr>
+<tr><td><a href="struct.TableGroup.html" title="struct casacore_tables::TableGroup"><code>TableGroup</code></a></td><td>A group of rows with equal key values</td></tr>
+<tr><td><a href="struct.TableIterator.html" title="struct casacore_tables::TableIterator"><code>TableIterator</code></a></td><td>Iterate groups of rows by key columns</td></tr>
+<tr><td><a href="struct.TableSchema.html" title="struct casacore_tables::TableSchema"><code>TableSchema</code></a></td><td>Declare column names, types, and array shapes</td></tr>
+<tr><td><a href="struct.ColumnSchema.html" title="struct casacore_tables::ColumnSchema"><code>ColumnSchema</code></a></td><td>Schema for a single column</td></tr>
+<tr><td><a href="enum.TableKind.html" title="enum casacore_tables::TableKind"><code>TableKind</code></a></td><td>Distinguish plain (disk-backed) from memory (transient) tables</td></tr>
+<tr><td><a href="struct.TableOptions.html" title="struct casacore_tables::TableOptions"><code>TableOptions</code></a></td><td>Bundle a filesystem path with a storage-manager choice</td></tr>
+<tr><td><a href="enum.DataManagerKind.html" title="enum casacore_tables::DataManagerKind"><code>DataManagerKind</code></a></td><td>Choose between <code>StManAipsIO</code> and <code>StandardStMan</code></td></tr>
+<tr><td><a href="enum.EndianFormat.html" title="enum casacore_tables::EndianFormat"><code>EndianFormat</code></a></td><td>Choose big-endian, little-endian, or host byte order</td></tr>
+<tr><td><a href="struct.RowRange.html" title="struct casacore_tables::RowRange"><code>RowRange</code></a></td><td>Select a contiguous or strided subset of rows</td></tr>
+<tr><td><a href="enum.LockMode.html" title="enum casacore_tables::LockMode"><code>LockMode</code></a></td><td>Choose a locking strategy (permanent, user, auto, none)</td></tr>
+<tr><td><a href="struct.LockOptions.html" title="struct casacore_tables::LockOptions"><code>LockOptions</code></a></td><td>Bundle lock mode with inspection interval</td></tr>
+<tr><td><a href="enum.LockType.html" title="enum casacore_tables::LockType"><code>LockType</code></a></td><td>Distinguish read vs. write locks</td></tr>
+<tr><td><a href="enum.TableError.html" title="enum casacore_tables::TableError"><code>TableError</code></a></td><td>All errors from table operations</td></tr>
+</tbody></table>
+</div><h2 id="storage-managers"><a class="doc-anchor" href="#storage-managers">§</a>Storage managers</h2>
+<p>This crate supports five on-disk formats, all interoperable with C++
+casacore:</p>
+<ul>
+<li>
+<p><a href="enum.DataManagerKind.html#variant.StManAipsIO" title="variant casacore_tables::DataManagerKind::StManAipsIO"><code>DataManagerKind::StManAipsIO</code></a> — each column is written as a single
+flat AipsIO stream. This is the simplest layout and the crate default.
+It is compatible with older versions of casacore.</p>
+</li>
+<li>
+<p><a href="enum.DataManagerKind.html#variant.StandardStMan" title="variant casacore_tables::DataManagerKind::StandardStMan"><code>DataManagerKind::StandardStMan</code></a> — data is partitioned into
+fixed-size buckets. This is the default storage manager in C++ casacore
+and provides more efficient random access for large tables.</p>
+</li>
+<li>
+<p><a href="enum.DataManagerKind.html#variant.TiledColumnStMan" title="variant casacore_tables::DataManagerKind::TiledColumnStMan"><code>DataManagerKind::TiledColumnStMan</code></a> — stores multi-dimensional
+array data in rectangular tiles within a single hypercube. All rows
+must have the same array shape. Best for large fixed-shape columns.</p>
+</li>
+<li>
+<p><a href="enum.DataManagerKind.html#variant.TiledShapeStMan" title="variant casacore_tables::DataManagerKind::TiledShapeStMan"><code>DataManagerKind::TiledShapeStMan</code></a> — one hypercube per unique
+array shape. Rows with different shapes are automatically grouped.
+Standard format for variable-shape visibility columns.</p>
+</li>
+<li>
+<p><a href="enum.DataManagerKind.html#variant.TiledCellStMan" title="variant casacore_tables::DataManagerKind::TiledCellStMan"><code>DataManagerKind::TiledCellStMan</code></a> — one hypercube per row,
+allowing fully variable shapes. Most memory-intensive variant.</p>
+</li>
+</ul>
+<h2 id="reference-tables-views"><a class="doc-anchor" href="#reference-tables-views">§</a>Reference tables (views)</h2>
+<p>A <a href="struct.RefTable.html" title="struct casacore_tables::RefTable"><code>RefTable</code></a> is a lightweight view over a parent <a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a>, selecting
+specific rows and/or columns without copying data. All cell reads and
+writes pass through to the parent.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="comment">// Select rows by index, by column name, or by predicate:
+</span><span class="kw">let </span>view = table.select_rows(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">2</span>]).unwrap();
+<span class="macro">assert_eq!</span>(view.row_count(), <span class="number">2</span>);</code></pre></div>
+<p>A <code>RefTable</code> can be <a href="struct.RefTable.html#method.save" title="method casacore_tables::RefTable::save">saved</a> to disk in C++-compatible
+format. When reopened via <a href="struct.Table.html#method.open" title="associated function casacore_tables::Table::open"><code>Table::open</code></a>, the view is materialized
+(the parent is loaded and referenced rows extracted).</p>
+<h2 id="sorting-and-grouped-iteration"><a class="doc-anchor" href="#sorting-and-grouped-iteration">§</a>Sorting and grouped iteration</h2>
+<p><a href="struct.Table.html#method.sort" title="method casacore_tables::Table::sort"><code>Table::sort</code></a> returns a <a href="struct.RefTable.html" title="struct casacore_tables::RefTable"><code>RefTable</code></a> with rows reordered by one or
+more key columns. <a href="struct.Table.html#method.iter_groups" title="method casacore_tables::Table::iter_groups"><code>Table::iter_groups</code></a> groups rows by equal key
+values, yielding <a href="struct.TableGroup.html" title="struct casacore_tables::TableGroup"><code>TableGroup</code></a> values (C++ equivalent:
+<code>TableIterator</code>).</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="comment">// Sort ascending by id:
+</span><span class="kw">let </span>sorted = table.sort(<span class="kw-2">&amp;</span>[(<span class="string">"id"</span>, SortOrder::Ascending)]).unwrap();
+<span class="macro">assert_eq!</span>(sorted.row_count(), <span class="number">3</span>);</code></pre></div><h2 id="table-concatenation-and-copy"><a class="doc-anchor" href="#table-concatenation-and-copy">§</a>Table concatenation and copy</h2>
+<p><a href="struct.Table.html#method.concat" title="associated function casacore_tables::Table::concat"><code>Table::concat</code></a> virtually combines multiple tables with the same
+schema into a single <a href="struct.ConcatTable.html" title="struct casacore_tables::ConcatTable"><code>ConcatTable</code></a> view without copying data.
+<a href="struct.Table.html#method.deep_copy" title="method casacore_tables::Table::deep_copy"><code>Table::deep_copy</code></a> saves all rows with a (possibly different)
+storage manager, and <a href="struct.Table.html#method.shallow_copy" title="method casacore_tables::Table::shallow_copy"><code>Table::shallow_copy</code></a> saves schema and
+keywords with zero rows.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="comment">// Concatenate two tables:
+</span><span class="kw">let </span>t1 = Table::open(TableOptions::new(<span class="string">"/tmp/part1"</span>)).unwrap();
+<span class="kw">let </span>t2 = Table::open(TableOptions::new(<span class="string">"/tmp/part2"</span>)).unwrap();
+<span class="kw">let </span>concat = Table::concat(<span class="macro">vec!</span>[t1, t2]).unwrap();
+<span class="macro">assert_eq!</span>(concat.row_count(), <span class="number">10</span>); <span class="comment">// combined rows
+
+// Deep copy with storage manager conversion:
+</span><span class="kw">let </span>table = Table::open(TableOptions::new(<span class="string">"/tmp/original"</span>)).unwrap();
+table.deep_copy(
+    TableOptions::new(<span class="string">"/tmp/copy"</span>)
+        .with_data_manager(DataManagerKind::StandardStMan),
+).unwrap();</code></pre></div><h2 id="table-locking-unix"><a class="doc-anchor" href="#table-locking-unix">§</a>Table locking (Unix)</h2>
+<p>When multiple processes share a table on disk, file-based locking
+prevents data corruption. Open a table with <a href="struct.Table.html#method.open_with_lock" title="associated function casacore_tables::Table::open_with_lock"><code>Table::open_with_lock</code></a>
+and a <a href="struct.LockOptions.html" title="struct casacore_tables::LockOptions"><code>LockOptions</code></a> to enable locking. The lock file (<code>table.lock</code>)
+uses the same binary format as C++ casacore, so Rust and C++ processes
+can safely share tables.</p>
+<p>Available lock modes (see <a href="enum.LockMode.html" title="enum casacore_tables::LockMode"><code>LockMode</code></a>):</p>
+<ul>
+<li><strong><code>PermanentLocking</code></strong> — acquire on open, hold until close.</li>
+<li><strong><code>UserLocking</code></strong> — explicit <a href="struct.Table.html#method.lock" title="method casacore_tables::Table::lock"><code>Table::lock</code></a> / <a href="struct.Table.html#method.unlock" title="method casacore_tables::Table::unlock"><code>Table::unlock</code></a> calls.</li>
+<li><strong><code>AutoLocking</code></strong> — open with a read lock; mutating operations acquire
+temporary write locks automatically.</li>
+<li><strong><code>NoLocking</code></strong> — no lock file (the default, for single-process use;
+unsafe for concurrent writers).</li>
+</ul>
+<h2 id="memory-tables"><a class="doc-anchor" href="#memory-tables">§</a>Memory tables</h2>
+<p>A memory table (<a href="enum.TableKind.html#variant.Memory" title="variant casacore_tables::TableKind::Memory"><code>TableKind::Memory</code></a>) holds all data in process memory
+and is deleted when dropped. Locking is a no-op (always writable).
+Memory tables support all the same operations as plain tables: row
+and column CRUD, keywords, sorting, selection, and grouped iteration.</p>
+<p>Use <a href="struct.Table.html#method.new_memory" title="associated function casacore_tables::Table::new_memory"><code>Table::new_memory</code></a> or <a href="struct.Table.html#method.with_schema_memory" title="associated function casacore_tables::Table::with_schema_memory"><code>Table::with_schema_memory</code></a> to create
+one. Call <a href="struct.Table.html#method.save" title="method casacore_tables::Table::save"><code>Table::save</code></a> to materialize a memory table to disk
+(producing a regular plain table). Use <a href="struct.Table.html#method.to_memory" title="method casacore_tables::Table::to_memory"><code>Table::to_memory</code></a> to create
+a transient copy of any existing table.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casacore_tables::{Table, TableSchema, ColumnSchema, TableKind};
+<span class="kw">use </span>casacore_types::<span class="kw-2">*</span>;
+
+<span class="kw">let </span>schema = TableSchema::new(<span class="macro">vec!</span>[
+    ColumnSchema::scalar(<span class="string">"id"</span>, PrimitiveType::Int32),
+]).unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>table = Table::with_schema_memory(schema);
+table.add_row(RecordValue::new(<span class="macro">vec!</span>[
+    RecordField::new(<span class="string">"id"</span>, Value::Scalar(ScalarValue::Int32(<span class="number">1</span>))),
+])).unwrap();
+<span class="macro">assert!</span>(table.is_memory());
+<span class="macro">assert_eq!</span>(table.row_count(), <span class="number">1</span>);</code></pre></div>
+<p>C++ equivalent: <code>MemoryTable</code>, <code>MemoryStMan</code>.</p>
+<h2 id="typical-workflow"><a class="doc-anchor" href="#typical-workflow">§</a>Typical workflow</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casacore_tables::{
+    Table, TableOptions, TableSchema, ColumnSchema, DataManagerKind,
+};
+<span class="kw">use </span>casacore_types::{PrimitiveType, RecordValue, RecordField, Value, ScalarValue};
+
+<span class="comment">// 1. Define the schema.
+</span><span class="kw">let </span>schema = TableSchema::new(<span class="macro">vec!</span>[
+    ColumnSchema::scalar(<span class="string">"id"</span>,   PrimitiveType::Int32),
+    ColumnSchema::scalar(<span class="string">"flux"</span>, PrimitiveType::Float64),
+]).expect(<span class="string">"valid schema"</span>);
+
+<span class="comment">// 2. Build a table and add rows.
+</span><span class="kw">let </span><span class="kw-2">mut </span>table = Table::with_schema(schema);
+table.add_row(RecordValue::new(<span class="macro">vec!</span>[
+    RecordField::new(<span class="string">"id"</span>,   Value::Scalar(ScalarValue::Int32(<span class="number">1</span>))),
+    RecordField::new(<span class="string">"flux"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">3.14</span>))),
+])).expect(<span class="string">"schema-compliant row"</span>);
+
+<span class="comment">// 3. Persist to disk.
+</span>table.save(TableOptions::new(<span class="string">"/tmp/my_table"</span>)).expect(<span class="string">"save"</span>);
+
+<span class="comment">// 4. Reopen (e.g. in a different process or after C++ casacore wrote it).
+</span><span class="kw">let </span>reopened = Table::open(TableOptions::new(<span class="string">"/tmp/my_table"</span>)).expect(<span class="string">"open"</span>);
+<span class="macro">assert_eq!</span>(reopened.row_count(), <span class="number">1</span>);</code></pre></div><h2 id="relationship-to-c-casacore"><a class="doc-anchor" href="#relationship-to-c-casacore">§</a>Relationship to C++ casacore</h2>
+<p>In C++ casacore the same functionality is split across <code>Table</code>,
+<code>ScalarColumn&lt;T&gt;</code>, <code>ArrayColumn&lt;T&gt;</code>, and <code>TableRecord</code>. The Rust <a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a>
+type unifies all of these into a single, dynamically typed interface.
+Column type safety is enforced at runtime by the accessor methods rather
+than through compile-time generics.</p>
+<h2 id="demo-program"><a class="doc-anchor" href="#demo-program">§</a>Demo program</h2>
+<p>A runnable demo (Rust equivalent of the C++ <code>tTable</code> test program) is
+included. Demo logic lives in the <a href="demo/index.html" title="mod casacore_tables::demo"><code>demo</code></a> module; a thin example binary
+drives it:</p>
+<div class="example-wrap"><pre class="language-bash"><code>cargo run -p casacore-tables --example t_table</code></pre></div></div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="demo/index.html" title="mod casacore_tables::demo">demo</a></dt><dd>Demo helpers and runnable outputs for <code>casacore-tables</code>.</dd><dt><a class="mod" href="table_measures/index.html" title="mod casacore_tables::table_measures">table_<wbr>measures</a></dt><dd>Measure column support: storing/reading measures in table columns via MEASINFO.</dd><dt><a class="mod" href="table_quantum/index.html" title="mod casacore_tables::table_quantum">table_<wbr>quantum</a></dt><dd>Quantum column support: unit-tagged table columns.</dd><dt><a class="mod" href="taql/index.html" title="mod casacore_tables::taql">taql</a></dt><dd>TaQL — Table Query Language for casacore tables.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ColumnBinding.html" title="struct casacore_tables::ColumnBinding">Column<wbr>Binding</a></dt><dd>Per-column data manager binding for <a href="struct.Table.html#method.save_with_bindings" title="method casacore_tables::Table::save_with_bindings"><code>Table::save_with_bindings</code></a>.</dd><dt><a class="struct" href="struct.ColumnCellIter.html" title="struct casacore_tables::ColumnCellIter">Column<wbr>Cell<wbr>Iter</a></dt><dd>An iterator over cells in a single column, yielding one <a href="struct.ColumnCellRef.html" title="struct casacore_tables::ColumnCellRef"><code>ColumnCellRef</code></a> per row.</dd><dt><a class="struct" href="struct.ColumnCellRef.html" title="struct casacore_tables::ColumnCellRef">Column<wbr>Cell<wbr>Ref</a></dt><dd>A borrowed reference to a single cell value together with its row index.</dd><dt><a class="struct" href="struct.ColumnChunkIter.html" title="struct casacore_tables::ColumnChunkIter">Column<wbr>Chunk<wbr>Iter</a></dt><dd>An iterator that yields column cells in fixed-size batches.</dd><dt><a class="struct" href="struct.ColumnOptions.html" title="struct casacore_tables::ColumnOptions">Column<wbr>Options</a></dt><dd>Storage and behaviour flags for a single column.</dd><dt><a class="struct" href="struct.ColumnSchema.html" title="struct casacore_tables::ColumnSchema">Column<wbr>Schema</a></dt><dd>Describes a single column within a <a href="struct.TableSchema.html" title="struct casacore_tables::TableSchema"><code>TableSchema</code></a>.</dd><dt><a class="struct" href="struct.ColumnsIndex.html" title="struct casacore_tables::ColumnsIndex">Columns<wbr>Index</a></dt><dd>An in-memory sorted index on one or more scalar columns of a <a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a>.</dd><dt><a class="struct" href="struct.ConcatTable.html" title="struct casacore_tables::ConcatTable">Concat<wbr>Table</a></dt><dd>A virtual table formed by concatenating two or more tables with the same
+schema.</dd><dt><a class="struct" href="struct.DataManagerInfo.html" title="struct casacore_tables::DataManagerInfo">Data<wbr>Manager<wbr>Info</a></dt><dd>Metadata for one data manager instance.</dd><dt><a class="struct" href="struct.LockOptions.html" title="struct casacore_tables::LockOptions">Lock<wbr>Options</a></dt><dd>Options controlling table lock behavior.</dd><dt><a class="struct" href="struct.RecordColumnCell.html" title="struct casacore_tables::RecordColumnCell">Record<wbr>Column<wbr>Cell</a></dt><dd>An owned record cell value together with its row index.</dd><dt><a class="struct" href="struct.RecordColumnIter.html" title="struct casacore_tables::RecordColumnIter">Record<wbr>Column<wbr>Iter</a></dt><dd>An iterator over cells in a record column, yielding one <a href="struct.RecordColumnCell.html" title="struct casacore_tables::RecordColumnCell"><code>RecordColumnCell</code></a> per row.</dd><dt><a class="struct" href="struct.RefTable.html" title="struct casacore_tables::RefTable">RefTable</a></dt><dd>A read-only view over a parent <a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a>’s rows and/or columns.</dd><dt><a class="struct" href="struct.RefTableMut.html" title="struct casacore_tables::RefTableMut">RefTable<wbr>Mut</a></dt><dd>A mutable write-through view over a parent <a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a>’s rows and/or columns.</dd><dt><a class="struct" href="struct.RowRange.html" title="struct casacore_tables::RowRange">RowRange</a></dt><dd>A contiguous, optionally strided range of row indices.</dd><dt><a class="struct" href="struct.Slicer.html" title="struct casacore_tables::Slicer">Slicer</a></dt><dd>An n-dimensional sub-region selector for array-valued cells.</dd><dt><a class="struct" href="struct.Table.html" title="struct casacore_tables::Table">Table</a></dt><dd>A casacore table — the fundamental persistent data container.</dd><dt><a class="struct" href="struct.TableGroup.html" title="struct casacore_tables::TableGroup">Table<wbr>Group</a></dt><dd>A group of rows sharing equal key values, produced by <a href="struct.TableIterator.html" title="struct casacore_tables::TableIterator"><code>TableIterator</code></a>.</dd><dt><a class="struct" href="struct.TableInfo.html" title="struct casacore_tables::TableInfo">Table<wbr>Info</a></dt><dd>C++ <code>TableInfo</code> metadata stored in <code>table.info</code>.</dd><dt><a class="struct" href="struct.TableIterator.html" title="struct casacore_tables::TableIterator">Table<wbr>Iterator</a></dt><dd>An iterator that groups table rows by equal values in key columns.</dd><dt><a class="struct" href="struct.TableOptions.html" title="struct casacore_tables::TableOptions">Table<wbr>Options</a></dt><dd>Configuration for opening or saving a <a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a> to disk.</dd><dt><a class="struct" href="struct.TableSchema.html" title="struct casacore_tables::TableSchema">Table<wbr>Schema</a></dt><dd>Defines the structure of a casacore table: an ordered set of column descriptions.</dd><dt><a class="struct" href="struct.TiledFileIO.html" title="struct casacore_tables::TiledFileIO">Tiled<wbr>FileIO</a></dt><dd>Random-access tile I/O for a <code>TiledCellStMan</code> data file.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.ArrayShapeContract.html" title="enum casacore_tables::ArrayShapeContract">Array<wbr>Shape<wbr>Contract</a></dt><dd>Describes the shape contract of an array column.</dd><dt><a class="enum" href="enum.ColumnType.html" title="enum casacore_tables::ColumnType">Column<wbr>Type</a></dt><dd>The kind of data a column holds.</dd><dt><a class="enum" href="enum.DataManagerKind.html" title="enum casacore_tables::DataManagerKind">Data<wbr>Manager<wbr>Kind</a></dt><dd>Which data manager to use when writing table data.</dd><dt><a class="enum" href="enum.EndianFormat.html" title="enum casacore_tables::EndianFormat">Endian<wbr>Format</a></dt><dd>Byte-ordering format for on-disk table data.</dd><dt><a class="enum" href="enum.LockMode.html" title="enum casacore_tables::LockMode">Lock<wbr>Mode</a></dt><dd>Lock mode options for a table.</dd><dt><a class="enum" href="enum.LockType.html" title="enum casacore_tables::LockType">Lock<wbr>Type</a></dt><dd>The type of lock being held or requested.</dd><dt><a class="enum" href="enum.QueryResult.html" title="enum casacore_tables::QueryResult">Query<wbr>Result</a></dt><dd>Result of a TaQL SELECT query via <a href="struct.Table.html#method.query_result" title="method casacore_tables::Table::query_result"><code>Table::query_result()</code></a>.</dd><dt><a class="enum" href="enum.SchemaError.html" title="enum casacore_tables::SchemaError">Schema<wbr>Error</a></dt><dd>Errors produced during schema construction or column option validation.</dd><dt><a class="enum" href="enum.SortOrder.html" title="enum casacore_tables::SortOrder">Sort<wbr>Order</a></dt><dd>Sort order for table sorting operations.</dd><dt><a class="enum" href="enum.StorageError.html" title="enum casacore_tables::StorageError">Storage<wbr>Error</a></dt><dd>Errors arising from table storage operations (I/O, format, schema).</dd><dt><a class="enum" href="enum.TableError.html" title="enum casacore_tables::TableError">Table<wbr>Error</a></dt><dd>Errors that can occur when reading or writing a <a href="struct.Table.html" title="struct casacore_tables::Table"><code>Table</code></a>.</dd><dt><a class="enum" href="enum.TableKind.html" title="enum casacore_tables::TableKind">Table<wbr>Kind</a></dt><dd>The kind of table: plain (disk-backed) or memory (transient).</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.ExternalLockSync.html" title="trait casacore_tables::ExternalLockSync">External<wbr>Lock<wbr>Sync</a></dt><dd>Hook for external lock synchronization.</dd><dt><a class="trait" href="trait.TilePixel.html" title="trait casacore_tables::TilePixel">Tile<wbr>Pixel</a></dt><dd>Pixel types supported by the generic tile I/O path.</dd></dl></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cpp_ms_bench_create_open","cpp_ms_bench_main_rows","cpp_ms_bench_open_main_rows","cpp_ms_digest_manifest","cpp_ms_table_row_digest","cpp_ms_table_row_field_manifest","cpp_ms_verify_basic_fixture","cpp_ms_write_basic_fixture"],"struct":["MsBenchResult","MsMainOpenScanBenchResult","MsMainRowsBenchResult"]};

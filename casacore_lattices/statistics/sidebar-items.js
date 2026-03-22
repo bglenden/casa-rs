@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ExecutionPolicy","Statistic"],"struct":["LatticeStatistics"],"trait":["StatsElement"]};

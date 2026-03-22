@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["SigmaColumn","SigmaSpectrumColumn","WeightColumn","WeightSpectrumColumn"]};

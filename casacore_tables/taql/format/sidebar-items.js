@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["format_result","format_rows","format_value"]};

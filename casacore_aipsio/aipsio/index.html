@@ -1,0 +1,184 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="AipsIO object stream API."><title>casacore_aipsio::aipsio - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casacore_aipsio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0 (4a4ef493e 2026-03-02)" data-channel="1.94.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module aipsio</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../casacore_aipsio/index.html">casacore_<wbr>aipsio</a><span class="version">0.6.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module aipsio</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#purpose" title="Purpose">Purpose</a></li><li><a href="#object-framing" title="Object Framing">Object Framing</a></li><li><a href="#construction-and-ownership" title="Construction and Ownership">Construction and Ownership</a></li><li><a href="#stream-state-and-positioning" title="Stream State and Positioning">Stream State and Positioning</a></li><li><a href="#file-backed-api" title="File-Backed API">File-Backed API</a></li><li><a href="#scalar-api" title="Scalar API">Scalar API</a></li><li><a href="#linear-array-api-putgetgetnew-equivalents" title="Linear Array API (`put`/`get`/`getnew` equivalents)">Linear Array API (<code>put</code>/<code>get</code>/<code>getnew</code> equivalents)</a></li><li><a href="#dynamic-values-value" title="Dynamic Values (`Value`)">Dynamic Values (<code>Value</code>)</a></li><li><a href="#array-rank-and-layout-notes" title="Array Rank and Layout Notes">Array Rank and Layout Notes</a></li><li><a href="#error-model" title="Error Model">Error Model</a></li><li><a href="#c-mapping-summary" title="C++ Mapping Summary">C++ Mapping Summary</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate casacore_<wbr>aipsio</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">casacore_aipsio</a></div><h1>Module <span>aipsio</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/casacore_aipsio/aipsio.rs.html#2-2363">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>AipsIO object stream API.</p>
+<p>This module mirrors casacore C++ <code>AipsIO</code> object-framing semantics:
+<code>putstart</code>/<code>putend</code>, <code>get_next_type</code>/<code>getstart</code>/<code>getend</code>, primitive
+scalar/array put-get functions, dynamic <code>put_value</code>/<code>get_value</code> (including
+recursive records), and <code>getnew</code> allocation helpers.</p>
+<p>The API is intentionally explicit and strongly typed rather than relying
+on C++ stream operators.</p>
+<h2 id="purpose"><a class="doc-anchor" href="#purpose">§</a>Purpose</h2>
+<p><a href="struct.AipsIo.html" title="struct casacore_aipsio::aipsio::AipsIo"><code>AipsIo</code></a> is the object-persistence framing layer. It provides:</p>
+<ul>
+<li>object boundaries and type/version headers (<code>putstart</code>/<code>putend</code>,
+<code>getstart</code>/<code>getend</code>)</li>
+<li>primitive scalar and linear-array codecs</li>
+<li>dynamic typed-value codecs (<code>Value</code>) including recursive records and N-D
+arrays</li>
+<li>file open/reopen/close semantics similar to casacore
+<code>ByteIO::OpenOption</code></li>
+</ul>
+<h2 id="object-framing"><a class="doc-anchor" href="#object-framing">§</a>Object Framing</h2>
+<p>Each top-level object is written as:</p>
+<ul>
+<li>top-level magic (<code>0xbebebebe</code>)</li>
+<li>object header:
+<ul>
+<li>object-length slot (backpatched at <code>putend</code>)</li>
+<li>type string</li>
+<li>version (<code>u32</code>)</li>
+</ul>
+</li>
+<li>object payload (scalars, arrays, nested objects, records, etc.)</li>
+</ul>
+<p>Nested <code>putstart</code>/<code>putend</code> are supported and contribute to parent length.</p>
+<p>Read-side invariants:</p>
+<ul>
+<li><code>get_next_type</code> peeks/caches the next object type</li>
+<li><code>getstart(expected_type)</code> validates the type and returns version</li>
+<li><code>getend()</code> verifies full object consumption and returns encoded length</li>
+</ul>
+<h2 id="construction-and-ownership"><a class="doc-anchor" href="#construction-and-ownership">§</a>Construction and Ownership</h2>
+<p>Constructors:</p>
+<ul>
+<li><a href="struct.AipsIo.html#method.new_read_write" title="associated function casacore_aipsio::aipsio::AipsIo::new_read_write"><code>AipsIo::new_read_write</code></a></li>
+<li><a href="struct.AipsIo.html#method.new_read_only" title="associated function casacore_aipsio::aipsio::AipsIo::new_read_only"><code>AipsIo::new_read_only</code></a></li>
+<li><a href="struct.AipsIo.html#method.new_write_only" title="associated function casacore_aipsio::aipsio::AipsIo::new_write_only"><code>AipsIo::new_write_only</code></a></li>
+</ul>
+<p>All constructors currently require <code>inner: Read + Write + Seek + Any</code> to
+preserve one type shape for in-memory and file-backed usage.</p>
+<p>Ownership helpers:</p>
+<ul>
+<li><a href="struct.AipsIo.html#method.into_inner" title="method casacore_aipsio::aipsio::AipsIo::into_inner"><code>AipsIo::into_inner</code></a> returns <code>Option&lt;Box&lt;dyn AipsIoStream&gt;&gt;</code></li>
+<li><a href="struct.AipsIo.html#method.into_inner_typed" title="method casacore_aipsio::aipsio::AipsIo::into_inner_typed"><code>AipsIo::into_inner_typed</code></a> downcasts to a concrete stream type</li>
+</ul>
+<h2 id="stream-state-and-positioning"><a class="doc-anchor" href="#stream-state-and-positioning">§</a>Stream State and Positioning</h2>
+<ul>
+<li><a href="struct.AipsIo.html#method.is_open" title="method casacore_aipsio::aipsio::AipsIo::is_open"><code>AipsIo::is_open</code></a> reports stream presence</li>
+<li><a href="struct.AipsIo.html#method.close" title="method casacore_aipsio::aipsio::AipsIo::close"><code>AipsIo::close</code></a> closes/reset state and removes scratch/delete files</li>
+<li><a href="struct.AipsIo.html#method.getpos" title="method casacore_aipsio::aipsio::AipsIo::getpos"><code>AipsIo::getpos</code></a> returns current offset</li>
+<li><a href="struct.AipsIo.html#method.setpos" title="method casacore_aipsio::aipsio::AipsIo::setpos"><code>AipsIo::setpos</code></a> repositions only when not inside an object (<code>level=0</code>)</li>
+</ul>
+<h2 id="file-backed-api"><a class="doc-anchor" href="#file-backed-api">§</a>File-Backed API</h2>
+<ul>
+<li><a href="struct.AipsIo.html#method.open" title="associated function casacore_aipsio::aipsio::AipsIo::open"><code>AipsIo::open</code></a></li>
+<li><a href="struct.AipsIo.html#method.open_file" title="method casacore_aipsio::aipsio::AipsIo::open_file"><code>AipsIo::open_file</code></a></li>
+<li><a href="struct.AipsIo.html#method.reopen" title="method casacore_aipsio::aipsio::AipsIo::reopen"><code>AipsIo::reopen</code></a></li>
+<li><a href="struct.AipsIo.html#method.file_option" title="method casacore_aipsio::aipsio::AipsIo::file_option"><code>AipsIo::file_option</code></a></li>
+</ul>
+<p><a href="enum.AipsOpenOption.html" title="enum casacore_aipsio::aipsio::AipsOpenOption"><code>AipsOpenOption</code></a> modes:</p>
+<ul>
+<li><code>Old</code>: read-only existing file</li>
+<li><code>New</code>: create/truncate read-write</li>
+<li><code>NewNoReplace</code>: create-new read-write; fail if exists</li>
+<li><code>Scratch</code>: create/truncate read-write and delete on close</li>
+<li><code>Delete</code>: open existing read-write and delete on close</li>
+<li><code>Update</code>: open existing read-write</li>
+<li><code>Append</code>: open/create read-write and seek to end once on open</li>
+</ul>
+<p><code>Append</code> intentionally does not use OS append-only writes; AipsIO requires
+in-place backpatching of object-length headers.</p>
+<h2 id="scalar-api"><a class="doc-anchor" href="#scalar-api">§</a>Scalar API</h2>
+<p>Write one value:</p>
+<ul>
+<li><code>put_bool</code></li>
+<li><code>put_i8</code>, <code>put_u8</code></li>
+<li><code>put_i16</code>, <code>put_u16</code></li>
+<li><code>put_i32</code>, <code>put_u32</code></li>
+<li><code>put_i64</code>, <code>put_u64</code></li>
+<li><code>put_f32</code>, <code>put_f64</code></li>
+<li><code>put_complex32</code>, <code>put_complex64</code></li>
+<li><code>put_string</code></li>
+</ul>
+<p>Read one value:</p>
+<ul>
+<li><code>get_bool</code></li>
+<li><code>get_i8</code>, <code>get_u8</code></li>
+<li><code>get_i16</code>, <code>get_u16</code></li>
+<li><code>get_i32</code>, <code>get_u32</code></li>
+<li><code>get_i64</code>, <code>get_u64</code></li>
+<li><code>get_f32</code>, <code>get_f64</code></li>
+<li><code>get_complex32</code>, <code>get_complex64</code></li>
+<li><code>get_string</code></li>
+</ul>
+<p>Encoding notes:</p>
+<ul>
+<li>numeric primitives use big-endian canonical encoding</li>
+<li>string encodes <code>u32</code> byte length then UTF-8 bytes</li>
+<li>booleans encode as byte <code>0</code>/<code>1</code></li>
+</ul>
+<h2 id="linear-array-api-putgetgetnew-equivalents"><a class="doc-anchor" href="#linear-array-api-putgetgetnew-equivalents">§</a>Linear Array API (<code>put</code>/<code>get</code>/<code>getnew</code> equivalents)</h2>
+<p>Write slices:</p>
+<ul>
+<li><code>put_bool_slice</code>, <code>put_i8_slice</code>, <code>put_u8_slice</code>, …</li>
+<li>each slice writer takes <code>put_nr: bool</code>:
+<ul>
+<li><code>true</code>: write element count (<code>u32</code>) first</li>
+<li><code>false</code>: write raw element sequence only</li>
+</ul>
+</li>
+</ul>
+<p>Read into caller-provided buffers (<code>get</code> equivalent):</p>
+<ul>
+<li><code>get_bool_into</code>, <code>get_i8_into</code>, <code>get_u8_into</code>, …</li>
+<li>caller supplies exact expected element count</li>
+</ul>
+<p>Read newly allocated arrays (<code>getnew</code> equivalent):</p>
+<ul>
+<li><code>getnew_bool</code>, <code>getnew_i8</code>, <code>getnew_u8</code>, …</li>
+<li>reads count prefix, allocates, fills <code>Vec&lt;T&gt;</code></li>
+</ul>
+<h2 id="dynamic-values-value"><a class="doc-anchor" href="#dynamic-values-value">§</a>Dynamic Values (<code>Value</code>)</h2>
+<ul>
+<li><a href="struct.AipsIo.html#method.put_value" title="method casacore_aipsio::aipsio::AipsIo::put_value"><code>AipsIo::put_value</code></a></li>
+<li><a href="struct.AipsIo.html#method.get_value" title="method casacore_aipsio::aipsio::AipsIo::get_value"><code>AipsIo::get_value</code></a></li>
+</ul>
+<p>Supported dynamic kinds:</p>
+<ul>
+<li><code>Value::Scalar(ScalarValue)</code></li>
+<li><code>Value::Array(ArrayValue)</code> (<code>ndarray::ArrayD&lt;T&gt;</code>, any rank)</li>
+<li><code>Value::Record(RecordValue)</code> (recursive)</li>
+</ul>
+<p>Dynamic encoding includes:</p>
+<ul>
+<li>value-kind tag (<code>scalar|array|record</code>)</li>
+<li>primitive tag for scalar/array kinds</li>
+<li>for arrays: rank + shape + linear payload</li>
+<li>for records: field count + <code>(field_name, field_value)</code> pairs</li>
+</ul>
+<h2 id="array-rank-and-layout-notes"><a class="doc-anchor" href="#array-rank-and-layout-notes">§</a>Array Rank and Layout Notes</h2>
+<p>Primitive slice APIs (<code>put_*_slice</code>/<code>get_*_into</code>/<code>getnew_*</code>) encode linear
+arrays only; rank is not stored.</p>
+<p>For <code>Value::Array</code>, rank and shape are encoded and reconstructed.</p>
+<p><code>AipsIo</code> treats array payload as a linear sequence. Cross-language tests can
+adapt linearization order (Fortran vs C memory order) in test shims without
+changing this public API.</p>
+<h2 id="error-model"><a class="doc-anchor" href="#error-model">§</a>Error Model</h2>
+<p>The API returns <a href="type.AipsIoObjectResult.html" title="type casacore_aipsio::aipsio::AipsIoObjectResult"><code>AipsIoObjectResult</code></a>.
+Notable <a href="enum.AipsIoObjectError.html" title="enum casacore_aipsio::aipsio::AipsIoObjectError"><code>AipsIoObjectError</code></a> categories:</p>
+<ul>
+<li>framing/state: <code>PutStartUnavailable</code>, <code>NoPutStart</code>, <code>NoGetStart</code>,
+<code>GetNextTypeUnavailable</code>, <code>IncompleteObjectRead</code></li>
+<li>type/format: <code>ObjectTypeMismatch</code>, <code>NoMagicValueFound</code>,
+<code>InvalidValueKindTag</code>, <code>InvalidPrimitiveTypeTag</code></li>
+<li>bounds/shape: <code>ReadBeyondEndOfObject</code>, <code>LengthOverflow</code>,
+<code>DimensionOverflow</code>, <code>InvalidArrayShape</code></li>
+<li>stream lifecycle: <code>AlreadyOpen</code>, <code>NotOpen</code>, <code>StreamTypeMismatch</code></li>
+<li>wrapped I/O/UTF-8 errors</li>
+</ul>
+<h2 id="c-mapping-summary"><a class="doc-anchor" href="#c-mapping-summary">§</a>C++ Mapping Summary</h2>
+<p>Close equivalents to casacore <code>AipsIO</code>:</p>
+<ul>
+<li><code>putstart</code> / <code>putend</code></li>
+<li><code>getNextType</code> (<code>get_next_type</code>) / <code>getstart</code> / <code>getend</code></li>
+<li>scalar put/get families</li>
+<li>array <code>put</code>/<code>get</code>/<code>getnew</code> families (slice/into/new-vec in Rust)</li>
+<li><code>getpos</code> / <code>setpos</code></li>
+<li>open/close/reopen/file option support</li>
+</ul>
+<p>Rust differences:</p>
+<ul>
+<li>explicit methods instead of <code>&lt;&lt;</code> / <code>&gt;&gt;</code> operators</li>
+<li>safe ownership (<code>Vec&lt;T&gt;</code>, <code>String</code>, <code>ArrayD&lt;T&gt;</code>) instead of raw pointers</li>
+<li>stream abstraction is <code>Read + Write + Seek</code></li>
+<li>dynamic typed-value API is first-class</li>
+</ul>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.AipsIo.html" title="struct casacore_aipsio::aipsio::AipsIo">AipsIo</a></dt><dd>Stateful AipsIO object reader/writer over an arbitrary seekable stream.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.AipsIoObjectError.html" title="enum casacore_aipsio::aipsio::AipsIoObjectError">Aips<wbr>IoObject<wbr>Error</a></dt><dd>Errors from <a href="struct.AipsIo.html" title="struct casacore_aipsio::aipsio::AipsIo"><code>AipsIo</code></a> object-framing operations.</dd><dt><a class="enum" href="enum.AipsOpenOption.html" title="enum casacore_aipsio::aipsio::AipsOpenOption">Aips<wbr>Open<wbr>Option</a></dt><dd>File open mode for <a href="struct.AipsIo.html" title="struct casacore_aipsio::aipsio::AipsIo"><code>AipsIo</code></a>, matching casacore <code>ByteIO::OpenOption</code>.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.AipsIoStream.html" title="trait casacore_aipsio::aipsio::AipsIoStream">Aips<wbr>IoStream</a></dt><dd>Object-safe byte stream used as the backing store for <a href="struct.AipsIo.html" title="struct casacore_aipsio::aipsio::AipsIo"><code>AipsIo</code></a>.</dd></dl><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><dl class="item-table"><dt><a class="type" href="type.AipsIoObjectResult.html" title="type casacore_aipsio::aipsio::AipsIoObjectResult">Aips<wbr>IoObject<wbr>Result</a></dt></dl></section></div></main></body></html>

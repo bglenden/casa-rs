@@ -1,0 +1,85 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Parser for casacore-compatible Lattice Expression Language (LEL) strings."><title>casacore_images::expr_parser - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casacore_images" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0 (4a4ef493e 2026-03-02)" data-channel="1.94.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module expr_parser</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../casacore_images/index.html">casacore_<wbr>images</a><span class="version">0.6.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module expr_<wbr>parser</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#grammar-ebnf" title="Grammar (EBNF)">Grammar (EBNF)</a></li><li><a href="#operator-precedence-lowest--highest" title="Operator precedence (lowest → highest)">Operator precedence (lowest → highest)</a></li><li><a href="#path-quoting-rules" title="Path quoting rules">Path quoting rules</a></li><li><a href="#deferred-features-wave-14--beyond" title="Deferred features (Wave 14 / beyond)">Deferred features (Wave 14 / beyond)</a></li><li><a href="#example" title="Example">Example</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate casacore_<wbr>images</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">casacore_images</a></div><h1>Module <span>expr_<wbr>parser</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/casacore_images/expr_parser.rs.html#2-2113">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Parser for casacore-compatible Lattice Expression Language (LEL) strings.</p>
+<p>Converts a LEL expression string into the lazy <a href="../image_expr/struct.ImageExpr.html" title="struct casacore_images::image_expr::ImageExpr"><code>ImageExpr</code></a> / <a href="../image_expr/struct.MaskExpr.html" title="struct casacore_images::image_expr::MaskExpr"><code>MaskExpr</code></a>
+DAG.  The supported grammar covers the full C++ LEL surface (Waves 11-14):</p>
+<ul>
+<li><strong>Arithmetic</strong>: <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>^</code> (power, right-associative)</li>
+<li><strong>Unary</strong>: <code>-x</code>, <code>+x</code></li>
+<li><strong>Comparison</strong>: <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>, <code>==</code>, <code>!=</code></li>
+<li><strong>Logical</strong>: <code>&amp;&amp;</code>, <code>||</code>, <code>!</code></li>
+<li><strong>1-arg math</strong>: <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code>, <code>sinh</code>,
+<code>cosh</code>, <code>tanh</code>, <code>exp</code>, <code>log</code>, <code>log10</code>, <code>sqrt</code>, <code>abs</code>, <code>ceil</code>, <code>floor</code>,
+<code>round</code>, <code>sign</code>, <code>conj</code></li>
+<li><strong>1-arg mask</strong>: <code>isnan</code> (→ mask), <code>all</code>, <code>any</code> (mask → mask)</li>
+<li><strong>1-arg numeric</strong>: <code>ntrue</code>, <code>nfalse</code> (mask → scalar), <code>sum</code>, <code>min1d</code>,
+<code>max1d</code>, <code>mean1d</code>/<code>mean</code>, <code>median1d</code>/<code>median</code> (reductions)</li>
+<li><strong>1-arg metadata</strong>: <code>ndim</code>, <code>nelem</code>/<code>nelements</code> (→ scalar), <code>mask</code>, <code>value</code></li>
+<li><strong>2-arg functions</strong>: <code>pow</code>, <code>fmod</code>, <code>atan2</code>, <code>min</code>, <code>max</code>, <code>length</code>,
+<code>fractile1d</code>/<code>fractile</code>, <code>fractilerange1d</code>/<code>fractilerange</code>, <code>replace</code></li>
+<li><strong>3-arg functions</strong>: <code>iif</code> (conditional), <code>fractilerange1d</code> (3-arg variant)</li>
+<li><strong>0-arg constants</strong>: <code>pi()</code>, <code>e()</code></li>
+</ul>
+<p>Type-changing functions (<code>real</code>, <code>imag</code>, <code>arg</code>, <code>complex</code>) are available
+only via the typed API on <a href="../image_expr/struct.ImageExpr.html" title="struct casacore_images::image_expr::ImageExpr"><code>ImageExpr</code></a>, not through the parser (the parser
+is monomorphic in T). <code>indexin</code> is deferred (requires array literal syntax).</p>
+<ul>
+<li><strong>Numeric literals</strong>: integers, floats (e.g. <code>1.5e-3</code>)</li>
+<li><strong>Image references</strong>: quoted paths (<code>'path'</code>, <code>"path"</code>) or unquoted
+identifiers resolved via the <a href="trait.ImageResolver.html" title="trait casacore_images::expr_parser::ImageResolver"><code>ImageResolver</code></a> trait.</li>
+</ul>
+<h2 id="grammar-ebnf"><a class="doc-anchor" href="#grammar-ebnf">§</a>Grammar (EBNF)</h2><div class="example-wrap"><pre class="language-text"><code>expression  → or_expr
+or_expr     → and_expr (&#39;||&#39; and_expr)*
+and_expr    → not_expr (&#39;&amp;&amp;&#39; not_expr)*
+not_expr    → &#39;!&#39; not_expr | rel_expr
+rel_expr    → add_expr ((&#39;==&#39; | &#39;!=&#39; | &#39;&gt;&#39; | &#39;&gt;=&#39; | &#39;&lt;&#39; | &#39;&lt;=&#39;) add_expr)?
+add_expr    → mul_expr ((&#39;+&#39; | &#39;-&#39;) mul_expr)*
+mul_expr    → power_expr ((&#39;*&#39; | &#39;/&#39;) power_expr)*
+power_expr  → unary_expr (&#39;^&#39; power_expr)?        // right-associative
+unary_expr  → (&#39;-&#39; | &#39;+&#39;) unary_expr | call_expr
+call_expr   → IDENT &#39;(&#39; arglist? &#39;)&#39; | primary
+primary     → &#39;(&#39; expression &#39;)&#39; | NUMBER | IMAGE_REF</code></pre></div><h2 id="operator-precedence-lowest--highest"><a class="doc-anchor" href="#operator-precedence-lowest--highest">§</a>Operator precedence (lowest → highest)</h2><div><table><thead><tr><th>Level</th><th>Operators</th><th>Associativity</th></tr></thead><tbody>
+<tr><td>1</td><td><code>||</code></td><td>left</td></tr>
+<tr><td>2</td><td><code>&amp;&amp;</code></td><td>left</td></tr>
+<tr><td>3</td><td><code>!</code></td><td>prefix</td></tr>
+<tr><td>4</td><td><code>== != &gt; &gt;= &lt; &lt;=</code></td><td>non-assoc</td></tr>
+<tr><td>5</td><td><code>+ -</code></td><td>left</td></tr>
+<tr><td>6</td><td><code>* /</code></td><td>left</td></tr>
+<tr><td>7</td><td><code>^</code></td><td>right</td></tr>
+<tr><td>8</td><td>unary <code>- +</code></td><td>prefix</td></tr>
+</tbody></table>
+</div><h2 id="path-quoting-rules"><a class="doc-anchor" href="#path-quoting-rules">§</a>Path quoting rules</h2>
+<p>Image paths may be specified using single quotes, double quotes, or as bare
+identifiers (alphanumeric plus <code>.</code>, <code>_</code>, <code>/</code>, <code>~</code>).  Inside quoted strings
+the opposite quote character is literal; there is no backslash-escape
+mechanism inside quotes in the supported subset.  Adjacent quoted strings
+are <strong>not</strong> concatenated (unlike the full C++ lexer); each quoted token is
+a single image reference.</p>
+<h2 id="deferred-features-wave-14--beyond"><a class="doc-anchor" href="#deferred-features-wave-14--beyond">§</a>Deferred features (Wave 14 / beyond)</h2>
+<ul>
+<li><code>$n</code> temporary lattice references</li>
+<li>Region references (<code>::region</code>)</li>
+<li>Array literals <code>[...]</code></li>
+<li><code>indexin</code> / <code>indexnotin</code></li>
+<li>Reduction functions (single-arg <code>min</code>, <code>max</code>, <code>mean</code>, <code>median</code>, etc.)</li>
+<li>Type conversion functions (<code>float</code>, <code>double</code>, <code>complex</code>, etc.)</li>
+<li><code>iif(cond, true, false)</code> conditional</li>
+<li>Complex literal suffix <code>i</code></li>
+<li><code>%</code> modulo infix operator (use <code>fmod()</code> instead)</li>
+</ul>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::collections::HashMap;
+<span class="kw">use </span>casacore_coordinates::CoordinateSystem;
+<span class="kw">use </span>casacore_images::{ImageExpr, TempImage};
+<span class="kw">use </span>casacore_images::expr_parser::{parse_image_expr, HashMapResolver};
+<span class="kw">use </span>casacore_lattices::LatticeMut;
+
+<span class="kw">let </span><span class="kw-2">mut </span>a = TempImage::&lt;f32&gt;::new(<span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">4</span>], CoordinateSystem::new()).unwrap();
+a.set(<span class="number">2.0</span>).unwrap();
+
+<span class="kw">let </span><span class="kw-2">mut </span>images = HashMap::new();
+images.insert(<span class="string">"a"</span>.to_string(), <span class="kw-2">&amp;</span>a <span class="kw">as </span><span class="kw-2">&amp;</span><span class="kw">dyn </span>casacore_images::image::ImageInterface&lt;f32&gt;);
+<span class="kw">let </span>resolver = HashMapResolver(images);
+
+<span class="kw">let </span>expr = parse_image_expr(<span class="string">"sin('a') + 1.0"</span>, <span class="kw-2">&amp;</span>resolver).unwrap();
+<span class="kw">let </span>val = expr.get_at(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<span class="macro">assert!</span>((val - (<span class="number">2.0_f32</span>.sin() + <span class="number">1.0</span>)).abs() &lt; <span class="number">1e-6</span>);</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ExprParseError.html" title="struct casacore_images::expr_parser::ExprParseError">Expr<wbr>Parse<wbr>Error</a></dt><dd>Errors that can occur while parsing a LEL expression string.</dd><dt><a class="struct" href="struct.HashMapResolver.html" title="struct casacore_images::expr_parser::HashMapResolver">Hash<wbr>MapResolver</a></dt><dd>Simple <a href="https://doc.rust-lang.org/1.94.0/std/collections/hash/map/struct.HashMap.html" title="struct std::collections::hash::map::HashMap"><code>HashMap</code></a>-backed image resolver.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.ExprValueConvert.html" title="trait casacore_images::expr_parser::ExprValueConvert">Expr<wbr>Value<wbr>Convert</a></dt><dd>Extension for converting between <code>f64</code> and pixel types during parsing.</dd><dt><a class="trait" href="trait.ImageResolver.html" title="trait casacore_images::expr_parser::ImageResolver">Image<wbr>Resolver</a></dt><dd>Resolves image name tokens (quoted paths or bare identifiers) to image
+references usable by the expression DAG.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.parse_image_expr.html" title="fn casacore_images::expr_parser::parse_image_expr">parse_<wbr>image_<wbr>expr</a></dt><dd>Parses a LEL expression string and returns a numeric <a href="../image_expr/struct.ImageExpr.html" title="struct casacore_images::image_expr::ImageExpr"><code>ImageExpr</code></a>.</dd><dt><a class="fn" href="fn.parse_mask_expr.html" title="fn casacore_images::expr_parser::parse_mask_expr">parse_<wbr>mask_<wbr>expr</a></dt><dd>Parses a LEL expression string and returns a boolean <a href="../image_expr/struct.MaskExpr.html" title="struct casacore_images::image_expr::MaskExpr"><code>MaskExpr</code></a>.</dd></dl></section></div></main></body></html>

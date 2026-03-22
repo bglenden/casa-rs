@@ -1,0 +1,50 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Direction measure: sky directions in various celestial reference frames."><title>casacore_types::measures::direction - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casacore_types" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0 (4a4ef493e 2026-03-02)" data-channel="1.94.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module direction</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../casacore_types/index.html">casacore_<wbr>types</a><span class="version">0.6.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module direction</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#sofa-vs-casacores-bespoke-algorithms" title="SOFA vs casacore’s bespoke algorithms">SOFA vs casacore’s bespoke algorithms</a></li><li><a href="#implemented-routes" title="Implemented routes">Implemented routes</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In casacore_<wbr>types::<wbr>measures</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">casacore_types</a>::<wbr><a href="../index.html">measures</a></div><h1>Module <span>direction</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/casacore_types/measures/direction.rs.html#2-1525">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Direction measure: sky directions in various celestial reference frames.</p>
+<p>This module provides:</p>
+<ul>
+<li><a href="enum.DirectionRef.html" title="enum casacore_types::measures::direction::DirectionRef"><code>DirectionRef</code></a> — celestial reference frame types (J2000, GALACTIC, etc.).</li>
+<li><a href="struct.MDirection.html" title="struct casacore_types::measures::direction::MDirection"><code>MDirection</code></a> — a sky direction stored as direction cosines with a reference
+frame, equivalent to C++ <code>MDirection</code>.</li>
+</ul>
+<p>Conversions between frames use rotation matrices (constant or epoch-dependent)
+via the [<code>sofars</code>] crate’s precession, nutation, and coordinate functions.</p>
+<h2 id="sofa-vs-casacores-bespoke-algorithms"><a class="doc-anchor" href="#sofa-vs-casacores-bespoke-algorithms">§</a>SOFA vs casacore’s bespoke algorithms</h2>
+<p>C++ casacore does <strong>not</strong> use the IAU SOFA library internally — it predates
+SOFA and has its own implementations of precession (Euler angle polynomials),
+nutation (custom series), and aberration (Stumpff polynomial series).
+SOFA is only an optional casacore build dependency used for testing.</p>
+<p>This Rust implementation uses [<code>sofars</code>] (a Rust port of SOFA) instead of
+transliterating casacore’s bespoke algorithms. Both implement the same IAU
+standards but with different polynomial series and internal decompositions.
+Measured deviations in J2000 → APP direction conversions:</p>
+<div><table><thead><tr><th>IAU model</th><th>Typical deviation</th><th>Main contributors</th></tr></thead><tbody>
+<tr><td>1976/1980</td><td>~1.5 mas</td><td>Sun deflection, velocity series</td></tr>
+<tr><td>2000A</td><td>~16 mas</td><td>Precession/nutation parameterization</td></tr>
+</tbody></table>
+</div>
+<p>The IAU 1976/1980 deviation is dominated by:</p>
+<ul>
+<li><strong>Sun gravitational deflection</strong>: C++ casacore applies full light deflection
+by the Sun (<code>applySolarPos</code>, up to ~1.75“ at the limb, typically ~1–2 mas
+at moderate elongation). SOFA’s <code>ab()</code> includes only a ~0.4 µas correction.</li>
+<li><strong>Earth velocity</strong>: SOFA uses VSOP87 via <code>epv00</code>; casacore uses Stumpff
+polynomial series. Difference: ~0.1 mas.</li>
+</ul>
+<p>The larger IAU 2000A deviation (~16 mas) comes from differences in how
+casacore and SOFA parameterize the IAU 2000 precession-nutation model.
+Casacore uses (ζA, zA, θA) Euler angles with frame bias baked into the
+constant terms; SOFA uses (ψA, ωA, χA) Lieske 1977 angles with IAU 2000
+corrections from <code>pr00</code> and separate frame bias via <code>bi00</code>.</p>
+<p>A test program comparing casacore and ERFA (SOFA) side-by-side is in
+<code>misc/casacore_vs_sofa_deviation.cpp</code>. An issue has been filed with the
+casacore C++ maintainers to clarify whether this is expected.</p>
+<h2 id="implemented-routes"><a class="doc-anchor" href="#implemented-routes">§</a>Implemented routes</h2>
+<p><strong>Constant-matrix</strong> (no frame data needed):
+J2000 ↔ GALACTIC, J2000 ↔ ICRS, GALACTIC ↔ SUPERGAL,
+AZEL ↔ AZELSW, AZELGEO ↔ AZELSWGEO, JNAT ↔ J2000</p>
+<p><strong>Epoch-dependent</strong> (need epoch in frame):
+J2000 ↔ JMEAN (precession), JMEAN ↔ JTRUE (nutation),
+J2000 ↔ ECLIPTIC (obliquity), JMEAN ↔ MECLIPTIC, JTRUE ↔ TECLIPTIC,
+JTRUE ↔ APP (aberration)</p>
+<p><strong>Epoch + position</strong> (need both):
+APP ↔ HADEC (sidereal time), HADEC ↔ AZEL, HADEC ↔ AZELGEO</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.MDirection.html" title="struct casacore_types::measures::direction::MDirection">MDirection</a></dt><dd>A sky direction in a specified celestial reference frame.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.DirectionRef.html" title="enum casacore_types::measures::direction::DirectionRef">Direction<wbr>Ref</a></dt><dd>Celestial reference frame types for direction measures.</dd></dl></section></div></main></body></html>

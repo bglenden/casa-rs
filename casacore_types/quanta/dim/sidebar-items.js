@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NDIM"],"enum":["Dimension"],"struct":["UnitDim"]};

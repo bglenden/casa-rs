@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["array_fractile","array_madfm","array_median","near","near_abs","near_f32","near_tol"]};

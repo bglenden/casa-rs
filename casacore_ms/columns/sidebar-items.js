@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["data_columns","direction_columns","exposure_interval","flag_columns","frequency_columns","main_ids","position_columns","time_columns","uvw_column","weight_columns"]};

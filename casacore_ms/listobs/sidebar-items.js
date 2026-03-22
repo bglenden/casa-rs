@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ListObsOutputFormat"],"struct":["AntennaSummary","DataDescriptionSummary","FieldSummary","ListObsOptions","ListObsSummary","MeasurementSetInfo","ObservationSummary","PolarizationSummary","ScanSummary","SourceSummary","SpectralWindowSummary"]};

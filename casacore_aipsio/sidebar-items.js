@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AipsIoError","ArrayValue","ByteOrder","PrimitiveType","ScalarValue","Value","ValueKind","ValueRank"],"fn":["detect_aipsio_byte_order"],"mod":["aipsio","demo"],"struct":["AipsReader","AipsWriter","RecordField","RecordValue","TypeTag"],"type":["AipsIoResult","Complex32","Complex64"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TaqlResult"],"fn":["execute","execute_readonly"]};

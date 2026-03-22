@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ValidationIssue"],"fn":["validate_column_metadata","validate_columns","validate_ms","validate_subtable_keywords"]};

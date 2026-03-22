@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SubtableId"],"fn":["optional_columns","required_columns"],"mod":["antenna","data_description","doppler","feed","field","flag_cmd","freq_offset","history","main_table","observation","pointing","polarization","processor","source","spectral_window","state","syscal","weather"]};

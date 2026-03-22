@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ProjectionType"],"fn":["deg_to_rad","rad_to_deg"],"struct":["Projection"]};

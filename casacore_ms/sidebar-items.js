@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["builder","column_def","columns","derived","error","grouping","listobs","ms","schema","selection","selection_helpers","subtables","validate"]};

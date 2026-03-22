@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AnyPagedImage","ImagePixelType"],"fn":["image_pixel_type"],"struct":["PagedImage"],"trait":["ImageInterface","ImagePixel","MutableImageInterface"],"type":["Image"]};

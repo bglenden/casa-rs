@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["antenna","data_description","doppler","feed","field","flag_cmd","freq_offset","history","observation","pointing","polarization","processor","source","spectral_window","state","syscal","weather"],"trait":["SubTable"]};

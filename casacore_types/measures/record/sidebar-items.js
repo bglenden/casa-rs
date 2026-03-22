@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["direction_from_record","direction_to_record","doppler_from_record","doppler_to_record","epoch_from_record","epoch_to_record","frequency_from_record","frequency_to_record","position_from_record","position_to_record","radial_velocity_from_record","radial_velocity_to_record"]};

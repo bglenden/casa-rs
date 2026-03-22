@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["avogadro","bohr_radius","boltzmann","c","electron_charge","electron_mass","electron_radius","faraday","full_turn","gas_constant","gravitational","h","half_turn","hi_line","iau_k2","proton_electron_ratio","proton_mass","quarter_turn","solar_radius","vacuum_permeability","vacuum_permittivity"]};

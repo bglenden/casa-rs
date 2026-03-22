@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MeasOffsetDesc","MeasRefDesc","MeasureType","MeasureValue"],"fn":["default_direction_ref_map","default_epoch_ref_map","default_frequency_ref_map"],"struct":["ArrayMeasColumn","ArrayMeasColumnMut","ScalarMeasColumn","ScalarMeasColumnMut","TableMeasDesc"]};
