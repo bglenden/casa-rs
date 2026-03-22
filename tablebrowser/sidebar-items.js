@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_CLI_WIDTH","DEFAULT_INSPECT_HEIGHT","DEFAULT_ROW_LIMIT","DEFAULT_SECTION_HEIGHT"],"enum":["InspectTarget","OutputView"],"fn":["cells_viewport_height","main","parse_args","parse_inspect_target","parse_keyword_path","print_inspector","print_section","run","run_session","run_snapshot","ui_schema_json","usage"],"struct":["CliOptions"]};
