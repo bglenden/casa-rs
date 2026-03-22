@@ -8,9 +8,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -19,9 +17,6 @@ concurrency:
 jobs:
   docs:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -35,11 +30,34 @@ jobs:
       - name: Add redirect index
         run: echo '<meta http-equiv="refresh" content="0;url=casacore_tables/index.html">' > target/doc/index.html
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: target/doc
+      - name: Deploy to gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          publish_dir="$(mktemp -d)"
+
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "$repo_url" "$publish_dir"
+          else
+            git clone --depth 1 "$repo_url" "$publish_dir"
+            git -C "$publish_dir" checkout --orphan gh-pages
+            git -C "$publish_dir" rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          rsync -a --delete --exclude '.git/' target/doc/ "$publish_dir"/
+          touch "$publish_dir/.nojekyll"
+
+          git -C "$publish_dir" config user.name "github-actions[bot]"
+          git -C "$publish_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$publish_dir" add --all
+
+          if git -C "$publish_dir" diff --cached --quiet; then
+            echo "No docs changes to publish"
+            exit 0
+          fi
+
+          git -C "$publish_dir" commit -m "Deploy rustdoc for ${GITHUB_SHA}"
+          git -C "$publish_dir" push origin HEAD:gh-pages
