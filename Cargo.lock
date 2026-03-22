@@ -79,7 +79,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "casacore-aipsio"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-types",
  "ndarray",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "casacore-coordinates"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-types",
  "ndarray",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "casacore-images"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-coordinates",
  "casacore-lattices",
@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "casacore-lattices"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-tables",
  "casacore-types",
@@ -127,14 +127,14 @@ dependencies = [
 
 [[package]]
 name = "casacore-measures-data"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ureq",
 ]
 
 [[package]]
 name = "casacore-ms"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-tables",
  "casacore-test-support",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "casacore-tables"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-aipsio",
  "casacore-types",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "casacore-test-support"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-aipsio",
  "casacore-coordinates",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "casacore-types"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-measures-data",
  "criterion",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "casars"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "casacore-ms",
  "casacore-types",
