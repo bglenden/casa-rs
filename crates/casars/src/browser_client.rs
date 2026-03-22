@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::process::{Child, ChildStdin, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -13,7 +13,8 @@ use casacore_tablebrowser_protocol::{
 
 use crate::registry::ResolvedCommand;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 5_000;
+const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Debug)]
 pub(crate) struct BrowserClient {
@@ -98,6 +99,21 @@ impl BrowserClient {
     }
 
     pub(crate) fn request(&self, command: BrowserCommand) -> Result<BrowserSnapshot, String> {
+        self.request_with_timeout(command, request_timeout())
+    }
+
+    pub(crate) fn request_startup(
+        &self,
+        command: BrowserCommand,
+    ) -> Result<BrowserSnapshot, String> {
+        self.request_with_timeout(command, startup_timeout())
+    }
+
+    fn request_with_timeout(
+        &self,
+        command: BrowserCommand,
+        timeout: Duration,
+    ) -> Result<BrowserSnapshot, String> {
         let payload = serde_json::to_string(&BrowserRequestEnvelope::new(command))
             .map_err(|error| format!("serialize browser request: {error}"))?;
         {
@@ -114,32 +130,23 @@ impl BrowserClient {
 
         let response = self
             .responses
-            .recv_timeout(REQUEST_TIMEOUT)
-            .map_err(|error| {
-                let stderr = self.stderr_text();
-                let exit = self
-                    .child
-                    .lock()
-                    .ok()
-                    .and_then(|mut child| child.try_wait().ok().flatten());
-                match exit {
-                    Some(status) => format!(
-                        "tablebrowser session exited with {}{}",
+            .recv_timeout(timeout)
+            .map_err(|error| match error {
+                RecvTimeoutError::Timeout => {
+                    let _ = self.terminate_and_wait();
+                    format_browser_failure(
+                        "timed out waiting for browser response",
+                        self.stderr_text(),
+                        None,
+                    )
+                }
+                RecvTimeoutError::Disconnected => {
+                    let status = self.reap_exit_status();
+                    format_browser_failure(
+                        "tablebrowser session exited",
+                        self.stderr_text(),
                         status,
-                        if stderr.trim().is_empty() {
-                            String::new()
-                        } else {
-                            format!(": {}", stderr.trim())
-                        }
-                    ),
-                    None => format!(
-                        "timed out waiting for browser response ({error}){}",
-                        if stderr.trim().is_empty() {
-                            String::new()
-                        } else {
-                            format!(": {}", stderr.trim())
-                        }
-                    ),
+                    )
                 }
             })?;
 
@@ -150,11 +157,7 @@ impl BrowserClient {
     }
 
     pub(crate) fn cancel(&self) -> Result<(), String> {
-        self.child
-            .lock()
-            .map_err(|_| "failed to acquire browser child lock".to_string())?
-            .kill()
-            .map_err(|error| format!("terminate browser session: {error}"))
+        self.terminate_and_wait().map(|_| ())
     }
 
     pub(crate) fn stderr_text(&self) -> String {
@@ -162,5 +165,146 @@ impl BrowserClient {
             .lock()
             .map(|stderr| stderr.clone())
             .unwrap_or_default()
+    }
+
+    fn reap_exit_status(&self) -> Option<ExitStatus> {
+        let mut child = self.child.lock().ok()?;
+        child.try_wait().ok().flatten()
+    }
+
+    fn terminate_and_wait(&self) -> Result<Option<ExitStatus>, String> {
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| "failed to acquire browser child lock".to_string())?;
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("poll browser session: {error}"))?
+        {
+            return Ok(Some(status));
+        }
+        child
+            .kill()
+            .map_err(|error| format!("terminate browser session: {error}"))?;
+        child
+            .wait()
+            .map(Some)
+            .map_err(|error| format!("wait for browser session: {error}"))
+    }
+}
+
+impl Drop for BrowserClient {
+    fn drop(&mut self) {
+        let _ = self.terminate_and_wait();
+    }
+}
+
+fn request_timeout() -> Duration {
+    duration_from_env(
+        "CASARS_BROWSER_REQUEST_TIMEOUT_MS",
+        DEFAULT_REQUEST_TIMEOUT_MS,
+    )
+}
+
+fn startup_timeout() -> Duration {
+    duration_from_env(
+        "CASARS_BROWSER_STARTUP_TIMEOUT_MS",
+        DEFAULT_STARTUP_TIMEOUT_MS,
+    )
+}
+
+fn duration_from_env(name: &str, default_ms: u64) -> Duration {
+    let millis = std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_ms);
+    Duration::from_millis(millis)
+}
+
+fn format_browser_failure(prefix: &str, stderr: String, status: Option<ExitStatus>) -> String {
+    let mut message = match status {
+        Some(status) => format!("{prefix} with {status}"),
+        None => prefix.to_string(),
+    };
+    if !stderr.trim().is_empty() {
+        message.push_str(": ");
+        message.push_str(stderr.trim());
+    }
+    message
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::thread;
+
+    use casacore_tablebrowser_protocol::{
+        BrowserCommand, BrowserResponseEnvelope, BrowserSnapshot, BrowserViewport,
+    };
+    use tempfile::tempdir;
+
+    use super::*;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn timeout_terminates_session_before_a_late_reply_can_be_reused() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script = write_slow_browser_script(temp.path(), 200);
+        unsafe {
+            std::env::set_var("CASARS_BROWSER_REQUEST_TIMEOUT_MS", "50");
+        }
+
+        let client =
+            BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn browser client");
+
+        let error = client
+            .request(BrowserCommand::GetSnapshot { viewport: None })
+            .expect_err("request should time out");
+        assert!(error.contains("timed out waiting for browser response"));
+
+        thread::sleep(Duration::from_millis(250));
+        assert!(
+            client
+                .request(BrowserCommand::GetSnapshot { viewport: None })
+                .is_err(),
+            "late reply should not be reused after timeout"
+        );
+
+        unsafe {
+            std::env::remove_var("CASARS_BROWSER_REQUEST_TIMEOUT_MS");
+        }
+    }
+
+    fn write_slow_browser_script(root: &Path, delay_ms: u64) -> PathBuf {
+        let path = root.join("slow-browser.sh");
+        let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+            capabilities: casacore_tablebrowser_protocol::BrowserCapabilities { editable: false },
+            view: casacore_tablebrowser_protocol::BrowserView::Overview,
+            focus: casacore_tablebrowser_protocol::BrowserFocus::Main,
+            table_path: "/tmp/fake.ms".to_string(),
+            breadcrumb: Vec::new(),
+            viewport: BrowserViewport::new(80, 24),
+            status_line: "ok".to_string(),
+            content_lines: vec!["Overview".to_string()],
+            selected_address: None,
+            inspector: None,
+        }))
+        .expect("serialize snapshot");
+        let script = format!(
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  sleep {}\n  printf '%s\\n' '{}'\ndone\n",
+            delay_ms as f64 / 1000.0,
+            response
+        );
+        fs::write(&path, script).expect("write script");
+        let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("chmod");
+        path
     }
 }

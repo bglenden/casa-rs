@@ -917,9 +917,19 @@ impl AppState {
                 self.result.status_kind = StatusKind::Info;
             }
             Err(error) => {
-                self.result.status_line = "Browser session resize failed.".to_string();
-                self.result.status_kind = StatusKind::Error;
-                self.result.stderr = format!("{error}\n{}", session.client.stderr_text());
+                let stderr = session.client.stderr_text();
+                let details = if stderr.trim().is_empty() {
+                    format!("{error}\n")
+                } else {
+                    format!("{error}\n{stderr}")
+                };
+                if let Some(session) = self.browser_session.take() {
+                    let _ = session.client.cancel();
+                }
+                self.report_browser_error(
+                    "Browser session resize failed. Session closed.",
+                    details,
+                );
             }
         }
     }
@@ -2229,7 +2239,8 @@ impl AppState {
             .resolve_command()
             .and_then(|command| BrowserClient::spawn(&command))
         {
-            Ok(client) => match client.request(BrowserCommand::OpenRoot { path, viewport }) {
+            Ok(client) => match client.request_startup(BrowserCommand::OpenRoot { path, viewport })
+            {
                 Ok(snapshot) => {
                     self.result = ResultState {
                         status_line: snapshot.status_line.clone(),
@@ -2245,15 +2256,15 @@ impl AppState {
                     });
                 }
                 Err(error) => {
-                    self.result.status_line = "Failed to open table browser.".to_string();
-                    self.result.status_kind = StatusKind::Error;
-                    self.result.stderr = format!("{error}\n");
+                    let _ = client.cancel();
+                    self.report_browser_error(
+                        "Failed to open table browser.",
+                        format!("{error}\n"),
+                    );
                 }
             },
             Err(error) => {
-                self.result.status_line = "Failed to launch table browser.".to_string();
-                self.result.status_kind = StatusKind::Error;
-                self.result.stderr = format!("{error}\n");
+                self.report_browser_error("Failed to launch table browser.", format!("{error}\n"));
             }
         }
     }
@@ -2279,15 +2290,25 @@ impl AppState {
                 self.result.status_kind = StatusKind::Info;
             }
             Err((error, stderr)) => {
-                self.result.status_line = "Browser command failed.".to_string();
-                self.result.status_kind = StatusKind::Error;
-                self.result.stderr = if stderr.trim().is_empty() {
+                if let Some(session) = self.browser_session.take() {
+                    let _ = session.client.cancel();
+                }
+                let details = if stderr.trim().is_empty() {
                     format!("{error}\n")
                 } else {
                     format!("{error}\n{stderr}")
                 };
+                self.report_browser_error("Browser command failed. Session closed.", details);
             }
         }
+    }
+
+    fn report_browser_error(&mut self, status_line: &str, stderr: String) {
+        self.result.status_line = status_line.to_string();
+        self.result.status_kind = StatusKind::Error;
+        self.result.stderr = stderr;
+        self.active_result_tab = ResultTab::Stderr;
+        self.pane_focus = PaneFocus::Result;
     }
 
     fn browser_clipboard_payload(&self) -> Option<(String, &'static str)> {

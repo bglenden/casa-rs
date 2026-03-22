@@ -1177,6 +1177,8 @@ fn browser_session_reports_structured_open_errors() {
         app.stderr_for_test()
             .contains("open_root_failed: fake open failure")
     );
+    let rendered = render_app(&app, 160, 28);
+    assert!(rendered.contains("open_root_failed: fake open failure"));
 }
 
 #[cfg(unix)]
@@ -1200,6 +1202,50 @@ fn browser_session_reports_malformed_backend_responses() {
             .contains("Failed to open table browser")
     );
     assert!(app.stderr_for_test().contains("invalid_response"));
+    let rendered = render_app(&app, 160, 28);
+    assert!(rendered.contains("invalid_response"));
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_command_errors_close_the_session_and_surface_stderr() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let open_snapshot = fake_browser_snapshot_json(
+        ProtocolBrowserView::Overview,
+        "Opened",
+        vec!["Overview root".to_string()],
+    );
+    let command_error = serde_json::to_string(&BrowserResponseEnvelope::error(
+        "browser_error",
+        "fake command failure",
+    ))
+    .expect("serialize browser error");
+    let script = write_fake_tablebrowser_script(temp.path(), &[open_snapshot, command_error], None);
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    assert!(app.browser_is_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+    assert!(!app.browser_is_active());
+    assert!(
+        app.status_line_for_test()
+            .contains("Browser command failed. Session closed.")
+    );
+    assert!(
+        app.stderr_for_test()
+            .contains("browser_error: fake command failure")
+    );
+    let rendered = render_app(&app, 160, 28);
+    assert!(rendered.contains("browser_error: fake command failure"));
 }
 
 #[test]

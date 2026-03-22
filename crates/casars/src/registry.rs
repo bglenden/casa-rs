@@ -42,6 +42,14 @@ impl ResolvedCommand {
         command.args(&self.prefix_args);
         command
     }
+
+    #[cfg(test)]
+    pub(crate) fn direct(program: impl Into<OsString>) -> Self {
+        Self {
+            program: program.into(),
+            prefix_args: Vec::new(),
+        }
+    }
 }
 
 impl RegistryApp {
