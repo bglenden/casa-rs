@@ -29,7 +29,7 @@ use casacore_types::measures::frequency::FrequencyRef;
 use casacore_types::measures::position::MPosition;
 use casacore_types::quanta::{MvAngle, MvTime};
 use ndarray::IxDyn;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::selection::MsSelection;
 use crate::subtables::{SubTable, get_f64, get_i32, has_column};
@@ -61,7 +61,7 @@ impl ListObsOutputFormat {
 /// This keeps the application layer thin: callers construct options once and
 /// then reuse the same summary builder and renderers regardless of whether the
 /// entrypoint is a standalone executable or a future Python binding.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ListObsOptions {
     /// Render the verbose CASA-style text layout.
     pub verbose: bool,
@@ -173,7 +173,7 @@ impl ListObsOptions {
 /// `schema_version` is included so JSON consumers can pin their deserializers
 /// to a known shape as this summary grows. New optional fields may be added in
 /// future schema versions without changing the default text output.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ListObsSummary {
     /// Version of the JSON schema emitted by [`render_json_pretty`](Self::render_json_pretty).
     pub schema_version: u32,
@@ -200,7 +200,7 @@ pub struct ListObsSummary {
 }
 
 /// General metadata about the summarized MeasurementSet.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MeasurementSetInfo {
     /// Filesystem path of the MeasurementSet root, if the MS is disk-backed.
     pub path: Option<String>,
@@ -235,7 +235,7 @@ pub struct MeasurementSetInfo {
 }
 
 /// Summary of one OBSERVATION subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObservationSummary {
     /// Row index in the OBSERVATION subtable.
     pub observation_id: usize,
@@ -254,7 +254,7 @@ pub struct ObservationSummary {
 }
 
 /// Summary of one MAIN-table scan group.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScanSummary {
     /// OBSERVATION_ID for the grouped rows.
     pub observation_id: i32,
@@ -293,7 +293,7 @@ pub struct ScanSummary {
 }
 
 /// Summary of one FIELD subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldSummary {
     /// Row index in the FIELD subtable.
     pub field_id: usize,
@@ -316,7 +316,7 @@ pub struct FieldSummary {
 }
 
 /// Summary of one POLARIZATION subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolarizationSummary {
     /// Row index in the POLARIZATION subtable.
     pub polarization_id: usize,
@@ -327,7 +327,7 @@ pub struct PolarizationSummary {
 }
 
 /// Summary of one DATA_DESCRIPTION subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DataDescriptionSummary {
     /// Row index in the DATA_DESCRIPTION subtable.
     pub data_description_id: usize,
@@ -340,7 +340,7 @@ pub struct DataDescriptionSummary {
 }
 
 /// Summary of one SPECTRAL_WINDOW subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpectralWindowSummary {
     /// Row index in the SPECTRAL_WINDOW subtable.
     pub spectral_window_id: usize,
@@ -369,7 +369,7 @@ pub struct SpectralWindowSummary {
 }
 
 /// Summary of one SOURCE subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceSummary {
     /// SOURCE_ID column value.
     pub source_id: i32,
@@ -394,7 +394,7 @@ pub struct SourceSummary {
 }
 
 /// Summary of one ANTENNA subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AntennaSummary {
     /// Row index in the ANTENNA subtable.
     pub antenna_id: usize,
@@ -2973,281 +2973,7 @@ fn stokes_code(name: &str) -> Option<i32> {
 
 /// Hidden CLI support shared by the `listobs` and `msinfo` binaries.
 #[doc(hidden)]
-pub mod cli {
-    use std::fs;
-    use std::path::PathBuf;
-
-    use super::{ListObsOptions, ListObsOutputFormat, ListObsSummary};
-
-    /// Parse the environment arguments, run the summary, and return a process exit code.
-    pub fn run_env(program_name: &str) -> i32 {
-        match parse_args(program_name, std::env::args_os().skip(1)) {
-            Ok(CliAction::Help) => {
-                print!("{}", usage(program_name));
-                0
-            }
-            Ok(CliAction::Run(options)) => {
-                match ListObsSummary::from_path_with_options(&options.path, &options.listobs)
-                    .and_then(|summary| {
-                        summary
-                            .render(options.format)
-                            .map_err(|error| super::MsError::VersionError(error.to_string()))
-                    })
-                    .map_err(|error| error.to_string())
-                    .and_then(|rendered| write_output(&options, &rendered))
-                {
-                    Ok(()) => 0,
-                    Err(error) => {
-                        eprintln!("Error: {error}");
-                        1
-                    }
-                }
-            }
-            Err(error) => {
-                eprintln!("Error: {error}\n");
-                eprintln!("{}", usage(program_name));
-                1
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    enum CliAction {
-        Help,
-        Run(Box<CliOptions>),
-    }
-
-    #[derive(Debug)]
-    struct CliOptions {
-        path: PathBuf,
-        format: ListObsOutputFormat,
-        output: Option<PathBuf>,
-        overwrite: bool,
-        listobs: ListObsOptions,
-    }
-
-    fn parse_args(
-        program_name: &str,
-        args: impl IntoIterator<Item = std::ffi::OsString>,
-    ) -> Result<CliAction, String> {
-        let mut format = ListObsOutputFormat::Text;
-        let mut output = None;
-        let mut overwrite = false;
-        let mut path = None;
-        let mut listobs = ListObsOptions::default();
-
-        let args = args.into_iter().collect::<Vec<_>>();
-        let mut index = 0;
-        while index < args.len() {
-            let arg = &args[index];
-            let arg_lossy = arg.to_string_lossy();
-            match arg_lossy.as_ref() {
-                "-h" | "--help" => return Ok(CliAction::Help),
-                "--overwrite" => overwrite = true,
-                "--verbose" => listobs.verbose = true,
-                "--no-verbose" => listobs.verbose = false,
-                "--selectdata" => listobs.selectdata = true,
-                "--no-selectdata" => listobs.selectdata = false,
-                "-o" | "--output" => {
-                    index += 1;
-                    let value = args
-                        .get(index)
-                        .ok_or_else(|| format!("missing value for --output in {program_name}"))?;
-                    output = Some(PathBuf::from(value));
-                }
-                "--listfile" => {
-                    index += 1;
-                    let value = args
-                        .get(index)
-                        .ok_or_else(|| format!("missing value for --listfile in {program_name}"))?;
-                    output = Some(PathBuf::from(value));
-                }
-                "--format" => {
-                    index += 1;
-                    let value = args
-                        .get(index)
-                        .ok_or_else(|| format!("missing value for --format in {program_name}"))?;
-                    format = ListObsOutputFormat::parse(&value.to_string_lossy())?;
-                }
-                "--field" => {
-                    index += 1;
-                    listobs.field = Some(take_value(&args, index, "--field", program_name)?);
-                }
-                "--spw" => {
-                    index += 1;
-                    listobs.spw = Some(take_value(&args, index, "--spw", program_name)?);
-                }
-                "--antenna" => {
-                    index += 1;
-                    listobs.antenna = Some(take_value(&args, index, "--antenna", program_name)?);
-                }
-                "--scan" => {
-                    index += 1;
-                    listobs.scan = Some(take_value(&args, index, "--scan", program_name)?);
-                }
-                "--observation" => {
-                    index += 1;
-                    listobs.observation =
-                        Some(take_value(&args, index, "--observation", program_name)?);
-                }
-                "--array" => {
-                    index += 1;
-                    listobs.array = Some(take_value(&args, index, "--array", program_name)?);
-                }
-                "--timerange" => {
-                    index += 1;
-                    listobs.timerange =
-                        Some(take_value(&args, index, "--timerange", program_name)?);
-                }
-                "--uvrange" => {
-                    index += 1;
-                    listobs.uvrange = Some(take_value(&args, index, "--uvrange", program_name)?);
-                }
-                "--correlation" => {
-                    index += 1;
-                    listobs.correlation =
-                        Some(take_value(&args, index, "--correlation", program_name)?);
-                }
-                "--intent" => {
-                    index += 1;
-                    listobs.intent = Some(take_value(&args, index, "--intent", program_name)?);
-                }
-                "--feed" => {
-                    index += 1;
-                    listobs.feed = Some(take_value(&args, index, "--feed", program_name)?);
-                }
-                "--listunfl" => listobs.listunfl = true,
-                "--cachesize" => {
-                    index += 1;
-                    let value = take_value(&args, index, "--cachesize", program_name)?;
-                    let parsed = value
-                        .parse::<f32>()
-                        .map_err(|_| format!("invalid float value for --cachesize: {value:?}"))?;
-                    listobs.cachesize_mb = Some(parsed);
-                }
-                value if value.starts_with("--format=") => {
-                    let raw = value.trim_start_matches("--format=");
-                    format = ListObsOutputFormat::parse(raw)?;
-                }
-                value if value.starts_with("--field=") => {
-                    listobs.field = Some(value.trim_start_matches("--field=").to_string());
-                }
-                value if value.starts_with("--spw=") => {
-                    listobs.spw = Some(value.trim_start_matches("--spw=").to_string());
-                }
-                value if value.starts_with("--antenna=") => {
-                    listobs.antenna = Some(value.trim_start_matches("--antenna=").to_string());
-                }
-                value if value.starts_with("--scan=") => {
-                    listobs.scan = Some(value.trim_start_matches("--scan=").to_string());
-                }
-                value if value.starts_with("--observation=") => {
-                    listobs.observation =
-                        Some(value.trim_start_matches("--observation=").to_string());
-                }
-                value if value.starts_with("--array=") => {
-                    listobs.array = Some(value.trim_start_matches("--array=").to_string());
-                }
-                value if value.starts_with("--timerange=") => {
-                    listobs.timerange = Some(value.trim_start_matches("--timerange=").to_string());
-                }
-                value if value.starts_with("--uvrange=") => {
-                    listobs.uvrange = Some(value.trim_start_matches("--uvrange=").to_string());
-                }
-                value if value.starts_with("--correlation=") => {
-                    listobs.correlation =
-                        Some(value.trim_start_matches("--correlation=").to_string());
-                }
-                value if value.starts_with("--intent=") => {
-                    listobs.intent = Some(value.trim_start_matches("--intent=").to_string());
-                }
-                value if value.starts_with("--feed=") => {
-                    listobs.feed = Some(value.trim_start_matches("--feed=").to_string());
-                }
-                value if value.starts_with("--cachesize=") => {
-                    let raw = value.trim_start_matches("--cachesize=");
-                    let parsed = raw
-                        .parse::<f32>()
-                        .map_err(|_| format!("invalid float value for --cachesize: {raw:?}"))?;
-                    listobs.cachesize_mb = Some(parsed);
-                }
-                value if value.starts_with('-') => {
-                    return Err(format!("unknown option {value:?}"));
-                }
-                _ => {
-                    if path.is_some() {
-                        return Err("expected exactly one MeasurementSet path".to_string());
-                    }
-                    path = Some(PathBuf::from(arg));
-                }
-            }
-            index += 1;
-        }
-
-        let path = path.ok_or_else(|| "missing MeasurementSet path".to_string())?;
-        Ok(CliAction::Run(Box::new(CliOptions {
-            path,
-            format,
-            output,
-            overwrite,
-            listobs,
-        })))
-    }
-
-    fn usage(program_name: &str) -> String {
-        format!(
-            "{program_name} - render a CASA-style MeasurementSet summary\n\n\
-Usage:\n  {program_name} [OPTIONS] <ms-path>\n\n\
-Options:\n  --format <FORMAT>     Output format: text (default) or json\n  \
--o, --output <PATH>    Write the rendered output to PATH\n  \
-  --listfile <PATH>    CASA-compatible alias for --output\n  \
-  --verbose            Render the verbose CASA-style report (default)\n  \
-  --no-verbose         Render the terse CASA-style report\n  \
-  --selectdata         Apply selection flags below (default)\n  \
-  --no-selectdata      Reject any selection flags and summarize the full MS\n  \
-  --field <EXPR>       Select field ids, ranges, names, or simple '*' globs\n  \
-  --spw <EXPR>         Select spectral-window ids or ranges\n  \
-  --antenna <EXPR>     Select antenna ids, names, or exact baselines a&&b\n  \
-  --scan <EXPR>        Select scan numbers or ranges\n  \
-  --observation <EXPR> Select observation ids or ranges\n  \
-  --array <EXPR>       Select array ids or ranges\n  \
-  --timerange <EXPR>   Select rows by CASA-style UTC time expressions\n  \
-  --uvrange <EXPR>     Select UV-distance ranges in m/lambda units\n  \
-  --correlation <EXPR> Select rows by correlation products such as XX,YY\n  \
-  --intent <EXPR>      Select scan intents by exact name or simple '*' globs\n  \
-  --listunfl           Include fractional unflagged-row counts\n  \
-  --overwrite          Replace an existing --output/--listfile target\n  \
-  -h, --help           Print this help message\n"
-        )
-    }
-
-    fn take_value(
-        args: &[std::ffi::OsString],
-        index: usize,
-        flag: &str,
-        program_name: &str,
-    ) -> Result<String, String> {
-        args.get(index)
-            .ok_or_else(|| format!("missing value for {flag} in {program_name}"))
-            .map(|value| value.to_string_lossy().to_string())
-    }
-
-    fn write_output(options: &CliOptions, rendered: &str) -> Result<(), String> {
-        if let Some(path) = &options.output {
-            if path.exists() && !options.overwrite {
-                return Err(format!(
-                    "refusing to overwrite existing output file {}; pass --overwrite to replace it",
-                    path.display()
-                ));
-            }
-            fs::write(path, format!("{rendered}\n"))
-                .map_err(|error| format!("write {}: {error}", path.display()))
-        } else {
-            println!("{rendered}");
-            Ok(())
-        }
-    }
-}
+pub mod cli;
 
 #[cfg(test)]
 mod tests {

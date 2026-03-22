@@ -1323,7 +1323,7 @@ fn plane_by_plane_perf() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "large bounded-cache perf comparison; run explicitly when evaluating disk-heavy workloads"]
+#[ignore = "large bounded-cache perf comparison; run explicitly when evaluating steady-state disk I/O"]
 fn plane_by_plane_bounded_cache_perf() {
     if !cpp_backend_available() {
         eprintln!("skipping plane_by_plane_bounded_cache_perf: C++ casacore not available");
@@ -1422,7 +1422,7 @@ fn plane_by_plane_bounded_cache_perf() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "large bounded-cache perf comparison; run explicitly when evaluating disk-heavy workloads"]
+#[ignore = "large bounded-cache Complex32 perf comparison; run explicitly when evaluating steady-state disk I/O"]
 fn plane_by_plane_complex32_bounded_cache_perf() {
     if !cpp_backend_available() {
         eprintln!(
@@ -1525,7 +1525,7 @@ fn plane_by_plane_complex32_bounded_cache_perf() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "large bounded-cache perf comparison; run explicitly when evaluating disk-heavy workloads"]
+#[ignore = "large bounded-cache perf comparison; run explicitly when evaluating steady-state disk I/O"]
 fn spectrum_by_spectrum_bounded_cache_perf() {
     if !cpp_backend_available() {
         eprintln!("skipping spectrum_by_spectrum_bounded_cache_perf: C++ casacore not available");

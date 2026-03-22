@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
+use casacore_ms::listobs::cli::{UiArgumentParser, UiCommandSchema, UiValueKind};
 use casacore_ms::schema;
 use casacore_ms::{MeasurementSet, MeasurementSetBuilder, SubtableId};
 use casacore_types::{
@@ -35,6 +36,66 @@ fn listobs_help_mentions_core_options() {
     assert!(stdout.contains("--listunfl"));
     assert!(stdout.contains("--no-verbose"));
     assert!(stdout.contains("--overwrite"));
+    assert!(stdout.contains("--ui-schema"));
+}
+
+#[test]
+fn listobs_ui_schema_round_trips_help() {
+    let help = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .arg("--help")
+        .output()
+        .expect("run listobs --help");
+    assert!(help.status.success());
+
+    let schema = load_listobs_schema();
+    let help_text = String::from_utf8(help.stdout).expect("utf8 help stdout");
+    assert_eq!(schema.render_help(), help_text);
+}
+
+#[test]
+fn listobs_ui_schema_describes_launcher_contract() {
+    let schema = load_listobs_schema();
+
+    assert_eq!(schema.schema_version, 1);
+    assert_eq!(schema.command_id, "listobs");
+    assert_eq!(schema.invocation_name, "listobs");
+    assert_eq!(schema.display_name, "ListObs");
+    assert_eq!(schema.category, "MeasurementSet");
+
+    let ms_path = schema.argument("ms_path").expect("ms_path argument");
+    assert!(ms_path.required);
+    assert_eq!(ms_path.group, "Input");
+    assert_eq!(ms_path.value_kind, UiValueKind::Path);
+    assert!(matches!(
+        ms_path.parser,
+        UiArgumentParser::Positional { ref metavar } if metavar == "ms-path"
+    ));
+
+    let format = schema.argument("format").expect("format argument");
+    assert!(format.hidden_in_tui);
+    assert_eq!(format.value_kind, UiValueKind::Choice);
+    assert!(matches!(
+        format.parser,
+        UiArgumentParser::Option { ref choices, .. }
+            if choices == &vec!["text".to_string(), "json".to_string()]
+    ));
+
+    let output = schema.argument("output").expect("output argument");
+    assert!(output.advanced);
+    assert_eq!(output.group, "Output");
+
+    let listfile = schema.argument("listfile").expect("listfile argument");
+    assert!(listfile.advanced);
+    assert_eq!(listfile.group, "Output");
+
+    let managed_output = schema.managed_output.expect("managed output");
+    assert_eq!(managed_output.renderer, "listobs-summary-v1");
+    assert_eq!(managed_output.stdout_format, "json");
+    assert!(managed_output.raw_stdout_available);
+    assert!(managed_output.raw_stderr_available);
+    assert_eq!(managed_output.inject_arguments.len(), 1);
+    assert_eq!(managed_output.inject_arguments[0].flag, "--format");
+    assert_eq!(managed_output.inject_arguments[0].value, "json");
 }
 
 #[test]
@@ -357,6 +418,15 @@ fn listobs_real_multifield_fixture_spw_selection_filters_json_summary() {
             .collect::<Vec<_>>(),
         vec![5]
     );
+}
+
+fn load_listobs_schema() -> UiCommandSchema {
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .arg("--ui-schema")
+        .output()
+        .expect("run listobs --ui-schema");
+    assert!(output.status.success(), "{output:?}");
+    serde_json::from_slice(&output.stdout).expect("parse listobs ui schema")
 }
 
 fn create_fixture_ms(root: &Path) -> PathBuf {

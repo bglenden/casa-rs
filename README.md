@@ -56,6 +56,52 @@ From this repository workspace:
 cargo test --workspace
 ```
 
+## Terminal Launcher
+
+`casars` is a ratatui-based terminal launcher for supported `casa-rs` command
+line applications.
+
+Run it from the workspace with:
+
+```bash
+cargo run -p casars
+```
+
+Current v1 coverage:
+
+- `listobs` with a schema-driven parameter pane
+- collapsible parameter sections and sticky UI theme/split preferences
+- structured MeasurementSet summary rendering with tabbed result views
+- raw stdout/stderr views for troubleshooting
+- mouse support for focus, clicks, wheel scrolling, and divider dragging
+- cancel support while a command is running
+
+Default keys:
+
+- `Tab`: switch focus between the parameter and result panes
+- `Up` / `Down`: move through parameter rows
+- `Enter` / `Space`: toggle a section, edit a text field, or toggle a boolean field
+- `h` / `l` or `Left` / `Right`: switch result tabs
+- `j` / `k` or `PgUp` / `PgDn`: scroll the active result view
+- `r`: run the selected application
+- `a`: show or hide advanced parameters
+- `t`: toggle between `dense_ansi` and `rich_panel` themes and persist the choice
+- `x`: cancel the running command
+- `q`: quit
+
+Mouse interactions:
+
+- single click: focus a pane, select a field, switch result tabs, or toggle a section header
+- double click on a text field: enter edit mode
+- wheel scroll: scroll the pane under the pointer
+- drag the center divider: resize the parameter/result split and persist the ratio
+
+Launcher-integrated commands should expose `--ui-schema` so `casars` can build
+the parameter form from machine-readable metadata emitted by the executable
+itself. The intended convention is that argv parsing, `--help`, and
+`--ui-schema` all come from the same internal command schema so they stay in
+sync.
+
 ## Minimal Example (`casacore-types`)
 
 ```rust

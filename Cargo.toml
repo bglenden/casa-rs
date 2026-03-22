@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/casars",
     "crates/casacore-types",
     "crates/casacore-aipsio",
     "crates/casacore-tables",
