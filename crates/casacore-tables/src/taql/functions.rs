@@ -2118,6 +2118,7 @@ fn sql_like_to_regex(pattern: &str) -> String {
 mod tests {
     use super::*;
     use casacore_types::{RecordField, RecordValue, ScalarValue, Value};
+    use std::sync::{Mutex, MutexGuard};
 
     fn dummy_ctx() -> (RecordValue, usize) {
         let row = RecordValue::new(vec![RecordField::new(
@@ -2145,6 +2146,11 @@ mod tests {
             style: crate::taql::ast::IndexStyle::default(),
         };
         call_function(name, args, &ctx)
+    }
+
+    fn udf_test_guard() -> MutexGuard<'static, ()> {
+        static UDF_TEST_MUTEX: Mutex<()> = Mutex::new(());
+        UDF_TEST_MUTEX.lock().unwrap()
     }
 
     // ── Math constants ──
@@ -3560,6 +3566,7 @@ mod tests {
 
     #[test]
     fn udf_register_and_call() {
+        let _guard = udf_test_guard();
         super::register_udf("myudf", |args, _ctx| {
             let v = args[0].to_float()?;
             Ok(ExprValue::Float(v * 3.0))
@@ -3571,6 +3578,7 @@ mod tests {
 
     #[test]
     fn udf_overrides_builtin() {
+        let _guard = udf_test_guard();
         // Register a UDF that overrides the built-in "abs"
         super::register_udf("abs", |_args, _ctx| Ok(ExprValue::Float(999.0)));
         let v = call("abs", vec![ExprValue::Float(-5.0)]);
@@ -3583,6 +3591,7 @@ mod tests {
 
     #[test]
     fn udf_unregistered_falls_through() {
+        let _guard = udf_test_guard();
         // Calling a name with no UDF or built-in should error
         let ctx = EvalContext {
             row: &casacore_types::RecordValue::default(),
@@ -3595,6 +3604,7 @@ mod tests {
 
     #[test]
     fn udf_clear_all() {
+        let _guard = udf_test_guard();
         super::register_udf("tmp_udf1", |_, _| Ok(ExprValue::Int(1)));
         super::register_udf("tmp_udf2", |_, _| Ok(ExprValue::Int(2)));
         super::clear_udfs();
