@@ -241,6 +241,7 @@ mod schema;
 mod sorting;
 mod table;
 mod table_impl;
+mod tablebrowser;
 
 pub(crate) mod aipsio;
 pub(crate) mod lock;
@@ -265,3 +266,4 @@ pub use table::{
     QueryResult, RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table,
     TableError, TableKind, TableOptions,
 };
+pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};

@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use ratatui::Frame;
+use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+    Block, Borders, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Wrap,
 };
 
 use crate::app::{
-    AppState, FormRowKind, FormSelection, PaneFocus, ResultContent, ResultTab, TableView,
+    AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, ResultContent,
+    ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
 };
+use crate::config::ThemeMode;
+use crate::registry::RegistryApp;
 use crate::theme::{Theme, theme};
 
 #[derive(Debug, Clone)]
@@ -59,7 +63,21 @@ impl UiLayout {
     }
 
     pub(crate) fn in_divider(&self, column: u16, row: u16) -> bool {
-        rect_contains(self.divider, column, row)
+        if self.divider.width == 0 || self.divider.height == 0 {
+            return false;
+        }
+        let hit_x = self.divider.x.saturating_sub(1);
+        let hit_width = self.divider.width.saturating_add(2);
+        rect_contains(
+            Rect {
+                x: hit_x,
+                y: self.divider.y,
+                width: hit_width,
+                height: self.divider.height,
+            },
+            column,
+            row,
+        )
     }
 
     pub(crate) fn in_form_block(&self, column: u16, row: u16) -> bool {
@@ -93,16 +111,22 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
         .split(area);
 
     let body = vertical[1];
-    let divider_width = 1;
+    let collapsed = app.parameters_pane_collapsed();
+    let divider_width = if collapsed { 0 } else { 1 };
     let available_width = body.width.saturating_sub(divider_width);
-    let min_pane = 24.min(available_width / 2);
-    let mut left_width = ((available_width as f32) * app.pane_split_ratio()).round() as u16;
-    if available_width > min_pane.saturating_mul(2) {
-        left_width = left_width.clamp(min_pane, available_width.saturating_sub(min_pane));
+    let (left_width, right_width) = if collapsed {
+        (0, body.width)
     } else {
-        left_width = available_width / 2;
-    }
-    let right_width = body.width.saturating_sub(left_width + divider_width);
+        let min_pane = 24.min(available_width / 2);
+        let mut left_width = ((available_width as f32) * app.pane_split_ratio()).round() as u16;
+        if available_width > min_pane.saturating_mul(2) {
+            left_width = left_width.clamp(min_pane, available_width.saturating_sub(min_pane));
+        } else {
+            left_width = available_width / 2;
+        }
+        let right_width = body.width.saturating_sub(left_width + divider_width);
+        (left_width, right_width)
+    };
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -151,7 +175,11 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
             .saturating_sub(status_height + tabs_height),
     };
 
-    let tab_hits = visible_tab_hits(result_tabs, app);
+    let tab_hits = if app.browser_is_active() {
+        Vec::new()
+    } else {
+        visible_tab_hits(result_tabs, app)
+    };
     let result_scrollbar = result_scrollbar_rect(app, result_content);
     let result_hscrollbar = result_hscrollbar_rect(app, result_content);
 
@@ -183,14 +211,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     frame.render_widget(footer, layout.footer);
 
     let divider_lines = (0..layout.divider.height)
-        .map(|row| {
-            let middle = layout.divider.height / 2;
-            if row >= middle.saturating_sub(1) && row <= middle.saturating_add(1) {
-                Line::from(palette.divider_glyph)
-            } else {
-                Line::from(" ")
-            }
-        })
+        .map(|_| Line::from(palette.divider_glyph))
         .collect::<Vec<_>>();
     let divider = Paragraph::new(divider_lines).style(Style::default().fg(palette.divider_fg));
     frame.render_widget(divider, layout.divider);
@@ -199,9 +220,118 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     draw_result(frame, app, layout, palette);
 }
 
+pub(crate) fn draw_launcher(frame: &mut Frame<'_>, apps: &[RegistryApp], selected: usize) {
+    let palette = theme(ThemeMode::DenseAnsi);
+    let area = frame.area();
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(8),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "casars",
+                Style::default()
+                    .fg(palette.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ◆  ", Style::default().fg(palette.header_dim_fg)),
+            Span::styled(
+                "Select Application",
+                Style::default()
+                    .fg(palette.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        vertical[0],
+    );
+    frame.render_widget(
+        Paragraph::new(footer_line("Up/Down select  Enter launch  q quit", palette)),
+        vertical[2],
+    );
+
+    let panel = centered_rect(72, apps.len() as u16 + 8, vertical[1]);
+    frame.render_widget(Clear, panel);
+    let block = Block::default()
+        .title("Applications")
+        .title_style(
+            Style::default()
+                .fg(palette.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(palette.border_set)
+        .border_style(Style::default().fg(palette.active_pane_border_fg))
+        .padding(Padding::new(1, 1, 1, 1));
+    let inner = block.inner(panel);
+    frame.render_widget(block, panel);
+
+    let description = Paragraph::new(vec![
+        Line::from("Choose the application to launch."),
+        Line::from(""),
+    ])
+    .style(Style::default().fg(palette.footer_fg))
+    .alignment(Alignment::Left);
+    let description_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: inner.height.min(2),
+    };
+    frame.render_widget(description, description_area);
+
+    let list_area = Rect {
+        x: inner.x,
+        y: inner.y.saturating_add(2),
+        width: inner.width,
+        height: inner.height.saturating_sub(2),
+    };
+    let items = apps
+        .iter()
+        .enumerate()
+        .map(|(index, app)| {
+            let marker = if index == selected {
+                palette.selection_glyph
+            } else {
+                " "
+            };
+            let line = format!(
+                "{marker} {:<14}  {} / {}",
+                app.id, app.category, app.display_name
+            );
+            let style = if index == selected {
+                Style::default()
+                    .fg(palette.field_selected_fg)
+                    .bg(palette.field_selected_bg)
+            } else {
+                Style::default().fg(palette.footer_fg)
+            };
+            ListItem::new(Line::from(line)).style(style)
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(List::new(items), list_area);
+}
+
 fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
     let block = form_block_widget(app, palette);
     frame.render_widget(block, layout.form_block);
+
+    if app.browser_is_active() {
+        if let Some(buffer) = app.visible_text_buffer(OutputPane::LeftOutput, layout) {
+            render_visible_text_buffer(
+                frame,
+                &buffer,
+                app.output_selection_rect(OutputPane::LeftOutput),
+                palette,
+            );
+        }
+        return;
+    }
 
     let rows = app.form_rows();
     let visible_targets = layout
@@ -265,6 +395,11 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
         frame.render_widget(status, layout.result_status);
     }
 
+    if app.browser_is_active() {
+        draw_browser_result(frame, app, layout, palette);
+        return;
+    }
+
     if layout.result_tabs.height > 0 {
         let mut spans = Vec::<Span<'static>>::new();
         for tab in app.result_tabs() {
@@ -299,23 +434,16 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
         vertical_scrollbar.is_some(),
         horizontal_scrollbar.is_some(),
     );
-
-    match &content {
-        ResultContent::Lines(lines) => {
-            let paragraph =
-                Paragraph::new(lines.iter().cloned().map(Line::from).collect::<Vec<_>>())
-                    .scroll((app.active_result_scroll(), app.active_result_hscroll()))
-                    .wrap(Wrap { trim: false });
-            frame.render_widget(paragraph, content_area);
-        }
-        ResultContent::Table(table) => draw_table_content(
+    if let Some(buffer) = app.visible_text_buffer(OutputPane::Result, layout) {
+        render_visible_text_buffer(
             frame,
-            content_area,
-            app.active_result_scroll(),
-            app.active_result_hscroll(),
+            &VisibleTextBuffer {
+                area: content_area,
+                ..buffer
+            },
+            app.output_selection_rect(OutputPane::Result),
             palette,
-            table,
-        ),
+        );
     }
 
     if let Some(mut state) = vertical_scrollbar {
@@ -345,45 +473,169 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
     }
 }
 
-fn draw_table_content(
+fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
+    if layout.result_tabs.height > 0 {
+        let mut spans = Vec::<Span<'static>>::new();
+        for tab in app.browser_tabs() {
+            if !spans.is_empty() {
+                spans.push(Span::raw(" "));
+            }
+            let active = app.active_browser_tab_label() == Some(tab.label());
+            let style = if active {
+                Style::default()
+                    .fg(palette.active_tab_fg)
+                    .bg(palette.active_tab_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.tab_fg)
+            };
+            spans.push(Span::styled(
+                browser_tab_label(*tab, active, palette),
+                style,
+            ));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), layout.result_tabs);
+    }
+
+    if layout.result_content.height == 0 {
+        return;
+    }
+
+    let vertical_scrollbar = browser_scrollbar_state(app, layout.result_content);
+    let horizontal_scrollbar = browser_hscrollbar_state(app, layout.result_content);
+    let content_area = content_viewport_area(
+        layout.result_content,
+        vertical_scrollbar.is_some(),
+        horizontal_scrollbar.is_some(),
+    );
+
+    let Some(buffer) = app.visible_text_buffer(OutputPane::Result, layout) else {
+        return;
+    };
+    render_visible_text_buffer(
+        frame,
+        &VisibleTextBuffer {
+            area: content_area,
+            ..buffer
+        },
+        app.output_selection_rect(OutputPane::Result),
+        palette,
+    );
+
+    if let Some(mut state) = vertical_scrollbar {
+        frame.render_stateful_widget(
+            Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_style(Style::default().fg(palette.scrollbar_track_fg))
+                .thumb_style(Style::default().fg(palette.scrollbar_thumb_fg)),
+            layout.result_scrollbar.unwrap_or(layout.result_content),
+            &mut state,
+        );
+    }
+
+    if let Some(mut state) = horizontal_scrollbar {
+        frame.render_stateful_widget(
+            Scrollbar::default()
+                .orientation(ScrollbarOrientation::HorizontalBottom)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_style(Style::default().fg(palette.scrollbar_track_fg))
+                .thumb_style(Style::default().fg(palette.scrollbar_thumb_fg)),
+            layout.result_hscrollbar.unwrap_or(layout.result_content),
+            &mut state,
+        );
+    }
+}
+
+fn render_visible_text_buffer(
     frame: &mut Frame<'_>,
-    area: Rect,
-    scroll: u16,
-    hscroll: u16,
+    buffer: &VisibleTextBuffer,
+    selection: Option<(usize, usize, usize, usize)>,
     palette: Theme,
-    table: &TableView,
 ) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(area);
-    let header = Paragraph::new(Line::from(slice_and_fit_text(
-        &table.header,
-        hscroll as usize,
-        chunks[0].width as usize,
-    )))
-    .style(
-        Style::default()
+    let lines = buffer
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(row, line)| render_visible_text_line(line, row, selection, palette))
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        buffer.area,
+    );
+}
+
+fn render_visible_text_line(
+    line: &VisibleTextLine,
+    row: usize,
+    selection: Option<(usize, usize, usize, usize)>,
+    palette: Theme,
+) -> Line<'static> {
+    let selection_style = Style::default()
+        .fg(palette.section_selected_fg)
+        .bg(palette.section_selected_bg)
+        .add_modifier(Modifier::BOLD);
+
+    let mut spans = Vec::new();
+    let mut current_text = String::new();
+    let mut current_style = None;
+
+    for (column, ch) in line.text.chars().enumerate() {
+        let mut style = base_style_for_role(
+            line.roles
+                .get(column)
+                .copied()
+                .unwrap_or(VisibleTextRole::Plain),
+            palette,
+        );
+        if selection_contains(selection, row, column) {
+            style = selection_style;
+        }
+        if current_style == Some(style) {
+            current_text.push(ch);
+        } else {
+            if let Some(existing) = current_style {
+                spans.push(Span::styled(current_text.clone(), existing));
+                current_text.clear();
+            }
+            current_style = Some(style);
+            current_text.push(ch);
+        }
+    }
+
+    if let Some(style) = current_style {
+        spans.push(Span::styled(current_text, style));
+    }
+
+    Line::from(spans)
+}
+
+fn base_style_for_role(role: VisibleTextRole, palette: Theme) -> Style {
+    match role {
+        VisibleTextRole::Plain => Style::default(),
+        VisibleTextRole::TableHeader => Style::default()
             .fg(palette.table_header_fg)
             .bg(palette.table_header_bg)
             .add_modifier(Modifier::BOLD),
-    );
-    frame.render_widget(header, chunks[0]);
+        VisibleTextRole::BrowserSeparator => Style::default().fg(palette.divider_fg),
+        VisibleTextRole::BrowserSelectedCell => Style::default()
+            .fg(palette.field_selected_fg)
+            .bg(palette.field_selected_bg)
+            .add_modifier(Modifier::BOLD),
+    }
+}
 
-    let visible_rows = table
-        .rows
-        .iter()
-        .skip(scroll as usize)
-        .take(chunks[1].height as usize)
-        .map(|row| {
-            ListItem::new(Line::from(slice_and_fit_text(
-                row,
-                hscroll as usize,
-                chunks[1].width as usize,
-            )))
-        })
-        .collect::<Vec<_>>();
-    frame.render_widget(List::new(visible_rows), chunks[1]);
+fn selection_contains(
+    selection: Option<(usize, usize, usize, usize)>,
+    row: usize,
+    column: usize,
+) -> bool {
+    let Some((row_start, row_end, col_start, col_end)) = selection else {
+        return false;
+    };
+    row >= row_start && row <= row_end && column >= col_start && column <= col_end
 }
 
 fn visible_form_hits(area: Rect, app: &AppState) -> Vec<FormRowHit> {
@@ -579,6 +831,23 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
     }
 }
 
+fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {
+    let short = match tab {
+        BrowserTab::Overview => "Overview",
+        BrowserTab::Columns => "Cols",
+        BrowserTab::Keywords => "Keys",
+        BrowserTab::Cells => "Cells",
+        BrowserTab::Subtables => "Links",
+    };
+    if active {
+        format!("◖ {} ◗", tab.label())
+    } else if palette.selection_glyph == "▌" {
+        format!("·{short}·")
+    } else {
+        format!("[{}]", tab.label())
+    }
+}
+
 fn result_scrollbar_state(
     content: &ResultContent,
     scroll: u16,
@@ -624,6 +893,35 @@ fn result_hscrollbar_state(
     )
 }
 
+fn scrollbar_state_from_metrics(
+    metrics: Option<(usize, usize)>,
+    scroll: u16,
+) -> Option<ScrollbarState> {
+    let (content_length, viewport_length) = metrics?;
+    if content_length <= viewport_length || viewport_length == 0 {
+        return None;
+    }
+    Some(
+        ScrollbarState::new(content_length)
+            .position(scroll as usize)
+            .viewport_content_length(viewport_length),
+    )
+}
+
+fn browser_scrollbar_state(app: &AppState, area: Rect) -> Option<ScrollbarState> {
+    scrollbar_state_from_metrics(
+        app.active_browser_scroll_metrics(area.height),
+        app.active_browser_scroll(),
+    )
+}
+
+fn browser_hscrollbar_state(app: &AppState, area: Rect) -> Option<ScrollbarState> {
+    scrollbar_state_from_metrics(
+        app.active_browser_hscroll_metrics(area.width),
+        app.active_browser_hscroll(),
+    )
+}
+
 fn content_viewport_area(area: Rect, has_vertical: bool, has_horizontal: bool) -> Rect {
     Rect {
         x: area.x,
@@ -636,6 +934,19 @@ fn content_viewport_area(area: Rect, has_vertical: bool, has_horizontal: bool) -
 }
 
 fn result_scrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
+    if app.browser_is_active() {
+        browser_scrollbar_state(app, area)?;
+        let has_horizontal = browser_hscrollbar_state(app, area).is_some();
+        return Some(Rect {
+            x: area.x + area.width.saturating_sub(1),
+            y: area.y,
+            width: 1,
+            height: area
+                .height
+                .saturating_sub(if has_horizontal { 1 } else { 0 }),
+        });
+    }
+
     let content = app.active_result_content();
     let scroll = app.active_result_scroll();
     result_scrollbar_state(&content, scroll, area)?;
@@ -652,6 +963,17 @@ fn result_scrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
 }
 
 fn result_hscrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
+    if app.browser_is_active() {
+        browser_hscrollbar_state(app, area)?;
+        let has_vertical = browser_scrollbar_state(app, area).is_some();
+        return Some(Rect {
+            x: area.x,
+            y: area.y + area.height.saturating_sub(1),
+            width: area.width.saturating_sub(if has_vertical { 1 } else { 0 }),
+            height: 1,
+        });
+    }
+
     let content = app.active_result_content();
     let hscroll = app.active_result_hscroll();
     result_hscrollbar_state(&content, hscroll, area)?;
@@ -671,6 +993,17 @@ fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
 fn fit_text(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
@@ -684,8 +1017,4 @@ fn fit_text(text: &str, width: usize) -> String {
     let mut out = text.chars().take(width - 3).collect::<String>();
     out.push_str("...");
     out
-}
-
-fn slice_and_fit_text(text: &str, offset: usize, width: usize) -> String {
-    fit_text(&text.chars().skip(offset).collect::<String>(), width)
 }

@@ -6,11 +6,19 @@ use casacore_ms::ListObsSummary;
 use casacore_ms::listobs::cli::{
     UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema,
 };
+use casacore_tablebrowser_protocol::{
+    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserInspectorSnapshot,
+    BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as TableBrowserView,
+    BrowserViewport,
+};
 use casacore_types::quanta::{MvAngle, MvTime};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ratatui::layout::Rect;
 
+use crate::browser_client::BrowserClient;
+use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
 use crate::registry::RegistryApp;
@@ -123,6 +131,91 @@ pub(crate) enum ResultContent {
     Table(TableView),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum BrowserTab {
+    Overview,
+    Columns,
+    Keywords,
+    Cells,
+    Subtables,
+}
+
+impl BrowserTab {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Overview,
+        Self::Columns,
+        Self::Keywords,
+        Self::Cells,
+        Self::Subtables,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Columns => "Columns",
+            Self::Keywords => "Keywords",
+            Self::Cells => "Cells",
+            Self::Subtables => "Subtables",
+        }
+    }
+
+    fn from_view(view: TableBrowserView) -> Self {
+        match view {
+            TableBrowserView::Overview => Self::Overview,
+            TableBrowserView::Columns => Self::Columns,
+            TableBrowserView::Keywords => Self::Keywords,
+            TableBrowserView::Cells => Self::Cells,
+            TableBrowserView::Subtables => Self::Subtables,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputPane {
+    Result,
+    LeftOutput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputSelectionMode {
+    Pending,
+    Dragging,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BufferPoint {
+    row: usize,
+    col: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OutputSelection {
+    target: OutputPane,
+    anchor: BufferPoint,
+    cursor: BufferPoint,
+    mode: OutputSelectionMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VisibleTextRole {
+    Plain,
+    TableHeader,
+    BrowserSeparator,
+    BrowserSelectedCell,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VisibleTextLine {
+    pub text: String,
+    pub roles: Vec<VisibleTextRole>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VisibleTextBuffer {
+    pub area: Rect,
+    pub lines: Vec<VisibleTextLine>,
+}
+
 #[derive(Debug)]
 pub(crate) struct AppState {
     app: RegistryApp,
@@ -140,13 +233,18 @@ pub(crate) struct AppState {
     result_scrolls: [u16; 9],
     result_hscrolls: [u16; 9],
     running: Option<RunningState>,
+    browser_session: Option<BrowserSession>,
     spinner_frame: usize,
     dragging_divider: bool,
     dragging_result_scrollbar: bool,
     dragging_result_hscrollbar: bool,
     dragging_result_hscrollbar_grab: u16,
+    output_selection: Option<OutputSelection>,
+    cached_result_text_area: Option<Rect>,
+    cached_left_output_area: Option<Rect>,
     last_click: Option<ClickState>,
     quit: bool,
+    return_to_launcher: bool,
 }
 
 #[derive(Debug)]
@@ -155,6 +253,13 @@ struct RunningState {
     renderer: Option<String>,
     file_output_path: Option<String>,
     cancel_requested: bool,
+}
+
+#[derive(Debug)]
+struct BrowserSession {
+    client: BrowserClient,
+    snapshot: BrowserSnapshot,
+    viewport: BrowserViewport,
 }
 
 #[derive(Debug, Default)]
@@ -232,6 +337,7 @@ impl AppState {
         schema: UiCommandSchema,
         config_store: ConfigStore,
     ) -> Self {
+        let ready_status_line = app.ready_status_line().to_string();
         let fields = schema
             .arguments
             .iter()
@@ -252,7 +358,7 @@ impl AppState {
             pane_focus: PaneFocus::Parameters,
             edit_state: None,
             result: ResultState {
-                status_line: "Ready. Press r to run listobs.".to_string(),
+                status_line: ready_status_line,
                 status_kind: StatusKind::Info,
                 ..ResultState::default()
             },
@@ -260,13 +366,18 @@ impl AppState {
             result_scrolls: [0; 9],
             result_hscrolls: [0; 9],
             running: None,
+            browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
             dragging_result_scrollbar: false,
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
+            output_selection: None,
+            cached_result_text_area: None,
+            cached_left_output_area: None,
             last_click: None,
             quit: false,
+            return_to_launcher: false,
         }
     }
 
@@ -301,18 +412,35 @@ impl AppState {
             result_scrolls: [0; 9],
             result_hscrolls: [0; 9],
             running: None,
+            browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
             dragging_result_scrollbar: false,
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
+            output_selection: None,
+            cached_result_text_area: None,
+            cached_left_output_area: None,
             last_click: None,
             quit: false,
+            return_to_launcher: false,
         }
     }
 
     pub(crate) fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    pub(crate) fn should_return_to_launcher(&self) -> bool {
+        self.return_to_launcher
+    }
+
+    fn has_active_session(&self) -> bool {
+        self.running.is_some() || self.browser_session.is_some()
+    }
+
+    fn browser_session(&self) -> Option<&BrowserSession> {
+        self.browser_session.as_ref()
     }
 
     pub(crate) fn on_tick(&mut self) {
@@ -326,14 +454,39 @@ impl AppState {
 
         match key_event.code {
             KeyCode::Char('q') if key_event.modifiers.is_empty() => {
-                if self.running.is_some() {
+                if self.has_active_session() {
                     self.cancel_current();
                 }
                 self.quit = true;
                 return;
             }
+            KeyCode::Char('b') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
+                if self.has_active_session() {
+                    self.cancel_current();
+                }
+                self.return_to_launcher = true;
+                return;
+            }
             KeyCode::Char('t') if key_event.modifiers.is_empty() => {
                 self.toggle_theme();
+                return;
+            }
+            KeyCode::Char('p') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
+                self.toggle_parameters_pane();
+                return;
+            }
+            KeyCode::Char('y') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
+                self.copy_output_selection();
+                return;
+            }
+            KeyCode::Char('c')
+                if is_browser_copy_modifier(key_event.modifiers) && self.edit_state.is_none() =>
+            {
+                self.copy_output_selection();
+                return;
+            }
+            KeyCode::Tab | KeyCode::BackTab if self.browser_session.is_some() => {
+                self.handle_browser_key(key_event);
                 return;
             }
             KeyCode::Tab | KeyCode::BackTab => {
@@ -341,12 +494,12 @@ impl AppState {
                 return;
             }
             KeyCode::Char('r') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
-                if self.running.is_none() {
+                if !self.has_active_session() {
                     self.start_run();
                 }
                 return;
             }
-            KeyCode::Char('a') if key_event.modifiers.is_empty() && self.running.is_none() => {
+            KeyCode::Char('a') if key_event.modifiers.is_empty() && !self.has_active_session() => {
                 self.toggle_advanced();
                 return;
             }
@@ -362,7 +515,12 @@ impl AppState {
             return;
         }
 
-        if self.running.is_some() {
+        if key_event.code == KeyCode::Esc && self.output_selection.is_some() {
+            self.clear_output_selection();
+            return;
+        }
+
+        if self.has_active_session() {
             self.handle_result_key(key_event);
             return;
         }
@@ -396,11 +554,13 @@ impl AppState {
     }
 
     pub(crate) fn handle_mouse_event(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
+        self.cache_output_layout(layout);
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.handle_left_mouse_down(mouse_event, layout)
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                self.finalize_output_selection();
                 self.dragging_divider = false;
                 self.dragging_result_scrollbar = false;
                 self.dragging_result_hscrollbar = false;
@@ -456,11 +616,13 @@ impl AppState {
 
     pub(crate) fn footer_text(&self) -> &'static str {
         if self.edit_state.is_some() {
-            "Tab pane  Enter commit  Esc cancel  Bksp delete  t theme  q quit"
+            "Tab pane  Enter save  Esc cancel  Bksp delete  p pane  t theme  q quit"
+        } else if self.browser_session.is_some() {
+            "Tab view  Arrows  PgUp/PgDn  Enter  y copy  Esc clear  Bksp up  p pane  b apps  x close  t theme  q quit"
         } else if self.running.is_some() {
-            "Tab pane  h/l tabs  j/k scroll  [/] horiz  x cancel  t theme  q quit"
+            "Tab pane  h/l tabs  j/k scroll  [/] hscr  y copy  p pane  b apps  x cancel  t theme  q quit"
         } else {
-            "Tab pane  Up/Down move  Enter act  h/l tabs  j/k scroll  [/] horiz  a adv  r run  t theme  q quit"
+            "Tab pane  h/l tabs  Arrows/jk  [/] hscr  y copy  a adv  p pane  b apps  r run  t theme  q quit"
         }
     }
 
@@ -480,6 +642,11 @@ impl AppState {
                 spinner_frames(self.theme_mode())[self.spinner_frame],
                 focus
             )
+        } else if self.browser_session.is_some() {
+            match self.theme_mode() {
+                ThemeMode::DenseAnsi => format!("Inspector [live]{focus}"),
+                ThemeMode::RichPanel => format!("◈ Inspector [live]{focus}"),
+            }
         } else if self.schema_error.is_some() {
             format!("{title} (schema unavailable){focus}")
         } else {
@@ -508,11 +675,19 @@ impl AppState {
         self.config_store.pane_split_ratio()
     }
 
+    pub(crate) fn parameters_pane_collapsed(&self) -> bool {
+        self.pane_split_ratio() <= 0.0
+    }
+
     pub(crate) fn pane_focus(&self) -> PaneFocus {
         self.pane_focus
     }
 
     pub(crate) fn form_rows(&self) -> Vec<FormRowView> {
+        if self.browser_session.is_some() {
+            return self.browser_inspector_rows();
+        }
+
         let mut rows = Vec::new();
         for (section_index, section) in self.sections.iter().enumerate() {
             let visible_fields = section
@@ -595,6 +770,19 @@ impl AppState {
             lines.push(error.clone());
         } else if self.running.is_some() {
             lines.push("Structured output will appear when the subprocess exits.".to_string());
+        } else if let Some(session) = self.browser_session() {
+            lines.push(format!(
+                "View: {}  Table: {}  Breadcrumb: {}",
+                session.snapshot.view.label(),
+                session.snapshot.table_path,
+                session
+                    .snapshot
+                    .breadcrumb
+                    .iter()
+                    .map(|entry| entry.label.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            ));
         } else {
             lines.push(format!(
                 "View: {}  Theme: {}  Verbose: {}",
@@ -616,6 +804,123 @@ impl AppState {
             StatusKind::Ok => "ok",
             StatusKind::Error => "error",
             StatusKind::Warning => "warning",
+        }
+    }
+
+    pub(crate) fn browser_is_active(&self) -> bool {
+        self.browser_session.is_some()
+    }
+
+    pub(crate) fn browser_tabs(&self) -> &'static [BrowserTab] {
+        &BrowserTab::ALL
+    }
+
+    pub(crate) fn active_browser_tab_label(&self) -> Option<&'static str> {
+        self.active_browser_tab().map(BrowserTab::label)
+    }
+
+    pub(crate) fn active_browser_scroll_metrics(
+        &self,
+        _viewport_height: u16,
+    ) -> Option<(usize, usize)> {
+        let session = self.browser_session()?;
+        let lines = self.browser_main_content_lines()?;
+        match session.snapshot.view {
+            TableBrowserView::Overview => None,
+            TableBrowserView::Columns => {
+                let (_, total) = browser_fraction(&lines, "selected=")?;
+                Some((total, browser_columns_viewport(&lines).max(1)))
+            }
+            TableBrowserView::Keywords => {
+                let (_, total) = browser_fraction(&lines, "selected=")?;
+                Some((total, lines.len().saturating_sub(1).max(1)))
+            }
+            TableBrowserView::Cells => {
+                let (_, total) = browser_fraction(&lines, "row=")?;
+                Some((total, lines.len().saturating_sub(2).max(1)))
+            }
+            TableBrowserView::Subtables => {
+                let (_, total) = browser_fraction(&lines, "selected=")?;
+                Some((total, lines.len().saturating_sub(1).max(1)))
+            }
+        }
+    }
+
+    pub(crate) fn active_browser_hscroll_metrics(
+        &self,
+        _viewport_width: u16,
+    ) -> Option<(usize, usize)> {
+        let session = self.browser_session()?;
+        let lines = self.browser_main_content_lines()?;
+        match session.snapshot.view {
+            TableBrowserView::Cells => {
+                let (_, total) = browser_fraction(&lines, "col=")?;
+                Some((total, browser_visible_cell_columns(&lines).max(1)))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn browser_inspector_lines(&self) -> Option<Vec<String>> {
+        let session = self.browser_session()?;
+        let inspector = session.snapshot.inspector.as_ref()?;
+        Some(browser_inspector_lines(inspector))
+    }
+
+    fn browser_inspector_rows(&self) -> Vec<FormRowView> {
+        let lines = self.browser_inspector_lines().unwrap_or_else(|| {
+            vec![
+                "Inspector".to_string(),
+                String::new(),
+                "No value selected.".to_string(),
+            ]
+        });
+
+        lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| FormRowView {
+                target: FormSelection::Section(index),
+                text,
+                kind: FormRowKind::Field,
+                selected: false,
+            })
+            .collect()
+    }
+
+    fn browser_main_content_lines(&self) -> Option<Vec<String>> {
+        let session = self.browser_session()?;
+        Some(browser_main_content_lines(&session.snapshot))
+    }
+
+    pub(crate) fn sync_browser_viewport(&mut self, width: u16, height: u16) {
+        let Some(current_viewport) = self
+            .browser_session
+            .as_ref()
+            .map(|session| session.viewport)
+        else {
+            return;
+        };
+        let viewport = BrowserViewport::new(width, height);
+        if viewport == current_viewport {
+            return;
+        }
+        self.clear_output_selection();
+        let Some(session) = self.browser_session.as_mut() else {
+            return;
+        };
+        match session.client.request(BrowserCommand::Resize { viewport }) {
+            Ok(snapshot) => {
+                session.viewport = viewport;
+                session.snapshot = snapshot.clone();
+                self.result.status_line = snapshot.status_line;
+                self.result.status_kind = StatusKind::Info;
+            }
+            Err(error) => {
+                self.result.status_line = "Browser session resize failed.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = format!("{error}\n{}", session.client.stderr_text());
+            }
         }
     }
 
@@ -664,20 +969,49 @@ impl AppState {
 
     #[cfg(test)]
     pub(crate) fn set_text_value(&mut self, id: &str, value: &str) {
-        if let Some(field) = self.fields.iter_mut().find(|field| field.schema.id == id) {
-            field.set_text(value.to_string());
-        }
+        self.apply_startup_text_value(id, value.to_string())
+            .expect("set text value in test");
     }
 
     #[cfg(test)]
     pub(crate) fn set_toggle_value(&mut self, id: &str, value: bool) {
-        if let Some(field) = self.fields.iter_mut().find(|field| field.schema.id == id) {
-            field.set_toggle(value);
-        }
+        self.apply_startup_toggle_value(id, value)
+            .expect("set toggle value in test");
+    }
+
+    pub(crate) fn apply_startup_text_value(
+        &mut self,
+        id: &str,
+        value: String,
+    ) -> Result<(), String> {
+        let field = self
+            .fields
+            .iter_mut()
+            .find(|field| field.schema.id == id)
+            .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
+        field.apply_text_value(value)
+    }
+
+    pub(crate) fn apply_startup_toggle_value(
+        &mut self,
+        id: &str,
+        value: bool,
+    ) -> Result<(), String> {
+        let field = self
+            .fields
+            .iter_mut()
+            .find(|field| field.schema.id == id)
+            .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
+        field.apply_toggle_value(value)
+    }
+
+    pub(crate) fn start_run_on_launch(&mut self) {
+        self.start_run();
     }
 
     #[cfg(test)]
     pub(crate) fn set_active_result_tab(&mut self, tab: ResultTab) {
+        self.clear_output_selection();
         self.active_result_tab = tab;
     }
 
@@ -723,6 +1057,11 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn status_line_for_test(&self) -> &str {
         &self.result.status_line
+    }
+
+    #[cfg(test)]
+    pub(crate) fn should_return_to_launcher_for_test(&self) -> bool {
+        self.return_to_launcher
     }
 
     #[cfg(test)]
@@ -776,6 +1115,243 @@ impl AppState {
             .map(|row| row.text)
     }
 
+    pub(crate) fn cache_output_layout(&mut self, layout: &UiLayout) {
+        let next_result = result_text_area(layout);
+        let next_left = left_output_area(self, layout);
+        if self.cached_result_text_area != Some(next_result)
+            && self
+                .output_selection
+                .is_some_and(|selection| selection.target == OutputPane::Result)
+        {
+            self.clear_output_selection();
+        }
+        if self.cached_left_output_area != next_left
+            && self
+                .output_selection
+                .is_some_and(|selection| selection.target == OutputPane::LeftOutput)
+        {
+            self.clear_output_selection();
+        }
+        self.cached_result_text_area = Some(next_result);
+        self.cached_left_output_area = next_left;
+    }
+
+    pub(crate) fn visible_text_buffer(
+        &self,
+        target: OutputPane,
+        layout: &UiLayout,
+    ) -> Option<VisibleTextBuffer> {
+        let area = match target {
+            OutputPane::Result => result_text_area(layout),
+            OutputPane::LeftOutput => left_output_area(self, layout)?,
+        };
+        self.visible_text_buffer_for_area(target, area)
+    }
+
+    pub(crate) fn output_selection_rect(
+        &self,
+        target: OutputPane,
+    ) -> Option<(usize, usize, usize, usize)> {
+        let selection = self.output_selection?;
+        if selection.target != target || selection.mode != OutputSelectionMode::Dragging {
+            return None;
+        }
+        Some(normalize_selection(selection))
+    }
+
+    fn visible_text_buffer_for_area(
+        &self,
+        target: OutputPane,
+        area: Rect,
+    ) -> Option<VisibleTextBuffer> {
+        if area.width == 0 || area.height == 0 {
+            return None;
+        }
+        match target {
+            OutputPane::Result => {
+                if self.browser_is_active() {
+                    let lines = self.browser_main_content_lines()?;
+                    let browser_cells =
+                        self.active_browser_tab_label() == Some(BrowserTab::Cells.label());
+                    Some(VisibleTextBuffer {
+                        area,
+                        lines: lines
+                            .into_iter()
+                            .take(area.height as usize)
+                            .map(|line| {
+                                if browser_cells {
+                                    browser_cells_visible_line(&line)
+                                } else {
+                                    VisibleTextLine::plain(line)
+                                }
+                            })
+                            .collect(),
+                    })
+                } else {
+                    let content = self.active_result_content();
+                    match content {
+                        ResultContent::Lines(lines) => Some(VisibleTextBuffer {
+                            area,
+                            lines: lines
+                                .iter()
+                                .skip(self.active_result_scroll() as usize)
+                                .take(area.height as usize)
+                                .map(|line| {
+                                    VisibleTextLine::plain(slice_visible_text(
+                                        line,
+                                        self.active_result_hscroll() as usize,
+                                        area.width as usize,
+                                    ))
+                                })
+                                .collect(),
+                        }),
+                        ResultContent::Table(table) => {
+                            let mut lines = Vec::new();
+                            lines.push(VisibleTextLine::table_header(slice_visible_text(
+                                &table.header,
+                                self.active_result_hscroll() as usize,
+                                area.width as usize,
+                            )));
+                            let body_height = area.height.saturating_sub(1) as usize;
+                            lines.extend(
+                                table
+                                    .rows
+                                    .iter()
+                                    .skip(self.active_result_scroll() as usize)
+                                    .take(body_height)
+                                    .map(|row| {
+                                        VisibleTextLine::plain(slice_visible_text(
+                                            row,
+                                            self.active_result_hscroll() as usize,
+                                            area.width as usize,
+                                        ))
+                                    }),
+                            );
+                            Some(VisibleTextBuffer { area, lines })
+                        }
+                    }
+                }
+            }
+            OutputPane::LeftOutput => Some(VisibleTextBuffer {
+                area,
+                lines: self
+                    .browser_inspector_lines()?
+                    .into_iter()
+                    .take(area.height as usize)
+                    .map(VisibleTextLine::plain)
+                    .collect(),
+            }),
+        }
+    }
+
+    fn clear_output_selection(&mut self) {
+        self.output_selection = None;
+    }
+
+    fn clear_output_selection_for_target(&mut self, target: OutputPane) {
+        if self
+            .output_selection
+            .is_some_and(|selection| selection.target == target)
+        {
+            self.output_selection = None;
+        }
+    }
+
+    fn active_selected_text(&self) -> Option<String> {
+        let selection = self.output_selection?;
+        if selection.mode != OutputSelectionMode::Dragging {
+            return None;
+        }
+        let area = match selection.target {
+            OutputPane::Result => self.cached_result_text_area?,
+            OutputPane::LeftOutput => self.cached_left_output_area?,
+        };
+        let buffer = self.visible_text_buffer_for_area(selection.target, area)?;
+        let text = extract_selected_text(&buffer, selection);
+        if text.is_empty() { None } else { Some(text) }
+    }
+
+    fn selection_point_at(
+        &self,
+        column: u16,
+        row: u16,
+        layout: &UiLayout,
+    ) -> Option<(OutputPane, BufferPoint)> {
+        if let Some(buffer) = self.visible_text_buffer(OutputPane::Result, layout)
+            && rect_contains(buffer.area, column, row)
+        {
+            return Some((
+                OutputPane::Result,
+                clamp_point_to_buffer(&buffer, column, row),
+            ));
+        }
+        if let Some(buffer) = self.visible_text_buffer(OutputPane::LeftOutput, layout)
+            && rect_contains(buffer.area, column, row)
+        {
+            return Some((
+                OutputPane::LeftOutput,
+                clamp_point_to_buffer(&buffer, column, row),
+            ));
+        }
+        None
+    }
+
+    fn clamped_selection_point(
+        &self,
+        target: OutputPane,
+        column: u16,
+        row: u16,
+    ) -> Option<BufferPoint> {
+        let area = match target {
+            OutputPane::Result => self.cached_result_text_area?,
+            OutputPane::LeftOutput => self.cached_left_output_area?,
+        };
+        let buffer = self.visible_text_buffer_for_area(target, area)?;
+        Some(clamp_point_to_buffer(&buffer, column, row))
+    }
+
+    fn begin_output_selection(&mut self, target: OutputPane, point: BufferPoint) {
+        self.output_selection = Some(OutputSelection {
+            target,
+            anchor: point,
+            cursor: point,
+            mode: OutputSelectionMode::Pending,
+        });
+    }
+
+    fn update_output_selection(&mut self, column: u16, row: u16) -> bool {
+        let Some(selection) = self.output_selection else {
+            return false;
+        };
+        let Some(point) = self.clamped_selection_point(selection.target, column, row) else {
+            return false;
+        };
+        let mode = if point == selection.anchor {
+            selection.mode
+        } else {
+            OutputSelectionMode::Dragging
+        };
+        self.output_selection = Some(OutputSelection {
+            cursor: point,
+            mode,
+            ..selection
+        });
+        true
+    }
+
+    fn finalize_output_selection(&mut self) {
+        let Some(selection) = self.output_selection else {
+            return;
+        };
+        if selection.mode == OutputSelectionMode::Pending {
+            self.output_selection = None;
+            return;
+        }
+        if let Some(text) = self.active_selected_text() {
+            self.copy_text_to_clipboard(text, "selection");
+        }
+    }
+
     fn handle_parameter_key(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Up | KeyCode::Char('k')
@@ -798,6 +1374,11 @@ impl AppState {
     }
 
     fn handle_result_key(&mut self, key_event: KeyEvent) {
+        if self.browser_session.is_some() {
+            self.handle_browser_key(key_event);
+            return;
+        }
+
         match key_event.code {
             KeyCode::Left | KeyCode::Char('h')
                 if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
@@ -840,6 +1421,104 @@ impl AppState {
         }
     }
 
+    fn handle_browser_key(&mut self, key_event: KeyEvent) {
+        match key_event.code {
+            KeyCode::Tab if key_event.modifiers.is_empty() => {
+                self.send_browser_command(BrowserCommand::CycleView {
+                    forward: true,
+                    viewport: None,
+                });
+            }
+            KeyCode::BackTab => {
+                self.send_browser_command(BrowserCommand::CycleView {
+                    forward: false,
+                    viewport: None,
+                });
+            }
+            KeyCode::Left | KeyCode::Char('h')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.send_browser_command(BrowserCommand::MoveLeft {
+                    steps: 1,
+                    viewport: None,
+                });
+            }
+            KeyCode::Right | KeyCode::Char('l')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.send_browser_command(BrowserCommand::MoveRight {
+                    steps: 1,
+                    viewport: None,
+                });
+            }
+            KeyCode::Up | KeyCode::Char('k')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.send_browser_command(BrowserCommand::MoveUp {
+                    steps: 1,
+                    viewport: None,
+                });
+            }
+            KeyCode::Down | KeyCode::Char('j')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.send_browser_command(BrowserCommand::MoveDown {
+                    steps: 1,
+                    viewport: None,
+                });
+            }
+            KeyCode::PageUp => self.send_browser_command(BrowserCommand::PageUp {
+                pages: 1,
+                viewport: None,
+            }),
+            KeyCode::PageDown => self.send_browser_command(BrowserCommand::PageDown {
+                pages: 1,
+                viewport: None,
+            }),
+            KeyCode::Enter if key_event.modifiers.is_empty() => {
+                self.send_browser_command(BrowserCommand::Activate { viewport: None })
+            }
+            KeyCode::Backspace => {
+                self.send_browser_command(BrowserCommand::Back { viewport: None })
+            }
+            KeyCode::Esc => self.send_browser_command(BrowserCommand::Escape { viewport: None }),
+            _ => {}
+        }
+    }
+
+    fn copy_output_selection(&mut self) {
+        let payload = self
+            .active_selected_text()
+            .map(|text| (text, "selection"))
+            .or_else(|| {
+                if self.browser_session.is_some() {
+                    self.browser_clipboard_payload()
+                } else {
+                    None
+                }
+            });
+        let Some((text, label)) = payload else {
+            self.result.status_line = "Nothing copyable is selected.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.copy_text_to_clipboard(text, label);
+    }
+
+    fn copy_text_to_clipboard(&mut self, text: String, label: &str) {
+        match clipboard::copy_text(&text) {
+            Ok(()) => {
+                self.result.status_line = format!("Copied {label} to clipboard.");
+                self.result.status_kind = StatusKind::Ok;
+            }
+            Err(error) => {
+                self.result.status_line = "Failed to copy to clipboard.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = format!("{error}\n");
+            }
+        }
+    }
+
     fn handle_edit_key(&mut self, key_event: KeyEvent) {
         let Some(edit_state) = self.edit_state.as_mut() else {
             return;
@@ -866,6 +1545,7 @@ impl AppState {
 
     fn handle_left_mouse_down(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
         if layout.in_divider(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection();
             self.dragging_divider = true;
             self.dragging_result_scrollbar = false;
             self.last_click = Some(ClickState {
@@ -876,6 +1556,7 @@ impl AppState {
         }
 
         if layout.in_result_scrollbar(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
             self.dragging_divider = false;
             self.dragging_result_scrollbar = true;
@@ -889,6 +1570,7 @@ impl AppState {
         }
 
         if layout.in_result_hscrollbar(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
             self.dragging_divider = false;
             self.dragging_result_scrollbar = false;
@@ -904,6 +1586,7 @@ impl AppState {
         }
 
         if let Some(tab) = layout.result_tab_at(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
             self.active_result_tab = tab;
             self.last_click = Some(ClickState {
@@ -913,8 +1596,25 @@ impl AppState {
             return;
         }
 
+        if let Some((target, point)) =
+            self.selection_point_at(mouse_event.column, mouse_event.row, layout)
+        {
+            self.pane_focus = if target == OutputPane::Result {
+                PaneFocus::Result
+            } else {
+                PaneFocus::Parameters
+            };
+            self.begin_output_selection(target, point);
+            self.last_click = Some(ClickState {
+                target: ClickTarget::Pane(self.pane_focus),
+                at: Instant::now(),
+            });
+            return;
+        }
+
         if layout.in_result_block(mouse_event.column, mouse_event.row) {
             self.pane_focus = PaneFocus::Result;
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.last_click = Some(ClickState {
                 target: ClickTarget::Pane(PaneFocus::Result),
                 at: Instant::now(),
@@ -922,7 +1622,7 @@ impl AppState {
             return;
         }
 
-        if self.running.is_some() {
+        if self.has_active_session() {
             return;
         }
 
@@ -967,30 +1667,46 @@ impl AppState {
 
     fn handle_left_mouse_drag(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
         if self.dragging_divider {
+            self.clear_output_selection();
             let relative = mouse_event
                 .column
                 .saturating_sub(layout.body.x)
                 .min(layout.body.width.saturating_sub(1));
-            let ratio = f32::from(relative) / f32::from(layout.body.width.max(1));
+            let ratio = if relative <= 1 {
+                0.0
+            } else {
+                f32::from(relative) / f32::from(layout.body.width.max(1))
+            };
             self.config_store.set_pane_split_ratio(ratio);
             return;
         }
         if self.dragging_result_scrollbar {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.scroll_result_to_mouse(mouse_event.row, layout);
             return;
         }
         if self.dragging_result_hscrollbar {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.scroll_result_horizontally_to_mouse(mouse_event.column, layout);
+            return;
+        }
+        if self.update_output_selection(mouse_event.column, mouse_event.row) {
+            self.last_click = None;
         }
     }
 
     fn handle_mouse_scroll(&mut self, mouse_event: MouseEvent, layout: &UiLayout, delta: i16) {
         if layout.in_result_block(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
-            self.scroll_active_result(delta);
+            if self.browser_session.is_some() {
+                self.scroll_active_browser(delta);
+            } else {
+                self.scroll_active_result(delta);
+            }
             return;
         }
-        if layout.in_form_block(mouse_event.column, mouse_event.row) && self.running.is_none() {
+        if layout.in_form_block(mouse_event.column, mouse_event.row) && !self.has_active_session() {
             self.pane_focus = PaneFocus::Parameters;
             if delta.is_negative() {
                 for _ in 0..delta.unsigned_abs() {
@@ -1006,8 +1722,13 @@ impl AppState {
 
     fn handle_mouse_hscroll(&mut self, mouse_event: MouseEvent, layout: &UiLayout, delta: i16) {
         if layout.in_result_block(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
-            self.scroll_active_result_horizontal(delta);
+            if self.browser_session.is_some() {
+                self.scroll_active_browser_horizontal(delta);
+            } else {
+                self.scroll_active_result_horizontal(delta);
+            }
         }
     }
 
@@ -1020,7 +1741,7 @@ impl AppState {
         self.pane_focus = match self.pane_focus {
             PaneFocus::Parameters => PaneFocus::Result,
             PaneFocus::Result => {
-                if self.running.is_some() || self.sections.is_empty() {
+                if self.has_active_session() || self.sections.is_empty() {
                     PaneFocus::Result
                 } else {
                     PaneFocus::Parameters
@@ -1123,7 +1844,113 @@ impl AppState {
         }
     }
 
+    fn active_browser_tab(&self) -> Option<BrowserTab> {
+        self.browser_session()
+            .map(|session| BrowserTab::from_view(session.snapshot.view))
+    }
+
+    fn toggle_parameters_pane(&mut self) {
+        self.clear_output_selection();
+        let next = if self.parameters_pane_collapsed() {
+            self.config_store.pane_restore_ratio()
+        } else {
+            0.0
+        };
+        self.config_store.set_pane_split_ratio(next);
+        if next == 0.0 {
+            self.pane_focus = PaneFocus::Result;
+        }
+    }
+
+    pub(crate) fn active_browser_scroll(&self) -> u16 {
+        let Some(session) = self.browser_session() else {
+            return 0;
+        };
+        let lines = self
+            .browser_main_content_lines()
+            .unwrap_or_else(|| session.snapshot.content_lines.clone());
+        let selected = match session.snapshot.view {
+            TableBrowserView::Overview => 0,
+            TableBrowserView::Columns
+            | TableBrowserView::Keywords
+            | TableBrowserView::Subtables => browser_fraction(&lines, "selected=")
+                .map(|(selected, _)| selected.saturating_sub(1))
+                .unwrap_or(0),
+            TableBrowserView::Cells => browser_fraction(&lines, "row=")
+                .map(|(selected, _)| selected.saturating_sub(1))
+                .unwrap_or(0),
+        };
+        selected.min(u16::MAX as usize) as u16
+    }
+
+    pub(crate) fn active_browser_hscroll(&self) -> u16 {
+        let Some(session) = self.browser_session() else {
+            return 0;
+        };
+        let lines = self
+            .browser_main_content_lines()
+            .unwrap_or_else(|| session.snapshot.content_lines.clone());
+        let selected = match session.snapshot.view {
+            TableBrowserView::Cells => browser_fraction(&lines, "col=")
+                .map(|(selected, _)| selected.saturating_sub(1))
+                .unwrap_or(0),
+            _ => 0,
+        };
+        selected.min(u16::MAX as usize) as u16
+    }
+
+    fn scroll_active_browser(&mut self, delta: i16) {
+        self.clear_output_selection_for_target(OutputPane::Result);
+        if delta.is_negative() {
+            self.send_browser_command(BrowserCommand::MoveUp {
+                steps: delta.unsigned_abs() as usize,
+                viewport: None,
+            });
+        } else {
+            self.send_browser_command(BrowserCommand::MoveDown {
+                steps: delta as usize,
+                viewport: None,
+            });
+        }
+    }
+
+    fn set_active_browser_scroll(&mut self, scroll: usize) {
+        let current = self.active_browser_scroll() as usize;
+        if scroll > current {
+            self.scroll_active_browser((scroll - current).min(i16::MAX as usize) as i16);
+        } else if current > scroll {
+            self.scroll_active_browser(-((current - scroll).min(i16::MAX as usize) as i16));
+        }
+    }
+
+    fn scroll_active_browser_horizontal(&mut self, delta: i16) {
+        self.clear_output_selection_for_target(OutputPane::Result);
+        if delta.is_negative() {
+            self.send_browser_command(BrowserCommand::MoveLeft {
+                steps: delta.unsigned_abs() as usize,
+                viewport: None,
+            });
+        } else {
+            self.send_browser_command(BrowserCommand::MoveRight {
+                steps: delta as usize,
+                viewport: None,
+            });
+        }
+    }
+
+    fn set_active_browser_hscroll(&mut self, scroll: usize) {
+        let current = self.active_browser_hscroll() as usize;
+        if scroll > current {
+            self.scroll_active_browser_horizontal((scroll - current).min(i16::MAX as usize) as i16);
+        } else if current > scroll {
+            self.scroll_active_browser_horizontal(
+                -((current - scroll).min(i16::MAX as usize) as i16),
+            );
+        }
+    }
+
     fn scroll_active_result(&mut self, delta: i16) {
+        self.clear_output_selection_for_target(OutputPane::Result);
         let scroll = &mut self.result_scrolls[self.active_result_tab.index()];
         if delta.is_negative() {
             *scroll = scroll.saturating_sub(delta.unsigned_abs());
@@ -1137,6 +1964,7 @@ impl AppState {
     }
 
     fn scroll_active_result_horizontal(&mut self, delta: i16) {
+        self.clear_output_selection_for_target(OutputPane::Result);
         let current = self.result_hscrolls[self.active_result_tab.index()] as usize;
         let next = if delta.is_negative() {
             current.saturating_sub(delta.unsigned_abs() as usize)
@@ -1154,13 +1982,20 @@ impl AppState {
         let Some(track) = layout.result_scrollbar else {
             return;
         };
-        let Some((content_length, viewport_length)) =
+        let metrics = if self.browser_session.is_some() {
+            self.active_browser_scroll_metrics(track.height)
+        } else {
             self.active_result_scroll_metrics(track.height)
-        else {
+        };
+        let Some((content_length, viewport_length)) = metrics else {
             return;
         };
         if content_length <= viewport_length || track.height == 0 {
-            self.set_active_result_scroll(0);
+            if self.browser_session.is_some() {
+                self.set_active_browser_scroll(0);
+            } else {
+                self.set_active_result_scroll(0);
+            }
             return;
         }
 
@@ -1174,19 +2009,31 @@ impl AppState {
         } else {
             (row_offset * max_scroll + denominator / 2) / denominator
         };
-        self.set_active_result_scroll(scroll);
+        if self.browser_session.is_some() {
+            self.set_active_browser_scroll(scroll);
+        } else {
+            self.set_active_result_scroll(scroll);
+        }
     }
 
     fn scroll_result_horizontally_to_mouse(&mut self, column: u16, layout: &UiLayout) {
         let Some(track) = layout.result_hscrollbar else {
             return;
         };
-        let Some((content_width, viewport_width)) = self.active_result_hscroll_metrics(track.width)
-        else {
+        let metrics = if self.browser_session.is_some() {
+            self.active_browser_hscroll_metrics(track.width)
+        } else {
+            self.active_result_hscroll_metrics(track.width)
+        };
+        let Some((content_width, viewport_width)) = metrics else {
             return;
         };
         if content_width <= viewport_width || track.width == 0 {
-            self.set_active_result_hscroll(0);
+            if self.browser_session.is_some() {
+                self.set_active_browser_hscroll(0);
+            } else {
+                self.set_active_result_hscroll(0);
+            }
             return;
         }
 
@@ -1203,7 +2050,11 @@ impl AppState {
             let thumb_offset = adjusted.min(max_thumb_offset);
             (thumb_offset * max_scroll + max_thumb_offset / 2) / max_thumb_offset
         };
-        self.set_active_result_hscroll(scroll);
+        if self.browser_session.is_some() {
+            self.set_active_browser_hscroll(scroll);
+        } else {
+            self.set_active_result_hscroll(scroll);
+        }
     }
 
     fn active_result_scroll_metrics(&self, viewport_height: u16) -> Option<(usize, usize)> {
@@ -1243,8 +2094,12 @@ impl AppState {
         let Some(track) = layout.result_hscrollbar else {
             return 0;
         };
-        let Some((content_width, viewport_width)) = self.active_result_hscroll_metrics(track.width)
-        else {
+        let metrics = if self.browser_session.is_some() {
+            self.active_browser_hscroll_metrics(track.width)
+        } else {
+            self.active_result_hscroll_metrics(track.width)
+        };
+        let Some((content_width, viewport_width)) = metrics else {
             return 0;
         };
         if content_width <= viewport_width || track.width == 0 {
@@ -1259,9 +2114,13 @@ impl AppState {
             return 0;
         }
 
-        let thumb_offset = (self.active_result_hscroll() as usize * max_thumb_offset
-            + max_scroll / 2)
-            / max_scroll;
+        let active_hscroll = if self.browser_session.is_some() {
+            self.active_browser_hscroll()
+        } else {
+            self.active_result_hscroll()
+        };
+        let thumb_offset =
+            (active_hscroll as usize * max_thumb_offset + max_scroll / 2) / max_scroll;
         let thumb_start = track.x as usize + thumb_offset;
         let thumb_end = thumb_start + thumb_length;
         let click = column as usize;
@@ -1273,6 +2132,7 @@ impl AppState {
     }
 
     fn cycle_visible_result_tab(&mut self, forward: bool) {
+        self.clear_output_selection_for_target(OutputPane::Result);
         let tabs = self.visible_result_tabs();
         let Some(position) = tabs.iter().position(|tab| *tab == self.active_result_tab) else {
             self.active_result_tab = ResultTab::Overview;
@@ -1300,12 +2160,18 @@ impl AppState {
     }
 
     fn start_run(&mut self) {
+        self.clear_output_selection();
         self.commit_edit_buffer();
 
         if self.schema.is_none() {
             self.result.status_line = "Cannot run without a loaded UI schema.".to_string();
             self.result.status_kind = StatusKind::Error;
             self.active_result_tab = ResultTab::Stderr;
+            return;
+        }
+
+        if self.app.is_browser_session() {
+            self.start_table_browser();
             return;
         }
 
@@ -1344,6 +2210,90 @@ impl AppState {
                 self.active_result_tab = ResultTab::Stderr;
             }
         }
+    }
+
+    fn start_table_browser(&mut self) {
+        self.clear_output_selection();
+        let Some(path) = self
+            .field_text("table_path")
+            .filter(|value| !value.trim().is_empty())
+        else {
+            self.result.status_line = "Table Path is required.".to_string();
+            self.result.status_kind = StatusKind::Error;
+            return;
+        };
+
+        let viewport = BrowserViewport::new(120, 24);
+        match self
+            .app
+            .resolve_command()
+            .and_then(|command| BrowserClient::spawn(&command))
+        {
+            Ok(client) => match client.request(BrowserCommand::OpenRoot { path, viewport }) {
+                Ok(snapshot) => {
+                    self.result = ResultState {
+                        status_line: snapshot.status_line.clone(),
+                        status_kind: StatusKind::Info,
+                        ..ResultState::default()
+                    };
+                    self.edit_state = None;
+                    self.pane_focus = PaneFocus::Result;
+                    self.browser_session = Some(BrowserSession {
+                        client,
+                        snapshot,
+                        viewport,
+                    });
+                }
+                Err(error) => {
+                    self.result.status_line = "Failed to open table browser.".to_string();
+                    self.result.status_kind = StatusKind::Error;
+                    self.result.stderr = format!("{error}\n");
+                }
+            },
+            Err(error) => {
+                self.result.status_line = "Failed to launch table browser.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = format!("{error}\n");
+            }
+        }
+    }
+
+    fn send_browser_command(&mut self, command: BrowserCommand) {
+        let result = {
+            let Some(session) = self.browser_session.as_mut() else {
+                return;
+            };
+            match session.client.request(command) {
+                Ok(snapshot) => {
+                    session.snapshot = snapshot.clone();
+                    Ok(snapshot)
+                }
+                Err(error) => Err((error, session.client.stderr_text())),
+            }
+        };
+
+        match result {
+            Ok(snapshot) => {
+                self.clear_output_selection();
+                self.result.status_line = snapshot.status_line;
+                self.result.status_kind = StatusKind::Info;
+            }
+            Err((error, stderr)) => {
+                self.result.status_line = "Browser command failed.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = if stderr.trim().is_empty() {
+                    format!("{error}\n")
+                } else {
+                    format!("{error}\n{stderr}")
+                };
+            }
+        }
+    }
+
+    fn browser_clipboard_payload(&self) -> Option<(String, &'static str)> {
+        let session = self.browser_session()?;
+        let inspector = session.snapshot.inspector.as_ref()?;
+        Some(copyable_browser_text(inspector))
     }
 
     fn build_execution_plan(&self) -> Result<ExecutionPlan, String> {
@@ -1442,6 +2392,7 @@ impl AppState {
 
     fn sync_result_tab_visibility(&mut self) {
         if !self.visible_result_tabs().contains(&self.active_result_tab) {
+            self.clear_output_selection_for_target(OutputPane::Result);
             self.active_result_tab = ResultTab::Overview;
         }
     }
@@ -1490,6 +2441,14 @@ impl AppState {
     }
 
     fn cancel_current(&mut self) {
+        if let Some(session) = self.browser_session.take() {
+            let _ = session.client.cancel();
+            self.result.status_line = "Browser session closed.".to_string();
+            self.result.status_kind = StatusKind::Info;
+            self.pane_focus = PaneFocus::Parameters;
+            return;
+        }
+
         let Some(running) = self.running.as_mut() else {
             return;
         };
@@ -1649,6 +2608,10 @@ impl AppState {
             ];
         }
 
+        if let Some(session) = self.browser_session() {
+            return session.snapshot.content_lines.clone();
+        }
+
         if let Some(error) = &self.result.structured_error {
             return vec![
                 "Overview".to_string(),
@@ -1789,15 +2752,42 @@ impl FormField {
     }
 
     fn set_text(&mut self, value: String) {
-        if let FormValue::Text(current) = &mut self.value {
-            *current = value;
+        let _ = self.apply_text_value(value);
+    }
+
+    fn apply_text_value(&mut self, value: String) -> Result<(), String> {
+        match &mut self.value {
+            FormValue::Text(current) => {
+                *current = value;
+                Ok(())
+            }
+            FormValue::Choice {
+                value: current,
+                choices,
+            } => {
+                if !choices.is_empty() && !choices.iter().any(|choice| choice == &value) {
+                    return Err(format!(
+                        "{} expects one of: {}",
+                        self.schema.label,
+                        choices.join(", ")
+                    ));
+                }
+                *current = value;
+                Ok(())
+            }
+            FormValue::Toggle(_) => {
+                Err(format!("{} does not accept text input", self.schema.label))
+            }
         }
     }
 
-    #[cfg(test)]
-    fn set_toggle(&mut self, value: bool) {
-        if let FormValue::Toggle(current) = &mut self.value {
-            *current = value;
+    fn apply_toggle_value(&mut self, value: bool) -> Result<(), String> {
+        match &mut self.value {
+            FormValue::Toggle(current) => {
+                *current = value;
+                Ok(())
+            }
+            _ => Err(format!("{} is not a toggle", self.schema.label)),
         }
     }
 
@@ -2254,6 +3244,243 @@ fn join_corrs(values: &[String]) -> String {
         .to_string()
 }
 
+impl VisibleTextLine {
+    fn plain(text: String) -> Self {
+        let roles = text.chars().map(|_| VisibleTextRole::Plain).collect();
+        Self { text, roles }
+    }
+
+    fn table_header(text: String) -> Self {
+        let roles = text.chars().map(|_| VisibleTextRole::TableHeader).collect();
+        Self { text, roles }
+    }
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
+fn result_text_area(layout: &UiLayout) -> Rect {
+    Rect {
+        x: layout.result_content.x,
+        y: layout.result_content.y,
+        width: layout
+            .result_content
+            .width
+            .saturating_sub(if layout.result_scrollbar.is_some() {
+                1
+            } else {
+                0
+            }),
+        height: layout.result_content.height.saturating_sub(
+            if layout.result_hscrollbar.is_some() {
+                1
+            } else {
+                0
+            },
+        ),
+    }
+}
+
+fn left_output_area(app: &AppState, layout: &UiLayout) -> Option<Rect> {
+    if app.browser_is_active() && layout.form_inner.width > 0 && layout.form_inner.height > 0 {
+        Some(layout.form_inner)
+    } else {
+        None
+    }
+}
+
+fn normalize_selection(selection: OutputSelection) -> (usize, usize, usize, usize) {
+    (
+        selection.anchor.row.min(selection.cursor.row),
+        selection.anchor.row.max(selection.cursor.row),
+        selection.anchor.col.min(selection.cursor.col),
+        selection.anchor.col.max(selection.cursor.col),
+    )
+}
+
+fn clamp_point_to_buffer(buffer: &VisibleTextBuffer, column: u16, row: u16) -> BufferPoint {
+    let relative_row = row.saturating_sub(buffer.area.y) as usize;
+    let row = relative_row.min(buffer.lines.len().saturating_sub(1));
+    let line_len = buffer
+        .lines
+        .get(row)
+        .map(|line| line.text.chars().count())
+        .unwrap_or(0);
+    let relative_col = column.saturating_sub(buffer.area.x) as usize;
+    let col = if line_len == 0 {
+        0
+    } else {
+        relative_col.min(line_len.saturating_sub(1))
+    };
+    BufferPoint { row, col }
+}
+
+fn extract_selected_text(buffer: &VisibleTextBuffer, selection: OutputSelection) -> String {
+    let (row_start, row_end, col_start, col_end) = normalize_selection(selection);
+    (row_start..=row_end)
+        .filter_map(|row| buffer.lines.get(row))
+        .map(|line| {
+            slice_chars(&line.text, col_start, col_end.saturating_add(1))
+                .trim_end_matches(' ')
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn browser_cells_visible_line(raw_line: &str) -> VisibleTextLine {
+    if !raw_line.contains('|') {
+        return VisibleTextLine::plain(raw_line.to_string());
+    }
+
+    let is_header = raw_line.trim_start().starts_with("row ");
+    let mut text = String::new();
+    let mut roles = Vec::new();
+    for (index, segment) in raw_line.split('|').enumerate() {
+        if index > 0 {
+            text.push('│');
+            roles.push(VisibleTextRole::BrowserSeparator);
+        }
+        let (visible, role) = if let Some(selected) = strip_browser_selection_markers(segment) {
+            (selected, VisibleTextRole::BrowserSelectedCell)
+        } else if is_header {
+            (segment.to_string(), VisibleTextRole::TableHeader)
+        } else {
+            (segment.to_string(), VisibleTextRole::Plain)
+        };
+        roles.extend(visible.chars().map(|_| role));
+        text.push_str(&visible);
+    }
+    VisibleTextLine { text, roles }
+}
+
+fn strip_browser_selection_markers(segment: &str) -> Option<String> {
+    let mut chars = segment.chars().collect::<Vec<_>>();
+    let first = chars
+        .iter()
+        .position(|character| !character.is_whitespace())?;
+    let last = chars
+        .iter()
+        .rposition(|character| !character.is_whitespace())?;
+    if chars[first] != '>' || chars[last] != '<' {
+        return None;
+    }
+    chars[first] = ' ';
+    chars[last] = ' ';
+    Some(chars.into_iter().collect())
+}
+
+fn slice_visible_text(text: &str, offset: usize, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let sliced = text.chars().skip(offset).collect::<String>();
+    fit_visible_text(&sliced, width)
+}
+
+fn fit_visible_text(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    if width <= 3 {
+        return ".".repeat(width);
+    }
+    let mut out = text.chars().take(width - 3).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn slice_chars(text: &str, start: usize, end: usize) -> String {
+    text.chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect()
+}
+
+fn is_browser_copy_modifier(modifiers: KeyModifiers) -> bool {
+    modifiers == KeyModifiers::SUPER || modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+}
+
+fn copyable_browser_text(inspector: &BrowserInspectorSnapshot) -> (String, &'static str) {
+    match &inspector.node {
+        BrowserValueNode::Undefined => ("<undefined>".to_string(), "undefined value"),
+        BrowserValueNode::Scalar { value } => (render_browser_scalar(value), "value"),
+        BrowserValueNode::TableRef { resolved_path, .. } => (resolved_path.clone(), "table path"),
+        BrowserValueNode::Array {
+            shape,
+            total_elements,
+            elements,
+            ..
+        } if elements.len() == *total_elements => (
+            format!(
+                "[{}]",
+                elements
+                    .iter()
+                    .map(|element| render_browser_scalar(&element.value))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            if shape.len() > 1 {
+                "array value"
+            } else {
+                "value"
+            },
+        ),
+        _ => (
+            inspector.rendered_lines.join("\n").trim().to_string(),
+            "inspector view",
+        ),
+    }
+}
+
+fn render_browser_scalar(value: &BrowserScalarValue) -> String {
+    match value {
+        BrowserScalarValue::Bool(value) => value.to_string(),
+        BrowserScalarValue::UInt8(value) => value.to_string(),
+        BrowserScalarValue::UInt16(value) => value.to_string(),
+        BrowserScalarValue::UInt32(value) => value.to_string(),
+        BrowserScalarValue::Int16(value) => value.to_string(),
+        BrowserScalarValue::Int32(value) => value.to_string(),
+        BrowserScalarValue::Int64(value) => value.to_string(),
+        BrowserScalarValue::Float32(value) => format_browser_float(f64::from(*value)),
+        BrowserScalarValue::Float64(value) => format_browser_float(*value),
+        BrowserScalarValue::Complex32(value) => render_complex32(value),
+        BrowserScalarValue::Complex64(value) => render_complex64(value),
+        BrowserScalarValue::String(value) => format!("{value:?}"),
+    }
+}
+
+fn render_complex32(value: &BrowserComplex32Value) -> String {
+    format!(
+        "{}{:+}i",
+        format_browser_float(f64::from(value.re)),
+        f64::from(value.im)
+    )
+}
+
+fn render_complex64(value: &BrowserComplex64Value) -> String {
+    format!("{}{:+}i", format_browser_float(value.re), value.im)
+}
+
+fn format_browser_float(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 {
+        format!("{value:.1}")
+    } else {
+        let rendered = format!("{value:.15}");
+        rendered
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
 fn spw_display_name(name: &str) -> String {
     if name.is_empty() {
         "none".to_string()
@@ -2299,4 +3526,68 @@ fn scrollbar_thumb_length(
     }
     let thumb = (track_length * viewport_length).div_ceil(content_length);
     thumb.clamp(1, track_length)
+}
+
+fn browser_fraction(lines: &[String], prefix: &str) -> Option<(usize, usize)> {
+    let line = lines.first()?;
+    let token = line
+        .split_whitespace()
+        .find(|token| token.starts_with(prefix))?
+        .strip_prefix(prefix)?;
+    let (selected, total) = token.split_once('/')?;
+    Some((selected.parse().ok()?, total.parse().ok()?))
+}
+
+fn browser_columns_viewport(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .skip(1)
+        .take_while(|line| !line.is_empty() && line.as_str() != "-- Column Details --")
+        .count()
+}
+
+fn browser_visible_cell_columns(lines: &[String]) -> usize {
+    let Some(header) = lines.get(1) else {
+        return 0;
+    };
+    header.split('|').count().saturating_sub(2)
+}
+
+fn browser_main_content_lines(snapshot: &BrowserSnapshot) -> Vec<String> {
+    let mut lines = snapshot.content_lines.clone();
+    let Some(inspector) = snapshot.inspector.as_ref() else {
+        return lines;
+    };
+    let inspector_lines = &inspector.rendered_lines;
+    if inspector_lines.is_empty() || lines.len() < inspector_lines.len() {
+        return lines;
+    }
+    if lines.ends_with(inspector_lines) {
+        let new_len = lines.len().saturating_sub(inspector_lines.len());
+        lines.truncate(new_len);
+        if lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+    }
+    lines
+}
+
+fn browser_inspector_lines(inspector: &BrowserInspectorSnapshot) -> Vec<String> {
+    let mut lines = vec![inspector.title.clone()];
+    if !inspector.trail.is_empty() {
+        lines.push(format!(
+            "Path: {}",
+            inspector
+                .trail
+                .iter()
+                .map(|entry| entry.label.as_str())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        ));
+    }
+    if !lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines.extend(inspector.rendered_lines.iter().cloned());
+    lines
 }

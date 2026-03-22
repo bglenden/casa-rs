@@ -12,15 +12,19 @@ workspace = true
 
 [dependencies]
 casacore-aipsio = { path = "../casacore-aipsio" }
+casacore-tablebrowser-protocol = { path = "../casacore-tablebrowser-protocol" }
 casacore-types = { path = "../casacore-types" }
 logos = "0.15"
 ndarray.workspace = true
 regex = "1"
 num-complex.workspace = true
+serde_json = "1"
 thiserror.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+flate2 = "1"
+tar = "0.4"
 tempfile = "3"
 
 [[example]]

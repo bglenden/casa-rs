@@ -7,6 +7,12 @@ use casacore_ms::column_def::{ColumnDef, ColumnKind};
 use casacore_ms::listobs::cli::command_schema;
 use casacore_ms::schema;
 use casacore_ms::{MeasurementSet, MeasurementSetBuilder, SubtableId};
+use casacore_tablebrowser_protocol::{
+    BrowserBreadcrumbEntry, BrowserCapabilities, BrowserFocus, BrowserInspectorSnapshot,
+    BrowserInspectorTrailEntry, BrowserResponseEnvelope, BrowserScalarValue, BrowserSnapshot,
+    BrowserValueNode, BrowserView as ProtocolBrowserView, BrowserViewport,
+};
+use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casacore_types::{
     ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value, quanta::MvTime,
 };
@@ -15,10 +21,64 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::tempdir;
 
-use crate::app::{AppState, PaneFocus, ResultTab};
+use crate::app::{AppState, OutputPane, PaneFocus, ResultTab};
 use crate::config::{ConfigStore, ThemeMode};
-use crate::registry::listobs_app;
+use crate::is_suspend_key;
+use crate::registry::{listobs_app, registered_apps, tablebrowser_app};
 use crate::ui;
+
+#[test]
+fn launcher_lists_registered_apps_in_expected_order() {
+    let apps = registered_apps();
+    let ids = apps.iter().map(|app| app.id).collect::<Vec<_>>();
+    assert_eq!(ids, vec!["listobs", "tablebrowser"]);
+}
+
+#[test]
+fn launcher_screen_renders_available_apps() {
+    let apps = registered_apps();
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| ui::draw_launcher(frame, &apps, 1))
+        .expect("draw launcher");
+    let buffer = terminal.backend().buffer().clone();
+    let mut rendered = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            rendered.push_str(buffer[(x, y)].symbol());
+        }
+        rendered.push('\n');
+    }
+
+    assert!(rendered.contains("Select Application"));
+    assert!(rendered.contains("listobs"));
+    assert!(rendered.contains("tablebrowser"));
+    assert!(rendered.contains("Table Browser"));
+}
+
+#[test]
+fn back_to_launcher_requests_launcher_from_idle_app() {
+    let (_temp, mut app) = test_app();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert!(app.should_return_to_launcher_for_test());
+}
+
+#[test]
+fn ctrl_z_is_reserved_for_terminal_suspend() {
+    assert!(is_suspend_key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(!is_suspend_key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+    assert!(!is_suspend_key(KeyEvent::new(
+        KeyCode::Char('x'),
+        KeyModifiers::CONTROL,
+    )));
+}
 
 #[test]
 fn renders_idle_layout_with_ready_status() {
@@ -27,7 +87,7 @@ fn renders_idle_layout_with_ready_status() {
     assert!(rendered.contains("casars"));
     assert!(rendered.contains("MeasurementSet / ListObs"));
     assert!(rendered.contains("MeasurementSet Path"));
-    assert!(rendered.contains("Ready. Press r to run listobs."));
+    assert!(rendered.contains("Ready. Press r to run the selected command."));
     assert!(rendered.contains("Overview"));
 }
 
@@ -109,6 +169,97 @@ fn pane_split_ratio_persists_after_drag() {
         ConfigStore::load_for_tests(config_path),
     );
     assert!(reloaded.pane_split_ratio_for_test() > 0.55);
+}
+
+#[test]
+fn divider_drag_starts_from_adjacent_border_column() {
+    let temp = tempdir().expect("tempdir");
+    let config_path = temp.path().join("casars.toml");
+    let mut app = AppState::from_schema_with_config(
+        listobs_app(),
+        command_schema("listobs"),
+        ConfigStore::load_for_tests(config_path),
+    );
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
+    let border_column = layout.form_block.x + layout.form_block.width.saturating_sub(1);
+
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            border_column,
+            layout.divider.y + 3,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            layout.body.x + 72,
+            layout.divider.y + 3,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            layout.body.x + 72,
+            layout.divider.y + 3,
+        ),
+        &layout,
+    );
+
+    assert!(app.pane_split_ratio_for_test() > 0.55);
+}
+
+#[test]
+fn pane_toggle_can_collapse_parameters_pane() {
+    let (_temp, mut app) = test_app();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
+    assert!(app.parameters_pane_collapsed());
+    assert_eq!(layout.form_block.width, 0);
+    assert_eq!(layout.result_block.width, layout.body.width);
+}
+
+#[test]
+fn pane_toggle_restores_previous_noncollapsed_size() {
+    let (_temp, mut app) = test_app();
+    let original = app.pane_split_ratio_for_test();
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            layout.divider.x,
+            layout.divider.y + 2,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            layout.body.x + 72,
+            layout.divider.y + 2,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            layout.body.x + 72,
+            layout.divider.y + 2,
+        ),
+        &layout,
+    );
+
+    let resized = app.pane_split_ratio_for_test();
+    assert!(resized > original);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+    assert!(app.parameters_pane_collapsed());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+
+    assert!((app.pane_split_ratio_for_test() - resized).abs() < f32::EPSILON);
 }
 
 #[test]
@@ -273,6 +424,782 @@ fn rich_panel_footer_keeps_theme_toggle_visible() {
     app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
     let rendered = render_app(&app, 100, 30);
     assert!(rendered.contains("t theme"));
+}
+
+#[test]
+fn tablebrowser_session_opens_cells_and_linked_subtables() {
+    let _guard = launcher_env_lock();
+    clear_tablebrowser_launcher_bin();
+
+    let temp = tempdir().expect("tempdir");
+    let table_path = create_fixture_table(temp.path());
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", table_path.to_string_lossy().as_ref());
+    app.start_run_for_test();
+
+    assert!(app.browser_is_active());
+    app.sync_browser_viewport(90, 25);
+    let overview = render_app(&app, 180, 30);
+    assert!(overview.contains("Tables / Table Browser"));
+    assert!(overview.contains("Columns"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    let cells = render_app(&app, 180, 30);
+    assert!(cells.contains("Cells"));
+    assert!(cells.contains("\"alpha\""));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    let subtables = render_app(&app, 180, 30);
+    assert!(subtables.contains("child.tab"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let child = render_app(&app, 180, 30);
+    assert!(child.contains("child.tab"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    let parent = render_app(&app, 180, 30);
+    assert!(parent.contains("parent.tab / child.tab") || parent.contains("parent.tab"));
+}
+
+#[test]
+fn back_to_launcher_closes_active_browser_session() {
+    let _guard = launcher_env_lock();
+    clear_tablebrowser_launcher_bin();
+
+    let temp = tempdir().expect("tempdir");
+    let table_path = create_fixture_table(temp.path());
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", table_path.to_string_lossy().as_ref());
+    app.start_run_for_test();
+
+    assert!(app.browser_is_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert!(app.should_return_to_launcher_for_test());
+    assert!(!app.browser_is_active());
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_cells_expose_scrollbar_metrics() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[fake_browser_snapshot_json(
+            ProtocolBrowserView::Cells,
+            "Fake cells",
+            vec![
+                "Cells  row=12/100  col=3/8  focus=Main".to_string(),
+                "row | NAME<str> | UVW<f64[]>[m] |".to_string(),
+                "  11 | \"alpha\"    | [1.0, 2.0, 3.0] m |".to_string(),
+                "  12 | \"beta\"     | [4.0, 5.0, 6.0] m |".to_string(),
+            ],
+        )],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    assert_eq!(app.active_browser_scroll(), 11);
+    assert_eq!(app.active_browser_hscroll(), 2);
+    assert_eq!(app.active_browser_scroll_metrics(12), Some((100, 2)));
+    assert_eq!(app.active_browser_hscroll_metrics(40), Some((8, 2)));
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_cells_render_styled_separators_and_strip_selection_markers() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[fake_browser_snapshot_json(
+            ProtocolBrowserView::Cells,
+            "Fake cells",
+            vec![
+                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                "row | NAME<str> | UVW<f64[3]>[m] |".to_string(),
+                "   0 | >\"alpha\"< | [1.0, 2.0, 3.0] |".to_string(),
+            ],
+        )],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    let rendered = render_app(&app, 160, 28);
+    assert!(rendered.contains("│"));
+    assert!(!rendered.contains(">\"alpha\"<"));
+    assert!(rendered.contains("\"alpha\""));
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_inspector_renders_in_left_pane_without_duplicate_result_content() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[fake_browser_snapshot_with_inspector_json(
+            ProtocolBrowserView::Cells,
+            "Fake cells",
+            vec![
+                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                "row | NAME<str> |".to_string(),
+                "   0 | >\"alpha\"< |".to_string(),
+                String::new(),
+                "-- Inspector (Main) --".to_string(),
+                "scalar: \"alpha\"".to_string(),
+            ],
+            Some(BrowserInspectorSnapshot {
+                title: "Cell row=0 column=NAME".to_string(),
+                trail: vec![BrowserInspectorTrailEntry {
+                    label: "root".to_string(),
+                    summary: "\"alpha\"".to_string(),
+                }],
+                node: BrowserValueNode::Scalar {
+                    value: casacore_tablebrowser_protocol::BrowserScalarValue::String(
+                        "alpha".to_string(),
+                    ),
+                },
+                rendered_lines: vec![
+                    "-- Inspector (Main) --".to_string(),
+                    "scalar: \"alpha\"".to_string(),
+                ],
+            }),
+        )],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    let rendered = render_app(&app, 160, 28);
+    assert!(rendered.contains("Cell row=0 column=NAME"));
+    assert!(rendered.contains("scalar: \"alpha\""));
+    assert_eq!(rendered.matches("-- Inspector (Main) --").count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_copy_shortcut_writes_selected_value_to_clipboard() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[fake_browser_snapshot_with_inspector_json(
+            ProtocolBrowserView::Cells,
+            "Fake cells",
+            vec![
+                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                "row | NAME<str> |".to_string(),
+                "   0 | >\"alpha\"< |".to_string(),
+            ],
+            Some(BrowserInspectorSnapshot {
+                title: "Cell row=0 column=NAME".to_string(),
+                trail: vec![],
+                node: BrowserValueNode::Scalar {
+                    value: BrowserScalarValue::String("alpha".to_string()),
+                },
+                rendered_lines: vec!["\"alpha\"".to_string()],
+            }),
+        )],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert_eq!(clipboard, "\"alpha\"");
+    let rendered = render_app(&app, 120, 28);
+    assert!(rendered.contains("Copied value to clipboard."));
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
+fn output_selection_copy_shortcuts_match_visible_plain_text() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+
+    let (_temp, mut app) = test_app();
+    app.set_result_for_test("alpha beta\ngamma delta", "");
+    app.set_active_result_tab(ResultTab::Stdout);
+    drag_select_visible_text(&mut app, 120, 28, OutputPane::Result, "alpha");
+
+    for key in [
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::SUPER),
+        KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+    ] {
+        app.handle_key_event(key);
+        let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+        assert_eq!(clipboard, "alpha");
+    }
+
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
+fn drag_selection_copies_visible_plain_text_on_mouse_up() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+
+    let (_temp, mut app) = test_app();
+    app.set_result_for_test("alpha beta\ngamma delta", "");
+    app.set_active_result_tab(ResultTab::Stdout);
+    drag_select_visible_text(&mut app, 120, 28, OutputPane::Result, "alpha");
+
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert_eq!(clipboard, "alpha");
+    assert!(
+        app.status_line_for_test()
+            .contains("Copied selection to clipboard.")
+    );
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
+fn output_selection_copy_works_for_structured_table_rows() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+
+    let ms_path = create_fixture_ms(temp.path());
+    let schema = listobs_app()
+        .load_schema()
+        .expect("load schema from listobs");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.start_run_for_test();
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
+    app.set_active_result_tab(ResultTab::Fields);
+
+    drag_select_visible_text(&mut app, 140, 32, OutputPane::Result, "3C286");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert_eq!(clipboard, "3C286");
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
+fn drag_selection_copies_browser_inspector_text_on_mouse_up() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[fake_browser_snapshot_with_inspector_json(
+            ProtocolBrowserView::Cells,
+            "Fake cells",
+            vec![
+                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                "row | NAME<str> |".to_string(),
+                "   0 | >\"alpha\"< |".to_string(),
+            ],
+            Some(BrowserInspectorSnapshot {
+                title: "Cell row=0 column=NAME".to_string(),
+                trail: vec![BrowserInspectorTrailEntry {
+                    label: "root".to_string(),
+                    summary: "scalar".to_string(),
+                }],
+                node: BrowserValueNode::Scalar {
+                    value: BrowserScalarValue::String("alpha".to_string()),
+                },
+                rendered_lines: vec!["scalar: alpha beta".to_string()],
+            }),
+        )],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    drag_select_visible_text(&mut app, 160, 28, OutputPane::LeftOutput, "alpha beta");
+
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert_eq!(clipboard, "alpha beta");
+    assert!(
+        app.status_line_for_test()
+            .contains("Copied selection to clipboard.")
+    );
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_result_selection_copies_visible_text_in_every_view() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Overview,
+                "Fake overview",
+                vec!["Overview root".to_string(), "token-overview".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Columns,
+                "Fake columns",
+                vec![
+                    "Columns  selected=1/3  focus=Main".to_string(),
+                    "token-columns".to_string(),
+                ],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Keywords,
+                "Fake keywords",
+                vec![
+                    "Keywords  selected=1/3  focus=Main".to_string(),
+                    "token-keywords".to_string(),
+                ],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >token-cells< |".to_string(),
+                ],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Subtables,
+                "Fake subtables",
+                vec![
+                    "Subtables  selected=1/3  focus=Main".to_string(),
+                    "token-subtables".to_string(),
+                ],
+            ),
+        ],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    for (index, expected) in [
+        "token-overview",
+        "token-columns",
+        "token-keywords",
+        "token-cells",
+        "token-subtables",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        drag_select_visible_text(&mut app, 160, 28, OutputPane::Result, expected);
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+        assert_eq!(clipboard, expected);
+    }
+
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_inspector_selection_copies_visible_text() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[fake_browser_snapshot_with_inspector_json(
+            ProtocolBrowserView::Cells,
+            "Fake cells",
+            vec![
+                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                "row | NAME<str> |".to_string(),
+                "   0 | >\"alpha\"< |".to_string(),
+            ],
+            Some(BrowserInspectorSnapshot {
+                title: "Cell row=0 column=NAME".to_string(),
+                trail: vec![BrowserInspectorTrailEntry {
+                    label: "root".to_string(),
+                    summary: "scalar".to_string(),
+                }],
+                node: BrowserValueNode::Scalar {
+                    value: BrowserScalarValue::String("alpha".to_string()),
+                },
+                rendered_lines: vec!["scalar: alpha beta".to_string()],
+            }),
+        )],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    drag_select_visible_text(&mut app, 160, 28, OutputPane::LeftOutput, "alpha beta");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert_eq!(clipboard, "alpha beta");
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
+fn non_browser_copy_without_selection_reports_nothing_selected() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+
+    let (_temp, mut app) = test_app();
+    app.set_result_for_test("alpha beta", "");
+    app.set_active_result_tab(ResultTab::Stdout);
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    assert!(
+        app.status_line_for_test()
+            .contains("Nothing copyable is selected")
+    );
+    assert!(!clipboard_path.exists());
+    clear_test_clipboard_file();
+}
+
+#[test]
+fn escape_clears_active_output_selection() {
+    let (_temp, mut app) = test_app();
+    app.set_result_for_test("alpha beta", "");
+    app.set_active_result_tab(ResultTab::Stdout);
+    drag_select_visible_text(&mut app, 120, 28, OutputPane::Result, "alpha");
+
+    assert!(app.output_selection_rect(OutputPane::Result).is_some());
+    app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.output_selection_rect(OutputPane::Result).is_none());
+}
+
+#[test]
+fn result_tab_switch_clears_active_output_selection() {
+    let (_temp, mut app) = test_app();
+    app.set_result_for_test("alpha beta", "stderr line");
+    app.set_active_result_tab(ResultTab::Stdout);
+    drag_select_visible_text(&mut app, 120, 28, OutputPane::Result, "alpha");
+
+    assert!(app.output_selection_rect(OutputPane::Result).is_some());
+    app.set_active_result_tab(ResultTab::Stderr);
+    assert!(app.output_selection_rect(OutputPane::Result).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_view_change_clears_active_output_selection() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Overview,
+                "Fake overview",
+                vec!["Overview root".to_string(), "token-overview".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Columns,
+                "Fake columns",
+                vec![
+                    "Columns  selected=1/3  focus=Main".to_string(),
+                    "token-columns".to_string(),
+                ],
+            ),
+        ],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    drag_select_visible_text(&mut app, 160, 28, OutputPane::Result, "token-overview");
+    assert!(app.output_selection_rect(OutputPane::Result).is_some());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert!(app.output_selection_rect(OutputPane::Result).is_none());
+}
+
+#[test]
+fn pane_toggle_clears_active_output_selection() {
+    let (_temp, mut app) = test_app();
+    app.set_result_for_test("alpha beta", "");
+    app.set_active_result_tab(ResultTab::Stdout);
+    drag_select_visible_text(&mut app, 120, 28, OutputPane::Result, "alpha");
+
+    assert!(app.output_selection_rect(OutputPane::Result).is_some());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+    assert!(app.output_selection_rect(OutputPane::Result).is_none());
+}
+
+#[test]
+fn divider_and_scrollbar_drag_do_not_create_output_selection() {
+    let (_temp, mut app) = test_app();
+    let stdout = (0..80)
+        .map(|index| format!("line-{index:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.set_result_for_test(&stdout, "");
+    app.set_active_result_tab(ResultTab::Stdout);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 28), &app);
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            layout.divider.x,
+            layout.divider.y + 2,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            layout.body.x + 70,
+            layout.divider.y + 2,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            layout.body.x + 70,
+            layout.divider.y + 2,
+        ),
+        &layout,
+    );
+    assert!(app.output_selection_rect(OutputPane::Result).is_none());
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 28), &app);
+    let scrollbar = layout.result_scrollbar.expect("result scrollbar");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            scrollbar.x,
+            scrollbar.y + 1,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            scrollbar.x,
+            scrollbar.y + 4,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            scrollbar.x,
+            scrollbar.y + 4,
+        ),
+        &layout,
+    );
+    assert!(app.output_selection_rect(OutputPane::Result).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn fake_tablebrowser_session_drives_casars_navigation() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Overview,
+                "Fake overview",
+                vec!["Overview root".to_string(), "alpha".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells",
+                vec!["Cells".to_string(), "\"alpha\"".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Cells,
+                "Fake moved cells",
+                vec!["Cells".to_string(), "\"beta\"".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Subtables,
+                "Fake child table",
+                vec!["Subtables".to_string(), "child.tab".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Overview,
+                "Fake back",
+                vec!["Overview root".to_string(), "returned".to_string()],
+            ),
+        ],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    let overview = render_app(&app, 160, 28);
+    assert!(overview.contains("Overview root"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    let cells = render_app(&app, 160, 28);
+    assert!(cells.contains("\"alpha\""));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    let moved = render_app(&app, 160, 28);
+    assert!(moved.contains("\"beta\""));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let child = render_app(&app, 160, 28);
+    assert!(child.contains("child.tab"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    let back = render_app(&app, 160, 28);
+    assert!(back.contains("returned"));
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_session_reports_structured_open_errors() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let error_json = serde_json::to_string(&BrowserResponseEnvelope::error(
+        "open_root_failed",
+        "fake open failure",
+    ))
+    .expect("serialize error response");
+    let script = write_fake_tablebrowser_script(temp.path(), &[error_json], None);
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    assert!(
+        app.status_line_for_test()
+            .contains("Failed to open table browser")
+    );
+    assert!(
+        app.stderr_for_test()
+            .contains("open_root_failed: fake open failure")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_session_reports_malformed_backend_responses() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_tablebrowser_script(temp.path(), &[], Some("not-json".to_string()));
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    assert!(
+        app.status_line_for_test()
+            .contains("Failed to open table browser")
+    );
+    assert!(app.stderr_for_test().contains("invalid_response"));
 }
 
 #[test]
@@ -787,6 +1714,80 @@ fn render_app(app: &AppState, width: u16, height: u16) -> String {
     rendered
 }
 
+fn drag_select_visible_text(
+    app: &mut AppState,
+    width: u16,
+    height: u16,
+    target: OutputPane,
+    needle: &str,
+) {
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, width, height), app);
+    let buffer = app
+        .visible_text_buffer(target, &layout)
+        .expect("visible text buffer");
+    let (row, col) = buffer
+        .lines
+        .iter()
+        .enumerate()
+        .find_map(|(row, line)| {
+            line.text
+                .find(needle)
+                .map(|byte_index| (row, line.text[..byte_index].chars().count()))
+        })
+        .unwrap_or_else(|| panic!("visible text {needle:?} not found"));
+    let start_column = buffer.area.x + col as u16;
+    let end_column = start_column + needle.chars().count().saturating_sub(1) as u16;
+    let row = buffer.area.y + row as u16;
+
+    app.handle_mouse_event(
+        mouse(MouseEventKind::Down(MouseButton::Left), start_column, row),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(MouseEventKind::Drag(MouseButton::Left), end_column, row),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(MouseEventKind::Up(MouseButton::Left), end_column, row),
+        &layout,
+    );
+}
+
+fn create_fixture_table(root: &Path) -> PathBuf {
+    let parent_path = root.join("parent.tab");
+    let child_path = root.join("child.tab");
+
+    let child_schema =
+        TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let mut child = Table::with_schema(child_schema);
+    child
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(7)),
+        )]))
+        .unwrap();
+    child.save(TableOptions::new(&child_path)).unwrap();
+
+    let parent_schema = TableSchema::new(vec![
+        ColumnSchema::scalar("name", PrimitiveType::String),
+        ColumnSchema::scalar("value", PrimitiveType::Float64),
+    ])
+    .unwrap();
+    let mut parent = Table::with_schema(parent_schema);
+    parent
+        .add_row(RecordValue::new(vec![
+            RecordField::new("name", Value::Scalar(ScalarValue::String("alpha".into()))),
+            RecordField::new("value", Value::Scalar(ScalarValue::Float64(1.5))),
+        ]))
+        .unwrap();
+    parent
+        .keywords_mut()
+        .upsert("CHILD", Value::table_ref("child.tab"));
+    parent.save(TableOptions::new(&parent_path)).unwrap();
+
+    parent_path
+}
+
 fn test_app() -> (tempfile::TempDir, AppState) {
     let temp = tempdir().expect("tempdir");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
@@ -824,6 +1825,32 @@ fn set_launcher_bin(path: &Path) {
     }
 }
 
+fn clear_tablebrowser_launcher_bin() {
+    // Tests hold a process-global mutex before mutating the environment.
+    unsafe {
+        std::env::remove_var("CASARS_TABLEBROWSER_BIN");
+    }
+}
+
+fn clear_test_clipboard_file() {
+    unsafe {
+        std::env::remove_var("CASARS_TEST_CLIPBOARD_FILE");
+    }
+}
+
+fn set_test_clipboard_file(path: &Path) {
+    unsafe {
+        std::env::set_var("CASARS_TEST_CLIPBOARD_FILE", path);
+    }
+}
+
+fn set_tablebrowser_launcher_bin(path: &Path) {
+    // Tests hold a process-global mutex before mutating the environment.
+    unsafe {
+        std::env::set_var("CASARS_TABLEBROWSER_BIN", path);
+    }
+}
+
 #[cfg(unix)]
 fn write_fake_listobs_script(root: &Path, body: &str) -> PathBuf {
     use std::fs;
@@ -841,6 +1868,111 @@ fn write_fake_listobs_script(root: &Path, body: &str) -> PathBuf {
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("chmod script");
     path
+}
+
+#[cfg(unix)]
+fn write_fake_tablebrowser_script(
+    root: &Path,
+    responses: &[String],
+    raw_response: Option<String>,
+) -> PathBuf {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let schema_json = fake_tablebrowser_schema_json();
+    let mut session_body = String::new();
+    if let Some(raw_response) = raw_response {
+        session_body.push_str("IFS= read -r line || exit 0\n");
+        session_body.push_str(&format!("printf '%s\\n' '{}'\n", raw_response));
+    } else {
+        session_body.push_str("count=0\n");
+        session_body.push_str("while IFS= read -r line; do\n");
+        session_body.push_str("  count=$((count + 1))\n");
+        session_body.push_str("  case \"$count\" in\n");
+        for (index, response) in responses.iter().enumerate() {
+            let case_index = index + 1;
+            session_body.push_str(&format!(
+                "    {case_index}) printf '%s\\n' '{response}' ;;\n"
+            ));
+        }
+        session_body.push_str("    *) exit 0 ;;\n");
+        session_body.push_str("  esac\n");
+        session_body.push_str("done\n");
+    }
+
+    let path = root.join("fake-tablebrowser.sh");
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--ui-schema\" ]; then\ncat <<'EOF'\n{schema_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--session\" ]; then\n{session_body}exit 0\nfi\necho \"unexpected args: $@\" >&2\nexit 1\n"
+    );
+    fs::write(&path, script).expect("write fake tablebrowser script");
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("chmod script");
+    path
+}
+
+fn fake_tablebrowser_schema_json() -> String {
+    serde_json::json!({
+        "schema_version": 1,
+        "command_id": "tablebrowser",
+        "invocation_name": "tablebrowser",
+        "display_name": "Table Browser",
+        "category": "Tables",
+        "summary": "browse arbitrary casacore tables",
+        "usage": "tablebrowser <table-path>",
+        "arguments": [
+            {
+                "id": "table_path",
+                "label": "Table Path",
+                "order": 0,
+                "parser": {
+                    "kind": "positional",
+                    "metavar": "table-path"
+                },
+                "value_kind": "path",
+                "required": true,
+                "default": null,
+                "help": "Path to the casacore table root directory",
+                "group": "Input",
+                "advanced": false,
+                "hidden_in_tui": false
+            }
+        ],
+        "managed_output": null
+    })
+    .to_string()
+}
+
+fn fake_browser_snapshot_json(
+    view: ProtocolBrowserView,
+    status_line: &str,
+    content_lines: Vec<String>,
+) -> String {
+    fake_browser_snapshot_with_inspector_json(view, status_line, content_lines, None)
+}
+
+fn fake_browser_snapshot_with_inspector_json(
+    view: ProtocolBrowserView,
+    status_line: &str,
+    content_lines: Vec<String>,
+    inspector: Option<BrowserInspectorSnapshot>,
+) -> String {
+    serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+        capabilities: BrowserCapabilities { editable: false },
+        view,
+        focus: BrowserFocus::Main,
+        table_path: "/tmp/fake.ms".to_string(),
+        breadcrumb: vec![BrowserBreadcrumbEntry {
+            label: "fake.ms".to_string(),
+            path: "/tmp/fake.ms".to_string(),
+        }],
+        viewport: BrowserViewport::new(120, 24),
+        status_line: status_line.to_string(),
+        content_lines,
+        selected_address: None,
+        inspector,
+    }))
+    .expect("serialize fake snapshot")
 }
 
 fn create_fixture_ms(root: &Path) -> PathBuf {

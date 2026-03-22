@@ -1,0 +1,441 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrowserRequestEnvelope",
+  "description": "JSON Lines request envelope sent from `casars` to the browser backend.",
+  "type": "object",
+  "required": [
+    "command",
+    "version"
+  ],
+  "properties": {
+    "command": {
+      "description": "Requested command.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/BrowserCommand"
+        }
+      ]
+    },
+    "version": {
+      "description": "Protocol version expected by the client.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    }
+  },
+  "definitions": {
+    "BrowserCommand": {
+      "description": "Command sent to the browser backend.",
+      "oneOf": [
+        {
+          "description": "Open the root table for a new or existing session.",
+          "type": "object",
+          "required": [
+            "command",
+            "path",
+            "viewport"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "open_root"
+              ]
+            },
+            "path": {
+              "description": "Filesystem path to the root table.",
+              "type": "string"
+            },
+            "viewport": {
+              "description": "Current render viewport.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Update the render viewport without changing selection state.",
+          "type": "object",
+          "required": [
+            "command",
+            "viewport"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "resize"
+              ]
+            },
+            "viewport": {
+              "description": "Current render viewport.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Rotate between top-level browser views.",
+          "type": "object",
+          "required": [
+            "command",
+            "forward"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "cycle_view"
+              ]
+            },
+            "forward": {
+              "description": "`true` for next view, `false` for previous view.",
+              "type": "boolean"
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Move the active selection one or more steps upward.",
+          "type": "object",
+          "required": [
+            "command",
+            "steps"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "move_up"
+              ]
+            },
+            "steps": {
+              "description": "Number of steps to move.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Move the active selection one or more steps downward.",
+          "type": "object",
+          "required": [
+            "command",
+            "steps"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "move_down"
+              ]
+            },
+            "steps": {
+              "description": "Number of steps to move.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Move the active selection or page left.",
+          "type": "object",
+          "required": [
+            "command",
+            "steps"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "move_left"
+              ]
+            },
+            "steps": {
+              "description": "Number of steps to move.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Move the active selection or page right.",
+          "type": "object",
+          "required": [
+            "command",
+            "steps"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "move_right"
+              ]
+            },
+            "steps": {
+              "description": "Number of steps to move.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Move by one or more pages upward.",
+          "type": "object",
+          "required": [
+            "command",
+            "pages"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "page_up"
+              ]
+            },
+            "pages": {
+              "description": "Number of pages to move.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Move by one or more pages downward.",
+          "type": "object",
+          "required": [
+            "command",
+            "pages"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "page_down"
+              ]
+            },
+            "pages": {
+              "description": "Number of pages to move.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Activate the selected item or expand the selected inspector node.",
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "activate"
+              ]
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Pop back to the parent table, if any.",
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "back"
+              ]
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Collapse one inspector level or return focus to the main pane.",
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "escape"
+              ]
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Request the current snapshot without changing state.",
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "get_snapshot"
+              ]
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "BrowserViewport": {
+      "description": "Render viewport requested by the consumer.",
+      "type": "object",
+      "required": [
+        "height",
+        "width"
+      ],
+      "properties": {
+        "height": {
+          "description": "Available content height in terminal cells.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "width": {
+          "description": "Available content width in terminal cells.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      }
+    }
+  }
+}

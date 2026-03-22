@@ -25,6 +25,8 @@ impl ThemeMode {
 pub(crate) struct UiConfig {
     pub theme_mode: ThemeMode,
     pub pane_split_ratio: f32,
+    #[serde(default = "default_pane_restore_ratio")]
+    pub pane_restore_ratio: f32,
 }
 
 impl Default for UiConfig {
@@ -32,6 +34,7 @@ impl Default for UiConfig {
         Self {
             theme_mode: ThemeMode::DenseAnsi,
             pane_split_ratio: 0.42,
+            pane_restore_ratio: default_pane_restore_ratio(),
         }
     }
 }
@@ -69,13 +72,21 @@ impl ConfigStore {
         self.config.pane_split_ratio
     }
 
+    pub(crate) fn pane_restore_ratio(&self) -> f32 {
+        self.config.pane_restore_ratio
+    }
+
     pub(crate) fn set_theme_mode(&mut self, theme_mode: ThemeMode) {
         self.config.theme_mode = theme_mode;
         let _ = self.save();
     }
 
     pub(crate) fn set_pane_split_ratio(&mut self, pane_split_ratio: f32) {
-        self.config.pane_split_ratio = pane_split_ratio.clamp(0.25, 0.75);
+        let normalized = normalize_pane_split_ratio(pane_split_ratio);
+        self.config.pane_split_ratio = normalized;
+        if normalized > 0.0 {
+            self.config.pane_restore_ratio = normalized;
+        }
         let _ = self.save();
     }
 
@@ -106,6 +117,30 @@ fn read_config_file(path: &Path) -> Option<UiConfig> {
 }
 
 fn normalize_config(mut config: UiConfig) -> UiConfig {
-    config.pane_split_ratio = config.pane_split_ratio.clamp(0.25, 0.75);
+    config.pane_split_ratio = normalize_pane_split_ratio(config.pane_split_ratio);
+    config.pane_restore_ratio = normalize_restore_ratio(config.pane_restore_ratio);
+    if config.pane_split_ratio > 0.0 {
+        config.pane_restore_ratio = config.pane_split_ratio;
+    }
     config
+}
+
+fn normalize_pane_split_ratio(pane_split_ratio: f32) -> f32 {
+    if pane_split_ratio <= 0.0 {
+        0.0
+    } else {
+        pane_split_ratio.clamp(0.25, 0.75)
+    }
+}
+
+fn default_pane_restore_ratio() -> f32 {
+    0.42
+}
+
+fn normalize_restore_ratio(pane_restore_ratio: f32) -> f32 {
+    if pane_restore_ratio <= 0.0 {
+        default_pane_restore_ratio()
+    } else {
+        pane_restore_ratio.clamp(0.25, 0.75)
+    }
 }

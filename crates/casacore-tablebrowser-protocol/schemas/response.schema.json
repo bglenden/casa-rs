@@ -1,0 +1,1224 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrowserResponseEnvelope",
+  "description": "JSON Lines response envelope sent from the backend to `casars`.",
+  "type": "object",
+  "required": [
+    "response",
+    "version"
+  ],
+  "properties": {
+    "response": {
+      "description": "Response payload.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/BrowserResponse"
+        }
+      ]
+    },
+    "version": {
+      "description": "Protocol version returned by the backend.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    }
+  },
+  "definitions": {
+    "BrowserAddress": {
+      "description": "Stable address of the currently selected object.",
+      "oneOf": [
+        {
+          "description": "A selected column definition.",
+          "type": "object",
+          "required": [
+            "column",
+            "kind",
+            "table_path"
+          ],
+          "properties": {
+            "column": {
+              "description": "Column name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "column"
+              ]
+            },
+            "table_path": {
+              "description": "Filesystem path of the current table.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A selected cell or nested cell value.",
+          "type": "object",
+          "required": [
+            "column",
+            "kind",
+            "row",
+            "table_path",
+            "value_path"
+          ],
+          "properties": {
+            "column": {
+              "description": "Selected column name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "cell"
+              ]
+            },
+            "row": {
+              "description": "Selected row index.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "table_path": {
+              "description": "Filesystem path of the current table.",
+              "type": "string"
+            },
+            "value_path": {
+              "description": "Nested path within the cell value.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ValuePathSegment"
+              }
+            }
+          }
+        },
+        {
+          "description": "A selected table keyword or nested keyword value.",
+          "type": "object",
+          "required": [
+            "keyword_path",
+            "kind",
+            "table_path",
+            "value_path"
+          ],
+          "properties": {
+            "keyword_path": {
+              "description": "Keyword path from the table keyword root.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "table_keyword"
+              ]
+            },
+            "table_path": {
+              "description": "Filesystem path of the current table.",
+              "type": "string"
+            },
+            "value_path": {
+              "description": "Nested path within the keyword value.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ValuePathSegment"
+              }
+            }
+          }
+        },
+        {
+          "description": "A selected column keyword or nested column-keyword value.",
+          "type": "object",
+          "required": [
+            "column",
+            "keyword_path",
+            "kind",
+            "table_path",
+            "value_path"
+          ],
+          "properties": {
+            "column": {
+              "description": "Owning column name.",
+              "type": "string"
+            },
+            "keyword_path": {
+              "description": "Keyword path from the column keyword root.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "column_keyword"
+              ]
+            },
+            "table_path": {
+              "description": "Filesystem path of the current table.",
+              "type": "string"
+            },
+            "value_path": {
+              "description": "Nested path within the keyword value.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ValuePathSegment"
+              }
+            }
+          }
+        },
+        {
+          "description": "A selected linked subtable entry.",
+          "type": "object",
+          "required": [
+            "kind",
+            "source",
+            "table_path",
+            "target_path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "subtable"
+              ]
+            },
+            "source": {
+              "description": "Human-readable description of where the link was discovered.",
+              "type": "string"
+            },
+            "table_path": {
+              "description": "Filesystem path of the current table.",
+              "type": "string"
+            },
+            "target_path": {
+              "description": "Resolved target table path.",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "BrowserArrayElement": {
+      "description": "Array element exposed through the inspector.",
+      "type": "object",
+      "required": [
+        "flat_index",
+        "index",
+        "selected",
+        "value"
+      ],
+      "properties": {
+        "flat_index": {
+          "description": "Flat row-major element index.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "index": {
+          "description": "Multidimensional index corresponding to `flat_index`.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          }
+        },
+        "selected": {
+          "description": "Whether this element is currently selected in the inspector.",
+          "type": "boolean"
+        },
+        "value": {
+          "description": "Typed scalar element payload.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/BrowserScalarValue"
+            }
+          ]
+        }
+      }
+    },
+    "BrowserBreadcrumbEntry": {
+      "description": "Breadcrumb entry for the current table stack.",
+      "type": "object",
+      "required": [
+        "label",
+        "path"
+      ],
+      "properties": {
+        "label": {
+          "description": "Display label used in breadcrumbs.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Filesystem path for the table.",
+          "type": "string"
+        }
+      }
+    },
+    "BrowserCapabilities": {
+      "description": "Capabilities advertised by the backend.",
+      "type": "object",
+      "required": [
+        "editable"
+      ],
+      "properties": {
+        "editable": {
+          "description": "Whether edit operations are available for the current session.",
+          "type": "boolean"
+        }
+      }
+    },
+    "BrowserComplex32Value": {
+      "description": "Typed complex32 payload.",
+      "type": "object",
+      "required": [
+        "im",
+        "re"
+      ],
+      "properties": {
+        "im": {
+          "description": "Imaginary component.",
+          "type": "number",
+          "format": "float"
+        },
+        "re": {
+          "description": "Real component.",
+          "type": "number",
+          "format": "float"
+        }
+      }
+    },
+    "BrowserComplex64Value": {
+      "description": "Typed complex64 payload.",
+      "type": "object",
+      "required": [
+        "im",
+        "re"
+      ],
+      "properties": {
+        "im": {
+          "description": "Imaginary component.",
+          "type": "number",
+          "format": "double"
+        },
+        "re": {
+          "description": "Real component.",
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "BrowserFocus": {
+      "description": "Active focus target inside the browser.",
+      "oneOf": [
+        {
+          "description": "Navigation is acting on the main view selection.",
+          "type": "string",
+          "enum": [
+            "main"
+          ]
+        },
+        {
+          "description": "Navigation is acting on the inspector selection.",
+          "type": "string",
+          "enum": [
+            "inspector"
+          ]
+        }
+      ]
+    },
+    "BrowserInspectorSnapshot": {
+      "description": "Typed inspector payload for the selected value.",
+      "type": "object",
+      "required": [
+        "node",
+        "rendered_lines",
+        "title",
+        "trail"
+      ],
+      "properties": {
+        "node": {
+          "description": "Current typed node.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/BrowserValueNode"
+            }
+          ]
+        },
+        "rendered_lines": {
+          "description": "Render-ready inspector lines for the current viewport.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "description": "Inspector title shown in the UI.",
+          "type": "string"
+        },
+        "trail": {
+          "description": "Trail from the base selection to the current node.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BrowserInspectorTrailEntry"
+          }
+        }
+      }
+    },
+    "BrowserInspectorTrailEntry": {
+      "description": "Current trail from the base selected value to the inspector node.",
+      "type": "object",
+      "required": [
+        "label",
+        "summary"
+      ],
+      "properties": {
+        "label": {
+          "description": "Path label for this trail segment.",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Compact value summary for this segment.",
+          "type": "string"
+        }
+      }
+    },
+    "BrowserPrimitiveType": {
+      "description": "Primitive element type carried by scalar and array values.",
+      "oneOf": [
+        {
+          "description": "Boolean scalar or array element.",
+          "type": "string",
+          "enum": [
+            "bool"
+          ]
+        },
+        {
+          "description": "Unsigned 8-bit integer.",
+          "type": "string",
+          "enum": [
+            "u_int8"
+          ]
+        },
+        {
+          "description": "Unsigned 16-bit integer.",
+          "type": "string",
+          "enum": [
+            "u_int16"
+          ]
+        },
+        {
+          "description": "Unsigned 32-bit integer.",
+          "type": "string",
+          "enum": [
+            "u_int32"
+          ]
+        },
+        {
+          "description": "Signed 16-bit integer.",
+          "type": "string",
+          "enum": [
+            "int16"
+          ]
+        },
+        {
+          "description": "Signed 32-bit integer.",
+          "type": "string",
+          "enum": [
+            "int32"
+          ]
+        },
+        {
+          "description": "Signed 64-bit integer.",
+          "type": "string",
+          "enum": [
+            "int64"
+          ]
+        },
+        {
+          "description": "32-bit floating-point value.",
+          "type": "string",
+          "enum": [
+            "float32"
+          ]
+        },
+        {
+          "description": "64-bit floating-point value.",
+          "type": "string",
+          "enum": [
+            "float64"
+          ]
+        },
+        {
+          "description": "32-bit complex value.",
+          "type": "string",
+          "enum": [
+            "complex32"
+          ]
+        },
+        {
+          "description": "64-bit complex value.",
+          "type": "string",
+          "enum": [
+            "complex64"
+          ]
+        },
+        {
+          "description": "UTF-8 string value.",
+          "type": "string",
+          "enum": [
+            "string"
+          ]
+        }
+      ]
+    },
+    "BrowserRecordFieldSummary": {
+      "description": "Record-field summary exposed through the inspector.",
+      "type": "object",
+      "required": [
+        "expandable",
+        "kind",
+        "name",
+        "openable",
+        "selected",
+        "summary"
+      ],
+      "properties": {
+        "expandable": {
+          "description": "Whether `Activate` can drill into this field.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "Broad value kind.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/BrowserValueKind"
+            }
+          ]
+        },
+        "name": {
+          "description": "Field name.",
+          "type": "string"
+        },
+        "openable": {
+          "description": "Whether `Activate` can open this field as a linked table.",
+          "type": "boolean"
+        },
+        "selected": {
+          "description": "Whether this field is currently selected in the inspector.",
+          "type": "boolean"
+        },
+        "summary": {
+          "description": "Compact summary shown in the inspector.",
+          "type": "string"
+        }
+      }
+    },
+    "BrowserResponse": {
+      "description": "Backend response payload.",
+      "oneOf": [
+        {
+          "description": "A full render snapshot after applying the requested command.",
+          "type": "object",
+          "required": [
+            "breadcrumb",
+            "capabilities",
+            "content_lines",
+            "focus",
+            "response",
+            "status_line",
+            "table_path",
+            "view",
+            "viewport"
+          ],
+          "properties": {
+            "breadcrumb": {
+              "description": "Current breadcrumb stack.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/BrowserBreadcrumbEntry"
+              }
+            },
+            "capabilities": {
+              "description": "Backend capabilities for the current session.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserCapabilities"
+                }
+              ]
+            },
+            "content_lines": {
+              "description": "Render-ready content lines for the viewport.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "focus": {
+              "description": "Active focus target.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserFocus"
+                }
+              ]
+            },
+            "inspector": {
+              "description": "Typed inspector payload for the current selection.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserInspectorSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "snapshot"
+              ]
+            },
+            "selected_address": {
+              "description": "Stable address of the current selection.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserAddress"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status_line": {
+              "description": "User-facing status line.",
+              "type": "string"
+            },
+            "table_path": {
+              "description": "Currently opened table path.",
+              "type": "string"
+            },
+            "view": {
+              "description": "Active top-level view.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserView"
+                }
+              ]
+            },
+            "viewport": {
+              "description": "Current viewport applied by the backend.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "A structured protocol or backend error.",
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "response"
+          ],
+          "properties": {
+            "code": {
+              "description": "Stable machine-readable error code.",
+              "type": "string"
+            },
+            "message": {
+              "description": "Human-readable explanation.",
+              "type": "string"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "error"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "BrowserScalarValue": {
+      "description": "Typed scalar payload.",
+      "oneOf": [
+        {
+          "description": "Boolean scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "bool"
+              ]
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "description": "Unsigned 8-bit integer scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "u_int8"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "Unsigned 16-bit integer scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "u_int16"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "Unsigned 32-bit integer scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "u_int32"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "Signed 16-bit integer scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "int16"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "int16"
+            }
+          }
+        },
+        {
+          "description": "Signed 32-bit integer scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "int32"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        },
+        {
+          "description": "Signed 64-bit integer scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "int64"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        },
+        {
+          "description": "32-bit floating-point scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "float32"
+              ]
+            },
+            "value": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        },
+        {
+          "description": "64-bit floating-point scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "float64"
+              ]
+            },
+            "value": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        {
+          "description": "32-bit complex scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "complex32"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/BrowserComplex32Value"
+            }
+          }
+        },
+        {
+          "description": "64-bit complex scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "complex64"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/BrowserComplex64Value"
+            }
+          }
+        },
+        {
+          "description": "UTF-8 string scalar.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "BrowserValueKind": {
+      "description": "Broad kind of a browser value.",
+      "oneOf": [
+        {
+          "description": "Missing / undefined value.",
+          "type": "string",
+          "enum": [
+            "undefined"
+          ]
+        },
+        {
+          "description": "Scalar value.",
+          "type": "string",
+          "enum": [
+            "scalar"
+          ]
+        },
+        {
+          "description": "Array value.",
+          "type": "string",
+          "enum": [
+            "array"
+          ]
+        },
+        {
+          "description": "Record value.",
+          "type": "string",
+          "enum": [
+            "record"
+          ]
+        },
+        {
+          "description": "Linked-table reference.",
+          "type": "string",
+          "enum": [
+            "table_ref"
+          ]
+        }
+      ]
+    },
+    "BrowserValueNode": {
+      "description": "Typed inspector node for the selected value.",
+      "oneOf": [
+        {
+          "description": "Undefined / absent cell or keyword.",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "undefined"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Scalar leaf value.",
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "scalar"
+              ]
+            },
+            "value": {
+              "description": "Typed scalar payload.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserScalarValue"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Array value, returned as a paged scalar-element view.",
+          "type": "object",
+          "required": [
+            "elements",
+            "kind",
+            "page_size",
+            "page_start",
+            "primitive",
+            "shape",
+            "total_elements"
+          ],
+          "properties": {
+            "elements": {
+              "description": "Page payload.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/BrowserArrayElement"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "array"
+              ]
+            },
+            "page_size": {
+              "description": "Maximum elements requested for this page.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "page_start": {
+              "description": "First flat element index in this page.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "primitive": {
+              "description": "Primitive element type.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserPrimitiveType"
+                }
+              ]
+            },
+            "shape": {
+              "description": "Full array shape.",
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0.0
+              }
+            },
+            "total_elements": {
+              "description": "Total element count.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "Record value, returned as a paged field summary view.",
+          "type": "object",
+          "required": [
+            "fields",
+            "kind",
+            "page_size",
+            "page_start",
+            "total_fields"
+          ],
+          "properties": {
+            "fields": {
+              "description": "Page payload.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/BrowserRecordFieldSummary"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "record"
+              ]
+            },
+            "page_size": {
+              "description": "Maximum fields requested for this page.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "page_start": {
+              "description": "First field index in this page.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "total_fields": {
+              "description": "Total field count.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "Linked table reference.",
+          "type": "object",
+          "required": [
+            "kind",
+            "openable",
+            "path",
+            "resolved_path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "table_ref"
+              ]
+            },
+            "openable": {
+              "description": "Whether the current backend can open this reference.",
+              "type": "boolean"
+            },
+            "path": {
+              "description": "Original relative or absolute stored path.",
+              "type": "string"
+            },
+            "resolved_path": {
+              "description": "Resolved filesystem path.",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "BrowserView": {
+      "description": "Top-level browser view.",
+      "oneOf": [
+        {
+          "description": "Table summary and storage metadata.",
+          "type": "string",
+          "enum": [
+            "overview"
+          ]
+        },
+        {
+          "description": "Column inventory and per-column metadata.",
+          "type": "string",
+          "enum": [
+            "columns"
+          ]
+        },
+        {
+          "description": "Table and column keyword tree.",
+          "type": "string",
+          "enum": [
+            "keywords"
+          ]
+        },
+        {
+          "description": "Row/column cell grid.",
+          "type": "string",
+          "enum": [
+            "cells"
+          ]
+        },
+        {
+          "description": "Linked persistent subtables.",
+          "type": "string",
+          "enum": [
+            "subtables"
+          ]
+        }
+      ]
+    },
+    "BrowserViewport": {
+      "description": "Render viewport requested by the consumer.",
+      "type": "object",
+      "required": [
+        "height",
+        "width"
+      ],
+      "properties": {
+        "height": {
+          "description": "Available content height in terminal cells.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "width": {
+          "description": "Available content width in terminal cells.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ValuePathSegment": {
+      "description": "Nested path segment inside a selected value.",
+      "oneOf": [
+        {
+          "description": "Drill into a record field.",
+          "type": "object",
+          "required": [
+            "name",
+            "segment"
+          ],
+          "properties": {
+            "name": {
+              "description": "Record field name.",
+              "type": "string"
+            },
+            "segment": {
+              "type": "string",
+              "enum": [
+                "record_field"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Drill into a flattened array element.",
+          "type": "object",
+          "required": [
+            "flat_index",
+            "segment"
+          ],
+          "properties": {
+            "flat_index": {
+              "description": "Zero-based flat element index in row-major order.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "segment": {
+              "type": "string",
+              "enum": [
+                "array_index"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}
