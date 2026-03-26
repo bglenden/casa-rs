@@ -17,9 +17,9 @@ pub use casacore_tablebrowser_protocol::BrowserView as TableBrowserView;
 use casacore_tablebrowser_protocol::{
     BrowserAddress, BrowserArrayElement, BrowserBreadcrumbEntry, BrowserCapabilities,
     BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
-    BrowserInspectorSnapshot, BrowserInspectorTrailEntry, BrowserPrimitiveType,
-    BrowserRecordFieldSummary, BrowserResponseEnvelope, BrowserScalarValue, BrowserSnapshot,
-    BrowserValueKind, BrowserValueNode, BrowserViewport, ValuePathSegment,
+    BrowserInspectorSnapshot, BrowserInspectorTrailEntry, BrowserNavigationMetrics,
+    BrowserPrimitiveType, BrowserRecordFieldSummary, BrowserResponseEnvelope, BrowserScalarValue,
+    BrowserSnapshot, BrowserValueKind, BrowserValueNode, BrowserViewport, ValuePathSegment,
 };
 use casacore_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use thiserror::Error;
@@ -460,6 +460,8 @@ impl TableBrowser {
             viewport: self.viewport,
             status_line: self.status_line.clone(),
             content_lines,
+            vertical_metrics: self.vertical_navigation_metrics(),
+            horizontal_metrics: self.horizontal_navigation_metrics(),
             selected_address: self
                 .current_selection_context()
                 .map(|context| context.address),
@@ -530,6 +532,9 @@ impl TableBrowser {
     }
 
     fn inspector_height(&self) -> usize {
+        if self.viewport.inspector_height > 0 {
+            return self.viewport.inspector_height as usize;
+        }
         if !matches!(
             self.view,
             TableBrowserView::Cells
@@ -545,6 +550,49 @@ impl TableBrowser {
         }
         let inspector = max(4, height / 3);
         inspector.min(height.saturating_sub(3))
+    }
+
+    fn vertical_navigation_metrics(&self) -> Option<BrowserNavigationMetrics> {
+        match self.view {
+            TableBrowserView::Overview => None,
+            TableBrowserView::Columns => Some(BrowserNavigationMetrics {
+                selected_index: self.columns_selected,
+                total_items: self.current().columns.len(),
+                viewport_items: self.main_height().saturating_sub(2).max(1),
+            }),
+            TableBrowserView::Keywords => Some(BrowserNavigationMetrics {
+                selected_index: self.keywords_selected,
+                total_items: self.current().keyword_entries.len(),
+                viewport_items: self.main_height().saturating_sub(1).max(1),
+            }),
+            TableBrowserView::Cells => Some(BrowserNavigationMetrics {
+                selected_index: self.cells_row_selected,
+                total_items: self.current().table.row_count(),
+                viewport_items: self.main_height().saturating_sub(2).max(1),
+            }),
+            TableBrowserView::Subtables => Some(BrowserNavigationMetrics {
+                selected_index: self.subtables_selected,
+                total_items: self.current().linked_tables.len(),
+                viewport_items: self.main_height().saturating_sub(1).max(1),
+            }),
+        }
+    }
+
+    fn horizontal_navigation_metrics(&self) -> Option<BrowserNavigationMetrics> {
+        match self.view {
+            TableBrowserView::Cells => Some(BrowserNavigationMetrics {
+                selected_index: self.cells_column_selected,
+                total_items: self.current().columns.len(),
+                viewport_items: visible_cell_columns(
+                    &self.current().columns,
+                    self.cells_column_offset,
+                    self.viewport.width as usize,
+                )
+                .len()
+                .max(1),
+            }),
+            _ => None,
+        }
     }
 
     fn clamp_all(&mut self) {

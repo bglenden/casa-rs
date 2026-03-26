@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
+use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use casacore_ms::ListObsSummary;
 use casacore_ms::listobs::cli::{
-    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema,
+    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
 };
+use casacore_ms::{ListObsSummary, ListObsUvCoverage};
 use casacore_tablebrowser_protocol::{
     BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserInspectorSnapshot,
     BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as TableBrowserView,
@@ -16,11 +18,18 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use ratatui_explorer::{FileExplorer, FileExplorerBuilder, Input as ExplorerInput};
+use ratatui_graphics::{
+    PanelProtocol, PanelRenderer, Picker, Resize, fit_pixels_preserving_aspect,
+};
 
 use crate::browser_client::BrowserClient;
 use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
+use crate::graphics::{
+    UV_PLOT_ASPECT_HEIGHT, UV_PLOT_ASPECT_WIDTH, UvPlotRenderInput, render_uv_plot, uv_plot_summary,
+};
 use crate::registry::RegistryApp;
 use crate::ui::UiLayout;
 
@@ -28,6 +37,8 @@ const DENSE_SPINNER_FRAMES: &[&str] = &["|", "/", "-", "\\"];
 const RICH_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠴", "⠦"];
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(450);
 const HORIZONTAL_SCROLL_STEP: i16 = 8;
+const RESULT_TAB_COUNT: usize = 10;
+const BROWSE_SUFFIX: &str = " [browse]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PaneFocus {
@@ -50,12 +61,13 @@ pub(crate) enum ResultTab {
     Spws,
     Sources,
     Antennas,
+    Uv,
     Stdout,
     Stderr,
 }
 
 impl ResultTab {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; RESULT_TAB_COUNT] = [
         Self::Overview,
         Self::Observations,
         Self::Scans,
@@ -63,6 +75,7 @@ impl ResultTab {
         Self::Spws,
         Self::Sources,
         Self::Antennas,
+        Self::Uv,
         Self::Stdout,
         Self::Stderr,
     ];
@@ -76,6 +89,7 @@ impl ResultTab {
             Self::Spws => "SPWs",
             Self::Sources => "Sources",
             Self::Antennas => "Antennas",
+            Self::Uv => "UV",
             Self::Stdout => "Stdout",
             Self::Stderr => "Stderr",
         }
@@ -90,8 +104,9 @@ impl ResultTab {
             Self::Spws => 4,
             Self::Sources => 5,
             Self::Antennas => 6,
-            Self::Stdout => 7,
-            Self::Stderr => 8,
+            Self::Uv => 7,
+            Self::Stdout => 8,
+            Self::Stderr => 9,
         }
     }
 }
@@ -129,6 +144,7 @@ impl TableView {
 pub(crate) enum ResultContent {
     Lines(Vec<String>),
     Table(TableView),
+    Graphic(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -166,6 +182,16 @@ impl BrowserTab {
             TableBrowserView::Keywords => Self::Keywords,
             TableBrowserView::Cells => Self::Cells,
             TableBrowserView::Subtables => Self::Subtables,
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Overview => 0,
+            Self::Columns => 1,
+            Self::Keywords => 2,
+            Self::Cells => 3,
+            Self::Subtables => 4,
         }
     }
 }
@@ -230,9 +256,14 @@ pub(crate) struct AppState {
     edit_state: Option<EditState>,
     result: ResultState,
     active_result_tab: ResultTab,
-    result_scrolls: [u16; 9],
-    result_hscrolls: [u16; 9],
+    result_scrolls: [u16; RESULT_TAB_COUNT],
+    result_hscrolls: [u16; RESULT_TAB_COUNT],
     running: Option<RunningState>,
+    uv_loading: Option<UvCoverageLoadState>,
+    uv_coverage: Option<ListObsUvCoverage>,
+    uv_coverage_error: Option<String>,
+    uv_plot_panel: Option<UvPlotPanelState>,
+    path_chooser: Option<PathChooserState>,
     browser_session: Option<BrowserSession>,
     spinner_frame: usize,
     dragging_divider: bool,
@@ -256,10 +287,51 @@ struct RunningState {
 }
 
 #[derive(Debug)]
+struct UvCoverageLoadState {
+    process: RunningProcess,
+    stdout: String,
+    stderr: String,
+    cancel_requested: bool,
+}
+
+#[derive(Debug)]
 struct BrowserSession {
     client: BrowserClient,
     snapshot: BrowserSnapshot,
     viewport: BrowserViewport,
+}
+
+struct UvPlotPanelState {
+    renderer: PanelRenderer<UvPlotRenderInput, String>,
+    request_key: Option<UvPlotRequestKey>,
+    last_error: Option<String>,
+    image_size: Option<(u32, u32)>,
+}
+
+#[derive(Debug)]
+struct PathChooserState {
+    field_index: usize,
+    explorer: FileExplorer,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UvPlotRequestKey {
+    area: Rect,
+    theme_mode: ThemeMode,
+    sample_count: usize,
+    track_count: usize,
+    max_abs_uv_bits: u64,
+}
+
+impl fmt::Debug for UvPlotPanelState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UvPlotPanelState")
+            .field("request_key", &self.request_key)
+            .field("last_error", &self.last_error)
+            .field("image_size", &self.image_size)
+            .finish()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -319,6 +391,8 @@ enum ClickTarget {
     Section(usize),
     Field(usize),
     Tab(ResultTab),
+    BrowserTab(BrowserTab),
+    PathChooserEntry(usize),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -363,9 +437,14 @@ impl AppState {
                 ..ResultState::default()
             },
             active_result_tab: ResultTab::Overview,
-            result_scrolls: [0; 9],
-            result_hscrolls: [0; 9],
+            result_scrolls: [0; RESULT_TAB_COUNT],
+            result_hscrolls: [0; RESULT_TAB_COUNT],
             running: None,
+            uv_loading: None,
+            uv_coverage: None,
+            uv_coverage_error: None,
+            uv_plot_panel: None,
+            path_chooser: None,
             browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
@@ -409,9 +488,14 @@ impl AppState {
                 ..ResultState::default()
             },
             active_result_tab: ResultTab::Stderr,
-            result_scrolls: [0; 9],
-            result_hscrolls: [0; 9],
+            result_scrolls: [0; RESULT_TAB_COUNT],
+            result_hscrolls: [0; RESULT_TAB_COUNT],
             running: None,
+            uv_loading: None,
+            uv_coverage: None,
+            uv_coverage_error: None,
+            uv_plot_panel: None,
+            path_chooser: None,
             browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
@@ -443,12 +527,170 @@ impl AppState {
         self.browser_session.as_ref()
     }
 
+    pub(crate) fn path_chooser_active(&self) -> bool {
+        self.path_chooser.is_some()
+    }
+
+    pub(crate) fn path_chooser_title(&self) -> Option<String> {
+        let chooser = self.path_chooser.as_ref()?;
+        let field = self.fields.get(chooser.field_index)?;
+        Some(format!("Browse {}", field.schema.label))
+    }
+
+    pub(crate) fn path_chooser_cwd(&self) -> Option<String> {
+        self.path_chooser
+            .as_ref()
+            .map(|chooser| chooser.explorer.cwd().display().to_string())
+    }
+
+    pub(crate) fn path_chooser_error(&self) -> Option<&str> {
+        self.path_chooser
+            .as_ref()
+            .and_then(|chooser| chooser.last_error.as_deref())
+    }
+
+    pub(crate) fn path_chooser_entries(&self) -> Option<Vec<(String, bool)>> {
+        let chooser = self.path_chooser.as_ref()?;
+        let selected = chooser.explorer.selected_idx();
+        Some(
+            chooser
+                .explorer
+                .files()
+                .iter()
+                .enumerate()
+                .map(|(index, file)| {
+                    let icon = if file.is_dir { "▸" } else { " " };
+                    (format!("{icon} {}", file.name), index == selected)
+                })
+                .collect(),
+        )
+    }
+
+    fn selected_path_field_index(&self) -> Option<usize> {
+        let FormSelection::Field(field_index) = self.selected_form else {
+            return None;
+        };
+        self.fields
+            .get(field_index)
+            .filter(|field| field.is_path())
+            .map(|_| field_index)
+    }
+
+    fn path_field_browse_hit(&self, field_index: usize, column: u16, layout: &UiLayout) -> bool {
+        let Some(field) = self.fields.get(field_index) else {
+            return false;
+        };
+        if !field.is_path() {
+            return false;
+        }
+        let Some(row) = layout
+            .form_rows
+            .iter()
+            .find(|row| row.target == FormSelection::Field(field_index))
+        else {
+            return false;
+        };
+        let text = field.render_line(self.edit_state.as_ref(), field_index);
+        let browse_len = BROWSE_SUFFIX.chars().count() as u16;
+        let text_end = row
+            .rect
+            .x
+            .saturating_add(text.chars().count().min(row.rect.width as usize) as u16);
+        let browse_start = text_end.saturating_sub(browse_len);
+        column >= browse_start && column < text_end
+    }
+
+    fn open_path_chooser_for_selected_field(&mut self) {
+        let Some(field_index) = self.selected_path_field_index() else {
+            return;
+        };
+        self.open_path_chooser(field_index);
+    }
+
+    fn open_path_chooser(&mut self, field_index: usize) {
+        let Some(field) = self.fields.get(field_index) else {
+            return;
+        };
+        let start = chooser_start_path(field.text_value().as_deref());
+        let builder = if start.is_dir() {
+            FileExplorerBuilder::default().working_dir(start)
+        } else {
+            FileExplorerBuilder::default().working_file(start)
+        };
+        match builder.show_hidden(false).build() {
+            Ok(explorer) => {
+                self.path_chooser = Some(PathChooserState {
+                    field_index,
+                    explorer,
+                    last_error: None,
+                });
+            }
+            Err(error) => {
+                self.result.status_line = "Failed to open path chooser.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr.push_str(&format!("{error}\n"));
+            }
+        }
+    }
+
+    fn close_path_chooser(&mut self) {
+        self.path_chooser = None;
+    }
+
+    fn confirm_path_chooser(&mut self) {
+        let Some((field_index, selected_path, is_dir)) =
+            self.path_chooser.as_ref().map(|chooser| {
+                (
+                    chooser.field_index,
+                    chooser.explorer.current().path.clone(),
+                    chooser.explorer.current().is_dir,
+                )
+            })
+        else {
+            return;
+        };
+        if is_dir {
+            self.apply_path_chooser_input(ExplorerInput::Right);
+            return;
+        }
+        let value = absolute_display_path(&selected_path);
+        if let Some(field) = self.fields.get_mut(field_index) {
+            field.set_text(value.clone());
+            self.clear_cached_uv_coverage();
+        }
+        self.close_path_chooser();
+        self.result.status_line = format!("Selected path: {value}");
+        self.result.status_kind = StatusKind::Ok;
+    }
+
+    fn cancel_path_chooser(&mut self) {
+        self.close_path_chooser();
+        self.result.status_line = "Path chooser canceled.".to_string();
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn apply_path_chooser_input(&mut self, input: ExplorerInput) {
+        let Some(chooser) = self.path_chooser.as_mut() else {
+            return;
+        };
+        chooser.last_error = None;
+        if let Err(error) = chooser.explorer.handle(input) {
+            chooser.last_error = Some(error.to_string());
+        }
+    }
+
     pub(crate) fn on_tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % spinner_frames(self.theme_mode()).len();
+        self.pump_uv_plot_panel();
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
         if key_event.kind != KeyEventKind::Press {
+            return;
+        }
+
+        if self.path_chooser.is_some() {
+            self.handle_path_chooser_key(key_event);
             return;
         }
 
@@ -507,6 +749,14 @@ impl AppState {
                 self.cancel_current();
                 return;
             }
+            KeyCode::Char('o')
+                if key_event.modifiers == KeyModifiers::CONTROL
+                    && self.edit_state.is_none()
+                    && !self.has_active_session() =>
+            {
+                self.open_path_chooser_for_selected_field();
+                return;
+            }
             _ => {}
         }
 
@@ -555,6 +805,10 @@ impl AppState {
 
     pub(crate) fn handle_mouse_event(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
         self.cache_output_layout(layout);
+        if self.path_chooser.is_some() {
+            self.handle_path_chooser_mouse(mouse_event, layout);
+            return;
+        }
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.handle_left_mouse_down(mouse_event, layout)
@@ -585,7 +839,7 @@ impl AppState {
         loop {
             let event = match self.running.as_ref() {
                 Some(running) => running.process.try_recv(),
-                None => return,
+                None => break,
             };
             match event {
                 Ok(ExecutionEvent::Stdout(chunk)) => self.result.stdout.push_str(&chunk),
@@ -604,6 +858,7 @@ impl AppState {
                 }
             }
         }
+        self.drain_uv_loading_events();
     }
 
     pub(crate) fn app_category(&self) -> &str {
@@ -618,7 +873,7 @@ impl AppState {
         if self.edit_state.is_some() {
             "Tab pane  Enter save  Esc cancel  Bksp delete  p pane  t theme  q quit"
         } else if self.browser_session.is_some() {
-            "Tab view  Arrows  PgUp/PgDn  Enter  y copy  Esc clear  Bksp up  p pane  b apps  x close  t theme  q quit"
+            "Tab view  Arrows  PgUp/PgDn  Enter  y copy  Esc back/clear  Bksp parent table  p pane  b apps  x close  t theme  q quit"
         } else if self.running.is_some() {
             "Tab pane  h/l tabs  j/k scroll  [/] hscr  y copy  p pane  b apps  x cancel  t theme  q quit"
         } else {
@@ -824,26 +1079,10 @@ impl AppState {
         _viewport_height: u16,
     ) -> Option<(usize, usize)> {
         let session = self.browser_session()?;
-        let lines = self.browser_main_content_lines()?;
-        match session.snapshot.view {
-            TableBrowserView::Overview => None,
-            TableBrowserView::Columns => {
-                let (_, total) = browser_fraction(&lines, "selected=")?;
-                Some((total, browser_columns_viewport(&lines).max(1)))
-            }
-            TableBrowserView::Keywords => {
-                let (_, total) = browser_fraction(&lines, "selected=")?;
-                Some((total, lines.len().saturating_sub(1).max(1)))
-            }
-            TableBrowserView::Cells => {
-                let (_, total) = browser_fraction(&lines, "row=")?;
-                Some((total, lines.len().saturating_sub(2).max(1)))
-            }
-            TableBrowserView::Subtables => {
-                let (_, total) = browser_fraction(&lines, "selected=")?;
-                Some((total, lines.len().saturating_sub(1).max(1)))
-            }
-        }
+        session
+            .snapshot
+            .vertical_metrics
+            .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1)))
     }
 
     pub(crate) fn active_browser_hscroll_metrics(
@@ -851,14 +1090,10 @@ impl AppState {
         _viewport_width: u16,
     ) -> Option<(usize, usize)> {
         let session = self.browser_session()?;
-        let lines = self.browser_main_content_lines()?;
-        match session.snapshot.view {
-            TableBrowserView::Cells => {
-                let (_, total) = browser_fraction(&lines, "col=")?;
-                Some((total, browser_visible_cell_columns(&lines).max(1)))
-            }
-            _ => None,
-        }
+        session
+            .snapshot
+            .horizontal_metrics
+            .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1)))
     }
 
     pub(crate) fn browser_inspector_lines(&self) -> Option<Vec<String>> {
@@ -893,7 +1128,7 @@ impl AppState {
         Some(browser_main_content_lines(&session.snapshot))
     }
 
-    pub(crate) fn sync_browser_viewport(&mut self, width: u16, height: u16) {
+    pub(crate) fn sync_browser_viewport(&mut self, width: u16, height: u16, inspector_height: u16) {
         let Some(current_viewport) = self
             .browser_session
             .as_ref()
@@ -901,7 +1136,7 @@ impl AppState {
         else {
             return;
         };
-        let viewport = BrowserViewport::new(width, height);
+        let viewport = BrowserViewport::with_inspector_height(width, height, inspector_height);
         if viewport == current_viewport {
             return;
         }
@@ -972,6 +1207,7 @@ impl AppState {
                 Some(summary) => ResultContent::Lines(build_compact_antenna_lines(summary)),
                 None => ResultContent::Lines(vec!["No antenna table available yet.".to_string()]),
             },
+            ResultTab::Uv => ResultContent::Graphic(self.uv_tab_summary()),
             ResultTab::Stdout => ResultContent::Lines(raw_lines("stdout", &self.result.stdout)),
             ResultTab::Stderr => ResultContent::Lines(raw_lines("stderr", &self.result.stderr)),
         }
@@ -999,7 +1235,11 @@ impl AppState {
             .iter_mut()
             .find(|field| field.schema.id == id)
             .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
-        field.apply_text_value(value)
+        let result = field.apply_text_value(value);
+        if result.is_ok() {
+            self.clear_cached_uv_coverage();
+        }
+        result
     }
 
     pub(crate) fn apply_startup_toggle_value(
@@ -1012,7 +1252,11 @@ impl AppState {
             .iter_mut()
             .find(|field| field.schema.id == id)
             .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
-        field.apply_toggle_value(value)
+        let result = field.apply_toggle_value(value);
+        if result.is_ok() {
+            self.clear_cached_uv_coverage();
+        }
+        result
     }
 
     pub(crate) fn start_run_on_launch(&mut self) {
@@ -1021,8 +1265,15 @@ impl AppState {
 
     #[cfg(test)]
     pub(crate) fn set_active_result_tab(&mut self, tab: ResultTab) {
+        self.activate_result_tab(tab);
+    }
+
+    fn activate_result_tab(&mut self, tab: ResultTab) {
         self.clear_output_selection();
         self.active_result_tab = tab;
+        if self.active_result_tab == ResultTab::Uv {
+            self.ensure_uv_coverage_started();
+        }
     }
 
     #[cfg(test)]
@@ -1036,6 +1287,19 @@ impl AppState {
         self.result.stderr = stderr.to_string();
         self.result.status_line = "Test result".to_string();
         self.result.status_kind = StatusKind::Info;
+    }
+
+    fn uv_tab_summary(&self) -> String {
+        if let Some(coverage) = self.uv_coverage.as_ref() {
+            return uv_plot_summary(coverage);
+        }
+        if self.uv_loading.is_some() {
+            return "Loading UV coverage...".to_string();
+        }
+        if let Some(error) = self.uv_coverage_error.as_ref() {
+            return format!("UV coverage unavailable. {error}");
+        }
+        "Open the UV tab to load wavelength-space UV coverage.".to_string()
     }
 
     #[cfg(test)]
@@ -1057,6 +1321,17 @@ impl AppState {
         }
         self.drain_execution_events();
         self.running.is_none()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_all_idle_for_test(&mut self, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while (self.running.is_some() || self.uv_loading.is_some()) && start.elapsed() < timeout {
+            self.drain_execution_events();
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        self.drain_execution_events();
+        self.running.is_none() && self.uv_loading.is_none()
     }
 
     #[cfg(test)]
@@ -1082,6 +1357,11 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn structured_for_test(&self) -> Option<&ListObsSummary> {
         self.result.structured.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn uv_coverage_for_test(&self) -> Option<&ListObsUvCoverage> {
+        self.uv_coverage.as_ref()
     }
 
     #[cfg(test)]
@@ -1123,6 +1403,21 @@ impl AppState {
             .into_iter()
             .find(|row| row.selected)
             .map(|row| row.text)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn field_text_for_test(&self, id: &str) -> Option<String> {
+        self.fields
+            .iter()
+            .find(|field| field.schema.id == id)
+            .and_then(|field| field.text_value())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepare_graphics_for_test(&mut self, width: u16, height: u16) {
+        let layout = crate::ui::compute_layout(Rect::new(0, 0, width, height), self);
+        self.cache_output_layout(&layout);
+        self.prepare_graphics(&layout);
     }
 
     pub(crate) fn cache_output_layout(&mut self, layout: &UiLayout) {
@@ -1167,6 +1462,14 @@ impl AppState {
             return None;
         }
         Some(normalize_selection(selection))
+    }
+
+    pub(crate) fn prepare_graphics(&mut self, layout: &UiLayout) {
+        if self.active_result_tab != ResultTab::Uv {
+            return;
+        }
+        self.ensure_uv_coverage_started();
+        self.ensure_uv_plot_requested(result_text_area(layout));
     }
 
     fn visible_text_buffer_for_area(
@@ -1239,6 +1542,7 @@ impl AppState {
                             );
                             Some(VisibleTextBuffer { area, lines })
                         }
+                        ResultContent::Graphic(_) => None,
                     }
                 }
             }
@@ -1383,6 +1687,71 @@ impl AppState {
         }
     }
 
+    fn handle_path_chooser_key(&mut self, key_event: KeyEvent) {
+        match key_event.code {
+            KeyCode::Esc => self.cancel_path_chooser(),
+            KeyCode::Enter if key_event.modifiers.is_empty() => self.confirm_path_chooser(),
+            _ => {
+                if let Some(input) = chooser_input_from_key(key_event) {
+                    self.apply_path_chooser_input(input);
+                }
+            }
+        }
+    }
+
+    fn handle_path_chooser_mouse(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
+        let area = crate::ui::path_chooser_area(layout.body);
+        let list_area = crate::ui::path_chooser_list_area(area);
+        match mouse_event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if !rect_contains(area, mouse_event.column, mouse_event.row) {
+                    self.cancel_path_chooser();
+                    return;
+                }
+                if !rect_contains(list_area, mouse_event.column, mouse_event.row) {
+                    return;
+                }
+                let Some(chooser) = self.path_chooser.as_mut() else {
+                    return;
+                };
+                if chooser.explorer.files().is_empty() {
+                    return;
+                }
+                let visible_height = list_area.height as usize;
+                let row_offset = mouse_event.row.saturating_sub(list_area.y) as usize;
+                let visible_start = chooser_visible_start(
+                    chooser.explorer.selected_idx(),
+                    chooser.explorer.files().len(),
+                    visible_height,
+                );
+                let index = (visible_start + row_offset).min(chooser.explorer.files().len() - 1);
+                chooser.explorer.set_selected_idx(index);
+                let click_target = ClickTarget::PathChooserEntry(index);
+                let double_click = self.last_click.is_some_and(|last| {
+                    last.target == click_target && last.at.elapsed() <= DOUBLE_CLICK_WINDOW
+                });
+                self.last_click = Some(ClickState {
+                    target: click_target,
+                    at: Instant::now(),
+                });
+                if double_click {
+                    self.confirm_path_chooser();
+                }
+            }
+            MouseEventKind::ScrollUp
+                if rect_contains(area, mouse_event.column, mouse_event.row) =>
+            {
+                self.apply_path_chooser_input(ExplorerInput::Up);
+            }
+            MouseEventKind::ScrollDown
+                if rect_contains(area, mouse_event.column, mouse_event.row) =>
+            {
+                self.apply_path_chooser_input(ExplorerInput::Down);
+            }
+            _ => {}
+        }
+    }
+
     fn handle_result_key(&mut self, key_event: KeyEvent) {
         if self.browser_session.is_some() {
             self.handle_browser_key(key_event);
@@ -1496,6 +1865,29 @@ impl AppState {
         }
     }
 
+    fn activate_browser_tab(&mut self, tab: BrowserTab) {
+        let Some(current) = self.active_browser_tab() else {
+            return;
+        };
+        if current == tab {
+            return;
+        }
+
+        let current_index = current.index();
+        let target_index = tab.index();
+        let (steps, forward) = if target_index >= current_index {
+            (target_index - current_index, true)
+        } else {
+            (current_index - target_index, false)
+        };
+        for _ in 0..steps {
+            self.send_browser_command(BrowserCommand::CycleView {
+                forward,
+                viewport: None,
+            });
+        }
+    }
+
     fn copy_output_selection(&mut self) {
         let payload = self
             .active_selected_text()
@@ -1503,6 +1895,10 @@ impl AppState {
             .or_else(|| {
                 if self.browser_session.is_some() {
                     self.browser_clipboard_payload()
+                } else if self.active_result_tab == ResultTab::Uv {
+                    self.uv_coverage
+                        .as_ref()
+                        .map(|coverage| (uv_plot_summary(coverage), "uv coverage summary"))
                 } else {
                     None
                 }
@@ -1598,9 +1994,20 @@ impl AppState {
         if let Some(tab) = layout.result_tab_at(mouse_event.column, mouse_event.row) {
             self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
-            self.active_result_tab = tab;
+            self.activate_result_tab(tab);
             self.last_click = Some(ClickState {
                 target: ClickTarget::Tab(tab),
+                at: Instant::now(),
+            });
+            return;
+        }
+
+        if let Some(tab) = layout.browser_tab_at(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection_for_target(OutputPane::Result);
+            self.pane_focus = PaneFocus::Result;
+            self.activate_browser_tab(tab);
+            self.last_click = Some(ClickState {
+                target: ClickTarget::BrowserTab(tab),
                 at: Instant::now(),
             });
             return;
@@ -1658,7 +2065,9 @@ impl AppState {
                 }
                 FormSelection::Field(field_index) => {
                     self.selected_form = FormSelection::Field(field_index);
-                    if double_click {
+                    if self.path_field_browse_hit(field_index, mouse_event.column, layout) {
+                        self.open_path_chooser(field_index);
+                    } else if double_click {
                         self.enter_edit_mode(field_index);
                     }
                 }
@@ -1720,11 +2129,11 @@ impl AppState {
             self.pane_focus = PaneFocus::Parameters;
             if delta.is_negative() {
                 for _ in 0..delta.unsigned_abs() {
-                    self.select_next_form_item();
+                    self.select_previous_form_item();
                 }
             } else {
                 for _ in 0..delta as u16 {
-                    self.select_previous_form_item();
+                    self.select_next_form_item();
                 }
             }
         }
@@ -1876,37 +2285,22 @@ impl AppState {
         let Some(session) = self.browser_session() else {
             return 0;
         };
-        let lines = self
-            .browser_main_content_lines()
-            .unwrap_or_else(|| session.snapshot.content_lines.clone());
-        let selected = match session.snapshot.view {
-            TableBrowserView::Overview => 0,
-            TableBrowserView::Columns
-            | TableBrowserView::Keywords
-            | TableBrowserView::Subtables => browser_fraction(&lines, "selected=")
-                .map(|(selected, _)| selected.saturating_sub(1))
-                .unwrap_or(0),
-            TableBrowserView::Cells => browser_fraction(&lines, "row=")
-                .map(|(selected, _)| selected.saturating_sub(1))
-                .unwrap_or(0),
-        };
-        selected.min(u16::MAX as usize) as u16
+        session
+            .snapshot
+            .vertical_metrics
+            .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
+            .unwrap_or(0)
     }
 
     pub(crate) fn active_browser_hscroll(&self) -> u16 {
         let Some(session) = self.browser_session() else {
             return 0;
         };
-        let lines = self
-            .browser_main_content_lines()
-            .unwrap_or_else(|| session.snapshot.content_lines.clone());
-        let selected = match session.snapshot.view {
-            TableBrowserView::Cells => browser_fraction(&lines, "col=")
-                .map(|(selected, _)| selected.saturating_sub(1))
-                .unwrap_or(0),
-            _ => 0,
-        };
-        selected.min(u16::MAX as usize) as u16
+        session
+            .snapshot
+            .horizontal_metrics
+            .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
+            .unwrap_or(0)
     }
 
     fn scroll_active_browser(&mut self, delta: i16) {
@@ -2072,6 +2466,7 @@ impl AppState {
         let viewport_length = match &content {
             ResultContent::Lines(_) => viewport_height as usize,
             ResultContent::Table(_) => viewport_height.saturating_sub(1) as usize,
+            ResultContent::Graphic(_) => return None,
         };
         if viewport_length == 0 {
             return None;
@@ -2079,6 +2474,7 @@ impl AppState {
         let content_length = match content {
             ResultContent::Lines(lines) => lines.len(),
             ResultContent::Table(table) => table.rows.len(),
+            ResultContent::Graphic(_) => return None,
         };
         Some((content_length, viewport_length))
     }
@@ -2096,6 +2492,7 @@ impl AppState {
                 .max()
                 .unwrap_or(0),
             ResultContent::Table(table) => table.content_width(),
+            ResultContent::Graphic(_) => return None,
         };
         Some((content_width, viewport_width))
     }
@@ -2155,7 +2552,7 @@ impl AppState {
         } else {
             position - 1
         };
-        self.active_result_tab = tabs[next];
+        self.activate_result_tab(tabs[next]);
     }
 
     fn ensure_visible_form_selection(&mut self) {
@@ -2172,6 +2569,7 @@ impl AppState {
     fn start_run(&mut self) {
         self.clear_output_selection();
         self.commit_edit_buffer();
+        self.clear_cached_uv_coverage();
 
         if self.schema.is_none() {
             self.result.status_line = "Cannot run without a loaded UI schema.".to_string();
@@ -2197,8 +2595,8 @@ impl AppState {
                     self.edit_state = None;
                     self.pane_focus = PaneFocus::Result;
                     self.active_result_tab = ResultTab::Overview;
-                    self.result_scrolls = [0; 9];
-                    self.result_hscrolls = [0; 9];
+                    self.result_scrolls = [0; RESULT_TAB_COUNT];
+                    self.result_hscrolls = [0; RESULT_TAB_COUNT];
                     self.running = Some(RunningState {
                         process,
                         renderer: plan.renderer,
@@ -2317,6 +2715,248 @@ impl AppState {
         Some(copyable_browser_text(inspector))
     }
 
+    fn clear_cached_uv_coverage(&mut self) {
+        self.uv_coverage = None;
+        self.uv_coverage_error = None;
+        self.uv_plot_panel = None;
+        self.uv_loading = None;
+    }
+
+    fn ensure_uv_coverage_started(&mut self) {
+        if self.app.id != "listobs"
+            || self.result.structured.is_none()
+            || self.uv_coverage.is_some()
+            || self.uv_loading.is_some()
+        {
+            return;
+        }
+
+        match self.build_uv_execution_plan() {
+            Ok(plan) => match spawn_process(&plan) {
+                Ok(process) => {
+                    self.uv_loading = Some(UvCoverageLoadState {
+                        process,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        cancel_requested: false,
+                    });
+                    self.uv_coverage_error = None;
+                    self.result.status_line = "Loading UV coverage...".to_string();
+                    self.result.status_kind = StatusKind::Running;
+                }
+                Err(error) => {
+                    self.uv_coverage_error = Some(error.clone());
+                    self.result.status_line = "Failed to launch UV coverage loader.".to_string();
+                    self.result.status_kind = StatusKind::Error;
+                    self.result.stderr.push_str(&format!("{error}\n"));
+                }
+            },
+            Err(error) => {
+                self.uv_coverage_error = Some(error.clone());
+                self.result.status_line = "Cannot start UV coverage loader.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr.push_str(&format!("{error}\n"));
+            }
+        }
+    }
+
+    fn build_uv_execution_plan(&self) -> Result<ExecutionPlan, String> {
+        self.schema
+            .as_ref()
+            .ok_or_else(|| "missing command schema".to_string())?;
+
+        let mut arguments = Vec::<OsString>::new();
+        let force_selectdata = self.selection_inputs_present();
+        for field in &self.fields {
+            if matches!(
+                field.schema.id.as_str(),
+                "selectdata" | "output" | "listfile" | "overwrite" | "format"
+            ) {
+                continue;
+            }
+            field.append_arguments(&mut arguments)?;
+        }
+        self.append_effective_selectdata_argument(&mut arguments, force_selectdata)?;
+        arguments.push("--format".into());
+        arguments.push("json".into());
+        arguments.push("--uv-coverage-json".into());
+
+        Ok(ExecutionPlan {
+            command: self.app.resolve_command()?,
+            arguments,
+            renderer: None,
+            file_output_path: None,
+        })
+    }
+
+    fn drain_uv_loading_events(&mut self) {
+        loop {
+            let event = match self.uv_loading.as_ref() {
+                Some(loading) => loading.process.try_recv(),
+                None => return,
+            };
+            match event {
+                Ok(ExecutionEvent::Stdout(chunk)) => {
+                    if let Some(loading) = self.uv_loading.as_mut() {
+                        loading.stdout.push_str(&chunk);
+                    }
+                }
+                Ok(ExecutionEvent::Stderr(chunk)) => {
+                    if let Some(loading) = self.uv_loading.as_mut() {
+                        loading.stderr.push_str(&chunk);
+                    }
+                }
+                Ok(ExecutionEvent::Exited(exit)) => {
+                    self.finish_uv_loading(exit.success);
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.uv_loading = None;
+                    self.uv_coverage_error =
+                        Some("UV coverage loader disconnected unexpectedly.".to_string());
+                    self.result.status_line =
+                        "UV coverage loader disconnected unexpectedly.".to_string();
+                    self.result.status_kind = StatusKind::Error;
+                    break;
+                }
+            }
+        }
+    }
+
+    fn finish_uv_loading(&mut self, success: bool) {
+        let Some(loading) = self.uv_loading.take() else {
+            return;
+        };
+
+        if loading.cancel_requested {
+            self.uv_coverage_error = Some("UV coverage load canceled.".to_string());
+            self.result.status_line = "UV coverage load canceled.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+
+        if !success {
+            self.uv_coverage_error =
+                Some("UV coverage loader failed. See stderr for details.".to_string());
+            self.result.status_line = "UV coverage load failed.".to_string();
+            self.result.status_kind = StatusKind::Error;
+            self.result.stderr.push_str(&loading.stderr);
+            return;
+        }
+
+        match serde_json::from_str::<ListObsUvCoverage>(&loading.stdout) {
+            Ok(coverage) => {
+                self.uv_coverage = Some(coverage);
+                self.uv_coverage_error = None;
+                self.result.status_line = "UV coverage loaded.".to_string();
+                self.result.status_kind = StatusKind::Ok;
+            }
+            Err(error) => {
+                self.uv_coverage_error = Some(format!("Failed to parse UV coverage JSON: {error}"));
+                self.result.status_line = "UV coverage parsing failed.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr.push_str(&loading.stdout);
+            }
+        }
+    }
+
+    fn pump_uv_plot_panel(&mut self) {
+        let Some(panel) = self.uv_plot_panel.as_mut() else {
+            return;
+        };
+        match panel.renderer.pump() {
+            Ok(changed) => {
+                if changed {
+                    panel.image_size = panel.renderer.image_size();
+                }
+            }
+            Err(error) => {
+                panel.last_error = Some(error.to_string());
+                self.result.status_line = "UV plot rendering failed.".to_string();
+                self.result.status_kind = StatusKind::Warning;
+            }
+        }
+    }
+
+    fn ensure_uv_plot_requested(&mut self, area: Rect) {
+        let Some(coverage) = self.uv_coverage.clone() else {
+            return;
+        };
+        if area.is_empty() {
+            return;
+        }
+        let theme_mode = self.theme_mode();
+
+        let panel = self.uv_plot_panel.get_or_insert_with(|| {
+            let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+            let renderer = PanelRenderer::new(picker, Resize::Fit(None), |job| {
+                render_uv_plot(job.max_pixel_width, job.max_pixel_height, &job.input)
+            })
+            .expect("panel renderer");
+            UvPlotPanelState {
+                renderer,
+                request_key: None,
+                last_error: None,
+                image_size: None,
+            }
+        });
+
+        let request_key = UvPlotRequestKey {
+            area,
+            theme_mode,
+            sample_count: coverage.sample_count,
+            track_count: coverage.tracks.len(),
+            max_abs_uv_bits: coverage.max_abs_uv_lambda.to_bits(),
+        };
+        if panel.request_key == Some(request_key) {
+            return;
+        }
+
+        let font_size = Picker::halfblocks().font_size();
+        let (pixel_width, pixel_height) = fit_pixels_preserving_aspect(
+            u32::from(area.width) * u32::from(font_size.0),
+            u32::from(area.height) * u32::from(font_size.1),
+            UV_PLOT_ASPECT_WIDTH,
+            UV_PLOT_ASPECT_HEIGHT,
+        )
+        .map_err(|error| error.to_string())
+        .unwrap_or((u32::from(area.width.max(1)), u32::from(area.height.max(1))));
+        if let Err(error) = panel.renderer.request(
+            area,
+            pixel_width.max(1),
+            pixel_height.max(1),
+            UvPlotRenderInput {
+                coverage,
+                theme_mode,
+            },
+        ) {
+            panel.last_error = Some(error.to_string());
+            self.result.status_line = "Failed to queue UV plot render.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        panel.request_key = Some(request_key);
+    }
+
+    pub(crate) fn uv_plot_protocol(&self) -> Option<&PanelProtocol> {
+        self.uv_plot_panel
+            .as_ref()
+            .and_then(|panel| panel.renderer.protocol())
+    }
+
+    pub(crate) fn uv_plot_pending(&self) -> bool {
+        self.uv_plot_panel
+            .as_ref()
+            .is_some_and(|panel| panel.renderer.is_pending())
+    }
+
+    pub(crate) fn uv_plot_last_error(&self) -> Option<&str> {
+        self.uv_plot_panel
+            .as_ref()
+            .and_then(|panel| panel.last_error.as_deref())
+    }
+
     fn build_execution_plan(&self) -> Result<ExecutionPlan, String> {
         let schema = self
             .schema
@@ -2395,12 +3035,13 @@ impl AppState {
     }
 
     fn visible_result_tabs(&self) -> &'static [ResultTab] {
-        const COMPACT: [ResultTab; 7] = [
+        const COMPACT: [ResultTab; 8] = [
             ResultTab::Overview,
             ResultTab::Observations,
             ResultTab::Fields,
             ResultTab::Spws,
             ResultTab::Antennas,
+            ResultTab::Uv,
             ResultTab::Stdout,
             ResultTab::Stderr,
         ];
@@ -2470,6 +3111,27 @@ impl AppState {
             return;
         }
 
+        if let Some(loading) = self.uv_loading.as_mut() {
+            if loading.cancel_requested {
+                return;
+            }
+            match loading.process.cancel() {
+                Ok(()) => {
+                    loading.cancel_requested = true;
+                    self.result.status_line =
+                        "Cancel requested for UV coverage load...".to_string();
+                    self.result.status_kind = StatusKind::Warning;
+                }
+                Err(error) => {
+                    self.result.status_line = "Failed to cancel UV coverage load.".to_string();
+                    self.result.status_kind = StatusKind::Error;
+                    self.result.stderr.push_str(&format!("{error}\n"));
+                    self.active_result_tab = ResultTab::Stderr;
+                }
+            }
+            return;
+        }
+
         let Some(running) = self.running.as_mut() else {
             return;
         };
@@ -2530,7 +3192,7 @@ impl AppState {
                     Ok(summary) => {
                         self.result.structured = Some(summary);
                         self.result.structured_error = None;
-                        self.active_result_tab = ResultTab::Overview;
+                        self.activate_result_tab(ResultTab::Overview);
                     }
                     Err(error) => {
                         self.result.structured = None;
@@ -2547,22 +3209,22 @@ impl AppState {
                     }
                 }
             } else {
-                self.active_result_tab = if !self.result.stdout.is_empty() {
+                self.activate_result_tab(if !self.result.stdout.is_empty() {
                     ResultTab::Stdout
                 } else {
                     ResultTab::Overview
-                };
+                });
             }
         } else {
             self.result.status_line = "Execution failed.".to_string();
             self.result.status_kind = StatusKind::Error;
             self.result.structured = None;
             self.result.structured_error = None;
-            self.active_result_tab = if !self.result.stderr.is_empty() {
+            self.activate_result_tab(if !self.result.stderr.is_empty() {
                 ResultTab::Stderr
             } else {
                 ResultTab::Stdout
-            };
+            });
         }
     }
 
@@ -2706,7 +3368,15 @@ impl FormField {
             }
             (FormValue::Choice { value, .. }, _) => value.clone(),
         };
-        format!("{:<18} {}", self.schema.label, value)
+        let mut rendered = format!("{:<18} {}", self.schema.label, value);
+        if self.is_path() {
+            rendered.push_str(BROWSE_SUFFIX);
+        }
+        rendered
+    }
+
+    fn is_path(&self) -> bool {
+        self.schema.value_kind == UiValueKind::Path
     }
 
     fn append_arguments(&self, arguments: &mut Vec<OsString>) -> Result<(), String> {
@@ -3549,29 +4219,67 @@ fn scrollbar_thumb_length(
     thumb.clamp(1, track_length)
 }
 
-fn browser_fraction(lines: &[String], prefix: &str) -> Option<(usize, usize)> {
-    let line = lines.first()?;
-    let token = line
-        .split_whitespace()
-        .find(|token| token.starts_with(prefix))?
-        .strip_prefix(prefix)?;
-    let (selected, total) = token.split_once('/')?;
-    Some((selected.parse().ok()?, total.parse().ok()?))
-}
-
-fn browser_columns_viewport(lines: &[String]) -> usize {
-    lines
-        .iter()
-        .skip(1)
-        .take_while(|line| !line.is_empty() && line.as_str() != "-- Column Details --")
-        .count()
-}
-
-fn browser_visible_cell_columns(lines: &[String]) -> usize {
-    let Some(header) = lines.get(1) else {
-        return 0;
+fn chooser_start_path(value: Option<&str>) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(raw) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return cwd;
     };
-    header.split('|').count().saturating_sub(2)
+    let candidate = PathBuf::from(raw);
+    let candidate = if candidate.is_absolute() {
+        candidate
+    } else {
+        cwd.join(candidate)
+    };
+    if candidate.exists() {
+        return candidate;
+    }
+    candidate
+        .ancestors()
+        .find(|path| path.exists())
+        .map(Path::to_path_buf)
+        .unwrap_or(cwd)
+}
+
+fn absolute_display_path(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| {
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(path)
+            }
+        })
+        .display()
+        .to_string()
+}
+
+fn chooser_visible_start(selected: usize, total: usize, visible_height: usize) -> usize {
+    if total == 0 || visible_height == 0 || total <= visible_height {
+        return 0;
+    }
+    let half = visible_height / 2;
+    selected
+        .saturating_sub(half)
+        .min(total.saturating_sub(visible_height))
+}
+
+fn chooser_input_from_key(key_event: KeyEvent) -> Option<ExplorerInput> {
+    if !(key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT) {
+        return None;
+    }
+    Some(match key_event.code {
+        KeyCode::Up | KeyCode::Char('k') => ExplorerInput::Up,
+        KeyCode::Down | KeyCode::Char('j') => ExplorerInput::Down,
+        KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h') => ExplorerInput::Left,
+        KeyCode::Right | KeyCode::Char('l') => ExplorerInput::Right,
+        KeyCode::Home => ExplorerInput::Home,
+        KeyCode::End => ExplorerInput::End,
+        KeyCode::PageUp => ExplorerInput::PageUp,
+        KeyCode::PageDown => ExplorerInput::PageDown,
+        _ => return None,
+    })
 }
 
 fn browser_main_content_lines(snapshot: &BrowserSnapshot) -> Vec<String> {

@@ -181,6 +181,19 @@ impl MeasurementSet {
         crate::listobs::ListObsSummary::from_ms_with_options(self, options)
     }
 
+    /// Build lazy-load UV coverage for the current MeasurementSet selection.
+    pub fn listobs_uv_coverage(&self) -> MsResult<crate::listobs::ListObsUvCoverage> {
+        crate::listobs::ListObsUvCoverage::from_ms(self)
+    }
+
+    /// Build lazy-load UV coverage using explicit task-style options.
+    pub fn listobs_uv_coverage_with_options(
+        &self,
+        options: &crate::listobs::ListObsOptions,
+    ) -> MsResult<crate::listobs::ListObsUvCoverage> {
+        crate::listobs::ListObsUvCoverage::from_ms_with_options(self, options)
+    }
+
     /// Number of rows in the main table.
     pub fn row_count(&self) -> usize {
         self.main.row_count()

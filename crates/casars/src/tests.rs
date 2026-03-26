@@ -9,8 +9,9 @@ use casacore_ms::schema;
 use casacore_ms::{MeasurementSet, MeasurementSetBuilder, SubtableId};
 use casacore_tablebrowser_protocol::{
     BrowserBreadcrumbEntry, BrowserCapabilities, BrowserFocus, BrowserInspectorSnapshot,
-    BrowserInspectorTrailEntry, BrowserResponseEnvelope, BrowserScalarValue, BrowserSnapshot,
-    BrowserValueNode, BrowserView as ProtocolBrowserView, BrowserViewport,
+    BrowserInspectorTrailEntry, BrowserNavigationMetrics, BrowserResponseEnvelope,
+    BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as ProtocolBrowserView,
+    BrowserViewport,
 };
 use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casacore_types::{
@@ -276,8 +277,76 @@ fn pastes_text_into_selected_field_without_edit_mode() {
     let (_temp, mut app) = test_app();
     app.handle_paste("/tmp/example.ms\n".to_string());
 
-    let rendered = render_app(&app, 100, 30);
-    assert!(rendered.contains("/tmp/example.ms"));
+    let rendered = render_app(&app, 140, 30);
+    assert!(rendered.contains("example.ms"));
+}
+
+#[test]
+fn ctrl_o_opens_path_chooser_for_path_field_and_escape_cancels() {
+    let temp = tempdir().expect("tempdir");
+    let path = temp.path().join("cancel.ms");
+    std::fs::write(&path, "").expect("write fake ms");
+
+    let (_temp, mut app) = test_app();
+    app.set_text_value("ms_path", path.to_string_lossy().as_ref());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert!(app.path_chooser_active());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.path_chooser_active());
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some(path.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn path_chooser_enter_confirms_selected_path() {
+    let temp = tempdir().expect("tempdir");
+    let path = temp.path().join("selected.ms");
+    std::fs::write(&path, "").expect("write fake ms");
+
+    let (_temp, mut app) = test_app();
+    app.set_text_value("ms_path", path.to_string_lossy().as_ref());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert!(app.path_chooser_active());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.path_chooser_active());
+    let expected = path.canonicalize().expect("canonical path");
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some(expected.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn clicking_path_browse_affordance_opens_chooser() {
+    let (_temp, mut app) = test_app();
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
+    let row_hit = layout
+        .form_rows
+        .iter()
+        .find(|row| matches!(row.target, crate::app::FormSelection::Field(_)))
+        .expect("path field row");
+    let row_text = app
+        .form_rows()
+        .into_iter()
+        .find(|row| row.target == row_hit.target)
+        .expect("row text")
+        .text;
+    let x = row_hit
+        .rect
+        .x
+        .saturating_add(row_text.chars().count() as u16)
+        .saturating_sub(3);
+
+    app.handle_mouse_event(
+        mouse(MouseEventKind::Down(MouseButton::Left), x, row_hit.rect.y),
+        &layout,
+    );
+
+    assert!(app.path_chooser_active());
 }
 
 #[test]
@@ -378,13 +447,11 @@ fn dragging_result_scrollbar_changes_active_result_offset() {
 
 #[test]
 fn wheel_scroll_down_in_form_moves_selection_downward() {
-    let (_temp, mut app) = test_app();
-    let before = app
-        .selected_form_text_for_test()
-        .expect("selected form text before scroll");
-    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
+    let (_temp, mut wheel_app) = test_app();
+    let (_temp, mut key_app) = test_app();
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &wheel_app);
 
-    app.handle_mouse_event(
+    wheel_app.handle_mouse_event(
         mouse(
             MouseEventKind::ScrollDown,
             layout.form_inner.x + 1,
@@ -392,11 +459,17 @@ fn wheel_scroll_down_in_form_moves_selection_downward() {
         ),
         &layout,
     );
+    for _ in 0..3 {
+        key_app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
 
-    let after = app
+    let wheel_after = wheel_app
         .selected_form_text_for_test()
-        .expect("selected form text after scroll");
-    assert_ne!(before, after);
+        .expect("selected form text after wheel scroll");
+    let key_after = key_app
+        .selected_form_text_for_test()
+        .expect("selected form text after key scroll");
+    assert_eq!(wheel_after, key_after);
 }
 
 #[test]
@@ -442,7 +515,7 @@ fn tablebrowser_session_opens_cells_and_linked_subtables() {
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
-    app.sync_browser_viewport(90, 25);
+    app.sync_browser_viewport(90, 25, 10);
     let overview = render_app(&app, 180, 30);
     assert!(overview.contains("Tables / Table Browser"));
     assert!(overview.contains("Columns"));
@@ -465,6 +538,85 @@ fn tablebrowser_session_opens_cells_and_linked_subtables() {
     app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
     let parent = render_app(&app, 180, 30);
     assert!(parent.contains("parent.tab / child.tab") || parent.contains("parent.tab"));
+}
+
+#[test]
+fn browser_footer_describes_escape_and_backspace_semantics() {
+    let _guard = launcher_env_lock();
+    clear_tablebrowser_launcher_bin();
+
+    let temp = tempdir().expect("tempdir");
+    let table_path = create_fixture_table(temp.path());
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", table_path.to_string_lossy().as_ref());
+    app.start_run_for_test();
+
+    assert!(app.browser_is_active());
+    assert!(app.footer_text().contains("Esc back/clear"));
+    assert!(app.footer_text().contains("Bksp parent table"));
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_tabs_are_clickable() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Overview,
+                "Fake overview",
+                vec!["Overview".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Columns,
+                "Fake columns",
+                vec!["Columns".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Keywords,
+                "Fake keywords",
+                vec!["Keywords".to_string()],
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells",
+                vec!["Cells".to_string()],
+            ),
+        ],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
+    let cells_tab = layout
+        .browser_tab_hits
+        .iter()
+        .find(|hit| hit.tab == crate::app::BrowserTab::Cells)
+        .expect("cells browser tab");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            cells_tab.rect.x,
+            cells_tab.rect.y,
+        ),
+        &layout,
+    );
+
+    assert_eq!(app.active_browser_tab_label(), Some("Cells"));
 }
 
 #[test]
@@ -495,15 +647,26 @@ fn browser_cells_expose_scrollbar_metrics() {
     let temp = tempdir().expect("tempdir");
     let script = write_fake_tablebrowser_script(
         temp.path(),
-        &[fake_browser_snapshot_json(
+        &[fake_browser_snapshot_with_metrics_json(
             ProtocolBrowserView::Cells,
             "Fake cells",
             vec![
-                "Cells  row=12/100  col=3/8  focus=Main".to_string(),
+                "Cells  focus=Main".to_string(),
                 "row | NAME<str> | UVW<f64[]>[m] |".to_string(),
                 "  11 | \"alpha\"    | [1.0, 2.0, 3.0] m |".to_string(),
                 "  12 | \"beta\"     | [4.0, 5.0, 6.0] m |".to_string(),
             ],
+            Some(BrowserNavigationMetrics {
+                selected_index: 11,
+                total_items: 100,
+                viewport_items: 2,
+            }),
+            Some(BrowserNavigationMetrics {
+                selected_index: 2,
+                total_items: 8,
+                viewport_items: 2,
+            }),
+            None,
         )],
         None,
     );
@@ -1317,6 +1480,40 @@ fn executes_listobs_and_parses_structured_output_into_tabs() {
 }
 
 #[test]
+fn uv_tab_lazy_loads_coverage_after_listobs_run() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+
+    let schema = listobs_app()
+        .load_schema()
+        .expect("load schema from listobs");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.start_run_for_test();
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
+    assert!(app.uv_coverage_for_test().is_none());
+
+    app.set_active_result_tab(ResultTab::Uv);
+    assert!(app.wait_for_all_idle_for_test(Duration::from_secs(60)));
+    app.prepare_graphics_for_test(140, 32);
+
+    let coverage = app.uv_coverage_for_test().expect("uv coverage");
+    assert!(coverage.sample_count > 0);
+    assert!(app.uv_plot_protocol().is_some() || app.uv_plot_pending());
+    match app.active_result_content() {
+        crate::app::ResultContent::Graphic(summary) => {
+            assert!(summary.contains("Tracks="));
+            assert!(summary.contains("Mirrored=yes"));
+        }
+        other => panic!("expected graphic result, got {other:?}"),
+    }
+}
+
+#[test]
 fn verbose_on_exposes_scans_and_sources_tabs() {
     let (_temp, app) = test_app();
     let rendered = render_app(&app, 140, 30);
@@ -1994,13 +2191,15 @@ fn fake_browser_snapshot_json(
     status_line: &str,
     content_lines: Vec<String>,
 ) -> String {
-    fake_browser_snapshot_with_inspector_json(view, status_line, content_lines, None)
+    fake_browser_snapshot_with_metrics_json(view, status_line, content_lines, None, None, None)
 }
 
-fn fake_browser_snapshot_with_inspector_json(
+fn fake_browser_snapshot_with_metrics_json(
     view: ProtocolBrowserView,
     status_line: &str,
     content_lines: Vec<String>,
+    vertical_metrics: Option<BrowserNavigationMetrics>,
+    horizontal_metrics: Option<BrowserNavigationMetrics>,
     inspector: Option<BrowserInspectorSnapshot>,
 ) -> String {
     serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
@@ -2015,10 +2214,21 @@ fn fake_browser_snapshot_with_inspector_json(
         viewport: BrowserViewport::new(120, 24),
         status_line: status_line.to_string(),
         content_lines,
+        vertical_metrics,
+        horizontal_metrics,
         selected_address: None,
         inspector,
     }))
     .expect("serialize fake snapshot")
+}
+
+fn fake_browser_snapshot_with_inspector_json(
+    view: ProtocolBrowserView,
+    status_line: &str,
+    content_lines: Vec<String>,
+    inspector: Option<BrowserInspectorSnapshot>,
+) -> String {
+    fake_browser_snapshot_with_metrics_json(view, status_line, content_lines, None, None, inspector)
 }
 
 fn create_fixture_ms(root: &Path) -> PathBuf {

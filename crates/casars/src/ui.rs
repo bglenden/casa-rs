@@ -8,6 +8,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Wrap,
 };
+use ratatui_image::Image as PanelImage;
 
 use crate::app::{
     AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, ResultContent,
@@ -33,6 +34,7 @@ pub(crate) struct UiLayout {
     pub result_scrollbar: Option<Rect>,
     pub result_hscrollbar: Option<Rect>,
     pub tab_hits: Vec<TabHit>,
+    pub browser_tab_hits: Vec<BrowserTabHit>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +49,12 @@ pub(crate) struct TabHit {
     pub rect: Rect,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct BrowserTabHit {
+    pub tab: BrowserTab,
+    pub rect: Rect,
+}
+
 impl UiLayout {
     pub(crate) fn form_target_at(&self, column: u16, row: u16) -> Option<FormSelection> {
         self.form_rows
@@ -57,6 +65,13 @@ impl UiLayout {
 
     pub(crate) fn result_tab_at(&self, column: u16, row: u16) -> Option<ResultTab> {
         self.tab_hits
+            .iter()
+            .find(|hit| rect_contains(hit.rect, column, row))
+            .map(|hit| hit.tab)
+    }
+
+    pub(crate) fn browser_tab_at(&self, column: u16, row: u16) -> Option<BrowserTab> {
+        self.browser_tab_hits
             .iter()
             .find(|hit| rect_contains(hit.rect, column, row))
             .map(|hit| hit.tab)
@@ -180,6 +195,11 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
     } else {
         visible_tab_hits(result_tabs, app)
     };
+    let browser_tab_hits = if app.browser_is_active() {
+        visible_browser_tab_hits(result_tabs, app)
+    } else {
+        Vec::new()
+    };
     let result_scrollbar = result_scrollbar_rect(app, result_content);
     let result_hscrollbar = result_hscrollbar_rect(app, result_content);
 
@@ -198,6 +218,7 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
         result_scrollbar,
         result_hscrollbar,
         tab_hits,
+        browser_tab_hits,
     }
 }
 
@@ -218,6 +239,9 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
 
     draw_form(frame, app, layout, palette);
     draw_result(frame, app, layout, palette);
+    if app.path_chooser_active() {
+        draw_path_chooser(frame, app, layout, palette);
+    }
 }
 
 pub(crate) fn draw_launcher(frame: &mut Frame<'_>, apps: &[RegistryApp], selected: usize) {
@@ -425,6 +449,10 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
     }
 
     let content = app.active_result_content();
+    if let ResultContent::Graphic(summary) = &content {
+        draw_graphic_result(frame, app, layout, palette, summary);
+        return;
+    }
     let vertical_scrollbar =
         result_scrollbar_state(&content, app.active_result_scroll(), layout.result_content);
     let horizontal_scrollbar =
@@ -470,6 +498,37 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
             layout.result_hscrollbar.unwrap_or(layout.result_content),
             &mut state,
         );
+    }
+}
+
+fn draw_graphic_result(
+    frame: &mut Frame<'_>,
+    app: &AppState,
+    layout: &UiLayout,
+    palette: Theme,
+    summary: &str,
+) {
+    let content_area = layout.result_content;
+    if content_area.height == 0 || content_area.width == 0 {
+        return;
+    }
+
+    if let Some(protocol) = app.uv_plot_protocol() {
+        let image_area = centered_square_rect(content_area, protocol.area());
+        frame.render_widget(PanelImage::new(protocol), image_area);
+    } else {
+        let message = if let Some(error) = app.uv_plot_last_error() {
+            format!("{summary}\n\n{error}")
+        } else if app.uv_plot_pending() {
+            format!("{summary}\n\nRendering UV plot...")
+        } else {
+            summary.to_string()
+        };
+        let paragraph = Paragraph::new(message)
+            .style(Style::default().fg(palette.footer_fg))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, content_area);
     }
 }
 
@@ -547,6 +606,93 @@ fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout,
             &mut state,
         );
     }
+}
+
+fn draw_path_chooser(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
+    let area = path_chooser_area(layout.body);
+    let list_area = path_chooser_list_area(area);
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title(
+            app.path_chooser_title()
+                .unwrap_or_else(|| "Browse Path".to_string()),
+        )
+        .title_style(
+            Style::default()
+                .fg(palette.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(palette.border_set)
+        .border_style(Style::default().fg(palette.active_pane_border_fg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let cwd = app.path_chooser_cwd().unwrap_or_default();
+    frame.render_widget(
+        Paragraph::new(format!("cwd: {cwd}"))
+            .style(Style::default().fg(palette.footer_fg))
+            .wrap(Wrap { trim: false }),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        },
+    );
+
+    let entries = app.path_chooser_entries().unwrap_or_default();
+    let selected = entries
+        .iter()
+        .position(|(_, selected)| *selected)
+        .unwrap_or(0);
+    let visible_height = list_area.height as usize;
+    let visible_start = if entries.len() <= visible_height || visible_height == 0 {
+        0
+    } else {
+        selected
+            .saturating_sub(visible_height / 2)
+            .min(entries.len().saturating_sub(visible_height))
+    };
+    let items = entries
+        .into_iter()
+        .skip(visible_start)
+        .take(visible_height)
+        .map(|(text, selected)| {
+            let style = if selected {
+                Style::default()
+                    .fg(palette.active_tab_fg)
+                    .bg(palette.active_tab_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.footer_fg)
+            };
+            ListItem::new(text).style(style)
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(List::new(items), list_area);
+
+    if let Some(error) = app.path_chooser_error() {
+        frame.render_widget(
+            Paragraph::new(error).style(Style::default().fg(palette.status_error_fg)),
+            Rect {
+                x: inner.x,
+                y: inner.y + inner.height.saturating_sub(2),
+                width: inner.width,
+                height: 1,
+            },
+        );
+    }
+    frame.render_widget(
+        Paragraph::new("Enter choose  Esc cancel  Backspace parent  Arrows/jk move")
+            .style(Style::default().fg(palette.footer_fg)),
+        Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        },
+    );
 }
 
 fn render_visible_text_buffer(
@@ -686,6 +832,33 @@ fn visible_tab_hits(area: Rect, app: &AppState) -> Vec<TabHit> {
     hits
 }
 
+fn visible_browser_tab_hits(area: Rect, app: &AppState) -> Vec<BrowserTabHit> {
+    if area.height == 0 || area.width == 0 {
+        return Vec::new();
+    }
+
+    let palette = theme(app.theme_mode());
+    let mut hits = Vec::new();
+    let mut x = area.x;
+    for tab in app.browser_tabs() {
+        let active = app.active_browser_tab_label() == Some(tab.label());
+        let label = browser_tab_label(*tab, active, palette);
+        let width = label.chars().count() as u16;
+        if x >= area.x + area.width {
+            break;
+        }
+        let rect = Rect {
+            x,
+            y: area.y,
+            width: width.min(area.x + area.width - x),
+            height: 1,
+        };
+        hits.push(BrowserTabHit { tab: *tab, rect });
+        x = x.saturating_add(width + 1);
+    }
+    hits
+}
+
 fn pane_border_style(theme: Theme, focus: PaneFocus, pane: PaneFocus) -> Style {
     if focus == pane {
         Style::default().fg(theme.active_pane_border_fg)
@@ -819,6 +992,7 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
         ResultTab::Spws => "SPWs",
         ResultTab::Sources => "Sources",
         ResultTab::Antennas => "Ant",
+        ResultTab::Uv => "UV",
         ResultTab::Stdout => "Out",
         ResultTab::Stderr => "Err",
     };
@@ -856,6 +1030,7 @@ fn result_scrollbar_state(
     let (content_length, viewport_length) = match content {
         ResultContent::Lines(lines) => (lines.len(), area.height as usize),
         ResultContent::Table(table) => (table.rows.len(), area.height.saturating_sub(1) as usize),
+        ResultContent::Graphic(_) => return None,
     };
 
     if content_length <= viewport_length || viewport_length == 0 {
@@ -881,6 +1056,7 @@ fn result_hscrollbar_state(
             .max()
             .unwrap_or(0),
         ResultContent::Table(table) => table.content_width(),
+        ResultContent::Graphic(_) => return None,
     };
     let viewport_width = area.width as usize;
     if viewport_width == 0 || content_width <= viewport_width {
@@ -999,6 +1175,38 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
         y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
+pub(crate) fn path_chooser_area(body: Rect) -> Rect {
+    centered_rect(body.width.min(84), body.height.min(24), body)
+}
+
+pub(crate) fn path_chooser_list_area(area: Rect) -> Rect {
+    let inner = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    Rect {
+        x: inner.x,
+        y: inner.y.saturating_add(1),
+        width: inner.width,
+        height: inner.height.saturating_sub(3),
+    }
+}
+
+fn centered_square_rect(area: Rect, protocol_area: Rect) -> Rect {
+    let width = protocol_area.width.min(area.width);
+    let height = protocol_area.height.min(area.height);
+    let offset_x = area.width.saturating_sub(width) / 2;
+    let offset_y = area.height.saturating_sub(height) / 2;
+    Rect {
+        x: area.x + offset_x,
+        y: area.y + offset_y,
         width,
         height,
     }

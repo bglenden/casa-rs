@@ -25,6 +25,7 @@ repository = "https://github.com/bglenden/casa-rs"
 [workspace.dependencies]
 ndarray = "0.17"
 num-complex = "0.4"
+ratatui-graphics = { path = "/Users/brianglendenning/SoftwareProjects/ratatui-graphics", default-features = false, features = ["panel", "plotters"] }
 sofars = "0.6"
 thiserror = "2.0"
 

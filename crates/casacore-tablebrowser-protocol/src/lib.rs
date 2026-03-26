@@ -21,12 +21,29 @@ pub struct BrowserViewport {
     pub width: u16,
     /// Available content height in terminal cells.
     pub height: u16,
+    /// Available inspector height in terminal cells when the client renders the
+    /// inspector in a separate pane.
+    #[serde(default)]
+    pub inspector_height: u16,
 }
 
 impl BrowserViewport {
     /// Construct a viewport from terminal-cell dimensions.
     pub const fn new(width: u16, height: u16) -> Self {
-        Self { width, height }
+        Self {
+            width,
+            height,
+            inspector_height: 0,
+        }
+    }
+
+    /// Construct a viewport with explicit main and inspector heights.
+    pub const fn with_inspector_height(width: u16, height: u16, inspector_height: u16) -> Self {
+        Self {
+            width,
+            height,
+            inspector_height,
+        }
     }
 }
 
@@ -35,8 +52,20 @@ impl Default for BrowserViewport {
         Self {
             width: 80,
             height: 24,
+            inspector_height: 0,
         }
     }
+}
+
+/// Structured main-pane navigation metrics for a browser view.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct BrowserNavigationMetrics {
+    /// Current selected item index within the view.
+    pub selected_index: usize,
+    /// Total number of items in the view.
+    pub total_items: usize,
+    /// Number of items visible in the current viewport.
+    pub viewport_items: usize,
 }
 
 /// JSON Lines request envelope sent from `casars` to the browser backend.
@@ -531,6 +560,12 @@ pub struct BrowserSnapshot {
     pub status_line: String,
     /// Render-ready content lines for the viewport.
     pub content_lines: Vec<String>,
+    /// Structured vertical metrics for the current main-pane view.
+    #[serde(default)]
+    pub vertical_metrics: Option<BrowserNavigationMetrics>,
+    /// Structured horizontal metrics for the current main-pane view.
+    #[serde(default)]
+    pub horizontal_metrics: Option<BrowserNavigationMetrics>,
     /// Stable address of the current selection.
     pub selected_address: Option<BrowserAddress>,
     /// Typed inspector payload for the current selection.
