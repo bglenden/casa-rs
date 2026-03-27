@@ -24,14 +24,42 @@ EOF
 }
 
 repo_root="$(git rev-parse --show-toplevel)"
+git_dir="$(git rev-parse --git-dir)"
+git_common_dir="$(git rev-parse --git-common-dir)"
 image_name="casa-rs-ci-minimal"
 command="${1:-all}"
 
+path_is_within_repo_root() {
+  case "$1" in
+    "$repo_root"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+container_mount_args() {
+  local -a mounts=("-v" "$repo_root:$repo_root")
+
+  if ! path_is_within_repo_root "$git_dir"; then
+    mounts+=("-v" "$git_dir:$git_dir")
+  fi
+
+  if [[ "$git_common_dir" != "$git_dir" ]] && ! path_is_within_repo_root "$git_common_dir"; then
+    mounts+=("-v" "$git_common_dir:$git_common_dir")
+  fi
+
+  printf '%s\0' "${mounts[@]}"
+}
+
 run_in_container() {
   local script="$1"
+  local -a mounts=()
+  while IFS= read -r -d '' arg; do
+    mounts+=("$arg")
+  done < <(container_mount_args)
+
   docker run --rm \
-    -v "$repo_root:/workspace" \
-    -w /workspace \
+    "${mounts[@]}" \
+    -w "$repo_root" \
     "$image_name" \
     bash -lc "$script"
 }
@@ -67,9 +95,13 @@ case "$command" in
     '
     ;;
   shell)
+    mounts=()
+    while IFS= read -r -d '' arg; do
+      mounts+=("$arg")
+    done < <(container_mount_args)
     docker run --rm -it \
-      -v "$repo_root:/workspace" \
-      -w /workspace \
+      "${mounts[@]}" \
+      -w "$repo_root" \
       "$image_name" \
       bash
     ;;

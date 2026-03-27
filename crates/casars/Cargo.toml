@@ -20,7 +20,6 @@ casacore-types = { path = "../casacore-types" }
 crossterm = "0.28"
 directories = "5"
 image = { version = "0.25", default-features = false, features = ["png"] }
-plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series", "point_series", "full_palette", "ttf"] }
 ratatui = "0.30"
 ratatui-explorer = "0.3.0"
 ratatui-graphics.workspace = true
@@ -34,3 +33,9 @@ libc = "0.2"
 [dev-dependencies]
 ndarray.workspace = true
 tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series", "point_series", "full_palette", "ttf"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series", "point_series", "full_palette", "ab_glyph"] }
