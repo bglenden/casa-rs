@@ -13,6 +13,7 @@ use plotters::prelude::*;
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 use serde::{Deserialize, Serialize};
 
+use crate::listobs::SpectralWindowSummary;
 use crate::{ListObsSummary, ListObsUvCoverage};
 
 const EXPORT_DPI: f32 = 72.0;
@@ -841,11 +842,7 @@ fn build_spectral_window_coverage_payload(
             };
             let color_group = match color_by {
                 "spw" => format!("spw-{}", spw.spectral_window_id),
-                "polarization" => spw
-                    .correlation_types
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "none".to_string()),
+                "polarization" => spectral_window_polarization_group(spw),
                 value => {
                     return Err(format!(
                         "invalid color_by {value:?} for spectral_window_coverage"
@@ -1192,6 +1189,21 @@ fn render_spectral_window_coverage_plot(
 
 fn spectral_window_lane_label(bar: &SpectralWindowCoverageBar) -> String {
     format!("SPW {}", bar.spectral_window_id)
+}
+
+fn spectral_window_polarization_group(spw: &SpectralWindowSummary) -> String {
+    if spw.polarization_ids.is_empty() {
+        "pol-none".to_string()
+    } else {
+        format!(
+            "pol-{}",
+            spw.polarization_ids
+                .iter()
+                .map(|id: &usize| id.to_string())
+                .collect::<Vec<_>>()
+                .join("-")
+        )
+    }
 }
 
 fn validate_option(kind: ListObsPlotKind, key: &str, value: &str) -> Result<(), String> {
@@ -1638,6 +1650,98 @@ mod tests {
             .map(super::spectral_window_lane_label)
             .collect::<Vec<_>>();
         assert_eq!(labels, vec!["SPW 1".to_string(), "SPW 2".to_string()]);
+    }
+
+    #[test]
+    fn spectral_window_polarization_color_group_uses_setup_ids() {
+        let mut summary = synthetic_summary();
+        summary.polarization_setups = vec![
+            PolarizationSummary {
+                polarization_id: 0,
+                num_correlations: 2,
+                correlation_types: vec!["XX".to_string(), "YY".to_string()],
+            },
+            PolarizationSummary {
+                polarization_id: 1,
+                num_correlations: 4,
+                correlation_types: vec![
+                    "XX".to_string(),
+                    "YY".to_string(),
+                    "XY".to_string(),
+                    "YX".to_string(),
+                ],
+            },
+        ];
+        summary.data_descriptions = vec![
+            DataDescriptionSummary {
+                data_description_id: 0,
+                spectral_window_id: 0,
+                polarization_id: 0,
+                flagged: false,
+            },
+            DataDescriptionSummary {
+                data_description_id: 1,
+                spectral_window_id: 1,
+                polarization_id: 1,
+                flagged: false,
+            },
+        ];
+        summary.spectral_windows = vec![
+            SpectralWindowSummary {
+                spectral_window_id: 0,
+                name: "LOW".to_string(),
+                num_channels: 16,
+                frame: Some("TOPO".to_string()),
+                first_channel_frequency_hz: 1.0e9,
+                channel_width_hz: 1.0e6,
+                reference_frequency_hz: 1.0e9,
+                center_frequency_hz: 1.008e9,
+                min_frequency_hz: 0.9995e9,
+                max_frequency_hz: 1.0165e9,
+                total_bandwidth_hz: 16.0e6,
+                data_description_ids: vec![0],
+                polarization_ids: vec![0],
+                correlation_types: vec!["XX".to_string(), "YY".to_string()],
+            },
+            SpectralWindowSummary {
+                spectral_window_id: 1,
+                name: "HIGH".to_string(),
+                num_channels: 32,
+                frame: Some("TOPO".to_string()),
+                first_channel_frequency_hz: 1.2e9,
+                channel_width_hz: 5.0e5,
+                reference_frequency_hz: 1.2e9,
+                center_frequency_hz: 1.208e9,
+                min_frequency_hz: 1.19975e9,
+                max_frequency_hz: 1.21625e9,
+                total_bandwidth_hz: 16.0e6,
+                data_description_ids: vec![1],
+                polarization_ids: vec![1],
+                correlation_types: vec![
+                    "XX".to_string(),
+                    "YY".to_string(),
+                    "XY".to_string(),
+                    "YX".to_string(),
+                ],
+            },
+        ];
+
+        let spec = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::SpectralWindowCoverage,
+            &["color_by=polarization".to_string()],
+        )
+        .unwrap();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let ListObsPlotPayload::SpectralWindowCoverage(payload) = payload else {
+            panic!("expected spectral window payload");
+        };
+
+        let color_groups = payload
+            .bars
+            .iter()
+            .map(|bar| bar.color_group.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(color_groups, vec!["pol-0".to_string(), "pol-1".to_string()]);
     }
 
     #[test]
