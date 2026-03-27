@@ -4,6 +4,7 @@ mod browser_client;
 mod clipboard;
 mod config;
 mod execution;
+mod graphics;
 mod registry;
 mod startup;
 mod theme;
@@ -160,12 +161,14 @@ fn run_selected_app(
         app.sync_browser_viewport(
             provisional_layout.result_content.width,
             provisional_layout.result_content.height,
+            provisional_layout.form_inner.height,
         );
         let layout = ui::compute_layout(
             ratatui::layout::Rect::new(0, 0, area.width, area.height),
             &app,
         );
         app.cache_output_layout(&layout);
+        app.prepare_graphics(&layout);
         terminal
             .terminal
             .draw(|frame| ui::draw(frame, &app, &layout))

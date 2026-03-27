@@ -31,9 +31,14 @@ use casacore_types::quanta::{MvAngle, MvTime};
 use ndarray::IxDyn;
 use serde::{Deserialize, Serialize};
 
+use crate::columns::uvw_column::UvwColumn;
 use crate::selection::MsSelection;
 use crate::subtables::{SubTable, get_f64, get_i32, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
+
+const LISTOBS_SCHEMA_VERSION: u32 = 1;
+const LISTOBS_UV_SCHEMA_VERSION: u32 = 1;
+const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
 /// Output formats supported by the `listobs` renderers and CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +202,63 @@ pub struct ListObsSummary {
     pub sources: Vec<SourceSummary>,
     /// ANTENNA subtable rows.
     pub antennas: Vec<AntennaSummary>,
+}
+
+/// Lazy-load UV coverage extracted for a `listobs` selection.
+///
+/// The payload is intentionally one-sided: it carries the observed baseline
+/// samples only. Consumers can mirror `(-u, -v)` at render time when they want
+/// the usual interferometric coverage display.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListObsUvCoverage {
+    /// Version of the JSON schema emitted by [`render_json_pretty`](Self::render_json_pretty).
+    pub schema_version: u32,
+    /// Options applied while generating this coverage payload.
+    pub options: ListObsOptions,
+    /// Filesystem path of the MeasurementSet root, if the MS is disk-backed.
+    pub measurement_set_path: Option<String>,
+    /// Axis label used by the rendered TUI plot.
+    pub axis_unit: String,
+    /// Whether the UI should mirror `(-u, -v)` for display.
+    pub mirrored_display: bool,
+    /// Total number of raw, one-sided samples in `tracks`.
+    pub sample_count: usize,
+    /// Maximum absolute extent across the `u` and `v` axes, in wavelengths.
+    pub max_abs_uv_lambda: f64,
+    /// Track groups sorted by `(antenna1, antenna2, field_id, spectral_window_id)`.
+    pub tracks: Vec<ListObsUvTrack>,
+}
+
+/// One baseline/field/SPW UV track.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListObsUvTrack {
+    /// Baseline antenna 1 id.
+    pub antenna1: i32,
+    /// Baseline antenna 2 id.
+    pub antenna2: i32,
+    /// MAIN.FIELD_ID for the grouped rows.
+    pub field_id: i32,
+    /// SPECTRAL_WINDOW row used to scale these samples.
+    pub spectral_window_id: i32,
+    /// Representative center frequency used for the lambda conversion.
+    pub center_frequency_hz: f64,
+    /// Samples sorted by time.
+    pub samples: Vec<ListObsUvPoint>,
+}
+
+/// One UVW sample converted to wavelengths.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListObsUvPoint {
+    /// MAIN-table row index.
+    pub row: usize,
+    /// MAIN.TIME in MJD seconds.
+    pub time_mjd_seconds: f64,
+    /// `u / lambda`.
+    pub u_lambda: f64,
+    /// `v / lambda`.
+    pub v_lambda: f64,
+    /// `w / lambda`.
+    pub w_lambda: f64,
 }
 
 /// General metadata about the summarized MeasurementSet.
@@ -502,7 +564,7 @@ impl ListObsSummary {
             .unwrap_or((None, None, None));
 
         Ok(Self {
-            schema_version: 1,
+            schema_version: LISTOBS_SCHEMA_VERSION,
             options: options.clone(),
             measurement_set: MeasurementSetInfo {
                 path: ms.path().map(|path| path.display().to_string()),
@@ -852,6 +914,150 @@ impl ListObsSummary {
             ListObsOutputFormat::Text => Ok(self.render_text()),
             ListObsOutputFormat::Json => self.render_json_pretty(),
         }
+    }
+}
+
+impl ListObsUvCoverage {
+    /// Build UV coverage from an open [`MeasurementSet`].
+    pub fn from_ms(ms: &MeasurementSet) -> MsResult<Self> {
+        Self::from_ms_with_options(ms, &ListObsOptions::default())
+    }
+
+    /// Build UV coverage from an open [`MeasurementSet`] using explicit
+    /// task-style options.
+    pub fn from_ms_with_options(ms: &MeasurementSet, options: &ListObsOptions) -> MsResult<Self> {
+        options.validate_supported()?;
+        let selected_rows = resolve_selected_rows(ms, options)?;
+        let dd = ms.data_description()?;
+        let spw = ms.spectral_window()?;
+        let uvw = UvwColumn::new(ms.main_table());
+
+        let mut ddid_to_spw = HashMap::<i32, i32>::with_capacity(dd.row_count());
+        for row in 0..dd.row_count() {
+            ddid_to_spw.insert(row as i32, dd.spectral_window_id(row)?);
+        }
+
+        let mut spw_center_hz = HashMap::<i32, f64>::with_capacity(spw.row_count());
+        for row in 0..spw.row_count() {
+            let chan_freq = spw.chan_freq(row)?;
+            let center_hz = mean_or_zero(&chan_freq);
+            let center_hz = if center_hz > 0.0 {
+                center_hz
+            } else {
+                spw.ref_frequency(row)?
+            };
+            if center_hz <= 0.0 {
+                return Err(MsError::VersionError(format!(
+                    "spectral window {row} does not expose a positive representative frequency"
+                )));
+            }
+            spw_center_hz.insert(row as i32, center_hz);
+        }
+
+        let mut grouped = BTreeMap::<(i32, i32, i32, i32), (f64, Vec<ListObsUvPoint>)>::new();
+        let mut sample_count = 0usize;
+        let mut max_abs_uv_lambda = 0.0_f64;
+        let rows = selected_rows
+            .as_deref()
+            .map(|rows| rows.to_vec())
+            .unwrap_or_else(|| (0..ms.main_table().row_count()).collect());
+
+        for row in rows {
+            let antenna1 = get_i32(ms.main_table(), row, "ANTENNA1")?;
+            let antenna2 = get_i32(ms.main_table(), row, "ANTENNA2")?;
+            let field_id = get_i32(ms.main_table(), row, "FIELD_ID")?;
+            let data_desc_id = get_i32(ms.main_table(), row, "DATA_DESC_ID")?;
+            let time_mjd_seconds = get_f64(ms.main_table(), row, "TIME")?;
+            let spectral_window_id = *ddid_to_spw.get(&data_desc_id).ok_or_else(|| {
+                MsError::VersionError(format!(
+                    "MAIN.DATA_DESC_ID {data_desc_id} does not resolve to a DATA_DESCRIPTION row"
+                ))
+            })?;
+            let center_frequency_hz = *spw_center_hz.get(&spectral_window_id).ok_or_else(|| {
+                MsError::VersionError(format!(
+                    "DATA_DESCRIPTION row {data_desc_id} resolved to unknown SPECTRAL_WINDOW {spectral_window_id}"
+                ))
+            })?;
+            let wavelength_m = SPEED_OF_LIGHT_M_S / center_frequency_hz;
+            let [u_m, v_m, w_m] = uvw.get(row)?;
+            let point = ListObsUvPoint {
+                row,
+                time_mjd_seconds,
+                u_lambda: u_m / wavelength_m,
+                v_lambda: v_m / wavelength_m,
+                w_lambda: w_m / wavelength_m,
+            };
+            max_abs_uv_lambda = max_abs_uv_lambda
+                .max(point.u_lambda.abs())
+                .max(point.v_lambda.abs());
+            sample_count += 1;
+            grouped
+                .entry((antenna1, antenna2, field_id, spectral_window_id))
+                .or_insert_with(|| (center_frequency_hz, Vec::new()))
+                .1
+                .push(point);
+        }
+
+        let mut tracks = grouped
+            .into_iter()
+            .map(
+                |(
+                    (antenna1, antenna2, field_id, spectral_window_id),
+                    (center_frequency_hz, mut samples),
+                )| {
+                    samples.sort_by(|left, right| {
+                        left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds)
+                    });
+                    ListObsUvTrack {
+                        antenna1,
+                        antenna2,
+                        field_id,
+                        spectral_window_id,
+                        center_frequency_hz,
+                        samples,
+                    }
+                },
+            )
+            .collect::<Vec<_>>();
+        tracks.sort_by_key(|track| {
+            (
+                track.antenna1,
+                track.antenna2,
+                track.field_id,
+                track.spectral_window_id,
+            )
+        });
+
+        Ok(Self {
+            schema_version: LISTOBS_UV_SCHEMA_VERSION,
+            options: options.clone(),
+            measurement_set_path: ms.path().map(|path| path.display().to_string()),
+            axis_unit: "lambda".to_string(),
+            mirrored_display: true,
+            sample_count,
+            max_abs_uv_lambda,
+            tracks,
+        })
+    }
+
+    /// Open an on-disk MeasurementSet and extract UV coverage.
+    pub fn from_path(path: impl AsRef<Path>) -> MsResult<Self> {
+        Self::from_path_with_options(path, &ListObsOptions::default())
+    }
+
+    /// Open an on-disk MeasurementSet and extract UV coverage using explicit
+    /// task-style options.
+    pub fn from_path_with_options(
+        path: impl AsRef<Path>,
+        options: &ListObsOptions,
+    ) -> MsResult<Self> {
+        let ms = MeasurementSet::open(path)?;
+        Self::from_ms_with_options(&ms, options)
+    }
+
+    /// Render the UV coverage as pretty-printed JSON.
+    pub fn render_json_pretty(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
     }
 }
 
@@ -3164,6 +3370,59 @@ mod tests {
         assert!(text.contains("0.75"));
     }
 
+    #[test]
+    fn uv_coverage_groups_tracks_and_scales_by_spw_center_frequency() {
+        let ms = make_selection_fixture();
+        let coverage = ListObsUvCoverage::from_ms(&ms).expect("build uv coverage");
+
+        assert_eq!(coverage.schema_version, LISTOBS_UV_SCHEMA_VERSION);
+        assert_eq!(coverage.axis_unit, "lambda");
+        assert!(coverage.mirrored_display);
+        assert_eq!(coverage.sample_count, 3);
+        assert_eq!(coverage.tracks.len(), 2);
+
+        let spw0 = coverage
+            .tracks
+            .iter()
+            .find(|track| track.spectral_window_id == 0)
+            .expect("spw0 track");
+        assert_eq!(spw0.samples.len(), 2);
+        assert_eq!(spw0.samples[0].row, 0);
+        assert_eq!(spw0.samples[1].row, 2);
+
+        let spw1 = coverage
+            .tracks
+            .iter()
+            .find(|track| track.spectral_window_id == 1)
+            .expect("spw1 track");
+        assert_eq!(spw1.samples.len(), 1);
+        assert!(spw1.center_frequency_hz > spw0.center_frequency_hz);
+        assert!(spw1.samples[0].u_lambda > spw0.samples[0].u_lambda);
+        assert!(coverage.max_abs_uv_lambda >= spw1.samples[0].v_lambda.abs());
+    }
+
+    #[test]
+    fn uv_coverage_respects_uvrange_selection() {
+        let ms = make_selection_fixture();
+        let coverage = ListObsUvCoverage::from_ms_with_options(
+            &ms,
+            &ListObsOptions {
+                uvrange: Some("0~50m".to_string()),
+                ..ListObsOptions::default()
+            },
+        )
+        .expect("build filtered uv coverage");
+
+        assert_eq!(coverage.sample_count, 2);
+        assert_eq!(coverage.tracks.len(), 1);
+        assert!(
+            coverage.tracks[0]
+                .samples
+                .iter()
+                .all(|sample| sample.row != 1)
+        );
+    }
+
     fn make_summary_fixture() -> MeasurementSet {
         let mut ms = MeasurementSet::create_memory(
             MeasurementSetBuilder::new().with_optional_subtable(crate::SubtableId::Source),
@@ -3331,8 +3590,10 @@ mod tests {
         let table = ms
             .subtable_mut(crate::SubtableId::SpectralWindow)
             .expect("SPECTRAL_WINDOW table");
-        let freq =
-            ArrayValue::Float64(ArrayD::from_shape_vec(vec![2], vec![1.4e9, 1.401e9]).unwrap());
+        let freq = ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![2], vec![ref_frequency_hz, ref_frequency_hz + 1.0e6])
+                .unwrap(),
+        );
         let width =
             ArrayValue::Float64(ArrayD::from_shape_vec(vec![2], vec![1.0e6, 1.0e6]).unwrap());
         let row = RecordValue::new(vec![

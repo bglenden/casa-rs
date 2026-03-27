@@ -292,6 +292,8 @@ mod tests {
             viewport: BrowserViewport::new(80, 24),
             status_line: "ok".to_string(),
             content_lines: vec!["Overview".to_string()],
+            vertical_metrics: None,
+            horizontal_metrics: None,
             selected_address: None,
             inspector: None,
         }))

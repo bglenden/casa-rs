@@ -6,7 +6,7 @@ use crate::config::ThemeMode;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Theme {
-    pub border_set: border::Set,
+    pub border_set: border::Set<'static>,
     pub header_fg: Color,
     pub header_dim_fg: Color,
     pub footer_fg: Color,

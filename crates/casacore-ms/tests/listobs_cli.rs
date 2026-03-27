@@ -88,6 +88,12 @@ fn listobs_ui_schema_describes_launcher_contract() {
     assert!(listfile.advanced);
     assert_eq!(listfile.group, "Output");
 
+    let uv_coverage_json = schema
+        .argument("uv_coverage_json")
+        .expect("uv_coverage_json argument");
+    assert!(uv_coverage_json.hidden_in_tui);
+    assert_eq!(uv_coverage_json.value_kind, UiValueKind::Bool);
+
     let managed_output = schema.managed_output.expect("managed output");
     assert_eq!(managed_output.renderer, "listobs-summary-v1");
     assert_eq!(managed_output.stdout_format, "json");
@@ -248,6 +254,33 @@ fn listobs_uvrange_selection_filters_json_summary() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse json");
     assert_eq!(json["measurement_set"]["row_count"], 1);
     assert_eq!(json["scans"][0]["scan_number"], 1);
+}
+
+#[test]
+fn listobs_uv_coverage_json_emits_lazy_plot_payload() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--format", "json", "--uv-coverage-json"])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs");
+    assert!(output.status.success(), "{output:?}");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse json");
+    assert_eq!(json["schema_version"], 1);
+    assert!(
+        json["tracks"]
+            .as_array()
+            .is_some_and(|tracks| !tracks.is_empty())
+    );
+    assert!(json["sample_count"].as_u64().is_some_and(|count| count > 0));
+    assert!(
+        json["max_abs_uv_lambda"]
+            .as_f64()
+            .is_some_and(|value| value > 0.0)
+    );
 }
 
 #[test]

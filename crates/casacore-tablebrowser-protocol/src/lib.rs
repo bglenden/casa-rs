@@ -21,12 +21,29 @@ pub struct BrowserViewport {
     pub width: u16,
     /// Available content height in terminal cells.
     pub height: u16,
+    /// Available inspector height in terminal cells when the client renders the
+    /// inspector in a separate pane.
+    #[serde(default)]
+    pub inspector_height: u16,
 }
 
 impl BrowserViewport {
     /// Construct a viewport from terminal-cell dimensions.
     pub const fn new(width: u16, height: u16) -> Self {
-        Self { width, height }
+        Self {
+            width,
+            height,
+            inspector_height: 0,
+        }
+    }
+
+    /// Construct a viewport with explicit main and inspector heights.
+    pub const fn with_inspector_height(width: u16, height: u16, inspector_height: u16) -> Self {
+        Self {
+            width,
+            height,
+            inspector_height,
+        }
     }
 }
 
@@ -35,8 +52,20 @@ impl Default for BrowserViewport {
         Self {
             width: 80,
             height: 24,
+            inspector_height: 0,
         }
     }
+}
+
+/// Structured main-pane navigation metrics for a browser view.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct BrowserNavigationMetrics {
+    /// Current selected item index within the view.
+    pub selected_index: usize,
+    /// Total number of items in the view.
+    pub total_items: usize,
+    /// Number of items visible in the current viewport.
+    pub viewport_items: usize,
 }
 
 /// JSON Lines request envelope sent from `casars` to the browser backend.
@@ -531,6 +560,12 @@ pub struct BrowserSnapshot {
     pub status_line: String,
     /// Render-ready content lines for the viewport.
     pub content_lines: Vec<String>,
+    /// Structured vertical metrics for the current main-pane view.
+    #[serde(default)]
+    pub vertical_metrics: Option<BrowserNavigationMetrics>,
+    /// Structured horizontal metrics for the current main-pane view.
+    #[serde(default)]
+    pub horizontal_metrics: Option<BrowserNavigationMetrics>,
     /// Stable address of the current selection.
     pub selected_address: Option<BrowserAddress>,
     /// Typed inspector payload for the current selection.
@@ -644,6 +679,8 @@ mod tests {
                 viewport,
                 status_line: "Columns ready".to_string(),
                 content_lines: vec!["Columns".to_string(), "NAME scalar string".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::Column {
                     table_path: "/tmp/root.ms".to_string(),
                     column: "NAME".to_string(),
@@ -676,6 +713,8 @@ mod tests {
                 viewport,
                 status_line: "Array inspector".to_string(),
                 content_lines: vec!["Cells".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::Cell {
                     table_path: "/tmp/root.ms".to_string(),
                     row: 7,
@@ -737,6 +776,8 @@ mod tests {
                 viewport,
                 status_line: "Keyword record".to_string(),
                 content_lines: vec!["Keywords".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::ColumnKeyword {
                     table_path: "/tmp/root.ms".to_string(),
                     column: "UVW".to_string(),
@@ -790,6 +831,8 @@ mod tests {
                 viewport,
                 status_line: "Keyword table ref".to_string(),
                 content_lines: vec!["Keywords".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::TableKeyword {
                     table_path: "/tmp/root.ms".to_string(),
                     keyword_path: vec!["FIELD".to_string(), "CHILD".to_string()],
@@ -824,6 +867,8 @@ mod tests {
                 viewport,
                 status_line: "Undefined selection".to_string(),
                 content_lines: vec!["Subtables".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::Subtable {
                     table_path: "/tmp/root.ms".to_string(),
                     source: "keyword:FIELD".to_string(),

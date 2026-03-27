@@ -72,9 +72,17 @@ Current v1 coverage:
 - `listobs` with a schema-driven parameter pane
 - collapsible parameter sections and sticky UI theme/split preferences
 - structured MeasurementSet summary rendering with tabbed result views
+- UV coverage plotting for `listobs`
 - raw stdout/stderr views for troubleshooting
 - mouse support for focus, clicks, wheel scrolling, and divider dragging
 - cancel support while a command is running
+
+Plot text rendering is platform-dependent today. On macOS, `casars` uses
+Plotters' system-font (`ttf`) path so charts pick up real platform fonts. On
+non-macOS targets, it uses Plotters' `ab_glyph` path instead so the workspace
+does not depend on Linux `fontconfig` just to build the launcher and its plots.
+That keeps CI portable, but chart text metrics and font appearance may differ
+slightly across platforms.
 
 Default keys:
 

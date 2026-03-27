@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ListObsOptions, ListObsOutputFormat, ListObsSummary};
+use super::{ListObsOptions, ListObsOutputFormat, ListObsSummary, ListObsUvCoverage};
 
 const UI_SCHEMA_VERSION: u32 = 1;
 const COMMAND_ID: &str = "listobs";
@@ -69,15 +69,27 @@ pub fn run_env(program_name: &str) -> i32 {
             }
         },
         Ok(CliAction::Run(options)) => {
-            match ListObsSummary::from_path_with_options(&options.path, &options.listobs)
-                .map_err(|error| error.to_string())
-                .and_then(|summary| {
-                    summary
-                        .render(options.format)
+            let rendered = match options.mode {
+                CliRunMode::Summary => {
+                    ListObsSummary::from_path_with_options(&options.path, &options.listobs)
                         .map_err(|error| error.to_string())
-                })
-                .and_then(|rendered| write_output(&options, &rendered))
-            {
+                        .and_then(|summary| {
+                            summary
+                                .render(options.format)
+                                .map_err(|error| error.to_string())
+                        })
+                }
+                CliRunMode::UvCoverageJson => {
+                    match ListObsUvCoverage::from_path_with_options(&options.path, &options.listobs)
+                    {
+                        Ok(coverage) => coverage
+                            .render_json_pretty()
+                            .map_err(|error| error.to_string()),
+                        Err(error) => Err(error.to_string()),
+                    }
+                }
+            };
+            match rendered.and_then(|text| write_output(&options, &text)) {
                 Ok(()) => 0,
                 Err(error) => {
                     eprintln!("Error: {error}");
@@ -430,6 +442,20 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 UiActionKind::Help,
                 "Print this help message",
             ),
+            toggle_argument(ToggleSpec {
+                common: ArgumentCommon {
+                    order: 22,
+                    id: "uv_coverage_json",
+                    label: "UV Coverage JSON",
+                    help: "Emit lazy-load UV coverage JSON for the current selection",
+                    group: "Output",
+                    advanced: true,
+                    hidden_in_tui: true,
+                },
+                true_flags: &["--uv-coverage-json"],
+                false_flags: &[],
+                default: false,
+            }),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "listobs-summary-v1".to_string(),
@@ -455,9 +481,16 @@ enum CliAction {
 struct CliOptions {
     path: PathBuf,
     format: ListObsOutputFormat,
+    mode: CliRunMode,
     output: Option<PathBuf>,
     overwrite: bool,
     listobs: ListObsOptions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliRunMode {
+    Summary,
+    UvCoverageJson,
 }
 
 #[derive(Debug, Clone)]
@@ -894,6 +927,11 @@ fn build_run_options(
     Ok(CliOptions {
         path: PathBuf::from(parsed.required_string("ms_path")?),
         format: ListObsOutputFormat::parse(&format)?,
+        mode: if parsed.bool_or_default(schema, "uv_coverage_json")? {
+            CliRunMode::UvCoverageJson
+        } else {
+            CliRunMode::Summary
+        },
         output: output.or(listfile).map(PathBuf::from),
         overwrite: parsed.bool_or_default(schema, "overwrite")?,
         listobs: ListObsOptions {

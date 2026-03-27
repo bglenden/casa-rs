@@ -386,6 +386,35 @@
         }
       }
     },
+    "BrowserNavigationMetrics": {
+      "description": "Structured main-pane navigation metrics for a browser view.",
+      "type": "object",
+      "required": [
+        "selected_index",
+        "total_items",
+        "viewport_items"
+      ],
+      "properties": {
+        "selected_index": {
+          "description": "Current selected item index within the view.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "total_items": {
+          "description": "Total number of items in the view.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "viewport_items": {
+          "description": "Number of items visible in the current viewport.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
     "BrowserPrimitiveType": {
       "description": "Primitive element type carried by scalar and array values.",
       "oneOf": [
@@ -565,6 +594,18 @@
                 }
               ]
             },
+            "horizontal_metrics": {
+              "description": "Structured horizontal metrics for the current main-pane view.",
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserNavigationMetrics"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "inspector": {
               "description": "Typed inspector payload for the current selection.",
               "anyOf": [
@@ -600,6 +641,18 @@
             "table_path": {
               "description": "Currently opened table path.",
               "type": "string"
+            },
+            "vertical_metrics": {
+              "description": "Structured vertical metrics for the current main-pane view.",
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserNavigationMetrics"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "view": {
               "description": "Active top-level view.",
@@ -1161,6 +1214,13 @@
       "properties": {
         "height": {
           "description": "Available content height in terminal cells.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "inspector_height": {
+          "description": "Available inspector height in terminal cells when the client renders the inspector in a separate pane.",
+          "default": 0,
           "type": "integer",
           "format": "uint16",
           "minimum": 0.0

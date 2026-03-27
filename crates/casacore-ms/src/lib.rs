@@ -61,7 +61,10 @@ pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
 pub use error::{MsError, MsResult};
-pub use listobs::{ListObsOptions, ListObsOutputFormat, ListObsSummary};
+pub use listobs::{
+    ListObsOptions, ListObsOutputFormat, ListObsSummary, ListObsUvCoverage, ListObsUvPoint,
+    ListObsUvTrack,
+};
 pub use ms::MeasurementSet;
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
