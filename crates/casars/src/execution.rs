@@ -149,6 +149,7 @@ fn exit_from_status(status: ExitStatus) -> ExecutionExit {
 mod tests {
     use super::*;
     use crate::registry::ResolvedCommand;
+    use std::time::Instant;
 
     #[test]
     fn spawn_process_reports_stdout_stderr_and_exit() {
@@ -199,7 +200,8 @@ mod tests {
         process.cancel().expect("cancel process");
 
         let mut exit = None;
-        for _ in 0..80 {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
             match process.try_recv() {
                 Ok(ExecutionEvent::Exited(status)) => {
                     exit = Some(status);
