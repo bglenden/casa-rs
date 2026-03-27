@@ -197,9 +197,6 @@ fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn resolve_app_defaults_and_rejects_unknown_ids() {
@@ -234,7 +231,7 @@ mod tests {
 
     #[test]
     fn resolve_command_prefers_override_environment() {
-        let _guard = ENV_LOCK.lock().expect("lock");
+        let _guard = crate::test_env_lock();
         let app = listobs_app();
         unsafe {
             env::set_var("CASARS_LISTOBS_BIN", "/tmp/custom-listobs");
@@ -252,7 +249,7 @@ mod tests {
 
     #[test]
     fn resolve_command_falls_back_to_cargo_run_prefix() {
-        let _guard = ENV_LOCK.lock().expect("lock");
+        let _guard = crate::test_env_lock();
         let app = tablebrowser_app();
         unsafe {
             env::remove_var("CASARS_TABLEBROWSER_BIN");

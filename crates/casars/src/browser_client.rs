@@ -239,7 +239,6 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
     use std::thread;
 
     use casacore_tablebrowser_protocol::{
@@ -248,12 +247,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
     #[test]
     fn timeout_terminates_session_before_a_late_reply_can_be_reused() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_env_lock();
         let temp = tempdir().expect("tempdir");
         let script = write_slow_browser_script(temp.path(), 200);
         unsafe {
@@ -283,7 +279,7 @@ mod tests {
 
     #[test]
     fn invalid_json_response_is_reported_as_protocol_error() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_env_lock();
         let temp = tempdir().expect("tempdir");
         let script = write_browser_script(
             temp.path(),
@@ -301,7 +297,7 @@ mod tests {
 
     #[test]
     fn disconnected_session_surfaces_exit_and_stderr() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_env_lock();
         let temp = tempdir().expect("tempdir");
         let script = write_browser_script(
             temp.path(),

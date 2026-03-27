@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::MutexGuard;
 use std::time::{Duration, Instant};
 
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
@@ -2533,10 +2533,7 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
 }
 
 fn launcher_env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    crate::test_env_lock()
 }
 
 fn clear_launcher_bin() {

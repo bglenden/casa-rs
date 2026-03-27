@@ -30,6 +30,16 @@ use crate::app::AppState;
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
 use crate::startup::{StartupLaunch, StartupSelection, StartupValue, parse_startup_args};
 
+#[cfg(test)]
+fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 enum RunOutcome {
     Quit,
     Launcher,
