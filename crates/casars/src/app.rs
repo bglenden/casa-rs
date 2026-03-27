@@ -340,6 +340,7 @@ pub(crate) struct AppState {
     uv_coverage: Option<ListObsUvCoverage>,
     uv_coverage_error: Option<String>,
     uv_plot_panel: Option<UvPlotPanelState>,
+    last_listobs_uv_plan: Option<ExecutionPlan>,
     path_chooser: Option<PathChooserState>,
     browser_session: Option<BrowserSession>,
     spinner_frame: usize,
@@ -360,6 +361,7 @@ struct RunningState {
     process: RunningProcess,
     renderer: Option<String>,
     file_output_path: Option<String>,
+    uv_plan: Option<ExecutionPlan>,
     cancel_requested: bool,
 }
 
@@ -522,6 +524,7 @@ impl AppState {
             uv_coverage: None,
             uv_coverage_error: None,
             uv_plot_panel: None,
+            last_listobs_uv_plan: None,
             path_chooser: None,
             browser_session: None,
             spinner_frame: 0,
@@ -573,6 +576,7 @@ impl AppState {
             uv_coverage: None,
             uv_coverage_error: None,
             uv_plot_panel: None,
+            last_listobs_uv_plan: None,
             path_chooser: None,
             browser_session: None,
             spinner_frame: 0,
@@ -598,7 +602,7 @@ impl AppState {
     }
 
     fn has_active_session(&self) -> bool {
-        self.running.is_some() || self.browser_session.is_some()
+        self.running.is_some() || self.browser_session.is_some() || self.uv_loading.is_some()
     }
 
     fn browser_session(&self) -> Option<&BrowserSession> {
@@ -1468,6 +1472,11 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn cancel_for_test(&mut self) {
         self.cancel_current();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn uv_loading_active_for_test(&self) -> bool {
+        self.uv_loading.is_some()
     }
 
     #[cfg(test)]
@@ -2673,6 +2682,7 @@ impl AppState {
         self.clear_output_selection();
         self.commit_edit_buffer();
         self.clear_cached_uv_coverage();
+        self.last_listobs_uv_plan = None;
 
         if self.schema.is_none() {
             self.result.status_line = "Cannot run without a loaded UI schema.".to_string();
@@ -2687,33 +2697,52 @@ impl AppState {
         }
 
         match self.build_execution_plan() {
-            Ok(plan) => match spawn_process(&plan) {
-                Ok(process) => {
-                    self.result = ResultState {
-                        status_line: format!("Running {}...", self.app.id),
-                        status_kind: StatusKind::Running,
-                        file_output_path: plan.file_output_path.clone(),
-                        ..ResultState::default()
-                    };
-                    self.edit_state = None;
-                    self.pane_focus = PaneFocus::Result;
-                    self.active_result_tab = ResultTab::Overview;
-                    self.result_scrolls = [0; RESULT_TAB_COUNT];
-                    self.result_hscrolls = [0; RESULT_TAB_COUNT];
-                    self.running = Some(RunningState {
-                        process,
-                        renderer: plan.renderer,
-                        file_output_path: plan.file_output_path,
-                        cancel_requested: false,
-                    });
+            Ok(plan) => {
+                let uv_plan = if self.app.id == "listobs" {
+                    match self.build_uv_execution_plan() {
+                        Ok(uv_plan) => Some(uv_plan),
+                        Err(error) => {
+                            self.result.status_line =
+                                "Cannot prepare UV coverage request.".to_string();
+                            self.result.status_kind = StatusKind::Error;
+                            self.result.stderr = format!("{error}\n");
+                            self.active_result_tab = ResultTab::Stderr;
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                match spawn_process(&plan) {
+                    Ok(process) => {
+                        self.result = ResultState {
+                            status_line: format!("Running {}...", self.app.id),
+                            status_kind: StatusKind::Running,
+                            file_output_path: plan.file_output_path.clone(),
+                            ..ResultState::default()
+                        };
+                        self.edit_state = None;
+                        self.pane_focus = PaneFocus::Result;
+                        self.active_result_tab = ResultTab::Overview;
+                        self.result_scrolls = [0; RESULT_TAB_COUNT];
+                        self.result_hscrolls = [0; RESULT_TAB_COUNT];
+                        self.running = Some(RunningState {
+                            process,
+                            renderer: plan.renderer,
+                            file_output_path: plan.file_output_path,
+                            uv_plan,
+                            cancel_requested: false,
+                        });
+                    }
+                    Err(error) => {
+                        self.result.status_line = format!("Failed to launch {}.", self.app.id);
+                        self.result.status_kind = StatusKind::Error;
+                        self.result.stderr = format!("{error}\n");
+                        self.active_result_tab = ResultTab::Stderr;
+                    }
                 }
-                Err(error) => {
-                    self.result.status_line = format!("Failed to launch {}.", self.app.id);
-                    self.result.status_kind = StatusKind::Error;
-                    self.result.stderr = format!("{error}\n");
-                    self.active_result_tab = ResultTab::Stderr;
-                }
-            },
+            }
             Err(error) => {
                 self.result.status_line = "Cannot start command.".to_string();
                 self.result.status_kind = StatusKind::Error;
@@ -2819,10 +2848,14 @@ impl AppState {
     }
 
     fn clear_cached_uv_coverage(&mut self) {
+        if let Some(loading) = self.uv_loading.take() {
+            if !loading.cancel_requested {
+                let _ = loading.process.cancel();
+            }
+        }
         self.uv_coverage = None;
         self.uv_coverage_error = None;
         self.uv_plot_panel = None;
-        self.uv_loading = None;
     }
 
     fn ensure_uv_coverage_started(&mut self) {
@@ -2834,29 +2867,29 @@ impl AppState {
             return;
         }
 
-        match self.build_uv_execution_plan() {
-            Ok(plan) => match spawn_process(&plan) {
-                Ok(process) => {
-                    self.uv_loading = Some(UvCoverageLoadState {
-                        process,
-                        stdout: String::new(),
-                        stderr: String::new(),
-                        cancel_requested: false,
-                    });
-                    self.uv_coverage_error = None;
-                    self.result.status_line = "Loading UV coverage...".to_string();
-                    self.result.status_kind = StatusKind::Running;
-                }
-                Err(error) => {
-                    self.uv_coverage_error = Some(error.clone());
-                    self.result.status_line = "Failed to launch UV coverage loader.".to_string();
-                    self.result.status_kind = StatusKind::Error;
-                    self.result.stderr.push_str(&format!("{error}\n"));
-                }
-            },
+        let Some(plan) = self.last_listobs_uv_plan.clone() else {
+            self.uv_coverage_error = Some(
+                "UV coverage is only available for the most recent completed listobs run."
+                    .to_string(),
+            );
+            return;
+        };
+
+        match spawn_process(&plan) {
+            Ok(process) => {
+                self.uv_loading = Some(UvCoverageLoadState {
+                    process,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    cancel_requested: false,
+                });
+                self.uv_coverage_error = None;
+                self.result.status_line = "Loading UV coverage...".to_string();
+                self.result.status_kind = StatusKind::Running;
+            }
             Err(error) => {
                 self.uv_coverage_error = Some(error.clone());
-                self.result.status_line = "Cannot start UV coverage loader.".to_string();
+                self.result.status_line = "Failed to launch UV coverage loader.".to_string();
                 self.result.status_kind = StatusKind::Error;
                 self.result.stderr.push_str(&format!("{error}\n"));
             }
@@ -3259,6 +3292,7 @@ impl AppState {
         self.result.file_output_path = running.file_output_path.clone();
 
         if running.cancel_requested {
+            self.last_listobs_uv_plan = None;
             self.result.status_line = "Execution canceled.".to_string();
             self.result.status_kind = StatusKind::Warning;
             self.result.structured = None;
@@ -3278,6 +3312,7 @@ impl AppState {
             self.result.status_line = "Execution completed successfully.".to_string();
             self.result.status_kind = StatusKind::Ok;
             if let Some(path) = running.file_output_path {
+                self.last_listobs_uv_plan = None;
                 self.result.structured = None;
                 self.result.structured_error = None;
                 self.result.file_output_path = Some(path);
@@ -3288,11 +3323,13 @@ impl AppState {
             if matches!(running.renderer.as_deref(), Some("listobs-summary-v1")) {
                 match serde_json::from_str::<ListObsSummary>(&self.result.stdout) {
                     Ok(summary) => {
+                        self.last_listobs_uv_plan = running.uv_plan;
                         self.result.structured = Some(summary);
                         self.result.structured_error = None;
                         self.activate_result_tab(ResultTab::Overview);
                     }
                     Err(error) => {
+                        self.last_listobs_uv_plan = None;
                         self.result.structured = None;
                         self.result.structured_error =
                             Some(format!("Failed to parse structured output: {error}"));
@@ -3314,6 +3351,7 @@ impl AppState {
                 });
             }
         } else {
+            self.last_listobs_uv_plan = None;
             self.result.status_line = "Execution failed.".to_string();
             self.result.status_kind = StatusKind::Error;
             self.result.structured = None;

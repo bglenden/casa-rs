@@ -5,6 +5,7 @@ use std::process::{Child, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use crate::registry::ResolvedCommand;
 
@@ -88,14 +89,7 @@ pub(crate) fn spawn_process(plan: &ExecutionPlan) -> Result<RunningProcess, Stri
 
     let child_for_wait = Arc::clone(&child);
     thread::spawn(move || {
-        let exit_status = child_for_wait
-            .lock()
-            .map_err(|_| "failed to acquire child-process lock".to_string())
-            .and_then(|mut child| {
-                child
-                    .wait()
-                    .map_err(|error| format!("wait for child: {error}"))
-            });
+        let exit_status = wait_for_child_exit(&child_for_wait);
         let _ = stdout_handle.join();
         let _ = stderr_handle.join();
         let exit = match exit_status {
@@ -112,6 +106,20 @@ pub(crate) fn spawn_process(plan: &ExecutionPlan) -> Result<RunningProcess, Stri
         receiver: rx,
         child,
     })
+}
+
+fn wait_for_child_exit(child: &Arc<Mutex<Child>>) -> Result<ExitStatus, String> {
+    loop {
+        let status = child
+            .lock()
+            .map_err(|_| "failed to acquire child-process lock".to_string())?
+            .try_wait()
+            .map_err(|error| format!("wait for child: {error}"))?;
+        if let Some(status) = status {
+            return Ok(status);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn read_stream<R>(stream: R, mut send: impl FnMut(String))

@@ -1,0 +1,36 @@
+[package]
+name = "ratatui-graphics"
+version = "0.1.0"
+edition = "2024"
+readme = "README.md"
+
+[dependencies]
+image = { version = "0.25.8", default-features = false, features = ["png"] }
+thiserror = "2.0.17"
+kittage = { version = "0.3.4", features = ["image-crate"], optional = true }
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series", "point_series", "full_palette", "ttf"], optional = true }
+ratatui = { version = "0.30.0", default-features = false, features = ["crossterm"], optional = true }
+ratatui-image = { version = "10.0.6", default-features = false, features = ["crossterm", "image-defaults"], optional = true }
+termbg = { version = "0.6.2", optional = true }
+
+[dev-dependencies]
+anyhow = "1.0.100"
+
+[features]
+default = ["panel", "kitty", "plotters", "terminal-detect"]
+panel = ["dep:ratatui", "dep:ratatui-image"]
+kitty = ["dep:kittage", "dep:ratatui", "dep:ratatui-image"]
+plotters = ["dep:plotters"]
+terminal-detect = ["dep:termbg"]
+
+[[example]]
+name = "panel_only"
+required-features = ["panel", "plotters"]
+
+[[example]]
+name = "kitty_overlay"
+required-features = ["kitty"]
+
+[[example]]
+name = "demo"
+required-features = ["panel", "kitty", "plotters", "terminal-detect"]

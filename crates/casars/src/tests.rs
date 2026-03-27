@@ -1607,6 +1607,102 @@ fn uv_tab_lazy_loads_coverage_after_listobs_run() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn uv_tab_reuses_last_successful_run_arguments_after_form_edits() {
+    let _guard = launcher_env_lock();
+
+    let temp = tempdir().expect("tempdir");
+    let first_root = temp.path().join("first");
+    let second_root = temp.path().join("second");
+    std::fs::create_dir(&first_root).expect("create first root");
+    std::fs::create_dir(&second_root).expect("create second root");
+    let first_ms = create_fixture_ms(&first_root);
+    let second_ms = create_fixture_ms(&second_root);
+    let arg_log = temp.path().join("listobs-args.log");
+    let script =
+        write_forwarding_listobs_script(temp.path(), &arg_log, Duration::ZERO, None::<&Path>);
+    set_launcher_bin(&script);
+
+    let schema = listobs_app()
+        .load_schema()
+        .expect("load schema from forwarding wrapper");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    app.set_text_value("ms_path", first_ms.to_string_lossy().as_ref());
+    app.start_run_for_test();
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
+
+    app.set_text_value("ms_path", second_ms.to_string_lossy().as_ref());
+    app.set_active_result_tab(ResultTab::Uv);
+    assert!(app.wait_for_all_idle_for_test(Duration::from_secs(60)));
+
+    let invocations = read_log_lines(&arg_log);
+    assert_eq!(
+        invocations.len(),
+        2,
+        "expected one summary run and one UV run"
+    );
+    let first_ms_display = first_ms.to_string_lossy();
+    let second_ms_display = second_ms.to_string_lossy();
+    assert!(invocations[0].contains(first_ms_display.as_ref()));
+    assert!(invocations[1].contains(first_ms_display.as_ref()));
+    assert!(invocations[1].contains("--uv-coverage-json"));
+    assert!(!invocations[1].contains(second_ms_display.as_ref()));
+}
+
+#[cfg(unix)]
+#[test]
+fn uv_loading_is_active_work_and_field_edits_cancel_the_loader() {
+    let _guard = launcher_env_lock();
+
+    let temp = tempdir().expect("tempdir");
+    let first_root = temp.path().join("first");
+    let second_root = temp.path().join("second");
+    std::fs::create_dir(&first_root).expect("create first root");
+    std::fs::create_dir(&second_root).expect("create second root");
+    let first_ms = create_fixture_ms(&first_root);
+    let second_ms = create_fixture_ms(&second_root);
+    let arg_log = temp.path().join("listobs-args.log");
+    let uv_marker = temp.path().join("uv-marker.log");
+    let script = write_forwarding_listobs_script(
+        temp.path(),
+        &arg_log,
+        Duration::from_secs(2),
+        Some(&uv_marker),
+    );
+    set_launcher_bin(&script);
+
+    let schema = listobs_app()
+        .load_schema()
+        .expect("load schema from forwarding wrapper");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    app.set_text_value("ms_path", first_ms.to_string_lossy().as_ref());
+    app.start_run_for_test();
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
+
+    app.set_active_result_tab(ResultTab::Uv);
+    assert!(app.uv_loading_active_for_test());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        read_log_lines(&arg_log).len(),
+        2,
+        "rerun should be blocked while UV loading is active"
+    );
+
+    app.set_text_value("ms_path", second_ms.to_string_lossy().as_ref());
+    assert!(!app.uv_loading_active_for_test());
+
+    std::thread::sleep(Duration::from_millis(2300));
+    assert!(
+        read_log_lines(&uv_marker).is_empty(),
+        "clearing cached UV state should cancel the in-flight loader"
+    );
+}
+
 #[test]
 fn verbose_on_exposes_scans_and_sources_tabs() {
     let (_temp, app) = test_app();
@@ -2205,6 +2301,81 @@ fn write_fake_listobs_script(root: &Path, body: &str) -> PathBuf {
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("chmod script");
     path
+}
+
+#[cfg(unix)]
+fn write_forwarding_listobs_script(
+    root: &Path,
+    log_path: &Path,
+    uv_delay: Duration,
+    uv_marker_path: Option<&Path>,
+) -> PathBuf {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let schema_json = command_schema("listobs")
+        .render_json_pretty()
+        .expect("serialize schema");
+    let delay_line = if uv_delay.is_zero() {
+        String::new()
+    } else {
+        format!("    sleep {:.3}\n", uv_delay.as_secs_f64())
+    };
+    let marker_line = uv_marker_path
+        .map(|path| {
+            format!(
+                "    printf '%s\\n' 'uv-finished' >> {}\n",
+                sh_quote_path(path)
+            )
+        })
+        .unwrap_or_default();
+    let path = root.join("forwarding-listobs.sh");
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--ui-schema\" ]; then\ncat <<'EOF'\n{schema_json}\nEOF\nexit 0\nfi\nprintf '%s\\n' \"$*\" >> {}\ncase \" $* \" in\n  *\" --uv-coverage-json \"*)\n{delay_line}{marker_line}    ;;\nesac\n{}\n",
+        sh_quote_path(log_path),
+        listobs_forward_exec_snippet(),
+    );
+    fs::write(&path, script).expect("write forwarding script");
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("chmod script");
+    path
+}
+
+#[cfg(unix)]
+fn listobs_forward_exec_snippet() -> String {
+    if let Some(path) = std::env::var_os("CARGO_BIN_EXE_listobs") {
+        return format!("exec {} \"$@\"", sh_quote(path.to_string_lossy().as_ref()));
+    }
+
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root");
+    format!(
+        "cd {} && exec {} run -q -p casacore-ms --bin listobs -- \"$@\"",
+        sh_quote_path(repo_root),
+        sh_quote(cargo.to_string_lossy().as_ref())
+    )
+}
+
+#[cfg(unix)]
+fn sh_quote_path(path: &Path) -> String {
+    sh_quote(path.to_string_lossy().as_ref())
+}
+
+#[cfg(unix)]
+fn sh_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn read_log_lines(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(unix)]
