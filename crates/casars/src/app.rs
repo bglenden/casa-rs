@@ -4603,8 +4603,8 @@ mod tests {
         expand_tilde_path_with_home,
     };
     use crate::execution::{ExecutionPlan, spawn_process};
-    use crate::registry::listobs_app;
     use crate::registry::ResolvedCommand;
+    use crate::registry::listobs_app;
     use casacore_ms::listobs::cli::command_schema;
     use casacore_ms::{ListObsOptions, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack};
     use image::DynamicImage;
@@ -4851,9 +4851,10 @@ mod tests {
 
         assert_eq!(app.status_line_for_test(), "UV plot rendering failed.");
         assert_eq!(app.result.status_kind, StatusKind::Warning);
-        assert!(app
-            .uv_plot_last_error()
-            .expect("plot error")
-            .contains("boom"));
+        assert!(
+            app.uv_plot_last_error()
+                .expect("plot error")
+                .contains("boom")
+        );
     }
 }

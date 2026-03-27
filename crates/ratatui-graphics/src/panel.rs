@@ -549,14 +549,15 @@ mod tests {
 
     #[test]
     fn request_rejects_invalid_dimensions_and_exhausted_ids() {
-        let mut renderer: PanelRenderer<i32, TestError> = PanelRenderer::new(
-            Picker::halfblocks(),
-            Resize::Fit(None),
-            |_job| Ok(DynamicImage::ImageRgba8(RgbaImage::new(1, 1))),
-        )
-        .unwrap();
+        let mut renderer: PanelRenderer<i32, TestError> =
+            PanelRenderer::new(Picker::halfblocks(), Resize::Fit(None), |_job| {
+                Ok(DynamicImage::ImageRgba8(RgbaImage::new(1, 1)))
+            })
+            .unwrap();
 
-        let err = renderer.request(Rect::new(0, 0, 0, 5), 10, 10, 1).unwrap_err();
+        let err = renderer
+            .request(Rect::new(0, 0, 0, 5), 10, 10, 1)
+            .unwrap_err();
         assert!(matches!(
             err,
             PanelSubmitError::InvalidDimensions {
@@ -568,18 +569,19 @@ mod tests {
         ));
 
         renderer.next_request_id = u64::MAX;
-        let err = renderer.request(Rect::new(0, 0, 5, 5), 10, 10, 1).unwrap_err();
+        let err = renderer
+            .request(Rect::new(0, 0, 5, 5), 10, 10, 1)
+            .unwrap_err();
         assert!(matches!(err, PanelSubmitError::RequestIdExhausted));
     }
 
     #[test]
     fn pump_reports_disconnected_worker_for_pending_latest_request() {
-        let mut renderer: PanelRenderer<i32, TestError> = PanelRenderer::new(
-            Picker::halfblocks(),
-            Resize::Fit(None),
-            |_job| Ok(DynamicImage::ImageRgba8(RgbaImage::new(1, 1))),
-        )
-        .unwrap();
+        let mut renderer: PanelRenderer<i32, TestError> =
+            PanelRenderer::new(Picker::halfblocks(), Resize::Fit(None), |_job| {
+                Ok(DynamicImage::ImageRgba8(RgbaImage::new(1, 1)))
+            })
+            .unwrap();
         let area = Rect::new(0, 0, 4, 4);
         let request_id = renderer.request(area, 8, 8, 1).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -604,12 +606,11 @@ mod tests {
             max_pixel_height: 16,
             input: (),
         };
-        let err = match render_panel_protocol(&picker, Resize::Fit(None), &job, |_job| {
-            Err(TestError)
-        }) {
-            Ok(_) => panic!("expected render error"),
-            Err(err) => err,
-        };
+        let err =
+            match render_panel_protocol(&picker, Resize::Fit(None), &job, |_job| Err(TestError)) {
+                Ok(_) => panic!("expected render error"),
+                Err(err) => err,
+            };
         match err {
             PanelRenderError::Render { request_id, .. } => assert_eq!(request_id, 7),
             other => panic!("unexpected render error: {other:?}"),
@@ -626,13 +627,11 @@ mod tests {
             max_pixel_height: 10,
             input: (),
         };
-        let prepared: PreparedPanelProtocol = render_panel_protocol(
-            &picker,
-            Resize::Fit(None),
-            &job,
-            |_job| Ok::<DynamicImage, TestError>(DynamicImage::ImageRgba8(RgbaImage::new(12, 10))),
-        )
-        .unwrap();
+        let prepared: PreparedPanelProtocol =
+            render_panel_protocol(&picker, Resize::Fit(None), &job, |_job| {
+                Ok::<DynamicImage, TestError>(DynamicImage::ImageRgba8(RgbaImage::new(12, 10)))
+            })
+            .unwrap();
         assert_eq!(prepared.request_id, 9);
         assert_eq!(prepared.area, job.area);
         assert_eq!(prepared.image_width, 12);
