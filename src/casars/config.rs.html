@@ -144,4 +144,55 @@
 <a href=#144 id=144 data-nosnippet>144</a>        pane_restore_ratio.clamp(<span class="number">0.25</span>, <span class="number">0.75</span>)
 <a href=#145 id=145 data-nosnippet>145</a>    }
 <a href=#146 id=146 data-nosnippet>146</a>}
+<a href=#147 id=147 data-nosnippet>147</a>
+<a href=#148 id=148 data-nosnippet>148</a><span class="attr">#[cfg(test)]
+<a href=#149 id=149 data-nosnippet>149</a></span><span class="kw">mod </span>tests {
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">use </span>tempfile::tempdir;
+<a href=#152 id=152 data-nosnippet>152</a>
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="attr">#[test]
+<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">fn </span>theme_mode_toggle_round_trips() {
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="macro">assert_eq!</span>(ThemeMode::DenseAnsi.toggle(), ThemeMode::RichPanel);
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="macro">assert_eq!</span>(ThemeMode::RichPanel.toggle(), ThemeMode::DenseAnsi);
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="attr">#[test]
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">fn </span>load_for_tests_normalizes_ratios_from_disk() {
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>path = temp.path().join(<span class="string">"casars.toml"</span>);
+<a href=#163 id=163 data-nosnippet>163</a>        fs::write(
+<a href=#164 id=164 data-nosnippet>164</a>            <span class="kw-2">&amp;</span>path,
+<a href=#165 id=165 data-nosnippet>165</a>            <span class="string">r#"
+<a href=#166 id=166 data-nosnippet>166</a>theme_mode = "rich_panel"
+<a href=#167 id=167 data-nosnippet>167</a>pane_split_ratio = 0.9
+<a href=#168 id=168 data-nosnippet>168</a>pane_restore_ratio = -1.0
+<a href=#169 id=169 data-nosnippet>169</a>"#</span>,
+<a href=#170 id=170 data-nosnippet>170</a>        )
+<a href=#171 id=171 data-nosnippet>171</a>        .expect(<span class="string">"write config"</span>);
+<a href=#172 id=172 data-nosnippet>172</a>
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>store = ConfigStore::load_for_tests(path);
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="macro">assert_eq!</span>(store.theme_mode(), ThemeMode::RichPanel);
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="macro">assert_eq!</span>(store.pane_split_ratio(), <span class="number">0.75</span>);
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="macro">assert_eq!</span>(store.pane_restore_ratio(), <span class="number">0.75</span>);
+<a href=#177 id=177 data-nosnippet>177</a>    }
+<a href=#178 id=178 data-nosnippet>178</a>
+<a href=#179 id=179 data-nosnippet>179</a>    <span class="attr">#[test]
+<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="kw">fn </span>set_pane_split_ratio_clamps_and_persists_restore_ratio() {
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
+<a href=#182 id=182 data-nosnippet>182</a>        <span class="kw">let </span>path = temp.path().join(<span class="string">"nested"</span>).join(<span class="string">"casars.toml"</span>);
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span><span class="kw-2">mut </span>store = ConfigStore::load_for_tests(path.clone());
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a>        store.set_pane_split_ratio(<span class="number">0.1</span>);
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="macro">assert_eq!</span>(store.pane_split_ratio(), <span class="number">0.25</span>);
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="macro">assert_eq!</span>(store.pane_restore_ratio(), <span class="number">0.25</span>);
+<a href=#188 id=188 data-nosnippet>188</a>
+<a href=#189 id=189 data-nosnippet>189</a>        store.set_pane_split_ratio(<span class="number">0.0</span>);
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="macro">assert_eq!</span>(store.pane_split_ratio(), <span class="number">0.0</span>);
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="macro">assert_eq!</span>(store.pane_restore_ratio(), <span class="number">0.25</span>);
+<a href=#192 id=192 data-nosnippet>192</a>
+<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">let </span>saved = fs::read_to_string(path).expect(<span class="string">"read saved config"</span>);
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"pane_split_ratio = 0.0"</span>));
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"pane_restore_ratio = 0.25"</span>));
+<a href=#196 id=196 data-nosnippet>196</a>    }
+<a href=#197 id=197 data-nosnippet>197</a>}
 </code></pre></div></section></main></body></html>
