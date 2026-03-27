@@ -283,6 +283,7 @@ mod tests {
 
     #[test]
     fn invalid_json_response_is_reported_as_protocol_error() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempdir().expect("tempdir");
         let script = write_browser_script(
             temp.path(),
@@ -300,6 +301,7 @@ mod tests {
 
     #[test]
     fn disconnected_session_surfaces_exit_and_stderr() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempdir().expect("tempdir");
         let script = write_browser_script(
             temp.path(),
