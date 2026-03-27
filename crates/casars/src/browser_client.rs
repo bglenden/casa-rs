@@ -281,8 +281,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn invalid_json_response_is_reported_as_protocol_error() {
+        let temp = tempdir().expect("tempdir");
+        let script = write_browser_script(
+            temp.path(),
+            "#!/bin/sh\nwhile IFS= read -r _line; do\n  printf '{not-json}\\n'\ndone\n",
+        );
+        let client =
+            BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn browser client");
+
+        let error = client
+            .request(BrowserCommand::GetSnapshot { viewport: None })
+            .expect_err("invalid response should fail");
+        assert!(error.contains("invalid_response"));
+        assert!(error.contains("parse browser response"));
+    }
+
+    #[test]
+    fn disconnected_session_surfaces_exit_and_stderr() {
+        let temp = tempdir().expect("tempdir");
+        let script = write_browser_script(
+            temp.path(),
+            "#!/bin/sh\nwhile IFS= read -r _line; do\n  echo 'backend exploded' >&2\n  exit 7\ndone\n",
+        );
+        let client =
+            BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn browser client");
+
+        let error = client
+            .request(BrowserCommand::GetSnapshot { viewport: None })
+            .expect_err("disconnected session should fail");
+        assert!(
+            error.contains("tablebrowser session exited")
+                || error.contains("write browser request")
+                || error.contains("timed out waiting for browser response")
+        );
+        assert!(error.contains("backend exploded") || error.contains("exit status: 7"));
+    }
+
     fn write_slow_browser_script(root: &Path, delay_ms: u64) -> PathBuf {
-        let path = root.join("slow-browser.sh");
         let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
             capabilities: casacore_tablebrowser_protocol::BrowserCapabilities { editable: false },
             view: casacore_tablebrowser_protocol::BrowserView::Overview,
@@ -303,6 +340,11 @@ mod tests {
             delay_ms as f64 / 1000.0,
             response
         );
+        write_browser_script(root, &script)
+    }
+
+    fn write_browser_script(root: &Path, script: &str) -> PathBuf {
+        let path = root.join("browser.sh");
         fs::write(&path, script).expect("write script");
         let mut permissions = fs::metadata(&path).expect("metadata").permissions();
         permissions.set_mode(0o755);

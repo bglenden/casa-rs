@@ -1245,7 +1245,37 @@ fn fit_text_preserving_suffix(text: &str, width: usize, suffix: &str) -> String 
 
 #[cfg(test)]
 mod tests {
-    use super::fit_text_preserving_suffix;
+    use ratatui::layout::Rect;
+    use ratatui::style::Modifier;
+    use ratatui::widgets::ScrollbarState;
+
+    use super::{
+        UiLayout, browser_tab_label, centered_rect, compute_layout, content_viewport_area,
+        fit_text, fit_text_preserving_suffix, footer_line, path_chooser_area,
+        path_chooser_list_area, rect_contains, render_form_row_text, render_visible_text_line,
+        result_hscrollbar_state, result_scrollbar_state, selection_contains, tab_label,
+    };
+    use crate::app::{
+        AppState, BrowserTab, FormRowKind, FormRowView, PaneFocus, ResultContent, ResultTab,
+        TableView, VisibleTextLine, VisibleTextRole,
+    };
+    use crate::config::ThemeMode;
+    use crate::registry::listobs_app;
+    use crate::theme::theme;
+    use casacore_ms::listobs::cli::command_schema;
+
+    fn test_app() -> AppState {
+        AppState::from_schema(listobs_app(), command_schema("listobs"))
+    }
+
+    #[test]
+    fn fit_text_handles_zero_and_short_widths() {
+        assert_eq!(fit_text("abcdef", 0), "");
+        assert_eq!(fit_text("abcdef", 2), "..");
+        assert_eq!(fit_text("abcdef", 3), "...");
+        assert_eq!(fit_text("abcdef", 5), "ab...");
+        assert_eq!(fit_text("abc", 5), "abc");
+    }
 
     #[test]
     fn preserves_browse_suffix_when_truncating() {
@@ -1262,5 +1292,190 @@ mod tests {
     fn falls_back_to_normal_fit_without_suffix() {
         let rendered = fit_text_preserving_suffix("abcdef", 5, " [browse]");
         assert_eq!(rendered, "ab...");
+    }
+
+    #[test]
+    fn footer_line_splits_key_action_segments() {
+        let line = footer_line("q=quit  Enter launch  arrows", theme(ThemeMode::DenseAnsi));
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(rendered, "q=quit  Enter launch  arrows");
+        assert_eq!(line.spans[0].style.fg, Some(theme(ThemeMode::DenseAnsi).footer_key_fg));
+        assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[1].style.fg, Some(theme(ThemeMode::DenseAnsi).footer_fg));
+    }
+
+    #[test]
+    fn render_form_row_text_formats_sections_and_fields() {
+        let palette = theme(ThemeMode::DenseAnsi);
+        let section = FormRowView {
+            target: crate::app::FormSelection::Section(0),
+            text: "Input".to_string(),
+            kind: FormRowKind::Section { collapsed: false },
+            selected: false,
+        };
+        assert_eq!(
+            render_form_row_text(&section, PaneFocus::Parameters, palette, 40),
+            "  [-] Input"
+        );
+
+        let field = FormRowView {
+            target: crate::app::FormSelection::Field(0),
+            text: "MeasurementSet Path [browse]".to_string(),
+            kind: FormRowKind::Field,
+            selected: true,
+        };
+        let selected = render_form_row_text(&field, PaneFocus::Parameters, palette, 20);
+        assert!(selected.starts_with("> "));
+        assert!(selected.ends_with("[browse]"));
+
+        let inactive = render_form_row_text(&field, PaneFocus::Result, palette, 20);
+        assert!(inactive.starts_with("  "));
+    }
+
+    #[test]
+    fn result_tab_and_browser_tab_labels_follow_theme_rules() {
+        let dense = theme(ThemeMode::DenseAnsi);
+        let rich = theme(ThemeMode::RichPanel);
+        assert_eq!(tab_label(ResultTab::Overview, true, dense), "◖ Overview ◗");
+        assert_eq!(tab_label(ResultTab::Stdout, false, dense), "[Stdout]");
+        assert_eq!(tab_label(ResultTab::Stdout, false, rich), "·Out·");
+        assert_eq!(browser_tab_label(BrowserTab::Overview, true, dense), "◖ Overview ◗");
+        assert_eq!(browser_tab_label(BrowserTab::Subtables, false, dense), "[Subtables]");
+        assert_eq!(browser_tab_label(BrowserTab::Subtables, false, rich), "·Links·");
+    }
+
+    #[test]
+    fn selection_contains_and_rect_contains_respect_bounds() {
+        assert!(selection_contains(Some((1, 2, 3, 4)), 1, 3));
+        assert!(selection_contains(Some((1, 2, 3, 4)), 2, 4));
+        assert!(!selection_contains(Some((1, 2, 3, 4)), 0, 3));
+        assert!(!selection_contains(Some((1, 2, 3, 4)), 1, 5));
+
+        let rect = Rect::new(2, 4, 3, 2);
+        assert!(rect_contains(rect, 2, 4));
+        assert!(rect_contains(rect, 4, 5));
+        assert!(!rect_contains(rect, 5, 5));
+        assert!(!rect_contains(rect, 4, 6));
+    }
+
+    #[test]
+    fn render_visible_text_line_groups_styles_and_selection() {
+        let palette = theme(ThemeMode::DenseAnsi);
+        let line = VisibleTextLine {
+            text: "ABC".to_string(),
+            roles: vec![
+                VisibleTextRole::Plain,
+                VisibleTextRole::TableHeader,
+                VisibleTextRole::BrowserSeparator,
+            ],
+        };
+        let rendered = render_visible_text_line(&line, 0, Some((0, 0, 2, 2)), palette);
+        assert_eq!(
+            rendered
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "ABC"
+        );
+        assert_eq!(rendered.spans.len(), 3);
+        assert_eq!(rendered.spans[0].style.fg, None);
+        assert_eq!(
+            rendered.spans[1].style.fg,
+            Some(palette.table_header_fg)
+        );
+        assert_eq!(
+            rendered.spans[2].style.bg,
+            Some(palette.section_selected_bg)
+        );
+        assert!(rendered.spans[2].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn scrollbar_helpers_cover_lines_tables_and_graphics() {
+        let lines = ResultContent::Lines(vec!["one".into(), "two".into(), "three".into()]);
+        let vscroll =
+            result_scrollbar_state(&lines, 1, Rect::new(0, 0, 10, 2)).expect("lines scrollbar");
+        assert_eq!(
+            vscroll,
+            ScrollbarState::new(3).position(1).viewport_content_length(2)
+        );
+
+        let table = ResultContent::Table(TableView {
+            header: "abcd".into(),
+            rows: vec!["row1".into(), "row2".into(), "row3".into()],
+        });
+        let hscroll =
+            result_hscrollbar_state(&table, 2, Rect::new(0, 0, 3, 2)).expect("table hscroll");
+        assert_eq!(
+            hscroll,
+            ScrollbarState::new(4).position(2).viewport_content_length(3)
+        );
+
+        assert!(result_scrollbar_state(&ResultContent::Graphic("uv".into()), 0, Rect::new(0, 0, 4, 4)).is_none());
+        assert!(result_hscrollbar_state(&ResultContent::Graphic("uv".into()), 0, Rect::new(0, 0, 4, 4)).is_none());
+    }
+
+    #[test]
+    fn viewport_and_centering_helpers_adjust_dimensions() {
+        assert_eq!(
+            content_viewport_area(Rect::new(1, 2, 10, 5), true, true),
+            Rect::new(1, 2, 9, 4)
+        );
+        assert_eq!(
+            centered_rect(20, 10, Rect::new(0, 0, 12, 6)),
+            Rect::new(0, 0, 12, 6)
+        );
+        assert_eq!(
+            centered_rect(6, 2, Rect::new(10, 10, 20, 10)),
+            Rect::new(17, 14, 6, 2)
+        );
+    }
+
+    #[test]
+    fn path_chooser_geometry_stays_within_body() {
+        let body = Rect::new(0, 0, 120, 40);
+        let chooser = path_chooser_area(body);
+        assert_eq!(chooser.width, 84);
+        assert_eq!(chooser.height, 24);
+        let list = path_chooser_list_area(chooser);
+        assert_eq!(list.x, chooser.x + 1);
+        assert_eq!(list.y, chooser.y + 2);
+        assert_eq!(list.width, chooser.width - 2);
+        assert_eq!(list.height, chooser.height - 5);
+    }
+
+    #[test]
+    fn compute_layout_provides_interactive_hit_regions() {
+        let app = test_app();
+        let layout: UiLayout = compute_layout(Rect::new(0, 0, 120, 40), &app);
+        assert!(layout.form_block.width > 0);
+        assert!(layout.result_block.width > 0);
+        assert!(!layout.form_rows.is_empty());
+        assert!(layout.form_target_at(layout.form_rows[0].rect.x, layout.form_rows[0].rect.y).is_some());
+        assert!(layout.in_form_block(layout.form_block.x, layout.form_block.y));
+        assert!(layout.in_result_block(layout.result_block.x, layout.result_block.y));
+        assert!(layout.in_divider(layout.divider.x, layout.divider.y));
+        assert!(!layout.tab_hits.is_empty());
+        assert_eq!(
+            layout.result_tab_at(layout.tab_hits[0].rect.x, layout.tab_hits[0].rect.y),
+            Some(ResultTab::Overview)
+        );
+    }
+
+    #[test]
+    fn layout_exposes_scrollbar_hit_regions_when_result_is_scrollable() {
+        let app = test_app();
+        let layout = compute_layout(Rect::new(0, 0, 80, 20), &app);
+        if let Some(rect) = layout.result_scrollbar {
+            assert!(layout.in_result_scrollbar(rect.x, rect.y));
+        }
+        if let Some(rect) = layout.result_hscrollbar {
+            assert!(layout.in_result_hscrollbar(rect.x, rect.y));
+        }
     }
 }

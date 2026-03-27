@@ -144,3 +144,54 @@ fn normalize_restore_ratio(pane_restore_ratio: f32) -> f32 {
         pane_restore_ratio.clamp(0.25, 0.75)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn theme_mode_toggle_round_trips() {
+        assert_eq!(ThemeMode::DenseAnsi.toggle(), ThemeMode::RichPanel);
+        assert_eq!(ThemeMode::RichPanel.toggle(), ThemeMode::DenseAnsi);
+    }
+
+    #[test]
+    fn load_for_tests_normalizes_ratios_from_disk() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("casars.toml");
+        fs::write(
+            &path,
+            r#"
+theme_mode = "rich_panel"
+pane_split_ratio = 0.9
+pane_restore_ratio = -1.0
+"#,
+        )
+        .expect("write config");
+
+        let store = ConfigStore::load_for_tests(path);
+        assert_eq!(store.theme_mode(), ThemeMode::RichPanel);
+        assert_eq!(store.pane_split_ratio(), 0.75);
+        assert_eq!(store.pane_restore_ratio(), 0.75);
+    }
+
+    #[test]
+    fn set_pane_split_ratio_clamps_and_persists_restore_ratio() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("nested").join("casars.toml");
+        let mut store = ConfigStore::load_for_tests(path.clone());
+
+        store.set_pane_split_ratio(0.1);
+        assert_eq!(store.pane_split_ratio(), 0.25);
+        assert_eq!(store.pane_restore_ratio(), 0.25);
+
+        store.set_pane_split_ratio(0.0);
+        assert_eq!(store.pane_split_ratio(), 0.0);
+        assert_eq!(store.pane_restore_ratio(), 0.25);
+
+        let saved = fs::read_to_string(path).expect("read saved config");
+        assert!(saved.contains("pane_split_ratio = 0.0"));
+        assert!(saved.contains("pane_restore_ratio = 0.25"));
+    }
+}

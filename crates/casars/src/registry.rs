@@ -193,3 +193,80 @@ fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
     path.set_extension(env::consts::EXE_EXTENSION);
     if path.exists() { Some(path) } else { None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn resolve_app_defaults_and_rejects_unknown_ids() {
+        assert_eq!(resolve_app(None).unwrap().id, "listobs");
+        assert_eq!(resolve_app(Some("tablebrowser")).unwrap().id, "tablebrowser");
+        assert!(resolve_app(Some("bogus"))
+            .unwrap_err()
+            .contains("unknown casars app"));
+    }
+
+    #[test]
+    fn app_metadata_matches_interaction_kind() {
+        let listobs = listobs_app();
+        assert!(!listobs.is_browser_session());
+        assert_eq!(
+            listobs.ready_status_line(),
+            "Ready. Press r to run the selected command."
+        );
+
+        let tablebrowser = tablebrowser_app();
+        assert!(tablebrowser.is_browser_session());
+        assert_eq!(
+            tablebrowser.ready_status_line(),
+            "Ready. Press r to open the browser session."
+        );
+    }
+
+    #[test]
+    fn resolve_command_prefers_override_environment() {
+        let _guard = ENV_LOCK.lock().expect("lock");
+        let app = listobs_app();
+        unsafe {
+            env::set_var("CASARS_LISTOBS_BIN", "/tmp/custom-listobs");
+        }
+
+        let resolved = app.resolve_command().expect("resolve override");
+        let command = resolved.command();
+        assert_eq!(command.get_program(), "/tmp/custom-listobs");
+        assert_eq!(command.get_args().count(), 0);
+
+        unsafe {
+            env::remove_var("CASARS_LISTOBS_BIN");
+        }
+    }
+
+    #[test]
+    fn resolve_command_falls_back_to_cargo_run_prefix() {
+        let _guard = ENV_LOCK.lock().expect("lock");
+        let app = tablebrowser_app();
+        unsafe {
+            env::remove_var("CASARS_TABLEBROWSER_BIN");
+            env::remove_var("CARGO_BIN_EXE_tablebrowser");
+            env::set_var("CARGO", "cargo");
+        }
+        let resolved = app.resolve_command().expect("resolve cargo fallback");
+        let command = resolved.command();
+        assert_eq!(command.get_program(), "cargo");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec!["run", "-q", "-p", "casacore-tables", "--bin", "tablebrowser", "--"]
+        );
+        unsafe {
+            env::remove_var("CARGO");
+        }
+    }
+}

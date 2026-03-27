@@ -385,4 +385,132 @@ mod tests {
         assert!(text.contains("Usage:"));
         assert!(text.contains("listobs"));
     }
+
+    #[test]
+    fn startup_help_renders_launcher_usage_and_known_apps() {
+        let StartupSelection::PrintText(text) =
+            parse_startup_args(vec![OsString::from("--help")]).expect("help output")
+        else {
+            panic!("expected print text");
+        };
+        assert!(text.contains("Usage:"));
+        assert!(text.contains("tablebrowser"));
+        assert!(text.contains("listobs"));
+    }
+
+    #[test]
+    fn startup_parser_rejects_unknown_global_options_and_missing_app_id() {
+        let error = parse_startup_args(vec![OsString::from("--bogus")])
+            .expect_err("unknown option should fail");
+        assert!(error.contains("unknown casars option"));
+
+        let error =
+            parse_startup_args(vec![OsString::from("--app")]).expect_err("missing app id fails");
+        assert!(error.contains("missing app id"));
+    }
+
+    #[test]
+    fn startup_parser_rejects_unknown_app_ids() {
+        let error = parse_startup_args(vec![OsString::from("missing-app")])
+            .expect_err("unknown app id should fail");
+        assert!(error.contains("unknown casars app"));
+    }
+
+    #[test]
+    fn schema_prefill_rejects_invalid_choice_and_extra_positionals() {
+        let schema = serde_json::from_value(json!({
+            "schema_version": 1,
+            "command_id": "demo",
+            "invocation_name": "demo",
+            "display_name": "Demo",
+            "category": "Test",
+            "summary": "demo schema",
+            "usage": "demo [--mode MODE]",
+            "arguments": [
+                {
+                    "id": "mode",
+                    "label": "Mode",
+                    "order": 0,
+                    "parser": {
+                        "kind": "option",
+                        "flags": ["--mode"],
+                        "metavar": "MODE",
+                        "choices": ["fast", "slow"]
+                    },
+                    "value_kind": "choice",
+                    "required": false,
+                    "default": null,
+                    "help": "Execution mode",
+                    "group": "Input",
+                    "advanced": false,
+                    "hidden_in_tui": false
+                }
+            ],
+            "managed_output": null
+        }))
+        .expect("choice schema");
+        let error = parse_schema_prefill_args(
+            &schema,
+            vec![OsString::from("--mode"), OsString::from("loud")],
+        )
+        .expect_err("invalid choice should fail");
+        assert!(error.contains("invalid value"));
+
+        let tablebrowser = serde_json::from_value(json!({
+            "schema_version": 1,
+            "command_id": "tablebrowser",
+            "invocation_name": "tablebrowser",
+            "display_name": "Table Browser",
+            "category": "Tables",
+            "summary": "browse arbitrary casacore tables",
+            "usage": "tablebrowser <table-path>",
+            "arguments": [
+                {
+                    "id": "table_path",
+                    "label": "Table Path",
+                    "order": 0,
+                    "parser": { "kind": "positional", "metavar": "table-path" },
+                    "value_kind": "path",
+                    "required": true,
+                    "default": null,
+                    "help": "Path to the casacore table root directory",
+                    "group": "Input",
+                    "advanced": false,
+                    "hidden_in_tui": false
+                }
+            ],
+            "managed_output": null
+        }))
+        .expect("tablebrowser schema");
+        let error = parse_schema_prefill_args(
+            &tablebrowser,
+            vec![OsString::from("/tmp/a.ms"), OsString::from("/tmp/b.ms")],
+        )
+        .expect_err("extra positional should fail");
+        assert!(error.contains("unexpected extra positional argument"));
+    }
+
+    #[test]
+    fn schema_prefill_rejects_combined_action_flags_and_supports_end_of_options() {
+        let schema = command_schema("listobs");
+        let error = parse_schema_prefill_args(
+            &schema,
+            vec![OsString::from("--help"), OsString::from("/tmp/example.ms")],
+        )
+        .expect_err("help cannot combine with other args");
+        assert!(error.contains("cannot be combined"));
+
+        let result = parse_schema_prefill_args(
+            &schema,
+            vec![OsString::from("--"), OsString::from("--literal.ms")],
+        )
+        .expect("end of options should force positional parsing");
+        let super::SchemaPrefillParse::Prefill { values, auto_run } = result else {
+            panic!("expected prefill");
+        };
+        assert!(auto_run);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].id, "ms_path");
+        assert_eq!(values[0].value, StartupValue::Text("--literal.ms".to_string()));
+    }
 }

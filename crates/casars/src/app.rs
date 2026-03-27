@@ -4599,23 +4599,89 @@ fn browser_inspector_lines(inspector: &BrowserInspectorSnapshot) -> Vec<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        AppState, RunningProcess, StatusKind, UvCoverageLoadState, UvPlotPanelState,
-        expand_tilde_path_with_home,
+        AppState, BrowserAction, BrowserSession, BrowserTab, BrowserValueNode, BufferPoint,
+        FormSelection, FormValue, OutputPane, OutputSelection, OutputSelectionMode,
+        PaneFocus, ParameterAction, ResultAction, ResultTab, RunningProcess,
+        RunningState, StatusKind, UvCoverageLoadState, UvPlotPanelState, VisibleTextBuffer,
+        VisibleTextLine, VisibleTextRole, browser_cells_visible_line, clamp_point_to_buffer,
+        build_antennas_table, build_compact_antenna_lines, build_fields_table,
+        build_observations_table, build_scans_table, build_sources_table, build_spws_table,
+        copyable_browser_text, expand_tilde_path_with_home, extract_selected_text,
+        fit_visible_text, format_float_compact, format_float_list, format_i32_list,
+        format_optional_float, join_corrs, normalize_selection, render_browser_scalar,
+        slice_chars, slice_visible_text, strip_browser_selection_markers,
     };
     use crate::execution::{ExecutionPlan, spawn_process};
-    use crate::registry::ResolvedCommand;
-    use crate::registry::listobs_app;
+    use crate::registry::{ResolvedCommand, listobs_app, tablebrowser_app};
+    use casacore_tablebrowser_protocol::{
+        BrowserArrayElement, BrowserBreadcrumbEntry, BrowserCapabilities, BrowserCommand,
+        BrowserComplex32Value, BrowserComplex64Value, BrowserFocus, BrowserInspectorSnapshot,
+        BrowserNavigationMetrics, BrowserResponseEnvelope, BrowserScalarValue, BrowserSnapshot,
+        BrowserView as ProtocolBrowserView, BrowserViewport,
+    };
     use casacore_ms::listobs::cli::command_schema;
-    use casacore_ms::{ListObsOptions, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack};
+    use casacore_ms::{
+        ListObsOptions, ListObsSummary, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack,
+    };
+    use casacore_ms::listobs::{
+        AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
+        ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary,
+        SpectralWindowSummary,
+    };
     use image::DynamicImage;
     use ratatui::layout::Rect;
     use ratatui_graphics::{PanelRenderer, Picker, Resize};
+    #[cfg(unix)]
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
+    #[cfg(unix)]
+    use tempfile::tempdir;
+
+    #[cfg(unix)]
+    use crate::browser_client::BrowserClient;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_app() -> AppState {
         AppState::from_schema(listobs_app(), command_schema("listobs"))
+    }
+
+    fn tablebrowser_test_app() -> AppState {
+        let schema = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "command_id": "tablebrowser",
+            "invocation_name": "tablebrowser",
+            "display_name": "Table Browser",
+            "category": "Tables",
+            "summary": "browse arbitrary casacore tables",
+            "usage": "tablebrowser <table-path>",
+            "arguments": [
+                {
+                    "id": "table_path",
+                    "label": "Table Path",
+                    "order": 0,
+                    "parser": {
+                        "kind": "positional",
+                        "metavar": "table-path"
+                    },
+                    "value_kind": "path",
+                    "required": true,
+                    "default": null,
+                    "help": "Path to the casacore table root directory",
+                    "group": "Input",
+                    "advanced": false,
+                    "hidden_in_tui": false
+                }
+            ],
+            "managed_output": null
+        }))
+        .expect("tablebrowser schema");
+        AppState::from_schema(tablebrowser_app(), schema)
     }
 
     fn sample_uv_coverage() -> ListObsUvCoverage {
@@ -4669,6 +4735,144 @@ mod tests {
         }
     }
 
+    fn sample_listobs_summary() -> ListObsSummary {
+        ListObsSummary {
+            schema_version: 1,
+            options: ListObsOptions::default(),
+            measurement_set: MeasurementSetInfo {
+                path: Some("/tmp/demo.ms".to_string()),
+                ms_version: Some(2.0),
+                row_count: 42,
+                observation_count: 1,
+                field_count: 1,
+                spectral_window_count: 1,
+                polarization_count: 1,
+                data_description_count: 1,
+                source_count: 1,
+                antenna_count: 3,
+                antenna_table_count: 3,
+                time_reference: Some("UTC".to_string()),
+                start_mjd_seconds: Some(0.0),
+                end_mjd_seconds: Some(3600.0),
+                total_elapsed_seconds: Some(3600.0),
+            },
+            observations: vec![ObservationSummary {
+                observation_id: 0,
+                telescope_name: "Very Large Array".to_string(),
+                observer: "Long Observer".to_string(),
+                project: "Project Alpha Beta".to_string(),
+                release_date_mjd_seconds: 0.0,
+                start_mjd_seconds: Some(0.0),
+                end_mjd_seconds: Some(3600.0),
+            }],
+            scans: vec![ScanSummary {
+                observation_id: 0,
+                array_id: 1,
+                scan_number: 7,
+                row_count: 12,
+                field_id: 0,
+                field_name: "3C286".to_string(),
+                field_ids: vec![0, 1],
+                field_names: vec!["3C286".to_string(), "3C48".to_string()],
+                data_description_ids: vec![0],
+                spectral_window_ids: vec![0, 3],
+                state_ids: vec![1, 2],
+                scan_intents: vec!["CALIBRATE_BANDPASS".to_string()],
+                start_mjd_seconds: 0.0,
+                end_mjd_seconds: 120.0,
+                mean_interval_seconds: 10.0,
+                mean_interval_seconds_by_spw: vec![10.0, 20.25],
+                unflagged_row_count: Some(11.5),
+            }],
+            fields: vec![FieldSummary {
+                field_id: 0,
+                name: "Long Source Name".to_string(),
+                code: "CAL".to_string(),
+                source_id: 9,
+                row_count: 12,
+                unflagged_row_count: Some(10.75),
+                time_mjd_seconds: 0.0,
+                direction_reference: Some("J2000".to_string()),
+                phase_direction_radians: [1.0, 0.5],
+            }],
+            polarization_setups: vec![PolarizationSummary {
+                polarization_id: 0,
+                num_correlations: 2,
+                correlation_types: vec!["XX".to_string(), "YY".to_string()],
+            }],
+            data_descriptions: vec![DataDescriptionSummary {
+                data_description_id: 0,
+                spectral_window_id: 0,
+                polarization_id: 0,
+                flagged: false,
+            }],
+            spectral_windows: vec![SpectralWindowSummary {
+                spectral_window_id: 0,
+                name: "none#LSRK#0".to_string(),
+                num_channels: 64,
+                frame: Some("LSRK".to_string()),
+                first_channel_frequency_hz: 1.2e9,
+                channel_width_hz: 1.25e5,
+                reference_frequency_hz: 1.25e9,
+                center_frequency_hz: 1.26e9,
+                total_bandwidth_hz: 8.0e6,
+                data_description_ids: vec![0],
+                polarization_ids: vec![0],
+                correlation_types: vec!["XX".to_string(), "YY".to_string(), "XY".to_string()],
+            }],
+            sources: vec![SourceSummary {
+                source_id: 9,
+                name: "3C286".to_string(),
+                code: "C".to_string(),
+                spectral_window_id: -1,
+                calibration_group: 0,
+                num_lines: 0,
+                rest_frequency_hz: Some(1.420405751e9),
+                system_velocity_m_s: Some(1234.0),
+                time_mjd_seconds: 0.0,
+                direction_radians: [1.0, 0.5],
+            }],
+            antennas: vec![
+                AntennaSummary {
+                    antenna_id: 0,
+                    name: "ea01".to_string(),
+                    station: "W01".to_string(),
+                    antenna_type: "GROUND-BASED".to_string(),
+                    mount: "ALT-AZ".to_string(),
+                    dish_diameter_m: 25.0,
+                    longitude_radians: 1.0,
+                    latitude_radians: 0.5,
+                    offset_from_observatory_m: [1.0, 2.0, 3.0],
+                    position_m: [10.0, 20.0, 30.0],
+                },
+                AntennaSummary {
+                    antenna_id: 1,
+                    name: "ea02".to_string(),
+                    station: "W02".to_string(),
+                    antenna_type: "GROUND-BASED".to_string(),
+                    mount: "ALT-AZ".to_string(),
+                    dish_diameter_m: 25.0,
+                    longitude_radians: 1.1,
+                    latitude_radians: 0.55,
+                    offset_from_observatory_m: [4.0, 5.0, 6.0],
+                    position_m: [40.0, 50.0, 60.0],
+                },
+                AntennaSummary {
+                    antenna_id: 2,
+                    name: "ea03".to_string(),
+                    station: "W03".to_string(),
+                    antenna_type: "GROUND-BASED".to_string(),
+                    mount: "ALT-AZ".to_string(),
+                    dish_diameter_m: 25.0,
+                    longitude_radians: 1.2,
+                    latitude_radians: 0.6,
+                    offset_from_observatory_m: [7.0, 8.0, 9.0],
+                    position_m: [70.0, 80.0, 90.0],
+                },
+            ],
+        }
+    }
+
     fn exited_process() -> RunningProcess {
         spawn_process(&ExecutionPlan {
             command: ResolvedCommand::direct("sh"),
@@ -4677,6 +4881,73 @@ mod tests {
             file_output_path: None,
         })
         .expect("spawn exited child")
+    }
+
+    fn running_state(renderer: Option<&str>, file_output_path: Option<&str>) -> RunningState {
+        RunningState {
+            process: exited_process(),
+            renderer: renderer.map(str::to_string),
+            file_output_path: file_output_path.map(str::to_string),
+            uv_plan: None,
+            cancel_requested: false,
+        }
+    }
+
+    #[cfg(unix)]
+    fn fake_browser_snapshot(status_line: &str, content_lines: Vec<String>) -> BrowserSnapshot {
+        fake_browser_snapshot_with_metrics(status_line, content_lines, None, None)
+    }
+
+    #[cfg(unix)]
+    fn fake_browser_snapshot_with_metrics(
+        status_line: &str,
+        content_lines: Vec<String>,
+        vertical_metrics: Option<BrowserNavigationMetrics>,
+        horizontal_metrics: Option<BrowserNavigationMetrics>,
+    ) -> BrowserSnapshot {
+        BrowserSnapshot {
+            capabilities: BrowserCapabilities { editable: false },
+            view: ProtocolBrowserView::Overview,
+            focus: BrowserFocus::Main,
+            table_path: "/tmp/fake.ms".to_string(),
+            breadcrumb: vec![BrowserBreadcrumbEntry {
+                label: "fake.ms".to_string(),
+                path: "/tmp/fake.ms".to_string(),
+            }],
+            viewport: BrowserViewport::new(80, 24),
+            status_line: status_line.to_string(),
+            content_lines,
+            vertical_metrics,
+            horizontal_metrics,
+            selected_address: None,
+            inspector: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_browser_session_script(
+        root: &Path,
+        responses: &[String],
+        stderr: Option<&str>,
+    ) -> PathBuf {
+        let path = root.join("app-browser.sh");
+        let mut script = String::from("#!/bin/sh\ncount=0\nwhile IFS= read -r _line; do\n");
+        if let Some(stderr) = stderr {
+            script.push_str(&format!("  echo '{}' >&2\n", stderr.replace('\'', "'\\''")));
+        }
+        script.push_str("  count=$((count + 1))\n  case \"$count\" in\n");
+        for (index, response) in responses.iter().enumerate() {
+            let case_index = index + 1;
+            script.push_str(&format!(
+                "    {case_index}) printf '%s\\n' '{response}' ;;\n"
+            ));
+        }
+        script.push_str("    *) exit 7 ;;\n  esac\ndone\n");
+        fs::write(&path, script).expect("write browser script");
+        let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("chmod");
+        path
     }
 
     #[test]
@@ -4856,5 +5127,906 @@ mod tests {
                 .expect("plot error")
                 .contains("boom")
         );
+    }
+
+    #[test]
+    fn helper_formatters_cover_optional_lists_and_correlation_joining() {
+        assert_eq!(format_optional_float(Some(1.23456)), "1.235");
+        assert_eq!(format_optional_float(None), "n/a");
+        assert_eq!(format_float_compact(12.3400, 3), "12.34");
+        assert_eq!(format_float_compact(12.0, 3), "12");
+        assert_eq!(format_i32_list(&[1, 2, 3]), "[1,2,3]");
+        assert_eq!(format_float_list(&[1.25, 2.0, 3.5001], 3), "[1.25,2,3.5]");
+        assert_eq!(join_corrs(&["XX".into(), "YY".into(), "XY".into()]), "XX  YY  XY");
+    }
+
+    #[test]
+    fn browser_cell_helpers_preserve_selection_and_header_roles() {
+        assert_eq!(
+            strip_browser_selection_markers("  >value<  ").as_deref(),
+            Some("   value   ")
+        );
+        assert!(strip_browser_selection_markers("value").is_none());
+
+        let header = browser_cells_visible_line("row |colA|colB");
+        assert_eq!(header.text, "row │colA│colB");
+        assert!(header.roles.contains(&VisibleTextRole::TableHeader));
+        assert!(header.roles.contains(&VisibleTextRole::BrowserSeparator));
+
+        let selected = browser_cells_visible_line("  >42< | plain ");
+        assert_eq!(selected.text, "   42  │ plain ");
+        assert!(selected.roles.contains(&VisibleTextRole::BrowserSelectedCell));
+    }
+
+    #[test]
+    fn visible_text_helpers_slice_and_trim_consistently() {
+        assert_eq!(fit_visible_text("abcdef", 0), "");
+        assert_eq!(fit_visible_text("abcdef", 2), "..");
+        assert_eq!(fit_visible_text("abcdef", 5), "ab...");
+        assert_eq!(slice_visible_text("abcdef", 2, 3), "...");
+        assert_eq!(slice_visible_text("abcdef", 99, 3), "");
+        assert_eq!(slice_chars("abcdef", 1, 4), "bcd");
+    }
+
+    #[test]
+    fn selection_helpers_normalize_clamp_and_extract_text() {
+        let buffer = VisibleTextBuffer {
+            area: Rect::new(10, 5, 8, 3),
+            lines: vec![
+                VisibleTextLine::plain("alpha  ".to_string()),
+                VisibleTextLine::plain("beta".to_string()),
+                VisibleTextLine::plain(String::new()),
+            ],
+        };
+        let selection = OutputSelection {
+            target: OutputPane::Result,
+            anchor: BufferPoint { row: 1, col: 3 },
+            cursor: BufferPoint { row: 0, col: 1 },
+            mode: OutputSelectionMode::Dragging,
+        };
+        assert_eq!(normalize_selection(selection), (0, 1, 1, 3));
+        assert_eq!(
+            clamp_point_to_buffer(&buffer, 50, 50),
+            BufferPoint { row: 2, col: 0 }
+        );
+        assert_eq!(
+            clamp_point_to_buffer(&buffer, 12, 5),
+            BufferPoint { row: 0, col: 2 }
+        );
+        assert_eq!(extract_selected_text(&buffer, selection), "lph\neta");
+    }
+
+    #[test]
+    fn browser_copy_helpers_render_scalars_arrays_and_fallback_views() {
+        let undefined = BrowserInspectorSnapshot {
+            title: "Undefined".into(),
+            trail: Vec::new(),
+            node: BrowserValueNode::Undefined,
+            rendered_lines: vec!["<undefined>".into()],
+        };
+        assert_eq!(
+            copyable_browser_text(&undefined),
+            ("<undefined>".to_string(), "undefined value")
+        );
+
+        let scalar = BrowserInspectorSnapshot {
+            title: "Scalar".into(),
+            trail: Vec::new(),
+            node: BrowserValueNode::Scalar {
+                value: BrowserScalarValue::Complex64(BrowserComplex64Value { re: 1.5, im: -2.0 }),
+            },
+            rendered_lines: vec!["1.5-2i".into()],
+        };
+        assert_eq!(copyable_browser_text(&scalar), ("1.5-2i".to_string(), "value"));
+
+        let table_ref = BrowserInspectorSnapshot {
+            title: "Table".into(),
+            trail: Vec::new(),
+            node: BrowserValueNode::TableRef {
+                path: "../SUB".into(),
+                resolved_path: "/tmp/root/SUB".into(),
+                openable: true,
+            },
+            rendered_lines: vec!["/tmp/root/SUB".into()],
+        };
+        assert_eq!(
+            copyable_browser_text(&table_ref),
+            ("/tmp/root/SUB".to_string(), "table path")
+        );
+
+        let full_array = BrowserInspectorSnapshot {
+            title: "Array".into(),
+            trail: Vec::new(),
+            node: BrowserValueNode::Array {
+                primitive: casacore_tablebrowser_protocol::BrowserPrimitiveType::Float64,
+                shape: vec![2, 1],
+                total_elements: 2,
+                page_start: 0,
+                page_size: 2,
+                elements: vec![
+                    BrowserArrayElement {
+                        flat_index: 0,
+                        index: vec![0, 0],
+                        value: BrowserScalarValue::Float64(1.25),
+                        selected: false,
+                    },
+                    BrowserArrayElement {
+                        flat_index: 1,
+                        index: vec![1, 0],
+                        value: BrowserScalarValue::Float64(2.5),
+                        selected: true,
+                    },
+                ],
+            },
+            rendered_lines: vec!["[1.25, 2.5]".into()],
+        };
+        assert_eq!(
+            copyable_browser_text(&full_array),
+            ("[1.25, 2.5]".to_string(), "array value")
+        );
+
+        let partial_array = BrowserInspectorSnapshot {
+            title: "Paged".into(),
+            trail: Vec::new(),
+            node: BrowserValueNode::Array {
+                primitive: casacore_tablebrowser_protocol::BrowserPrimitiveType::Int32,
+                shape: vec![4],
+                total_elements: 4,
+                page_start: 0,
+                page_size: 2,
+                elements: vec![BrowserArrayElement {
+                    flat_index: 0,
+                    index: vec![0],
+                    value: BrowserScalarValue::Int32(7),
+                    selected: true,
+                }],
+            },
+            rendered_lines: vec!["[7,".into(), " ...]".into()],
+        };
+        assert_eq!(
+            copyable_browser_text(&partial_array),
+            ("[7,\n ...]".to_string(), "inspector view")
+        );
+    }
+
+    #[test]
+    fn browser_scalar_rendering_formats_numbers_strings_and_complex_values() {
+        assert_eq!(render_browser_scalar(&BrowserScalarValue::Bool(true)), "true");
+        assert_eq!(render_browser_scalar(&BrowserScalarValue::Float32(1.25)), "1.25");
+        assert_eq!(
+            render_browser_scalar(&BrowserScalarValue::String("abc".into())),
+            "\"abc\""
+        );
+        assert_eq!(
+            render_browser_scalar(&BrowserScalarValue::Complex32(BrowserComplex32Value {
+                re: 3.0,
+                im: 4.5,
+            })),
+            "3.0+4.5i"
+        );
+    }
+
+    #[test]
+    fn browser_tab_labels_reflect_backend_view_mapping() {
+        assert_eq!(BrowserTab::from_view(casacore_tablebrowser_protocol::BrowserView::Cells), BrowserTab::Cells);
+        assert_eq!(BrowserTab::Cells.label(), "Cells");
+    }
+
+    #[test]
+    fn build_execution_plan_applies_selection_and_output_rules() {
+        let mut app = test_app();
+        app.set_text_value("ms_path", "/tmp/input.ms");
+
+        let base = app.build_execution_plan().expect("build execution plan");
+        assert!(!base.arguments.is_empty());
+        assert_eq!(base.renderer.as_deref(), Some("listobs-summary-v1"));
+
+        app.set_text_value("field", "3C286");
+        let selected = app.build_execution_plan().expect("selection plan");
+        assert!(selected.arguments.iter().any(|arg| arg == "--selectdata"));
+
+        app.set_text_value("output", "/tmp/out.txt");
+        app.set_text_value("listfile", "/tmp/out.log");
+        let error = app.build_execution_plan().expect_err("conflicting outputs should fail");
+        assert!(error.contains("Choose either --output or --listfile"));
+    }
+
+    #[test]
+    fn finish_execution_covers_cancel_file_output_parse_failure_and_plain_modes() {
+        let mut app = test_app();
+
+        app.running = Some(RunningState {
+            cancel_requested: true,
+            ..running_state(Some("listobs-summary-v1"), None)
+        });
+        app.result.stderr = "cancel stderr".into();
+        app.finish_execution(Some(130), false);
+        assert_eq!(app.status_line_for_test(), "Execution canceled.");
+        assert_eq!(app.result.status_kind, StatusKind::Warning);
+        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
+        assert!(app.result.structured_error.is_some());
+
+        app.running = Some(running_state(Some("listobs-summary-v1"), Some("/tmp/out.txt")));
+        app.result.stdout.clear();
+        app.result.stderr.clear();
+        app.finish_execution(Some(0), true);
+        assert_eq!(app.status_line_for_test(), "Execution completed successfully.");
+        assert_eq!(app.result.status_kind, StatusKind::Ok);
+        assert_eq!(app.file_output_path_for_test(), Some("/tmp/out.txt"));
+        assert_eq!(app.active_result_tab(), ResultTab::Overview);
+
+        app.running = Some(running_state(Some("listobs-summary-v1"), None));
+        app.result.stdout = "{".into();
+        app.result.stderr.clear();
+        app.finish_execution(Some(0), true);
+        assert_eq!(
+            app.status_line_for_test(),
+            "Execution completed, but structured rendering failed."
+        );
+        assert_eq!(app.result.status_kind, StatusKind::Warning);
+        assert!(app.result.structured_error.is_some());
+        assert_eq!(app.active_result_tab(), ResultTab::Stdout);
+
+        app.running = Some(running_state(None, None));
+        app.result.stdout = "plain stdout".into();
+        app.result.stderr.clear();
+        app.finish_execution(Some(0), true);
+        assert_eq!(app.result.status_kind, StatusKind::Ok);
+        assert_eq!(app.active_result_tab(), ResultTab::Stdout);
+
+        app.running = Some(running_state(None, None));
+        app.result.stdout.clear();
+        app.result.stderr = "plain stderr".into();
+        app.finish_execution(Some(1), false);
+        assert_eq!(app.status_line_for_test(), "Execution failed.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn browser_session_success_and_failure_paths_update_state() {
+        let temp = tempdir().expect("tempdir");
+        let success_response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(
+            fake_browser_snapshot("Browser moved", vec!["new content".into()]),
+        ))
+        .expect("serialize snapshot");
+        let script = write_browser_session_script(temp.path(), &[success_response], None);
+        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
+
+        let mut app = test_app();
+        app.browser_session = Some(BrowserSession {
+            client,
+            snapshot: fake_browser_snapshot("Old", vec!["old".into()]),
+            viewport: BrowserViewport::new(80, 24),
+        });
+        app.output_selection = Some(OutputSelection {
+            target: OutputPane::Result,
+            anchor: BufferPoint { row: 0, col: 0 },
+            cursor: BufferPoint { row: 0, col: 1 },
+            mode: OutputSelectionMode::Dragging,
+        });
+        app.send_browser_command(BrowserCommand::GetSnapshot { viewport: None });
+        assert!(app.browser_is_active());
+        assert_eq!(app.status_line_for_test(), "Browser moved");
+        assert_eq!(app.result.status_kind, StatusKind::Info);
+        assert!(app.output_selection.is_none());
+
+        let failure_script = write_browser_session_script(temp.path(), &[], Some("session stderr"));
+        let failure_client =
+            BrowserClient::spawn(&ResolvedCommand::direct(failure_script)).expect("spawn client");
+        app.browser_session = Some(BrowserSession {
+            client: failure_client,
+            snapshot: fake_browser_snapshot("Old", vec!["old".into()]),
+            viewport: BrowserViewport::new(80, 24),
+        });
+        app.send_browser_command(BrowserCommand::GetSnapshot { viewport: None });
+        assert!(!app.browser_is_active());
+        assert_eq!(
+            app.status_line_for_test(),
+            "Browser command failed. Session closed."
+        );
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert!(app.stderr_for_test().contains("session stderr"));
+        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
+        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancel_current_closes_browser_session_and_restores_parameter_focus() {
+        let temp = tempdir().expect("tempdir");
+        let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(
+            fake_browser_snapshot("Opened", vec!["content".into()]),
+        ))
+        .expect("serialize snapshot");
+        let script = write_browser_session_script(temp.path(), &[response], None);
+        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
+
+        let mut app = test_app();
+        app.pane_focus = PaneFocus::Result;
+        app.browser_session = Some(BrowserSession {
+            client,
+            snapshot: fake_browser_snapshot("Opened", vec!["content".into()]),
+            viewport: BrowserViewport::new(80, 24),
+        });
+
+        app.cancel_current();
+        assert!(!app.browser_is_active());
+        assert_eq!(app.status_line_for_test(), "Browser session closed.");
+        assert_eq!(app.result.status_kind, StatusKind::Info);
+        assert_eq!(app.pane_focus_for_test(), PaneFocus::Parameters);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overview_lines_cover_file_running_error_and_browser_states() {
+        let temp = tempdir().expect("tempdir");
+        let mut app = test_app();
+        app.result.file_output_path = Some("/tmp/output.txt".into());
+        let file_lines = app.overview_lines();
+        assert!(file_lines.iter().any(|line| line.contains("/tmp/output.txt")));
+
+        app.result.file_output_path = None;
+        app.running = Some(running_state(None, None));
+        let running_lines = app.overview_lines();
+        assert!(running_lines.iter().any(|line| line.contains("still running")));
+
+        app.running = None;
+        app.result.structured_error = Some("parse failed".into());
+        let error_lines = app.overview_lines();
+        assert!(error_lines.iter().any(|line| line.contains("parse failed")));
+
+        app.result.structured_error = None;
+        let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(
+            fake_browser_snapshot("Browser overview", vec!["browser line".into()]),
+        ))
+        .expect("serialize snapshot");
+        let script = write_browser_session_script(temp.path(), &[response], None);
+        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
+        app.browser_session = Some(BrowserSession {
+            client,
+            snapshot: fake_browser_snapshot("Browser overview", vec!["browser line".into()]),
+            viewport: BrowserViewport::new(80, 24),
+        });
+        let browser_lines = app.overview_lines();
+        assert_eq!(browser_lines, vec!["browser line".to_string()]);
+    }
+
+    #[test]
+    fn structured_renderers_cover_all_summary_tabs() {
+        let summary = sample_listobs_summary();
+
+        let observations = build_observations_table(&summary);
+        assert!(observations.header.contains("Telescope"));
+        assert!(observations.rows[0].contains("Very La"));
+        assert!(observations.rows[0].contains("Long Ob"));
+
+        let scans = build_scans_table(&summary, true);
+        assert!(scans.header.contains("nUnfl"));
+        assert!(scans.rows[0].contains("CALIBRATE_BANDPASS"));
+        assert!(scans.rows[0].contains("[0,3]"));
+
+        let fields = build_fields_table(&summary, true);
+        assert!(fields.header.contains("nUnflRows"));
+        assert!(fields.rows[0].contains("J2000"));
+
+        let spws = build_spws_table(&summary);
+        assert!(spws.header.contains("CtrFreq(MHz)"));
+        assert!(spws.rows[0].contains("LSRK"));
+        assert!(spws.rows[0].contains("XX  YY  XY"));
+
+        let sources = build_sources_table(&summary);
+        assert!(sources.rows[0].contains("any"));
+        assert!(sources.rows[0].contains("1.234"));
+
+        let antennas = build_antennas_table(&summary);
+        assert!(antennas.header.contains("ITRF x"));
+        assert!(antennas.rows[0].contains("ea01"));
+
+        let compact = build_compact_antenna_lines(&summary);
+        assert!(compact[0].contains("Antennas: 3"));
+        assert!(compact.iter().any(|line| line.to_string().contains("'ea01'='W01'")));
+    }
+
+    #[test]
+    fn start_run_reports_schema_build_and_launch_failures() {
+        let mut app = test_app();
+        app.schema = None;
+        app.start_run();
+        assert_eq!(app.status_line_for_test(), "Cannot run without a loaded UI schema.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
+
+        let mut app = test_app();
+        app.set_text_value("ms_path", "/tmp/demo.ms");
+        app.set_text_value("output", "/tmp/out.txt");
+        app.set_text_value("listfile", "/tmp/out.log");
+        app.start_run();
+        assert_eq!(app.status_line_for_test(), "Cannot start command.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert!(app.stderr_for_test().contains("Choose either --output or --listfile"));
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let mut app = test_app();
+        app.set_text_value("ms_path", "/tmp/demo.ms");
+        unsafe {
+            std::env::set_var("CASARS_LISTOBS_BIN", "/definitely/missing-listobs");
+        }
+        app.start_run();
+        unsafe {
+            std::env::remove_var("CASARS_LISTOBS_BIN");
+        }
+        assert_eq!(app.status_line_for_test(), "Failed to launch listobs.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert!(app.stderr_for_test().contains("spawn subprocess"));
+        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
+    }
+
+    #[test]
+    fn table_browser_start_requires_path_and_reports_launch_failure() {
+        let mut app = tablebrowser_test_app();
+        app.start_run();
+        assert_eq!(app.status_line_for_test(), "Table Path is required.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert!(!app.browser_is_active());
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let mut app = tablebrowser_test_app();
+        app.set_text_value("table_path", "/tmp/demo.table");
+        unsafe {
+            std::env::set_var("CASARS_TABLEBROWSER_BIN", "/definitely/missing-tablebrowser");
+        }
+        app.start_run();
+        unsafe {
+            std::env::remove_var("CASARS_TABLEBROWSER_BIN");
+        }
+        assert_eq!(app.status_line_for_test(), "Failed to launch table browser.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert!(app.stderr_for_test().contains("spawn tablebrowser session"));
+        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
+        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    }
+
+    #[test]
+    fn ensure_uv_coverage_started_covers_missing_plan_launch_failure_and_success() {
+        let mut app = test_app();
+        app.result.structured = Some(sample_listobs_summary());
+
+        app.ensure_uv_coverage_started();
+        assert_eq!(
+            app.uv_coverage_error.as_deref(),
+            Some("UV coverage is only available for the most recent completed listobs run.")
+        );
+
+        app.last_listobs_uv_plan = Some(ExecutionPlan {
+            command: ResolvedCommand::direct("/definitely/missing-uv-loader"),
+            arguments: Vec::new(),
+            renderer: None,
+            file_output_path: None,
+        });
+        app.ensure_uv_coverage_started();
+        assert_eq!(app.status_line_for_test(), "Failed to launch UV coverage loader.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert!(app.stderr_for_test().contains("spawn subprocess"));
+
+        let coverage = sample_uv_coverage();
+        let json = serde_json::to_string(&coverage).expect("serialize coverage");
+        app.result.stderr.clear();
+        app.last_listobs_uv_plan = Some(ExecutionPlan {
+            command: ResolvedCommand::direct("sh"),
+            arguments: vec![
+                "-c".into(),
+                "printf '%s' \"$1\"".into(),
+                "uv-loader".into(),
+                json.into(),
+            ],
+            renderer: None,
+            file_output_path: None,
+        });
+        app.ensure_uv_coverage_started();
+        assert!(app.uv_loading_active_for_test());
+        assert!(app.wait_for_all_idle_for_test(Duration::from_secs(2)));
+        assert_eq!(app.status_line_for_test(), "UV coverage loaded.");
+        assert_eq!(app.result.status_kind, StatusKind::Ok);
+        assert_eq!(app.uv_coverage_for_test(), Some(&coverage));
+    }
+
+    #[test]
+    fn cancel_current_covers_uv_and_running_cancel_paths() {
+        let mut app = test_app();
+        app.uv_loading = Some(UvCoverageLoadState {
+            process: spawn_process(&ExecutionPlan {
+                command: ResolvedCommand::direct("sh"),
+                arguments: vec!["-c".into(), "sleep 5".into()],
+                renderer: None,
+                file_output_path: None,
+            })
+            .expect("spawn long-running uv loader"),
+            stdout: String::new(),
+            stderr: String::new(),
+            cancel_requested: false,
+        });
+        app.cancel_current();
+        assert_eq!(
+            app.status_line_for_test(),
+            "Cancel requested for UV coverage load..."
+        );
+        assert_eq!(app.result.status_kind, StatusKind::Warning);
+        assert!(app.uv_loading.as_ref().is_some_and(|loading| loading.cancel_requested));
+
+        let mut app = test_app();
+        app.uv_loading = Some(UvCoverageLoadState {
+            process: exited_process(),
+            stdout: String::new(),
+            stderr: String::new(),
+            cancel_requested: false,
+        });
+        app.cancel_current();
+        assert_eq!(
+            app.status_line_for_test(),
+            "Cancel requested for UV coverage load..."
+        );
+        assert!(app.uv_loading.as_ref().is_some_and(|loading| loading.cancel_requested));
+        app.cancel_current();
+        assert_eq!(
+            app.status_line_for_test(),
+            "Cancel requested for UV coverage load..."
+        );
+
+        let mut app = test_app();
+        app.running = Some(running_state(None, None));
+        app.cancel_current();
+        assert_eq!(app.status_line_for_test(), "Cancel requested for listobs...");
+        assert!(app.running.as_ref().is_some_and(|running| running.cancel_requested));
+        app.cancel_current();
+        assert_eq!(app.status_line_for_test(), "Cancel requested for listobs...");
+    }
+
+    #[test]
+    fn parameter_and_result_actions_cover_dispatch_and_focus_helpers() {
+        let mut app = test_app();
+        let toggle_index = app
+            .fields
+            .iter()
+            .position(|field| matches!(field.value, FormValue::Toggle(_)))
+            .expect("toggle field");
+
+        app.selected_form = FormSelection::Field(toggle_index);
+        app.apply_parameter_action(ParameterAction::ChoiceNext);
+        app.apply_parameter_action(ParameterAction::ChoicePrevious);
+
+        app.apply_parameter_action(ParameterAction::SelectNext);
+        assert_ne!(app.selected_form, FormSelection::Field(toggle_index));
+        app.apply_parameter_action(ParameterAction::SelectPrevious);
+        assert_eq!(app.selected_form, FormSelection::Field(toggle_index));
+
+        let toggle_before = match app.fields[toggle_index].value {
+            FormValue::Toggle(value) => value,
+            _ => unreachable!("toggle field"),
+        };
+        app.selected_form = FormSelection::Field(toggle_index);
+        app.apply_parameter_action(ParameterAction::Activate);
+        let toggle_after = match app.fields[toggle_index].value {
+            FormValue::Toggle(value) => value,
+            _ => unreachable!("toggle field"),
+        };
+        assert_ne!(toggle_before, toggle_after);
+
+        let collapsed_before = app.sections[0].collapsed;
+        app.selected_form = FormSelection::Section(0);
+        app.apply_parameter_action(ParameterAction::Activate);
+        assert_ne!(collapsed_before, app.sections[0].collapsed);
+
+        app.active_result_tab = ResultTab::Stdout;
+        app.apply_result_action(ResultAction::Scroll(3));
+        app.apply_result_action(ResultAction::ScrollHorizontal(4));
+        assert_eq!(app.result_scrolls[ResultTab::Stdout.index()], 3);
+        assert_eq!(app.result_hscrolls[ResultTab::Stdout.index()], 4);
+
+        app.active_result_tab = ResultTab::Overview;
+        app.apply_result_action(ResultAction::NextTab);
+        assert_eq!(app.active_result_tab(), ResultTab::Observations);
+        app.apply_result_action(ResultAction::PreviousTab);
+        assert_eq!(app.active_result_tab(), ResultTab::Overview);
+
+        app.toggle_advanced();
+        assert!(app.show_advanced);
+        app.toggle_parameters_pane();
+        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+        assert!(app.parameters_pane_collapsed());
+        app.toggle_parameters_pane();
+        assert!(!app.parameters_pane_collapsed());
+        app.toggle_focus();
+        assert_eq!(app.pane_focus_for_test(), PaneFocus::Parameters);
+        app.toggle_focus();
+        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    }
+
+    #[test]
+    fn input_modes_and_path_chooser_key_dispatch_cover_interactive_branches() {
+        let mut app = test_app();
+        assert_eq!(app.input_mode(), super::InputMode::Parameters);
+
+        app.pane_focus = PaneFocus::Result;
+        assert_eq!(app.input_mode(), super::InputMode::Result);
+
+        app.edit_state = Some(super::EditState {
+            field_index: 0,
+            buffer: "draft".to_string(),
+        });
+        assert_eq!(app.input_mode(), super::InputMode::Edit);
+
+        let temp = tempdir().expect("tempdir");
+        let chooser_dir = temp.path().join("chooser-mode");
+        std::fs::create_dir(&chooser_dir).expect("create chooser dir");
+        std::fs::write(chooser_dir.join("picked.ms"), "").expect("create file");
+
+        let field_index = app
+            .fields
+            .iter()
+            .position(|field| field.schema.id == "ms_path")
+            .expect("ms_path field");
+        app.edit_state = Some(super::EditState {
+            field_index,
+            buffer: chooser_dir.to_string_lossy().to_string(),
+        });
+        app.selected_form = FormSelection::Field(field_index);
+        app.open_path_chooser_for_selected_field();
+        assert_eq!(app.input_mode(), super::InputMode::PathChooser);
+        assert!(app
+            .resolve_key_action(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ))
+            .is_some_and(|action| matches!(
+                action,
+                super::AppAction::PathChooser(super::PathChooserAction::Confirm)
+            )));
+        assert!(app
+            .resolve_key_action(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(' '),
+                crossterm::event::KeyModifiers::NONE,
+            ))
+            .is_some_and(|action| matches!(
+                action,
+                super::AppAction::PathChooser(super::PathChooserAction::SelectCurrent)
+            )));
+        assert!(app
+            .resolve_key_action(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Down,
+                crossterm::event::KeyModifiers::NONE,
+            ))
+            .is_some_and(|action| matches!(
+                action,
+                super::AppAction::PathChooser(super::PathChooserAction::Navigate(
+                    super::ExplorerInput::Down
+                ))
+            )));
+        assert_eq!(
+            app.resolve_key_action(crossterm::event::KeyEvent {
+                code: crossterm::event::KeyCode::Esc,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+                kind: crossterm::event::KeyEventKind::Release,
+                state: crossterm::event::KeyEventState::NONE,
+            }),
+            None
+        );
+
+        let spinner_before = app.spinner_frame;
+        app.on_tick();
+        assert_eq!(
+            app.spinner_frame,
+            (spinner_before + 1) % super::spinner_frames(app.theme_mode()).len()
+        );
+
+        app.handle_key_event(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        app.handle_key_event(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(' '),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(app.path_chooser.is_none());
+        assert!(app.status_line_for_test().starts_with("Selected path:"));
+        assert_eq!(
+            app.input_mode(),
+            if app.pane_focus == PaneFocus::Parameters {
+                super::InputMode::Parameters
+            } else {
+                super::InputMode::Result
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn browser_actions_and_path_chooser_cover_dispatch_heavy_branches() {
+        let temp = tempdir().expect("tempdir");
+        let responses = [
+            ("cycle", ProtocolBrowserView::Columns),
+            ("left", ProtocolBrowserView::Columns),
+            ("right", ProtocolBrowserView::Columns),
+            ("up", ProtocolBrowserView::Columns),
+            ("down", ProtocolBrowserView::Columns),
+            ("page-up", ProtocolBrowserView::Columns),
+            ("page-down", ProtocolBrowserView::Columns),
+            ("activate", ProtocolBrowserView::Columns),
+            ("back", ProtocolBrowserView::Columns),
+            ("escape", ProtocolBrowserView::Columns),
+            ("scroll-down", ProtocolBrowserView::Columns),
+            ("scroll-up", ProtocolBrowserView::Columns),
+            ("hscroll-right", ProtocolBrowserView::Columns),
+            ("hscroll-left", ProtocolBrowserView::Columns),
+            ("keywords", ProtocolBrowserView::Keywords),
+        ]
+        .into_iter()
+        .map(|(status, view)| {
+            serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+                capabilities: BrowserCapabilities { editable: false },
+                view,
+                focus: BrowserFocus::Main,
+                table_path: "/tmp/fake.ms".to_string(),
+                breadcrumb: vec![BrowserBreadcrumbEntry {
+                    label: "fake.ms".to_string(),
+                    path: "/tmp/fake.ms".to_string(),
+                }],
+                viewport: BrowserViewport::new(80, 24),
+                status_line: status.to_string(),
+                content_lines: vec![status.to_string()],
+                vertical_metrics: Some(BrowserNavigationMetrics {
+                    selected_index: 2,
+                    total_items: 20,
+                    viewport_items: 5,
+                }),
+                horizontal_metrics: Some(BrowserNavigationMetrics {
+                    selected_index: 1,
+                    total_items: 10,
+                    viewport_items: 4,
+                }),
+                selected_address: None,
+                inspector: None,
+            }))
+            .expect("serialize snapshot")
+        })
+        .collect::<Vec<_>>();
+        let script = write_browser_session_script(temp.path(), &responses, None);
+        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
+
+        let mut app = test_app();
+        app.browser_session = Some(BrowserSession {
+            client,
+            snapshot: fake_browser_snapshot_with_metrics(
+                "cells",
+                vec!["cells".into()],
+                Some(BrowserNavigationMetrics {
+                    selected_index: 2,
+                    total_items: 20,
+                    viewport_items: 5,
+                }),
+                Some(BrowserNavigationMetrics {
+                    selected_index: 1,
+                    total_items: 10,
+                    viewport_items: 4,
+                }),
+            ),
+            viewport: BrowserViewport::new(80, 24),
+        });
+        app.browser_session.as_mut().unwrap().snapshot.view = ProtocolBrowserView::Cells;
+
+        assert_eq!(app.active_browser_scroll(), 2);
+        assert_eq!(app.active_browser_hscroll(), 1);
+
+        app.apply_browser_action(BrowserAction::CycleView { forward: true });
+        app.apply_browser_action(BrowserAction::MoveLeft);
+        app.apply_browser_action(BrowserAction::MoveRight);
+        app.apply_browser_action(BrowserAction::MoveUp);
+        app.apply_browser_action(BrowserAction::MoveDown);
+        app.apply_browser_action(BrowserAction::PageUp);
+        app.apply_browser_action(BrowserAction::PageDown);
+        app.apply_browser_action(BrowserAction::Activate);
+        app.apply_browser_action(BrowserAction::Back);
+        app.apply_browser_action(BrowserAction::Escape);
+        assert_eq!(app.status_line_for_test(), "escape");
+
+        app.set_active_browser_scroll(5);
+        assert_eq!(app.status_line_for_test(), "scroll-down");
+        app.set_active_browser_scroll(0);
+        assert_eq!(app.status_line_for_test(), "scroll-up");
+        app.set_active_browser_hscroll(5);
+        assert_eq!(app.status_line_for_test(), "hscroll-right");
+        app.set_active_browser_hscroll(0);
+        assert_eq!(app.status_line_for_test(), "hscroll-left");
+        app.activate_browser_tab(BrowserTab::Keywords);
+        assert_eq!(app.status_line_for_test(), "keywords");
+
+        let chooser_dir = temp.path().join("chooser");
+        std::fs::create_dir(&chooser_dir).expect("create chooser dir");
+        std::fs::write(chooser_dir.join("picked.ms"), "").expect("create file");
+        app.set_text_value("ms_path", chooser_dir.to_string_lossy().as_ref());
+        let field_index = app
+            .fields
+            .iter()
+            .position(|field| field.schema.id == "ms_path")
+            .expect("ms_path field");
+        app.edit_state = Some(super::EditState {
+            field_index,
+            buffer: chooser_dir.to_string_lossy().to_string(),
+        });
+        app.selected_form = FormSelection::Field(field_index);
+        app.open_path_chooser_for_selected_field();
+        assert!(app.path_chooser.is_some());
+        assert!(app.edit_state.is_none());
+
+        let layout = crate::ui::compute_layout(Rect::new(0, 0, 120, 30), &app);
+        let chooser_area = crate::ui::path_chooser_area(layout.body);
+        let list_area = crate::ui::path_chooser_list_area(chooser_area);
+        app.handle_path_chooser_mouse(
+            crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::ScrollDown,
+                column: list_area.x,
+                row: list_area.y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            },
+            &layout,
+        );
+        app.handle_path_chooser_mouse(
+            crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::ScrollUp,
+                column: list_area.x,
+                row: list_area.y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            },
+            &layout,
+        );
+        app.apply_path_chooser_action(super::PathChooserAction::SelectCurrent);
+        assert!(app.status_line_for_test().starts_with("Selected path:"));
+
+        app.open_path_chooser(field_index);
+        app.handle_path_chooser_mouse(
+            crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            },
+            &layout,
+        );
+        assert_eq!(app.status_line_for_test(), "Path chooser canceled.");
+        assert!(app.path_chooser.is_none());
+    }
+
+    #[test]
+    fn copy_output_selection_covers_warning_and_uv_summary_clipboard_paths() {
+        let mut app = test_app();
+        app.copy_output_selection();
+        assert_eq!(app.status_line_for_test(), "Nothing copyable is selected.");
+        assert_eq!(app.result.status_kind, StatusKind::Warning);
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let clipboard_path = temp.path().join("clipboard.txt");
+        unsafe {
+            std::env::set_var("CASARS_TEST_CLIPBOARD_FILE", &clipboard_path);
+        }
+
+        let mut app = test_app();
+        app.active_result_tab = ResultTab::Uv;
+        app.uv_coverage = Some(sample_uv_coverage());
+        app.copy_output_selection();
+
+        unsafe {
+            std::env::remove_var("CASARS_TEST_CLIPBOARD_FILE");
+        }
+
+        assert_eq!(
+            app.status_line_for_test(),
+            "Copied uv coverage summary to clipboard."
+        );
+        assert_eq!(app.result.status_kind, StatusKind::Ok);
+        let copied = std::fs::read_to_string(&clipboard_path).expect("read clipboard override");
+        assert!(copied.contains("Tracks=2"));
+        assert!(copied.contains("UV coverage in M"));
     }
 }

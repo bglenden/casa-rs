@@ -47,6 +47,8 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - `scripts/run-coverage.sh`
+- Coverage changes should maintain a safety margin of at least 3 percentage
+  points above the enforced CI threshold; do not aim only to barely pass.
 - Small performance guards stay in the default `cargo test --workspace` path.
 - Long coverage/perf work should run less often, usually via CI or explicit full runs.
 - To reproduce the GitHub Actions environment locally, use

@@ -144,3 +144,74 @@ fn exit_from_status(status: ExitStatus) -> ExecutionExit {
         success: status.success(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::ResolvedCommand;
+
+    #[test]
+    fn spawn_process_reports_stdout_stderr_and_exit() {
+        let plan = ExecutionPlan {
+            command: ResolvedCommand::direct("sh"),
+            arguments: vec![
+                "-c".into(),
+                "printf 'hello\\n'; printf 'oops\\n' >&2; exit 3".into(),
+            ],
+            renderer: None,
+            file_output_path: None,
+        };
+
+        let process = spawn_process(&plan).expect("spawn process");
+        let mut saw_stdout = false;
+        let mut saw_stderr = false;
+        let mut exit = None;
+        for _ in 0..80 {
+            match process.try_recv() {
+                Ok(ExecutionEvent::Stdout(chunk)) => saw_stdout |= chunk.contains("hello"),
+                Ok(ExecutionEvent::Stderr(chunk)) => saw_stderr |= chunk.contains("oops"),
+                Ok(ExecutionEvent::Exited(status)) => {
+                    exit = Some(status);
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => thread::sleep(Duration::from_millis(25)),
+                Err(error) => panic!("unexpected channel error: {error}"),
+            }
+        }
+
+        let exit = exit.expect("process exit event");
+        assert!(saw_stdout);
+        assert!(saw_stderr);
+        assert_eq!(exit.code, Some(3));
+        assert!(!exit.success);
+    }
+
+    #[test]
+    fn cancel_stops_running_child() {
+        let plan = ExecutionPlan {
+            command: ResolvedCommand::direct("sh"),
+            arguments: vec!["-c".into(), "sleep 5".into()],
+            renderer: None,
+            file_output_path: None,
+        };
+
+        let process = spawn_process(&plan).expect("spawn process");
+        process.cancel().expect("cancel process");
+
+        let mut exit = None;
+        for _ in 0..80 {
+            match process.try_recv() {
+                Ok(ExecutionEvent::Exited(status)) => {
+                    exit = Some(status);
+                    break;
+                }
+                Ok(_) | Err(mpsc::TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => panic!("unexpected channel error: {error}"),
+            }
+        }
+
+        assert!(!exit.expect("exit after cancel").success);
+    }
+}
