@@ -4600,33 +4600,31 @@ fn browser_inspector_lines(inspector: &BrowserInspectorSnapshot) -> Vec<String> 
 mod tests {
     use super::{
         AppState, BrowserAction, BrowserSession, BrowserTab, BrowserValueNode, BufferPoint,
-        FormSelection, FormValue, OutputPane, OutputSelection, OutputSelectionMode,
-        PaneFocus, ParameterAction, ResultAction, ResultTab, RunningProcess,
-        RunningState, StatusKind, UvCoverageLoadState, UvPlotPanelState, VisibleTextBuffer,
-        VisibleTextLine, VisibleTextRole, browser_cells_visible_line, clamp_point_to_buffer,
-        build_antennas_table, build_compact_antenna_lines, build_fields_table,
-        build_observations_table, build_scans_table, build_sources_table, build_spws_table,
-        copyable_browser_text, expand_tilde_path_with_home, extract_selected_text,
-        fit_visible_text, format_float_compact, format_float_list, format_i32_list,
-        format_optional_float, join_corrs, normalize_selection, render_browser_scalar,
-        slice_chars, slice_visible_text, strip_browser_selection_markers,
+        FormSelection, FormValue, OutputPane, OutputSelection, OutputSelectionMode, PaneFocus,
+        ParameterAction, ResultAction, ResultTab, RunningProcess, RunningState, StatusKind,
+        UvCoverageLoadState, UvPlotPanelState, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
+        browser_cells_visible_line, build_antennas_table, build_compact_antenna_lines,
+        build_fields_table, build_observations_table, build_scans_table, build_sources_table,
+        build_spws_table, clamp_point_to_buffer, copyable_browser_text,
+        expand_tilde_path_with_home, extract_selected_text, fit_visible_text, format_float_compact,
+        format_float_list, format_i32_list, format_optional_float, join_corrs, normalize_selection,
+        render_browser_scalar, slice_chars, slice_visible_text, strip_browser_selection_markers,
     };
     use crate::execution::{ExecutionPlan, spawn_process};
     use crate::registry::{ResolvedCommand, listobs_app, tablebrowser_app};
+    use casacore_ms::listobs::cli::command_schema;
+    use casacore_ms::listobs::{
+        AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
+        ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary, SpectralWindowSummary,
+    };
+    use casacore_ms::{
+        ListObsOptions, ListObsSummary, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack,
+    };
     use casacore_tablebrowser_protocol::{
         BrowserArrayElement, BrowserBreadcrumbEntry, BrowserCapabilities, BrowserCommand,
         BrowserComplex32Value, BrowserComplex64Value, BrowserFocus, BrowserInspectorSnapshot,
         BrowserNavigationMetrics, BrowserResponseEnvelope, BrowserScalarValue, BrowserSnapshot,
         BrowserView as ProtocolBrowserView, BrowserViewport,
-    };
-    use casacore_ms::listobs::cli::command_schema;
-    use casacore_ms::{
-        ListObsOptions, ListObsSummary, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack,
-    };
-    use casacore_ms::listobs::{
-        AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
-        ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary,
-        SpectralWindowSummary,
     };
     use image::DynamicImage;
     use ratatui::layout::Rect;
@@ -5137,7 +5135,10 @@ mod tests {
         assert_eq!(format_float_compact(12.0, 3), "12");
         assert_eq!(format_i32_list(&[1, 2, 3]), "[1,2,3]");
         assert_eq!(format_float_list(&[1.25, 2.0, 3.5001], 3), "[1.25,2,3.5]");
-        assert_eq!(join_corrs(&["XX".into(), "YY".into(), "XY".into()]), "XX  YY  XY");
+        assert_eq!(
+            join_corrs(&["XX".into(), "YY".into(), "XY".into()]),
+            "XX  YY  XY"
+        );
     }
 
     #[test]
@@ -5155,7 +5156,11 @@ mod tests {
 
         let selected = browser_cells_visible_line("  >42< | plain ");
         assert_eq!(selected.text, "   42  │ plain ");
-        assert!(selected.roles.contains(&VisibleTextRole::BrowserSelectedCell));
+        assert!(
+            selected
+                .roles
+                .contains(&VisibleTextRole::BrowserSelectedCell)
+        );
     }
 
     #[test]
@@ -5217,7 +5222,10 @@ mod tests {
             },
             rendered_lines: vec!["1.5-2i".into()],
         };
-        assert_eq!(copyable_browser_text(&scalar), ("1.5-2i".to_string(), "value"));
+        assert_eq!(
+            copyable_browser_text(&scalar),
+            ("1.5-2i".to_string(), "value")
+        );
 
         let table_ref = BrowserInspectorSnapshot {
             title: "Table".into(),
@@ -5291,8 +5299,14 @@ mod tests {
 
     #[test]
     fn browser_scalar_rendering_formats_numbers_strings_and_complex_values() {
-        assert_eq!(render_browser_scalar(&BrowserScalarValue::Bool(true)), "true");
-        assert_eq!(render_browser_scalar(&BrowserScalarValue::Float32(1.25)), "1.25");
+        assert_eq!(
+            render_browser_scalar(&BrowserScalarValue::Bool(true)),
+            "true"
+        );
+        assert_eq!(
+            render_browser_scalar(&BrowserScalarValue::Float32(1.25)),
+            "1.25"
+        );
         assert_eq!(
             render_browser_scalar(&BrowserScalarValue::String("abc".into())),
             "\"abc\""
@@ -5308,7 +5322,10 @@ mod tests {
 
     #[test]
     fn browser_tab_labels_reflect_backend_view_mapping() {
-        assert_eq!(BrowserTab::from_view(casacore_tablebrowser_protocol::BrowserView::Cells), BrowserTab::Cells);
+        assert_eq!(
+            BrowserTab::from_view(casacore_tablebrowser_protocol::BrowserView::Cells),
+            BrowserTab::Cells
+        );
         assert_eq!(BrowserTab::Cells.label(), "Cells");
     }
 
@@ -5327,7 +5344,9 @@ mod tests {
 
         app.set_text_value("output", "/tmp/out.txt");
         app.set_text_value("listfile", "/tmp/out.log");
-        let error = app.build_execution_plan().expect_err("conflicting outputs should fail");
+        let error = app
+            .build_execution_plan()
+            .expect_err("conflicting outputs should fail");
         assert!(error.contains("Choose either --output or --listfile"));
     }
 
@@ -5346,11 +5365,17 @@ mod tests {
         assert_eq!(app.active_result_tab(), ResultTab::Stderr);
         assert!(app.result.structured_error.is_some());
 
-        app.running = Some(running_state(Some("listobs-summary-v1"), Some("/tmp/out.txt")));
+        app.running = Some(running_state(
+            Some("listobs-summary-v1"),
+            Some("/tmp/out.txt"),
+        ));
         app.result.stdout.clear();
         app.result.stderr.clear();
         app.finish_execution(Some(0), true);
-        assert_eq!(app.status_line_for_test(), "Execution completed successfully.");
+        assert_eq!(
+            app.status_line_for_test(),
+            "Execution completed successfully."
+        );
         assert_eq!(app.result.status_kind, StatusKind::Ok);
         assert_eq!(app.file_output_path_for_test(), Some("/tmp/out.txt"));
         assert_eq!(app.active_result_tab(), ResultTab::Overview);
@@ -5465,12 +5490,20 @@ mod tests {
         let mut app = test_app();
         app.result.file_output_path = Some("/tmp/output.txt".into());
         let file_lines = app.overview_lines();
-        assert!(file_lines.iter().any(|line| line.contains("/tmp/output.txt")));
+        assert!(
+            file_lines
+                .iter()
+                .any(|line| line.contains("/tmp/output.txt"))
+        );
 
         app.result.file_output_path = None;
         app.running = Some(running_state(None, None));
         let running_lines = app.overview_lines();
-        assert!(running_lines.iter().any(|line| line.contains("still running")));
+        assert!(
+            running_lines
+                .iter()
+                .any(|line| line.contains("still running"))
+        );
 
         app.running = None;
         app.result.structured_error = Some("parse failed".into());
@@ -5526,7 +5559,11 @@ mod tests {
 
         let compact = build_compact_antenna_lines(&summary);
         assert!(compact[0].contains("Antennas: 3"));
-        assert!(compact.iter().any(|line| line.to_string().contains("'ea01'='W01'")));
+        assert!(
+            compact
+                .iter()
+                .any(|line| line.to_string().contains("'ea01'='W01'"))
+        );
     }
 
     #[test]
@@ -5534,7 +5571,10 @@ mod tests {
         let mut app = test_app();
         app.schema = None;
         app.start_run();
-        assert_eq!(app.status_line_for_test(), "Cannot run without a loaded UI schema.");
+        assert_eq!(
+            app.status_line_for_test(),
+            "Cannot run without a loaded UI schema."
+        );
         assert_eq!(app.result.status_kind, StatusKind::Error);
         assert_eq!(app.active_result_tab(), ResultTab::Stderr);
 
@@ -5545,7 +5585,10 @@ mod tests {
         app.start_run();
         assert_eq!(app.status_line_for_test(), "Cannot start command.");
         assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(app.stderr_for_test().contains("Choose either --output or --listfile"));
+        assert!(
+            app.stderr_for_test()
+                .contains("Choose either --output or --listfile")
+        );
 
         let _guard = ENV_LOCK.lock().expect("env lock");
         let mut app = test_app();
@@ -5575,13 +5618,19 @@ mod tests {
         let mut app = tablebrowser_test_app();
         app.set_text_value("table_path", "/tmp/demo.table");
         unsafe {
-            std::env::set_var("CASARS_TABLEBROWSER_BIN", "/definitely/missing-tablebrowser");
+            std::env::set_var(
+                "CASARS_TABLEBROWSER_BIN",
+                "/definitely/missing-tablebrowser",
+            );
         }
         app.start_run();
         unsafe {
             std::env::remove_var("CASARS_TABLEBROWSER_BIN");
         }
-        assert_eq!(app.status_line_for_test(), "Failed to launch table browser.");
+        assert_eq!(
+            app.status_line_for_test(),
+            "Failed to launch table browser."
+        );
         assert_eq!(app.result.status_kind, StatusKind::Error);
         assert!(app.stderr_for_test().contains("spawn tablebrowser session"));
         assert_eq!(app.active_result_tab(), ResultTab::Stderr);
@@ -5606,7 +5655,10 @@ mod tests {
             file_output_path: None,
         });
         app.ensure_uv_coverage_started();
-        assert_eq!(app.status_line_for_test(), "Failed to launch UV coverage loader.");
+        assert_eq!(
+            app.status_line_for_test(),
+            "Failed to launch UV coverage loader."
+        );
         assert_eq!(app.result.status_kind, StatusKind::Error);
         assert!(app.stderr_for_test().contains("spawn subprocess"));
 
@@ -5653,7 +5705,11 @@ mod tests {
             "Cancel requested for UV coverage load..."
         );
         assert_eq!(app.result.status_kind, StatusKind::Warning);
-        assert!(app.uv_loading.as_ref().is_some_and(|loading| loading.cancel_requested));
+        assert!(
+            app.uv_loading
+                .as_ref()
+                .is_some_and(|loading| loading.cancel_requested)
+        );
 
         let mut app = test_app();
         app.uv_loading = Some(UvCoverageLoadState {
@@ -5667,7 +5723,11 @@ mod tests {
             app.status_line_for_test(),
             "Cancel requested for UV coverage load..."
         );
-        assert!(app.uv_loading.as_ref().is_some_and(|loading| loading.cancel_requested));
+        assert!(
+            app.uv_loading
+                .as_ref()
+                .is_some_and(|loading| loading.cancel_requested)
+        );
         app.cancel_current();
         assert_eq!(
             app.status_line_for_test(),
@@ -5677,10 +5737,20 @@ mod tests {
         let mut app = test_app();
         app.running = Some(running_state(None, None));
         app.cancel_current();
-        assert_eq!(app.status_line_for_test(), "Cancel requested for listobs...");
-        assert!(app.running.as_ref().is_some_and(|running| running.cancel_requested));
+        assert_eq!(
+            app.status_line_for_test(),
+            "Cancel requested for listobs..."
+        );
+        assert!(
+            app.running
+                .as_ref()
+                .is_some_and(|running| running.cancel_requested)
+        );
         app.cancel_current();
-        assert_eq!(app.status_line_for_test(), "Cancel requested for listobs...");
+        assert_eq!(
+            app.status_line_for_test(),
+            "Cancel requested for listobs..."
+        );
     }
 
     #[test]
@@ -5774,26 +5844,28 @@ mod tests {
         app.selected_form = FormSelection::Field(field_index);
         app.open_path_chooser_for_selected_field();
         assert_eq!(app.input_mode(), super::InputMode::PathChooser);
-        assert!(app
-            .resolve_key_action(crossterm::event::KeyEvent::new(
+        assert!(
+            app.resolve_key_action(crossterm::event::KeyEvent::new(
                 crossterm::event::KeyCode::Enter,
                 crossterm::event::KeyModifiers::NONE,
             ))
             .is_some_and(|action| matches!(
                 action,
                 super::AppAction::PathChooser(super::PathChooserAction::Confirm)
-            )));
-        assert!(app
-            .resolve_key_action(crossterm::event::KeyEvent::new(
+            ))
+        );
+        assert!(
+            app.resolve_key_action(crossterm::event::KeyEvent::new(
                 crossterm::event::KeyCode::Char(' '),
                 crossterm::event::KeyModifiers::NONE,
             ))
             .is_some_and(|action| matches!(
                 action,
                 super::AppAction::PathChooser(super::PathChooserAction::SelectCurrent)
-            )));
-        assert!(app
-            .resolve_key_action(crossterm::event::KeyEvent::new(
+            ))
+        );
+        assert!(
+            app.resolve_key_action(crossterm::event::KeyEvent::new(
                 crossterm::event::KeyCode::Down,
                 crossterm::event::KeyModifiers::NONE,
             ))
@@ -5802,7 +5874,8 @@ mod tests {
                 super::AppAction::PathChooser(super::PathChooserAction::Navigate(
                     super::ExplorerInput::Down
                 ))
-            )));
+            ))
+        );
         assert_eq!(
             app.resolve_key_action(crossterm::event::KeyEvent {
                 code: crossterm::event::KeyCode::Esc,

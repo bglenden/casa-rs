@@ -1303,9 +1303,15 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(rendered, "q=quit  Enter launch  arrows");
-        assert_eq!(line.spans[0].style.fg, Some(theme(ThemeMode::DenseAnsi).footer_key_fg));
+        assert_eq!(
+            line.spans[0].style.fg,
+            Some(theme(ThemeMode::DenseAnsi).footer_key_fg)
+        );
         assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(line.spans[1].style.fg, Some(theme(ThemeMode::DenseAnsi).footer_fg));
+        assert_eq!(
+            line.spans[1].style.fg,
+            Some(theme(ThemeMode::DenseAnsi).footer_fg)
+        );
     }
 
     #[test]
@@ -1343,9 +1349,18 @@ mod tests {
         assert_eq!(tab_label(ResultTab::Overview, true, dense), "◖ Overview ◗");
         assert_eq!(tab_label(ResultTab::Stdout, false, dense), "[Stdout]");
         assert_eq!(tab_label(ResultTab::Stdout, false, rich), "·Out·");
-        assert_eq!(browser_tab_label(BrowserTab::Overview, true, dense), "◖ Overview ◗");
-        assert_eq!(browser_tab_label(BrowserTab::Subtables, false, dense), "[Subtables]");
-        assert_eq!(browser_tab_label(BrowserTab::Subtables, false, rich), "·Links·");
+        assert_eq!(
+            browser_tab_label(BrowserTab::Overview, true, dense),
+            "◖ Overview ◗"
+        );
+        assert_eq!(
+            browser_tab_label(BrowserTab::Subtables, false, dense),
+            "[Subtables]"
+        );
+        assert_eq!(
+            browser_tab_label(BrowserTab::Subtables, false, rich),
+            "·Links·"
+        );
     }
 
     #[test]
@@ -1384,15 +1399,17 @@ mod tests {
         );
         assert_eq!(rendered.spans.len(), 3);
         assert_eq!(rendered.spans[0].style.fg, None);
-        assert_eq!(
-            rendered.spans[1].style.fg,
-            Some(palette.table_header_fg)
-        );
+        assert_eq!(rendered.spans[1].style.fg, Some(palette.table_header_fg));
         assert_eq!(
             rendered.spans[2].style.bg,
             Some(palette.section_selected_bg)
         );
-        assert!(rendered.spans[2].style.add_modifier.contains(Modifier::BOLD));
+        assert!(
+            rendered.spans[2]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     #[test]
@@ -1402,7 +1419,9 @@ mod tests {
             result_scrollbar_state(&lines, 1, Rect::new(0, 0, 10, 2)).expect("lines scrollbar");
         assert_eq!(
             vscroll,
-            ScrollbarState::new(3).position(1).viewport_content_length(2)
+            ScrollbarState::new(3)
+                .position(1)
+                .viewport_content_length(2)
         );
 
         let table = ResultContent::Table(TableView {
@@ -1413,11 +1432,27 @@ mod tests {
             result_hscrollbar_state(&table, 2, Rect::new(0, 0, 3, 2)).expect("table hscroll");
         assert_eq!(
             hscroll,
-            ScrollbarState::new(4).position(2).viewport_content_length(3)
+            ScrollbarState::new(4)
+                .position(2)
+                .viewport_content_length(3)
         );
 
-        assert!(result_scrollbar_state(&ResultContent::Graphic("uv".into()), 0, Rect::new(0, 0, 4, 4)).is_none());
-        assert!(result_hscrollbar_state(&ResultContent::Graphic("uv".into()), 0, Rect::new(0, 0, 4, 4)).is_none());
+        assert!(
+            result_scrollbar_state(
+                &ResultContent::Graphic("uv".into()),
+                0,
+                Rect::new(0, 0, 4, 4)
+            )
+            .is_none()
+        );
+        assert!(
+            result_hscrollbar_state(
+                &ResultContent::Graphic("uv".into()),
+                0,
+                Rect::new(0, 0, 4, 4)
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -1456,7 +1491,11 @@ mod tests {
         assert!(layout.form_block.width > 0);
         assert!(layout.result_block.width > 0);
         assert!(!layout.form_rows.is_empty());
-        assert!(layout.form_target_at(layout.form_rows[0].rect.x, layout.form_rows[0].rect.y).is_some());
+        assert!(
+            layout
+                .form_target_at(layout.form_rows[0].rect.x, layout.form_rows[0].rect.y)
+                .is_some()
+        );
         assert!(layout.in_form_block(layout.form_block.x, layout.form_block.y));
         assert!(layout.in_result_block(layout.result_block.x, layout.result_block.y));
         assert!(layout.in_divider(layout.divider.x, layout.divider.y));

@@ -511,6 +511,9 @@ mod tests {
         assert!(auto_run);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].id, "ms_path");
-        assert_eq!(values[0].value, StartupValue::Text("--literal.ms".to_string()));
+        assert_eq!(
+            values[0].value,
+            StartupValue::Text("--literal.ms".to_string())
+        );
     }
 }

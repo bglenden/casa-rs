@@ -204,10 +204,15 @@ mod tests {
     #[test]
     fn resolve_app_defaults_and_rejects_unknown_ids() {
         assert_eq!(resolve_app(None).unwrap().id, "listobs");
-        assert_eq!(resolve_app(Some("tablebrowser")).unwrap().id, "tablebrowser");
-        assert!(resolve_app(Some("bogus"))
-            .unwrap_err()
-            .contains("unknown casars app"));
+        assert_eq!(
+            resolve_app(Some("tablebrowser")).unwrap().id,
+            "tablebrowser"
+        );
+        assert!(
+            resolve_app(Some("bogus"))
+                .unwrap_err()
+                .contains("unknown casars app")
+        );
     }
 
     #[test]
@@ -263,7 +268,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             args,
-            vec!["run", "-q", "-p", "casacore-tables", "--bin", "tablebrowser", "--"]
+            vec![
+                "run",
+                "-q",
+                "-p",
+                "casacore-tables",
+                "--bin",
+                "tablebrowser",
+                "--"
+            ]
         );
         unsafe {
             env::remove_var("CARGO");
