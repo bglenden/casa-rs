@@ -552,6 +552,7 @@ struct FormSection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClickTarget {
+    DividerToggle,
     Divider,
     ResultScrollbar,
     ResultHorizontalScrollbar,
@@ -2182,6 +2183,18 @@ impl AppState {
     }
 
     fn handle_left_mouse_down(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
+        if layout.in_divider_toggle(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection();
+            self.dragging_divider = false;
+            self.dragging_result_scrollbar = false;
+            self.toggle_parameters_pane();
+            self.last_click = Some(ClickState {
+                target: ClickTarget::DividerToggle,
+                at: Instant::now(),
+            });
+            return;
+        }
+
         if layout.in_divider(mouse_event.column, mouse_event.row) {
             self.clear_output_selection();
             self.dragging_divider = true;
@@ -3258,6 +3271,7 @@ impl AppState {
             ListObsPlotRenderInput {
                 payload,
                 theme_mode,
+                terminal_cell_px: panel.font_size,
             },
         ) {
             panel.last_error = Some(error.to_string());

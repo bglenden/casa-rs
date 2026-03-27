@@ -218,6 +218,63 @@ pub struct ListObsPlotTheme {
     pub accents: [[u8; 3]; 6],
 }
 
+/// Rendering defaults for plot typography and symbols.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListObsPlotRenderStyle {
+    margin_px: u32,
+    label_area_px: u32,
+    wide_y_label_area_px: u32,
+    axis_desc_font_px: i32,
+    axis_label_font_px: i32,
+    annotation_font_px: i32,
+    point_radius_px: i32,
+    mirror_point_radius_px: i32,
+    line_width_px: u32,
+    mirror_line_width_px: u32,
+    antenna_marker_scale_pct: u32,
+}
+
+impl ListObsPlotRenderStyle {
+    /// Heuristic defaults for off-screen bitmap/PDF export.
+    pub fn for_bitmap_size(_width: u32, height: u32) -> Self {
+        let base = (height / 28).clamp(18, 34) as i32;
+        let label_area = ((base as u32) * 3).clamp(56, 112);
+        Self {
+            margin_px: ((base as u32) / 2).clamp(10, 20),
+            label_area_px: label_area,
+            wide_y_label_area_px: (label_area + (base as u32) * 2).clamp(92, 160),
+            axis_desc_font_px: base + 4,
+            axis_label_font_px: base,
+            annotation_font_px: base,
+            point_radius_px: (base / 4).clamp(4, 10),
+            mirror_point_radius_px: ((base - 2) / 4).clamp(3, 8),
+            line_width_px: ((base as u32) / 7).clamp(2, 5),
+            mirror_line_width_px: ((base as u32) / 10).clamp(1, 3),
+            antenna_marker_scale_pct: 160,
+        }
+    }
+
+    /// Defaults aligned to the actual terminal cell size reported by the backend.
+    pub fn for_terminal_cells(cell_width_px: u16, cell_height_px: u16) -> Self {
+        let base = u32::from(cell_height_px.max(16));
+        let label_area = (base * 3).clamp(56, 132);
+        let _ = cell_width_px;
+        Self {
+            margin_px: (base / 2).clamp(10, 22),
+            label_area_px: label_area,
+            wide_y_label_area_px: (label_area + base * 2).clamp(96, 180),
+            axis_desc_font_px: (base + 4) as i32,
+            axis_label_font_px: base as i32,
+            annotation_font_px: base as i32,
+            point_radius_px: ((base as i32) / 4).clamp(5, 12),
+            mirror_point_radius_px: (((base as i32) - 2) / 4).clamp(4, 10),
+            line_width_px: (base / 7).clamp(2, 6),
+            mirror_line_width_px: (base / 10).clamp(1, 4),
+            antenna_marker_scale_pct: 180,
+        }
+    }
+}
+
 impl ListObsPlotTheme {
     /// Light export-oriented theme.
     pub fn light() -> Self {
@@ -468,6 +525,23 @@ pub fn render_listobs_plot_image(
     width: u32,
     height: u32,
 ) -> Result<DynamicImage, String> {
+    render_listobs_plot_image_with_style(
+        payload,
+        theme,
+        width,
+        height,
+        ListObsPlotRenderStyle::for_bitmap_size(width, height),
+    )
+}
+
+/// Render one plot payload into a bitmap image using explicit terminal/export style metrics.
+pub fn render_listobs_plot_image_with_style(
+    payload: &ListObsPlotPayload,
+    theme: ListObsPlotTheme,
+    width: u32,
+    height: u32,
+    style: ListObsPlotRenderStyle,
+) -> Result<DynamicImage, String> {
     if width == 0 || height == 0 {
         return Err("plot size must be non-zero".to_string());
     }
@@ -478,15 +552,17 @@ pub fn render_listobs_plot_image(
         .map_err(|error| error.to_string())?;
 
     match payload {
-        ListObsPlotPayload::UvCoverage(payload) => render_uv_coverage_plot(&root, payload, theme)?,
+        ListObsPlotPayload::UvCoverage(payload) => {
+            render_uv_coverage_plot(&root, payload, theme, style)?
+        }
         ListObsPlotPayload::AntennaLayout(payload) => {
-            render_antenna_layout_plot(&root, payload, theme)?
+            render_antenna_layout_plot(&root, payload, theme, style)?
         }
         ListObsPlotPayload::ScanTimeline(payload) => {
-            render_scan_timeline_plot(&root, payload, theme)?
+            render_scan_timeline_plot(&root, payload, theme, style)?
         }
         ListObsPlotPayload::SpectralWindowCoverage(payload) => {
-            render_spectral_window_coverage_plot(&root, payload, theme)?
+            render_spectral_window_coverage_plot(&root, payload, theme, style)?
         }
     }
 
@@ -506,7 +582,13 @@ pub fn export_listobs_plot(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    let image = render_listobs_plot_image(payload, theme, width, height)?;
+    let image = render_listobs_plot_image_with_style(
+        payload,
+        theme,
+        width,
+        height,
+        ListObsPlotRenderStyle::for_bitmap_size(width, height),
+    )?;
     match format {
         ListObsPlotExportFormat::Png => image
             .save_with_format(output_path, ImageFormat::Png)
@@ -560,6 +642,8 @@ fn build_antenna_layout_payload(
     let labels = spec.option("labels").unwrap_or("name");
     let labels_enabled = labels != "off";
     let coordinates = spec.option("coordinates").unwrap_or("offset");
+    let use_absolute_coordinates =
+        coordinates == "absolute" || should_fallback_to_absolute_antenna_coordinates(summary);
     let size_by_diameter = parse_on_off(
         spec.option("size_by_diameter").unwrap_or("on"),
         "size_by_diameter",
@@ -567,7 +651,7 @@ fn build_antenna_layout_payload(
     let mut omitted = 0usize;
     let mut antennas = Vec::<(AntennaLayoutPoint, String, String)>::new();
     for antenna in &summary.antennas {
-        let (x, y, x_label, y_label) = if coordinates == "absolute" {
+        let (x, y, x_label, y_label) = if use_absolute_coordinates {
             (
                 antenna.position_m[0],
                 antenna.position_m[1],
@@ -610,7 +694,7 @@ fn build_antenna_layout_payload(
     if antennas.is_empty() {
         return Err(format!(
             "Antenna layout requires finite {} coordinates in the ANTENNA table.",
-            if coordinates == "absolute" {
+            if use_absolute_coordinates {
                 "ITRF"
             } else {
                 "offset"
@@ -632,12 +716,25 @@ fn build_antenna_layout_payload(
             labels_enabled,
             antennas: antennas.into_iter().map(|entry| entry.0).collect(),
             summary: if omitted == 0 {
-                format!("Antenna layout. Antennas={}", summary.antennas.len())
+                if coordinates == "offset" && use_absolute_coordinates {
+                    format!(
+                        "Antenna layout. Antennas={} (offsets unavailable; using ITRF X/Y)",
+                        summary.antennas.len()
+                    )
+                } else {
+                    format!("Antenna layout. Antennas={}", summary.antennas.len())
+                }
             } else {
+                let suffix = if coordinates == "offset" && use_absolute_coordinates {
+                    "; offsets unavailable; using ITRF X/Y"
+                } else {
+                    ""
+                };
                 format!(
-                    "Antenna layout. Antennas={} ({} omitted without finite coordinates)",
+                    "Antenna layout. Antennas={} ({} omitted without finite coordinates{})",
                     summary.antennas.len() - omitted,
-                    omitted
+                    omitted,
+                    suffix
                 )
             },
         },
@@ -755,8 +852,8 @@ fn build_spectral_window_coverage_payload(
             };
             Ok(SpectralWindowCoverageBar {
                 lane,
-                start: spw.first_channel_frequency_hz / scale.0,
-                end: (spw.first_channel_frequency_hz + spw.total_bandwidth_hz) / scale.0,
+                start: spw.min_frequency_hz / scale.0,
+                end: spw.max_frequency_hz / scale.0,
                 label,
                 color_group,
             })
@@ -779,18 +876,21 @@ fn render_uv_coverage_plot(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     payload: &UvCoveragePlotPayload,
     theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
 ) -> Result<(), String> {
     let axis_scale = uv_axis_scale(payload.axis_extent_lambda);
     let extent = (payload.axis_extent_lambda / axis_scale.lambda_scale).max(1.0);
-    let mut chart = ChartBuilder::on(root)
-        .margin(16)
-        .x_label_area_size(44)
-        .y_label_area_size(56)
+    let chart_root = centered_square_chart_area(root.clone(), style);
+    let mut chart = ChartBuilder::on(&chart_root)
+        .margin(0)
+        .x_label_area_size(style.label_area_px)
+        .y_label_area_size(style.label_area_px)
         .build_cartesian_2d(-extent..extent, -extent..extent)
         .map_err(|error| error.to_string())?;
     configure_mesh(
         &mut chart,
         theme,
+        style,
         &format!("u ({})", axis_scale.unit_label),
         &format!("v ({})", axis_scale.unit_label),
     )?;
@@ -806,7 +906,7 @@ fn render_uv_coverage_plot(
             chart
                 .draw_series(PointSeries::of_element(
                     points.iter().copied(),
-                    3,
+                    style.point_radius_px,
                     color.filled(),
                     &|coord, size, style| {
                         EmptyElement::at(coord) + Circle::new((0, 0), size, style)
@@ -817,7 +917,7 @@ fn render_uv_coverage_plot(
                 chart
                     .draw_series(PointSeries::of_element(
                         points.iter().map(|(u, v)| (-u, -v)),
-                        2,
+                        style.mirror_point_radius_px,
                         color.mix(0.5).filled(),
                         &|coord, size, style| {
                             EmptyElement::at(coord) + Circle::new((0, 0), size, style)
@@ -829,14 +929,14 @@ fn render_uv_coverage_plot(
             chart
                 .draw_series(LineSeries::new(
                     points.iter().copied(),
-                    color.stroke_width(2),
+                    color.stroke_width(style.line_width_px),
                 ))
                 .map_err(|error| error.to_string())?;
             if payload.mirror {
                 chart
                     .draw_series(LineSeries::new(
                         points.iter().map(|(u, v)| (-u, -v)),
-                        color.mix(0.5).stroke_width(1),
+                        color.mix(0.5).stroke_width(style.mirror_line_width_px),
                     ))
                     .map_err(|error| error.to_string())?;
             }
@@ -844,7 +944,7 @@ fn render_uv_coverage_plot(
             chart
                 .draw_series(PointSeries::of_element(
                     [point],
-                    3,
+                    style.point_radius_px,
                     color.filled(),
                     &|coord, size, style| {
                         EmptyElement::at(coord) + Circle::new((0, 0), size, style)
@@ -861,34 +961,59 @@ fn render_antenna_layout_plot(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     payload: &AntennaLayoutPlotPayload,
     theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
 ) -> Result<(), String> {
     let (min_x, max_x, min_y, max_y) =
         bounds(payload.antennas.iter().map(|point| (point.x, point.y)))
             .unwrap_or((-1.0, 1.0, -1.0, 1.0));
-    let padding_x = ((max_x - min_x).abs() * 0.1).max(1.0);
-    let padding_y = ((max_y - min_y).abs() * 0.1).max(1.0);
-    let mut chart = ChartBuilder::on(root)
-        .margin(16)
-        .x_label_area_size(44)
-        .y_label_area_size(56)
-        .build_cartesian_2d(
-            (min_x - padding_x)..(max_x + padding_x),
-            (min_y - padding_y)..(max_y + padding_y),
-        )
+    let ((x_min, x_max), (y_min, y_max)) = equal_axis_ranges(min_x, max_x, min_y, max_y);
+    let chart_root = centered_square_chart_area(root.clone(), style);
+    let mut chart = ChartBuilder::on(&chart_root)
+        .margin(0)
+        .x_label_area_size(style.label_area_px)
+        .y_label_area_size(style.label_area_px)
+        .build_cartesian_2d(x_min..x_max, y_min..y_max)
         .map_err(|error| error.to_string())?;
-    configure_mesh(&mut chart, theme, &payload.x_label, &payload.y_label)?;
+    let axis_span = (x_max - x_min).abs().max((y_max - y_min).abs()).max(1.0);
+    chart
+        .configure_mesh()
+        .x_desc(&payload.x_label)
+        .y_desc(&payload.y_label)
+        .axis_desc_style(
+            ("sans-serif", style.axis_desc_font_px)
+                .into_font()
+                .color(&rgb(theme.axis)),
+        )
+        .axis_style(rgb(theme.axis))
+        .label_style(
+            ("sans-serif", style.axis_label_font_px)
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
+        .light_line_style(rgb(theme.grid).mix(0.55))
+        .bold_line_style(rgb(theme.grid))
+        .x_labels(5)
+        .y_labels(5)
+        .x_label_formatter(&|value| format_numeric_tick(*value, axis_span))
+        .y_label_formatter(&|value| format_numeric_tick(*value, axis_span))
+        .draw()
+        .map_err(|error| error.to_string())?;
 
     for (index, point) in payload.antennas.iter().enumerate() {
         let color = rgb(theme.accents[index % theme.accents.len()]);
+        let marker_radius = (point.marker_radius * (style.antenna_marker_scale_pct as i32) / 100)
+            .clamp(style.point_radius_px, style.point_radius_px * 3);
         chart
             .draw_series(std::iter::once(
                 EmptyElement::at((point.x, point.y))
-                    + Circle::new((0, 0), point.marker_radius, color.filled())
+                    + Circle::new((0, 0), marker_radius, color.filled())
                     + if payload.labels_enabled && !point.label.is_empty() {
                         Text::new(
                             point.label.clone(),
-                            (10, -10),
-                            ("sans-serif", 16).into_font().color(&rgb(theme.axis)),
+                            (marker_radius + 6, -(marker_radius + 4)),
+                            ("sans-serif", style.annotation_font_px)
+                                .into_font()
+                                .color(&rgb(theme.axis)),
                         )
                     } else {
                         Text::new(String::new(), (0, 0), ("sans-serif", 1).into_font())
@@ -904,26 +1029,45 @@ fn render_scan_timeline_plot(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     payload: &ScanTimelinePlotPayload,
     theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
 ) -> Result<(), String> {
     let lane_count = payload.lane_labels.len().max(1);
+    let axis_offset = scan_timeline_axis_offset(payload.start_mjd_seconds, payload.end_mjd_seconds);
+    let x_label = if axis_offset == 0.0 {
+        "Time (MJD seconds)".to_string()
+    } else {
+        format!("Time (MJD seconds - {:.0})", axis_offset)
+    };
     let mut chart = ChartBuilder::on(root)
-        .margin(16)
-        .x_label_area_size(44)
-        .y_label_area_size(92)
+        .margin(style.margin_px)
+        .x_label_area_size(style.label_area_px)
+        .y_label_area_size(style.wide_y_label_area_px)
         .build_cartesian_2d(
-            payload.start_mjd_seconds..payload.end_mjd_seconds,
+            (payload.start_mjd_seconds - axis_offset)..(payload.end_mjd_seconds - axis_offset),
             0f64..lane_count as f64,
         )
         .map_err(|error| error.to_string())?;
     chart
         .configure_mesh()
-        .x_desc("Time (MJD seconds)")
+        .x_desc(&x_label)
         .y_desc("Lane")
-        .axis_desc_style(("sans-serif", 18).into_font().color(&rgb(theme.axis)))
+        .axis_desc_style(
+            ("sans-serif", style.axis_desc_font_px)
+                .into_font()
+                .color(&rgb(theme.axis)),
+        )
         .axis_style(rgb(theme.axis))
-        .label_style(("sans-serif", 14).into_font().color(&rgb(theme.label)))
+        .label_style(
+            ("sans-serif", style.axis_label_font_px)
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
         .light_line_style(rgb(theme.grid).mix(0.55))
         .bold_line_style(rgb(theme.grid))
+        .x_labels(6)
+        .x_label_formatter(&|value| {
+            format_numeric_tick(*value, payload.end_mjd_seconds - payload.start_mjd_seconds)
+        })
         .y_labels(lane_count)
         .y_label_formatter(&|value| {
             let lane = (*value).floor() as usize;
@@ -942,8 +1086,8 @@ fn render_scan_timeline_plot(
         chart
             .draw_series(std::iter::once(Rectangle::new(
                 [
-                    (bar.start_mjd_seconds, lane + 0.15),
-                    (bar.end_mjd_seconds, lane + 0.85),
+                    (bar.start_mjd_seconds - axis_offset, lane + 0.15),
+                    (bar.end_mjd_seconds - axis_offset, lane + 0.85),
                 ],
                 color.filled(),
             )))
@@ -952,8 +1096,10 @@ fn render_scan_timeline_plot(
             chart
                 .draw_series(std::iter::once(Text::new(
                     bar.label.clone(),
-                    (bar.start_mjd_seconds, lane + 0.5),
-                    ("sans-serif", 14).into_font().color(&rgb(theme.axis)),
+                    (bar.start_mjd_seconds - axis_offset, lane + 0.5),
+                    ("sans-serif", style.annotation_font_px)
+                        .into_font()
+                        .color(&rgb(theme.axis)),
                 )))
                 .map_err(|error| error.to_string())?;
         }
@@ -966,6 +1112,7 @@ fn render_spectral_window_coverage_plot(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     payload: &SpectralWindowCoveragePlotPayload,
     theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
 ) -> Result<(), String> {
     let (min_x, max_x) = payload
         .bars
@@ -981,18 +1128,26 @@ fn render_spectral_window_coverage_plot(
     };
     let lane_count = payload.bars.len().max(1);
     let mut chart = ChartBuilder::on(root)
-        .margin(16)
-        .x_label_area_size(44)
-        .y_label_area_size(92)
+        .margin(style.margin_px)
+        .x_label_area_size(style.label_area_px)
+        .y_label_area_size(style.wide_y_label_area_px)
         .build_cartesian_2d(min_x..max_x, 0f64..lane_count as f64)
         .map_err(|error| error.to_string())?;
     chart
         .configure_mesh()
         .x_desc(&payload.x_label)
         .y_desc("SPW")
-        .axis_desc_style(("sans-serif", 18).into_font().color(&rgb(theme.axis)))
+        .axis_desc_style(
+            ("sans-serif", style.axis_desc_font_px)
+                .into_font()
+                .color(&rgb(theme.axis)),
+        )
         .axis_style(rgb(theme.axis))
-        .label_style(("sans-serif", 14).into_font().color(&rgb(theme.label)))
+        .label_style(
+            ("sans-serif", style.axis_label_font_px)
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
         .light_line_style(rgb(theme.grid).mix(0.55))
         .bold_line_style(rgb(theme.grid))
         .y_labels(lane_count)
@@ -1021,7 +1176,9 @@ fn render_spectral_window_coverage_plot(
                 .draw_series(std::iter::once(Text::new(
                     bar.label.clone(),
                     (bar.start, lane + 0.5),
-                    ("sans-serif", 14).into_font().color(&rgb(theme.axis)),
+                    ("sans-serif", style.annotation_font_px)
+                        .into_font()
+                        .color(&rgb(theme.axis)),
                 )))
                 .map_err(|error| error.to_string())?;
         }
@@ -1079,6 +1236,7 @@ fn validate_option(kind: ListObsPlotKind, key: &str, value: &str) -> Result<(), 
 fn configure_mesh<DB: DrawingBackend>(
     chart: &mut ChartContext<'_, DB, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
     x_desc: &str,
     y_desc: &str,
 ) -> Result<(), String> {
@@ -1086,9 +1244,17 @@ fn configure_mesh<DB: DrawingBackend>(
         .configure_mesh()
         .x_desc(x_desc)
         .y_desc(y_desc)
-        .axis_desc_style(("sans-serif", 18).into_font().color(&rgb(theme.axis)))
+        .axis_desc_style(
+            ("sans-serif", style.axis_desc_font_px)
+                .into_font()
+                .color(&rgb(theme.axis)),
+        )
         .axis_style(rgb(theme.axis))
-        .label_style(("sans-serif", 14).into_font().color(&rgb(theme.label)))
+        .label_style(
+            ("sans-serif", style.axis_label_font_px)
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
         .light_line_style(rgb(theme.grid).mix(0.55))
         .bold_line_style(rgb(theme.grid))
         .draw()
@@ -1117,6 +1283,36 @@ fn palette_color(group: &str, theme: ListObsPlotTheme) -> RGBColor {
     rgb(theme.accents[hash % theme.accents.len()])
 }
 
+fn centered_square_chart_area<'a>(
+    root: DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>,
+    style: ListObsPlotRenderStyle,
+) -> DrawingArea<BitMapBackend<'a>, plotters::coord::Shift> {
+    let (width, height) = root.dim_in_pixel();
+    let available_width = width.saturating_sub(style.margin_px * 2 + style.label_area_px);
+    let available_height = height.saturating_sub(style.margin_px * 2 + style.label_area_px);
+    let square = available_width.min(available_height).max(1);
+    let extra_width = available_width.saturating_sub(square);
+    let extra_height = available_height.saturating_sub(square);
+    root.margin(
+        style.margin_px + extra_height / 2,
+        style.margin_px + (extra_height - extra_height / 2),
+        style.margin_px + extra_width / 2,
+        style.margin_px + (extra_width - extra_width / 2),
+    )
+}
+
+fn equal_axis_ranges(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> ((f64, f64), (f64, f64)) {
+    let center_x = (min_x + max_x) / 2.0;
+    let center_y = (min_y + max_y) / 2.0;
+    let span = (max_x - min_x).abs().max((max_y - min_y).abs()).max(1.0);
+    let padding = (span * 0.1).max(1.0);
+    let half_extent = span / 2.0 + padding;
+    (
+        (center_x - half_extent, center_x + half_extent),
+        (center_y - half_extent, center_y + half_extent),
+    )
+}
+
 fn bounds(points: impl Iterator<Item = (f64, f64)>) -> Option<(f64, f64, f64, f64)> {
     let mut min_x = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -1136,6 +1332,41 @@ fn bounds(points: impl Iterator<Item = (f64, f64)>) -> Option<(f64, f64, f64, f6
     seen.then_some((min_x, max_x, min_y, max_y))
 }
 
+fn format_numeric_tick(value: f64, span: f64) -> String {
+    let decimals = if span >= 1_000.0 {
+        0
+    } else if span >= 100.0 {
+        1
+    } else if span >= 10.0 {
+        2
+    } else {
+        3
+    };
+    trim_numeric_label(format!("{value:.precision$}", precision = decimals))
+}
+
+fn trim_numeric_label(label: String) -> String {
+    if label.contains('.') {
+        let trimmed = label.trim_end_matches('0').trim_end_matches('.');
+        if trimmed == "-0" {
+            "0".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        label
+    }
+}
+
+fn scan_timeline_axis_offset(start_mjd_seconds: f64, end_mjd_seconds: f64) -> f64 {
+    let span = (end_mjd_seconds - start_mjd_seconds).abs();
+    if !start_mjd_seconds.is_finite() || !end_mjd_seconds.is_finite() || span < 1.0 {
+        return 0.0;
+    }
+    let step = 10f64.powi(span.log10().floor() as i32);
+    (start_mjd_seconds / step).floor() * step
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct UvAxisScale {
     unit_label: &'static str,
@@ -1143,30 +1374,49 @@ struct UvAxisScale {
 }
 
 fn uv_axis_scale(max_abs_uv_lambda: f64) -> UvAxisScale {
-    if max_abs_uv_lambda >= 1_000_000.0 {
-        UvAxisScale {
-            unit_label: "Mλ",
-            lambda_scale: 1_000_000.0,
+    let _ = max_abs_uv_lambda;
+    UvAxisScale {
+        unit_label: "kλ",
+        lambda_scale: 1_000.0,
+    }
+}
+
+fn should_fallback_to_absolute_antenna_coordinates(summary: &ListObsSummary) -> bool {
+    let mut saw_nonzero_offset = false;
+    let mut min_x = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    let mut saw_absolute_position = false;
+
+    for antenna in &summary.antennas {
+        let [east, north, _elevation] = antenna.offset_from_observatory_m;
+        if east.is_finite() && north.is_finite() && (east.abs() > 1e-6 || north.abs() > 1e-6) {
+            saw_nonzero_offset = true;
         }
-    } else if max_abs_uv_lambda >= 1_000.0 {
-        UvAxisScale {
-            unit_label: "kλ",
-            lambda_scale: 1_000.0,
-        }
-    } else {
-        UvAxisScale {
-            unit_label: "λ",
-            lambda_scale: 1.0,
+
+        let [x, y, _z] = antenna.position_m;
+        if x.is_finite() && y.is_finite() {
+            saw_absolute_position = true;
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
         }
     }
+
+    !saw_nonzero_offset
+        && saw_absolute_position
+        && ((max_x - min_x).abs() > 1e-3 || (max_y - min_y).abs() > 1e-3)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotSpec, ListObsPlotTheme,
-        build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload,
-        export_listobs_plot, render_listobs_plot_image,
+        ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
+        ListObsPlotTheme, UvAxisScale, build_listobs_plot_payload_from_summary,
+        build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick,
+        render_listobs_plot_image, scan_timeline_axis_offset, uv_axis_scale,
     };
     use crate::listobs::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
@@ -1216,6 +1466,24 @@ mod tests {
     }
 
     #[test]
+    fn uv_axis_scale_is_fixed_to_kilolambda() {
+        assert_eq!(
+            uv_axis_scale(42.0),
+            UvAxisScale {
+                unit_label: "kλ",
+                lambda_scale: 1_000.0,
+            }
+        );
+        assert_eq!(
+            uv_axis_scale(5_000_000.0),
+            UvAxisScale {
+                unit_label: "kλ",
+                lambda_scale: 1_000.0,
+            }
+        );
+    }
+
+    #[test]
     fn plot_export_writes_png_and_pdf_files() {
         let temp = tempdir().unwrap();
         let summary = synthetic_summary();
@@ -1259,6 +1527,72 @@ mod tests {
         let spec = ListObsPlotKind::AntennaLayout.default_spec();
         let error = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap_err();
         assert!(error.contains("finite offset coordinates"));
+    }
+
+    #[test]
+    fn antenna_layout_falls_back_to_absolute_coordinates_when_offsets_are_all_zero() {
+        let mut summary = synthetic_summary();
+        for antenna in &mut summary.antennas {
+            antenna.offset_from_observatory_m = [0.0, 0.0, 0.0];
+        }
+        let spec = ListObsPlotKind::AntennaLayout.default_spec();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let ListObsPlotPayload::AntennaLayout(payload) = payload else {
+            panic!("expected antenna layout payload");
+        };
+        assert_eq!(payload.x_label, "ITRF X (m)");
+        assert_eq!(payload.y_label, "ITRF Y (m)");
+        assert!(payload.summary.contains("using ITRF X/Y"));
+        assert!(payload.antennas.iter().any(|point| point.x.abs() > 1.0));
+    }
+
+    #[test]
+    fn spectral_window_plot_uses_true_band_edges_for_descending_windows() {
+        let mut summary = synthetic_summary();
+        summary.spectral_windows = vec![SpectralWindowSummary {
+            spectral_window_id: 7,
+            name: "DESC".to_string(),
+            num_channels: 4,
+            frame: Some("TOPO".to_string()),
+            first_channel_frequency_hz: 10.0e9,
+            channel_width_hz: -1.0e9,
+            reference_frequency_hz: 9.0e9,
+            center_frequency_hz: 8.5e9,
+            min_frequency_hz: 7.0e9,
+            max_frequency_hz: 10.5e9,
+            total_bandwidth_hz: 4.0e9,
+            data_description_ids: vec![0],
+            polarization_ids: vec![0],
+            correlation_types: vec!["XX".to_string()],
+        }];
+
+        let spec = ListObsPlotKind::SpectralWindowCoverage.default_spec();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let ListObsPlotPayload::SpectralWindowCoverage(payload) = payload else {
+            panic!("expected spectral window payload");
+        };
+        assert_eq!(payload.bars.len(), 1);
+        let bar = &payload.bars[0];
+        assert_eq!(bar.start, 7.0);
+        assert_eq!(bar.end, 10.5);
+        assert!(bar.start < summary.spectral_windows[0].center_frequency_hz / 1.0e9);
+        assert!(bar.end > summary.spectral_windows[0].center_frequency_hz / 1.0e9);
+    }
+
+    #[test]
+    fn numeric_tick_formatter_trims_noise_for_large_axes() {
+        assert_eq!(format_numeric_tick(2_000.0, 10_000.0), "2000");
+        assert_eq!(format_numeric_tick(160.0, 200.0), "160");
+        assert_eq!(format_numeric_tick(12.340, 20.0), "12.34");
+    }
+
+    #[test]
+    fn scan_timeline_axis_offset_removes_common_prefix() {
+        assert_eq!(
+            scan_timeline_axis_offset(4_197_926_160.0, 4_197_926_280.0),
+            4_197_926_100.0
+        );
+        assert_eq!(scan_timeline_axis_offset(10.0, 10.4), 0.0);
     }
 
     fn synthetic_summary() -> ListObsSummary {
@@ -1384,6 +1718,8 @@ mod tests {
                     channel_width_hz: 1.0e6,
                     reference_frequency_hz: 1.0e9,
                     center_frequency_hz: 1.008e9,
+                    min_frequency_hz: 0.9995e9,
+                    max_frequency_hz: 1.0165e9,
                     total_bandwidth_hz: 16.0e6,
                     data_description_ids: vec![0],
                     polarization_ids: vec![0],
@@ -1398,6 +1734,8 @@ mod tests {
                     channel_width_hz: 5.0e5,
                     reference_frequency_hz: 1.2e9,
                     center_frequency_hz: 1.208e9,
+                    min_frequency_hz: 1.19975e9,
+                    max_frequency_hz: 1.21625e9,
                     total_bandwidth_hz: 16.0e6,
                     data_description_ids: vec![1],
                     polarization_ids: vec![0],

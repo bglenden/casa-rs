@@ -142,7 +142,7 @@ fn pane_split_ratio_persists_after_drag() {
         mouse(
             MouseEventKind::Down(MouseButton::Left),
             layout.divider.x,
-            layout.divider.y,
+            layout.divider.y + 2,
         ),
         &layout,
     );
@@ -150,7 +150,7 @@ fn pane_split_ratio_persists_after_drag() {
         mouse(
             MouseEventKind::Drag(MouseButton::Left),
             layout.body.x + 72,
-            layout.divider.y,
+            layout.divider.y + 2,
         ),
         &layout,
     );
@@ -158,7 +158,7 @@ fn pane_split_ratio_persists_after_drag() {
         mouse(
             MouseEventKind::Up(MouseButton::Left),
             layout.body.x + 72,
-            layout.divider.y,
+            layout.divider.y + 2,
         ),
         &layout,
     );
@@ -219,7 +219,11 @@ fn pane_toggle_can_collapse_parameters_pane() {
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
     assert!(app.parameters_pane_collapsed());
     assert_eq!(layout.form_block.width, 0);
-    assert_eq!(layout.result_block.width, layout.body.width);
+    assert_eq!(layout.divider.width, 1);
+    assert_eq!(
+        layout.result_block.width + layout.divider.width,
+        layout.body.width
+    );
 }
 
 #[test]
@@ -1615,6 +1619,28 @@ fn plots_tab_loads_uv_coverage_after_listobs_run() {
     assert!(rendered.contains("Catalog"));
     assert!(rendered.contains("Controls"));
     assert!(rendered.contains("UV Coverage"));
+}
+
+#[test]
+fn divider_chevron_can_collapse_parameters_sidebar_from_plots() {
+    let (_temp, mut app) = test_app();
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let before = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 34), &app);
+    assert!(!app.parameters_pane_collapsed());
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            before.divider.x,
+            before.divider.y,
+        ),
+        &before,
+    );
+
+    let after = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 34), &app);
+    assert!(app.parameters_pane_collapsed());
+    assert_eq!(after.divider.width, 1);
+    assert!(after.result_block.width > before.result_block.width);
 }
 
 #[test]

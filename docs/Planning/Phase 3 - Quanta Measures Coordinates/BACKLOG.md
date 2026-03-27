@@ -95,3 +95,44 @@ current wave unless a larger crate-graph cleanup is already in flight.
 correctness audit, not a blocker for the current measure APIs. It should land
 either as exact casacore parity work or as stronger documented divergence once
 the expected behavior is confirmed.
+
+---
+
+### 11.4 `ephemerides/Sources` and `ephemerides/Lines` Catalog Import
+
+**Status:** DEFER
+
+**Reason:** The observatory catalog is implemented, but source and spectral-line
+catalog tables are still missing from the Rust-native measures-data bundle.
+They are not required by current measure/MS workflows and should be added as a
+separate catalog wave.
+
+---
+
+### 11.5 Geomagnetic and Space-Weather Tables (`IGRF`, `IMF`, `KpApF107`)
+
+**Status:** DEFER
+
+**Reason:** These geodetic support tables are present in casacore-data but are
+not consumed by the current Rust measures stack. Keep them deferred until a
+concrete user-facing magnetic-field or space-weather workflow needs them.
+
+---
+
+### 11.6 Auxiliary Observatory/Velocity Catalogs (`SCHED_locations`, `VGEO`, `VTOP`)
+
+**Status:** DEFER
+
+**Reason:** The core `Observatories` table is now bundled, but these related
+location/velocity catalogs remain unimplemented. They should be imported only
+once there is a clear API consumer for them.
+
+---
+
+### 11.7 Broader Measures-Data Parity Audit and Refresh Tooling
+
+**Status:** DEFER
+
+**Reason:** The Rust-native observatory importer is implemented, but the rest of
+the measures-data tree still needs a periodic parity audit and refresh workflow
+so future bundled snapshots stay aligned with upstream casacore-data.

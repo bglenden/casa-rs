@@ -81,6 +81,13 @@ pub(crate) struct PlotControlHit {
 }
 
 impl UiLayout {
+    pub(crate) fn in_divider_toggle(&self, column: u16, row: u16) -> bool {
+        let Some(rect) = divider_toggle_rect(self.divider) else {
+            return false;
+        };
+        rect_contains(rect, column, row)
+    }
+
     pub(crate) fn form_target_at(&self, column: u16, row: u16) -> Option<FormSelection> {
         self.form_rows
             .iter()
@@ -180,7 +187,7 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
 
     let body = vertical[1];
     let collapsed = app.parameters_pane_collapsed();
-    let divider_width = if collapsed { 0 } else { 1 };
+    let divider_width = u16::from(body.width > 0);
     let available_width = body.width.saturating_sub(divider_width);
     let (left_width, right_width) = if collapsed {
         (0, body.width)
@@ -291,8 +298,24 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     let footer = Paragraph::new(footer_line(app.footer_text(), palette));
     frame.render_widget(footer, layout.footer);
 
+    let divider_glyph = if app.parameters_pane_collapsed() {
+        "▶"
+    } else {
+        "◀"
+    };
     let divider_lines = (0..layout.divider.height)
-        .map(|_| Line::from(palette.divider_glyph))
+        .map(|index| {
+            if index == 0 {
+                Line::from(Span::styled(
+                    divider_glyph,
+                    Style::default()
+                        .fg(palette.divider_fg)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(palette.divider_glyph)
+            }
+        })
         .collect::<Vec<_>>();
     let divider = Paragraph::new(divider_lines).style(Style::default().fg(palette.divider_fg));
     frame.render_widget(divider, layout.divider);
@@ -1266,6 +1289,18 @@ pub(crate) fn plot_canvas_area(layout: &UiLayout) -> Option<Rect> {
         .plot_workspace
         .as_ref()
         .map(|workspace| workspace.canvas_inner)
+}
+
+fn divider_toggle_rect(divider: Rect) -> Option<Rect> {
+    if divider.width == 0 || divider.height == 0 {
+        return None;
+    }
+    Some(Rect {
+        x: divider.x,
+        y: divider.y,
+        width: divider.width,
+        height: 1,
+    })
 }
 
 fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {

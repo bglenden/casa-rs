@@ -473,7 +473,18 @@ dependencies = [
 name = "casacore-measures-data"
 version = "0.7.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "casacore-measures-tools"
+version = "0.7.0"
+dependencies = [
+ "casacore-measures-data",
+ "casacore-tables",
+ "casacore-types",
 ]
 
 [[package]]

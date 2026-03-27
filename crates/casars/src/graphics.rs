@@ -7,6 +7,7 @@ use crate::config::ThemeMode;
 pub(crate) struct ListObsPlotRenderInput {
     pub payload: casacore_ms::ListObsPlotPayload,
     pub theme_mode: ThemeMode,
+    pub terminal_cell_px: (u16, u16),
 }
 
 pub(crate) fn plot_theme(theme_mode: ThemeMode) -> casacore_ms::ListObsPlotTheme {
@@ -21,11 +22,15 @@ pub(crate) fn render_plot_image(
     height: u32,
     input: &ListObsPlotRenderInput,
 ) -> Result<DynamicImage, String> {
-    casacore_ms::render_listobs_plot_image(
+    casacore_ms::render_listobs_plot_image_with_style(
         &input.payload,
         plot_theme(input.theme_mode),
         width,
         height,
+        casacore_ms::ListObsPlotRenderStyle::for_terminal_cells(
+            input.terminal_cell_px.0,
+            input.terminal_cell_px.1,
+        ),
     )
 }
 

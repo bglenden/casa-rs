@@ -525,9 +525,24 @@ fn listobs_real_small_fixture_json_smoke() {
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse json");
     assert_eq!(json["measurement_set"]["row_count"], 1058);
+    assert_eq!(json["observations"][0]["telescope_name"], "ALMA");
     assert_eq!(json["fields"].as_array().unwrap().len(), 2);
     assert_eq!(json["fields"][0]["name"], "J1617-7717");
     assert_eq!(json["fields"][1]["name"], "J1423-7829");
+    let first_spw = &json["spectral_windows"][0];
+    let center_hz = first_spw["center_frequency_hz"].as_f64().unwrap();
+    let min_hz = first_spw["min_frequency_hz"].as_f64().unwrap();
+    let max_hz = first_spw["max_frequency_hz"].as_f64().unwrap();
+    assert!(min_hz < center_hz && center_hz < max_hz);
+    assert!(first_spw["channel_width_hz"].as_f64().unwrap() < 0.0);
+    assert!(json["antennas"].as_array().unwrap().iter().any(|antenna| {
+        antenna["offset_from_observatory_m"][0]
+            .as_f64()
+            .is_some_and(|value| value.abs() > 1.0)
+            || antenna["offset_from_observatory_m"][1]
+                .as_f64()
+                .is_some_and(|value| value.abs() > 1.0)
+    }));
 }
 
 #[test]
