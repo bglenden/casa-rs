@@ -434,6 +434,8 @@ pub struct SpectralWindowCoveragePlotPayload {
 /// One spectral-window bar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralWindowCoverageBar {
+    /// Spectral-window identifier for labeling.
+    pub spectral_window_id: usize,
     /// Y-axis row index.
     pub lane: usize,
     /// Low-frequency edge.
@@ -851,6 +853,7 @@ fn build_spectral_window_coverage_payload(
                 }
             };
             Ok(SpectralWindowCoverageBar {
+                spectral_window_id: spw.spectral_window_id,
                 lane,
                 start: spw.min_frequency_hz / scale.0,
                 end: spw.max_frequency_hz / scale.0,
@@ -1156,7 +1159,7 @@ fn render_spectral_window_coverage_plot(
             payload
                 .bars
                 .get(lane)
-                .map(|_| format!("SPW {lane}"))
+                .map(spectral_window_lane_label)
                 .unwrap_or_default()
         })
         .draw()
@@ -1185,6 +1188,10 @@ fn render_spectral_window_coverage_plot(
     }
 
     Ok(())
+}
+
+fn spectral_window_lane_label(bar: &SpectralWindowCoverageBar) -> String {
+    format!("SPW {}", bar.spectral_window_id)
 }
 
 fn validate_option(kind: ListObsPlotKind, key: &str, value: &str) -> Result<(), String> {
@@ -1573,10 +1580,64 @@ mod tests {
         };
         assert_eq!(payload.bars.len(), 1);
         let bar = &payload.bars[0];
+        assert_eq!(bar.spectral_window_id, 7);
         assert_eq!(bar.start, 7.0);
         assert_eq!(bar.end, 10.5);
         assert!(bar.start < summary.spectral_windows[0].center_frequency_hz / 1.0e9);
         assert!(bar.end > summary.spectral_windows[0].center_frequency_hz / 1.0e9);
+        assert_eq!(super::spectral_window_lane_label(bar), "SPW 7");
+    }
+
+    #[test]
+    fn spectral_window_lane_labels_use_real_spw_ids() {
+        let mut summary = synthetic_summary();
+        summary.spectral_windows = vec![
+            SpectralWindowSummary {
+                spectral_window_id: 1,
+                name: "LOW".to_string(),
+                num_channels: 16,
+                frame: Some("TOPO".to_string()),
+                first_channel_frequency_hz: 1.0e9,
+                channel_width_hz: 1.0e6,
+                reference_frequency_hz: 1.0e9,
+                center_frequency_hz: 1.008e9,
+                min_frequency_hz: 0.9995e9,
+                max_frequency_hz: 1.0165e9,
+                total_bandwidth_hz: 16.0e6,
+                data_description_ids: vec![0],
+                polarization_ids: vec![0],
+                correlation_types: vec!["XX".to_string(), "YY".to_string()],
+            },
+            SpectralWindowSummary {
+                spectral_window_id: 2,
+                name: "HIGH".to_string(),
+                num_channels: 32,
+                frame: Some("TOPO".to_string()),
+                first_channel_frequency_hz: 1.2e9,
+                channel_width_hz: 5.0e5,
+                reference_frequency_hz: 1.2e9,
+                center_frequency_hz: 1.208e9,
+                min_frequency_hz: 1.19975e9,
+                max_frequency_hz: 1.21625e9,
+                total_bandwidth_hz: 16.0e6,
+                data_description_ids: vec![1],
+                polarization_ids: vec![0],
+                correlation_types: vec!["XX".to_string(), "YY".to_string()],
+            },
+        ];
+
+        let spec = ListObsPlotKind::SpectralWindowCoverage.default_spec();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let ListObsPlotPayload::SpectralWindowCoverage(payload) = payload else {
+            panic!("expected spectral window payload");
+        };
+
+        let labels = payload
+            .bars
+            .iter()
+            .map(super::spectral_window_lane_label)
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["SPW 1".to_string(), "SPW 2".to_string()]);
     }
 
     #[test]

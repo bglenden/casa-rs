@@ -134,6 +134,10 @@ struct SelectionContext<'a> {
 }
 
 impl TableBrowser {
+    fn reset_browsing_status_line(&mut self) {
+        self.status_line = format!("Browsing {}.", self.current().path.display());
+    }
+
     /// Open a browser rooted at `table_path`.
     pub fn open(table_path: impl AsRef<Path>) -> Result<Self, TableBrowserError> {
         let opened = OpenedTable::open(table_path.as_ref())?;
@@ -172,7 +176,7 @@ impl TableBrowser {
                 self.focus = BrowserFocus::Main;
                 self.viewport = viewport;
                 self.reset_navigation_state();
-                self.status_line = format!("Browsing {}.", self.current().path.display());
+                self.reset_browsing_status_line();
             }
             BrowserCommand::Resize { viewport } => {
                 self.viewport = viewport;
@@ -295,11 +299,13 @@ impl TableBrowser {
         match focus {
             BrowserFocus::Main => {
                 self.focus = BrowserFocus::Main;
+                self.reset_browsing_status_line();
             }
             BrowserFocus::Inspector => {
                 if self.snapshot().inspector.is_some() {
                     self.focus = BrowserFocus::Inspector;
                     self.clamp_inspector();
+                    self.reset_browsing_status_line();
                 } else {
                     self.focus = BrowserFocus::Main;
                     self.status_line =
@@ -443,7 +449,7 @@ impl TableBrowser {
         self.view = TableBrowserView::Overview;
         self.focus = BrowserFocus::Main;
         self.reset_navigation_state();
-        self.status_line = format!("Browsing {}.", self.current().path.display());
+        self.reset_browsing_status_line();
         Ok(())
     }
 
@@ -457,7 +463,7 @@ impl TableBrowser {
         self.view = TableBrowserView::Overview;
         self.focus = BrowserFocus::Main;
         self.reset_navigation_state();
-        self.status_line = format!("Browsing {}.", self.current().path.display());
+        self.reset_browsing_status_line();
         true
     }
 
@@ -2465,6 +2471,10 @@ mod tests {
             })
             .expect("set focus with inspector");
         assert_eq!(browser.snapshot().focus, BrowserFocus::Inspector);
+        assert_eq!(
+            browser.status_line,
+            format!("Browsing {}.", browser.current_path().display())
+        );
 
         browser
             .apply(BrowserCommand::SetFocus {
@@ -2473,6 +2483,10 @@ mod tests {
             })
             .expect("return focus to main");
         assert_eq!(browser.snapshot().focus, BrowserFocus::Main);
+        assert_eq!(
+            browser.status_line,
+            format!("Browsing {}.", browser.current_path().display())
+        );
     }
 
     #[test]
