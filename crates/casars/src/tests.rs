@@ -593,7 +593,7 @@ fn rich_panel_keeps_content_clear_of_the_frame() {
 fn rich_panel_footer_keeps_theme_toggle_visible() {
     let (_temp, mut app) = test_app();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
-    let rendered = render_app(&app, 100, 30);
+    let rendered = render_app(&app, 140, 30);
     assert!(rendered.contains("t theme"));
 }
 
@@ -618,14 +618,14 @@ fn tablebrowser_session_opens_cells_and_linked_subtables() {
     assert!(overview.contains("Tables / Table Browser"));
     assert!(overview.contains("Columns"));
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     let cells = render_app(&app, 180, 30);
     assert!(cells.contains("Cells"));
     assert!(cells.contains("\"alpha\""));
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     let subtables = render_app(&app, 180, 30);
     assert!(subtables.contains("child.tab"));
 
@@ -654,8 +654,132 @@ fn browser_footer_describes_escape_and_backspace_semantics() {
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
-    assert!(app.footer_text().contains("Esc back/clear"));
+    assert!(app.footer_text().contains("Esc back"));
     assert!(app.footer_text().contains("Bksp parent table"));
+}
+
+#[test]
+fn help_overlay_toggles_with_question_mark_and_escape() {
+    let (_temp, mut app) = test_app();
+    assert!(!app.help_visible());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+    assert!(app.help_visible());
+    let rendered = render_app(&app, 140, 30);
+    assert!(rendered.contains("Key Help"));
+    assert!(rendered.contains("Tab/Shift-Tab focus"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.help_visible());
+}
+
+#[test]
+fn edit_tab_commits_and_moves_to_next_field() {
+    let (_temp, mut app) = test_app();
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_paste("/tmp/demo.ms".to_string());
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+    assert!(app.edit_buffer_for_test().is_none());
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some("/tmp/demo.ms")
+    );
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("Verbose Report"))
+    );
+}
+
+#[test]
+fn plot_tab_tab_cycles_focus_ring_and_skips_collapsed_sidebar() {
+    let (_temp, mut app) = test_app();
+    app.set_active_result_tab(ResultTab::Plots);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Canvas);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Controls);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+    assert!(app.parameters_pane_collapsed());
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Controls);
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_tab_moves_focus_and_brackets_switch_views() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let inspector = Some(BrowserInspectorSnapshot {
+        title: "Cell row=0 column=NAME".to_string(),
+        trail: vec![BrowserInspectorTrailEntry {
+            label: "root".to_string(),
+            summary: "scalar".to_string(),
+        }],
+        node: BrowserValueNode::Scalar {
+            value: BrowserScalarValue::String("alpha".to_string()),
+        },
+        rendered_lines: vec!["scalar: alpha".to_string()],
+    });
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[
+            fake_browser_snapshot_with_focus_and_metrics_json(
+                ProtocolBrowserView::Cells,
+                BrowserFocus::Main,
+                "Fake cells",
+                vec!["Cells".to_string(), "\"alpha\"".to_string()],
+                None,
+                None,
+                inspector.clone(),
+            ),
+            fake_browser_snapshot_with_focus_and_metrics_json(
+                ProtocolBrowserView::Cells,
+                BrowserFocus::Inspector,
+                "Fake cells inspector",
+                vec!["Cells".to_string(), "\"alpha\"".to_string()],
+                None,
+                None,
+                inspector,
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Columns,
+                "Fake columns",
+                vec!["Columns".to_string(), "NAME".to_string()],
+            ),
+        ],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    assert_eq!(app.browser_focus_for_test(), Some(BrowserFocus::Main));
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.browser_focus_for_test(), Some(BrowserFocus::Inspector));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Parameters);
+    assert_eq!(app.active_browser_tab_label(), Some("Cells"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    assert_eq!(app.browser_focus_for_test(), Some(BrowserFocus::Main));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert_eq!(app.active_browser_tab_label(), Some("Columns"));
 }
 
 #[cfg(unix)]
@@ -1004,26 +1128,48 @@ fn drag_selection_copies_browser_inspector_text_on_mouse_up() {
     set_test_clipboard_file(&clipboard_path);
     let script = write_fake_tablebrowser_script(
         temp.path(),
-        &[fake_browser_snapshot_with_inspector_json(
-            ProtocolBrowserView::Cells,
-            "Fake cells",
-            vec![
-                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
-                "row | NAME<str> |".to_string(),
-                "   0 | >\"alpha\"< |".to_string(),
-            ],
-            Some(BrowserInspectorSnapshot {
-                title: "Cell row=0 column=NAME".to_string(),
-                trail: vec![BrowserInspectorTrailEntry {
-                    label: "root".to_string(),
-                    summary: "scalar".to_string(),
-                }],
-                node: BrowserValueNode::Scalar {
-                    value: BrowserScalarValue::String("alpha".to_string()),
-                },
-                rendered_lines: vec!["scalar: alpha beta".to_string()],
-            }),
-        )],
+        &[
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells inspector focus",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Inspector".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+        ],
         None,
     );
     set_tablebrowser_launcher_bin(&script);
@@ -1119,7 +1265,7 @@ fn browser_result_selection_copies_visible_text_in_every_view() {
     .enumerate()
     {
         if index > 0 {
-            app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
         }
         drag_select_visible_text(&mut app, 160, 28, OutputPane::Result, expected);
         app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
@@ -1139,26 +1285,48 @@ fn browser_inspector_selection_copies_visible_text() {
     set_test_clipboard_file(&clipboard_path);
     let script = write_fake_tablebrowser_script(
         temp.path(),
-        &[fake_browser_snapshot_with_inspector_json(
-            ProtocolBrowserView::Cells,
-            "Fake cells",
-            vec![
-                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
-                "row | NAME<str> |".to_string(),
-                "   0 | >\"alpha\"< |".to_string(),
-            ],
-            Some(BrowserInspectorSnapshot {
-                title: "Cell row=0 column=NAME".to_string(),
-                trail: vec![BrowserInspectorTrailEntry {
-                    label: "root".to_string(),
-                    summary: "scalar".to_string(),
-                }],
-                node: BrowserValueNode::Scalar {
-                    value: BrowserScalarValue::String("alpha".to_string()),
-                },
-                rendered_lines: vec!["scalar: alpha beta".to_string()],
-            }),
-        )],
+        &[
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells inspector focus",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Inspector".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+        ],
         None,
     );
     set_tablebrowser_launcher_bin(&script);
@@ -1261,7 +1429,7 @@ fn browser_view_change_clears_active_output_selection() {
     drag_select_visible_text(&mut app, 160, 28, OutputPane::Result, "token-overview");
     assert!(app.output_selection_rect(OutputPane::Result).is_some());
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     assert!(app.output_selection_rect(OutputPane::Result).is_none());
 }
 
@@ -1392,7 +1560,7 @@ fn fake_tablebrowser_session_drives_casars_navigation() {
     let overview = render_app(&app, 160, 28);
     assert!(overview.contains("Overview root"));
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     let cells = render_app(&app, 160, 28);
     assert!(cells.contains("\"alpha\""));
 
@@ -1494,7 +1662,7 @@ fn browser_command_errors_close_the_session_and_surface_stderr() {
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
 
     assert!(!app.browser_is_active());
     assert!(
@@ -2016,7 +2184,7 @@ fn keyboard_horizontal_scroll_changes_result_offset() {
         ),
         &layout,
     );
-    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
     assert!(app.active_result_hscroll_for_test() > 0);
 }
 
@@ -2508,7 +2676,15 @@ fn fake_browser_snapshot_json(
     status_line: &str,
     content_lines: Vec<String>,
 ) -> String {
-    fake_browser_snapshot_with_metrics_json(view, status_line, content_lines, None, None, None)
+    fake_browser_snapshot_with_focus_and_metrics_json(
+        view,
+        BrowserFocus::Main,
+        status_line,
+        content_lines,
+        None,
+        None,
+        None,
+    )
 }
 
 fn fake_browser_snapshot_with_metrics_json(
@@ -2519,10 +2695,30 @@ fn fake_browser_snapshot_with_metrics_json(
     horizontal_metrics: Option<BrowserNavigationMetrics>,
     inspector: Option<BrowserInspectorSnapshot>,
 ) -> String {
+    fake_browser_snapshot_with_focus_and_metrics_json(
+        view,
+        BrowserFocus::Main,
+        status_line,
+        content_lines,
+        vertical_metrics,
+        horizontal_metrics,
+        inspector,
+    )
+}
+
+fn fake_browser_snapshot_with_focus_and_metrics_json(
+    view: ProtocolBrowserView,
+    focus: BrowserFocus,
+    status_line: &str,
+    content_lines: Vec<String>,
+    vertical_metrics: Option<BrowserNavigationMetrics>,
+    horizontal_metrics: Option<BrowserNavigationMetrics>,
+    inspector: Option<BrowserInspectorSnapshot>,
+) -> String {
     serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
         capabilities: BrowserCapabilities { editable: false },
         view,
-        focus: BrowserFocus::Main,
+        focus,
         table_path: "/tmp/fake.ms".to_string(),
         breadcrumb: vec![BrowserBreadcrumbEntry {
             label: "fake.ms".to_string(),

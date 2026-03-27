@@ -181,6 +181,10 @@ impl TableBrowser {
                 self.apply_viewport(viewport);
                 self.cycle_view(forward);
             }
+            BrowserCommand::SetFocus { focus, viewport } => {
+                self.apply_viewport(viewport);
+                self.set_focus(focus);
+            }
             BrowserCommand::MoveUp { steps, viewport } => {
                 self.apply_viewport(viewport);
                 self.move_vertical(steps, false);
@@ -284,6 +288,25 @@ impl TableBrowser {
             index - 1
         };
         self.set_view(ALL[next]);
+    }
+
+    /// Set the active browser focus when the target is currently reachable.
+    pub fn set_focus(&mut self, focus: BrowserFocus) {
+        match focus {
+            BrowserFocus::Main => {
+                self.focus = BrowserFocus::Main;
+            }
+            BrowserFocus::Inspector => {
+                if self.snapshot().inspector.is_some() {
+                    self.focus = BrowserFocus::Inspector;
+                    self.clamp_inspector();
+                } else {
+                    self.focus = BrowserFocus::Main;
+                    self.status_line =
+                        "Inspector is unavailable for the current selection.".to_string();
+                }
+            }
+        }
     }
 
     /// Return the filesystem path of the currently open table.
@@ -2414,6 +2437,82 @@ mod tests {
             }
             other => panic!("unexpected response: {other:?}"),
         }
+    }
+
+    #[test]
+    fn browser_set_focus_promotes_inspector_only_when_available() {
+        let temp = tempdir().expect("tempdir");
+        let root = create_fixture_table(temp.path());
+        let mut browser = TableBrowser::open(&root).expect("open browser");
+
+        browser
+            .apply(BrowserCommand::SetFocus {
+                focus: BrowserFocus::Inspector,
+                viewport: None,
+            })
+            .expect("set focus without inspector");
+        assert_eq!(browser.snapshot().focus, BrowserFocus::Main);
+        assert!(browser.status_line.contains("Inspector is unavailable"));
+
+        browser.set_view(TableBrowserView::Cells);
+        browser
+            .select_cell(0, "complex_array")
+            .expect("select complex array");
+        browser
+            .apply(BrowserCommand::SetFocus {
+                focus: BrowserFocus::Inspector,
+                viewport: None,
+            })
+            .expect("set focus with inspector");
+        assert_eq!(browser.snapshot().focus, BrowserFocus::Inspector);
+
+        browser
+            .apply(BrowserCommand::SetFocus {
+                focus: BrowserFocus::Main,
+                viewport: None,
+            })
+            .expect("return focus to main");
+        assert_eq!(browser.snapshot().focus, BrowserFocus::Main);
+    }
+
+    #[test]
+    fn browser_cycle_view_resets_focus_and_clears_inspector_state() {
+        let temp = tempdir().expect("tempdir");
+        let root = create_fixture_table(temp.path());
+        let mut browser = TableBrowser::open(&root).expect("open browser");
+        browser.set_view(TableBrowserView::Cells);
+        browser
+            .select_cell(0, "meta")
+            .expect("select record column");
+        browser
+            .apply(BrowserCommand::Activate { viewport: None })
+            .expect("enter inspector");
+        browser
+            .apply(BrowserCommand::SetFocus {
+                focus: BrowserFocus::Inspector,
+                viewport: None,
+            })
+            .expect("set focus inspector");
+        browser
+            .apply(BrowserCommand::MoveDown {
+                steps: 1,
+                viewport: None,
+            })
+            .expect("move inspector selection");
+
+        let before = browser.snapshot();
+        assert_eq!(before.focus, BrowserFocus::Inspector);
+        assert_eq!(before.view, TableBrowserView::Cells);
+
+        browser
+            .apply(BrowserCommand::CycleView {
+                forward: true,
+                viewport: None,
+            })
+            .expect("cycle view");
+        let after = browser.snapshot();
+        assert_eq!(after.focus, BrowserFocus::Main);
+        assert_eq!(after.view, TableBrowserView::Subtables);
     }
 
     #[test]

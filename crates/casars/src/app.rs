@@ -13,9 +13,9 @@ use casacore_ms::{
     build_listobs_uv_plot_payload, export_listobs_plot,
 };
 use casacore_tablebrowser_protocol::{
-    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserInspectorSnapshot,
-    BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as TableBrowserView,
-    BrowserViewport,
+    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
+    BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
+    BrowserView as TableBrowserView, BrowserViewport,
 };
 use casacore_types::quanta::{MvAngle, MvTime};
 use crossterm::event::{
@@ -70,8 +70,6 @@ enum ResultAction {
     Scroll(i16),
     ScrollHorizontal(i16),
     Activate,
-    NextPlotPane,
-    PreviousPlotPane,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +90,8 @@ enum BrowserAction {
 enum EditAction {
     Cancel,
     Commit,
+    CommitAndNext,
+    CommitAndPrevious,
     DeleteBackward,
     Insert(char),
 }
@@ -109,14 +109,16 @@ enum AppAction {
     Quit,
     BackToLauncher,
     ToggleTheme,
-    ToggleParametersPane,
+    TogglePrimaryAuxPane,
     CopySelection,
-    ToggleFocus,
+    FocusNext,
+    FocusPrevious,
     StartRun,
     ToggleAdvanced,
     CancelSession,
     OpenPathChooser,
     ClearSelection,
+    ToggleHelp,
     Parameter(ParameterAction),
     Result(ResultAction),
     Browser(BrowserAction),
@@ -236,6 +238,17 @@ pub(crate) enum PlotPaneFocus {
     Catalog,
     Canvas,
     Controls,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusTarget {
+    ParametersPane,
+    ResultPane,
+    PlotCatalog,
+    PlotCanvas,
+    PlotControls,
+    BrowserMain,
+    BrowserInspector,
 }
 
 #[derive(Debug, Clone)]
@@ -386,6 +399,7 @@ pub(crate) struct AppState {
     dragging_result_hscrollbar: bool,
     dragging_result_hscrollbar_grab: u16,
     output_selection: Option<OutputSelection>,
+    show_help: bool,
     cached_result_text_area: Option<Rect>,
     cached_left_output_area: Option<Rect>,
     last_click: Option<ClickState>,
@@ -621,6 +635,7 @@ impl AppState {
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
             output_selection: None,
+            show_help: false,
             cached_result_text_area: None,
             cached_left_output_area: None,
             last_click: None,
@@ -669,6 +684,7 @@ impl AppState {
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
             output_selection: None,
+            show_help: false,
             cached_result_text_area: None,
             cached_left_output_area: None,
             last_click: None,
@@ -898,6 +914,137 @@ impl AppState {
         }
     }
 
+    fn browser_inspector_reachable(&self) -> bool {
+        !self.parameters_pane_collapsed()
+            && self
+                .browser_session()
+                .is_some_and(|session| session.snapshot.inspector.is_some())
+    }
+
+    fn focus_ring(&self) -> Vec<FocusTarget> {
+        if self.browser_session.is_some() {
+            let mut ring = vec![FocusTarget::BrowserMain];
+            if self.browser_inspector_reachable() {
+                ring.push(FocusTarget::BrowserInspector);
+            }
+            return ring;
+        }
+
+        let mut ring = Vec::new();
+        if !self.parameters_pane_collapsed() {
+            ring.push(FocusTarget::ParametersPane);
+        }
+        if self.active_result_tab == ResultTab::Plots {
+            ring.extend([
+                FocusTarget::PlotCatalog,
+                FocusTarget::PlotCanvas,
+                FocusTarget::PlotControls,
+            ]);
+        } else {
+            ring.push(FocusTarget::ResultPane);
+        }
+        ring
+    }
+
+    fn current_focus_target(&self) -> FocusTarget {
+        if let Some(session) = self.browser_session() {
+            return match session.snapshot.focus {
+                BrowserFocus::Inspector if self.browser_inspector_reachable() => {
+                    FocusTarget::BrowserInspector
+                }
+                _ => FocusTarget::BrowserMain,
+            };
+        }
+
+        match self.pane_focus {
+            PaneFocus::Parameters if !self.parameters_pane_collapsed() => {
+                FocusTarget::ParametersPane
+            }
+            PaneFocus::Parameters | PaneFocus::Result => {
+                if self.active_result_tab == ResultTab::Plots {
+                    match self.plot_workspace.focus {
+                        PlotPaneFocus::Catalog => FocusTarget::PlotCatalog,
+                        PlotPaneFocus::Canvas => FocusTarget::PlotCanvas,
+                        PlotPaneFocus::Controls => FocusTarget::PlotControls,
+                    }
+                } else {
+                    FocusTarget::ResultPane
+                }
+            }
+        }
+    }
+
+    fn set_focus_target(&mut self, target: FocusTarget) {
+        match target {
+            FocusTarget::ParametersPane => {
+                if !self.parameters_pane_collapsed() {
+                    self.pane_focus = PaneFocus::Parameters;
+                }
+            }
+            FocusTarget::ResultPane => {
+                self.pane_focus = PaneFocus::Result;
+            }
+            FocusTarget::PlotCatalog => {
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Catalog;
+            }
+            FocusTarget::PlotCanvas => {
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Canvas;
+            }
+            FocusTarget::PlotControls => {
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Controls;
+            }
+            FocusTarget::BrowserMain => {
+                self.pane_focus = PaneFocus::Result;
+                if self
+                    .browser_session()
+                    .is_some_and(|session| session.snapshot.focus != BrowserFocus::Main)
+                {
+                    self.send_browser_command(BrowserCommand::SetFocus {
+                        focus: BrowserFocus::Main,
+                        viewport: None,
+                    });
+                }
+            }
+            FocusTarget::BrowserInspector => {
+                if self.browser_inspector_reachable() {
+                    self.pane_focus = PaneFocus::Parameters;
+                    if self
+                        .browser_session()
+                        .is_some_and(|session| session.snapshot.focus != BrowserFocus::Inspector)
+                    {
+                        self.send_browser_command(BrowserCommand::SetFocus {
+                            focus: BrowserFocus::Inspector,
+                            viewport: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn cycle_focus(&mut self, forward: bool) {
+        let ring = self.focus_ring();
+        if ring.is_empty() {
+            return;
+        }
+        let current = self.current_focus_target();
+        let index = ring
+            .iter()
+            .position(|target| *target == current)
+            .unwrap_or(0);
+        let next = if forward {
+            (index + 1) % ring.len()
+        } else if index == 0 {
+            ring.len() - 1
+        } else {
+            index - 1
+        };
+        self.set_focus_target(ring[next]);
+    }
+
     fn resolve_key_action(&self, key_event: KeyEvent) -> Option<AppAction> {
         if key_event.kind != KeyEventKind::Press {
             return None;
@@ -926,7 +1073,19 @@ impl AppState {
             };
         }
 
+        if self.show_help {
+            return match key_event.code {
+                KeyCode::Esc | KeyCode::Char('?') if key_event.modifiers.is_empty() => {
+                    Some(AppAction::ToggleHelp)
+                }
+                _ => None,
+            };
+        }
+
         match key_event.code {
+            KeyCode::Char('?') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::ToggleHelp);
+            }
             KeyCode::Char('q') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
                 return Some(AppAction::Quit);
             }
@@ -940,7 +1099,7 @@ impl AppState {
                 return Some(AppAction::BackToLauncher);
             }
             KeyCode::Char('p') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
-                return Some(AppAction::ToggleParametersPane);
+                return Some(AppAction::TogglePrimaryAuxPane);
             }
             KeyCode::Char('y') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
                 return Some(AppAction::CopySelection);
@@ -971,19 +1130,32 @@ impl AppState {
             {
                 return Some(AppAction::OpenPathChooser);
             }
-            KeyCode::Tab | KeyCode::BackTab if mode == InputMode::Browser => {
-                return Some(AppAction::Browser(BrowserAction::CycleView {
-                    forward: key_event.code == KeyCode::Tab,
-                }));
+            KeyCode::Tab if mode == InputMode::Edit => {
+                return Some(AppAction::Edit(EditAction::CommitAndNext));
             }
-            KeyCode::Tab | KeyCode::BackTab if plots_active => {
-                return Some(AppAction::Result(if key_event.code == KeyCode::Tab {
-                    ResultAction::NextPlotPane
+            KeyCode::BackTab if mode == InputMode::Edit => {
+                return Some(AppAction::Edit(EditAction::CommitAndPrevious));
+            }
+            KeyCode::Tab => return Some(AppAction::FocusNext),
+            KeyCode::BackTab => return Some(AppAction::FocusPrevious),
+            KeyCode::Char('[') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return if mode == InputMode::Browser {
+                    Some(AppAction::Browser(BrowserAction::CycleView {
+                        forward: false,
+                    }))
                 } else {
-                    ResultAction::PreviousPlotPane
-                }));
+                    Some(AppAction::Result(ResultAction::PreviousTab))
+                };
             }
-            KeyCode::Tab | KeyCode::BackTab => return Some(AppAction::ToggleFocus),
+            KeyCode::Char(']') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return if mode == InputMode::Browser {
+                    Some(AppAction::Browser(BrowserAction::CycleView {
+                        forward: true,
+                    }))
+                } else {
+                    Some(AppAction::Result(ResultAction::NextTab))
+                };
+            }
             KeyCode::Enter if plots_active && key_event.modifiers.is_empty() => {
                 return Some(AppAction::Result(ResultAction::Activate));
             }
@@ -992,9 +1164,6 @@ impl AppState {
 
         if key_event.code == KeyCode::Esc && self.output_selection.is_some() {
             return Some(AppAction::ClearSelection);
-        }
-        if key_event.code == KeyCode::Esc && plots_active {
-            return Some(AppAction::ToggleFocus);
         }
 
         match mode {
@@ -1021,9 +1190,10 @@ impl AppState {
                 self.return_to_launcher = true;
             }
             AppAction::ToggleTheme => self.toggle_theme(),
-            AppAction::ToggleParametersPane => self.toggle_parameters_pane(),
+            AppAction::TogglePrimaryAuxPane => self.toggle_primary_aux_pane(),
             AppAction::CopySelection => self.copy_output_selection(),
-            AppAction::ToggleFocus => self.toggle_focus(),
+            AppAction::FocusNext => self.cycle_focus(true),
+            AppAction::FocusPrevious => self.cycle_focus(false),
             AppAction::StartRun => {
                 if !self.has_active_session() {
                     self.start_run();
@@ -1033,6 +1203,7 @@ impl AppState {
             AppAction::CancelSession => self.cancel_current(),
             AppAction::OpenPathChooser => self.open_path_chooser_for_selected_field(),
             AppAction::ClearSelection => self.clear_output_selection(),
+            AppAction::ToggleHelp => self.show_help = !self.show_help,
             AppAction::Parameter(action) => self.apply_parameter_action(action),
             AppAction::Result(action) => self.apply_result_action(action),
             AppAction::Browser(action) => self.apply_browser_action(action),
@@ -1131,16 +1302,138 @@ impl AppState {
         self.app.display_name
     }
 
-    pub(crate) fn footer_text(&self) -> &'static str {
+    pub(crate) fn footer_text(&self) -> String {
+        let mut parts = vec!["Tab/Shift-Tab focus".to_string(), "t theme".to_string()];
         if self.edit_state.is_some() {
-            "Tab pane  Enter save  Esc cancel  Bksp delete  p pane  t theme  q quit"
+            parts.extend([
+                "Enter save".to_string(),
+                "Esc cancel".to_string(),
+                "Bksp delete".to_string(),
+            ]);
         } else if self.browser_session.is_some() {
-            "Tab view  Arrows  PgUp/PgDn  Enter  y copy  Esc back/clear  Bksp parent table  p pane  b apps  x close  t theme  q quit"
-        } else if self.running.is_some() {
-            "Tab pane  h/l tabs  j/k scroll  [/] hscr  y copy  p pane  b apps  x cancel  t theme  q quit"
+            parts.extend([
+                "[/] views".to_string(),
+                "Arrows/hjkl move".to_string(),
+                "PgUp/PgDn page".to_string(),
+                "Enter open".to_string(),
+                "Esc back".to_string(),
+                "Bksp parent table".to_string(),
+                "y copy".to_string(),
+            ]);
+        } else if self.active_result_tab == ResultTab::Plots {
+            parts.extend([
+                "[/] tabs".to_string(),
+                "Arrows/hjkl move".to_string(),
+                "Enter activate".to_string(),
+                "y copy".to_string(),
+            ]);
         } else {
-            "Tab pane  h/l tabs  Arrows/jk  [/] hscr  y copy  a adv  p pane  b apps  r run  t theme  q quit"
+            parts.extend([
+                "[/] tabs".to_string(),
+                "Arrows/hjkl move".to_string(),
+                "y copy".to_string(),
+            ]);
+            if self.running.is_none() {
+                parts.push("a adv".to_string());
+                parts.push("r run".to_string());
+            } else {
+                parts.push("x cancel".to_string());
+            }
         }
+        parts.extend([
+            "p pane".to_string(),
+            "? help".to_string(),
+            "b apps".to_string(),
+            "q quit".to_string(),
+        ]);
+        parts.join("  ")
+    }
+
+    pub(crate) fn help_visible(&self) -> bool {
+        self.show_help
+    }
+
+    pub(crate) fn help_overlay_lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            "Key Help".to_string(),
+            String::new(),
+            "Global: Tab/Shift-Tab focus  [/] primary views  ? help".to_string(),
+            "Global: p primary pane  y copy  b apps  t theme  q quit".to_string(),
+        ];
+        if self.running.is_none() && self.browser_session.is_none() && self.edit_state.is_none() {
+            lines.push("Global: r run  a advanced options".to_string());
+        } else if self.running.is_some() {
+            lines.push("Global: x cancel active process".to_string());
+        } else if self.browser_session.is_some() {
+            lines.push("Global: x close browser session".to_string());
+        }
+        lines.push(String::new());
+
+        if self.edit_state.is_some() {
+            lines.extend([
+                "Edit: Enter save  Tab next field  Shift-Tab previous field".to_string(),
+                "Edit: Esc cancel  Backspace delete".to_string(),
+            ]);
+            return lines;
+        }
+
+        match self.current_focus_target() {
+            FocusTarget::ParametersPane => {
+                lines.extend([
+                    "Focus: Parameters pane".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Adjust: Left/Right".to_string(),
+                    "Activate: Enter or Space".to_string(),
+                ]);
+            }
+            FocusTarget::ResultPane => {
+                lines.extend([
+                    "Focus: Result pane".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Scroll horizontally: Left/Right or h/l".to_string(),
+                ]);
+            }
+            FocusTarget::PlotCatalog => {
+                lines.extend([
+                    "Focus: Plot catalog".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Activate: Enter".to_string(),
+                ]);
+            }
+            FocusTarget::PlotCanvas => {
+                lines.extend([
+                    "Focus: Plot canvas".to_string(),
+                    "Canvas is passive in this wave.".to_string(),
+                ]);
+            }
+            FocusTarget::PlotControls => {
+                lines.extend([
+                    "Focus: Plot controls".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Adjust: Left/Right or h/l".to_string(),
+                    "Activate: Enter".to_string(),
+                ]);
+            }
+            FocusTarget::BrowserMain => {
+                lines.extend([
+                    "Focus: Browser main pane".to_string(),
+                    "Move: Arrows or h/j/k/l".to_string(),
+                    "Page: PgUp/PgDn".to_string(),
+                    "Activate: Enter".to_string(),
+                    "Back: Esc  Parent table: Backspace".to_string(),
+                ]);
+            }
+            FocusTarget::BrowserInspector => {
+                lines.extend([
+                    "Focus: Browser inspector".to_string(),
+                    "Move: Arrows or h/j/k/l".to_string(),
+                    "Page: PgUp/PgDn".to_string(),
+                    "Activate: Enter".to_string(),
+                    "Back: Esc".to_string(),
+                ]);
+            }
+        }
+        lines
     }
 
     pub(crate) fn parameter_title(&self) -> String {
@@ -1668,6 +1961,13 @@ impl AppState {
     }
 
     #[cfg(test)]
+    pub(crate) fn browser_focus_for_test(&self) -> Option<BrowserFocus> {
+        self.browser_session
+            .as_ref()
+            .map(|session| session.snapshot.focus)
+    }
+
+    #[cfg(test)]
     pub(crate) fn field_text_for_test(&self, id: &str) -> Option<String> {
         self.fields
             .iter()
@@ -2037,8 +2337,6 @@ impl AppState {
                     }
                 }
                 ResultAction::Activate => self.activate_plot_workspace_selection(),
-                ResultAction::NextPlotPane => self.cycle_plot_pane(true),
-                ResultAction::PreviousPlotPane => self.cycle_plot_pane(false),
             }
             return;
         }
@@ -2048,7 +2346,6 @@ impl AppState {
             ResultAction::Scroll(delta) => self.scroll_active_result(delta),
             ResultAction::ScrollHorizontal(delta) => self.scroll_active_result_horizontal(delta),
             ResultAction::Activate => {}
-            ResultAction::NextPlotPane | ResultAction::PreviousPlotPane => {}
         }
     }
 
@@ -2173,6 +2470,18 @@ impl AppState {
                 let committed = self.edit_state.take().expect("edit state");
                 self.commit_plot_or_field_edit(committed);
             }
+            EditAction::CommitAndNext => {
+                let committed = self.edit_state.take().expect("edit state");
+                let target = committed.target;
+                self.commit_plot_or_field_edit(committed);
+                self.advance_after_edit(target, true);
+            }
+            EditAction::CommitAndPrevious => {
+                let committed = self.edit_state.take().expect("edit state");
+                let target = committed.target;
+                self.commit_plot_or_field_edit(committed);
+                self.advance_after_edit(target, false);
+            }
             EditAction::DeleteBackward => {
                 edit_state.buffer.pop();
             }
@@ -2182,12 +2491,93 @@ impl AppState {
         }
     }
 
+    fn advance_after_edit(&mut self, target: EditTarget, forward: bool) {
+        match target {
+            EditTarget::FormField(field_index) => self.advance_form_edit(field_index, forward),
+            EditTarget::PlotExportPath => {
+                self.advance_plot_edit(PlotControlTarget::ExportPath, forward)
+            }
+            EditTarget::PlotExportWidth => {
+                self.advance_plot_edit(PlotControlTarget::ExportWidth, forward)
+            }
+            EditTarget::PlotExportHeight => {
+                self.advance_plot_edit(PlotControlTarget::ExportHeight, forward)
+            }
+        }
+    }
+
+    fn advance_form_edit(&mut self, field_index: usize, forward: bool) {
+        let targets = self
+            .visible_form_targets()
+            .into_iter()
+            .filter_map(|target| match target {
+                FormSelection::Field(index) => Some(index),
+                FormSelection::Section(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let Some(position) = targets
+            .iter()
+            .position(|candidate| *candidate == field_index)
+        else {
+            return;
+        };
+        let next = if forward {
+            (position + 1) % targets.len()
+        } else if position == 0 {
+            targets.len() - 1
+        } else {
+            position - 1
+        };
+        let next_field = targets[next];
+        self.selected_form = FormSelection::Field(next_field);
+        self.pane_focus = PaneFocus::Parameters;
+        if self
+            .fields
+            .get(next_field)
+            .is_some_and(|field| matches!(field.value, FormValue::Text(_)))
+        {
+            self.enter_edit_mode(next_field);
+        }
+    }
+
+    fn advance_plot_edit(&mut self, current: PlotControlTarget, forward: bool) {
+        const EDITABLE_TARGETS: [PlotControlTarget; 3] = [
+            PlotControlTarget::ExportPath,
+            PlotControlTarget::ExportWidth,
+            PlotControlTarget::ExportHeight,
+        ];
+        let Some(position) = EDITABLE_TARGETS
+            .iter()
+            .position(|target| *target == current)
+        else {
+            return;
+        };
+        let next = if forward {
+            (position + 1) % EDITABLE_TARGETS.len()
+        } else if position == 0 {
+            EDITABLE_TARGETS.len() - 1
+        } else {
+            position - 1
+        };
+        let next_target = EDITABLE_TARGETS[next];
+        if let Some(index) = self
+            .plot_control_rows()
+            .iter()
+            .position(|row| row.target == next_target)
+        {
+            self.plot_workspace.selected_control = index;
+            self.pane_focus = PaneFocus::Result;
+            self.plot_workspace.focus = PlotPaneFocus::Controls;
+            self.activate_plot_workspace_selection();
+        }
+    }
+
     fn handle_left_mouse_down(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
         if layout.in_divider_toggle(mouse_event.column, mouse_event.row) {
             self.clear_output_selection();
             self.dragging_divider = false;
             self.dragging_result_scrollbar = false;
-            self.toggle_parameters_pane();
+            self.toggle_primary_aux_pane();
             self.last_click = Some(ClickState {
                 target: ClickTarget::DividerToggle,
                 at: Instant::now(),
@@ -2315,11 +2705,18 @@ impl AppState {
         if let Some((target, point)) =
             self.selection_point_at(mouse_event.column, mouse_event.row, layout)
         {
-            self.pane_focus = if target == OutputPane::Result {
-                PaneFocus::Result
+            if self.browser_session.is_some() {
+                match target {
+                    OutputPane::Result => self.set_focus_target(FocusTarget::BrowserMain),
+                    OutputPane::LeftOutput => self.set_focus_target(FocusTarget::BrowserInspector),
+                }
             } else {
-                PaneFocus::Parameters
-            };
+                self.pane_focus = if target == OutputPane::Result {
+                    PaneFocus::Result
+                } else {
+                    PaneFocus::Parameters
+                };
+            }
             self.begin_output_selection(target, point);
             self.last_click = Some(ClickState {
                 target: ClickTarget::Pane(self.pane_focus),
@@ -2329,7 +2726,11 @@ impl AppState {
         }
 
         if layout.in_result_block(mouse_event.column, mouse_event.row) {
-            self.pane_focus = PaneFocus::Result;
+            if self.browser_session.is_some() {
+                self.set_focus_target(FocusTarget::BrowserMain);
+            } else {
+                self.pane_focus = PaneFocus::Result;
+            }
             self.clear_output_selection_for_target(OutputPane::Result);
             self.last_click = Some(ClickState {
                 target: ClickTarget::Pane(PaneFocus::Result),
@@ -2343,7 +2744,11 @@ impl AppState {
         }
 
         if let Some(target) = layout.form_target_at(mouse_event.column, mouse_event.row) {
-            self.pane_focus = PaneFocus::Parameters;
+            if self.browser_session.is_some() {
+                self.set_focus_target(FocusTarget::BrowserInspector);
+            } else {
+                self.pane_focus = PaneFocus::Parameters;
+            }
             let click_target = match target {
                 FormSelection::Section(index) => ClickTarget::Section(index),
                 FormSelection::Field(index) => ClickTarget::Field(index),
@@ -2512,19 +2917,6 @@ impl AppState {
         self.config_store.set_theme_mode(next);
     }
 
-    fn toggle_focus(&mut self) {
-        self.pane_focus = match self.pane_focus {
-            PaneFocus::Parameters => PaneFocus::Result,
-            PaneFocus::Result => {
-                if self.has_active_session() || self.sections.is_empty() {
-                    PaneFocus::Result
-                } else {
-                    PaneFocus::Parameters
-                }
-            }
-        };
-    }
-
     fn toggle_advanced(&mut self) {
         self.show_advanced = !self.show_advanced;
         self.ensure_visible_form_selection();
@@ -2624,7 +3016,10 @@ impl AppState {
             .map(|session| BrowserTab::from_view(session.snapshot.view))
     }
 
-    fn toggle_parameters_pane(&mut self) {
+    fn toggle_primary_aux_pane(&mut self) {
+        if self.browser_session.is_some() || self.sections.is_empty() {
+            return;
+        }
         self.clear_output_selection();
         let next = if self.parameters_pane_collapsed() {
             self.config_store.pane_restore_ratio()
@@ -2633,7 +3028,13 @@ impl AppState {
         };
         self.config_store.set_pane_split_ratio(next);
         if next == 0.0 {
-            self.pane_focus = PaneFocus::Result;
+            self.set_focus_target(if self.active_result_tab == ResultTab::Plots {
+                FocusTarget::PlotCatalog
+            } else {
+                FocusTarget::ResultPane
+            });
+        } else if self.focus_ring().contains(&FocusTarget::ParametersPane) {
+            self.pane_focus = PaneFocus::Parameters;
         }
     }
 
@@ -3039,6 +3440,12 @@ impl AppState {
         match result {
             Ok(snapshot) => {
                 self.clear_output_selection();
+                self.pane_focus = match snapshot.focus {
+                    BrowserFocus::Inspector if self.browser_inspector_reachable() => {
+                        PaneFocus::Parameters
+                    }
+                    _ => PaneFocus::Result,
+                };
                 self.result.status_line = snapshot.status_line;
                 self.result.status_kind = StatusKind::Info;
             }
@@ -3403,26 +3810,6 @@ impl AppState {
             }
             PlotPaneFocus::Canvas => {}
         }
-    }
-
-    fn cycle_plot_pane(&mut self, forward: bool) {
-        let order = [
-            PlotPaneFocus::Catalog,
-            PlotPaneFocus::Canvas,
-            PlotPaneFocus::Controls,
-        ];
-        let current = order
-            .iter()
-            .position(|focus| *focus == self.plot_workspace.focus)
-            .unwrap_or(0);
-        let next = if forward {
-            (current + 1) % order.len()
-        } else if current == 0 {
-            order.len() - 1
-        } else {
-            current - 1
-        };
-        self.plot_workspace.focus = order[next];
     }
 
     fn adjust_selected_plot_control(&mut self, forward: bool) {
@@ -3959,10 +4346,15 @@ impl AppState {
             ));
             lines.push(String::new());
             lines.push("Current tabs".to_string());
-            lines.push(
-                "Use h/l or Left/Right to switch between Overview, Observations, Fields, SPWs, Antennas, Stdout, and Stderr."
-                    .to_string(),
-            );
+            let tab_labels = self
+                .visible_result_tabs()
+                .iter()
+                .map(|tab| tab.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!(
+                "Use [ and ] or click the tab strip to switch between {tab_labels}."
+            ));
             return lines;
         }
 
@@ -5031,12 +5423,12 @@ fn resolve_result_action(key_event: KeyEvent) -> Option<ResultAction> {
         KeyCode::Left | KeyCode::Char('h')
             if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
         {
-            Some(ResultAction::PreviousTab)
+            Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
         }
         KeyCode::Right | KeyCode::Char('l')
             if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
         {
-            Some(ResultAction::NextTab)
+            Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
         }
         KeyCode::Up | KeyCode::Char('k')
             if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
@@ -5050,19 +5442,12 @@ fn resolve_result_action(key_event: KeyEvent) -> Option<ResultAction> {
         }
         KeyCode::PageUp if key_event.modifiers.is_empty() => Some(ResultAction::Scroll(-10)),
         KeyCode::PageDown if key_event.modifiers.is_empty() => Some(ResultAction::Scroll(10)),
-        KeyCode::Char('[') if key_event.modifiers.is_empty() => {
-            Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
-        }
-        KeyCode::Char(']') if key_event.modifiers.is_empty() => {
-            Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
-        }
         KeyCode::Left if key_event.modifiers == KeyModifiers::CONTROL => {
             Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
         }
         KeyCode::Right if key_event.modifiers == KeyModifiers::CONTROL => {
             Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
         }
-        KeyCode::Char('v') if key_event.modifiers.is_empty() => Some(ResultAction::NextTab),
         _ => None,
     }
 }

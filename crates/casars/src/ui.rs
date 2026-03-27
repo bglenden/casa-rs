@@ -295,7 +295,8 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     let header = Paragraph::new(header_line(app, palette));
     frame.render_widget(header, layout.header);
 
-    let footer = Paragraph::new(footer_line(app.footer_text(), palette));
+    let footer_text = app.footer_text();
+    let footer = Paragraph::new(footer_line(&footer_text, palette));
     frame.render_widget(footer, layout.footer);
 
     let divider_glyph = if app.parameters_pane_collapsed() {
@@ -324,6 +325,9 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     draw_result(frame, app, layout, palette);
     if app.path_chooser_active() {
         draw_path_chooser(frame, app, layout, palette);
+    }
+    if app.help_visible() {
+        draw_help_overlay(frame, app, palette);
     }
 }
 
@@ -1148,6 +1152,39 @@ fn footer_line(text: &str, palette: Theme) -> Line<'static> {
         }
     }
     Line::from(spans)
+}
+
+fn draw_help_overlay(frame: &mut Frame<'_>, app: &AppState, palette: Theme) {
+    let area = centered_rect(
+        frame.area().width.saturating_mul(3) / 4,
+        frame.area().height.saturating_mul(2) / 3,
+        frame.area(),
+    );
+    frame.render_widget(Clear, area);
+    let lines = app
+        .help_overlay_lines()
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    let block = Block::default()
+        .title("Help")
+        .title_style(
+            Style::default()
+                .fg(palette.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(palette.border_set)
+        .border_style(Style::default().fg(palette.active_pane_border_fg))
+        .padding(Padding::new(1, 1, 0, 0));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(palette.footer_fg)),
+        inner,
+    );
 }
 
 fn render_form_row_text(
