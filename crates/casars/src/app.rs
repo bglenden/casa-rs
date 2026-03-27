@@ -4598,8 +4598,86 @@ fn browser_inspector_lines(inspector: &BrowserInspectorSnapshot) -> Vec<String> 
 
 #[cfg(test)]
 mod tests {
-    use super::expand_tilde_path_with_home;
+    use super::{
+        AppState, RunningProcess, StatusKind, UvCoverageLoadState, UvPlotPanelState,
+        expand_tilde_path_with_home,
+    };
+    use crate::execution::{ExecutionPlan, spawn_process};
+    use crate::registry::listobs_app;
+    use crate::registry::ResolvedCommand;
+    use casacore_ms::listobs::cli::command_schema;
+    use casacore_ms::{ListObsOptions, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack};
+    use image::DynamicImage;
+    use ratatui::layout::Rect;
+    use ratatui_graphics::{PanelRenderer, Picker, Resize};
     use std::path::{Path, PathBuf};
+    use std::thread;
+    use std::time::Duration;
+
+    fn test_app() -> AppState {
+        AppState::from_schema(listobs_app(), command_schema("listobs"))
+    }
+
+    fn sample_uv_coverage() -> ListObsUvCoverage {
+        ListObsUvCoverage {
+            schema_version: 1,
+            options: ListObsOptions::default(),
+            measurement_set_path: Some("/tmp/demo.ms".to_string()),
+            axis_unit: "lambda".to_string(),
+            mirrored_display: true,
+            sample_count: 3,
+            max_abs_uv_lambda: 1_200_000.0,
+            tracks: vec![
+                ListObsUvTrack {
+                    antenna1: 0,
+                    antenna2: 1,
+                    field_id: 0,
+                    spectral_window_id: 0,
+                    center_frequency_hz: 1.4e9,
+                    samples: vec![
+                        ListObsUvPoint {
+                            row: 0,
+                            time_mjd_seconds: 0.0,
+                            u_lambda: -600_000.0,
+                            v_lambda: 300_000.0,
+                            w_lambda: 0.0,
+                        },
+                        ListObsUvPoint {
+                            row: 1,
+                            time_mjd_seconds: 10.0,
+                            u_lambda: 700_000.0,
+                            v_lambda: -450_000.0,
+                            w_lambda: 0.0,
+                        },
+                    ],
+                },
+                ListObsUvTrack {
+                    antenna1: 2,
+                    antenna2: 3,
+                    field_id: 1,
+                    spectral_window_id: 0,
+                    center_frequency_hz: 1.4e9,
+                    samples: vec![ListObsUvPoint {
+                        row: 2,
+                        time_mjd_seconds: 20.0,
+                        u_lambda: 125_000.0,
+                        v_lambda: 800_000.0,
+                        w_lambda: 0.0,
+                    }],
+                },
+            ],
+        }
+    }
+
+    fn exited_process() -> RunningProcess {
+        spawn_process(&ExecutionPlan {
+            command: ResolvedCommand::direct("sh"),
+            arguments: vec!["-c".into(), "exit 0".into()],
+            renderer: None,
+            file_output_path: None,
+        })
+        .expect("spawn exited child")
+    }
 
     #[test]
     fn expands_bare_tilde_to_home() {
@@ -4623,5 +4701,159 @@ mod tests {
             expand_tilde_path_with_home("./relative/path", Some(Path::new("/tmp/home"))),
             PathBuf::from("./relative/path")
         );
+    }
+
+    #[test]
+    fn uv_tab_summary_reports_prompt_loading_error_and_loaded_states() {
+        let mut app = test_app();
+        assert_eq!(
+            app.uv_tab_summary(),
+            "Open the UV tab to load wavelength-space UV coverage."
+        );
+
+        app.uv_loading = Some(UvCoverageLoadState {
+            process: exited_process(),
+            stdout: String::new(),
+            stderr: String::new(),
+            cancel_requested: false,
+        });
+        assert_eq!(app.uv_tab_summary(), "Loading UV coverage...");
+
+        app.uv_loading = None;
+        app.uv_coverage_error = Some("not available".to_string());
+        assert_eq!(
+            app.uv_tab_summary(),
+            "UV coverage unavailable. not available"
+        );
+
+        app.uv_coverage = Some(sample_uv_coverage());
+        let summary = app.uv_tab_summary();
+        assert!(summary.contains("UV coverage in Mλ."));
+        assert!(summary.contains("Tracks=2"));
+    }
+
+    #[test]
+    fn finish_uv_loading_covers_cancel_failure_parse_and_success_paths() {
+        let mut app = test_app();
+
+        app.uv_loading = Some(UvCoverageLoadState {
+            process: exited_process(),
+            stdout: String::new(),
+            stderr: String::new(),
+            cancel_requested: true,
+        });
+        app.finish_uv_loading(true);
+        assert_eq!(app.status_line_for_test(), "UV coverage load canceled.");
+        assert_eq!(app.result.status_kind, StatusKind::Warning);
+
+        app.uv_loading = Some(UvCoverageLoadState {
+            process: exited_process(),
+            stdout: String::new(),
+            stderr: "uv stderr\n".to_string(),
+            cancel_requested: false,
+        });
+        app.finish_uv_loading(false);
+        assert_eq!(app.status_line_for_test(), "UV coverage load failed.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert!(app.stderr_for_test().contains("uv stderr"));
+
+        app.uv_loading = Some(UvCoverageLoadState {
+            process: exited_process(),
+            stdout: "{".to_string(),
+            stderr: String::new(),
+            cancel_requested: false,
+        });
+        app.finish_uv_loading(true);
+        assert_eq!(app.status_line_for_test(), "UV coverage parsing failed.");
+        assert_eq!(app.result.status_kind, StatusKind::Error);
+        assert_eq!(app.stderr_for_test(), "uv stderr\n{");
+
+        let coverage = sample_uv_coverage();
+        app.uv_loading = Some(UvCoverageLoadState {
+            process: exited_process(),
+            stdout: serde_json::to_string(&coverage).expect("serialize coverage"),
+            stderr: String::new(),
+            cancel_requested: false,
+        });
+        app.finish_uv_loading(true);
+        assert_eq!(app.status_line_for_test(), "UV coverage loaded.");
+        assert_eq!(app.result.status_kind, StatusKind::Ok);
+        assert_eq!(app.uv_coverage_for_test(), Some(&coverage));
+    }
+
+    #[test]
+    fn ensure_uv_plot_requested_generates_protocol_and_request_key() {
+        let mut app = test_app();
+        app.uv_coverage = Some(sample_uv_coverage());
+
+        app.ensure_uv_plot_requested(Rect::new(0, 0, 20, 10));
+        assert!(app.uv_plot_pending());
+        for _ in 0..80 {
+            app.pump_uv_plot_panel();
+            if app.uv_plot_protocol().is_some() || app.uv_plot_last_error().is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let panel = app.uv_plot_panel.as_ref().expect("plot panel");
+        assert!(panel.request_key.is_some());
+        assert!(
+            app.uv_plot_protocol().is_some() || app.uv_plot_last_error().is_some(),
+            "expected render output or a surfaced renderer error"
+        );
+        if app.uv_plot_protocol().is_some() {
+            assert!(panel.image_size.is_some());
+        } else {
+            assert_eq!(app.status_line_for_test(), "UV plot rendering failed.");
+            assert_eq!(app.result.status_kind, StatusKind::Warning);
+        }
+
+        let first_key = panel.request_key;
+        app.ensure_uv_plot_requested(Rect::new(0, 0, 20, 10));
+        assert_eq!(app.uv_plot_panel.as_ref().unwrap().request_key, first_key);
+
+        app.result.status_line.clear();
+        app.handle_key_event(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('t'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        app.ensure_uv_plot_requested(Rect::new(0, 0, 20, 10));
+        assert_ne!(app.uv_plot_panel.as_ref().unwrap().request_key, first_key);
+    }
+
+    #[test]
+    fn pump_uv_plot_panel_surfaces_renderer_errors() {
+        let mut app = test_app();
+        app.uv_coverage = Some(sample_uv_coverage());
+        let picker = Picker::halfblocks();
+        let font_size = picker.font_size();
+        let renderer = PanelRenderer::new(picker, Resize::Fit(None), |_job| {
+            Err::<DynamicImage, String>("boom".to_string())
+        })
+        .expect("panel renderer");
+        app.uv_plot_panel = Some(UvPlotPanelState {
+            renderer,
+            font_size,
+            request_key: None,
+            last_error: None,
+            image_size: None,
+        });
+
+        app.ensure_uv_plot_requested(Rect::new(0, 0, 18, 8));
+        for _ in 0..80 {
+            app.pump_uv_plot_panel();
+            if app.uv_plot_last_error().is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(app.status_line_for_test(), "UV plot rendering failed.");
+        assert_eq!(app.result.status_kind, StatusKind::Warning);
+        assert!(app
+            .uv_plot_last_error()
+            .expect("plot error")
+            .contains("boom"));
     }
 }

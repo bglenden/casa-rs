@@ -308,4 +308,31 @@ mod tests {
         assert!(delete.contains("\u{1b}_Ga=d"));
         assert!(delete.contains(",d=I"));
     }
+
+    #[test]
+    fn wrapper_methods_compose_upload_and_delete_sequences() {
+        let mut manager = KittyLayerManager::new();
+        let handle = manager.allocate().unwrap();
+        let image = RgbaImage::from_pixel(1, 1, Rgba([5, 6, 7, 255]));
+        let placement = KittyPlacement {
+            rect: Rect::new(2, 3, 1, 1),
+            z_index: 2,
+            preserve_cursor: false,
+        };
+
+        let mut out = Vec::new();
+        manager
+            .upload_and_place_rgba(&mut out, handle, &image, placement)
+            .unwrap();
+        let rendered = String::from_utf8(out).unwrap();
+        assert!(rendered.contains("\u{1b}_Ga=t"));
+        assert!(rendered.contains("\u{1b}_Ga=p"));
+        assert!(rendered.contains(",z=2"));
+
+        let mut delete = Vec::new();
+        manager.clear_and_delete(&mut delete, handle).unwrap();
+        let delete = String::from_utf8(delete).unwrap();
+        assert!(delete.contains("\u{1b}_Ga=d"));
+        assert!(delete.contains(",d=I"));
+    }
 }

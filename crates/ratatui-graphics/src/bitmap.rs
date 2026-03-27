@@ -89,4 +89,27 @@ mod tests {
         assert_eq!(image.width(), 4);
         assert_eq!(image.height(), 3);
     }
+
+    #[test]
+    fn rejects_buffer_size_overflow() {
+        let err = PlottersBitmap::new(u32::MAX, u32::MAX).unwrap_err();
+        assert!(matches!(
+            err,
+            PlottersBitmapError::BufferSizeOverflow {
+                width: u32::MAX,
+                height: u32::MAX
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_rgb_buffer_shape() {
+        let bitmap = PlottersBitmap {
+            width: 2,
+            height: 2,
+            buffer: vec![0; 3],
+        };
+        let err = bitmap.into_rgb_image().unwrap_err();
+        assert!(matches!(err, PlottersBitmapError::InvalidRgbBuffer));
+    }
 }

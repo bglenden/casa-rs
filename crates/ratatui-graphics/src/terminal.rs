@@ -64,12 +64,22 @@ fn term_channel_to_u8(value: u16) -> u8 {
 
 #[cfg(all(test, feature = "terminal-detect"))]
 mod tests {
-    use super::term_channel_to_u8;
+    use super::{term_bg_rgb8, term_channel_to_u8};
 
     #[test]
     fn term_channel_conversion_covers_bounds() {
         assert_eq!(term_channel_to_u8(0), 0);
         assert_eq!(term_channel_to_u8(u16::MAX), 255);
         assert_eq!(term_channel_to_u8(32_768), 128);
+    }
+
+    #[test]
+    fn term_bg_rgb8_converts_each_channel() {
+        let converted = term_bg_rgb8(termbg::Rgb {
+            r: 0,
+            g: 32_768,
+            b: u16::MAX,
+        });
+        assert_eq!(converted, [0, 128, 255]);
     }
 }

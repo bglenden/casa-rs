@@ -201,8 +201,60 @@ fn uv_axis_scale(max_abs_uv_lambda: f64) -> UvAxisScale {
 
 #[cfg(test)]
 mod tests {
-    use super::{uv_axis_scale, uv_plot_summary};
-    use casacore_ms::{ListObsOptions, ListObsUvCoverage};
+    use super::{render_uv_plot, uv_axis_scale, uv_plot_summary, uv_plot_theme};
+    use crate::config::ThemeMode;
+    use casacore_ms::{ListObsOptions, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack};
+
+    fn sample_uv_coverage() -> ListObsUvCoverage {
+        ListObsUvCoverage {
+            schema_version: 1,
+            options: ListObsOptions::default(),
+            measurement_set_path: Some("/tmp/demo.ms".to_string()),
+            axis_unit: "lambda".to_string(),
+            mirrored_display: true,
+            sample_count: 3,
+            max_abs_uv_lambda: 1_250_000.0,
+            tracks: vec![
+                ListObsUvTrack {
+                    antenna1: 0,
+                    antenna2: 1,
+                    field_id: 0,
+                    spectral_window_id: 0,
+                    center_frequency_hz: 1.4e9,
+                    samples: vec![
+                        ListObsUvPoint {
+                            row: 0,
+                            time_mjd_seconds: 0.0,
+                            u_lambda: -800_000.0,
+                            v_lambda: 250_000.0,
+                            w_lambda: 0.0,
+                        },
+                        ListObsUvPoint {
+                            row: 1,
+                            time_mjd_seconds: 10.0,
+                            u_lambda: 900_000.0,
+                            v_lambda: -400_000.0,
+                            w_lambda: 0.0,
+                        },
+                    ],
+                },
+                ListObsUvTrack {
+                    antenna1: 2,
+                    antenna2: 3,
+                    field_id: 1,
+                    spectral_window_id: 0,
+                    center_frequency_hz: 1.4e9,
+                    samples: vec![ListObsUvPoint {
+                        row: 2,
+                        time_mjd_seconds: 20.0,
+                        u_lambda: 150_000.0,
+                        v_lambda: 600_000.0,
+                        w_lambda: 0.0,
+                    }],
+                },
+            ],
+        }
+    }
 
     #[test]
     fn uv_axis_scale_uses_lambda_for_small_extents() {
@@ -239,18 +291,61 @@ mod tests {
 
     #[test]
     fn uv_plot_summary_reports_scaled_units() {
-        let coverage = ListObsUvCoverage {
-            schema_version: 1,
-            options: ListObsOptions::default(),
-            measurement_set_path: None,
-            axis_unit: "lambda".to_string(),
-            mirrored_display: true,
-            sample_count: 42,
-            max_abs_uv_lambda: 1_250_000.0,
-            tracks: Vec::new(),
-        };
+        let mut coverage = sample_uv_coverage();
+        coverage.sample_count = 42;
+        coverage.tracks.clear();
         let summary = uv_plot_summary(&coverage);
         assert!(summary.contains("UV coverage in Mλ."));
         assert!(summary.contains("Max |u,v|=1.2"));
+    }
+
+    #[test]
+    fn uv_plot_theme_uses_distinct_palettes() {
+        let dense = uv_plot_theme(ThemeMode::DenseAnsi);
+        let rich = uv_plot_theme(ThemeMode::RichPanel);
+
+        assert_ne!(dense.background, rich.background);
+        assert_ne!(dense.track, rich.track);
+        assert_ne!(dense.mirror, rich.mirror);
+    }
+
+    #[test]
+    fn render_uv_plot_renders_tracks_for_both_themes() {
+        let coverage = sample_uv_coverage();
+        for theme_mode in [ThemeMode::DenseAnsi, ThemeMode::RichPanel] {
+            match render_uv_plot(
+                160,
+                120,
+                &super::UvPlotRenderInput {
+                    coverage: coverage.clone(),
+                    theme_mode,
+                },
+            ) {
+                Ok(image) => {
+                    assert_eq!(image.width(), 160);
+                    assert_eq!(image.height(), 120);
+                }
+                Err(error) => {
+                    assert!(
+                        error.contains("FontUnavailable"),
+                        "unexpected render failure: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn render_uv_plot_rejects_zero_dimensions() {
+        let err = render_uv_plot(
+            0,
+            120,
+            &super::UvPlotRenderInput {
+                coverage: sample_uv_coverage(),
+                theme_mode: ThemeMode::DenseAnsi,
+            },
+        )
+        .expect_err("zero-width plot should fail");
+        assert!(err.contains("non-zero"));
     }
 }

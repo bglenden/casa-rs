@@ -29,6 +29,16 @@ git_common_dir="$(git rev-parse --git-common-dir)"
 image_name="casa-rs-ci-minimal"
 command="${1:-all}"
 
+abspath_from_repo_root() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$repo_root/${1#./}" ;;
+  esac
+}
+
+git_dir="$(abspath_from_repo_root "$git_dir")"
+git_common_dir="$(abspath_from_repo_root "$git_common_dir")"
+
 path_is_within_repo_root() {
   case "$1" in
     "$repo_root"/*) return 0 ;;
