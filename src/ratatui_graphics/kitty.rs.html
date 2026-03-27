@@ -308,5 +308,32 @@
 <a href=#308 id=308 data-nosnippet>308</a>        <span class="macro">assert!</span>(delete.contains(<span class="string">"\u{1b}_Ga=d"</span>));
 <a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">assert!</span>(delete.contains(<span class="string">",d=I"</span>));
 <a href=#310 id=310 data-nosnippet>310</a>    }
-<a href=#311 id=311 data-nosnippet>311</a>}
+<a href=#311 id=311 data-nosnippet>311</a>
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="attr">#[test]
+<a href=#313 id=313 data-nosnippet>313</a>    </span><span class="kw">fn </span>wrapper_methods_compose_upload_and_delete_sequences() {
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span><span class="kw-2">mut </span>manager = KittyLayerManager::new();
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>handle = manager.allocate().unwrap();
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>image = RgbaImage::from_pixel(<span class="number">1</span>, <span class="number">1</span>, Rgba([<span class="number">5</span>, <span class="number">6</span>, <span class="number">7</span>, <span class="number">255</span>]));
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span>placement = KittyPlacement {
+<a href=#318 id=318 data-nosnippet>318</a>            rect: Rect::new(<span class="number">2</span>, <span class="number">3</span>, <span class="number">1</span>, <span class="number">1</span>),
+<a href=#319 id=319 data-nosnippet>319</a>            z_index: <span class="number">2</span>,
+<a href=#320 id=320 data-nosnippet>320</a>            preserve_cursor: <span class="bool-val">false</span>,
+<a href=#321 id=321 data-nosnippet>321</a>        };
+<a href=#322 id=322 data-nosnippet>322</a>
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
+<a href=#324 id=324 data-nosnippet>324</a>        manager
+<a href=#325 id=325 data-nosnippet>325</a>            .upload_and_place_rgba(<span class="kw-2">&amp;mut </span>out, handle, <span class="kw-2">&amp;</span>image, placement)
+<a href=#326 id=326 data-nosnippet>326</a>            .unwrap();
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">let </span>rendered = String::from_utf8(out).unwrap();
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="macro">assert!</span>(rendered.contains(<span class="string">"\u{1b}_Ga=t"</span>));
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="macro">assert!</span>(rendered.contains(<span class="string">"\u{1b}_Ga=p"</span>));
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="macro">assert!</span>(rendered.contains(<span class="string">",z=2"</span>));
+<a href=#331 id=331 data-nosnippet>331</a>
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span><span class="kw-2">mut </span>delete = Vec::new();
+<a href=#333 id=333 data-nosnippet>333</a>        manager.clear_and_delete(<span class="kw-2">&amp;mut </span>delete, handle).unwrap();
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>delete = String::from_utf8(delete).unwrap();
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="macro">assert!</span>(delete.contains(<span class="string">"\u{1b}_Ga=d"</span>));
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="macro">assert!</span>(delete.contains(<span class="string">",d=I"</span>));
+<a href=#337 id=337 data-nosnippet>337</a>    }
+<a href=#338 id=338 data-nosnippet>338</a>}
 </code></pre></div></section></main></body></html>
