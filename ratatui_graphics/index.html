@@ -1,0 +1,87 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="ratatui-graphics"><title>ratatui_graphics - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="ratatui_graphics" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate ratatui_graphics</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../ratatui_graphics/index.html">ratatui_<wbr>graphics</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#ratatui-graphics" title="ratatui-graphics">ratatui-graphics</a><ul><li><a href="#what-it-provides" title="What It Provides">What It Provides</a></li><li><a href="#api-shape" title="API Shape">API Shape</a></li><li><a href="#using-it-from-casa-rs" title="Using It from `../casa-rs`">Using It from <code>../casa-rs</code></a></li><li><a href="#layout-1" title="Layout">Layout</a></li><li><a href="#features" title="Features">Features</a></li><li><a href="#examples" title="Examples">Examples</a></li><li><a href="#verification" title="Verification">Verification</a></li><li><a href="#notes" title="Notes">Notes</a></li></ul></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>ratatui_<wbr>graphics</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/ratatui_graphics/lib.rs.html#2-35">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="ratatui-graphics"><a class="doc-anchor" href="#ratatui-graphics">§</a>ratatui-graphics</h2>
+<p><code>ratatui-graphics</code> is an internal Rust library for embedding plots and images into
+<code>ratatui</code> applications that target Ghostty and the Kitty graphics protocol first.</p>
+<p>It intentionally optimizes for one near-term consumer: <code>../casa-rs</code>.
+This crate is not shaped for public release yet.</p>
+<h3 id="what-it-provides"><a class="doc-anchor" href="#what-it-provides">§</a>What It Provides</h3>
+<p>The library supports two rendering paths:</p>
+<ul>
+<li>Panel rendering through <code>ratatui-image</code>, where the image is adapted to a <code>ratatui</code> layout
+rectangle and clipped by the widget system.</li>
+<li>Direct Kitty graphics layers, where uploaded images are placed independently of <code>ratatui</code>
+and must be explicitly cleared or deleted by the application.</li>
+</ul>
+<p>The current public API is centered on:</p>
+<ul>
+<li><code>PanelRenderer</code> for request coalescing, worker lifecycle, stale-result filtering, and current
+panel protocol state.</li>
+<li><code>KittyLayerManager</code> for typed image/placement handles and explicit upload/place/delete steps.</li>
+<li><code>PlottersBitmap</code> for <code>plotters</code> RGB raster generation.</li>
+<li>Generic image operations such as aspect fitting, chroma-key background transparency, and
+opacity adjustment.</li>
+<li>Terminal helpers for detecting background color and checking whether direct Kitty layers are
+supported for the chosen <code>ratatui-image</code> picker.</li>
+</ul>
+<h3 id="api-shape"><a class="doc-anchor" href="#api-shape">§</a>API Shape</h3>
+<p>This crate is intentionally more than thin glue. It owns:</p>
+<ul>
+<li>panel worker lifecycle and latest-wins request behavior</li>
+<li>stale-result filtering via request ids</li>
+<li>Kitty layer id allocation</li>
+<li>terminal capability policy for direct Kitty layers</li>
+</ul>
+<p>Demo-specific theme presets and scientific-plot styling do not belong in the library API.
+Those live in <code>examples/</code>.</p>
+<h3 id="using-it-from-casa-rs"><a class="doc-anchor" href="#using-it-from-casa-rs">§</a>Using It from <code>../casa-rs</code></h3>
+<p>Keep this crate as a sibling repo and consume it with a local path dependency.
+Do not copy sources into <code>casa-rs</code>.</p>
+<p>In the <code>casa-rs</code> workspace root:</p>
+<div class="example-wrap"><pre class="language-toml"><code>[workspace.dependencies]
+ratatui-graphics = { path = &quot;../ratatui-graphics&quot; }</code></pre></div>
+<p>In the consuming crate inside <code>casa-rs</code>:</p>
+<div class="example-wrap"><pre class="language-toml"><code>[dependencies]
+ratatui-graphics.workspace = true</code></pre></div>
+<p>That keeps the dependency editable in place while both repos evolve together.</p>
+<h3 id="layout-1"><a class="doc-anchor" href="#layout-1">§</a>Layout</h3>
+<ul>
+<li><code>src/panel.rs</code>: stateful panel rendering API</li>
+<li><code>src/kitty.rs</code>: direct Kitty layer management</li>
+<li><code>src/bitmap.rs</code>: checked plotters bitmap helper</li>
+<li><code>src/image_ops.rs</code>: generic image manipulation helpers</li>
+<li><code>src/terminal.rs</code>: terminal capability and background detection helpers</li>
+<li><code>examples/</code>: interactive demo plus smaller focused examples</li>
+</ul>
+<h3 id="features"><a class="doc-anchor" href="#features">§</a>Features</h3>
+<ul>
+<li><code>panel</code>: <code>ratatui-image</code> panel rendering support</li>
+<li><code>kitty</code>: direct Kitty graphics layer support</li>
+<li><code>plotters</code>: plotters bitmap helper support</li>
+<li><code>terminal-detect</code>: terminal background probing via <code>termbg</code></li>
+</ul>
+<p>Default features enable all of the above.</p>
+<h3 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h3>
+<ul>
+<li><code>cargo run --example panel_only</code></li>
+<li><code>cargo run --example kitty_overlay</code></li>
+<li><code>cargo run --example demo</code></li>
+</ul>
+<p>The <code>demo</code> example is the full interactive Ghostty experiment.</p>
+<h3 id="verification"><a class="doc-anchor" href="#verification">§</a>Verification</h3>
+<p>The main local verification commands are:</p>
+<ul>
+<li><code>cargo check --all-features</code></li>
+<li><code>cargo test --all-features</code></li>
+<li><code>cargo check --example panel_only</code></li>
+<li><code>cargo check --example kitty_overlay</code></li>
+<li><code>cargo check --example demo</code></li>
+</ul>
+<h3 id="notes"><a class="doc-anchor" href="#notes">§</a>Notes</h3>
+<ul>
+<li>The direct Kitty layer path is intentionally explicit: callers are responsible for deciding
+when to upload, place, clear, and delete layers.</li>
+<li>The panel path is stateful but higher-level: <code>PanelRenderer</code> owns the worker thread and
+latest-wins request semantics so the app does not need raw channel plumbing.</li>
+<li>Ghostty-specific compositing behavior should be validated in a real Ghostty session; a generic
+PTY smoke test is not enough to verify layering.</li>
+</ul>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.PlottersBitmap"><code>pub use bitmap::<a class="struct" href="bitmap/struct.PlottersBitmap.html" title="struct ratatui_graphics::bitmap::PlottersBitmap">PlottersBitmap</a>;</code></dt><dt id="reexport.PlottersBitmapError"><code>pub use bitmap::<a class="enum" href="bitmap/enum.PlottersBitmapError.html" title="enum ratatui_graphics::bitmap::PlottersBitmapError">PlottersBitmapError</a>;</code></dt><dt id="reexport.ImageLayers"><code>pub use image_ops::<a class="struct" href="image_ops/struct.ImageLayers.html" title="struct ratatui_graphics::image_ops::ImageLayers">ImageLayers</a>;</code></dt><dt id="reexport.ImageOpsError"><code>pub use image_ops::<a class="enum" href="image_ops/enum.ImageOpsError.html" title="enum ratatui_graphics::image_ops::ImageOpsError">ImageOpsError</a>;</code></dt><dt id="reexport.apply_opacity"><code>pub use image_ops::<a class="fn" href="image_ops/fn.apply_opacity.html" title="fn ratatui_graphics::image_ops::apply_opacity">apply_opacity</a>;</code></dt><dt id="reexport.fit_pixels_preserving_aspect"><code>pub use image_ops::<a class="fn" href="image_ops/fn.fit_pixels_preserving_aspect.html" title="fn ratatui_graphics::image_ops::fit_pixels_preserving_aspect">fit_pixels_preserving_aspect</a>;</code></dt><dt id="reexport.key_background_transparency"><code>pub use image_ops::<a class="fn" href="image_ops/fn.key_background_transparency.html" title="fn ratatui_graphics::image_ops::key_background_transparency">key_background_transparency</a>;</code></dt><dt id="reexport.prepare_image_layers"><code>pub use image_ops::<a class="fn" href="image_ops/fn.prepare_image_layers.html" title="fn ratatui_graphics::image_ops::prepare_image_layers">prepare_image_layers</a>;</code></dt><dt id="reexport.KittyLayerError"><code>pub use kitty::<a class="enum" href="kitty/enum.KittyLayerError.html" title="enum ratatui_graphics::kitty::KittyLayerError">KittyLayerError</a>;</code></dt><dt id="reexport.KittyLayerHandle"><code>pub use kitty::<a class="struct" href="kitty/struct.KittyLayerHandle.html" title="struct ratatui_graphics::kitty::KittyLayerHandle">KittyLayerHandle</a>;</code></dt><dt id="reexport.KittyLayerManager"><code>pub use kitty::<a class="struct" href="kitty/struct.KittyLayerManager.html" title="struct ratatui_graphics::kitty::KittyLayerManager">KittyLayerManager</a>;</code></dt><dt id="reexport.KittyPlacement"><code>pub use kitty::<a class="struct" href="kitty/struct.KittyPlacement.html" title="struct ratatui_graphics::kitty::KittyPlacement">KittyPlacement</a>;</code></dt><dt id="reexport.KittyPlacementError"><code>pub use kitty::<a class="enum" href="kitty/enum.KittyPlacementError.html" title="enum ratatui_graphics::kitty::KittyPlacementError">KittyPlacementError</a>;</code></dt><dt id="reexport.PanelInitError"><code>pub use panel::<a class="enum" href="panel/enum.PanelInitError.html" title="enum ratatui_graphics::panel::PanelInitError">PanelInitError</a>;</code></dt><dt id="reexport.PanelRenderError"><code>pub use panel::<a class="enum" href="panel/enum.PanelRenderError.html" title="enum ratatui_graphics::panel::PanelRenderError">PanelRenderError</a>;</code></dt><dt id="reexport.PanelRenderJob"><code>pub use panel::<a class="struct" href="panel/struct.PanelRenderJob.html" title="struct ratatui_graphics::panel::PanelRenderJob">PanelRenderJob</a>;</code></dt><dt id="reexport.PanelRenderer"><code>pub use panel::<a class="struct" href="panel/struct.PanelRenderer.html" title="struct ratatui_graphics::panel::PanelRenderer">PanelRenderer</a>;</code></dt><dt id="reexport.PanelSubmitError"><code>pub use panel::<a class="enum" href="panel/enum.PanelSubmitError.html" title="enum ratatui_graphics::panel::PanelSubmitError">PanelSubmitError</a>;</code></dt><dt id="reexport.PanelWorkerError"><code>pub use panel::<a class="enum" href="panel/enum.PanelWorkerError.html" title="enum ratatui_graphics::panel::PanelWorkerError">PanelWorkerError</a>;</code></dt><dt id="reexport.PreparedPanelProtocol"><code>pub use panel::<a class="struct" href="panel/struct.PreparedPanelProtocol.html" title="struct ratatui_graphics::panel::PreparedPanelProtocol">PreparedPanelProtocol</a>;</code></dt><dt id="reexport.render_panel_protocol"><code>pub use panel::<a class="fn" href="panel/fn.render_panel_protocol.html" title="fn ratatui_graphics::panel::render_panel_protocol">render_panel_protocol</a>;</code></dt><dt id="reexport.TerminalCapabilities"><code>pub use terminal::<a class="struct" href="terminal/struct.TerminalCapabilities.html" title="struct ratatui_graphics::terminal::TerminalCapabilities">TerminalCapabilities</a>;</code></dt><dt id="reexport.TerminalDetectError"><code>pub use terminal::<a class="enum" href="terminal/enum.TerminalDetectError.html" title="enum ratatui_graphics::terminal::TerminalDetectError">TerminalDetectError</a>;</code></dt><dt id="reexport.detect_terminal_background"><code>pub use terminal::<a class="fn" href="terminal/fn.detect_terminal_background.html" title="fn ratatui_graphics::terminal::detect_terminal_background">detect_terminal_background</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="bitmap/index.html" title="mod ratatui_graphics::bitmap">bitmap</a></dt><dd>Plotters-specific bitmap helpers.</dd><dt><a class="mod" href="image_ops/index.html" title="mod ratatui_graphics::image_ops">image_<wbr>ops</a></dt><dd>Generic image-processing helpers used by panel and Kitty rendering paths.</dd><dt><a class="mod" href="kitty/index.html" title="mod ratatui_graphics::kitty">kitty</a></dt><dd>Direct Kitty graphics layer helpers.</dd><dt><a class="mod" href="panel/index.html" title="mod ratatui_graphics::panel">panel</a></dt><dd>Stateful panel rendering support built on top of <code>ratatui-image</code>.</dd><dt><a class="mod" href="terminal/index.html" title="mod ratatui_graphics::terminal">terminal</a></dt><dd>Terminal capability helpers.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Picker.html" title="struct ratatui_graphics::Picker">Picker</a></dt></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.PanelProtocol.html" title="enum ratatui_graphics::PanelProtocol">Panel<wbr>Protocol</a></dt><dd>A fixed-size image protocol for the [crate::Image] widget.</dd><dt><a class="enum" href="enum.ProtocolType.html" title="enum ratatui_graphics::ProtocolType">Protocol<wbr>Type</a></dt><dd>Serde-friendly protocol-type enum for <a href="struct.Picker.html" title="struct ratatui_graphics::Picker">Picker</a>.</dd><dt><a class="enum" href="enum.Resize.html" title="enum ratatui_graphics::Resize">Resize</a></dt><dd>Resize method</dd></dl></section></div></main></body></html>

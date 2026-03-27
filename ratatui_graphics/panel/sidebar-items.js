@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PanelInitError","PanelRenderError","PanelSubmitError","PanelWorkerError"],"fn":["render_panel_protocol"],"struct":["PanelRenderJob","PanelRenderer","PreparedPanelProtocol"]};

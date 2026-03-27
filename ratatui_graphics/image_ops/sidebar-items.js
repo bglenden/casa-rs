@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ImageOpsError"],"fn":["apply_opacity","fit_pixels_preserving_aspect","key_background_transparency","prepare_image_layers"],"struct":["ImageLayers"]};

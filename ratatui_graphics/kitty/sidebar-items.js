@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["KittyLayerError","KittyPlacementError"],"struct":["KittyLayerHandle","KittyLayerManager","KittyPlacement"]};
