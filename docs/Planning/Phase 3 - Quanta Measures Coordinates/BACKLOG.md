@@ -73,3 +73,25 @@ sequenced after typed MS APIs.
 
 **Reason:** Core subset is enough for Phase 3 validation; full catalog can be
 expanded incrementally after UDF framework stabilizes.
+
+---
+
+### 11.2 Shared Record/Value Crate Extraction for Measure Record Serialization
+
+**Status:** DEFER
+
+**Reason:** `casacore-types` still depends on record/value types that currently
+live in the table layer. Splitting that shared data model into its own crate is
+worth doing, but it cuts across package boundaries and should stay out of the
+current wave unless a larger crate-graph cleanup is already in flight.
+
+---
+
+### 11.3 Resolve or Explicitly Document the casacore vs SOFA Direction Deviation
+
+**Status:** DEFER
+
+**Reason:** The remaining J2000/App deviation investigation is a focused
+correctness audit, not a blocker for the current measure APIs. It should land
+either as exact casacore parity work or as stronger documented divergence once
+the expected behavior is confirmed.

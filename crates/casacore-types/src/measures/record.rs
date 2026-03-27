@@ -6,10 +6,9 @@
 //! produce and consume [`RecordValue`] in the same format, ensuring
 //! interoperability with C++ tables.
 //!
-// TODO: The record functions depend on `RecordValue` / `Value` / `ScalarValue` from
-// the tables layer. When `casacore-tables` is split into its own crate these types
-// will need a shared dependency (e.g. a `casacore-record` crate) so that
-// `casacore-types` does not pull in table-storage details.
+//! Deferred: Phase 3 backlog item 11.2 tracks splitting the shared
+//! `RecordValue` / `Value` data model out of the table layer so
+//! `casacore-types` no longer depends on table-storage details here.
 //!
 //! ## MEpoch record format
 //!

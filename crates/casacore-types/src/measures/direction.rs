@@ -44,11 +44,9 @@
 //! `misc/casacore_vs_sofa_deviation.cpp`. An issue has been filed with the
 //! casacore C++ maintainers to clarify whether this is expected.
 //!
-// TODO: The IAU 2000A ~16 mas deviation between casacore and SOFA needs
-// investigation. Options: (1) transliterate casacore's IAU 2000 precession/
-// nutation to match exactly, (2) determine which implementation is more
-// accurate and document the difference, (3) add Sun gravitational deflection
-// to reduce the IAU 1976 deviation to sub-mas.
+//! Deferred: Phase 3 backlog item 11.3 tracks the remaining casacore vs SOFA
+//! deviation audit, including whether to match casacore exactly or document the
+//! expected divergence more explicitly.
 //!
 //! # Implemented routes
 //!

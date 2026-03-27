@@ -10,6 +10,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::{ListObsOptions, ListObsOutputFormat, ListObsSummary, ListObsUvCoverage};
+use crate::plot::{
+    ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotTheme,
+    build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, export_listobs_plot,
+};
 
 const UI_SCHEMA_VERSION: u32 = 1;
 const COMMAND_ID: &str = "listobs";
@@ -69,7 +73,7 @@ pub fn run_env(program_name: &str) -> i32 {
             }
         },
         Ok(CliAction::Run(options)) => {
-            let rendered = match options.mode {
+            let result = match &options.mode {
                 CliRunMode::Summary => {
                     ListObsSummary::from_path_with_options(&options.path, &options.listobs)
                         .map_err(|error| error.to_string())
@@ -78,18 +82,54 @@ pub fn run_env(program_name: &str) -> i32 {
                                 .render(options.format)
                                 .map_err(|error| error.to_string())
                         })
+                        .and_then(|text| write_output(&options, &text))
                 }
                 CliRunMode::UvCoverageJson => {
                     match ListObsUvCoverage::from_path_with_options(&options.path, &options.listobs)
                     {
                         Ok(coverage) => coverage
                             .render_json_pretty()
-                            .map_err(|error| error.to_string()),
+                            .map_err(|error| error.to_string())
+                            .and_then(|text| write_output(&options, &text)),
                         Err(error) => Err(error.to_string()),
                     }
                 }
+                CliRunMode::Plot {
+                    spec,
+                    output_path,
+                    export_format,
+                    width,
+                    height,
+                } => {
+                    let theme = ListObsPlotTheme::light();
+                    let payload_result = match spec.kind {
+                        ListObsPlotKind::UvCoverage => ListObsUvCoverage::from_path_with_options(
+                            &options.path,
+                            &options.listobs,
+                        )
+                        .map_err(|error| error.to_string())
+                        .and_then(|coverage| build_listobs_uv_plot_payload(&coverage, spec)),
+                        _ => {
+                            ListObsSummary::from_path_with_options(&options.path, &options.listobs)
+                                .map_err(|error| error.to_string())
+                                .and_then(|summary| {
+                                    build_listobs_plot_payload_from_summary(&summary, spec)
+                                })
+                        }
+                    };
+                    payload_result.and_then(|payload| {
+                        export_listobs_plot(
+                            &payload,
+                            theme,
+                            output_path,
+                            *export_format,
+                            *width,
+                            *height,
+                        )
+                    })
+                }
             };
-            match rendered.and_then(|text| write_output(&options, &text)) {
+            match result {
                 Ok(()) => 0,
                 Err(error) => {
                     eprintln!("Error: {error}");
@@ -426,25 +466,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false_flags: &[],
                 default: false,
             }),
-            action_argument(
-                20,
-                "ui_schema",
-                "UI Schema",
-                &["--ui-schema"],
-                UiActionKind::UiSchema,
-                "Print the machine-readable UI schema for this command",
-            ),
-            action_argument(
-                21,
-                "help",
-                "Help",
-                &["-h", "--help"],
-                UiActionKind::Help,
-                "Print this help message",
-            ),
             toggle_argument(ToggleSpec {
                 common: ArgumentCommon {
-                    order: 22,
+                    order: 20,
                     id: "uv_coverage_json",
                     label: "UV Coverage JSON",
                     help: "Emit lazy-load UV coverage JSON for the current selection",
@@ -456,6 +480,123 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false_flags: &[],
                 default: false,
             }),
+            option_argument(OptionSpec {
+                common: ArgumentCommon {
+                    order: 21,
+                    id: "plot",
+                    label: "Plot Kind",
+                    help: "Export one plot instead of the text/json summary",
+                    group: "Plots",
+                    advanced: true,
+                    hidden_in_tui: true,
+                },
+                flags: &["--plot"],
+                metavar: "KIND",
+                value_kind: UiValueKind::Choice,
+                default: None,
+                choices: &[
+                    "uv_coverage",
+                    "antenna_layout",
+                    "scan_timeline",
+                    "spectral_window_coverage",
+                ],
+            }),
+            option_argument(OptionSpec {
+                common: ArgumentCommon {
+                    order: 22,
+                    id: "plot_option",
+                    label: "Plot Option",
+                    help: "Repeatable plot-specific key=value option",
+                    group: "Plots",
+                    advanced: true,
+                    hidden_in_tui: true,
+                },
+                flags: &["--plot-option"],
+                metavar: "KEY=VALUE",
+                value_kind: UiValueKind::String,
+                default: None,
+                choices: &[],
+            }),
+            option_argument(OptionSpec {
+                common: ArgumentCommon {
+                    order: 23,
+                    id: "plot_output",
+                    label: "Plot Output",
+                    help: "Write the exported plot to PATH when --plot is active",
+                    group: "Plots",
+                    advanced: true,
+                    hidden_in_tui: true,
+                },
+                flags: &["--plot-output"],
+                metavar: "PATH",
+                value_kind: UiValueKind::Path,
+                default: None,
+                choices: &[],
+            }),
+            option_argument(OptionSpec {
+                common: ArgumentCommon {
+                    order: 24,
+                    id: "plot_format",
+                    label: "Plot Format",
+                    help: "Plot export format: png or pdf (default: png)",
+                    group: "Plots",
+                    advanced: true,
+                    hidden_in_tui: true,
+                },
+                flags: &["--plot-format"],
+                metavar: "FORMAT",
+                value_kind: UiValueKind::Choice,
+                default: Some("png"),
+                choices: &["png", "pdf"],
+            }),
+            option_argument(OptionSpec {
+                common: ArgumentCommon {
+                    order: 25,
+                    id: "plot_width",
+                    label: "Plot Width",
+                    help: "Rendered plot width in pixels (default: 1600)",
+                    group: "Plots",
+                    advanced: true,
+                    hidden_in_tui: true,
+                },
+                flags: &["--plot-width"],
+                metavar: "PIXELS",
+                value_kind: UiValueKind::Float,
+                default: Some("1600"),
+                choices: &[],
+            }),
+            option_argument(OptionSpec {
+                common: ArgumentCommon {
+                    order: 26,
+                    id: "plot_height",
+                    label: "Plot Height",
+                    help: "Rendered plot height in pixels (default: 900)",
+                    group: "Plots",
+                    advanced: true,
+                    hidden_in_tui: true,
+                },
+                flags: &["--plot-height"],
+                metavar: "PIXELS",
+                value_kind: UiValueKind::Float,
+                default: Some("900"),
+                choices: &[],
+            }),
+            action_argument(
+                27,
+                "ui_schema",
+                "UI Schema",
+                &["--ui-schema"],
+                UiActionKind::UiSchema,
+                "Print the machine-readable UI schema for this command",
+            ),
+            action_argument(
+                28,
+                "help",
+                "Help",
+                &["-h", "--help"],
+                UiActionKind::Help,
+                "Print this help message",
+            ),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "listobs-summary-v1".to_string(),
@@ -487,15 +628,22 @@ struct CliOptions {
     listobs: ListObsOptions,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum CliRunMode {
     Summary,
     UvCoverageJson,
+    Plot {
+        spec: crate::plot::ListObsPlotSpec,
+        output_path: PathBuf,
+        export_format: ListObsPlotExportFormat,
+        width: u32,
+        height: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
 enum ParsedValue {
-    String(String),
+    Strings(Vec<String>),
     Bool(bool),
 }
 
@@ -506,8 +654,17 @@ struct ParsedValues {
 
 impl ParsedValues {
     fn insert_string(&mut self, id: &str, value: String) {
-        self.values
-            .insert(id.to_string(), ParsedValue::String(value));
+        match self.values.get_mut(id) {
+            Some(ParsedValue::Strings(values)) => values.push(value),
+            Some(ParsedValue::Bool(_)) => {
+                self.values
+                    .insert(id.to_string(), ParsedValue::Strings(vec![value]));
+            }
+            None => {
+                self.values
+                    .insert(id.to_string(), ParsedValue::Strings(vec![value]));
+            }
+        }
     }
 
     fn insert_bool(&mut self, id: &str, value: bool) {
@@ -516,9 +673,17 @@ impl ParsedValues {
 
     fn optional_string(&self, id: &str) -> Result<Option<String>, String> {
         match self.values.get(id) {
-            Some(ParsedValue::String(value)) => Ok(Some(value.clone())),
+            Some(ParsedValue::Strings(values)) => Ok(values.last().cloned()),
             Some(ParsedValue::Bool(_)) => Err(format!("internal type mismatch for {id}")),
             None => Ok(None),
+        }
+    }
+
+    fn string_values(&self, id: &str) -> Result<Vec<String>, String> {
+        match self.values.get(id) {
+            Some(ParsedValue::Strings(values)) => Ok(values.clone()),
+            Some(ParsedValue::Bool(_)) => Err(format!("internal type mismatch for {id}")),
+            None => Ok(Vec::new()),
         }
     }
 
@@ -530,7 +695,7 @@ impl ParsedValues {
     fn bool_or_default(&self, schema: &UiCommandSchema, id: &str) -> Result<bool, String> {
         match self.values.get(id) {
             Some(ParsedValue::Bool(value)) => Ok(*value),
-            Some(ParsedValue::String(_)) => Err(format!("internal type mismatch for {id}")),
+            Some(ParsedValue::Strings(_)) => Err(format!("internal type mismatch for {id}")),
             None => schema
                 .argument(id)
                 .and_then(UiArgumentSchema::default_bool)
@@ -924,10 +1089,79 @@ fn build_run_options(
         })
         .transpose()?;
 
+    let plot_kind = parsed
+        .optional_string("plot")?
+        .map(|value| ListObsPlotKind::parse(&value))
+        .transpose()?;
+    let plot_options = parsed.string_values("plot_option")?;
+    let plot_output = parsed.optional_string("plot_output")?;
+    let plot_format = parsed
+        .optional_string("plot_format")?
+        .or_else(|| {
+            schema
+                .argument("plot_format")
+                .and_then(|argument| argument.default.clone())
+        })
+        .unwrap_or_else(|| "png".to_string());
+    let plot_width = parsed
+        .optional_string("plot_width")?
+        .or_else(|| {
+            schema
+                .argument("plot_width")
+                .and_then(|argument| argument.default.clone())
+        })
+        .unwrap_or_else(|| "1600".to_string())
+        .parse::<u32>()
+        .map_err(|_| "invalid integer value for --plot-width".to_string())?;
+    let plot_height = parsed
+        .optional_string("plot_height")?
+        .or_else(|| {
+            schema
+                .argument("plot_height")
+                .and_then(|argument| argument.default.clone())
+        })
+        .unwrap_or_else(|| "900".to_string())
+        .parse::<u32>()
+        .map_err(|_| "invalid integer value for --plot-height".to_string())?;
+    let plot_mode = if let Some(kind) = plot_kind {
+        if output.is_some() || listfile.is_some() {
+            return Err(
+                "cannot combine --plot with --output/--listfile; use --plot-output".to_string(),
+            );
+        }
+        if parsed.optional_string("format")?.is_some() {
+            return Err(
+                "cannot combine --plot with --format; plot export always writes to --plot-output"
+                    .to_string(),
+            );
+        }
+        let output_path = plot_output
+            .ok_or_else(|| "--plot requires --plot-output <PATH>".to_string())
+            .map(PathBuf::from)?;
+        let spec = crate::plot::ListObsPlotSpec::from_cli_assignments(kind, &plot_options)?;
+        Some(CliRunMode::Plot {
+            spec,
+            output_path,
+            export_format: ListObsPlotExportFormat::parse(&plot_format)?,
+            width: plot_width.max(1),
+            height: plot_height.max(1),
+        })
+    } else {
+        if plot_output.is_some() {
+            return Err("--plot-output requires --plot".to_string());
+        }
+        if !plot_options.is_empty() {
+            return Err("--plot-option requires --plot".to_string());
+        }
+        None
+    };
+
     Ok(CliOptions {
         path: PathBuf::from(parsed.required_string("ms_path")?),
         format: ListObsOutputFormat::parse(&format)?,
-        mode: if parsed.bool_or_default(schema, "uv_coverage_json")? {
+        mode: if let Some(mode) = plot_mode {
+            mode
+        } else if parsed.bool_or_default(schema, "uv_coverage_json")? {
             CliRunMode::UvCoverageJson
         } else {
             CliRunMode::Summary

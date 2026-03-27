@@ -11,8 +11,8 @@ use ratatui::widgets::{
 use ratatui_image::Image as PanelImage;
 
 use crate::app::{
-    AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, ResultContent,
-    ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
+    AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, PlotControlTarget,
+    PlotPaneFocus, ResultContent, ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
 };
 use crate::config::ThemeMode;
 use crate::registry::RegistryApp;
@@ -33,6 +33,7 @@ pub(crate) struct UiLayout {
     pub result_content: Rect,
     pub result_scrollbar: Option<Rect>,
     pub result_hscrollbar: Option<Rect>,
+    pub plot_workspace: Option<PlotWorkspaceLayout>,
     pub tab_hits: Vec<TabHit>,
     pub browser_tab_hits: Vec<BrowserTabHit>,
 }
@@ -52,6 +53,30 @@ pub(crate) struct TabHit {
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserTabHit {
     pub tab: BrowserTab,
+    pub rect: Rect,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotWorkspaceLayout {
+    pub catalog_block: Rect,
+    pub catalog_inner: Rect,
+    pub catalog_hits: Vec<PlotCatalogHit>,
+    pub canvas_block: Rect,
+    pub canvas_inner: Rect,
+    pub controls_block: Rect,
+    pub controls_inner: Rect,
+    pub control_hits: Vec<PlotControlHit>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotCatalogHit {
+    pub tab: crate::app::PlotCatalogRowView,
+    pub rect: Rect,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotControlHit {
+    pub target: PlotControlTarget,
     pub rect: Rect,
 }
 
@@ -111,6 +136,34 @@ impl UiLayout {
     pub(crate) fn in_result_hscrollbar(&self, column: u16, row: u16) -> bool {
         self.result_hscrollbar
             .is_some_and(|rect| rect_contains(rect, column, row))
+    }
+
+    pub(crate) fn plot_catalog_at(
+        &self,
+        column: u16,
+        row: u16,
+    ) -> Option<crate::app::PlotCatalogRowView> {
+        self.plot_workspace
+            .as_ref()?
+            .catalog_hits
+            .iter()
+            .find(|hit| rect_contains(hit.rect, column, row))
+            .map(|hit| hit.tab.clone())
+    }
+
+    pub(crate) fn plot_control_at(&self, column: u16, row: u16) -> Option<PlotControlTarget> {
+        self.plot_workspace
+            .as_ref()?
+            .control_hits
+            .iter()
+            .find(|hit| rect_contains(hit.rect, column, row))
+            .map(|hit| hit.target)
+    }
+
+    pub(crate) fn in_plot_canvas(&self, column: u16, row: u16) -> bool {
+        self.plot_workspace
+            .as_ref()
+            .is_some_and(|workspace| rect_contains(workspace.canvas_inner, column, row))
     }
 }
 
@@ -202,6 +255,12 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
     };
     let result_scrollbar = result_scrollbar_rect(app, result_content);
     let result_hscrollbar = result_hscrollbar_rect(app, result_content);
+    let plot_workspace = if !app.browser_is_active() && app.active_result_tab() == ResultTab::Plots
+    {
+        Some(build_plot_workspace_layout(result_content, app))
+    } else {
+        None
+    };
 
     UiLayout {
         header: vertical[0],
@@ -217,6 +276,7 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
         result_content,
         result_scrollbar,
         result_hscrollbar,
+        plot_workspace,
         tab_hits,
         browser_tab_hits,
     }
@@ -450,7 +510,11 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
 
     let content = app.active_result_content();
     if let ResultContent::Graphic(summary) = &content {
-        draw_graphic_result(frame, app, layout, palette, summary);
+        if app.active_result_tab() == ResultTab::Plots {
+            draw_plot_workspace(frame, app, layout, palette, summary);
+        } else {
+            draw_graphic_result(frame, app, layout, palette, summary);
+        }
         return;
     }
     let vertical_scrollbar =
@@ -513,13 +577,13 @@ fn draw_graphic_result(
         return;
     }
 
-    if let Some(protocol) = app.uv_plot_protocol() {
+    if let Some(protocol) = app.plot_protocol() {
         frame.render_widget(PanelImage::new(protocol), content_area);
     } else {
-        let message = if let Some(error) = app.uv_plot_last_error() {
+        let message = if let Some(error) = app.plot_last_error() {
             format!("{summary}\n\n{error}")
-        } else if app.uv_plot_pending() {
-            format!("{summary}\n\nRendering UV plot...")
+        } else if app.plot_pending() {
+            format!("{summary}\n\nRendering plot...")
         } else {
             summary.to_string()
         };
@@ -529,6 +593,117 @@ fn draw_graphic_result(
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, content_area);
     }
+}
+
+fn draw_plot_workspace(
+    frame: &mut Frame<'_>,
+    app: &AppState,
+    layout: &UiLayout,
+    palette: Theme,
+    summary: &str,
+) {
+    let Some(workspace) = layout.plot_workspace.as_ref() else {
+        draw_graphic_result(frame, app, layout, palette, summary);
+        return;
+    };
+
+    let selected_plot = app.selected_plot_kind().display_name();
+    let catalog_title = match app.plot_focus() {
+        PlotPaneFocus::Catalog => "Catalog [focus]",
+        _ => "Catalog",
+    };
+    let canvas_title = match app.plot_focus() {
+        PlotPaneFocus::Canvas => format!("{selected_plot} [focus]"),
+        _ => selected_plot.to_string(),
+    };
+    let controls_title = match app.plot_focus() {
+        PlotPaneFocus::Controls => "Controls [focus]",
+        _ => "Controls",
+    };
+
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(catalog_title)
+            .border_style(Style::default().fg(palette.divider_fg)),
+        workspace.catalog_block,
+    );
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(canvas_title)
+            .border_style(Style::default().fg(palette.divider_fg)),
+        workspace.canvas_block,
+    );
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(controls_title)
+            .border_style(Style::default().fg(palette.divider_fg)),
+        workspace.controls_block,
+    );
+
+    let catalog_items = app
+        .plot_catalog_rows()
+        .into_iter()
+        .map(|row| {
+            let style = if row.selected {
+                Style::default()
+                    .fg(palette.active_tab_fg)
+                    .bg(palette.active_tab_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.footer_fg)
+            };
+            ListItem::new(Line::from(Span::styled(row.label, style)))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(List::new(catalog_items), workspace.catalog_inner);
+
+    if let Some(protocol) = app.plot_protocol() {
+        frame.render_widget(PanelImage::new(protocol), workspace.canvas_inner);
+    } else {
+        let message = if let Some(error) = app.plot_last_error() {
+            format!("{summary}\n\n{error}")
+        } else if app.plot_pending() {
+            format!("{summary}\n\nRendering plot...")
+        } else {
+            summary.to_string()
+        };
+        frame.render_widget(
+            Paragraph::new(message)
+                .style(Style::default().fg(palette.footer_fg))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: false }),
+            workspace.canvas_inner,
+        );
+    }
+
+    let mut control_lines = Vec::<Line<'static>>::new();
+    if let Some(banner) = app.plot_dirty_banner() {
+        control_lines.push(Line::from(Span::styled(
+            banner.to_string(),
+            Style::default()
+                .fg(palette.banner_fg)
+                .add_modifier(Modifier::BOLD),
+        )));
+        control_lines.push(Line::from(""));
+    }
+    control_lines.extend(app.plot_control_rows().into_iter().map(|row| {
+        let style = if row.selected {
+            Style::default()
+                .fg(palette.active_tab_fg)
+                .bg(palette.active_tab_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette.footer_fg)
+        };
+        Line::from(Span::styled(row.text, style))
+    }));
+    frame.render_widget(
+        Paragraph::new(control_lines).wrap(Wrap { trim: false }),
+        workspace.controls_inner,
+    );
 }
 
 fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
@@ -1004,7 +1179,7 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
         ResultTab::Spws => "SPWs",
         ResultTab::Sources => "Sources",
         ResultTab::Antennas => "Ant",
-        ResultTab::Uv => "UV",
+        ResultTab::Plots => "Plots",
         ResultTab::Stdout => "Out",
         ResultTab::Stderr => "Err",
     };
@@ -1015,6 +1190,82 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
     } else {
         format!("[{}]", tab.label())
     }
+}
+
+fn build_plot_workspace_layout(area: Rect, app: &AppState) -> PlotWorkspaceLayout {
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(28), Constraint::Min(30)])
+        .split(area);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(12), Constraint::Length(11)])
+        .split(horizontal[1]);
+
+    let catalog_block = horizontal[0];
+    let canvas_block = right[0];
+    let controls_block = right[1];
+    let catalog_inner = Block::default().borders(Borders::ALL).inner(catalog_block);
+    let canvas_inner = Block::default().borders(Borders::ALL).inner(canvas_block);
+    let controls_inner = Block::default().borders(Borders::ALL).inner(controls_block);
+
+    let catalog_hits = app
+        .plot_catalog_rows()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (index < catalog_inner.height as usize).then_some(PlotCatalogHit {
+                tab: row,
+                rect: Rect {
+                    x: catalog_inner.x,
+                    y: catalog_inner.y + index as u16,
+                    width: catalog_inner.width,
+                    height: 1,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let control_hits = app
+        .plot_control_rows()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            let offset = if app.plot_dirty_banner().is_some() {
+                2usize
+            } else {
+                0usize
+            };
+            let y = controls_inner.y + offset as u16 + index as u16;
+            ((offset + index) < controls_inner.height as usize).then_some(PlotControlHit {
+                target: row.target,
+                rect: Rect {
+                    x: controls_inner.x,
+                    y,
+                    width: controls_inner.width,
+                    height: 1,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    PlotWorkspaceLayout {
+        catalog_block,
+        catalog_inner,
+        catalog_hits,
+        canvas_block,
+        canvas_inner,
+        controls_block,
+        controls_inner,
+        control_hits,
+    }
+}
+
+pub(crate) fn plot_canvas_area(layout: &UiLayout) -> Option<Rect> {
+    layout
+        .plot_workspace
+        .as_ref()
+        .map(|workspace| workspace.canvas_inner)
 }
 
 fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {

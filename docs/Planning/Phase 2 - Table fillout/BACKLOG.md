@@ -207,3 +207,13 @@ Significant standalone scope. Should be a separate crate if needed.
 
 ---
 
+### 26.4 `VirtualTaQLColumn` Array-Column Materialization
+
+**Status:** DEFER
+
+**Reason:** The current virtual-column engine converts scalar expression values
+only. Array-valued expressions need shape-aware conversion into casacore array
+cells and enough test coverage to keep TaQL virtual columns interoperable with
+both scalar and array-backed schemas.
+
+---
