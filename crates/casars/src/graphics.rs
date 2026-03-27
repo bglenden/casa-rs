@@ -5,8 +5,11 @@ use ratatui_graphics::PlottersBitmap;
 
 use crate::config::ThemeMode;
 
-pub(crate) const UV_PLOT_ASPECT_WIDTH: u32 = 1;
-pub(crate) const UV_PLOT_ASPECT_HEIGHT: u32 = 1;
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UvAxisScale {
+    unit_label: &'static str,
+    lambda_scale: f64,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UvPlotRenderInput {
@@ -56,23 +59,55 @@ pub(crate) fn render_uv_plot(
     root.fill(&theme.background)
         .map_err(|error| error.to_string())?;
 
-    let extent = input.coverage.max_abs_uv_lambda.max(1.0);
+    let axis_scale = uv_axis_scale(input.coverage.max_abs_uv_lambda);
+    let extent = (input.coverage.max_abs_uv_lambda / axis_scale.lambda_scale).max(1.0);
     let range = -extent..extent;
+    let min_dimension = width.min(height).max(1);
+    let base_margin = ((min_dimension as f32) * 0.03).round() as u32;
+    let x_label_area = ((height as f32) * 0.12).round() as u32;
+    let y_label_area = ((width as f32) * 0.14).round() as u32;
+    let axis_font_size = ((min_dimension as f32) * 0.045).round() as i32;
+    let tick_font_size = ((min_dimension as f32) * 0.032).round() as i32;
+    let base_margin = base_margin.clamp(8, 18);
+    let x_label_area = x_label_area.clamp(28, 56);
+    let y_label_area = y_label_area.clamp(42, 82);
+    let axis_font_size = axis_font_size.clamp(24, 40);
+    let tick_font_size = tick_font_size.clamp(18, 28);
+    let plot_width_budget = width.saturating_sub(y_label_area + base_margin.saturating_mul(2));
+    let plot_height_budget = height.saturating_sub(x_label_area + base_margin.saturating_mul(2));
+    let plot_side = plot_width_budget.min(plot_height_budget).max(1);
+    let extra_width = plot_width_budget.saturating_sub(plot_side);
+    let extra_height = plot_height_budget.saturating_sub(plot_side);
+    let margin_left = base_margin + extra_width / 2;
+    let margin_right = base_margin + extra_width.saturating_sub(extra_width / 2);
+    let margin_top = base_margin + extra_height / 2;
+    let margin_bottom = base_margin + extra_height.saturating_sub(extra_height / 2);
 
     let mut chart = ChartBuilder::on(&root)
-        .margin(16)
-        .x_label_area_size(42)
-        .y_label_area_size(52)
+        .margin_left(margin_left)
+        .margin_right(margin_right)
+        .margin_top(margin_top)
+        .margin_bottom(margin_bottom)
+        .x_label_area_size(x_label_area)
+        .y_label_area_size(y_label_area)
         .build_cartesian_2d(range.clone(), range)
         .map_err(|error| error.to_string())?;
 
     chart
         .configure_mesh()
-        .x_desc("u (lambda)")
-        .y_desc("v (lambda)")
-        .axis_desc_style(("sans-serif", 18).into_font().color(&theme.axis))
+        .x_desc(format!("u ({})", axis_scale.unit_label))
+        .y_desc(format!("v ({})", axis_scale.unit_label))
+        .axis_desc_style(
+            ("sans-serif", axis_font_size)
+                .into_font()
+                .color(&theme.axis),
+        )
         .axis_style(theme.axis)
-        .label_style(("sans-serif", 14).into_font().color(&theme.label))
+        .label_style(
+            ("sans-serif", tick_font_size)
+                .into_font()
+                .color(&theme.label),
+        )
         .light_line_style(theme.grid.mix(0.55))
         .bold_line_style(theme.grid)
         .draw()
@@ -82,7 +117,12 @@ pub(crate) fn render_uv_plot(
         let points = track
             .samples
             .iter()
-            .map(|sample| (sample.u_lambda, sample.v_lambda))
+            .map(|sample| {
+                (
+                    sample.u_lambda / axis_scale.lambda_scale,
+                    sample.v_lambda / axis_scale.lambda_scale,
+                )
+            })
             .collect::<Vec<_>>();
         if points.len() >= 2 {
             chart
@@ -130,10 +170,87 @@ pub(crate) fn render_uv_plot(
 }
 
 pub(crate) fn uv_plot_summary(coverage: &casacore_ms::ListObsUvCoverage) -> String {
+    let axis_scale = uv_axis_scale(coverage.max_abs_uv_lambda);
     format!(
-        "UV coverage in lambda. Tracks={} Samples={} Mirrored=yes Max |u,v|={:.1}",
+        "UV coverage in {}. Tracks={} Samples={} Mirrored=yes Max |u,v|={:.1}",
+        axis_scale.unit_label,
         coverage.tracks.len(),
         coverage.sample_count,
-        coverage.max_abs_uv_lambda
+        coverage.max_abs_uv_lambda / axis_scale.lambda_scale
     )
+}
+
+fn uv_axis_scale(max_abs_uv_lambda: f64) -> UvAxisScale {
+    if max_abs_uv_lambda >= 1_000_000.0 {
+        UvAxisScale {
+            unit_label: "Mλ",
+            lambda_scale: 1_000_000.0,
+        }
+    } else if max_abs_uv_lambda >= 1_000.0 {
+        UvAxisScale {
+            unit_label: "kλ",
+            lambda_scale: 1_000.0,
+        }
+    } else {
+        UvAxisScale {
+            unit_label: "λ",
+            lambda_scale: 1.0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{uv_axis_scale, uv_plot_summary};
+    use casacore_ms::{ListObsOptions, ListObsUvCoverage};
+
+    #[test]
+    fn uv_axis_scale_uses_lambda_for_small_extents() {
+        assert_eq!(
+            uv_axis_scale(875.0),
+            super::UvAxisScale {
+                unit_label: "λ",
+                lambda_scale: 1.0,
+            }
+        );
+    }
+
+    #[test]
+    fn uv_axis_scale_uses_klambda_for_thousands() {
+        assert_eq!(
+            uv_axis_scale(12_345.0),
+            super::UvAxisScale {
+                unit_label: "kλ",
+                lambda_scale: 1_000.0,
+            }
+        );
+    }
+
+    #[test]
+    fn uv_axis_scale_uses_mlambda_for_millions() {
+        assert_eq!(
+            uv_axis_scale(3_200_000.0),
+            super::UvAxisScale {
+                unit_label: "Mλ",
+                lambda_scale: 1_000_000.0,
+            }
+        );
+    }
+
+    #[test]
+    fn uv_plot_summary_reports_scaled_units() {
+        let coverage = ListObsUvCoverage {
+            schema_version: 1,
+            options: ListObsOptions::default(),
+            measurement_set_path: None,
+            axis_unit: "lambda".to_string(),
+            mirrored_display: true,
+            sample_count: 42,
+            max_abs_uv_lambda: 1_250_000.0,
+            tracks: Vec::new(),
+        };
+        let summary = uv_plot_summary(&coverage);
+        assert!(summary.contains("UV coverage in Mλ."));
+        assert!(summary.contains("Max |u,v|=1.2"));
+    }
 }

@@ -429,6 +429,13 @@
           "format": "uint16",
           "minimum": 0.0
         },
+        "inspector_height": {
+          "description": "Available inspector height in terminal cells when the client renders the inspector in a separate pane.",
+          "default": 0,
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
         "width": {
           "description": "Available content width in terminal cells.",
           "type": "integer",

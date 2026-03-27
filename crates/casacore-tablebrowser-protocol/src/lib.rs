@@ -679,6 +679,8 @@ mod tests {
                 viewport,
                 status_line: "Columns ready".to_string(),
                 content_lines: vec!["Columns".to_string(), "NAME scalar string".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::Column {
                     table_path: "/tmp/root.ms".to_string(),
                     column: "NAME".to_string(),
@@ -711,6 +713,8 @@ mod tests {
                 viewport,
                 status_line: "Array inspector".to_string(),
                 content_lines: vec!["Cells".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::Cell {
                     table_path: "/tmp/root.ms".to_string(),
                     row: 7,
@@ -772,6 +776,8 @@ mod tests {
                 viewport,
                 status_line: "Keyword record".to_string(),
                 content_lines: vec!["Keywords".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::ColumnKeyword {
                     table_path: "/tmp/root.ms".to_string(),
                     column: "UVW".to_string(),
@@ -825,6 +831,8 @@ mod tests {
                 viewport,
                 status_line: "Keyword table ref".to_string(),
                 content_lines: vec!["Keywords".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::TableKeyword {
                     table_path: "/tmp/root.ms".to_string(),
                     keyword_path: vec!["FIELD".to_string(), "CHILD".to_string()],
@@ -859,6 +867,8 @@ mod tests {
                 viewport,
                 status_line: "Undefined selection".to_string(),
                 content_lines: vec!["Subtables".to_string()],
+                vertical_metrics: None,
+                horizontal_metrics: None,
                 selected_address: Some(BrowserAddress::Subtable {
                     table_path: "/tmp/root.ms".to_string(),
                     source: "keyword:FIELD".to_string(),

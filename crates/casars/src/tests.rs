@@ -350,6 +350,100 @@ fn clicking_path_browse_affordance_opens_chooser() {
 }
 
 #[test]
+fn typing_directory_then_opening_chooser_confirms_selected_file() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = temp.path().join("selected.ms");
+    std::fs::write(&ms_path, "").expect("write fake ms");
+
+    let (_temp, mut app) = test_app();
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    while app
+        .edit_buffer_for_test()
+        .is_some_and(|buffer| !buffer.is_empty())
+    {
+        app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    }
+    for character in temp.path().display().to_string().chars() {
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    }
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some(temp.path().to_string_lossy().as_ref())
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+
+    assert!(app.path_chooser_active());
+    assert_eq!(
+        app.path_chooser_cwd().as_deref(),
+        Some(temp.path().to_string_lossy().as_ref())
+    );
+    let selected = app
+        .path_chooser_entries()
+        .expect("chooser entries")
+        .into_iter()
+        .find(|(_, selected)| *selected)
+        .expect("selected entry");
+    assert!(selected.0.contains("selected.ms"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.path_chooser_active());
+    assert!(app.edit_buffer_for_test().is_none());
+    let expected = ms_path.canonicalize().expect("canonical path");
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some(expected.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn path_chooser_enter_selects_directory_path() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = temp.path().join("selected.ms");
+    std::fs::create_dir(&ms_path).expect("create fake ms directory");
+
+    let (_temp, mut app) = test_app();
+    app.set_text_value("ms_path", temp.path().to_string_lossy().as_ref());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert!(app.path_chooser_active());
+
+    let selected = app
+        .path_chooser_entries()
+        .expect("chooser entries")
+        .into_iter()
+        .find(|(_, selected)| *selected)
+        .expect("selected entry");
+    assert!(selected.0.contains("selected.ms/"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.path_chooser_active());
+    let expected = ms_path.canonicalize().expect("canonical path");
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some(expected.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn path_chooser_right_descends_into_selected_directory() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = temp.path().join("selected.ms");
+    std::fs::create_dir(&ms_path).expect("create fake ms directory");
+
+    let (_temp, mut app) = test_app();
+    app.set_text_value("ms_path", temp.path().to_string_lossy().as_ref());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert!(app.path_chooser_active());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    assert!(app.path_chooser_active());
+    assert_eq!(
+        app.path_chooser_cwd().as_deref(),
+        Some(ms_path.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
 fn double_click_enters_text_edit_mode() {
     let (_temp, mut app) = test_app();
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &app);

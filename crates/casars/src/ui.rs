@@ -514,8 +514,7 @@ fn draw_graphic_result(
     }
 
     if let Some(protocol) = app.uv_plot_protocol() {
-        let image_area = centered_square_rect(content_area, protocol.area());
-        frame.render_widget(PanelImage::new(protocol), image_area);
+        frame.render_widget(PanelImage::new(protocol), content_area);
     } else {
         let message = if let Some(error) = app.uv_plot_last_error() {
             format!("{summary}\n\n{error}")
@@ -684,7 +683,7 @@ fn draw_path_chooser(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, p
         );
     }
     frame.render_widget(
-        Paragraph::new("Enter choose  Esc cancel  Backspace parent  Arrows/jk move")
+        Paragraph::new("Enter/Space choose  Right/l open dir  Backspace parent  Arrows/jk move")
             .style(Style::default().fg(palette.footer_fg)),
         Rect {
             x: inner.x,
@@ -978,7 +977,20 @@ fn render_form_row_text(
             } else {
                 " "
             };
-            fit_text(&format!("{marker} {}", row.text), width as usize)
+            let prefix = format!("{marker} ");
+            let available = width as usize;
+            if available <= prefix.chars().count() {
+                fit_text(&prefix, available)
+            } else {
+                format!(
+                    "{prefix}{}",
+                    fit_text_preserving_suffix(
+                        &row.text,
+                        available - prefix.chars().count(),
+                        " [browse]"
+                    )
+                )
+            }
         }
     }
 }
@@ -1199,19 +1211,6 @@ pub(crate) fn path_chooser_list_area(area: Rect) -> Rect {
     }
 }
 
-fn centered_square_rect(area: Rect, protocol_area: Rect) -> Rect {
-    let width = protocol_area.width.min(area.width);
-    let height = protocol_area.height.min(area.height);
-    let offset_x = area.width.saturating_sub(width) / 2;
-    let offset_y = area.height.saturating_sub(height) / 2;
-    Rect {
-        x: area.x + offset_x,
-        y: area.y + offset_y,
-        width,
-        height,
-    }
-}
-
 fn fit_text(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
@@ -1225,4 +1224,43 @@ fn fit_text(text: &str, width: usize) -> String {
     let mut out = text.chars().take(width - 3).collect::<String>();
     out.push_str("...");
     out
+}
+
+fn fit_text_preserving_suffix(text: &str, width: usize, suffix: &str) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let Some(prefix) = text.strip_suffix(suffix) else {
+        return fit_text(text, width);
+    };
+    let suffix_width = suffix.chars().count();
+    if width <= suffix_width {
+        return fit_text(suffix, width);
+    }
+    format!("{}{}", fit_text(prefix, width - suffix_width), suffix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_text_preserving_suffix;
+
+    #[test]
+    fn preserves_browse_suffix_when_truncating() {
+        let rendered = fit_text_preserving_suffix(
+            "MeasurementSet Path /very/long/path/to/data.ms [browse]",
+            32,
+            " [browse]",
+        );
+        assert!(rendered.ends_with(" [browse]"));
+        assert!(rendered.contains("..."));
+    }
+
+    #[test]
+    fn falls_back_to_normal_fit_without_suffix() {
+        let rendered = fit_text_preserving_suffix("abcdef", 5, " [browse]");
+        assert_eq!(rendered, "ab...");
+    }
 }

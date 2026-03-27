@@ -19,17 +19,13 @@ use crossterm::event::{
 };
 use ratatui::layout::Rect;
 use ratatui_explorer::{FileExplorer, FileExplorerBuilder, Input as ExplorerInput};
-use ratatui_graphics::{
-    PanelProtocol, PanelRenderer, Picker, Resize, fit_pixels_preserving_aspect,
-};
+use ratatui_graphics::{PanelProtocol, PanelRenderer, Picker, Resize};
 
 use crate::browser_client::BrowserClient;
 use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
-use crate::graphics::{
-    UV_PLOT_ASPECT_HEIGHT, UV_PLOT_ASPECT_WIDTH, UvPlotRenderInput, render_uv_plot, uv_plot_summary,
-};
+use crate::graphics::{UvPlotRenderInput, render_uv_plot, uv_plot_summary};
 use crate::registry::RegistryApp;
 use crate::ui::UiLayout;
 
@@ -39,6 +35,87 @@ const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(450);
 const HORIZONTAL_SCROLL_STEP: i16 = 8;
 const RESULT_TAB_COUNT: usize = 10;
 const BROWSE_SUFFIX: &str = " [browse]";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyProfile {
+    Default,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Parameters,
+    Result,
+    Browser,
+    Edit,
+    PathChooser,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParameterAction {
+    SelectPrevious,
+    SelectNext,
+    ChoicePrevious,
+    ChoiceNext,
+    Activate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResultAction {
+    PreviousTab,
+    NextTab,
+    Scroll(i16),
+    ScrollHorizontal(i16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserAction {
+    CycleView { forward: bool },
+    MoveLeft,
+    MoveRight,
+    MoveUp,
+    MoveDown,
+    PageUp,
+    PageDown,
+    Activate,
+    Back,
+    Escape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditAction {
+    Cancel,
+    Commit,
+    DeleteBackward,
+    Insert(char),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathChooserAction {
+    Cancel,
+    Confirm,
+    SelectCurrent,
+    Navigate(ExplorerInput),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppAction {
+    Quit,
+    BackToLauncher,
+    ToggleTheme,
+    ToggleParametersPane,
+    CopySelection,
+    ToggleFocus,
+    StartRun,
+    ToggleAdvanced,
+    CancelSession,
+    OpenPathChooser,
+    ClearSelection,
+    Parameter(ParameterAction),
+    Result(ResultAction),
+    Browser(BrowserAction),
+    Edit(EditAction),
+    PathChooser(PathChooserAction),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PaneFocus {
@@ -303,6 +380,7 @@ struct BrowserSession {
 
 struct UvPlotPanelState {
     renderer: PanelRenderer<UvPlotRenderInput, String>,
+    font_size: (u16, u16),
     request_key: Option<UvPlotRequestKey>,
     last_error: Option<String>,
     image_size: Option<(u32, u32)>,
@@ -608,17 +686,22 @@ impl AppState {
     }
 
     fn open_path_chooser(&mut self, field_index: usize) {
+        self.prepare_path_chooser_field(field_index);
         let Some(field) = self.fields.get(field_index) else {
             return;
         };
         let start = chooser_start_path(field.text_value().as_deref());
-        let builder = if start.is_dir() {
+        let start_is_dir = start.is_dir();
+        let builder = if start_is_dir {
             FileExplorerBuilder::default().working_dir(start)
         } else {
             FileExplorerBuilder::default().working_file(start)
         };
         match builder.show_hidden(false).build() {
-            Ok(explorer) => {
+            Ok(mut explorer) => {
+                if start_is_dir && explorer.current().name == "../" && explorer.files().len() > 1 {
+                    explorer.set_selected_idx(1);
+                }
                 self.path_chooser = Some(PathChooserState {
                     field_index,
                     explorer,
@@ -633,28 +716,49 @@ impl AppState {
         }
     }
 
+    fn prepare_path_chooser_field(&mut self, field_index: usize) {
+        let Some(edit_state) = self.edit_state.take() else {
+            return;
+        };
+        if edit_state.field_index == field_index {
+            if let Some(field) = self.fields.get_mut(field_index) {
+                field.set_text(edit_state.buffer);
+                self.clear_cached_uv_coverage();
+            }
+        } else {
+            self.edit_state = Some(edit_state);
+        }
+    }
+
     fn close_path_chooser(&mut self) {
         self.path_chooser = None;
     }
 
     fn confirm_path_chooser(&mut self) {
-        let Some((field_index, selected_path, is_dir)) =
-            self.path_chooser.as_ref().map(|chooser| {
-                (
-                    chooser.field_index,
-                    chooser.explorer.current().path.clone(),
-                    chooser.explorer.current().is_dir,
-                )
-            })
+        let Some((field_index, selected_path)) = self
+            .path_chooser
+            .as_ref()
+            .map(|chooser| (chooser.field_index, chooser.explorer.current().path.clone()))
         else {
             return;
         };
-        if is_dir {
-            self.apply_path_chooser_input(ExplorerInput::Right);
+        self.select_path_chooser_path(field_index, &selected_path);
+    }
+
+    fn select_current_path_chooser_entry(&mut self) {
+        let Some((field_index, selected_path)) = self
+            .path_chooser
+            .as_ref()
+            .map(|chooser| (chooser.field_index, chooser.explorer.current().path.clone()))
+        else {
             return;
-        }
-        let value = absolute_display_path(&selected_path);
-        if let Some(field) = self.fields.get_mut(field_index) {
+        };
+        self.select_path_chooser_path(field_index, &selected_path);
+    }
+
+    fn select_path_chooser_path(&mut self, selected_field_index: usize, selected_path: &Path) {
+        let value = absolute_display_path(selected_path);
+        if let Some(field) = self.fields.get_mut(selected_field_index) {
             field.set_text(value.clone());
             self.clear_cached_uv_coverage();
         }
@@ -684,100 +788,157 @@ impl AppState {
         self.pump_uv_plot_panel();
     }
 
-    pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
-        if key_event.kind != KeyEventKind::Press {
-            return;
-        }
+    fn key_profile(&self) -> KeyProfile {
+        KeyProfile::Default
+    }
 
+    fn input_mode(&self) -> InputMode {
         if self.path_chooser.is_some() {
-            self.handle_path_chooser_key(key_event);
-            return;
+            InputMode::PathChooser
+        } else if self.edit_state.is_some() {
+            InputMode::Edit
+        } else if self.browser_session.is_some() {
+            InputMode::Browser
+        } else {
+            match self.pane_focus {
+                PaneFocus::Parameters => InputMode::Parameters,
+                PaneFocus::Result => InputMode::Result,
+            }
+        }
+    }
+
+    fn resolve_key_action(&self, key_event: KeyEvent) -> Option<AppAction> {
+        if key_event.kind != KeyEventKind::Press {
+            return None;
+        }
+        match self.key_profile() {
+            KeyProfile::Default => self.resolve_default_key_action(key_event),
+        }
+    }
+
+    fn resolve_default_key_action(&self, key_event: KeyEvent) -> Option<AppAction> {
+        let mode = self.input_mode();
+
+        if mode == InputMode::PathChooser {
+            return match key_event.code {
+                KeyCode::Esc => Some(AppAction::PathChooser(PathChooserAction::Cancel)),
+                KeyCode::Enter if key_event.modifiers.is_empty() => {
+                    Some(AppAction::PathChooser(PathChooserAction::Confirm))
+                }
+                KeyCode::Char(' ') if key_event.modifiers.is_empty() => {
+                    Some(AppAction::PathChooser(PathChooserAction::SelectCurrent))
+                }
+                _ => chooser_input_from_key(key_event)
+                    .map(PathChooserAction::Navigate)
+                    .map(AppAction::PathChooser),
+            };
         }
 
         match key_event.code {
-            KeyCode::Char('q') if key_event.modifiers.is_empty() => {
+            KeyCode::Char('q') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::Quit);
+            }
+            KeyCode::Char('t') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::ToggleTheme);
+            }
+            KeyCode::Char('x') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::CancelSession);
+            }
+            KeyCode::Char('b') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::BackToLauncher);
+            }
+            KeyCode::Char('p') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::ToggleParametersPane);
+            }
+            KeyCode::Char('y') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::CopySelection);
+            }
+            KeyCode::Char('c')
+                if is_browser_copy_modifier(key_event.modifiers) && mode != InputMode::Edit =>
+            {
+                return Some(AppAction::CopySelection);
+            }
+            KeyCode::Char('r')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && !self.has_active_session() =>
+            {
+                return Some(AppAction::StartRun);
+            }
+            KeyCode::Char('a')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && !self.has_active_session() =>
+            {
+                return Some(AppAction::ToggleAdvanced);
+            }
+            KeyCode::Char('o')
+                if key_event.modifiers == KeyModifiers::CONTROL
+                    && mode != InputMode::Edit
+                    && !self.has_active_session() =>
+            {
+                return Some(AppAction::OpenPathChooser);
+            }
+            KeyCode::Tab | KeyCode::BackTab if mode == InputMode::Browser => {
+                return Some(AppAction::Browser(BrowserAction::CycleView {
+                    forward: key_event.code == KeyCode::Tab,
+                }));
+            }
+            KeyCode::Tab | KeyCode::BackTab => return Some(AppAction::ToggleFocus),
+            _ => {}
+        }
+
+        if key_event.code == KeyCode::Esc && self.output_selection.is_some() {
+            return Some(AppAction::ClearSelection);
+        }
+
+        match mode {
+            InputMode::Parameters => resolve_parameter_action(key_event).map(AppAction::Parameter),
+            InputMode::Result => resolve_result_action(key_event).map(AppAction::Result),
+            InputMode::Browser => resolve_browser_action(key_event).map(AppAction::Browser),
+            InputMode::Edit => resolve_edit_action(key_event).map(AppAction::Edit),
+            InputMode::PathChooser => None,
+        }
+    }
+
+    fn apply_action(&mut self, action: AppAction) {
+        match action {
+            AppAction::Quit => {
                 if self.has_active_session() {
                     self.cancel_current();
                 }
                 self.quit = true;
-                return;
             }
-            KeyCode::Char('b') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
+            AppAction::BackToLauncher => {
                 if self.has_active_session() {
                     self.cancel_current();
                 }
                 self.return_to_launcher = true;
-                return;
             }
-            KeyCode::Char('t') if key_event.modifiers.is_empty() => {
-                self.toggle_theme();
-                return;
-            }
-            KeyCode::Char('p') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
-                self.toggle_parameters_pane();
-                return;
-            }
-            KeyCode::Char('y') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
-                self.copy_output_selection();
-                return;
-            }
-            KeyCode::Char('c')
-                if is_browser_copy_modifier(key_event.modifiers) && self.edit_state.is_none() =>
-            {
-                self.copy_output_selection();
-                return;
-            }
-            KeyCode::Tab | KeyCode::BackTab if self.browser_session.is_some() => {
-                self.handle_browser_key(key_event);
-                return;
-            }
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.toggle_focus();
-                return;
-            }
-            KeyCode::Char('r') if key_event.modifiers.is_empty() && self.edit_state.is_none() => {
+            AppAction::ToggleTheme => self.toggle_theme(),
+            AppAction::ToggleParametersPane => self.toggle_parameters_pane(),
+            AppAction::CopySelection => self.copy_output_selection(),
+            AppAction::ToggleFocus => self.toggle_focus(),
+            AppAction::StartRun => {
                 if !self.has_active_session() {
                     self.start_run();
                 }
-                return;
             }
-            KeyCode::Char('a') if key_event.modifiers.is_empty() && !self.has_active_session() => {
-                self.toggle_advanced();
-                return;
-            }
-            KeyCode::Char('x') if key_event.modifiers.is_empty() => {
-                self.cancel_current();
-                return;
-            }
-            KeyCode::Char('o')
-                if key_event.modifiers == KeyModifiers::CONTROL
-                    && self.edit_state.is_none()
-                    && !self.has_active_session() =>
-            {
-                self.open_path_chooser_for_selected_field();
-                return;
-            }
-            _ => {}
+            AppAction::ToggleAdvanced => self.toggle_advanced(),
+            AppAction::CancelSession => self.cancel_current(),
+            AppAction::OpenPathChooser => self.open_path_chooser_for_selected_field(),
+            AppAction::ClearSelection => self.clear_output_selection(),
+            AppAction::Parameter(action) => self.apply_parameter_action(action),
+            AppAction::Result(action) => self.apply_result_action(action),
+            AppAction::Browser(action) => self.apply_browser_action(action),
+            AppAction::Edit(action) => self.apply_edit_action(action),
+            AppAction::PathChooser(action) => self.apply_path_chooser_action(action),
         }
+    }
 
-        if self.edit_state.is_some() {
-            self.handle_edit_key(key_event);
-            return;
-        }
-
-        if key_event.code == KeyCode::Esc && self.output_selection.is_some() {
-            self.clear_output_selection();
-            return;
-        }
-
-        if self.has_active_session() {
-            self.handle_result_key(key_event);
-            return;
-        }
-
-        match self.pane_focus {
-            PaneFocus::Parameters => self.handle_parameter_key(key_event),
-            PaneFocus::Result => self.handle_result_key(key_event),
+    pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if let Some(action) = self.resolve_key_action(key_event) {
+            self.apply_action(action);
         }
     }
 
@@ -836,11 +997,8 @@ impl AppState {
     }
 
     pub(crate) fn drain_execution_events(&mut self) {
-        loop {
-            let event = match self.running.as_ref() {
-                Some(running) => running.process.try_recv(),
-                None => break,
-            };
+        while let Some(running) = self.running.as_ref() {
+            let event = running.process.try_recv();
             match event {
                 Ok(ExecutionEvent::Stdout(chunk)) => self.result.stdout.push_str(&chunk),
                 Ok(ExecutionEvent::Stderr(chunk)) => self.result.stderr.push_str(&chunk),
@@ -1666,36 +1824,22 @@ impl AppState {
         }
     }
 
-    fn handle_parameter_key(&mut self, key_event: KeyEvent) {
-        match key_event.code {
-            KeyCode::Up | KeyCode::Char('k')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.select_previous_form_item();
-            }
-            KeyCode::Down | KeyCode::Char('j')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.select_next_form_item();
-            }
-            KeyCode::Left => self.adjust_selected_choice(false),
-            KeyCode::Right => self.adjust_selected_choice(true),
-            KeyCode::Enter | KeyCode::Char(' ') if key_event.modifiers.is_empty() => {
-                self.activate_selected_form_item();
-            }
-            _ => {}
+    fn apply_parameter_action(&mut self, action: ParameterAction) {
+        match action {
+            ParameterAction::SelectPrevious => self.select_previous_form_item(),
+            ParameterAction::SelectNext => self.select_next_form_item(),
+            ParameterAction::ChoicePrevious => self.adjust_selected_choice(false),
+            ParameterAction::ChoiceNext => self.adjust_selected_choice(true),
+            ParameterAction::Activate => self.activate_selected_form_item(),
         }
     }
 
-    fn handle_path_chooser_key(&mut self, key_event: KeyEvent) {
-        match key_event.code {
-            KeyCode::Esc => self.cancel_path_chooser(),
-            KeyCode::Enter if key_event.modifiers.is_empty() => self.confirm_path_chooser(),
-            _ => {
-                if let Some(input) = chooser_input_from_key(key_event) {
-                    self.apply_path_chooser_input(input);
-                }
-            }
+    fn apply_path_chooser_action(&mut self, action: PathChooserAction) {
+        match action {
+            PathChooserAction::Cancel => self.cancel_path_chooser(),
+            PathChooserAction::Confirm => self.confirm_path_chooser(),
+            PathChooserAction::SelectCurrent => self.select_current_path_chooser_entry(),
+            PathChooserAction::Navigate(input) => self.apply_path_chooser_input(input),
         }
     }
 
@@ -1734,8 +1878,22 @@ impl AppState {
                     target: click_target,
                     at: Instant::now(),
                 });
-                if double_click {
-                    self.confirm_path_chooser();
+                let double_click_target = if double_click {
+                    Some((
+                        chooser.field_index,
+                        chooser.explorer.current().path.clone(),
+                        chooser.explorer.current().is_dir,
+                    ))
+                } else {
+                    None
+                };
+                let _ = chooser;
+                if let Some((field_index, path, is_dir)) = double_click_target {
+                    if is_dir {
+                        self.apply_path_chooser_input(ExplorerInput::Right);
+                    } else {
+                        self.select_path_chooser_path(field_index, &path);
+                    }
                 }
             }
             MouseEventKind::ScrollUp
@@ -1752,116 +1910,64 @@ impl AppState {
         }
     }
 
-    fn handle_result_key(&mut self, key_event: KeyEvent) {
-        if self.browser_session.is_some() {
-            self.handle_browser_key(key_event);
-            return;
-        }
-
-        match key_event.code {
-            KeyCode::Left | KeyCode::Char('h')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.cycle_visible_result_tab(false);
-            }
-            KeyCode::Right | KeyCode::Char('l')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.cycle_visible_result_tab(true);
-            }
-            KeyCode::Up | KeyCode::Char('k')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.scroll_active_result(-1);
-            }
-            KeyCode::Down | KeyCode::Char('j')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.scroll_active_result(1);
-            }
-            KeyCode::PageUp => self.scroll_active_result(-10),
-            KeyCode::PageDown => self.scroll_active_result(10),
-            KeyCode::Char('[') if key_event.modifiers.is_empty() => {
-                self.scroll_active_result_horizontal(-HORIZONTAL_SCROLL_STEP)
-            }
-            KeyCode::Char(']') if key_event.modifiers.is_empty() => {
-                self.scroll_active_result_horizontal(HORIZONTAL_SCROLL_STEP)
-            }
-            KeyCode::Left if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.scroll_active_result_horizontal(-HORIZONTAL_SCROLL_STEP)
-            }
-            KeyCode::Right if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.scroll_active_result_horizontal(HORIZONTAL_SCROLL_STEP)
-            }
-            KeyCode::Char('v') if key_event.modifiers.is_empty() => {
-                self.cycle_visible_result_tab(true);
-            }
-            _ => {}
+    fn apply_result_action(&mut self, action: ResultAction) {
+        match action {
+            ResultAction::PreviousTab => self.cycle_visible_result_tab(false),
+            ResultAction::NextTab => self.cycle_visible_result_tab(true),
+            ResultAction::Scroll(delta) => self.scroll_active_result(delta),
+            ResultAction::ScrollHorizontal(delta) => self.scroll_active_result_horizontal(delta),
         }
     }
 
-    fn handle_browser_key(&mut self, key_event: KeyEvent) {
-        match key_event.code {
-            KeyCode::Tab if key_event.modifiers.is_empty() => {
+    fn apply_browser_action(&mut self, action: BrowserAction) {
+        match action {
+            BrowserAction::CycleView { forward } => {
                 self.send_browser_command(BrowserCommand::CycleView {
-                    forward: true,
+                    forward,
                     viewport: None,
                 });
             }
-            KeyCode::BackTab => {
-                self.send_browser_command(BrowserCommand::CycleView {
-                    forward: false,
-                    viewport: None,
-                });
-            }
-            KeyCode::Left | KeyCode::Char('h')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
+            BrowserAction::MoveLeft => {
                 self.send_browser_command(BrowserCommand::MoveLeft {
                     steps: 1,
                     viewport: None,
                 });
             }
-            KeyCode::Right | KeyCode::Char('l')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
+            BrowserAction::MoveRight => {
                 self.send_browser_command(BrowserCommand::MoveRight {
                     steps: 1,
                     viewport: None,
                 });
             }
-            KeyCode::Up | KeyCode::Char('k')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
+            BrowserAction::MoveUp => {
                 self.send_browser_command(BrowserCommand::MoveUp {
                     steps: 1,
                     viewport: None,
                 });
             }
-            KeyCode::Down | KeyCode::Char('j')
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
+            BrowserAction::MoveDown => {
                 self.send_browser_command(BrowserCommand::MoveDown {
                     steps: 1,
                     viewport: None,
                 });
             }
-            KeyCode::PageUp => self.send_browser_command(BrowserCommand::PageUp {
+            BrowserAction::PageUp => self.send_browser_command(BrowserCommand::PageUp {
                 pages: 1,
                 viewport: None,
             }),
-            KeyCode::PageDown => self.send_browser_command(BrowserCommand::PageDown {
+            BrowserAction::PageDown => self.send_browser_command(BrowserCommand::PageDown {
                 pages: 1,
                 viewport: None,
             }),
-            KeyCode::Enter if key_event.modifiers.is_empty() => {
+            BrowserAction::Activate => {
                 self.send_browser_command(BrowserCommand::Activate { viewport: None })
             }
-            KeyCode::Backspace => {
+            BrowserAction::Back => {
                 self.send_browser_command(BrowserCommand::Back { viewport: None })
             }
-            KeyCode::Esc => self.send_browser_command(BrowserCommand::Escape { viewport: None }),
-            _ => {}
+            BrowserAction::Escape => {
+                self.send_browser_command(BrowserCommand::Escape { viewport: None })
+            }
         }
     }
 
@@ -1925,27 +2031,24 @@ impl AppState {
         }
     }
 
-    fn handle_edit_key(&mut self, key_event: KeyEvent) {
+    fn apply_edit_action(&mut self, action: EditAction) {
         let Some(edit_state) = self.edit_state.as_mut() else {
             return;
         };
-        match key_event.code {
-            KeyCode::Esc => self.edit_state = None,
-            KeyCode::Enter => {
+        match action {
+            EditAction::Cancel => self.edit_state = None,
+            EditAction::Commit => {
                 if let Some(field) = self.fields.get_mut(edit_state.field_index) {
                     field.set_text(edit_state.buffer.clone());
                 }
                 self.edit_state = None;
             }
-            KeyCode::Backspace => {
+            EditAction::DeleteBackward => {
                 edit_state.buffer.pop();
             }
-            KeyCode::Char(character)
-                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
-            {
+            EditAction::Insert(character) => {
                 edit_state.buffer.push(character);
             }
-            _ => {}
         }
     }
 
@@ -2890,12 +2993,14 @@ impl AppState {
 
         let panel = self.uv_plot_panel.get_or_insert_with(|| {
             let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+            let font_size = picker.font_size();
             let renderer = PanelRenderer::new(picker, Resize::Fit(None), |job| {
                 render_uv_plot(job.max_pixel_width, job.max_pixel_height, &job.input)
             })
             .expect("panel renderer");
             UvPlotPanelState {
                 renderer,
+                font_size,
                 request_key: None,
                 last_error: None,
                 image_size: None,
@@ -2913,15 +3018,8 @@ impl AppState {
             return;
         }
 
-        let font_size = Picker::halfblocks().font_size();
-        let (pixel_width, pixel_height) = fit_pixels_preserving_aspect(
-            u32::from(area.width) * u32::from(font_size.0),
-            u32::from(area.height) * u32::from(font_size.1),
-            UV_PLOT_ASPECT_WIDTH,
-            UV_PLOT_ASPECT_HEIGHT,
-        )
-        .map_err(|error| error.to_string())
-        .unwrap_or((u32::from(area.width.max(1)), u32::from(area.height.max(1))));
+        let pixel_width = u32::from(area.width.max(1)) * u32::from(panel.font_size.0.max(1));
+        let pixel_height = u32::from(area.height.max(1)) * u32::from(panel.font_size.1.max(1));
         if let Err(error) = panel.renderer.request(
             area,
             pixel_width.max(1),
@@ -3386,13 +3484,13 @@ impl FormField {
                     return Err(format!("{} is required.", self.schema.label));
                 }
                 if !value.trim().is_empty() {
-                    arguments.push(OsString::from(value));
+                    arguments.push(path_argument_value(self.is_path(), value));
                 }
             }
             (UiArgumentParser::Option { flags, .. }, FormValue::Text(value)) => {
                 if !value.trim().is_empty() {
                     arguments.push(OsString::from(&flags[0]));
-                    arguments.push(OsString::from(value));
+                    arguments.push(path_argument_value(self.is_path(), value));
                 }
             }
             (UiArgumentParser::Option { flags, .. }, FormValue::Choice { value, .. }) => {
@@ -4224,7 +4322,7 @@ fn chooser_start_path(value: Option<&str>) -> PathBuf {
     let Some(raw) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return cwd;
     };
-    let candidate = PathBuf::from(raw);
+    let candidate = expand_tilde_path(raw);
     let candidate = if candidate.is_absolute() {
         candidate
     } else {
@@ -4238,6 +4336,38 @@ fn chooser_start_path(value: Option<&str>) -> PathBuf {
         .find(|path| path.exists())
         .map(Path::to_path_buf)
         .unwrap_or(cwd)
+}
+
+fn path_argument_value(is_path: bool, value: &str) -> OsString {
+    if is_path {
+        expand_tilde_path(value.trim()).into_os_string()
+    } else {
+        OsString::from(value)
+    }
+}
+
+fn expand_tilde_path(raw: &str) -> PathBuf {
+    expand_tilde_path_with_home(raw, home_dir_path())
+}
+
+fn expand_tilde_path_with_home(raw: &str, home: Option<&Path>) -> PathBuf {
+    if raw == "~" {
+        return home
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(raw));
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = home {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(raw)
+}
+
+fn home_dir_path() -> Option<&'static Path> {
+    static HOME: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| std::env::var_os("HOME").map(PathBuf::from))
+        .as_deref()
 }
 
 fn absolute_display_path(path: &Path) -> String {
@@ -4282,6 +4412,113 @@ fn chooser_input_from_key(key_event: KeyEvent) -> Option<ExplorerInput> {
     })
 }
 
+fn resolve_parameter_action(key_event: KeyEvent) -> Option<ParameterAction> {
+    match key_event.code {
+        KeyCode::Up | KeyCode::Char('k')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(ParameterAction::SelectPrevious)
+        }
+        KeyCode::Down | KeyCode::Char('j')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(ParameterAction::SelectNext)
+        }
+        KeyCode::Left if key_event.modifiers.is_empty() => Some(ParameterAction::ChoicePrevious),
+        KeyCode::Right if key_event.modifiers.is_empty() => Some(ParameterAction::ChoiceNext),
+        KeyCode::Enter | KeyCode::Char(' ') if key_event.modifiers.is_empty() => {
+            Some(ParameterAction::Activate)
+        }
+        _ => None,
+    }
+}
+
+fn resolve_result_action(key_event: KeyEvent) -> Option<ResultAction> {
+    match key_event.code {
+        KeyCode::Left | KeyCode::Char('h')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(ResultAction::PreviousTab)
+        }
+        KeyCode::Right | KeyCode::Char('l')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(ResultAction::NextTab)
+        }
+        KeyCode::Up | KeyCode::Char('k')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(ResultAction::Scroll(-1))
+        }
+        KeyCode::Down | KeyCode::Char('j')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(ResultAction::Scroll(1))
+        }
+        KeyCode::PageUp if key_event.modifiers.is_empty() => Some(ResultAction::Scroll(-10)),
+        KeyCode::PageDown if key_event.modifiers.is_empty() => Some(ResultAction::Scroll(10)),
+        KeyCode::Char('[') if key_event.modifiers.is_empty() => {
+            Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
+        }
+        KeyCode::Char(']') if key_event.modifiers.is_empty() => {
+            Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
+        }
+        KeyCode::Left if key_event.modifiers == KeyModifiers::CONTROL => {
+            Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
+        }
+        KeyCode::Right if key_event.modifiers == KeyModifiers::CONTROL => {
+            Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
+        }
+        KeyCode::Char('v') if key_event.modifiers.is_empty() => Some(ResultAction::NextTab),
+        _ => None,
+    }
+}
+
+fn resolve_browser_action(key_event: KeyEvent) -> Option<BrowserAction> {
+    match key_event.code {
+        KeyCode::Left | KeyCode::Char('h')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(BrowserAction::MoveLeft)
+        }
+        KeyCode::Right | KeyCode::Char('l')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(BrowserAction::MoveRight)
+        }
+        KeyCode::Up | KeyCode::Char('k')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(BrowserAction::MoveUp)
+        }
+        KeyCode::Down | KeyCode::Char('j')
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(BrowserAction::MoveDown)
+        }
+        KeyCode::PageUp if key_event.modifiers.is_empty() => Some(BrowserAction::PageUp),
+        KeyCode::PageDown if key_event.modifiers.is_empty() => Some(BrowserAction::PageDown),
+        KeyCode::Enter if key_event.modifiers.is_empty() => Some(BrowserAction::Activate),
+        KeyCode::Backspace if key_event.modifiers.is_empty() => Some(BrowserAction::Back),
+        KeyCode::Esc if key_event.modifiers.is_empty() => Some(BrowserAction::Escape),
+        _ => None,
+    }
+}
+
+fn resolve_edit_action(key_event: KeyEvent) -> Option<EditAction> {
+    match key_event.code {
+        KeyCode::Esc if key_event.modifiers.is_empty() => Some(EditAction::Cancel),
+        KeyCode::Enter if key_event.modifiers.is_empty() => Some(EditAction::Commit),
+        KeyCode::Backspace if key_event.modifiers.is_empty() => Some(EditAction::DeleteBackward),
+        KeyCode::Char(character)
+            if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+        {
+            Some(EditAction::Insert(character))
+        }
+        _ => None,
+    }
+}
+
 fn browser_main_content_lines(snapshot: &BrowserSnapshot) -> Vec<String> {
     let mut lines = snapshot.content_lines.clone();
     let Some(inspector) = snapshot.inspector.as_ref() else {
@@ -4319,4 +4556,34 @@ fn browser_inspector_lines(inspector: &BrowserInspectorSnapshot) -> Vec<String> 
     }
     lines.extend(inspector.rendered_lines.iter().cloned());
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_tilde_path_with_home;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn expands_bare_tilde_to_home() {
+        assert_eq!(
+            expand_tilde_path_with_home("~", Some(Path::new("/tmp/home"))),
+            PathBuf::from("/tmp/home")
+        );
+    }
+
+    #[test]
+    fn expands_tilde_slash_to_home_relative_path() {
+        assert_eq!(
+            expand_tilde_path_with_home("~/data/file.ms", Some(Path::new("/tmp/home"))),
+            PathBuf::from("/tmp/home/data/file.ms")
+        );
+    }
+
+    #[test]
+    fn leaves_non_tilde_paths_unchanged() {
+        assert_eq!(
+            expand_tilde_path_with_home("./relative/path", Some(Path::new("/tmp/home"))),
+            PathBuf::from("./relative/path")
+        );
+    }
 }
