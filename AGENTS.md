@@ -35,6 +35,13 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   Use `///` for items and `//!` for modules. Reference the C++ class/function names
   so users can cross-reference.
 
+## Backlog Tracking
+
+- Canonical backlog tracking lives in the phase-specific `docs/Planning/Phase */BACKLOG.md` files.
+- When deferring work, add or update the numbered backlog item there first.
+- Do not introduce new backlog-style `TODO` / `FIXME` / `XXX` / `HACK` comments as the source of truth.
+- If a local code comment is still useful, keep it brief and reference the backlog item instead.
+
 ## Merge Policy
 
 - Squash-on-merge into main: one commit per wave/PR.

@@ -5,14 +5,11 @@
 //! sensible C++ `LatticeIterator`/`LatticeNavigator` use cases without
 //! requiring callers to assemble navigator objects manually.
 //!
-//! TODO: proper mask support still needs a first-class masked-lattice model.
-//! Properly implemented masked traversal should return aligned value and mask
-//! cursors and define consistent read/write behavior for both temporary and
-//! persistent backends.
+//! Deferred: Phase 5 backlog item 12.1 tracks first-class masked traversal with
+//! aligned value/mask cursors and consistent read/write behavior.
 //!
-//! TODO: mutable traversal now has the same cache-hint plumbing as read-only
-//! traversal, but it still lacks the richer producer/worker execution helpers
-//! used by read-only reductions and map/write pipelines.
+//! Deferred: Phase 5 backlog item 12.2 tracks richer mutable traversal
+//! producer/worker helpers on top of the existing cache-hint plumbing.
 
 use ndarray::ArrayD;
 

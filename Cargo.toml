@@ -5,6 +5,7 @@ members = [
     "crates/casacore-tablebrowser-protocol",
     "crates/casacore-types",
     "crates/casacore-aipsio",
+    "crates/casacore-measures-tools",
     "crates/casacore-tables",
     "crates/casacore-lattices",
     "crates/casacore-coordinates",

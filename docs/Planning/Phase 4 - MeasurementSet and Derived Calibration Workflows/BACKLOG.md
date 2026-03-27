@@ -62,3 +62,62 @@ distinct risk boundary.
 
 **Reason:** Phase 4 targets core derived quantities and UDF hooks; full catalog
 can expand after demand is clear.
+
+---
+
+### 11.1 `listobs` Plot Workspace Infrastructure in `casars`
+
+**Status:** IMPLEMENT
+
+**Reason:** Add a reusable `Plots` workspace to the `listobs` TUI so one
+application can host multiple plot kinds with a catalog, canvas, and controls
+pane tied to the last successful summary run.
+
+---
+
+### 11.2 Shared `PlotSpec`, CLI Plot Mode, and Plot Export Contract
+
+**Status:** IMPLEMENT
+
+**Reason:** Keep CLI and TUI plotting in parity by driving both through shared
+plot specification types plus explicit `PNG` / raster-backed `PDF` export
+support.
+
+---
+
+### 11.3 Initial Metadata Plot Catalog (`UV`, Antenna Layout, Scan Timeline, SPW Coverage)
+
+**Status:** IMPLEMENT
+
+**Reason:** These four plots exercise both richer TUI layout work and reusable
+plot rendering without pulling raw visibility extraction into the first wave.
+
+---
+
+### 11.4 Raw Visibility Plots (`Amplitude vs Time`, `Phase vs Time`, `Amplitude vs UV Distance`)
+
+**Status:** DEFER
+
+**Reason:** These need a second wave of payload extraction, averaging, and
+selection semantics from MAIN-table data. Ship the reusable plot substrate
+first, then add raw visibility plots on top of it.
+
+---
+
+### 11.5 Advanced Plot Interactions and Generic `plotms`-Style Axis Engine
+
+**Status:** DEFER
+
+**Reason:** Free-form axis selection, pan/zoom, and broader interaction afford a
+different level of complexity than the curated first-wave catalog. Stabilize the
+workspace and export contract before generalizing it.
+
+---
+
+### 11.6 True Vector Plot Export (`PDF` / `SVG`)
+
+**Status:** DEFER
+
+**Reason:** Raster-backed single-page PDF export is enough for the first wave.
+True vector export should wait until the rendering abstraction is stable and the
+required backend behavior is well understood.

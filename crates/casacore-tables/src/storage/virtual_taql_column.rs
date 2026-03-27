@@ -112,7 +112,7 @@ fn expr_value_to_value(val: &ExprValue) -> Value {
         ExprValue::Complex(c) => Value::Scalar(ScalarValue::Complex64(*c)),
         ExprValue::String(s) => Value::Scalar(ScalarValue::String(s.clone())),
         ExprValue::DateTime(v) => Value::Scalar(ScalarValue::Float64(*v)),
-        ExprValue::Array(_) => Value::Scalar(ScalarValue::Bool(false)), // TODO: array columns
+        ExprValue::Array(_) => Value::Scalar(ScalarValue::Bool(false)), // Deferred: Phase 2 backlog item 26.4.
         ExprValue::Regex { pattern, .. } => Value::Scalar(ScalarValue::String(pattern.clone())),
         ExprValue::Null => Value::Scalar(ScalarValue::Bool(false)),
     }

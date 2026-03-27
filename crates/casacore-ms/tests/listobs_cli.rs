@@ -36,6 +36,12 @@ fn listobs_help_mentions_core_options() {
     assert!(stdout.contains("--listunfl"));
     assert!(stdout.contains("--no-verbose"));
     assert!(stdout.contains("--overwrite"));
+    assert!(stdout.contains("--plot <KIND>"));
+    assert!(stdout.contains("--plot-option <KEY=VALUE>"));
+    assert!(stdout.contains("--plot-output <PATH>"));
+    assert!(stdout.contains("--plot-format <FORMAT>"));
+    assert!(stdout.contains("--plot-width <PIXELS>"));
+    assert!(stdout.contains("--plot-height <PIXELS>"));
     assert!(stdout.contains("--ui-schema"));
 }
 
@@ -93,6 +99,38 @@ fn listobs_ui_schema_describes_launcher_contract() {
         .expect("uv_coverage_json argument");
     assert!(uv_coverage_json.hidden_in_tui);
     assert_eq!(uv_coverage_json.value_kind, UiValueKind::Bool);
+
+    let plot = schema.argument("plot").expect("plot argument");
+    assert!(plot.hidden_in_tui);
+    assert_eq!(plot.value_kind, UiValueKind::Choice);
+
+    let plot_option = schema
+        .argument("plot_option")
+        .expect("plot_option argument");
+    assert!(plot_option.hidden_in_tui);
+    assert_eq!(plot_option.value_kind, UiValueKind::String);
+
+    let plot_output = schema
+        .argument("plot_output")
+        .expect("plot_output argument");
+    assert!(plot_output.hidden_in_tui);
+    assert_eq!(plot_output.value_kind, UiValueKind::Path);
+
+    let plot_format = schema
+        .argument("plot_format")
+        .expect("plot_format argument");
+    assert!(plot_format.hidden_in_tui);
+    assert_eq!(plot_format.value_kind, UiValueKind::Choice);
+
+    let plot_width = schema.argument("plot_width").expect("plot_width argument");
+    assert!(plot_width.hidden_in_tui);
+    assert_eq!(plot_width.value_kind, UiValueKind::Float);
+
+    let plot_height = schema
+        .argument("plot_height")
+        .expect("plot_height argument");
+    assert!(plot_height.hidden_in_tui);
+    assert_eq!(plot_height.value_kind, UiValueKind::Float);
 
     let managed_output = schema.managed_output.expect("managed output");
     assert_eq!(managed_output.renderer, "listobs-summary-v1");
@@ -284,6 +322,104 @@ fn listobs_uv_coverage_json_emits_lazy_plot_payload() {
 }
 
 #[test]
+fn listobs_plot_mode_exports_png() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let output_path = temp.path().join("scan-timeline.png");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args([
+            "--plot",
+            "scan_timeline",
+            "--plot-option",
+            "color_by=intent",
+            "--plot-output",
+        ])
+        .arg(&output_path)
+        .args([
+            "--plot-format",
+            "png",
+            "--plot-width",
+            "640",
+            "--plot-height",
+            "360",
+        ])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs plot export");
+    assert!(output.status.success(), "{output:?}");
+    assert!(output_path.is_file());
+    let bytes = std::fs::read(&output_path).expect("png bytes");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(bytes.len() > 512);
+}
+
+#[test]
+fn listobs_plot_mode_exports_pdf() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let output_path = temp.path().join("antenna-layout.pdf");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args([
+            "--plot",
+            "antenna_layout",
+            "--plot-option",
+            "labels=name",
+            "--plot-output",
+        ])
+        .arg(&output_path)
+        .args([
+            "--plot-format",
+            "pdf",
+            "--plot-width",
+            "800",
+            "--plot-height",
+            "600",
+        ])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs plot export");
+    assert!(output.status.success(), "{output:?}");
+    assert!(output_path.is_file());
+    let bytes = std::fs::read(&output_path).expect("pdf bytes");
+    assert!(bytes.starts_with(b"%PDF-"));
+    assert!(bytes.len() > 512);
+}
+
+#[test]
+fn listobs_plot_mode_requires_plot_output() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--plot", "uv_coverage"])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs without plot output");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("--plot requires --plot-output"));
+}
+
+#[test]
+fn listobs_plot_output_requires_plot_mode() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let output_path = temp.path().join("orphan-plot.png");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--plot-output"])
+        .arg(&output_path)
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs with orphan plot output");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("--plot-output requires --plot"));
+}
+
+#[test]
 fn listobs_listunfl_includes_unflagged_counts() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
@@ -389,9 +525,24 @@ fn listobs_real_small_fixture_json_smoke() {
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse json");
     assert_eq!(json["measurement_set"]["row_count"], 1058);
+    assert_eq!(json["observations"][0]["telescope_name"], "ALMA");
     assert_eq!(json["fields"].as_array().unwrap().len(), 2);
     assert_eq!(json["fields"][0]["name"], "J1617-7717");
     assert_eq!(json["fields"][1]["name"], "J1423-7829");
+    let first_spw = &json["spectral_windows"][0];
+    let center_hz = first_spw["center_frequency_hz"].as_f64().unwrap();
+    let min_hz = first_spw["min_frequency_hz"].as_f64().unwrap();
+    let max_hz = first_spw["max_frequency_hz"].as_f64().unwrap();
+    assert!(min_hz < center_hz && center_hz < max_hz);
+    assert!(first_spw["channel_width_hz"].as_f64().unwrap() < 0.0);
+    assert!(json["antennas"].as_array().unwrap().iter().any(|antenna| {
+        antenna["offset_from_observatory_m"][0]
+            .as_f64()
+            .is_some_and(|value| value.abs() > 1.0)
+            || antenna["offset_from_observatory_m"][1]
+                .as_f64()
+                .is_some_and(|value| value.abs() > 1.0)
+    }));
 }
 
 #[test]

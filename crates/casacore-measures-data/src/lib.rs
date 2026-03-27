@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! IERS Earth Orientation Parameter (EOP) data for astronomical conversions.
+//! Bundled measures data for astronomical conversions.
 //!
-//! This crate provides access to IERS finals2000A.data — the standard
-//! combined EOP file that contains dUT1 (UT1−UTC), polar motion (xp, yp),
-//! and nutation corrections needed for precise astronomical coordinate
-//! conversions.
+//! This crate currently provides:
+//!
+//! - IERS Earth Orientation Parameter (EOP) data from `finals2000A.data`
+//! - An observatory catalog derived from casacore's `geodetic/Observatories`
+//!   table
 //!
 //! # Features
 //!
@@ -39,13 +40,17 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 mod bundled;
+mod bundled_observatories;
 mod interp;
+mod observatory;
 mod parser;
 
 #[cfg(feature = "update")]
 pub mod update;
 
 pub use bundled::bundled_eop_table;
+pub use bundled_observatories::bundled_observatory_catalog;
+pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -276,6 +281,8 @@ impl EopTable {
 
 /// The filename searched for in data directories.
 const EOP_FILENAME: &str = "finals2000A.data";
+/// The filename searched for in data directories.
+const OBSERVATORIES_FILENAME: &str = "observatories.json";
 
 /// Cached result from [`load_eop`].
 ///
@@ -283,6 +290,8 @@ const EOP_FILENAME: &str = "finals2000A.data";
 /// bundled table should be used. The first successful call to [`load_eop`]
 /// initialises this; subsequent calls return the cached result.
 static LOADED_EOP: OnceLock<Option<(EopTable, &'static str)>> = OnceLock::new();
+/// Cached result from [`load_observatories`].
+static LOADED_OBSERVATORIES: OnceLock<Option<(ObservatoryCatalog, &'static str)>> = OnceLock::new();
 
 /// Load EOP data with the standard search order:
 ///
@@ -320,6 +329,42 @@ pub fn load_eop() -> (&'static EopTable, &'static str) {
     match loaded {
         Some((table, source)) => (table, source),
         None => (EopTable::bundled(), "bundled"),
+    }
+}
+
+/// Load observatory data with the standard search order:
+///
+/// 1. `$CASA_RS_DATA/observatories.json`
+/// 2. `~/.casa-rs/data/observatories.json`
+/// 3. Bundled snapshot
+///
+/// The result is cached after the first call. Returns a reference to
+/// the loaded catalog and a description of the source.
+pub fn load_observatories() -> (&'static ObservatoryCatalog, &'static str) {
+    let loaded = LOADED_OBSERVATORIES.get_or_init(|| {
+        if let Ok(dir) = std::env::var("CASA_RS_DATA") {
+            let path = std::path::PathBuf::from(&dir).join(OBSERVATORIES_FILENAME);
+            if let Ok(catalog) = ObservatoryCatalog::from_file(&path) {
+                return Some((catalog, "$CASA_RS_DATA"));
+            }
+        }
+
+        if let Ok(home) = std::env::var("HOME") {
+            let path = std::path::PathBuf::from(home)
+                .join(".casa-rs")
+                .join("data")
+                .join(OBSERVATORIES_FILENAME);
+            if let Ok(catalog) = ObservatoryCatalog::from_file(&path) {
+                return Some((catalog, "~/.casa-rs/data"));
+            }
+        }
+
+        None
+    });
+
+    match loaded {
+        Some((catalog, source)) => (catalog, source),
+        None => (ObservatoryCatalog::bundled(), "bundled"),
     }
 }
 
@@ -388,6 +433,43 @@ mod tests {
     fn load_eop_returns_valid_table() {
         let (table, source) = load_eop();
         assert!(table.entries().len() > 1000);
+        assert!(!source.is_empty());
+    }
+
+    #[test]
+    fn bundled_observatory_catalog_loads() {
+        let catalog = ObservatoryCatalog::bundled();
+        assert!(catalog.entries().len() > 40);
+        assert!(catalog.get("ALMA").is_some());
+        assert!(catalog.get("VLA").is_some());
+    }
+
+    #[test]
+    fn observatory_lookup_is_case_insensitive() {
+        let catalog = ObservatoryCatalog::bundled();
+        assert_eq!(catalog.get("alma"), catalog.get("ALMA"));
+        assert_eq!(catalog.get("vla"), catalog.get("VLA"));
+    }
+
+    #[test]
+    fn bundled_observatory_catalog_preserves_representative_fields() {
+        let catalog = ObservatoryCatalog::bundled();
+        let alma = catalog.get("ALMA").expect("ALMA");
+        assert_eq!(alma.observatory_type, "WGS84");
+        assert!((alma.longitude_deg - (-67.754929)).abs() < 1e-6);
+        assert!((alma.height_m - 5056.8).abs() < 1e-6);
+
+        let vla = catalog.get("VLA").expect("VLA");
+        assert_eq!(vla.observatory_type, "ITRF");
+        assert!((vla.x_m - (-1_601_185.365)).abs() < 1e-6);
+        assert!((vla.y_m - (-5_041_977.547)).abs() < 1e-6);
+        assert!((vla.z_m - 3_554_875.870).abs() < 1e-6);
+    }
+
+    #[test]
+    fn load_observatories_returns_valid_catalog() {
+        let (catalog, source) = load_observatories();
+        assert!(catalog.entries().len() > 40);
         assert!(!source.is_empty());
     }
 

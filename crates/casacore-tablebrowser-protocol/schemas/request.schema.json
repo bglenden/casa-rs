@@ -112,6 +112,41 @@
           }
         },
         {
+          "description": "Set the active browser focus pane without changing the current view.",
+          "type": "object",
+          "required": [
+            "command",
+            "focus"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_focus"
+              ]
+            },
+            "focus": {
+              "description": "Focus target within the browser workspace.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BrowserFocus"
+                }
+              ]
+            },
+            "viewport": {
+              "description": "Optional viewport update applied before rendering.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BrowserViewport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
           "description": "Move the active selection one or more steps upward.",
           "type": "object",
           "required": [
@@ -412,6 +447,25 @@
               ]
             }
           }
+        }
+      ]
+    },
+    "BrowserFocus": {
+      "description": "Active focus target inside the browser.",
+      "oneOf": [
+        {
+          "description": "Navigation is acting on the main view selection.",
+          "type": "string",
+          "enum": [
+            "main"
+          ]
+        },
+        {
+          "description": "Navigation is acting on the inspector selection.",
+          "type": "string",
+          "enum": [
+            "inspector"
+          ]
         }
       ]
     },

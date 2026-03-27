@@ -420,6 +420,10 @@ pub struct SpectralWindowSummary {
     pub reference_frequency_hz: f64,
     /// Center frequency in Hz.
     pub center_frequency_hz: f64,
+    /// Lower spectral edge in Hz, including half-channel padding.
+    pub min_frequency_hz: f64,
+    /// Upper spectral edge in Hz, including half-channel padding.
+    pub max_frequency_hz: f64,
     /// Total bandwidth in Hz.
     pub total_bandwidth_hz: f64,
     /// DATA_DESCRIPTION rows that point to this spectral window.
@@ -1200,6 +1204,9 @@ fn build_spectral_windows(
         let chan_freq = spw.chan_freq(row)?;
         let chan_width = spw.chan_width(row)?;
 
+        let (min_frequency_hz, max_frequency_hz) =
+            spectral_window_frequency_bounds(&chan_freq, &chan_width);
+
         summaries.push(SpectralWindowSummary {
             spectral_window_id: row,
             name: spw.name(row)?,
@@ -1209,6 +1216,8 @@ fn build_spectral_windows(
             channel_width_hz: chan_width.first().copied().unwrap_or(0.0),
             reference_frequency_hz: spw.ref_frequency(row)?,
             center_frequency_hz: mean_or_zero(&chan_freq),
+            min_frequency_hz,
+            max_frequency_hz,
             total_bandwidth_hz: spw.total_bandwidth(row)?,
             data_description_ids,
             polarization_ids: polarization_ids.into_iter().collect(),
@@ -2854,7 +2863,7 @@ fn observatory_position(
         .iter()
         .map(|obs| obs.telescope_name.as_str())
         .find(|name| !name.is_empty());
-    if let Some(position) = telescope_name.and_then(known_observatory_position) {
+    if let Some(position) = telescope_name.and_then(MPosition::from_observatory_name) {
         return Ok(Some(position));
     }
 
@@ -2875,33 +2884,24 @@ fn observatory_position(
     Ok(None)
 }
 
-fn known_observatory_position(name: &str) -> Option<MPosition> {
-    match name {
-        // CASA MeasTable::Observatory("VLA"), expressed in ITRF meters.
-        "VLA" | "EVLA" => Some(MPosition::new_itrf(
-            -1_601_185.365,
-            -5_041_977.547,
-            3_554_875.870,
-        )),
-        _ => None,
-    }
-}
-
 fn observatory_offset(position_m: [f64; 3], observatory: Option<&MPosition>) -> [f64; 3] {
     let Some(observatory) = observatory else {
         return [0.0, 0.0, 0.0];
     };
-    let position = MPosition::new_itrf(position_m[0], position_m[1], position_m[2]);
-    let (long_obs, lat_obs, r_obs) = observatory.as_spherical();
-    if r_obs == 0.0 {
-        return [0.0, 0.0, 0.0];
-    }
-    let (long_ant, lat_ant, r_ant) = position.as_spherical();
-    [
-        (long_ant - long_obs) * r_obs * lat_obs.cos(),
-        (lat_ant - lat_obs) * r_obs,
-        r_ant - r_obs,
-    ]
+    let [obs_x, obs_y, obs_z] = observatory.as_itrf();
+    let delta = [
+        position_m[0] - obs_x,
+        position_m[1] - obs_y,
+        position_m[2] - obs_z,
+    ];
+    let lon = observatory.longitude_rad();
+    let lat = observatory.latitude_rad();
+    let (sin_lon, cos_lon) = lon.sin_cos();
+    let (sin_lat, cos_lat) = lat.sin_cos();
+    let east = -sin_lon * delta[0] + cos_lon * delta[1];
+    let north = -sin_lat * cos_lon * delta[0] - sin_lat * sin_lon * delta[1] + cos_lat * delta[2];
+    let up = cos_lat * cos_lon * delta[0] + cos_lat * sin_lon * delta[1] + sin_lat * delta[2];
+    [east, north, up]
 }
 
 fn extract_direction_pair(value: &ArrayValue) -> MsResult<[f64; 2]> {
@@ -3030,6 +3030,35 @@ fn mean_or_zero(values: &[f64]) -> f64 {
     } else {
         values.iter().sum::<f64>() / values.len() as f64
     }
+}
+
+fn spectral_window_frequency_bounds(chan_freq: &[f64], chan_width: &[f64]) -> (f64, f64) {
+    let mut min_frequency_hz = f64::INFINITY;
+    let mut max_frequency_hz = f64::NEG_INFINITY;
+
+    for (&frequency_hz, &width_hz) in chan_freq.iter().zip(chan_width.iter()) {
+        if !frequency_hz.is_finite() || !width_hz.is_finite() {
+            continue;
+        }
+        let edge_a = frequency_hz - width_hz / 2.0;
+        let edge_b = frequency_hz + width_hz / 2.0;
+        min_frequency_hz = min_frequency_hz.min(edge_a.min(edge_b));
+        max_frequency_hz = max_frequency_hz.max(edge_a.max(edge_b));
+    }
+
+    if min_frequency_hz.is_finite() && max_frequency_hz.is_finite() {
+        return (min_frequency_hz, max_frequency_hz);
+    }
+
+    if let Some(&center_frequency_hz) = chan_freq.first() {
+        let width_hz = chan_width.first().copied().unwrap_or(0.0).abs();
+        return (
+            center_frequency_hz - width_hz / 2.0,
+            center_frequency_hz + width_hz / 2.0,
+        );
+    }
+
+    (0.0, 0.0)
 }
 
 fn extract_first_f64_opt(value: Option<&ArrayValue>) -> MsResult<Option<f64>> {

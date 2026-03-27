@@ -1690,10 +1690,8 @@ where
         .iter()
         .product::<usize>()
         .saturating_mul(std::mem::size_of::<T>());
-    // TODO: Replace this small-image fallback with a dedicated serial scalar
-    // source-reduction kernel. A simple direct full-read kernel regressed the
-    // 64^3 Rust/C++ comparison, so the remaining optimization needs a tighter
-    // loop that does not give up the medium-size win from the current path.
+    // Deferred: Phase 5 backlog item 12.3 tracks a tighter dedicated serial
+    // scalar reduction kernel for this small-image path.
     if !matches!(op, ReductionOp::Median) && payload_bytes <= 4 * 1024 * 1024 {
         return source_stats_reduction_value(op, image);
     }

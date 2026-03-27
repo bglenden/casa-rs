@@ -13,8 +13,9 @@ use casacore_ms::columns::position_columns::AntennaPositionColumn;
 use casacore_ms::columns::time_columns::TimeColumn;
 use casacore_ms::columns::uvw_column::UvwColumn;
 use casacore_ms::{
-    ListObsOptions, ListObsOutputFormat, ListObsSummary, MeasurementSet, MeasurementSetBuilder,
-    MsError, OptionalMainColumn, SubTable, SubtableId, VisibilityDataColumn,
+    ListObsOptions, ListObsOutputFormat, ListObsPlotKind, ListObsPlotPayload, ListObsSummary,
+    MeasurementSet, MeasurementSetBuilder, MsError, OptionalMainColumn, SubTable, SubtableId,
+    VisibilityDataColumn, build_listobs_plot_payload_from_summary,
 };
 use casacore_tables::{ColumnSchema, Table, TableSchema};
 use casacore_types::measures::{EpochRef, PositionRef};
@@ -387,6 +388,30 @@ fn listobs_library_summary_renders_real_fixture_with_selection() {
             .render_json_pretty()
             .expect("pretty json")
             .contains("\"schema_version\": 1")
+    );
+}
+
+#[test]
+fn antenna_plot_uses_offset_coordinates_for_real_alma_fixture() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small.ms.tgz");
+    let summary = MeasurementSet::open(&ms_path)
+        .expect("open MS")
+        .listobs_summary()
+        .expect("summary");
+
+    let spec = ListObsPlotKind::AntennaLayout.default_spec();
+    let payload = build_listobs_plot_payload_from_summary(&summary, &spec).expect("plot payload");
+    let ListObsPlotPayload::AntennaLayout(payload) = payload else {
+        panic!("expected antenna layout payload");
+    };
+
+    assert_eq!(payload.x_label, "East Offset (m)");
+    assert_eq!(payload.y_label, "North Offset (m)");
+    assert!(
+        payload
+            .antennas
+            .iter()
+            .any(|point| point.x.abs() > 1.0 || point.y.abs() > 1.0)
     );
 }
 

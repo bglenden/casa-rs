@@ -110,6 +110,13 @@ pub enum BrowserCommand {
         /// Optional viewport update applied before rendering.
         viewport: Option<BrowserViewport>,
     },
+    /// Set the active browser focus pane without changing the current view.
+    SetFocus {
+        /// Focus target within the browser workspace.
+        focus: BrowserFocus,
+        /// Optional viewport update applied before rendering.
+        viewport: Option<BrowserViewport>,
+    },
     /// Move the active selection one or more steps upward.
     MoveUp {
         /// Number of steps to move.
@@ -615,6 +622,10 @@ mod tests {
             BrowserRequestEnvelope::new(BrowserCommand::CycleView {
                 forward: true,
                 viewport: Some(viewport),
+            }),
+            BrowserRequestEnvelope::new(BrowserCommand::SetFocus {
+                focus: BrowserFocus::Inspector,
+                viewport: None,
             }),
             BrowserRequestEnvelope::new(BrowserCommand::MoveUp {
                 steps: 2,

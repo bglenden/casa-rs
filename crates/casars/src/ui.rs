@@ -11,8 +11,8 @@ use ratatui::widgets::{
 use ratatui_image::Image as PanelImage;
 
 use crate::app::{
-    AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, ResultContent,
-    ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
+    AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, PlotControlTarget,
+    PlotPaneFocus, ResultContent, ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
 };
 use crate::config::ThemeMode;
 use crate::registry::RegistryApp;
@@ -33,6 +33,7 @@ pub(crate) struct UiLayout {
     pub result_content: Rect,
     pub result_scrollbar: Option<Rect>,
     pub result_hscrollbar: Option<Rect>,
+    pub plot_workspace: Option<PlotWorkspaceLayout>,
     pub tab_hits: Vec<TabHit>,
     pub browser_tab_hits: Vec<BrowserTabHit>,
 }
@@ -55,7 +56,38 @@ pub(crate) struct BrowserTabHit {
     pub rect: Rect,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PlotWorkspaceLayout {
+    pub catalog_block: Rect,
+    pub catalog_inner: Rect,
+    pub catalog_hits: Vec<PlotCatalogHit>,
+    pub canvas_block: Rect,
+    pub canvas_inner: Rect,
+    pub controls_block: Rect,
+    pub controls_inner: Rect,
+    pub control_hits: Vec<PlotControlHit>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotCatalogHit {
+    pub tab: crate::app::PlotCatalogRowView,
+    pub rect: Rect,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotControlHit {
+    pub target: PlotControlTarget,
+    pub rect: Rect,
+}
+
 impl UiLayout {
+    pub(crate) fn in_divider_toggle(&self, column: u16, row: u16) -> bool {
+        let Some(rect) = divider_toggle_rect(self.divider) else {
+            return false;
+        };
+        rect_contains(rect, column, row)
+    }
+
     pub(crate) fn form_target_at(&self, column: u16, row: u16) -> Option<FormSelection> {
         self.form_rows
             .iter()
@@ -112,6 +144,34 @@ impl UiLayout {
         self.result_hscrollbar
             .is_some_and(|rect| rect_contains(rect, column, row))
     }
+
+    pub(crate) fn plot_catalog_at(
+        &self,
+        column: u16,
+        row: u16,
+    ) -> Option<crate::app::PlotCatalogRowView> {
+        self.plot_workspace
+            .as_ref()?
+            .catalog_hits
+            .iter()
+            .find(|hit| rect_contains(hit.rect, column, row))
+            .map(|hit| hit.tab.clone())
+    }
+
+    pub(crate) fn plot_control_at(&self, column: u16, row: u16) -> Option<PlotControlTarget> {
+        self.plot_workspace
+            .as_ref()?
+            .control_hits
+            .iter()
+            .find(|hit| rect_contains(hit.rect, column, row))
+            .map(|hit| hit.target)
+    }
+
+    pub(crate) fn in_plot_canvas(&self, column: u16, row: u16) -> bool {
+        self.plot_workspace
+            .as_ref()
+            .is_some_and(|workspace| rect_contains(workspace.canvas_inner, column, row))
+    }
 }
 
 pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
@@ -127,7 +187,7 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
 
     let body = vertical[1];
     let collapsed = app.parameters_pane_collapsed();
-    let divider_width = if collapsed { 0 } else { 1 };
+    let divider_width = u16::from(body.width > 0);
     let available_width = body.width.saturating_sub(divider_width);
     let (left_width, right_width) = if collapsed {
         (0, body.width)
@@ -202,6 +262,12 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
     };
     let result_scrollbar = result_scrollbar_rect(app, result_content);
     let result_hscrollbar = result_hscrollbar_rect(app, result_content);
+    let plot_workspace = if !app.browser_is_active() && app.active_result_tab() == ResultTab::Plots
+    {
+        Some(build_plot_workspace_layout(result_content, app))
+    } else {
+        None
+    };
 
     UiLayout {
         header: vertical[0],
@@ -217,6 +283,7 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
         result_content,
         result_scrollbar,
         result_hscrollbar,
+        plot_workspace,
         tab_hits,
         browser_tab_hits,
     }
@@ -228,11 +295,28 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     let header = Paragraph::new(header_line(app, palette));
     frame.render_widget(header, layout.header);
 
-    let footer = Paragraph::new(footer_line(app.footer_text(), palette));
+    let footer_text = app.footer_text();
+    let footer = Paragraph::new(footer_line(&footer_text, palette));
     frame.render_widget(footer, layout.footer);
 
+    let divider_glyph = if app.parameters_pane_collapsed() {
+        "▶"
+    } else {
+        "◀"
+    };
     let divider_lines = (0..layout.divider.height)
-        .map(|_| Line::from(palette.divider_glyph))
+        .map(|index| {
+            if index == 0 {
+                Line::from(Span::styled(
+                    divider_glyph,
+                    Style::default()
+                        .fg(palette.divider_fg)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(palette.divider_glyph)
+            }
+        })
         .collect::<Vec<_>>();
     let divider = Paragraph::new(divider_lines).style(Style::default().fg(palette.divider_fg));
     frame.render_widget(divider, layout.divider);
@@ -241,6 +325,9 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     draw_result(frame, app, layout, palette);
     if app.path_chooser_active() {
         draw_path_chooser(frame, app, layout, palette);
+    }
+    if app.help_visible() {
+        draw_help_overlay(frame, app, palette);
     }
 }
 
@@ -450,7 +537,11 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
 
     let content = app.active_result_content();
     if let ResultContent::Graphic(summary) = &content {
-        draw_graphic_result(frame, app, layout, palette, summary);
+        if app.active_result_tab() == ResultTab::Plots {
+            draw_plot_workspace(frame, app, layout, palette, summary);
+        } else {
+            draw_graphic_result(frame, app, layout, palette, summary);
+        }
         return;
     }
     let vertical_scrollbar =
@@ -513,13 +604,13 @@ fn draw_graphic_result(
         return;
     }
 
-    if let Some(protocol) = app.uv_plot_protocol() {
+    if let Some(protocol) = app.plot_protocol() {
         frame.render_widget(PanelImage::new(protocol), content_area);
     } else {
-        let message = if let Some(error) = app.uv_plot_last_error() {
+        let message = if let Some(error) = app.plot_last_error() {
             format!("{summary}\n\n{error}")
-        } else if app.uv_plot_pending() {
-            format!("{summary}\n\nRendering UV plot...")
+        } else if app.plot_pending() {
+            format!("{summary}\n\nRendering plot...")
         } else {
             summary.to_string()
         };
@@ -529,6 +620,117 @@ fn draw_graphic_result(
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, content_area);
     }
+}
+
+fn draw_plot_workspace(
+    frame: &mut Frame<'_>,
+    app: &AppState,
+    layout: &UiLayout,
+    palette: Theme,
+    summary: &str,
+) {
+    let Some(workspace) = layout.plot_workspace.as_ref() else {
+        draw_graphic_result(frame, app, layout, palette, summary);
+        return;
+    };
+
+    let selected_plot = app.selected_plot_kind().display_name();
+    let catalog_title = match app.plot_focus() {
+        PlotPaneFocus::Catalog => "Catalog [focus]",
+        _ => "Catalog",
+    };
+    let canvas_title = match app.plot_focus() {
+        PlotPaneFocus::Canvas => format!("{selected_plot} [focus]"),
+        _ => selected_plot.to_string(),
+    };
+    let controls_title = match app.plot_focus() {
+        PlotPaneFocus::Controls => "Controls [focus]",
+        _ => "Controls",
+    };
+
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(catalog_title)
+            .border_style(Style::default().fg(palette.divider_fg)),
+        workspace.catalog_block,
+    );
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(canvas_title)
+            .border_style(Style::default().fg(palette.divider_fg)),
+        workspace.canvas_block,
+    );
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(controls_title)
+            .border_style(Style::default().fg(palette.divider_fg)),
+        workspace.controls_block,
+    );
+
+    let catalog_items = app
+        .plot_catalog_rows()
+        .into_iter()
+        .map(|row| {
+            let style = if row.selected {
+                Style::default()
+                    .fg(palette.active_tab_fg)
+                    .bg(palette.active_tab_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.footer_fg)
+            };
+            ListItem::new(Line::from(Span::styled(row.label, style)))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(List::new(catalog_items), workspace.catalog_inner);
+
+    if let Some(protocol) = app.plot_protocol() {
+        frame.render_widget(PanelImage::new(protocol), workspace.canvas_inner);
+    } else {
+        let message = if let Some(error) = app.plot_last_error() {
+            format!("{summary}\n\n{error}")
+        } else if app.plot_pending() {
+            format!("{summary}\n\nRendering plot...")
+        } else {
+            summary.to_string()
+        };
+        frame.render_widget(
+            Paragraph::new(message)
+                .style(Style::default().fg(palette.footer_fg))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: false }),
+            workspace.canvas_inner,
+        );
+    }
+
+    let mut control_lines = Vec::<Line<'static>>::new();
+    if let Some(banner) = app.plot_dirty_banner() {
+        control_lines.push(Line::from(Span::styled(
+            banner.to_string(),
+            Style::default()
+                .fg(palette.banner_fg)
+                .add_modifier(Modifier::BOLD),
+        )));
+        control_lines.push(Line::from(""));
+    }
+    control_lines.extend(app.plot_control_rows().into_iter().map(|row| {
+        let style = if row.selected {
+            Style::default()
+                .fg(palette.active_tab_fg)
+                .bg(palette.active_tab_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette.footer_fg)
+        };
+        Line::from(Span::styled(row.text, style))
+    }));
+    frame.render_widget(
+        Paragraph::new(control_lines).wrap(Wrap { trim: false }),
+        workspace.controls_inner,
+    );
 }
 
 fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
@@ -952,6 +1154,39 @@ fn footer_line(text: &str, palette: Theme) -> Line<'static> {
     Line::from(spans)
 }
 
+fn draw_help_overlay(frame: &mut Frame<'_>, app: &AppState, palette: Theme) {
+    let area = centered_rect(
+        frame.area().width.saturating_mul(3) / 4,
+        frame.area().height.saturating_mul(2) / 3,
+        frame.area(),
+    );
+    frame.render_widget(Clear, area);
+    let lines = app
+        .help_overlay_lines()
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    let block = Block::default()
+        .title("Help")
+        .title_style(
+            Style::default()
+                .fg(palette.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(palette.border_set)
+        .border_style(Style::default().fg(palette.active_pane_border_fg))
+        .padding(Padding::new(1, 1, 0, 0));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(palette.footer_fg)),
+        inner,
+    );
+}
+
 fn render_form_row_text(
     row: &crate::app::FormRowView,
     focus: PaneFocus,
@@ -1004,7 +1239,7 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
         ResultTab::Spws => "SPWs",
         ResultTab::Sources => "Sources",
         ResultTab::Antennas => "Ant",
-        ResultTab::Uv => "UV",
+        ResultTab::Plots => "Plots",
         ResultTab::Stdout => "Out",
         ResultTab::Stderr => "Err",
     };
@@ -1015,6 +1250,94 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
     } else {
         format!("[{}]", tab.label())
     }
+}
+
+fn build_plot_workspace_layout(area: Rect, app: &AppState) -> PlotWorkspaceLayout {
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(28), Constraint::Min(30)])
+        .split(area);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(12), Constraint::Length(11)])
+        .split(horizontal[1]);
+
+    let catalog_block = horizontal[0];
+    let canvas_block = right[0];
+    let controls_block = right[1];
+    let catalog_inner = Block::default().borders(Borders::ALL).inner(catalog_block);
+    let canvas_inner = Block::default().borders(Borders::ALL).inner(canvas_block);
+    let controls_inner = Block::default().borders(Borders::ALL).inner(controls_block);
+
+    let catalog_hits = app
+        .plot_catalog_rows()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (index < catalog_inner.height as usize).then_some(PlotCatalogHit {
+                tab: row,
+                rect: Rect {
+                    x: catalog_inner.x,
+                    y: catalog_inner.y + index as u16,
+                    width: catalog_inner.width,
+                    height: 1,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let control_hits = app
+        .plot_control_rows()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            let offset = if app.plot_dirty_banner().is_some() {
+                2usize
+            } else {
+                0usize
+            };
+            let y = controls_inner.y + offset as u16 + index as u16;
+            ((offset + index) < controls_inner.height as usize).then_some(PlotControlHit {
+                target: row.target,
+                rect: Rect {
+                    x: controls_inner.x,
+                    y,
+                    width: controls_inner.width,
+                    height: 1,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    PlotWorkspaceLayout {
+        catalog_block,
+        catalog_inner,
+        catalog_hits,
+        canvas_block,
+        canvas_inner,
+        controls_block,
+        controls_inner,
+        control_hits,
+    }
+}
+
+pub(crate) fn plot_canvas_area(layout: &UiLayout) -> Option<Rect> {
+    layout
+        .plot_workspace
+        .as_ref()
+        .map(|workspace| workspace.canvas_inner)
+}
+
+fn divider_toggle_rect(divider: Rect) -> Option<Rect> {
+    if divider.width == 0 || divider.height == 0 {
+        return None;
+    }
+    Some(Rect {
+        x: divider.x,
+        y: divider.y,
+        width: divider.width,
+        height: 1,
+    })
 }
 
 fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {
@@ -1245,37 +1568,7 @@ fn fit_text_preserving_suffix(text: &str, width: usize, suffix: &str) -> String 
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::Rect;
-    use ratatui::style::Modifier;
-    use ratatui::widgets::ScrollbarState;
-
-    use super::{
-        UiLayout, browser_tab_label, centered_rect, compute_layout, content_viewport_area,
-        fit_text, fit_text_preserving_suffix, footer_line, path_chooser_area,
-        path_chooser_list_area, rect_contains, render_form_row_text, render_visible_text_line,
-        result_hscrollbar_state, result_scrollbar_state, selection_contains, tab_label,
-    };
-    use crate::app::{
-        AppState, BrowserTab, FormRowKind, FormRowView, PaneFocus, ResultContent, ResultTab,
-        TableView, VisibleTextLine, VisibleTextRole,
-    };
-    use crate::config::ThemeMode;
-    use crate::registry::listobs_app;
-    use crate::theme::theme;
-    use casacore_ms::listobs::cli::command_schema;
-
-    fn test_app() -> AppState {
-        AppState::from_schema(listobs_app(), command_schema("listobs"))
-    }
-
-    #[test]
-    fn fit_text_handles_zero_and_short_widths() {
-        assert_eq!(fit_text("abcdef", 0), "");
-        assert_eq!(fit_text("abcdef", 2), "..");
-        assert_eq!(fit_text("abcdef", 3), "...");
-        assert_eq!(fit_text("abcdef", 5), "ab...");
-        assert_eq!(fit_text("abc", 5), "abc");
-    }
+    use super::fit_text_preserving_suffix;
 
     #[test]
     fn preserves_browse_suffix_when_truncating() {
@@ -1292,229 +1585,5 @@ mod tests {
     fn falls_back_to_normal_fit_without_suffix() {
         let rendered = fit_text_preserving_suffix("abcdef", 5, " [browse]");
         assert_eq!(rendered, "ab...");
-    }
-
-    #[test]
-    fn footer_line_splits_key_action_segments() {
-        let line = footer_line("q=quit  Enter launch  arrows", theme(ThemeMode::DenseAnsi));
-        let rendered = line
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-        assert_eq!(rendered, "q=quit  Enter launch  arrows");
-        assert_eq!(
-            line.spans[0].style.fg,
-            Some(theme(ThemeMode::DenseAnsi).footer_key_fg)
-        );
-        assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(
-            line.spans[1].style.fg,
-            Some(theme(ThemeMode::DenseAnsi).footer_fg)
-        );
-    }
-
-    #[test]
-    fn render_form_row_text_formats_sections_and_fields() {
-        let palette = theme(ThemeMode::DenseAnsi);
-        let section = FormRowView {
-            target: crate::app::FormSelection::Section(0),
-            text: "Input".to_string(),
-            kind: FormRowKind::Section { collapsed: false },
-            selected: false,
-        };
-        assert_eq!(
-            render_form_row_text(&section, PaneFocus::Parameters, palette, 40),
-            "  [-] Input"
-        );
-
-        let field = FormRowView {
-            target: crate::app::FormSelection::Field(0),
-            text: "MeasurementSet Path [browse]".to_string(),
-            kind: FormRowKind::Field,
-            selected: true,
-        };
-        let selected = render_form_row_text(&field, PaneFocus::Parameters, palette, 20);
-        assert!(selected.starts_with("> "));
-        assert!(selected.ends_with("[browse]"));
-
-        let inactive = render_form_row_text(&field, PaneFocus::Result, palette, 20);
-        assert!(inactive.starts_with("  "));
-    }
-
-    #[test]
-    fn result_tab_and_browser_tab_labels_follow_theme_rules() {
-        let dense = theme(ThemeMode::DenseAnsi);
-        let rich = theme(ThemeMode::RichPanel);
-        assert_eq!(tab_label(ResultTab::Overview, true, dense), "◖ Overview ◗");
-        assert_eq!(tab_label(ResultTab::Stdout, false, dense), "[Stdout]");
-        assert_eq!(tab_label(ResultTab::Stdout, false, rich), "·Out·");
-        assert_eq!(
-            browser_tab_label(BrowserTab::Overview, true, dense),
-            "◖ Overview ◗"
-        );
-        assert_eq!(
-            browser_tab_label(BrowserTab::Subtables, false, dense),
-            "[Subtables]"
-        );
-        assert_eq!(
-            browser_tab_label(BrowserTab::Subtables, false, rich),
-            "·Links·"
-        );
-    }
-
-    #[test]
-    fn selection_contains_and_rect_contains_respect_bounds() {
-        assert!(selection_contains(Some((1, 2, 3, 4)), 1, 3));
-        assert!(selection_contains(Some((1, 2, 3, 4)), 2, 4));
-        assert!(!selection_contains(Some((1, 2, 3, 4)), 0, 3));
-        assert!(!selection_contains(Some((1, 2, 3, 4)), 1, 5));
-
-        let rect = Rect::new(2, 4, 3, 2);
-        assert!(rect_contains(rect, 2, 4));
-        assert!(rect_contains(rect, 4, 5));
-        assert!(!rect_contains(rect, 5, 5));
-        assert!(!rect_contains(rect, 4, 6));
-    }
-
-    #[test]
-    fn render_visible_text_line_groups_styles_and_selection() {
-        let palette = theme(ThemeMode::DenseAnsi);
-        let line = VisibleTextLine {
-            text: "ABC".to_string(),
-            roles: vec![
-                VisibleTextRole::Plain,
-                VisibleTextRole::TableHeader,
-                VisibleTextRole::BrowserSeparator,
-            ],
-        };
-        let rendered = render_visible_text_line(&line, 0, Some((0, 0, 2, 2)), palette);
-        assert_eq!(
-            rendered
-                .spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>(),
-            "ABC"
-        );
-        assert_eq!(rendered.spans.len(), 3);
-        assert_eq!(rendered.spans[0].style.fg, None);
-        assert_eq!(rendered.spans[1].style.fg, Some(palette.table_header_fg));
-        assert_eq!(
-            rendered.spans[2].style.bg,
-            Some(palette.section_selected_bg)
-        );
-        assert!(
-            rendered.spans[2]
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
-        );
-    }
-
-    #[test]
-    fn scrollbar_helpers_cover_lines_tables_and_graphics() {
-        let lines = ResultContent::Lines(vec!["one".into(), "two".into(), "three".into()]);
-        let vscroll =
-            result_scrollbar_state(&lines, 1, Rect::new(0, 0, 10, 2)).expect("lines scrollbar");
-        assert_eq!(
-            vscroll,
-            ScrollbarState::new(3)
-                .position(1)
-                .viewport_content_length(2)
-        );
-
-        let table = ResultContent::Table(TableView {
-            header: "abcd".into(),
-            rows: vec!["row1".into(), "row2".into(), "row3".into()],
-        });
-        let hscroll =
-            result_hscrollbar_state(&table, 2, Rect::new(0, 0, 3, 2)).expect("table hscroll");
-        assert_eq!(
-            hscroll,
-            ScrollbarState::new(4)
-                .position(2)
-                .viewport_content_length(3)
-        );
-
-        assert!(
-            result_scrollbar_state(
-                &ResultContent::Graphic("uv".into()),
-                0,
-                Rect::new(0, 0, 4, 4)
-            )
-            .is_none()
-        );
-        assert!(
-            result_hscrollbar_state(
-                &ResultContent::Graphic("uv".into()),
-                0,
-                Rect::new(0, 0, 4, 4)
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn viewport_and_centering_helpers_adjust_dimensions() {
-        assert_eq!(
-            content_viewport_area(Rect::new(1, 2, 10, 5), true, true),
-            Rect::new(1, 2, 9, 4)
-        );
-        assert_eq!(
-            centered_rect(20, 10, Rect::new(0, 0, 12, 6)),
-            Rect::new(0, 0, 12, 6)
-        );
-        assert_eq!(
-            centered_rect(6, 2, Rect::new(10, 10, 20, 10)),
-            Rect::new(17, 14, 6, 2)
-        );
-    }
-
-    #[test]
-    fn path_chooser_geometry_stays_within_body() {
-        let body = Rect::new(0, 0, 120, 40);
-        let chooser = path_chooser_area(body);
-        assert_eq!(chooser.width, 84);
-        assert_eq!(chooser.height, 24);
-        let list = path_chooser_list_area(chooser);
-        assert_eq!(list.x, chooser.x + 1);
-        assert_eq!(list.y, chooser.y + 2);
-        assert_eq!(list.width, chooser.width - 2);
-        assert_eq!(list.height, chooser.height - 5);
-    }
-
-    #[test]
-    fn compute_layout_provides_interactive_hit_regions() {
-        let app = test_app();
-        let layout: UiLayout = compute_layout(Rect::new(0, 0, 120, 40), &app);
-        assert!(layout.form_block.width > 0);
-        assert!(layout.result_block.width > 0);
-        assert!(!layout.form_rows.is_empty());
-        assert!(
-            layout
-                .form_target_at(layout.form_rows[0].rect.x, layout.form_rows[0].rect.y)
-                .is_some()
-        );
-        assert!(layout.in_form_block(layout.form_block.x, layout.form_block.y));
-        assert!(layout.in_result_block(layout.result_block.x, layout.result_block.y));
-        assert!(layout.in_divider(layout.divider.x, layout.divider.y));
-        assert!(!layout.tab_hits.is_empty());
-        assert_eq!(
-            layout.result_tab_at(layout.tab_hits[0].rect.x, layout.tab_hits[0].rect.y),
-            Some(ResultTab::Overview)
-        );
-    }
-
-    #[test]
-    fn layout_exposes_scrollbar_hit_regions_when_result_is_scrollable() {
-        let app = test_app();
-        let layout = compute_layout(Rect::new(0, 0, 80, 20), &app);
-        if let Some(rect) = layout.result_scrollbar {
-            assert!(layout.in_result_scrollbar(rect.x, rect.y));
-        }
-        if let Some(rect) = layout.result_hscrollbar {
-            assert!(layout.in_result_hscrollbar(rect.x, rect.y));
-        }
     }
 }

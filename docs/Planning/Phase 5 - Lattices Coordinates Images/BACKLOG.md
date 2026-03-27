@@ -54,3 +54,33 @@ scope.
 
 **Reason:** Depends on complete coordinate and image-math expansion beyond
 Phase 5 core.
+
+---
+
+### 12.1 First-Class Masked-Lattice Traversal
+
+**Status:** DEFER
+
+**Reason:** Traversal APIs still need a proper masked-lattice model with aligned
+value/mask cursors and consistent read/write semantics across temporary and
+persistent backends.
+
+---
+
+### 12.2 Richer Mutable Traversal Producer/Worker Helpers
+
+**Status:** DEFER
+
+**Reason:** Mutable traversal now shares cache-hint plumbing with the read-only
+path, but it still lacks the higher-level producer/worker execution helpers used
+by read-only reductions and chunk pipelines.
+
+---
+
+### 12.3 Optimized Small-Image Scalar Reduction Kernel
+
+**Status:** DEFER
+
+**Reason:** The current small-image fallback is a pragmatic performance tradeoff.
+Replacing it with a tighter dedicated serial reduction kernel remains worthwhile,
+but it needs its own benchmark-guided pass.

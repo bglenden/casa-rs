@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
 use casacore_ms::listobs::cli::command_schema;
 use casacore_ms::schema;
-use casacore_ms::{MeasurementSet, MeasurementSetBuilder, SubtableId};
+use casacore_ms::{ListObsPlotKind, MeasurementSet, MeasurementSetBuilder, SubtableId};
 use casacore_tablebrowser_protocol::{
     BrowserBreadcrumbEntry, BrowserCapabilities, BrowserFocus, BrowserInspectorSnapshot,
     BrowserInspectorTrailEntry, BrowserNavigationMetrics, BrowserResponseEnvelope,
@@ -22,7 +22,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::tempdir;
 
-use crate::app::{AppState, OutputPane, PaneFocus, ResultTab};
+use crate::app::{AppState, OutputPane, PaneFocus, PlotControlTarget, PlotPaneFocus, ResultTab};
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
 use crate::registry::{listobs_app, registered_apps, tablebrowser_app};
@@ -142,7 +142,7 @@ fn pane_split_ratio_persists_after_drag() {
         mouse(
             MouseEventKind::Down(MouseButton::Left),
             layout.divider.x,
-            layout.divider.y,
+            layout.divider.y + 2,
         ),
         &layout,
     );
@@ -150,7 +150,7 @@ fn pane_split_ratio_persists_after_drag() {
         mouse(
             MouseEventKind::Drag(MouseButton::Left),
             layout.body.x + 72,
-            layout.divider.y,
+            layout.divider.y + 2,
         ),
         &layout,
     );
@@ -158,7 +158,7 @@ fn pane_split_ratio_persists_after_drag() {
         mouse(
             MouseEventKind::Up(MouseButton::Left),
             layout.body.x + 72,
-            layout.divider.y,
+            layout.divider.y + 2,
         ),
         &layout,
     );
@@ -219,7 +219,11 @@ fn pane_toggle_can_collapse_parameters_pane() {
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
     assert!(app.parameters_pane_collapsed());
     assert_eq!(layout.form_block.width, 0);
-    assert_eq!(layout.result_block.width, layout.body.width);
+    assert_eq!(layout.divider.width, 1);
+    assert_eq!(
+        layout.result_block.width + layout.divider.width,
+        layout.body.width
+    );
 }
 
 #[test]
@@ -589,7 +593,7 @@ fn rich_panel_keeps_content_clear_of_the_frame() {
 fn rich_panel_footer_keeps_theme_toggle_visible() {
     let (_temp, mut app) = test_app();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
-    let rendered = render_app(&app, 100, 30);
+    let rendered = render_app(&app, 140, 30);
     assert!(rendered.contains("t theme"));
 }
 
@@ -614,14 +618,14 @@ fn tablebrowser_session_opens_cells_and_linked_subtables() {
     assert!(overview.contains("Tables / Table Browser"));
     assert!(overview.contains("Columns"));
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     let cells = render_app(&app, 180, 30);
     assert!(cells.contains("Cells"));
     assert!(cells.contains("\"alpha\""));
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     let subtables = render_app(&app, 180, 30);
     assert!(subtables.contains("child.tab"));
 
@@ -650,8 +654,132 @@ fn browser_footer_describes_escape_and_backspace_semantics() {
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
-    assert!(app.footer_text().contains("Esc back/clear"));
+    assert!(app.footer_text().contains("Esc back"));
     assert!(app.footer_text().contains("Bksp parent table"));
+}
+
+#[test]
+fn help_overlay_toggles_with_question_mark_and_escape() {
+    let (_temp, mut app) = test_app();
+    assert!(!app.help_visible());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+    assert!(app.help_visible());
+    let rendered = render_app(&app, 140, 30);
+    assert!(rendered.contains("Key Help"));
+    assert!(rendered.contains("Tab/Shift-Tab focus"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.help_visible());
+}
+
+#[test]
+fn edit_tab_commits_and_moves_to_next_field() {
+    let (_temp, mut app) = test_app();
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_paste("/tmp/demo.ms".to_string());
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+    assert!(app.edit_buffer_for_test().is_none());
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some("/tmp/demo.ms")
+    );
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("Verbose Report"))
+    );
+}
+
+#[test]
+fn plot_tab_tab_cycles_focus_ring_and_skips_collapsed_sidebar() {
+    let (_temp, mut app) = test_app();
+    app.set_active_result_tab(ResultTab::Plots);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Canvas);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Controls);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+    assert!(app.parameters_pane_collapsed());
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Controls);
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_tab_moves_focus_and_brackets_switch_views() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let inspector = Some(BrowserInspectorSnapshot {
+        title: "Cell row=0 column=NAME".to_string(),
+        trail: vec![BrowserInspectorTrailEntry {
+            label: "root".to_string(),
+            summary: "scalar".to_string(),
+        }],
+        node: BrowserValueNode::Scalar {
+            value: BrowserScalarValue::String("alpha".to_string()),
+        },
+        rendered_lines: vec!["scalar: alpha".to_string()],
+    });
+    let script = write_fake_tablebrowser_script(
+        temp.path(),
+        &[
+            fake_browser_snapshot_with_focus_and_metrics_json(
+                ProtocolBrowserView::Cells,
+                BrowserFocus::Main,
+                "Fake cells",
+                vec!["Cells".to_string(), "\"alpha\"".to_string()],
+                None,
+                None,
+                inspector.clone(),
+            ),
+            fake_browser_snapshot_with_focus_and_metrics_json(
+                ProtocolBrowserView::Cells,
+                BrowserFocus::Inspector,
+                "Fake cells inspector",
+                vec!["Cells".to_string(), "\"alpha\"".to_string()],
+                None,
+                None,
+                inspector,
+            ),
+            fake_browser_snapshot_json(
+                ProtocolBrowserView::Columns,
+                "Fake columns",
+                vec!["Columns".to_string(), "NAME".to_string()],
+            ),
+        ],
+        None,
+    );
+    set_tablebrowser_launcher_bin(&script);
+
+    let schema = tablebrowser_app()
+        .load_schema()
+        .expect("load fake tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
+    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.start_run_for_test();
+
+    assert_eq!(app.browser_focus_for_test(), Some(BrowserFocus::Main));
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.browser_focus_for_test(), Some(BrowserFocus::Inspector));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Parameters);
+    assert_eq!(app.active_browser_tab_label(), Some("Cells"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    assert_eq!(app.browser_focus_for_test(), Some(BrowserFocus::Main));
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert_eq!(app.active_browser_tab_label(), Some("Columns"));
 }
 
 #[cfg(unix)]
@@ -1000,26 +1128,48 @@ fn drag_selection_copies_browser_inspector_text_on_mouse_up() {
     set_test_clipboard_file(&clipboard_path);
     let script = write_fake_tablebrowser_script(
         temp.path(),
-        &[fake_browser_snapshot_with_inspector_json(
-            ProtocolBrowserView::Cells,
-            "Fake cells",
-            vec![
-                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
-                "row | NAME<str> |".to_string(),
-                "   0 | >\"alpha\"< |".to_string(),
-            ],
-            Some(BrowserInspectorSnapshot {
-                title: "Cell row=0 column=NAME".to_string(),
-                trail: vec![BrowserInspectorTrailEntry {
-                    label: "root".to_string(),
-                    summary: "scalar".to_string(),
-                }],
-                node: BrowserValueNode::Scalar {
-                    value: BrowserScalarValue::String("alpha".to_string()),
-                },
-                rendered_lines: vec!["scalar: alpha beta".to_string()],
-            }),
-        )],
+        &[
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells inspector focus",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Inspector".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+        ],
         None,
     );
     set_tablebrowser_launcher_bin(&script);
@@ -1115,7 +1265,7 @@ fn browser_result_selection_copies_visible_text_in_every_view() {
     .enumerate()
     {
         if index > 0 {
-            app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
         }
         drag_select_visible_text(&mut app, 160, 28, OutputPane::Result, expected);
         app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
@@ -1135,26 +1285,48 @@ fn browser_inspector_selection_copies_visible_text() {
     set_test_clipboard_file(&clipboard_path);
     let script = write_fake_tablebrowser_script(
         temp.path(),
-        &[fake_browser_snapshot_with_inspector_json(
-            ProtocolBrowserView::Cells,
-            "Fake cells",
-            vec![
-                "Cells  row=1/10  col=1/3  focus=Main".to_string(),
-                "row | NAME<str> |".to_string(),
-                "   0 | >\"alpha\"< |".to_string(),
-            ],
-            Some(BrowserInspectorSnapshot {
-                title: "Cell row=0 column=NAME".to_string(),
-                trail: vec![BrowserInspectorTrailEntry {
-                    label: "root".to_string(),
-                    summary: "scalar".to_string(),
-                }],
-                node: BrowserValueNode::Scalar {
-                    value: BrowserScalarValue::String("alpha".to_string()),
-                },
-                rendered_lines: vec!["scalar: alpha beta".to_string()],
-            }),
-        )],
+        &[
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Main".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+            fake_browser_snapshot_with_inspector_json(
+                ProtocolBrowserView::Cells,
+                "Fake cells inspector focus",
+                vec![
+                    "Cells  row=1/10  col=1/3  focus=Inspector".to_string(),
+                    "row | NAME<str> |".to_string(),
+                    "   0 | >\"alpha\"< |".to_string(),
+                ],
+                Some(BrowserInspectorSnapshot {
+                    title: "Cell row=0 column=NAME".to_string(),
+                    trail: vec![BrowserInspectorTrailEntry {
+                        label: "root".to_string(),
+                        summary: "scalar".to_string(),
+                    }],
+                    node: BrowserValueNode::Scalar {
+                        value: BrowserScalarValue::String("alpha".to_string()),
+                    },
+                    rendered_lines: vec!["scalar: alpha beta".to_string()],
+                }),
+            ),
+        ],
         None,
     );
     set_tablebrowser_launcher_bin(&script);
@@ -1257,7 +1429,7 @@ fn browser_view_change_clears_active_output_selection() {
     drag_select_visible_text(&mut app, 160, 28, OutputPane::Result, "token-overview");
     assert!(app.output_selection_rect(OutputPane::Result).is_some());
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     assert!(app.output_selection_rect(OutputPane::Result).is_none());
 }
 
@@ -1388,7 +1560,7 @@ fn fake_tablebrowser_session_drives_casars_navigation() {
     let overview = render_app(&app, 160, 28);
     assert!(overview.contains("Overview root"));
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
     let cells = render_app(&app, 160, 28);
     assert!(cells.contains("\"alpha\""));
 
@@ -1490,7 +1662,7 @@ fn browser_command_errors_close_the_session_and_surface_stderr() {
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
-    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
 
     assert!(!app.browser_is_active());
     assert!(
@@ -1574,7 +1746,7 @@ fn executes_listobs_and_parses_structured_output_into_tabs() {
 }
 
 #[test]
-fn uv_tab_lazy_loads_coverage_after_listobs_run() {
+fn plots_tab_loads_uv_coverage_after_listobs_run() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
 
@@ -1591,116 +1763,203 @@ fn uv_tab_lazy_loads_coverage_after_listobs_run() {
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(app.uv_coverage_for_test().is_none());
 
-    app.set_active_result_tab(ResultTab::Uv);
-    assert!(app.wait_for_all_idle_for_test(Duration::from_secs(60)));
+    app.set_active_result_tab(ResultTab::Plots);
     app.prepare_graphics_for_test(140, 32);
+    assert!(wait_for_plot_render(
+        &mut app,
+        140,
+        32,
+        Duration::from_secs(5)
+    ));
 
     let coverage = app.uv_coverage_for_test().expect("uv coverage");
     assert!(coverage.sample_count > 0);
-    assert!(app.uv_plot_protocol().is_some() || app.uv_plot_pending());
+    assert_eq!(app.selected_plot_kind(), ListObsPlotKind::UvCoverage);
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
+    assert!(app.plot_protocol().is_some() || app.plot_pending());
     match app.active_result_content() {
         crate::app::ResultContent::Graphic(summary) => {
-            assert!(summary.contains("Tracks="));
-            assert!(summary.contains("Mirrored=yes"));
+            assert!(summary.contains("UV Coverage from run 1."));
         }
         other => panic!("expected graphic result, got {other:?}"),
     }
+    let rendered = render_app(&app, 140, 32);
+    assert!(rendered.contains("Catalog"));
+    assert!(rendered.contains("Controls"));
+    assert!(rendered.contains("UV Coverage"));
 }
 
-#[cfg(unix)]
 #[test]
-fn uv_tab_reuses_last_successful_run_arguments_after_form_edits() {
+fn divider_chevron_can_collapse_parameters_sidebar_from_plots() {
+    let (_temp, mut app) = test_app();
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let before = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 34), &app);
+    assert!(!app.parameters_pane_collapsed());
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            before.divider.x,
+            before.divider.y,
+        ),
+        &before,
+    );
+
+    let after = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 34), &app);
+    assert!(app.parameters_pane_collapsed());
+    assert_eq!(after.divider.width, 1);
+    assert!(after.result_block.width > before.result_block.width);
+}
+
+#[test]
+fn plots_tab_shows_dirty_banner_and_copy_cli_uses_last_successful_run() {
     let _guard = launcher_env_lock();
+    clear_launcher_bin();
 
     let temp = tempdir().expect("tempdir");
-    let first_root = temp.path().join("first");
+    let first_ms = create_fixture_ms(temp.path());
     let second_root = temp.path().join("second");
-    std::fs::create_dir(&first_root).expect("create first root");
     std::fs::create_dir(&second_root).expect("create second root");
-    let first_ms = create_fixture_ms(&first_root);
     let second_ms = create_fixture_ms(&second_root);
-    let arg_log = temp.path().join("listobs-args.log");
-    let script =
-        write_forwarding_listobs_script(temp.path(), &arg_log, Duration::ZERO, None::<&Path>);
-    set_launcher_bin(&script);
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
 
     let schema = listobs_app()
         .load_schema()
-        .expect("load schema from forwarding wrapper");
+        .expect("load schema from listobs");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
     app.set_text_value("ms_path", first_ms.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
-    app.set_text_value("ms_path", second_ms.to_string_lossy().as_ref());
-    app.set_active_result_tab(ResultTab::Uv);
-    assert!(app.wait_for_all_idle_for_test(Duration::from_secs(60)));
+    app.set_active_result_tab(ResultTab::Plots);
+    app.prepare_graphics_for_test(140, 32);
+    assert!(wait_for_plot_render(
+        &mut app,
+        140,
+        32,
+        Duration::from_secs(5)
+    ));
 
-    let invocations = read_log_lines(&arg_log);
-    assert_eq!(
-        invocations.len(),
-        2,
-        "expected one summary run and one UV run"
+    app.set_text_value("ms_path", second_ms.to_string_lossy().as_ref());
+    assert!(app.plot_snapshot_dirty_for_test());
+
+    let rendered = render_app(&app, 160, 34);
+    assert!(rendered.contains("Plots reflect the last successful run"));
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 34), &app);
+    let visible_control_hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .control_hits
+        .iter()
+        .last()
+        .expect("visible control hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            visible_control_hit.rect.x + 1,
+            visible_control_hit.rect.y,
+        ),
+        &layout,
     );
+    move_plot_control_selection_to(&mut app, PlotControlTarget::CopyCli);
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
     let first_ms_display = first_ms.to_string_lossy();
     let second_ms_display = second_ms.to_string_lossy();
-    assert!(invocations[0].contains(first_ms_display.as_ref()));
-    assert!(invocations[1].contains(first_ms_display.as_ref()));
-    assert!(invocations[1].contains("--uv-coverage-json"));
-    assert!(!invocations[1].contains(second_ms_display.as_ref()));
+    assert!(clipboard.contains("--plot uv_coverage"));
+    assert!(clipboard.contains(first_ms_display.as_ref()));
+    assert!(!clipboard.contains(second_ms_display.as_ref()));
+    assert!(
+        app.status_line_for_test()
+            .contains("Copied plot CLI to clipboard.")
+    );
+    clear_test_clipboard_file();
 }
 
-#[cfg(unix)]
 #[test]
-fn uv_loading_is_active_work_and_field_edits_cancel_the_loader() {
+fn plot_workspace_mouse_selection_and_export_pdf_work() {
     let _guard = launcher_env_lock();
+    clear_launcher_bin();
 
     let temp = tempdir().expect("tempdir");
-    let first_root = temp.path().join("first");
-    let second_root = temp.path().join("second");
-    std::fs::create_dir(&first_root).expect("create first root");
-    std::fs::create_dir(&second_root).expect("create second root");
-    let first_ms = create_fixture_ms(&first_root);
-    let second_ms = create_fixture_ms(&second_root);
-    let arg_log = temp.path().join("listobs-args.log");
-    let uv_marker = temp.path().join("uv-marker.log");
-    let script = write_forwarding_listobs_script(
-        temp.path(),
-        &arg_log,
-        Duration::from_secs(2),
-        Some(&uv_marker),
-    );
-    set_launcher_bin(&script);
+    let ms_path = create_fixture_ms(temp.path());
+    let export_path = temp.path().join("antenna-layout-check.pdf");
 
     let schema = listobs_app()
         .load_schema()
-        .expect("load schema from forwarding wrapper");
+        .expect("load schema from listobs");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
-    app.set_text_value("ms_path", first_ms.to_string_lossy().as_ref());
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
-    app.set_active_result_tab(ResultTab::Uv);
-    assert!(app.uv_loading_active_for_test());
+    app.set_active_result_tab(ResultTab::Plots);
+    app.prepare_graphics_for_test(160, 36);
+    assert!(wait_for_plot_render(
+        &mut app,
+        160,
+        36,
+        Duration::from_secs(5)
+    ));
 
-    app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
-    std::thread::sleep(Duration::from_millis(150));
-    assert_eq!(
-        read_log_lines(&arg_log).len(),
-        2,
-        "rerun should be blocked while UV loading is active"
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 36), &app);
+    let antenna_hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .iter()
+        .find(|hit| hit.tab.kind == ListObsPlotKind::AntennaLayout)
+        .expect("antenna hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            antenna_hit.rect.x + 1,
+            antenna_hit.rect.y,
+        ),
+        &layout,
     );
+    assert_eq!(app.selected_plot_kind(), ListObsPlotKind::AntennaLayout);
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
 
-    app.set_text_value("ms_path", second_ms.to_string_lossy().as_ref());
-    assert!(!app.uv_loading_active_for_test());
-
-    std::thread::sleep(Duration::from_millis(2300));
-    assert!(
-        read_log_lines(&uv_marker).is_empty(),
-        "clearing cached UV state should cancel the in-flight loader"
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 36), &app);
+    let export_path_hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .control_hits
+        .iter()
+        .find(|hit| hit.target == PlotControlTarget::ExportPath)
+        .expect("export path hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            export_path_hit.rect.x + 1,
+            export_path_hit.rect.y,
+        ),
+        &layout,
     );
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Controls);
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let existing = app.edit_buffer_for_test().expect("plot export path editor");
+    for _ in 0..existing.chars().count() {
+        app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    }
+    app.handle_paste(export_path.display().to_string());
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    move_plot_control_selection_to(&mut app, PlotControlTarget::ExportPdf);
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(export_path.is_file());
+    let pdf = std::fs::read(&export_path).expect("pdf bytes");
+    assert!(pdf.starts_with(b"%PDF-"));
+    assert!(app.status_line_for_test().contains("Saved"));
 }
 
 #[test]
@@ -1925,7 +2184,7 @@ fn keyboard_horizontal_scroll_changes_result_offset() {
         ),
         &layout,
     );
-    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
     assert!(app.active_result_hscroll_for_test() > 0);
 }
 
@@ -2147,6 +2406,42 @@ fn render_app(app: &AppState, width: u16, height: u16) -> String {
     rendered
 }
 
+fn wait_for_plot_render(app: &mut AppState, width: u16, height: u16, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        app.prepare_graphics_for_test(width, height);
+        app.on_tick();
+        if app.plot_protocol().is_some() || app.plot_last_error().is_some() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    app.prepare_graphics_for_test(width, height);
+    app.on_tick();
+    app.plot_protocol().is_some() || app.plot_last_error().is_some()
+}
+
+fn move_plot_control_selection_to(app: &mut AppState, target: PlotControlTarget) {
+    let rows = app.plot_control_rows();
+    let current = rows
+        .iter()
+        .position(|row| row.selected)
+        .expect("selected control");
+    let target_index = rows
+        .iter()
+        .position(|row| row.target == target)
+        .expect("target control");
+    if current < target_index {
+        for _ in current..target_index {
+            app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+    } else {
+        for _ in target_index..current {
+            app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        }
+    }
+}
+
 fn drag_select_visible_text(
     app: &mut AppState,
     width: u16,
@@ -2304,81 +2599,6 @@ fn write_fake_listobs_script(root: &Path, body: &str) -> PathBuf {
 }
 
 #[cfg(unix)]
-fn write_forwarding_listobs_script(
-    root: &Path,
-    log_path: &Path,
-    uv_delay: Duration,
-    uv_marker_path: Option<&Path>,
-) -> PathBuf {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-
-    let schema_json = command_schema("listobs")
-        .render_json_pretty()
-        .expect("serialize schema");
-    let delay_line = if uv_delay.is_zero() {
-        String::new()
-    } else {
-        format!("    sleep {:.3}\n", uv_delay.as_secs_f64())
-    };
-    let marker_line = uv_marker_path
-        .map(|path| {
-            format!(
-                "    printf '%s\\n' 'uv-finished' >> {}\n",
-                sh_quote_path(path)
-            )
-        })
-        .unwrap_or_default();
-    let path = root.join("forwarding-listobs.sh");
-    let script = format!(
-        "#!/bin/sh\nif [ \"$1\" = \"--ui-schema\" ]; then\ncat <<'EOF'\n{schema_json}\nEOF\nexit 0\nfi\nprintf '%s\\n' \"$*\" >> {}\ncase \" $* \" in\n  *\" --uv-coverage-json \"*)\n{delay_line}{marker_line}    ;;\nesac\n{}\n",
-        sh_quote_path(log_path),
-        listobs_forward_exec_snippet(),
-    );
-    fs::write(&path, script).expect("write forwarding script");
-    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&path, permissions).expect("chmod script");
-    path
-}
-
-#[cfg(unix)]
-fn listobs_forward_exec_snippet() -> String {
-    if let Some(path) = std::env::var_os("CARGO_BIN_EXE_listobs") {
-        return format!("exec {} \"$@\"", sh_quote(path.to_string_lossy().as_ref()));
-    }
-
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root");
-    format!(
-        "cd {} && exec {} run -q -p casacore-ms --bin listobs -- \"$@\"",
-        sh_quote_path(repo_root),
-        sh_quote(cargo.to_string_lossy().as_ref())
-    )
-}
-
-#[cfg(unix)]
-fn sh_quote_path(path: &Path) -> String {
-    sh_quote(path.to_string_lossy().as_ref())
-}
-
-#[cfg(unix)]
-fn sh_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-fn read_log_lines(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_string)
-        .collect()
-}
-
-#[cfg(unix)]
 fn write_fake_tablebrowser_script(
     root: &Path,
     responses: &[String],
@@ -2456,7 +2676,15 @@ fn fake_browser_snapshot_json(
     status_line: &str,
     content_lines: Vec<String>,
 ) -> String {
-    fake_browser_snapshot_with_metrics_json(view, status_line, content_lines, None, None, None)
+    fake_browser_snapshot_with_focus_and_metrics_json(
+        view,
+        BrowserFocus::Main,
+        status_line,
+        content_lines,
+        None,
+        None,
+        None,
+    )
 }
 
 fn fake_browser_snapshot_with_metrics_json(
@@ -2467,10 +2695,30 @@ fn fake_browser_snapshot_with_metrics_json(
     horizontal_metrics: Option<BrowserNavigationMetrics>,
     inspector: Option<BrowserInspectorSnapshot>,
 ) -> String {
+    fake_browser_snapshot_with_focus_and_metrics_json(
+        view,
+        BrowserFocus::Main,
+        status_line,
+        content_lines,
+        vertical_metrics,
+        horizontal_metrics,
+        inspector,
+    )
+}
+
+fn fake_browser_snapshot_with_focus_and_metrics_json(
+    view: ProtocolBrowserView,
+    focus: BrowserFocus,
+    status_line: &str,
+    content_lines: Vec<String>,
+    vertical_metrics: Option<BrowserNavigationMetrics>,
+    horizontal_metrics: Option<BrowserNavigationMetrics>,
+    inspector: Option<BrowserInspectorSnapshot>,
+) -> String {
     serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
         capabilities: BrowserCapabilities { editable: false },
         view,
-        focus: BrowserFocus::Main,
+        focus,
         table_path: "/tmp/fake.ms".to_string(),
         breadcrumb: vec![BrowserBreadcrumbEntry {
             label: "fake.ms".to_string(),

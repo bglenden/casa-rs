@@ -13,6 +13,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use casacore_measures_data::load_observatories;
+
 use super::error::MeasureError;
 
 /// WGS84 ellipsoid identifier for sofars (n=1).
@@ -130,6 +132,25 @@ impl MPosition {
         Self {
             values: [longitude_rad, latitude_rad, height_m],
             refer: PositionRef::WGS84,
+        }
+    }
+
+    /// Resolve an observatory name from the bundled/runtime observatory catalog.
+    ///
+    /// This uses the catalog loaded by [`casacore_measures_data::load_observatories`]
+    /// and returns `None` when the name is not present or the stored coordinate
+    /// type is unsupported by the Rust measures layer.
+    pub fn from_observatory_name(name: &str) -> Option<Self> {
+        let (catalog, _source) = load_observatories();
+        let entry = catalog.get(name)?;
+        match entry.observatory_type.to_ascii_uppercase().as_str() {
+            "ITRF" => Some(Self::new_itrf(entry.x_m, entry.y_m, entry.z_m)),
+            "WGS84" => Some(Self::new_wgs84(
+                entry.longitude_deg.to_radians(),
+                entry.latitude_deg.to_radians(),
+                entry.height_m,
+            )),
+            _ => None,
         }
     }
 
@@ -323,5 +344,13 @@ mod tests {
     fn casacore_code_known_values() {
         assert_eq!(PositionRef::ITRF.casacore_code(), 0);
         assert_eq!(PositionRef::WGS84.casacore_code(), 1);
+    }
+
+    #[test]
+    fn observatory_catalog_resolves_known_sites() {
+        let alma = MPosition::from_observatory_name("ALMA").expect("ALMA in catalog");
+        let vla = MPosition::from_observatory_name("vla").expect("VLA in catalog");
+        assert_eq!(alma.refer(), PositionRef::WGS84);
+        assert_eq!(vla.refer(), PositionRef::ITRF);
     }
 }

@@ -7,11 +7,15 @@ use std::time::{Duration, Instant};
 use casacore_ms::listobs::cli::{
     UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
 };
-use casacore_ms::{ListObsSummary, ListObsUvCoverage};
+use casacore_ms::{
+    ListObsOptions, ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
+    ListObsSummary, ListObsUvCoverage, build_listobs_plot_payload_from_summary,
+    build_listobs_uv_plot_payload, export_listobs_plot,
+};
 use casacore_tablebrowser_protocol::{
-    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserInspectorSnapshot,
-    BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as TableBrowserView,
-    BrowserViewport,
+    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
+    BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
+    BrowserView as TableBrowserView, BrowserViewport,
 };
 use casacore_types::quanta::{MvAngle, MvTime};
 use crossterm::event::{
@@ -25,7 +29,7 @@ use crate::browser_client::BrowserClient;
 use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
-use crate::graphics::{UvPlotRenderInput, render_uv_plot, uv_plot_summary};
+use crate::graphics::{ListObsPlotRenderInput, plot_theme, render_plot_image};
 use crate::registry::RegistryApp;
 use crate::ui::UiLayout;
 
@@ -65,6 +69,7 @@ enum ResultAction {
     NextTab,
     Scroll(i16),
     ScrollHorizontal(i16),
+    Activate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +90,8 @@ enum BrowserAction {
 enum EditAction {
     Cancel,
     Commit,
+    CommitAndNext,
+    CommitAndPrevious,
     DeleteBackward,
     Insert(char),
 }
@@ -102,14 +109,16 @@ enum AppAction {
     Quit,
     BackToLauncher,
     ToggleTheme,
-    ToggleParametersPane,
+    TogglePrimaryAuxPane,
     CopySelection,
-    ToggleFocus,
+    FocusNext,
+    FocusPrevious,
     StartRun,
     ToggleAdvanced,
     CancelSession,
     OpenPathChooser,
     ClearSelection,
+    ToggleHelp,
     Parameter(ParameterAction),
     Result(ResultAction),
     Browser(BrowserAction),
@@ -138,7 +147,7 @@ pub(crate) enum ResultTab {
     Spws,
     Sources,
     Antennas,
-    Uv,
+    Plots,
     Stdout,
     Stderr,
 }
@@ -152,7 +161,7 @@ impl ResultTab {
         Self::Spws,
         Self::Sources,
         Self::Antennas,
-        Self::Uv,
+        Self::Plots,
         Self::Stdout,
         Self::Stderr,
     ];
@@ -166,7 +175,7 @@ impl ResultTab {
             Self::Spws => "SPWs",
             Self::Sources => "Sources",
             Self::Antennas => "Antennas",
-            Self::Uv => "UV",
+            Self::Plots => "Plots",
             Self::Stdout => "Stdout",
             Self::Stderr => "Stderr",
         }
@@ -181,7 +190,7 @@ impl ResultTab {
             Self::Spws => 4,
             Self::Sources => 5,
             Self::Antennas => 6,
-            Self::Uv => 7,
+            Self::Plots => 7,
             Self::Stdout => 8,
             Self::Stderr => 9,
         }
@@ -222,6 +231,51 @@ pub(crate) enum ResultContent {
     Lines(Vec<String>),
     Table(TableView),
     Graphic(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlotPaneFocus {
+    Catalog,
+    Canvas,
+    Controls,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusTarget {
+    ParametersPane,
+    ResultPane,
+    PlotCatalog,
+    PlotCanvas,
+    PlotControls,
+    BrowserMain,
+    BrowserInspector,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotCatalogRowView {
+    pub kind: ListObsPlotKind,
+    pub label: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlotControlTarget {
+    Option(&'static str),
+    ExportPath,
+    ExportWidth,
+    ExportHeight,
+    Refresh,
+    ResetControls,
+    CopyCli,
+    ExportPng,
+    ExportPdf,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotControlRowView {
+    pub target: PlotControlTarget,
+    pub text: String,
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -336,11 +390,7 @@ pub(crate) struct AppState {
     result_scrolls: [u16; RESULT_TAB_COUNT],
     result_hscrolls: [u16; RESULT_TAB_COUNT],
     running: Option<RunningState>,
-    uv_loading: Option<UvCoverageLoadState>,
-    uv_coverage: Option<ListObsUvCoverage>,
-    uv_coverage_error: Option<String>,
-    uv_plot_panel: Option<UvPlotPanelState>,
-    last_listobs_uv_plan: Option<ExecutionPlan>,
+    plot_workspace: PlotWorkspaceState,
     path_chooser: Option<PathChooserState>,
     browser_session: Option<BrowserSession>,
     spinner_frame: usize,
@@ -349,6 +399,7 @@ pub(crate) struct AppState {
     dragging_result_hscrollbar: bool,
     dragging_result_hscrollbar_grab: u16,
     output_selection: Option<OutputSelection>,
+    show_help: bool,
     cached_result_text_area: Option<Rect>,
     cached_left_output_area: Option<Rect>,
     last_click: Option<ClickState>,
@@ -361,15 +412,6 @@ struct RunningState {
     process: RunningProcess,
     renderer: Option<String>,
     file_output_path: Option<String>,
-    uv_plan: Option<ExecutionPlan>,
-    cancel_requested: bool,
-}
-
-#[derive(Debug)]
-struct UvCoverageLoadState {
-    process: RunningProcess,
-    stdout: String,
-    stderr: String,
     cancel_requested: bool,
 }
 
@@ -380,10 +422,10 @@ struct BrowserSession {
     viewport: BrowserViewport,
 }
 
-struct UvPlotPanelState {
-    renderer: PanelRenderer<UvPlotRenderInput, String>,
+struct PlotPanelState {
+    renderer: PanelRenderer<ListObsPlotRenderInput, String>,
     font_size: (u16, u16),
-    request_key: Option<UvPlotRequestKey>,
+    request_key: Option<PlotRequestKey>,
     last_error: Option<String>,
     image_size: Option<(u32, u32)>,
 }
@@ -395,22 +437,82 @@ struct PathChooserState {
     last_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct UvPlotRequestKey {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlotRequestKey {
     area: Rect,
     theme_mode: ThemeMode,
-    sample_count: usize,
-    track_count: usize,
-    max_abs_uv_bits: u64,
+    snapshot_generation: u64,
+    plot_kind: ListObsPlotKind,
+    spec_key: String,
+    uv_sample_count: usize,
 }
 
-impl fmt::Debug for UvPlotPanelState {
+impl fmt::Debug for PlotPanelState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UvPlotPanelState")
+        f.debug_struct("PlotPanelState")
             .field("request_key", &self.request_key)
             .field("last_error", &self.last_error)
             .field("image_size", &self.image_size)
             .finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ListObsRunSnapshot {
+    generation: u64,
+    summary: ListObsSummary,
+    path: Option<PathBuf>,
+    options: ListObsOptions,
+    dirty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditTarget {
+    FormField(usize),
+    PlotExportPath,
+    PlotExportWidth,
+    PlotExportHeight,
+}
+
+#[derive(Debug)]
+struct PlotWorkspaceState {
+    focus: PlotPaneFocus,
+    selected_plot: ListObsPlotKind,
+    selected_control: usize,
+    uv_spec: ListObsPlotSpec,
+    antenna_spec: ListObsPlotSpec,
+    scan_spec: ListObsPlotSpec,
+    spw_spec: ListObsPlotSpec,
+    snapshot: Option<ListObsRunSnapshot>,
+    next_generation: u64,
+    cached_uv_coverage: Option<(u64, ListObsUvCoverage)>,
+    uv_error: Option<String>,
+    panel: Option<PlotPanelState>,
+    export_path: String,
+    export_width: u32,
+    export_height: u32,
+}
+
+impl PlotWorkspaceState {
+    fn new() -> Self {
+        let selected_plot = ListObsPlotKind::UvCoverage;
+        Self {
+            focus: PlotPaneFocus::Catalog,
+            selected_plot,
+            selected_control: 0,
+            uv_spec: ListObsPlotSpec::new(ListObsPlotKind::UvCoverage),
+            antenna_spec: ListObsPlotSpec::new(ListObsPlotKind::AntennaLayout),
+            scan_spec: ListObsPlotSpec::new(ListObsPlotKind::ScanTimeline),
+            spw_spec: ListObsPlotSpec::new(ListObsPlotKind::SpectralWindowCoverage),
+            snapshot: None,
+            next_generation: 1,
+            cached_uv_coverage: None,
+            uv_error: None,
+            panel: None,
+            export_path: default_plot_export_path(selected_plot, ListObsPlotExportFormat::Png),
+            export_width: 1600,
+            export_height: 900,
+        }
     }
 }
 
@@ -438,7 +540,7 @@ enum StatusKind {
 
 #[derive(Debug)]
 struct EditState {
-    field_index: usize,
+    target: EditTarget,
     buffer: String,
 }
 
@@ -464,6 +566,7 @@ struct FormSection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClickTarget {
+    DividerToggle,
     Divider,
     ResultScrollbar,
     ResultHorizontalScrollbar,
@@ -471,6 +574,9 @@ enum ClickTarget {
     Section(usize),
     Field(usize),
     Tab(ResultTab),
+    PlotCatalog(ListObsPlotKind),
+    PlotControl(PlotControlTarget),
+    PlotCanvas,
     BrowserTab(BrowserTab),
     PathChooserEntry(usize),
 }
@@ -520,11 +626,7 @@ impl AppState {
             result_scrolls: [0; RESULT_TAB_COUNT],
             result_hscrolls: [0; RESULT_TAB_COUNT],
             running: None,
-            uv_loading: None,
-            uv_coverage: None,
-            uv_coverage_error: None,
-            uv_plot_panel: None,
-            last_listobs_uv_plan: None,
+            plot_workspace: PlotWorkspaceState::new(),
             path_chooser: None,
             browser_session: None,
             spinner_frame: 0,
@@ -533,6 +635,7 @@ impl AppState {
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
             output_selection: None,
+            show_help: false,
             cached_result_text_area: None,
             cached_left_output_area: None,
             last_click: None,
@@ -572,11 +675,7 @@ impl AppState {
             result_scrolls: [0; RESULT_TAB_COUNT],
             result_hscrolls: [0; RESULT_TAB_COUNT],
             running: None,
-            uv_loading: None,
-            uv_coverage: None,
-            uv_coverage_error: None,
-            uv_plot_panel: None,
-            last_listobs_uv_plan: None,
+            plot_workspace: PlotWorkspaceState::new(),
             path_chooser: None,
             browser_session: None,
             spinner_frame: 0,
@@ -585,6 +684,7 @@ impl AppState {
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
             output_selection: None,
+            show_help: false,
             cached_result_text_area: None,
             cached_left_output_area: None,
             last_click: None,
@@ -602,7 +702,7 @@ impl AppState {
     }
 
     fn has_active_session(&self) -> bool {
-        self.running.is_some() || self.browser_session.is_some() || self.uv_loading.is_some()
+        self.running.is_some() || self.browser_session.is_some()
     }
 
     fn browser_session(&self) -> Option<&BrowserSession> {
@@ -724,13 +824,16 @@ impl AppState {
         let Some(edit_state) = self.edit_state.take() else {
             return;
         };
-        if edit_state.field_index == field_index {
-            if let Some(field) = self.fields.get_mut(field_index) {
-                field.set_text(edit_state.buffer);
-                self.clear_cached_uv_coverage();
+        match edit_state.target {
+            EditTarget::FormField(target_index) if target_index == field_index => {
+                if let Some(field) = self.fields.get_mut(field_index) {
+                    field.set_text(edit_state.buffer);
+                    self.mark_plot_snapshot_dirty();
+                }
             }
-        } else {
-            self.edit_state = Some(edit_state);
+            _ => {
+                self.edit_state = Some(edit_state);
+            }
         }
     }
 
@@ -764,7 +867,7 @@ impl AppState {
         let value = absolute_display_path(selected_path);
         if let Some(field) = self.fields.get_mut(selected_field_index) {
             field.set_text(value.clone());
-            self.clear_cached_uv_coverage();
+            self.mark_plot_snapshot_dirty();
         }
         self.close_path_chooser();
         self.result.status_line = format!("Selected path: {value}");
@@ -789,7 +892,7 @@ impl AppState {
 
     pub(crate) fn on_tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % spinner_frames(self.theme_mode()).len();
-        self.pump_uv_plot_panel();
+        self.pump_plot_panel();
     }
 
     fn key_profile(&self) -> KeyProfile {
@@ -811,6 +914,137 @@ impl AppState {
         }
     }
 
+    fn browser_inspector_reachable(&self) -> bool {
+        !self.parameters_pane_collapsed()
+            && self
+                .browser_session()
+                .is_some_and(|session| session.snapshot.inspector.is_some())
+    }
+
+    fn focus_ring(&self) -> Vec<FocusTarget> {
+        if self.browser_session.is_some() {
+            let mut ring = vec![FocusTarget::BrowserMain];
+            if self.browser_inspector_reachable() {
+                ring.push(FocusTarget::BrowserInspector);
+            }
+            return ring;
+        }
+
+        let mut ring = Vec::new();
+        if !self.parameters_pane_collapsed() {
+            ring.push(FocusTarget::ParametersPane);
+        }
+        if self.active_result_tab == ResultTab::Plots {
+            ring.extend([
+                FocusTarget::PlotCatalog,
+                FocusTarget::PlotCanvas,
+                FocusTarget::PlotControls,
+            ]);
+        } else {
+            ring.push(FocusTarget::ResultPane);
+        }
+        ring
+    }
+
+    fn current_focus_target(&self) -> FocusTarget {
+        if let Some(session) = self.browser_session() {
+            return match session.snapshot.focus {
+                BrowserFocus::Inspector if self.browser_inspector_reachable() => {
+                    FocusTarget::BrowserInspector
+                }
+                _ => FocusTarget::BrowserMain,
+            };
+        }
+
+        match self.pane_focus {
+            PaneFocus::Parameters if !self.parameters_pane_collapsed() => {
+                FocusTarget::ParametersPane
+            }
+            PaneFocus::Parameters | PaneFocus::Result => {
+                if self.active_result_tab == ResultTab::Plots {
+                    match self.plot_workspace.focus {
+                        PlotPaneFocus::Catalog => FocusTarget::PlotCatalog,
+                        PlotPaneFocus::Canvas => FocusTarget::PlotCanvas,
+                        PlotPaneFocus::Controls => FocusTarget::PlotControls,
+                    }
+                } else {
+                    FocusTarget::ResultPane
+                }
+            }
+        }
+    }
+
+    fn set_focus_target(&mut self, target: FocusTarget) {
+        match target {
+            FocusTarget::ParametersPane => {
+                if !self.parameters_pane_collapsed() {
+                    self.pane_focus = PaneFocus::Parameters;
+                }
+            }
+            FocusTarget::ResultPane => {
+                self.pane_focus = PaneFocus::Result;
+            }
+            FocusTarget::PlotCatalog => {
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Catalog;
+            }
+            FocusTarget::PlotCanvas => {
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Canvas;
+            }
+            FocusTarget::PlotControls => {
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Controls;
+            }
+            FocusTarget::BrowserMain => {
+                self.pane_focus = PaneFocus::Result;
+                if self
+                    .browser_session()
+                    .is_some_and(|session| session.snapshot.focus != BrowserFocus::Main)
+                {
+                    self.send_browser_command(BrowserCommand::SetFocus {
+                        focus: BrowserFocus::Main,
+                        viewport: None,
+                    });
+                }
+            }
+            FocusTarget::BrowserInspector => {
+                if self.browser_inspector_reachable() {
+                    self.pane_focus = PaneFocus::Parameters;
+                    if self
+                        .browser_session()
+                        .is_some_and(|session| session.snapshot.focus != BrowserFocus::Inspector)
+                    {
+                        self.send_browser_command(BrowserCommand::SetFocus {
+                            focus: BrowserFocus::Inspector,
+                            viewport: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn cycle_focus(&mut self, forward: bool) {
+        let ring = self.focus_ring();
+        if ring.is_empty() {
+            return;
+        }
+        let current = self.current_focus_target();
+        let index = ring
+            .iter()
+            .position(|target| *target == current)
+            .unwrap_or(0);
+        let next = if forward {
+            (index + 1) % ring.len()
+        } else if index == 0 {
+            ring.len() - 1
+        } else {
+            index - 1
+        };
+        self.set_focus_target(ring[next]);
+    }
+
     fn resolve_key_action(&self, key_event: KeyEvent) -> Option<AppAction> {
         if key_event.kind != KeyEventKind::Press {
             return None;
@@ -822,6 +1056,7 @@ impl AppState {
 
     fn resolve_default_key_action(&self, key_event: KeyEvent) -> Option<AppAction> {
         let mode = self.input_mode();
+        let plots_active = mode == InputMode::Result && self.active_result_tab == ResultTab::Plots;
 
         if mode == InputMode::PathChooser {
             return match key_event.code {
@@ -838,7 +1073,19 @@ impl AppState {
             };
         }
 
+        if self.show_help {
+            return match key_event.code {
+                KeyCode::Esc | KeyCode::Char('?') if key_event.modifiers.is_empty() => {
+                    Some(AppAction::ToggleHelp)
+                }
+                _ => None,
+            };
+        }
+
         match key_event.code {
+            KeyCode::Char('?') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return Some(AppAction::ToggleHelp);
+            }
             KeyCode::Char('q') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
                 return Some(AppAction::Quit);
             }
@@ -852,7 +1099,7 @@ impl AppState {
                 return Some(AppAction::BackToLauncher);
             }
             KeyCode::Char('p') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
-                return Some(AppAction::ToggleParametersPane);
+                return Some(AppAction::TogglePrimaryAuxPane);
             }
             KeyCode::Char('y') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
                 return Some(AppAction::CopySelection);
@@ -883,12 +1130,35 @@ impl AppState {
             {
                 return Some(AppAction::OpenPathChooser);
             }
-            KeyCode::Tab | KeyCode::BackTab if mode == InputMode::Browser => {
-                return Some(AppAction::Browser(BrowserAction::CycleView {
-                    forward: key_event.code == KeyCode::Tab,
-                }));
+            KeyCode::Tab if mode == InputMode::Edit => {
+                return Some(AppAction::Edit(EditAction::CommitAndNext));
             }
-            KeyCode::Tab | KeyCode::BackTab => return Some(AppAction::ToggleFocus),
+            KeyCode::BackTab if mode == InputMode::Edit => {
+                return Some(AppAction::Edit(EditAction::CommitAndPrevious));
+            }
+            KeyCode::Tab => return Some(AppAction::FocusNext),
+            KeyCode::BackTab => return Some(AppAction::FocusPrevious),
+            KeyCode::Char('[') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return if mode == InputMode::Browser {
+                    Some(AppAction::Browser(BrowserAction::CycleView {
+                        forward: false,
+                    }))
+                } else {
+                    Some(AppAction::Result(ResultAction::PreviousTab))
+                };
+            }
+            KeyCode::Char(']') if key_event.modifiers.is_empty() && mode != InputMode::Edit => {
+                return if mode == InputMode::Browser {
+                    Some(AppAction::Browser(BrowserAction::CycleView {
+                        forward: true,
+                    }))
+                } else {
+                    Some(AppAction::Result(ResultAction::NextTab))
+                };
+            }
+            KeyCode::Enter if plots_active && key_event.modifiers.is_empty() => {
+                return Some(AppAction::Result(ResultAction::Activate));
+            }
             _ => {}
         }
 
@@ -920,9 +1190,10 @@ impl AppState {
                 self.return_to_launcher = true;
             }
             AppAction::ToggleTheme => self.toggle_theme(),
-            AppAction::ToggleParametersPane => self.toggle_parameters_pane(),
+            AppAction::TogglePrimaryAuxPane => self.toggle_primary_aux_pane(),
             AppAction::CopySelection => self.copy_output_selection(),
-            AppAction::ToggleFocus => self.toggle_focus(),
+            AppAction::FocusNext => self.cycle_focus(true),
+            AppAction::FocusPrevious => self.cycle_focus(false),
             AppAction::StartRun => {
                 if !self.has_active_session() {
                     self.start_run();
@@ -932,6 +1203,7 @@ impl AppState {
             AppAction::CancelSession => self.cancel_current(),
             AppAction::OpenPathChooser => self.open_path_chooser_for_selected_field(),
             AppAction::ClearSelection => self.clear_output_selection(),
+            AppAction::ToggleHelp => self.show_help = !self.show_help,
             AppAction::Parameter(action) => self.apply_parameter_action(action),
             AppAction::Result(action) => self.apply_result_action(action),
             AppAction::Browser(action) => self.apply_browser_action(action),
@@ -1020,7 +1292,6 @@ impl AppState {
                 }
             }
         }
-        self.drain_uv_loading_events();
     }
 
     pub(crate) fn app_category(&self) -> &str {
@@ -1031,16 +1302,138 @@ impl AppState {
         self.app.display_name
     }
 
-    pub(crate) fn footer_text(&self) -> &'static str {
+    pub(crate) fn footer_text(&self) -> String {
+        let mut parts = vec!["Tab/Shift-Tab focus".to_string(), "t theme".to_string()];
         if self.edit_state.is_some() {
-            "Tab pane  Enter save  Esc cancel  Bksp delete  p pane  t theme  q quit"
+            parts.extend([
+                "Enter save".to_string(),
+                "Esc cancel".to_string(),
+                "Bksp delete".to_string(),
+            ]);
         } else if self.browser_session.is_some() {
-            "Tab view  Arrows  PgUp/PgDn  Enter  y copy  Esc back/clear  Bksp parent table  p pane  b apps  x close  t theme  q quit"
-        } else if self.running.is_some() {
-            "Tab pane  h/l tabs  j/k scroll  [/] hscr  y copy  p pane  b apps  x cancel  t theme  q quit"
+            parts.extend([
+                "[/] views".to_string(),
+                "Arrows/hjkl move".to_string(),
+                "PgUp/PgDn page".to_string(),
+                "Enter open".to_string(),
+                "Esc back".to_string(),
+                "Bksp parent table".to_string(),
+                "y copy".to_string(),
+            ]);
+        } else if self.active_result_tab == ResultTab::Plots {
+            parts.extend([
+                "[/] tabs".to_string(),
+                "Arrows/hjkl move".to_string(),
+                "Enter activate".to_string(),
+                "y copy".to_string(),
+            ]);
         } else {
-            "Tab pane  h/l tabs  Arrows/jk  [/] hscr  y copy  a adv  p pane  b apps  r run  t theme  q quit"
+            parts.extend([
+                "[/] tabs".to_string(),
+                "Arrows/hjkl move".to_string(),
+                "y copy".to_string(),
+            ]);
+            if self.running.is_none() {
+                parts.push("a adv".to_string());
+                parts.push("r run".to_string());
+            } else {
+                parts.push("x cancel".to_string());
+            }
         }
+        parts.extend([
+            "p pane".to_string(),
+            "? help".to_string(),
+            "b apps".to_string(),
+            "q quit".to_string(),
+        ]);
+        parts.join("  ")
+    }
+
+    pub(crate) fn help_visible(&self) -> bool {
+        self.show_help
+    }
+
+    pub(crate) fn help_overlay_lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            "Key Help".to_string(),
+            String::new(),
+            "Global: Tab/Shift-Tab focus  [/] primary views  ? help".to_string(),
+            "Global: p primary pane  y copy  b apps  t theme  q quit".to_string(),
+        ];
+        if self.running.is_none() && self.browser_session.is_none() && self.edit_state.is_none() {
+            lines.push("Global: r run  a advanced options".to_string());
+        } else if self.running.is_some() {
+            lines.push("Global: x cancel active process".to_string());
+        } else if self.browser_session.is_some() {
+            lines.push("Global: x close browser session".to_string());
+        }
+        lines.push(String::new());
+
+        if self.edit_state.is_some() {
+            lines.extend([
+                "Edit: Enter save  Tab next field  Shift-Tab previous field".to_string(),
+                "Edit: Esc cancel  Backspace delete".to_string(),
+            ]);
+            return lines;
+        }
+
+        match self.current_focus_target() {
+            FocusTarget::ParametersPane => {
+                lines.extend([
+                    "Focus: Parameters pane".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Adjust: Left/Right".to_string(),
+                    "Activate: Enter or Space".to_string(),
+                ]);
+            }
+            FocusTarget::ResultPane => {
+                lines.extend([
+                    "Focus: Result pane".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Scroll horizontally: Left/Right or h/l".to_string(),
+                ]);
+            }
+            FocusTarget::PlotCatalog => {
+                lines.extend([
+                    "Focus: Plot catalog".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Activate: Enter".to_string(),
+                ]);
+            }
+            FocusTarget::PlotCanvas => {
+                lines.extend([
+                    "Focus: Plot canvas".to_string(),
+                    "Canvas is passive in this wave.".to_string(),
+                ]);
+            }
+            FocusTarget::PlotControls => {
+                lines.extend([
+                    "Focus: Plot controls".to_string(),
+                    "Move: Up/Down or j/k".to_string(),
+                    "Adjust: Left/Right or h/l".to_string(),
+                    "Activate: Enter".to_string(),
+                ]);
+            }
+            FocusTarget::BrowserMain => {
+                lines.extend([
+                    "Focus: Browser main pane".to_string(),
+                    "Move: Arrows or h/j/k/l".to_string(),
+                    "Page: PgUp/PgDn".to_string(),
+                    "Activate: Enter".to_string(),
+                    "Back: Esc  Parent table: Backspace".to_string(),
+                ]);
+            }
+            FocusTarget::BrowserInspector => {
+                lines.extend([
+                    "Focus: Browser inspector".to_string(),
+                    "Move: Arrows or h/j/k/l".to_string(),
+                    "Page: PgUp/PgDn".to_string(),
+                    "Activate: Enter".to_string(),
+                    "Back: Esc".to_string(),
+                ]);
+            }
+        }
+        lines
     }
 
     pub(crate) fn parameter_title(&self) -> String {
@@ -1369,7 +1762,7 @@ impl AppState {
                 Some(summary) => ResultContent::Lines(build_compact_antenna_lines(summary)),
                 None => ResultContent::Lines(vec!["No antenna table available yet.".to_string()]),
             },
-            ResultTab::Uv => ResultContent::Graphic(self.uv_tab_summary()),
+            ResultTab::Plots => ResultContent::Graphic(self.plots_tab_summary()),
             ResultTab::Stdout => ResultContent::Lines(raw_lines("stdout", &self.result.stdout)),
             ResultTab::Stderr => ResultContent::Lines(raw_lines("stderr", &self.result.stderr)),
         }
@@ -1399,7 +1792,7 @@ impl AppState {
             .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
         let result = field.apply_text_value(value);
         if result.is_ok() {
-            self.clear_cached_uv_coverage();
+            self.mark_plot_snapshot_dirty();
         }
         result
     }
@@ -1416,7 +1809,7 @@ impl AppState {
             .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
         let result = field.apply_toggle_value(value);
         if result.is_ok() {
-            self.clear_cached_uv_coverage();
+            self.mark_plot_snapshot_dirty();
         }
         result
     }
@@ -1433,8 +1826,8 @@ impl AppState {
     fn activate_result_tab(&mut self, tab: ResultTab) {
         self.clear_output_selection();
         self.active_result_tab = tab;
-        if self.active_result_tab == ResultTab::Uv {
-            self.ensure_uv_coverage_started();
+        if self.active_result_tab == ResultTab::Plots {
+            self.sync_plot_export_path_for_selected_plot();
         }
     }
 
@@ -1451,17 +1844,17 @@ impl AppState {
         self.result.status_kind = StatusKind::Info;
     }
 
-    fn uv_tab_summary(&self) -> String {
-        if let Some(coverage) = self.uv_coverage.as_ref() {
-            return uv_plot_summary(coverage);
+    fn plots_tab_summary(&self) -> String {
+        if let Some(error) = self.plot_workspace.uv_error.as_deref() {
+            return format!("Plots unavailable. {error}");
         }
-        if self.uv_loading.is_some() {
-            return "Loading UV coverage...".to_string();
+        if let Some(summary) = self.current_plot_summary() {
+            return summary.to_string();
         }
-        if let Some(error) = self.uv_coverage_error.as_ref() {
-            return format!("UV coverage unavailable. {error}");
+        if self.plot_workspace.snapshot.is_some() {
+            return "Select a plot from the catalog to render it.".to_string();
         }
-        "Open the UV tab to load wavelength-space UV coverage.".to_string()
+        "Run listobs to populate the plot workspace.".to_string()
     }
 
     #[cfg(test)]
@@ -1475,8 +1868,11 @@ impl AppState {
     }
 
     #[cfg(test)]
-    pub(crate) fn uv_loading_active_for_test(&self) -> bool {
-        self.uv_loading.is_some()
+    pub(crate) fn plot_snapshot_dirty_for_test(&self) -> bool {
+        self.plot_workspace
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.dirty)
     }
 
     #[cfg(test)]
@@ -1488,17 +1884,6 @@ impl AppState {
         }
         self.drain_execution_events();
         self.running.is_none()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn wait_for_all_idle_for_test(&mut self, timeout: Duration) -> bool {
-        let start = Instant::now();
-        while (self.running.is_some() || self.uv_loading.is_some()) && start.elapsed() < timeout {
-            self.drain_execution_events();
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        self.drain_execution_events();
-        self.running.is_none() && self.uv_loading.is_none()
     }
 
     #[cfg(test)]
@@ -1528,7 +1913,10 @@ impl AppState {
 
     #[cfg(test)]
     pub(crate) fn uv_coverage_for_test(&self) -> Option<&ListObsUvCoverage> {
-        self.uv_coverage.as_ref()
+        self.plot_workspace
+            .cached_uv_coverage
+            .as_ref()
+            .map(|(_, coverage)| coverage)
     }
 
     #[cfg(test)]
@@ -1570,6 +1958,13 @@ impl AppState {
             .into_iter()
             .find(|row| row.selected)
             .map(|row| row.text)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn browser_focus_for_test(&self) -> Option<BrowserFocus> {
+        self.browser_session
+            .as_ref()
+            .map(|session| session.snapshot.focus)
     }
 
     #[cfg(test)]
@@ -1632,11 +2027,10 @@ impl AppState {
     }
 
     pub(crate) fn prepare_graphics(&mut self, layout: &UiLayout) {
-        if self.active_result_tab != ResultTab::Uv {
+        if self.active_result_tab != ResultTab::Plots {
             return;
         }
-        self.ensure_uv_coverage_started();
-        self.ensure_uv_plot_requested(result_text_area(layout));
+        self.ensure_plot_requested(layout);
     }
 
     fn visible_text_buffer_for_area(
@@ -1920,11 +2314,38 @@ impl AppState {
     }
 
     fn apply_result_action(&mut self, action: ResultAction) {
+        if self.active_result_tab == ResultTab::Plots {
+            match action {
+                ResultAction::PreviousTab => {
+                    if self.plot_workspace.focus == PlotPaneFocus::Controls {
+                        self.adjust_selected_plot_control(false);
+                    } else {
+                        self.cycle_visible_result_tab(false);
+                    }
+                }
+                ResultAction::NextTab => {
+                    if self.plot_workspace.focus == PlotPaneFocus::Controls {
+                        self.adjust_selected_plot_control(true);
+                    } else {
+                        self.cycle_visible_result_tab(true);
+                    }
+                }
+                ResultAction::Scroll(delta) => self.scroll_active_plot_workspace(delta),
+                ResultAction::ScrollHorizontal(delta) => {
+                    if self.plot_workspace.focus == PlotPaneFocus::Controls {
+                        self.adjust_selected_plot_control(delta >= 0);
+                    }
+                }
+                ResultAction::Activate => self.activate_plot_workspace_selection(),
+            }
+            return;
+        }
         match action {
             ResultAction::PreviousTab => self.cycle_visible_result_tab(false),
             ResultAction::NextTab => self.cycle_visible_result_tab(true),
             ResultAction::Scroll(delta) => self.scroll_active_result(delta),
             ResultAction::ScrollHorizontal(delta) => self.scroll_active_result_horizontal(delta),
+            ResultAction::Activate => {}
         }
     }
 
@@ -2010,10 +2431,9 @@ impl AppState {
             .or_else(|| {
                 if self.browser_session.is_some() {
                     self.browser_clipboard_payload()
-                } else if self.active_result_tab == ResultTab::Uv {
-                    self.uv_coverage
-                        .as_ref()
-                        .map(|coverage| (uv_plot_summary(coverage), "uv coverage summary"))
+                } else if self.active_result_tab == ResultTab::Plots {
+                    self.current_plot_summary()
+                        .map(|summary| (summary, "plot summary"))
                 } else {
                     None
                 }
@@ -2047,10 +2467,20 @@ impl AppState {
         match action {
             EditAction::Cancel => self.edit_state = None,
             EditAction::Commit => {
-                if let Some(field) = self.fields.get_mut(edit_state.field_index) {
-                    field.set_text(edit_state.buffer.clone());
-                }
-                self.edit_state = None;
+                let committed = self.edit_state.take().expect("edit state");
+                self.commit_plot_or_field_edit(committed);
+            }
+            EditAction::CommitAndNext => {
+                let committed = self.edit_state.take().expect("edit state");
+                let target = committed.target;
+                self.commit_plot_or_field_edit(committed);
+                self.advance_after_edit(target, true);
+            }
+            EditAction::CommitAndPrevious => {
+                let committed = self.edit_state.take().expect("edit state");
+                let target = committed.target;
+                self.commit_plot_or_field_edit(committed);
+                self.advance_after_edit(target, false);
             }
             EditAction::DeleteBackward => {
                 edit_state.buffer.pop();
@@ -2061,7 +2491,100 @@ impl AppState {
         }
     }
 
+    fn advance_after_edit(&mut self, target: EditTarget, forward: bool) {
+        match target {
+            EditTarget::FormField(field_index) => self.advance_form_edit(field_index, forward),
+            EditTarget::PlotExportPath => {
+                self.advance_plot_edit(PlotControlTarget::ExportPath, forward)
+            }
+            EditTarget::PlotExportWidth => {
+                self.advance_plot_edit(PlotControlTarget::ExportWidth, forward)
+            }
+            EditTarget::PlotExportHeight => {
+                self.advance_plot_edit(PlotControlTarget::ExportHeight, forward)
+            }
+        }
+    }
+
+    fn advance_form_edit(&mut self, field_index: usize, forward: bool) {
+        let targets = self
+            .visible_form_targets()
+            .into_iter()
+            .filter_map(|target| match target {
+                FormSelection::Field(index) => Some(index),
+                FormSelection::Section(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let Some(position) = targets
+            .iter()
+            .position(|candidate| *candidate == field_index)
+        else {
+            return;
+        };
+        let next = if forward {
+            (position + 1) % targets.len()
+        } else if position == 0 {
+            targets.len() - 1
+        } else {
+            position - 1
+        };
+        let next_field = targets[next];
+        self.selected_form = FormSelection::Field(next_field);
+        self.pane_focus = PaneFocus::Parameters;
+        if self
+            .fields
+            .get(next_field)
+            .is_some_and(|field| matches!(field.value, FormValue::Text(_)))
+        {
+            self.enter_edit_mode(next_field);
+        }
+    }
+
+    fn advance_plot_edit(&mut self, current: PlotControlTarget, forward: bool) {
+        const EDITABLE_TARGETS: [PlotControlTarget; 3] = [
+            PlotControlTarget::ExportPath,
+            PlotControlTarget::ExportWidth,
+            PlotControlTarget::ExportHeight,
+        ];
+        let Some(position) = EDITABLE_TARGETS
+            .iter()
+            .position(|target| *target == current)
+        else {
+            return;
+        };
+        let next = if forward {
+            (position + 1) % EDITABLE_TARGETS.len()
+        } else if position == 0 {
+            EDITABLE_TARGETS.len() - 1
+        } else {
+            position - 1
+        };
+        let next_target = EDITABLE_TARGETS[next];
+        if let Some(index) = self
+            .plot_control_rows()
+            .iter()
+            .position(|row| row.target == next_target)
+        {
+            self.plot_workspace.selected_control = index;
+            self.pane_focus = PaneFocus::Result;
+            self.plot_workspace.focus = PlotPaneFocus::Controls;
+            self.activate_plot_workspace_selection();
+        }
+    }
+
     fn handle_left_mouse_down(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
+        if layout.in_divider_toggle(mouse_event.column, mouse_event.row) {
+            self.clear_output_selection();
+            self.dragging_divider = false;
+            self.dragging_result_scrollbar = false;
+            self.toggle_primary_aux_pane();
+            self.last_click = Some(ClickState {
+                target: ClickTarget::DividerToggle,
+                at: Instant::now(),
+            });
+            return;
+        }
+
         if layout.in_divider(mouse_event.column, mouse_event.row) {
             self.clear_output_selection();
             self.dragging_divider = true;
@@ -2125,14 +2648,75 @@ impl AppState {
             return;
         }
 
+        if self.active_result_tab == ResultTab::Plots {
+            if let Some(row) = layout.plot_catalog_at(mouse_event.column, mouse_event.row) {
+                self.pane_focus = PaneFocus::Result;
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.plot_workspace.focus = PlotPaneFocus::Catalog;
+                self.set_selected_plot(row.kind);
+                self.last_click = Some(ClickState {
+                    target: ClickTarget::PlotCatalog(row.kind),
+                    at: Instant::now(),
+                });
+                return;
+            }
+
+            if let Some(target) = layout.plot_control_at(mouse_event.column, mouse_event.row) {
+                self.pane_focus = PaneFocus::Result;
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.plot_workspace.focus = PlotPaneFocus::Controls;
+                if let Some(index) = self
+                    .plot_control_rows()
+                    .iter()
+                    .position(|row| row.target == target)
+                {
+                    self.plot_workspace.selected_control = index;
+                }
+                self.last_click = Some(ClickState {
+                    target: ClickTarget::PlotControl(target),
+                    at: Instant::now(),
+                });
+                match target {
+                    PlotControlTarget::Refresh
+                    | PlotControlTarget::ResetControls
+                    | PlotControlTarget::CopyCli
+                    | PlotControlTarget::ExportPng
+                    | PlotControlTarget::ExportPdf => self.activate_plot_workspace_selection(),
+                    PlotControlTarget::Option(_)
+                    | PlotControlTarget::ExportPath
+                    | PlotControlTarget::ExportWidth
+                    | PlotControlTarget::ExportHeight => {}
+                }
+                return;
+            }
+
+            if layout.in_plot_canvas(mouse_event.column, mouse_event.row) {
+                self.pane_focus = PaneFocus::Result;
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.plot_workspace.focus = PlotPaneFocus::Canvas;
+                self.last_click = Some(ClickState {
+                    target: ClickTarget::PlotCanvas,
+                    at: Instant::now(),
+                });
+                return;
+            }
+        }
+
         if let Some((target, point)) =
             self.selection_point_at(mouse_event.column, mouse_event.row, layout)
         {
-            self.pane_focus = if target == OutputPane::Result {
-                PaneFocus::Result
+            if self.browser_session.is_some() {
+                match target {
+                    OutputPane::Result => self.set_focus_target(FocusTarget::BrowserMain),
+                    OutputPane::LeftOutput => self.set_focus_target(FocusTarget::BrowserInspector),
+                }
             } else {
-                PaneFocus::Parameters
-            };
+                self.pane_focus = if target == OutputPane::Result {
+                    PaneFocus::Result
+                } else {
+                    PaneFocus::Parameters
+                };
+            }
             self.begin_output_selection(target, point);
             self.last_click = Some(ClickState {
                 target: ClickTarget::Pane(self.pane_focus),
@@ -2142,7 +2726,11 @@ impl AppState {
         }
 
         if layout.in_result_block(mouse_event.column, mouse_event.row) {
-            self.pane_focus = PaneFocus::Result;
+            if self.browser_session.is_some() {
+                self.set_focus_target(FocusTarget::BrowserMain);
+            } else {
+                self.pane_focus = PaneFocus::Result;
+            }
             self.clear_output_selection_for_target(OutputPane::Result);
             self.last_click = Some(ClickState {
                 target: ClickTarget::Pane(PaneFocus::Result),
@@ -2156,7 +2744,11 @@ impl AppState {
         }
 
         if let Some(target) = layout.form_target_at(mouse_event.column, mouse_event.row) {
-            self.pane_focus = PaneFocus::Parameters;
+            if self.browser_session.is_some() {
+                self.set_focus_target(FocusTarget::BrowserInspector);
+            } else {
+                self.pane_focus = PaneFocus::Parameters;
+            }
             let click_target = match target {
                 FormSelection::Section(index) => ClickTarget::Section(index),
                 FormSelection::Field(index) => ClickTarget::Field(index),
@@ -2227,6 +2819,35 @@ impl AppState {
     }
 
     fn handle_mouse_scroll(&mut self, mouse_event: MouseEvent, layout: &UiLayout, delta: i16) {
+        if self.active_result_tab == ResultTab::Plots {
+            if layout
+                .plot_catalog_at(mouse_event.column, mouse_event.row)
+                .is_some()
+            {
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Catalog;
+                self.scroll_active_plot_workspace(delta);
+                return;
+            }
+            if layout
+                .plot_control_at(mouse_event.column, mouse_event.row)
+                .is_some()
+            {
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Controls;
+                self.scroll_active_plot_workspace(delta);
+                return;
+            }
+            if layout.in_plot_canvas(mouse_event.column, mouse_event.row) {
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Canvas;
+                return;
+            }
+        }
+
         if layout.in_result_block(mouse_event.column, mouse_event.row) {
             self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
@@ -2252,6 +2873,34 @@ impl AppState {
     }
 
     fn handle_mouse_hscroll(&mut self, mouse_event: MouseEvent, layout: &UiLayout, delta: i16) {
+        if self.active_result_tab == ResultTab::Plots {
+            if layout
+                .plot_control_at(mouse_event.column, mouse_event.row)
+                .is_some()
+            {
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Controls;
+                self.adjust_selected_plot_control(delta >= 0);
+                return;
+            }
+            if layout
+                .plot_catalog_at(mouse_event.column, mouse_event.row)
+                .is_some()
+            {
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Catalog;
+                return;
+            }
+            if layout.in_plot_canvas(mouse_event.column, mouse_event.row) {
+                self.clear_output_selection_for_target(OutputPane::Result);
+                self.pane_focus = PaneFocus::Result;
+                self.plot_workspace.focus = PlotPaneFocus::Canvas;
+                return;
+            }
+        }
+
         if layout.in_result_block(mouse_event.column, mouse_event.row) {
             self.clear_output_selection_for_target(OutputPane::Result);
             self.pane_focus = PaneFocus::Result;
@@ -2266,19 +2915,6 @@ impl AppState {
     fn toggle_theme(&mut self) {
         let next = self.theme_mode().toggle();
         self.config_store.set_theme_mode(next);
-    }
-
-    fn toggle_focus(&mut self) {
-        self.pane_focus = match self.pane_focus {
-            PaneFocus::Parameters => PaneFocus::Result,
-            PaneFocus::Result => {
-                if self.has_active_session() || self.sections.is_empty() {
-                    PaneFocus::Result
-                } else {
-                    PaneFocus::Parameters
-                }
-            }
-        };
     }
 
     fn toggle_advanced(&mut self) {
@@ -2350,7 +2986,7 @@ impl AppState {
         };
         if let FormValue::Text(value) = &field.value {
             self.edit_state = Some(EditState {
-                field_index,
+                target: EditTarget::FormField(field_index),
                 buffer: value.clone(),
             });
         }
@@ -2380,7 +3016,10 @@ impl AppState {
             .map(|session| BrowserTab::from_view(session.snapshot.view))
     }
 
-    fn toggle_parameters_pane(&mut self) {
+    fn toggle_primary_aux_pane(&mut self) {
+        if self.browser_session.is_some() || self.sections.is_empty() {
+            return;
+        }
         self.clear_output_selection();
         let next = if self.parameters_pane_collapsed() {
             self.config_store.pane_restore_ratio()
@@ -2389,7 +3028,13 @@ impl AppState {
         };
         self.config_store.set_pane_split_ratio(next);
         if next == 0.0 {
-            self.pane_focus = PaneFocus::Result;
+            self.set_focus_target(if self.active_result_tab == ResultTab::Plots {
+                FocusTarget::PlotCatalog
+            } else {
+                FocusTarget::ResultPane
+            });
+        } else if self.focus_ring().contains(&FocusTarget::ParametersPane) {
+            self.pane_focus = PaneFocus::Parameters;
         }
     }
 
@@ -2681,8 +3326,6 @@ impl AppState {
     fn start_run(&mut self) {
         self.clear_output_selection();
         self.commit_edit_buffer();
-        self.clear_cached_uv_coverage();
-        self.last_listobs_uv_plan = None;
 
         if self.schema.is_none() {
             self.result.status_line = "Cannot run without a loaded UI schema.".to_string();
@@ -2697,52 +3340,33 @@ impl AppState {
         }
 
         match self.build_execution_plan() {
-            Ok(plan) => {
-                let uv_plan = if self.app.id == "listobs" {
-                    match self.build_uv_execution_plan() {
-                        Ok(uv_plan) => Some(uv_plan),
-                        Err(error) => {
-                            self.result.status_line =
-                                "Cannot prepare UV coverage request.".to_string();
-                            self.result.status_kind = StatusKind::Error;
-                            self.result.stderr = format!("{error}\n");
-                            self.active_result_tab = ResultTab::Stderr;
-                            return;
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                match spawn_process(&plan) {
-                    Ok(process) => {
-                        self.result = ResultState {
-                            status_line: format!("Running {}...", self.app.id),
-                            status_kind: StatusKind::Running,
-                            file_output_path: plan.file_output_path.clone(),
-                            ..ResultState::default()
-                        };
-                        self.edit_state = None;
-                        self.pane_focus = PaneFocus::Result;
-                        self.active_result_tab = ResultTab::Overview;
-                        self.result_scrolls = [0; RESULT_TAB_COUNT];
-                        self.result_hscrolls = [0; RESULT_TAB_COUNT];
-                        self.running = Some(RunningState {
-                            process,
-                            renderer: plan.renderer,
-                            file_output_path: plan.file_output_path,
-                            uv_plan,
-                            cancel_requested: false,
-                        });
-                    }
-                    Err(error) => {
-                        self.result.status_line = format!("Failed to launch {}.", self.app.id);
-                        self.result.status_kind = StatusKind::Error;
-                        self.result.stderr = format!("{error}\n");
-                        self.active_result_tab = ResultTab::Stderr;
-                    }
+            Ok(plan) => match spawn_process(&plan) {
+                Ok(process) => {
+                    self.result = ResultState {
+                        status_line: format!("Running {}...", self.app.id),
+                        status_kind: StatusKind::Running,
+                        file_output_path: plan.file_output_path.clone(),
+                        ..ResultState::default()
+                    };
+                    self.edit_state = None;
+                    self.pane_focus = PaneFocus::Result;
+                    self.active_result_tab = ResultTab::Overview;
+                    self.result_scrolls = [0; RESULT_TAB_COUNT];
+                    self.result_hscrolls = [0; RESULT_TAB_COUNT];
+                    self.running = Some(RunningState {
+                        process,
+                        renderer: plan.renderer,
+                        file_output_path: plan.file_output_path,
+                        cancel_requested: false,
+                    });
                 }
-            }
+                Err(error) => {
+                    self.result.status_line = format!("Failed to launch {}.", self.app.id);
+                    self.result.status_kind = StatusKind::Error;
+                    self.result.stderr = format!("{error}\n");
+                    self.active_result_tab = ResultTab::Stderr;
+                }
+            },
             Err(error) => {
                 self.result.status_line = "Cannot start command.".to_string();
                 self.result.status_kind = StatusKind::Error;
@@ -2816,6 +3440,12 @@ impl AppState {
         match result {
             Ok(snapshot) => {
                 self.clear_output_selection();
+                self.pane_focus = match snapshot.focus {
+                    BrowserFocus::Inspector if self.browser_inspector_reachable() => {
+                        PaneFocus::Parameters
+                    }
+                    _ => PaneFocus::Result,
+                };
                 self.result.status_line = snapshot.status_line;
                 self.result.status_kind = StatusKind::Info;
             }
@@ -2847,158 +3477,120 @@ impl AppState {
         Some(copyable_browser_text(inspector))
     }
 
-    fn clear_cached_uv_coverage(&mut self) {
-        if let Some(loading) = self.uv_loading.take() {
-            if !loading.cancel_requested {
-                let _ = loading.process.cancel();
-            }
+    fn mark_plot_snapshot_dirty(&mut self) {
+        if let Some(snapshot) = self.plot_workspace.snapshot.as_mut() {
+            snapshot.dirty = true;
         }
-        self.uv_coverage = None;
-        self.uv_coverage_error = None;
-        self.uv_plot_panel = None;
     }
 
-    fn ensure_uv_coverage_started(&mut self) {
-        if self.app.id != "listobs"
-            || self.result.structured.is_none()
-            || self.uv_coverage.is_some()
-            || self.uv_loading.is_some()
-        {
-            return;
-        }
+    fn record_plot_snapshot(&mut self, summary: ListObsSummary) {
+        let generation = self.plot_workspace.next_generation;
+        self.plot_workspace.next_generation += 1;
+        self.plot_workspace.snapshot = Some(ListObsRunSnapshot {
+            generation,
+            path: summary.measurement_set.path.as_ref().map(PathBuf::from),
+            options: summary.options.clone(),
+            summary,
+            dirty: false,
+        });
+        self.plot_workspace.cached_uv_coverage = None;
+        self.plot_workspace.uv_error = None;
+        self.plot_workspace.panel = None;
+        self.sync_plot_export_path_for_selected_plot();
+    }
 
-        let Some(plan) = self.last_listobs_uv_plan.clone() else {
-            self.uv_coverage_error = Some(
-                "UV coverage is only available for the most recent completed listobs run."
+    fn sync_plot_export_path_for_selected_plot(&mut self) {
+        self.plot_workspace.export_path = default_plot_export_path(
+            self.plot_workspace.selected_plot,
+            ListObsPlotExportFormat::Png,
+        );
+    }
+
+    fn clear_plot_render_cache(&mut self) {
+        self.plot_workspace.panel = None;
+    }
+
+    fn current_plot_summary(&self) -> Option<String> {
+        let snapshot = self.plot_workspace.snapshot.as_ref()?;
+        let dirty_suffix = if snapshot.dirty {
+            " Pending form edits will not affect plots until you rerun listobs."
+        } else {
+            ""
+        };
+        Some(format!(
+            "{} from run {}.{}",
+            self.plot_workspace.selected_plot.display_name(),
+            snapshot.generation,
+            dirty_suffix
+        ))
+    }
+
+    fn selected_plot_spec(&self) -> &ListObsPlotSpec {
+        match self.plot_workspace.selected_plot {
+            ListObsPlotKind::UvCoverage => &self.plot_workspace.uv_spec,
+            ListObsPlotKind::AntennaLayout => &self.plot_workspace.antenna_spec,
+            ListObsPlotKind::ScanTimeline => &self.plot_workspace.scan_spec,
+            ListObsPlotKind::SpectralWindowCoverage => &self.plot_workspace.spw_spec,
+        }
+    }
+
+    fn selected_plot_spec_mut(&mut self) -> &mut ListObsPlotSpec {
+        match self.plot_workspace.selected_plot {
+            ListObsPlotKind::UvCoverage => &mut self.plot_workspace.uv_spec,
+            ListObsPlotKind::AntennaLayout => &mut self.plot_workspace.antenna_spec,
+            ListObsPlotKind::ScanTimeline => &mut self.plot_workspace.scan_spec,
+            ListObsPlotKind::SpectralWindowCoverage => &mut self.plot_workspace.spw_spec,
+        }
+    }
+
+    fn current_uv_coverage(
+        &mut self,
+        snapshot: &ListObsRunSnapshot,
+    ) -> Result<ListObsUvCoverage, String> {
+        if let Some((generation, coverage)) = self.plot_workspace.cached_uv_coverage.as_ref()
+            && *generation == snapshot.generation
+        {
+            return Ok(coverage.clone());
+        }
+        let Some(path) = snapshot.path.as_ref() else {
+            return Err(
+                "UV coverage requires a disk-backed MeasurementSet from the last successful run."
                     .to_string(),
             );
-            return;
         };
-
-        match spawn_process(&plan) {
-            Ok(process) => {
-                self.uv_loading = Some(UvCoverageLoadState {
-                    process,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    cancel_requested: false,
-                });
-                self.uv_coverage_error = None;
-                self.result.status_line = "Loading UV coverage...".to_string();
-                self.result.status_kind = StatusKind::Running;
-            }
-            Err(error) => {
-                self.uv_coverage_error = Some(error.clone());
-                self.result.status_line = "Failed to launch UV coverage loader.".to_string();
-                self.result.status_kind = StatusKind::Error;
-                self.result.stderr.push_str(&format!("{error}\n"));
-            }
-        }
-    }
-
-    fn build_uv_execution_plan(&self) -> Result<ExecutionPlan, String> {
-        self.schema
-            .as_ref()
-            .ok_or_else(|| "missing command schema".to_string())?;
-
-        let mut arguments = Vec::<OsString>::new();
-        let force_selectdata = self.selection_inputs_present();
-        for field in &self.fields {
-            if matches!(
-                field.schema.id.as_str(),
-                "selectdata" | "output" | "listfile" | "overwrite" | "format"
-            ) {
-                continue;
-            }
-            field.append_arguments(&mut arguments)?;
-        }
-        self.append_effective_selectdata_argument(&mut arguments, force_selectdata)?;
-        arguments.push("--format".into());
-        arguments.push("json".into());
-        arguments.push("--uv-coverage-json".into());
-
-        Ok(ExecutionPlan {
-            command: self.app.resolve_command()?,
-            arguments,
-            renderer: None,
-            file_output_path: None,
-        })
-    }
-
-    fn drain_uv_loading_events(&mut self) {
-        loop {
-            let event = match self.uv_loading.as_ref() {
-                Some(loading) => loading.process.try_recv(),
-                None => return,
-            };
-            match event {
-                Ok(ExecutionEvent::Stdout(chunk)) => {
-                    if let Some(loading) = self.uv_loading.as_mut() {
-                        loading.stdout.push_str(&chunk);
-                    }
-                }
-                Ok(ExecutionEvent::Stderr(chunk)) => {
-                    if let Some(loading) = self.uv_loading.as_mut() {
-                        loading.stderr.push_str(&chunk);
-                    }
-                }
-                Ok(ExecutionEvent::Exited(exit)) => {
-                    self.finish_uv_loading(exit.success);
-                    break;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.uv_loading = None;
-                    self.uv_coverage_error =
-                        Some("UV coverage loader disconnected unexpectedly.".to_string());
-                    self.result.status_line =
-                        "UV coverage loader disconnected unexpectedly.".to_string();
-                    self.result.status_kind = StatusKind::Error;
-                    break;
-                }
-            }
-        }
-    }
-
-    fn finish_uv_loading(&mut self, success: bool) {
-        let Some(loading) = self.uv_loading.take() else {
-            return;
-        };
-
-        if loading.cancel_requested {
-            self.uv_coverage_error = Some("UV coverage load canceled.".to_string());
-            self.result.status_line = "UV coverage load canceled.".to_string();
-            self.result.status_kind = StatusKind::Warning;
-            return;
-        }
-
-        if !success {
-            self.uv_coverage_error =
-                Some("UV coverage loader failed. See stderr for details.".to_string());
-            self.result.status_line = "UV coverage load failed.".to_string();
-            self.result.status_kind = StatusKind::Error;
-            self.result.stderr.push_str(&loading.stderr);
-            return;
-        }
-
-        match serde_json::from_str::<ListObsUvCoverage>(&loading.stdout) {
+        match ListObsUvCoverage::from_path_with_options(path, &snapshot.options) {
             Ok(coverage) => {
-                self.uv_coverage = Some(coverage);
-                self.uv_coverage_error = None;
-                self.result.status_line = "UV coverage loaded.".to_string();
-                self.result.status_kind = StatusKind::Ok;
+                self.plot_workspace.cached_uv_coverage =
+                    Some((snapshot.generation, coverage.clone()));
+                self.plot_workspace.uv_error = None;
+                Ok(coverage)
             }
             Err(error) => {
-                self.uv_coverage_error = Some(format!("Failed to parse UV coverage JSON: {error}"));
-                self.result.status_line = "UV coverage parsing failed.".to_string();
-                self.result.status_kind = StatusKind::Error;
-                self.result.stderr.push_str(&loading.stdout);
+                let error = error.to_string();
+                self.plot_workspace.uv_error = Some(error.clone());
+                Err(error)
             }
         }
     }
 
-    fn pump_uv_plot_panel(&mut self) {
-        let Some(panel) = self.uv_plot_panel.as_mut() else {
+    fn current_plot_payload(&mut self) -> Result<ListObsPlotPayload, String> {
+        let Some(snapshot) = self.plot_workspace.snapshot.clone() else {
+            return Err("Run listobs to populate the plot workspace.".to_string());
+        };
+        match self.plot_workspace.selected_plot {
+            ListObsPlotKind::UvCoverage => {
+                let coverage = self.current_uv_coverage(&snapshot)?;
+                build_listobs_uv_plot_payload(&coverage, self.selected_plot_spec())
+            }
+            _ => build_listobs_plot_payload_from_summary(
+                &snapshot.summary,
+                self.selected_plot_spec(),
+            ),
+        }
+    }
+
+    fn pump_plot_panel(&mut self) {
+        let Some(panel) = self.plot_workspace.panel.as_mut() else {
             return;
         };
         match panel.renderer.pump() {
@@ -3009,29 +3601,54 @@ impl AppState {
             }
             Err(error) => {
                 panel.last_error = Some(error.to_string());
-                self.result.status_line = "UV plot rendering failed.".to_string();
+                self.result.status_line = "Plot rendering failed.".to_string();
                 self.result.status_kind = StatusKind::Warning;
             }
         }
     }
 
-    fn ensure_uv_plot_requested(&mut self, area: Rect) {
-        let Some(coverage) = self.uv_coverage.clone() else {
+    fn ensure_plot_requested(&mut self, layout: &UiLayout) {
+        if self.active_result_tab != ResultTab::Plots {
+            return;
+        }
+        let Some(area) = crate::ui::plot_canvas_area(layout) else {
             return;
         };
         if area.is_empty() {
             return;
         }
+        let payload = match self.current_plot_payload() {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.result.status_line = "Plot payload unavailable.".to_string();
+                self.result.status_kind = StatusKind::Warning;
+                self.result.stderr = format!("{error}\n");
+                return;
+            }
+        };
+        let spec_key = self.selected_plot_spec().cli_assignments().join(";");
+        let snapshot_generation = self
+            .plot_workspace
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.generation)
+            .unwrap_or_default();
+        let uv_sample_count = self
+            .plot_workspace
+            .cached_uv_coverage
+            .as_ref()
+            .map(|(_, coverage)| coverage.sample_count)
+            .unwrap_or(0);
         let theme_mode = self.theme_mode();
 
-        let panel = self.uv_plot_panel.get_or_insert_with(|| {
+        let panel = self.plot_workspace.panel.get_or_insert_with(|| {
             let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
             let font_size = picker.font_size();
             let renderer = PanelRenderer::new(picker, Resize::Fit(None), |job| {
-                render_uv_plot(job.max_pixel_width, job.max_pixel_height, &job.input)
+                render_plot_image(job.max_pixel_width, job.max_pixel_height, &job.input)
             })
             .expect("panel renderer");
-            UvPlotPanelState {
+            PlotPanelState {
                 renderer,
                 font_size,
                 request_key: None,
@@ -3040,14 +3657,15 @@ impl AppState {
             }
         });
 
-        let request_key = UvPlotRequestKey {
+        let request_key = PlotRequestKey {
             area,
             theme_mode,
-            sample_count: coverage.sample_count,
-            track_count: coverage.tracks.len(),
-            max_abs_uv_bits: coverage.max_abs_uv_lambda.to_bits(),
+            snapshot_generation,
+            plot_kind: self.plot_workspace.selected_plot,
+            spec_key,
+            uv_sample_count,
         };
-        if panel.request_key == Some(request_key) {
+        if panel.request_key == Some(request_key.clone()) {
             return;
         }
 
@@ -3057,35 +3675,386 @@ impl AppState {
             area,
             pixel_width.max(1),
             pixel_height.max(1),
-            UvPlotRenderInput {
-                coverage,
+            ListObsPlotRenderInput {
+                payload,
                 theme_mode,
+                terminal_cell_px: panel.font_size,
             },
         ) {
             panel.last_error = Some(error.to_string());
-            self.result.status_line = "Failed to queue UV plot render.".to_string();
+            self.result.status_line = "Failed to queue plot render.".to_string();
             self.result.status_kind = StatusKind::Warning;
             return;
         }
         panel.request_key = Some(request_key);
     }
 
-    pub(crate) fn uv_plot_protocol(&self) -> Option<&PanelProtocol> {
-        self.uv_plot_panel
+    pub(crate) fn plot_protocol(&self) -> Option<&PanelProtocol> {
+        self.plot_workspace
+            .panel
             .as_ref()
             .and_then(|panel| panel.renderer.protocol())
     }
 
-    pub(crate) fn uv_plot_pending(&self) -> bool {
-        self.uv_plot_panel
+    pub(crate) fn plot_pending(&self) -> bool {
+        self.plot_workspace
+            .panel
             .as_ref()
             .is_some_and(|panel| panel.renderer.is_pending())
     }
 
-    pub(crate) fn uv_plot_last_error(&self) -> Option<&str> {
-        self.uv_plot_panel
+    pub(crate) fn plot_last_error(&self) -> Option<&str> {
+        self.plot_workspace
+            .panel
             .as_ref()
             .and_then(|panel| panel.last_error.as_deref())
+    }
+
+    pub(crate) fn plot_focus(&self) -> PlotPaneFocus {
+        self.plot_workspace.focus
+    }
+
+    pub(crate) fn selected_plot_kind(&self) -> ListObsPlotKind {
+        self.plot_workspace.selected_plot
+    }
+
+    pub(crate) fn plot_catalog_rows(&self) -> Vec<PlotCatalogRowView> {
+        ListObsPlotKind::ALL
+            .into_iter()
+            .map(|kind| PlotCatalogRowView {
+                kind,
+                label: kind.display_name().to_string(),
+                selected: kind == self.plot_workspace.selected_plot,
+            })
+            .collect()
+    }
+
+    pub(crate) fn plot_control_rows(&self) -> Vec<PlotControlRowView> {
+        let spec = self.selected_plot_spec();
+        let mut rows = plot_choice_descriptors(self.plot_workspace.selected_plot)
+            .iter()
+            .map(|descriptor| PlotControlRowView {
+                target: PlotControlTarget::Option(descriptor.key),
+                text: format!(
+                    "{:<16} {}",
+                    descriptor.label,
+                    spec.option(descriptor.key).unwrap_or("<unset>")
+                ),
+                selected: false,
+            })
+            .collect::<Vec<_>>();
+        rows.push(PlotControlRowView {
+            target: PlotControlTarget::ExportPath,
+            text: format!("{:<16} {}", "Export path", self.plot_workspace.export_path),
+            selected: false,
+        });
+        rows.push(PlotControlRowView {
+            target: PlotControlTarget::ExportWidth,
+            text: format!(
+                "{:<16} {}",
+                "Export width", self.plot_workspace.export_width
+            ),
+            selected: false,
+        });
+        rows.push(PlotControlRowView {
+            target: PlotControlTarget::ExportHeight,
+            text: format!(
+                "{:<16} {}",
+                "Export height", self.plot_workspace.export_height
+            ),
+            selected: false,
+        });
+        for (target, label) in [
+            (PlotControlTarget::Refresh, "Refresh"),
+            (PlotControlTarget::ResetControls, "Reset Controls"),
+            (PlotControlTarget::CopyCli, "Copy CLI"),
+            (PlotControlTarget::ExportPng, "Export PNG"),
+            (PlotControlTarget::ExportPdf, "Export PDF"),
+        ] {
+            rows.push(PlotControlRowView {
+                target,
+                text: label.to_string(),
+                selected: false,
+            });
+        }
+        if let Some(row) = rows.get_mut(self.plot_workspace.selected_control) {
+            row.selected = true;
+        }
+        rows
+    }
+
+    pub(crate) fn plot_dirty_banner(&self) -> Option<&'static str> {
+        self.plot_workspace.snapshot.as_ref().and_then(|snapshot| {
+            snapshot
+                .dirty
+                .then_some("Plots reflect the last successful run. Re-run to apply form changes.")
+        })
+    }
+
+    fn scroll_active_plot_workspace(&mut self, delta: i16) {
+        match self.plot_workspace.focus {
+            PlotPaneFocus::Catalog => {
+                let all = ListObsPlotKind::ALL;
+                let current = all
+                    .iter()
+                    .position(|kind| *kind == self.plot_workspace.selected_plot)
+                    .unwrap_or(0) as i16;
+                let next = (current + delta).clamp(0, all.len() as i16 - 1) as usize;
+                self.set_selected_plot(all[next]);
+            }
+            PlotPaneFocus::Controls => {
+                let row_count = self.plot_control_rows().len() as i16;
+                let next = (self.plot_workspace.selected_control as i16 + delta)
+                    .clamp(0, row_count.saturating_sub(1));
+                self.plot_workspace.selected_control = next as usize;
+            }
+            PlotPaneFocus::Canvas => {}
+        }
+    }
+
+    fn adjust_selected_plot_control(&mut self, forward: bool) {
+        let Some(target) = self
+            .plot_control_rows()
+            .get(self.plot_workspace.selected_control)
+            .map(|row| row.target)
+        else {
+            return;
+        };
+        if let PlotControlTarget::Option(key) = target {
+            let Some(descriptor) = plot_choice_descriptors(self.plot_workspace.selected_plot)
+                .iter()
+                .find(|descriptor| descriptor.key == key)
+            else {
+                return;
+            };
+            let spec = self.selected_plot_spec_mut();
+            let current = spec.option(key).unwrap_or(descriptor.choices[0]);
+            let position = descriptor
+                .choices
+                .iter()
+                .position(|choice| *choice == current)
+                .unwrap_or(0);
+            let next = if forward {
+                (position + 1) % descriptor.choices.len()
+            } else if position == 0 {
+                descriptor.choices.len() - 1
+            } else {
+                position - 1
+            };
+            if spec.set_option(key, descriptor.choices[next]).is_ok() {
+                self.clear_plot_render_cache();
+            }
+        }
+    }
+
+    fn activate_plot_workspace_selection(&mut self) {
+        match self.plot_workspace.focus {
+            PlotPaneFocus::Catalog => {}
+            PlotPaneFocus::Canvas => {}
+            PlotPaneFocus::Controls => {
+                let Some(target) = self
+                    .plot_control_rows()
+                    .get(self.plot_workspace.selected_control)
+                    .map(|row| row.target)
+                else {
+                    return;
+                };
+                match target {
+                    PlotControlTarget::Option(_) => self.adjust_selected_plot_control(true),
+                    PlotControlTarget::ExportPath => {
+                        self.edit_state = Some(EditState {
+                            target: EditTarget::PlotExportPath,
+                            buffer: self.plot_workspace.export_path.clone(),
+                        });
+                    }
+                    PlotControlTarget::ExportWidth => {
+                        self.edit_state = Some(EditState {
+                            target: EditTarget::PlotExportWidth,
+                            buffer: self.plot_workspace.export_width.to_string(),
+                        });
+                    }
+                    PlotControlTarget::ExportHeight => {
+                        self.edit_state = Some(EditState {
+                            target: EditTarget::PlotExportHeight,
+                            buffer: self.plot_workspace.export_height.to_string(),
+                        });
+                    }
+                    PlotControlTarget::Refresh => {
+                        self.plot_workspace.cached_uv_coverage = None;
+                        self.plot_workspace.uv_error = None;
+                        self.clear_plot_render_cache();
+                    }
+                    PlotControlTarget::ResetControls => {
+                        let selected_plot = self.plot_workspace.selected_plot;
+                        *self.selected_plot_spec_mut() = ListObsPlotSpec::new(selected_plot);
+                        self.clear_plot_render_cache();
+                    }
+                    PlotControlTarget::CopyCli => self.copy_current_plot_cli(),
+                    PlotControlTarget::ExportPng => {
+                        self.export_current_plot(ListObsPlotExportFormat::Png)
+                    }
+                    PlotControlTarget::ExportPdf => {
+                        self.export_current_plot(ListObsPlotExportFormat::Pdf)
+                    }
+                }
+            }
+        }
+    }
+
+    fn commit_plot_or_field_edit(&mut self, edit_state: EditState) {
+        match edit_state.target {
+            EditTarget::FormField(field_index) => {
+                if let Some(field) = self.fields.get_mut(field_index) {
+                    field.set_text(edit_state.buffer);
+                    self.mark_plot_snapshot_dirty();
+                }
+            }
+            EditTarget::PlotExportPath => {
+                self.plot_workspace.export_path = edit_state.buffer.trim().to_string();
+            }
+            EditTarget::PlotExportWidth => match edit_state.buffer.trim().parse::<u32>() {
+                Ok(value) if value > 0 => self.plot_workspace.export_width = value,
+                _ => {
+                    self.result.status_line = "Plot width must be a positive integer.".to_string();
+                    self.result.status_kind = StatusKind::Error;
+                }
+            },
+            EditTarget::PlotExportHeight => match edit_state.buffer.trim().parse::<u32>() {
+                Ok(value) if value > 0 => self.plot_workspace.export_height = value,
+                _ => {
+                    self.result.status_line = "Plot height must be a positive integer.".to_string();
+                    self.result.status_kind = StatusKind::Error;
+                }
+            },
+        }
+    }
+
+    fn copy_current_plot_cli(&mut self) {
+        let Some(snapshot) = self.plot_workspace.snapshot.as_ref() else {
+            self.result.status_line = "Run listobs before copying a plot CLI.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        let Some(path) = snapshot.path.as_ref() else {
+            self.result.status_line =
+                "The current plot is not backed by a disk MeasurementSet.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        let cli = self.build_current_plot_cli(path, ListObsPlotExportFormat::Png);
+        self.copy_text_to_clipboard(cli, "plot CLI");
+    }
+
+    fn export_current_plot(&mut self, format: ListObsPlotExportFormat) {
+        let payload = match self.current_plot_payload() {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.result.status_line = "Plot export failed.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = format!("{error}\n");
+                return;
+            }
+        };
+        let output_path = current_plot_output_path(
+            &self.plot_workspace.export_path,
+            self.plot_workspace.selected_plot,
+            format,
+        );
+        match export_listobs_plot(
+            &payload,
+            plot_theme(self.theme_mode()),
+            &output_path,
+            format,
+            self.plot_workspace.export_width,
+            self.plot_workspace.export_height,
+        ) {
+            Ok(()) => {
+                self.result.status_line = format!("Saved {}.", output_path.display());
+                self.result.status_kind = StatusKind::Ok;
+                self.plot_workspace.export_path = output_path.display().to_string();
+            }
+            Err(error) => {
+                self.result.status_line = "Plot export failed.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = format!("{error}\n");
+            }
+        }
+    }
+
+    fn build_current_plot_cli(&self, path: &Path, format: ListObsPlotExportFormat) -> String {
+        let mut args = Vec::<String>::new();
+        let options = self
+            .plot_workspace
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.options.clone())
+            .unwrap_or_default();
+        if !options.verbose {
+            args.push("--no-verbose".to_string());
+        }
+        if !options.selectdata {
+            args.push("--no-selectdata".to_string());
+        }
+        for (flag, value) in [
+            ("--field", options.field.as_deref()),
+            ("--spw", options.spw.as_deref()),
+            ("--antenna", options.antenna.as_deref()),
+            ("--scan", options.scan.as_deref()),
+            ("--observation", options.observation.as_deref()),
+            ("--array", options.array.as_deref()),
+            ("--timerange", options.timerange.as_deref()),
+            ("--uvrange", options.uvrange.as_deref()),
+            ("--correlation", options.correlation.as_deref()),
+            ("--intent", options.intent.as_deref()),
+            ("--feed", options.feed.as_deref()),
+        ] {
+            if let Some(value) = value {
+                args.push(flag.to_string());
+                args.push(shell_quote(value));
+            }
+        }
+        if options.listunfl {
+            args.push("--listunfl".to_string());
+        }
+        if let Some(value) = options.cachesize_mb {
+            args.push("--cachesize".to_string());
+            args.push(value.to_string());
+        }
+        args.push("--plot".to_string());
+        args.push(self.plot_workspace.selected_plot.as_str().to_string());
+        for assignment in self.selected_plot_spec().cli_assignments() {
+            args.push("--plot-option".to_string());
+            args.push(shell_quote(&assignment));
+        }
+        args.push("--plot-output".to_string());
+        args.push(shell_quote(
+            &current_plot_output_path(
+                &self.plot_workspace.export_path,
+                self.plot_workspace.selected_plot,
+                format,
+            )
+            .display()
+            .to_string(),
+        ));
+        args.push("--plot-format".to_string());
+        args.push(format.extension().to_string());
+        args.push("--plot-width".to_string());
+        args.push(self.plot_workspace.export_width.to_string());
+        args.push("--plot-height".to_string());
+        args.push(self.plot_workspace.export_height.to_string());
+        args.push(shell_quote(&path.display().to_string()));
+        format!("listobs {}", args.join(" "))
+    }
+
+    fn set_selected_plot(&mut self, kind: ListObsPlotKind) {
+        if self.plot_workspace.selected_plot == kind {
+            return;
+        }
+        self.plot_workspace.selected_plot = kind;
+        self.plot_workspace.selected_control = 0;
+        self.plot_workspace.focus = PlotPaneFocus::Catalog;
+        self.clear_plot_render_cache();
+        self.sync_plot_export_path_for_selected_plot();
     }
 
     fn build_execution_plan(&self) -> Result<ExecutionPlan, String> {
@@ -3135,9 +4104,7 @@ impl AppState {
         let Some(edit_state) = self.edit_state.take() else {
             return;
         };
-        if let Some(field) = self.fields.get_mut(edit_state.field_index) {
-            field.set_text(edit_state.buffer);
-        }
+        self.commit_plot_or_field_edit(edit_state);
     }
 
     fn field_text(&self, id: &str) -> Option<String> {
@@ -3172,7 +4139,7 @@ impl AppState {
             ResultTab::Fields,
             ResultTab::Spws,
             ResultTab::Antennas,
-            ResultTab::Uv,
+            ResultTab::Plots,
             ResultTab::Stdout,
             ResultTab::Stderr,
         ];
@@ -3242,27 +4209,6 @@ impl AppState {
             return;
         }
 
-        if let Some(loading) = self.uv_loading.as_mut() {
-            if loading.cancel_requested {
-                return;
-            }
-            match loading.process.cancel() {
-                Ok(()) => {
-                    loading.cancel_requested = true;
-                    self.result.status_line =
-                        "Cancel requested for UV coverage load...".to_string();
-                    self.result.status_kind = StatusKind::Warning;
-                }
-                Err(error) => {
-                    self.result.status_line = "Failed to cancel UV coverage load.".to_string();
-                    self.result.status_kind = StatusKind::Error;
-                    self.result.stderr.push_str(&format!("{error}\n"));
-                    self.active_result_tab = ResultTab::Stderr;
-                }
-            }
-            return;
-        }
-
         let Some(running) = self.running.as_mut() else {
             return;
         };
@@ -3292,7 +4238,6 @@ impl AppState {
         self.result.file_output_path = running.file_output_path.clone();
 
         if running.cancel_requested {
-            self.last_listobs_uv_plan = None;
             self.result.status_line = "Execution canceled.".to_string();
             self.result.status_kind = StatusKind::Warning;
             self.result.structured = None;
@@ -3312,7 +4257,6 @@ impl AppState {
             self.result.status_line = "Execution completed successfully.".to_string();
             self.result.status_kind = StatusKind::Ok;
             if let Some(path) = running.file_output_path {
-                self.last_listobs_uv_plan = None;
                 self.result.structured = None;
                 self.result.structured_error = None;
                 self.result.file_output_path = Some(path);
@@ -3323,13 +4267,12 @@ impl AppState {
             if matches!(running.renderer.as_deref(), Some("listobs-summary-v1")) {
                 match serde_json::from_str::<ListObsSummary>(&self.result.stdout) {
                     Ok(summary) => {
-                        self.last_listobs_uv_plan = running.uv_plan;
+                        self.record_plot_snapshot(summary.clone());
                         self.result.structured = Some(summary);
                         self.result.structured_error = None;
                         self.activate_result_tab(ResultTab::Overview);
                     }
                     Err(error) => {
-                        self.last_listobs_uv_plan = None;
                         self.result.structured = None;
                         self.result.structured_error =
                             Some(format!("Failed to parse structured output: {error}"));
@@ -3351,7 +4294,6 @@ impl AppState {
                 });
             }
         } else {
-            self.last_listobs_uv_plan = None;
             self.result.status_line = "Execution failed.".to_string();
             self.result.status_kind = StatusKind::Error;
             self.result.structured = None;
@@ -3404,10 +4346,15 @@ impl AppState {
             ));
             lines.push(String::new());
             lines.push("Current tabs".to_string());
-            lines.push(
-                "Use h/l or Left/Right to switch between Overview, Observations, Fields, SPWs, Antennas, Stdout, and Stderr."
-                    .to_string(),
-            );
+            let tab_labels = self
+                .visible_result_tabs()
+                .iter()
+                .map(|tab| tab.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!(
+                "Use [ and ] or click the tab strip to switch between {tab_labels}."
+            ));
             return lines;
         }
 
@@ -3487,7 +4434,7 @@ impl FormField {
 
     fn render_line(&self, edit_state: Option<&EditState>, field_index: usize) -> String {
         let value = match (&self.value, edit_state) {
-            (_, Some(edit_state)) if edit_state.field_index == field_index => {
+            (_, Some(edit_state)) if edit_state.target == EditTarget::FormField(field_index) => {
                 format!("{}|", edit_state.buffer)
             }
             (FormValue::Text(value), _) if value.trim().is_empty() && self.schema.required => {
@@ -4476,12 +5423,12 @@ fn resolve_result_action(key_event: KeyEvent) -> Option<ResultAction> {
         KeyCode::Left | KeyCode::Char('h')
             if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
         {
-            Some(ResultAction::PreviousTab)
+            Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
         }
         KeyCode::Right | KeyCode::Char('l')
             if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
         {
-            Some(ResultAction::NextTab)
+            Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
         }
         KeyCode::Up | KeyCode::Char('k')
             if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
@@ -4495,19 +5442,12 @@ fn resolve_result_action(key_event: KeyEvent) -> Option<ResultAction> {
         }
         KeyCode::PageUp if key_event.modifiers.is_empty() => Some(ResultAction::Scroll(-10)),
         KeyCode::PageDown if key_event.modifiers.is_empty() => Some(ResultAction::Scroll(10)),
-        KeyCode::Char('[') if key_event.modifiers.is_empty() => {
-            Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
-        }
-        KeyCode::Char(']') if key_event.modifiers.is_empty() => {
-            Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
-        }
         KeyCode::Left if key_event.modifiers == KeyModifiers::CONTROL => {
             Some(ResultAction::ScrollHorizontal(-HORIZONTAL_SCROLL_STEP))
         }
         KeyCode::Right if key_event.modifiers == KeyModifiers::CONTROL => {
             Some(ResultAction::ScrollHorizontal(HORIZONTAL_SCROLL_STEP))
         }
-        KeyCode::Char('v') if key_event.modifiers.is_empty() => Some(ResultAction::NextTab),
         _ => None,
     }
 }
@@ -4596,357 +5536,130 @@ fn browser_inspector_lines(inspector: &BrowserInspectorSnapshot) -> Vec<String> 
     lines
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PlotChoiceDescriptor {
+    key: &'static str,
+    label: &'static str,
+    choices: &'static [&'static str],
+}
+
+const UV_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
+    PlotChoiceDescriptor {
+        key: "draw_mode",
+        label: "Draw mode",
+        choices: &["tracks", "points"],
+    },
+    PlotChoiceDescriptor {
+        key: "mirror",
+        label: "Mirror",
+        choices: &["on", "off"],
+    },
+    PlotChoiceDescriptor {
+        key: "axis_extent",
+        label: "Axis extent",
+        choices: &["auto", "1000", "10000", "100000"],
+    },
+];
+
+const ANTENNA_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
+    PlotChoiceDescriptor {
+        key: "labels",
+        label: "Labels",
+        choices: &["off", "id", "name"],
+    },
+    PlotChoiceDescriptor {
+        key: "coordinates",
+        label: "Coordinates",
+        choices: &["offset", "absolute"],
+    },
+    PlotChoiceDescriptor {
+        key: "size_by_diameter",
+        label: "Size by dish",
+        choices: &["on", "off"],
+    },
+];
+
+const SCAN_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
+    PlotChoiceDescriptor {
+        key: "lanes",
+        label: "Lane grouping",
+        choices: &["scan", "field"],
+    },
+    PlotChoiceDescriptor {
+        key: "color_by",
+        label: "Color by",
+        choices: &["field", "intent"],
+    },
+    PlotChoiceDescriptor {
+        key: "labels",
+        label: "Labels",
+        choices: &["none", "scan", "field"],
+    },
+];
+
+const SPW_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
+    PlotChoiceDescriptor {
+        key: "unit",
+        label: "X unit",
+        choices: &["ghz", "mhz"],
+    },
+    PlotChoiceDescriptor {
+        key: "labels",
+        label: "Labels",
+        choices: &["on", "off"],
+    },
+    PlotChoiceDescriptor {
+        key: "color_by",
+        label: "Color by",
+        choices: &["spw", "polarization"],
+    },
+];
+
+fn plot_choice_descriptors(kind: ListObsPlotKind) -> &'static [PlotChoiceDescriptor] {
+    match kind {
+        ListObsPlotKind::UvCoverage => &UV_PLOT_CONTROLS,
+        ListObsPlotKind::AntennaLayout => &ANTENNA_PLOT_CONTROLS,
+        ListObsPlotKind::ScanTimeline => &SCAN_PLOT_CONTROLS,
+        ListObsPlotKind::SpectralWindowCoverage => &SPW_PLOT_CONTROLS,
+    }
+}
+
+fn default_plot_export_path(kind: ListObsPlotKind, format: ListObsPlotExportFormat) -> String {
+    format!("{}.{}", kind.as_str(), format.extension())
+}
+
+fn current_plot_output_path(
+    configured_path: &str,
+    kind: ListObsPlotKind,
+    format: ListObsPlotExportFormat,
+) -> PathBuf {
+    let trimmed = configured_path.trim();
+    let mut path = if trimmed.is_empty() {
+        PathBuf::from(default_plot_export_path(kind, format))
+    } else {
+        PathBuf::from(trimmed)
+    };
+    path.set_extension(format.extension());
+    path
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        "''".to_string()
+    } else if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "/._-:=~".contains(character))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{
-        AppState, BrowserAction, BrowserSession, BrowserTab, BrowserValueNode, BufferPoint,
-        FormSelection, FormValue, OutputPane, OutputSelection, OutputSelectionMode, PaneFocus,
-        ParameterAction, ResultAction, ResultTab, RunningProcess, RunningState, StatusKind,
-        UvCoverageLoadState, UvPlotPanelState, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
-        browser_cells_visible_line, build_antennas_table, build_compact_antenna_lines,
-        build_fields_table, build_observations_table, build_scans_table, build_sources_table,
-        build_spws_table, clamp_point_to_buffer, copyable_browser_text,
-        expand_tilde_path_with_home, extract_selected_text, fit_visible_text, format_float_compact,
-        format_float_list, format_i32_list, format_optional_float, join_corrs, normalize_selection,
-        render_browser_scalar, slice_chars, slice_visible_text, strip_browser_selection_markers,
-    };
-    use crate::execution::{ExecutionPlan, spawn_process};
-    use crate::registry::{ResolvedCommand, listobs_app, tablebrowser_app};
-    use casacore_ms::listobs::cli::command_schema;
-    use casacore_ms::listobs::{
-        AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
-        ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary, SpectralWindowSummary,
-    };
-    use casacore_ms::{
-        ListObsOptions, ListObsSummary, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack,
-    };
-    use casacore_tablebrowser_protocol::{
-        BrowserArrayElement, BrowserBreadcrumbEntry, BrowserCapabilities, BrowserCommand,
-        BrowserComplex32Value, BrowserComplex64Value, BrowserFocus, BrowserInspectorSnapshot,
-        BrowserNavigationMetrics, BrowserResponseEnvelope, BrowserScalarValue, BrowserSnapshot,
-        BrowserView as ProtocolBrowserView, BrowserViewport,
-    };
-    use image::DynamicImage;
-    use ratatui::layout::Rect;
-    use ratatui_graphics::{PanelRenderer, Picker, Resize};
-    #[cfg(unix)]
-    use std::fs;
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
+    use super::expand_tilde_path_with_home;
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
-    use std::thread;
-    use std::time::Duration;
-    #[cfg(unix)]
-    use tempfile::tempdir;
-
-    #[cfg(unix)]
-    use crate::browser_client::BrowserClient;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn test_app() -> AppState {
-        AppState::from_schema(listobs_app(), command_schema("listobs"))
-    }
-
-    fn tablebrowser_test_app() -> AppState {
-        let schema = serde_json::from_value(serde_json::json!({
-            "schema_version": 1,
-            "command_id": "tablebrowser",
-            "invocation_name": "tablebrowser",
-            "display_name": "Table Browser",
-            "category": "Tables",
-            "summary": "browse arbitrary casacore tables",
-            "usage": "tablebrowser <table-path>",
-            "arguments": [
-                {
-                    "id": "table_path",
-                    "label": "Table Path",
-                    "order": 0,
-                    "parser": {
-                        "kind": "positional",
-                        "metavar": "table-path"
-                    },
-                    "value_kind": "path",
-                    "required": true,
-                    "default": null,
-                    "help": "Path to the casacore table root directory",
-                    "group": "Input",
-                    "advanced": false,
-                    "hidden_in_tui": false
-                }
-            ],
-            "managed_output": null
-        }))
-        .expect("tablebrowser schema");
-        AppState::from_schema(tablebrowser_app(), schema)
-    }
-
-    fn sample_uv_coverage() -> ListObsUvCoverage {
-        ListObsUvCoverage {
-            schema_version: 1,
-            options: ListObsOptions::default(),
-            measurement_set_path: Some("/tmp/demo.ms".to_string()),
-            axis_unit: "lambda".to_string(),
-            mirrored_display: true,
-            sample_count: 3,
-            max_abs_uv_lambda: 1_200_000.0,
-            tracks: vec![
-                ListObsUvTrack {
-                    antenna1: 0,
-                    antenna2: 1,
-                    field_id: 0,
-                    spectral_window_id: 0,
-                    center_frequency_hz: 1.4e9,
-                    samples: vec![
-                        ListObsUvPoint {
-                            row: 0,
-                            time_mjd_seconds: 0.0,
-                            u_lambda: -600_000.0,
-                            v_lambda: 300_000.0,
-                            w_lambda: 0.0,
-                        },
-                        ListObsUvPoint {
-                            row: 1,
-                            time_mjd_seconds: 10.0,
-                            u_lambda: 700_000.0,
-                            v_lambda: -450_000.0,
-                            w_lambda: 0.0,
-                        },
-                    ],
-                },
-                ListObsUvTrack {
-                    antenna1: 2,
-                    antenna2: 3,
-                    field_id: 1,
-                    spectral_window_id: 0,
-                    center_frequency_hz: 1.4e9,
-                    samples: vec![ListObsUvPoint {
-                        row: 2,
-                        time_mjd_seconds: 20.0,
-                        u_lambda: 125_000.0,
-                        v_lambda: 800_000.0,
-                        w_lambda: 0.0,
-                    }],
-                },
-            ],
-        }
-    }
-
-    fn sample_listobs_summary() -> ListObsSummary {
-        ListObsSummary {
-            schema_version: 1,
-            options: ListObsOptions::default(),
-            measurement_set: MeasurementSetInfo {
-                path: Some("/tmp/demo.ms".to_string()),
-                ms_version: Some(2.0),
-                row_count: 42,
-                observation_count: 1,
-                field_count: 1,
-                spectral_window_count: 1,
-                polarization_count: 1,
-                data_description_count: 1,
-                source_count: 1,
-                antenna_count: 3,
-                antenna_table_count: 3,
-                time_reference: Some("UTC".to_string()),
-                start_mjd_seconds: Some(0.0),
-                end_mjd_seconds: Some(3600.0),
-                total_elapsed_seconds: Some(3600.0),
-            },
-            observations: vec![ObservationSummary {
-                observation_id: 0,
-                telescope_name: "Very Large Array".to_string(),
-                observer: "Long Observer".to_string(),
-                project: "Project Alpha Beta".to_string(),
-                release_date_mjd_seconds: 0.0,
-                start_mjd_seconds: Some(0.0),
-                end_mjd_seconds: Some(3600.0),
-            }],
-            scans: vec![ScanSummary {
-                observation_id: 0,
-                array_id: 1,
-                scan_number: 7,
-                row_count: 12,
-                field_id: 0,
-                field_name: "3C286".to_string(),
-                field_ids: vec![0, 1],
-                field_names: vec!["3C286".to_string(), "3C48".to_string()],
-                data_description_ids: vec![0],
-                spectral_window_ids: vec![0, 3],
-                state_ids: vec![1, 2],
-                scan_intents: vec!["CALIBRATE_BANDPASS".to_string()],
-                start_mjd_seconds: 0.0,
-                end_mjd_seconds: 120.0,
-                mean_interval_seconds: 10.0,
-                mean_interval_seconds_by_spw: vec![10.0, 20.25],
-                unflagged_row_count: Some(11.5),
-            }],
-            fields: vec![FieldSummary {
-                field_id: 0,
-                name: "Long Source Name".to_string(),
-                code: "CAL".to_string(),
-                source_id: 9,
-                row_count: 12,
-                unflagged_row_count: Some(10.75),
-                time_mjd_seconds: 0.0,
-                direction_reference: Some("J2000".to_string()),
-                phase_direction_radians: [1.0, 0.5],
-            }],
-            polarization_setups: vec![PolarizationSummary {
-                polarization_id: 0,
-                num_correlations: 2,
-                correlation_types: vec!["XX".to_string(), "YY".to_string()],
-            }],
-            data_descriptions: vec![DataDescriptionSummary {
-                data_description_id: 0,
-                spectral_window_id: 0,
-                polarization_id: 0,
-                flagged: false,
-            }],
-            spectral_windows: vec![SpectralWindowSummary {
-                spectral_window_id: 0,
-                name: "none#LSRK#0".to_string(),
-                num_channels: 64,
-                frame: Some("LSRK".to_string()),
-                first_channel_frequency_hz: 1.2e9,
-                channel_width_hz: 1.25e5,
-                reference_frequency_hz: 1.25e9,
-                center_frequency_hz: 1.26e9,
-                total_bandwidth_hz: 8.0e6,
-                data_description_ids: vec![0],
-                polarization_ids: vec![0],
-                correlation_types: vec!["XX".to_string(), "YY".to_string(), "XY".to_string()],
-            }],
-            sources: vec![SourceSummary {
-                source_id: 9,
-                name: "3C286".to_string(),
-                code: "C".to_string(),
-                spectral_window_id: -1,
-                calibration_group: 0,
-                num_lines: 0,
-                rest_frequency_hz: Some(1.420405751e9),
-                system_velocity_m_s: Some(1234.0),
-                time_mjd_seconds: 0.0,
-                direction_radians: [1.0, 0.5],
-            }],
-            antennas: vec![
-                AntennaSummary {
-                    antenna_id: 0,
-                    name: "ea01".to_string(),
-                    station: "W01".to_string(),
-                    antenna_type: "GROUND-BASED".to_string(),
-                    mount: "ALT-AZ".to_string(),
-                    dish_diameter_m: 25.0,
-                    longitude_radians: 1.0,
-                    latitude_radians: 0.5,
-                    offset_from_observatory_m: [1.0, 2.0, 3.0],
-                    position_m: [10.0, 20.0, 30.0],
-                },
-                AntennaSummary {
-                    antenna_id: 1,
-                    name: "ea02".to_string(),
-                    station: "W02".to_string(),
-                    antenna_type: "GROUND-BASED".to_string(),
-                    mount: "ALT-AZ".to_string(),
-                    dish_diameter_m: 25.0,
-                    longitude_radians: 1.1,
-                    latitude_radians: 0.55,
-                    offset_from_observatory_m: [4.0, 5.0, 6.0],
-                    position_m: [40.0, 50.0, 60.0],
-                },
-                AntennaSummary {
-                    antenna_id: 2,
-                    name: "ea03".to_string(),
-                    station: "W03".to_string(),
-                    antenna_type: "GROUND-BASED".to_string(),
-                    mount: "ALT-AZ".to_string(),
-                    dish_diameter_m: 25.0,
-                    longitude_radians: 1.2,
-                    latitude_radians: 0.6,
-                    offset_from_observatory_m: [7.0, 8.0, 9.0],
-                    position_m: [70.0, 80.0, 90.0],
-                },
-            ],
-        }
-    }
-
-    fn exited_process() -> RunningProcess {
-        spawn_process(&ExecutionPlan {
-            command: ResolvedCommand::direct("sh"),
-            arguments: vec!["-c".into(), "exit 0".into()],
-            renderer: None,
-            file_output_path: None,
-        })
-        .expect("spawn exited child")
-    }
-
-    fn running_state(renderer: Option<&str>, file_output_path: Option<&str>) -> RunningState {
-        RunningState {
-            process: exited_process(),
-            renderer: renderer.map(str::to_string),
-            file_output_path: file_output_path.map(str::to_string),
-            uv_plan: None,
-            cancel_requested: false,
-        }
-    }
-
-    #[cfg(unix)]
-    fn fake_browser_snapshot(status_line: &str, content_lines: Vec<String>) -> BrowserSnapshot {
-        fake_browser_snapshot_with_metrics(status_line, content_lines, None, None)
-    }
-
-    #[cfg(unix)]
-    fn fake_browser_snapshot_with_metrics(
-        status_line: &str,
-        content_lines: Vec<String>,
-        vertical_metrics: Option<BrowserNavigationMetrics>,
-        horizontal_metrics: Option<BrowserNavigationMetrics>,
-    ) -> BrowserSnapshot {
-        BrowserSnapshot {
-            capabilities: BrowserCapabilities { editable: false },
-            view: ProtocolBrowserView::Overview,
-            focus: BrowserFocus::Main,
-            table_path: "/tmp/fake.ms".to_string(),
-            breadcrumb: vec![BrowserBreadcrumbEntry {
-                label: "fake.ms".to_string(),
-                path: "/tmp/fake.ms".to_string(),
-            }],
-            viewport: BrowserViewport::new(80, 24),
-            status_line: status_line.to_string(),
-            content_lines,
-            vertical_metrics,
-            horizontal_metrics,
-            selected_address: None,
-            inspector: None,
-        }
-    }
-
-    #[cfg(unix)]
-    fn write_browser_session_script(
-        root: &Path,
-        responses: &[String],
-        stderr: Option<&str>,
-    ) -> PathBuf {
-        let path = root.join("app-browser.sh");
-        let mut script = String::from("#!/bin/sh\ncount=0\nwhile IFS= read -r _line; do\n");
-        if let Some(stderr) = stderr {
-            script.push_str(&format!("  echo '{}' >&2\n", stderr.replace('\'', "'\\''")));
-        }
-        script.push_str("  count=$((count + 1))\n  case \"$count\" in\n");
-        for (index, response) in responses.iter().enumerate() {
-            let case_index = index + 1;
-            script.push_str(&format!(
-                "    {case_index}) printf '%s\\n' '{response}' ;;\n"
-            ));
-        }
-        script.push_str("    *) exit 7 ;;\n  esac\ndone\n");
-        fs::write(&path, script).expect("write browser script");
-        let mut permissions = fs::metadata(&path).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&path, permissions).expect("chmod");
-        path
-    }
 
     #[test]
     fn expands_bare_tilde_to_home() {
@@ -4970,1136 +5683,5 @@ mod tests {
             expand_tilde_path_with_home("./relative/path", Some(Path::new("/tmp/home"))),
             PathBuf::from("./relative/path")
         );
-    }
-
-    #[test]
-    fn uv_tab_summary_reports_prompt_loading_error_and_loaded_states() {
-        let mut app = test_app();
-        assert_eq!(
-            app.uv_tab_summary(),
-            "Open the UV tab to load wavelength-space UV coverage."
-        );
-
-        app.uv_loading = Some(UvCoverageLoadState {
-            process: exited_process(),
-            stdout: String::new(),
-            stderr: String::new(),
-            cancel_requested: false,
-        });
-        assert_eq!(app.uv_tab_summary(), "Loading UV coverage...");
-
-        app.uv_loading = None;
-        app.uv_coverage_error = Some("not available".to_string());
-        assert_eq!(
-            app.uv_tab_summary(),
-            "UV coverage unavailable. not available"
-        );
-
-        app.uv_coverage = Some(sample_uv_coverage());
-        let summary = app.uv_tab_summary();
-        assert!(summary.contains("UV coverage in Mλ."));
-        assert!(summary.contains("Tracks=2"));
-    }
-
-    #[test]
-    fn finish_uv_loading_covers_cancel_failure_parse_and_success_paths() {
-        let mut app = test_app();
-
-        app.uv_loading = Some(UvCoverageLoadState {
-            process: exited_process(),
-            stdout: String::new(),
-            stderr: String::new(),
-            cancel_requested: true,
-        });
-        app.finish_uv_loading(true);
-        assert_eq!(app.status_line_for_test(), "UV coverage load canceled.");
-        assert_eq!(app.result.status_kind, StatusKind::Warning);
-
-        app.uv_loading = Some(UvCoverageLoadState {
-            process: exited_process(),
-            stdout: String::new(),
-            stderr: "uv stderr\n".to_string(),
-            cancel_requested: false,
-        });
-        app.finish_uv_loading(false);
-        assert_eq!(app.status_line_for_test(), "UV coverage load failed.");
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(app.stderr_for_test().contains("uv stderr"));
-
-        app.uv_loading = Some(UvCoverageLoadState {
-            process: exited_process(),
-            stdout: "{".to_string(),
-            stderr: String::new(),
-            cancel_requested: false,
-        });
-        app.finish_uv_loading(true);
-        assert_eq!(app.status_line_for_test(), "UV coverage parsing failed.");
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert_eq!(app.stderr_for_test(), "uv stderr\n{");
-
-        let coverage = sample_uv_coverage();
-        app.uv_loading = Some(UvCoverageLoadState {
-            process: exited_process(),
-            stdout: serde_json::to_string(&coverage).expect("serialize coverage"),
-            stderr: String::new(),
-            cancel_requested: false,
-        });
-        app.finish_uv_loading(true);
-        assert_eq!(app.status_line_for_test(), "UV coverage loaded.");
-        assert_eq!(app.result.status_kind, StatusKind::Ok);
-        assert_eq!(app.uv_coverage_for_test(), Some(&coverage));
-    }
-
-    #[test]
-    fn ensure_uv_plot_requested_generates_protocol_and_request_key() {
-        let mut app = test_app();
-        app.uv_coverage = Some(sample_uv_coverage());
-
-        app.ensure_uv_plot_requested(Rect::new(0, 0, 20, 10));
-        assert!(app.uv_plot_pending());
-        for _ in 0..80 {
-            app.pump_uv_plot_panel();
-            if app.uv_plot_protocol().is_some() || app.uv_plot_last_error().is_some() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        let panel = app.uv_plot_panel.as_ref().expect("plot panel");
-        assert!(panel.request_key.is_some());
-        assert!(
-            app.uv_plot_protocol().is_some() || app.uv_plot_last_error().is_some(),
-            "expected render output or a surfaced renderer error"
-        );
-        if app.uv_plot_protocol().is_some() {
-            assert!(panel.image_size.is_some());
-        } else {
-            assert_eq!(app.status_line_for_test(), "UV plot rendering failed.");
-            assert_eq!(app.result.status_kind, StatusKind::Warning);
-        }
-
-        let first_key = panel.request_key;
-        app.ensure_uv_plot_requested(Rect::new(0, 0, 20, 10));
-        assert_eq!(app.uv_plot_panel.as_ref().unwrap().request_key, first_key);
-
-        app.result.status_line.clear();
-        app.handle_key_event(crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('t'),
-            crossterm::event::KeyModifiers::NONE,
-        ));
-        app.ensure_uv_plot_requested(Rect::new(0, 0, 20, 10));
-        assert_ne!(app.uv_plot_panel.as_ref().unwrap().request_key, first_key);
-    }
-
-    #[test]
-    fn pump_uv_plot_panel_surfaces_renderer_errors() {
-        let mut app = test_app();
-        app.uv_coverage = Some(sample_uv_coverage());
-        let picker = Picker::halfblocks();
-        let font_size = picker.font_size();
-        let renderer = PanelRenderer::new(picker, Resize::Fit(None), |_job| {
-            Err::<DynamicImage, String>("boom".to_string())
-        })
-        .expect("panel renderer");
-        app.uv_plot_panel = Some(UvPlotPanelState {
-            renderer,
-            font_size,
-            request_key: None,
-            last_error: None,
-            image_size: None,
-        });
-
-        app.ensure_uv_plot_requested(Rect::new(0, 0, 18, 8));
-        for _ in 0..80 {
-            app.pump_uv_plot_panel();
-            if app.uv_plot_last_error().is_some() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        assert_eq!(app.status_line_for_test(), "UV plot rendering failed.");
-        assert_eq!(app.result.status_kind, StatusKind::Warning);
-        assert!(
-            app.uv_plot_last_error()
-                .expect("plot error")
-                .contains("boom")
-        );
-    }
-
-    #[test]
-    fn helper_formatters_cover_optional_lists_and_correlation_joining() {
-        assert_eq!(format_optional_float(Some(1.23456)), "1.235");
-        assert_eq!(format_optional_float(None), "n/a");
-        assert_eq!(format_float_compact(12.3400, 3), "12.34");
-        assert_eq!(format_float_compact(12.0, 3), "12");
-        assert_eq!(format_i32_list(&[1, 2, 3]), "[1,2,3]");
-        assert_eq!(format_float_list(&[1.25, 2.0, 3.5001], 3), "[1.25,2,3.5]");
-        assert_eq!(
-            join_corrs(&["XX".into(), "YY".into(), "XY".into()]),
-            "XX  YY  XY"
-        );
-    }
-
-    #[test]
-    fn browser_cell_helpers_preserve_selection_and_header_roles() {
-        assert_eq!(
-            strip_browser_selection_markers("  >value<  ").as_deref(),
-            Some("   value   ")
-        );
-        assert!(strip_browser_selection_markers("value").is_none());
-
-        let header = browser_cells_visible_line("row |colA|colB");
-        assert_eq!(header.text, "row │colA│colB");
-        assert!(header.roles.contains(&VisibleTextRole::TableHeader));
-        assert!(header.roles.contains(&VisibleTextRole::BrowserSeparator));
-
-        let selected = browser_cells_visible_line("  >42< | plain ");
-        assert_eq!(selected.text, "   42  │ plain ");
-        assert!(
-            selected
-                .roles
-                .contains(&VisibleTextRole::BrowserSelectedCell)
-        );
-    }
-
-    #[test]
-    fn visible_text_helpers_slice_and_trim_consistently() {
-        assert_eq!(fit_visible_text("abcdef", 0), "");
-        assert_eq!(fit_visible_text("abcdef", 2), "..");
-        assert_eq!(fit_visible_text("abcdef", 5), "ab...");
-        assert_eq!(slice_visible_text("abcdef", 2, 3), "...");
-        assert_eq!(slice_visible_text("abcdef", 99, 3), "");
-        assert_eq!(slice_chars("abcdef", 1, 4), "bcd");
-    }
-
-    #[test]
-    fn selection_helpers_normalize_clamp_and_extract_text() {
-        let buffer = VisibleTextBuffer {
-            area: Rect::new(10, 5, 8, 3),
-            lines: vec![
-                VisibleTextLine::plain("alpha  ".to_string()),
-                VisibleTextLine::plain("beta".to_string()),
-                VisibleTextLine::plain(String::new()),
-            ],
-        };
-        let selection = OutputSelection {
-            target: OutputPane::Result,
-            anchor: BufferPoint { row: 1, col: 3 },
-            cursor: BufferPoint { row: 0, col: 1 },
-            mode: OutputSelectionMode::Dragging,
-        };
-        assert_eq!(normalize_selection(selection), (0, 1, 1, 3));
-        assert_eq!(
-            clamp_point_to_buffer(&buffer, 50, 50),
-            BufferPoint { row: 2, col: 0 }
-        );
-        assert_eq!(
-            clamp_point_to_buffer(&buffer, 12, 5),
-            BufferPoint { row: 0, col: 2 }
-        );
-        assert_eq!(extract_selected_text(&buffer, selection), "lph\neta");
-    }
-
-    #[test]
-    fn browser_copy_helpers_render_scalars_arrays_and_fallback_views() {
-        let undefined = BrowserInspectorSnapshot {
-            title: "Undefined".into(),
-            trail: Vec::new(),
-            node: BrowserValueNode::Undefined,
-            rendered_lines: vec!["<undefined>".into()],
-        };
-        assert_eq!(
-            copyable_browser_text(&undefined),
-            ("<undefined>".to_string(), "undefined value")
-        );
-
-        let scalar = BrowserInspectorSnapshot {
-            title: "Scalar".into(),
-            trail: Vec::new(),
-            node: BrowserValueNode::Scalar {
-                value: BrowserScalarValue::Complex64(BrowserComplex64Value { re: 1.5, im: -2.0 }),
-            },
-            rendered_lines: vec!["1.5-2i".into()],
-        };
-        assert_eq!(
-            copyable_browser_text(&scalar),
-            ("1.5-2i".to_string(), "value")
-        );
-
-        let table_ref = BrowserInspectorSnapshot {
-            title: "Table".into(),
-            trail: Vec::new(),
-            node: BrowserValueNode::TableRef {
-                path: "../SUB".into(),
-                resolved_path: "/tmp/root/SUB".into(),
-                openable: true,
-            },
-            rendered_lines: vec!["/tmp/root/SUB".into()],
-        };
-        assert_eq!(
-            copyable_browser_text(&table_ref),
-            ("/tmp/root/SUB".to_string(), "table path")
-        );
-
-        let full_array = BrowserInspectorSnapshot {
-            title: "Array".into(),
-            trail: Vec::new(),
-            node: BrowserValueNode::Array {
-                primitive: casacore_tablebrowser_protocol::BrowserPrimitiveType::Float64,
-                shape: vec![2, 1],
-                total_elements: 2,
-                page_start: 0,
-                page_size: 2,
-                elements: vec![
-                    BrowserArrayElement {
-                        flat_index: 0,
-                        index: vec![0, 0],
-                        value: BrowserScalarValue::Float64(1.25),
-                        selected: false,
-                    },
-                    BrowserArrayElement {
-                        flat_index: 1,
-                        index: vec![1, 0],
-                        value: BrowserScalarValue::Float64(2.5),
-                        selected: true,
-                    },
-                ],
-            },
-            rendered_lines: vec!["[1.25, 2.5]".into()],
-        };
-        assert_eq!(
-            copyable_browser_text(&full_array),
-            ("[1.25, 2.5]".to_string(), "array value")
-        );
-
-        let partial_array = BrowserInspectorSnapshot {
-            title: "Paged".into(),
-            trail: Vec::new(),
-            node: BrowserValueNode::Array {
-                primitive: casacore_tablebrowser_protocol::BrowserPrimitiveType::Int32,
-                shape: vec![4],
-                total_elements: 4,
-                page_start: 0,
-                page_size: 2,
-                elements: vec![BrowserArrayElement {
-                    flat_index: 0,
-                    index: vec![0],
-                    value: BrowserScalarValue::Int32(7),
-                    selected: true,
-                }],
-            },
-            rendered_lines: vec!["[7,".into(), " ...]".into()],
-        };
-        assert_eq!(
-            copyable_browser_text(&partial_array),
-            ("[7,\n ...]".to_string(), "inspector view")
-        );
-    }
-
-    #[test]
-    fn browser_scalar_rendering_formats_numbers_strings_and_complex_values() {
-        assert_eq!(
-            render_browser_scalar(&BrowserScalarValue::Bool(true)),
-            "true"
-        );
-        assert_eq!(
-            render_browser_scalar(&BrowserScalarValue::Float32(1.25)),
-            "1.25"
-        );
-        assert_eq!(
-            render_browser_scalar(&BrowserScalarValue::String("abc".into())),
-            "\"abc\""
-        );
-        assert_eq!(
-            render_browser_scalar(&BrowserScalarValue::Complex32(BrowserComplex32Value {
-                re: 3.0,
-                im: 4.5,
-            })),
-            "3.0+4.5i"
-        );
-    }
-
-    #[test]
-    fn browser_tab_labels_reflect_backend_view_mapping() {
-        assert_eq!(
-            BrowserTab::from_view(casacore_tablebrowser_protocol::BrowserView::Cells),
-            BrowserTab::Cells
-        );
-        assert_eq!(BrowserTab::Cells.label(), "Cells");
-    }
-
-    #[test]
-    fn build_execution_plan_applies_selection_and_output_rules() {
-        let mut app = test_app();
-        app.set_text_value("ms_path", "/tmp/input.ms");
-
-        let base = app.build_execution_plan().expect("build execution plan");
-        assert!(!base.arguments.is_empty());
-        assert_eq!(base.renderer.as_deref(), Some("listobs-summary-v1"));
-
-        app.set_text_value("field", "3C286");
-        let selected = app.build_execution_plan().expect("selection plan");
-        assert!(selected.arguments.iter().any(|arg| arg == "--selectdata"));
-
-        app.set_text_value("output", "/tmp/out.txt");
-        app.set_text_value("listfile", "/tmp/out.log");
-        let error = app
-            .build_execution_plan()
-            .expect_err("conflicting outputs should fail");
-        assert!(error.contains("Choose either --output or --listfile"));
-    }
-
-    #[test]
-    fn finish_execution_covers_cancel_file_output_parse_failure_and_plain_modes() {
-        let mut app = test_app();
-
-        app.running = Some(RunningState {
-            cancel_requested: true,
-            ..running_state(Some("listobs-summary-v1"), None)
-        });
-        app.result.stderr = "cancel stderr".into();
-        app.finish_execution(Some(130), false);
-        assert_eq!(app.status_line_for_test(), "Execution canceled.");
-        assert_eq!(app.result.status_kind, StatusKind::Warning);
-        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
-        assert!(app.result.structured_error.is_some());
-
-        app.running = Some(running_state(
-            Some("listobs-summary-v1"),
-            Some("/tmp/out.txt"),
-        ));
-        app.result.stdout.clear();
-        app.result.stderr.clear();
-        app.finish_execution(Some(0), true);
-        assert_eq!(
-            app.status_line_for_test(),
-            "Execution completed successfully."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Ok);
-        assert_eq!(app.file_output_path_for_test(), Some("/tmp/out.txt"));
-        assert_eq!(app.active_result_tab(), ResultTab::Overview);
-
-        app.running = Some(running_state(Some("listobs-summary-v1"), None));
-        app.result.stdout = "{".into();
-        app.result.stderr.clear();
-        app.finish_execution(Some(0), true);
-        assert_eq!(
-            app.status_line_for_test(),
-            "Execution completed, but structured rendering failed."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Warning);
-        assert!(app.result.structured_error.is_some());
-        assert_eq!(app.active_result_tab(), ResultTab::Stdout);
-
-        app.running = Some(running_state(None, None));
-        app.result.stdout = "plain stdout".into();
-        app.result.stderr.clear();
-        app.finish_execution(Some(0), true);
-        assert_eq!(app.result.status_kind, StatusKind::Ok);
-        assert_eq!(app.active_result_tab(), ResultTab::Stdout);
-
-        app.running = Some(running_state(None, None));
-        app.result.stdout.clear();
-        app.result.stderr = "plain stderr".into();
-        app.finish_execution(Some(1), false);
-        assert_eq!(app.status_line_for_test(), "Execution failed.");
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn browser_session_success_and_failure_paths_update_state() {
-        let temp = tempdir().expect("tempdir");
-        let success_response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(
-            fake_browser_snapshot("Browser moved", vec!["new content".into()]),
-        ))
-        .expect("serialize snapshot");
-        let script = write_browser_session_script(temp.path(), &[success_response], None);
-        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
-
-        let mut app = test_app();
-        app.browser_session = Some(BrowserSession {
-            client,
-            snapshot: fake_browser_snapshot("Old", vec!["old".into()]),
-            viewport: BrowserViewport::new(80, 24),
-        });
-        app.output_selection = Some(OutputSelection {
-            target: OutputPane::Result,
-            anchor: BufferPoint { row: 0, col: 0 },
-            cursor: BufferPoint { row: 0, col: 1 },
-            mode: OutputSelectionMode::Dragging,
-        });
-        app.send_browser_command(BrowserCommand::GetSnapshot { viewport: None });
-        assert!(app.browser_is_active());
-        assert_eq!(app.status_line_for_test(), "Browser moved");
-        assert_eq!(app.result.status_kind, StatusKind::Info);
-        assert!(app.output_selection.is_none());
-
-        let failure_script = write_browser_session_script(temp.path(), &[], Some("session stderr"));
-        let failure_client =
-            BrowserClient::spawn(&ResolvedCommand::direct(failure_script)).expect("spawn client");
-        app.browser_session = Some(BrowserSession {
-            client: failure_client,
-            snapshot: fake_browser_snapshot("Old", vec!["old".into()]),
-            viewport: BrowserViewport::new(80, 24),
-        });
-        app.send_browser_command(BrowserCommand::GetSnapshot { viewport: None });
-        assert!(!app.browser_is_active());
-        assert_eq!(
-            app.status_line_for_test(),
-            "Browser command failed. Session closed."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(app.stderr_for_test().contains("session stderr"));
-        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
-        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn cancel_current_closes_browser_session_and_restores_parameter_focus() {
-        let temp = tempdir().expect("tempdir");
-        let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(
-            fake_browser_snapshot("Opened", vec!["content".into()]),
-        ))
-        .expect("serialize snapshot");
-        let script = write_browser_session_script(temp.path(), &[response], None);
-        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
-
-        let mut app = test_app();
-        app.pane_focus = PaneFocus::Result;
-        app.browser_session = Some(BrowserSession {
-            client,
-            snapshot: fake_browser_snapshot("Opened", vec!["content".into()]),
-            viewport: BrowserViewport::new(80, 24),
-        });
-
-        app.cancel_current();
-        assert!(!app.browser_is_active());
-        assert_eq!(app.status_line_for_test(), "Browser session closed.");
-        assert_eq!(app.result.status_kind, StatusKind::Info);
-        assert_eq!(app.pane_focus_for_test(), PaneFocus::Parameters);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn overview_lines_cover_file_running_error_and_browser_states() {
-        let temp = tempdir().expect("tempdir");
-        let mut app = test_app();
-        app.result.file_output_path = Some("/tmp/output.txt".into());
-        let file_lines = app.overview_lines();
-        assert!(
-            file_lines
-                .iter()
-                .any(|line| line.contains("/tmp/output.txt"))
-        );
-
-        app.result.file_output_path = None;
-        app.running = Some(running_state(None, None));
-        let running_lines = app.overview_lines();
-        assert!(
-            running_lines
-                .iter()
-                .any(|line| line.contains("still running"))
-        );
-
-        app.running = None;
-        app.result.structured_error = Some("parse failed".into());
-        let error_lines = app.overview_lines();
-        assert!(error_lines.iter().any(|line| line.contains("parse failed")));
-
-        app.result.structured_error = None;
-        let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(
-            fake_browser_snapshot("Browser overview", vec!["browser line".into()]),
-        ))
-        .expect("serialize snapshot");
-        let script = write_browser_session_script(temp.path(), &[response], None);
-        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
-        app.browser_session = Some(BrowserSession {
-            client,
-            snapshot: fake_browser_snapshot("Browser overview", vec!["browser line".into()]),
-            viewport: BrowserViewport::new(80, 24),
-        });
-        let browser_lines = app.overview_lines();
-        assert_eq!(browser_lines, vec!["browser line".to_string()]);
-    }
-
-    #[test]
-    fn structured_renderers_cover_all_summary_tabs() {
-        let summary = sample_listobs_summary();
-
-        let observations = build_observations_table(&summary);
-        assert!(observations.header.contains("Telescope"));
-        assert!(observations.rows[0].contains("Very La"));
-        assert!(observations.rows[0].contains("Long Ob"));
-
-        let scans = build_scans_table(&summary, true);
-        assert!(scans.header.contains("nUnfl"));
-        assert!(scans.rows[0].contains("CALIBRATE_BANDPASS"));
-        assert!(scans.rows[0].contains("[0,3]"));
-
-        let fields = build_fields_table(&summary, true);
-        assert!(fields.header.contains("nUnflRows"));
-        assert!(fields.rows[0].contains("J2000"));
-
-        let spws = build_spws_table(&summary);
-        assert!(spws.header.contains("CtrFreq(MHz)"));
-        assert!(spws.rows[0].contains("LSRK"));
-        assert!(spws.rows[0].contains("XX  YY  XY"));
-
-        let sources = build_sources_table(&summary);
-        assert!(sources.rows[0].contains("any"));
-        assert!(sources.rows[0].contains("1.234"));
-
-        let antennas = build_antennas_table(&summary);
-        assert!(antennas.header.contains("ITRF x"));
-        assert!(antennas.rows[0].contains("ea01"));
-
-        let compact = build_compact_antenna_lines(&summary);
-        assert!(compact[0].contains("Antennas: 3"));
-        assert!(
-            compact
-                .iter()
-                .any(|line| line.to_string().contains("'ea01'='W01'"))
-        );
-    }
-
-    #[test]
-    fn start_run_reports_schema_build_and_launch_failures() {
-        let mut app = test_app();
-        app.schema = None;
-        app.start_run();
-        assert_eq!(
-            app.status_line_for_test(),
-            "Cannot run without a loaded UI schema."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
-
-        let mut app = test_app();
-        app.set_text_value("ms_path", "/tmp/demo.ms");
-        app.set_text_value("output", "/tmp/out.txt");
-        app.set_text_value("listfile", "/tmp/out.log");
-        app.start_run();
-        assert_eq!(app.status_line_for_test(), "Cannot start command.");
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(
-            app.stderr_for_test()
-                .contains("Choose either --output or --listfile")
-        );
-
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let mut app = test_app();
-        app.set_text_value("ms_path", "/tmp/demo.ms");
-        unsafe {
-            std::env::set_var("CASARS_LISTOBS_BIN", "/definitely/missing-listobs");
-        }
-        app.start_run();
-        unsafe {
-            std::env::remove_var("CASARS_LISTOBS_BIN");
-        }
-        assert_eq!(app.status_line_for_test(), "Failed to launch listobs.");
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(app.stderr_for_test().contains("spawn subprocess"));
-        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
-    }
-
-    #[test]
-    fn table_browser_start_requires_path_and_reports_launch_failure() {
-        let mut app = tablebrowser_test_app();
-        app.start_run();
-        assert_eq!(app.status_line_for_test(), "Table Path is required.");
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(!app.browser_is_active());
-
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let mut app = tablebrowser_test_app();
-        app.set_text_value("table_path", "/tmp/demo.table");
-        unsafe {
-            std::env::set_var(
-                "CASARS_TABLEBROWSER_BIN",
-                "/definitely/missing-tablebrowser",
-            );
-        }
-        app.start_run();
-        unsafe {
-            std::env::remove_var("CASARS_TABLEBROWSER_BIN");
-        }
-        assert_eq!(
-            app.status_line_for_test(),
-            "Failed to launch table browser."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(app.stderr_for_test().contains("spawn tablebrowser session"));
-        assert_eq!(app.active_result_tab(), ResultTab::Stderr);
-        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
-    }
-
-    #[test]
-    fn ensure_uv_coverage_started_covers_missing_plan_launch_failure_and_success() {
-        let mut app = test_app();
-        app.result.structured = Some(sample_listobs_summary());
-
-        app.ensure_uv_coverage_started();
-        assert_eq!(
-            app.uv_coverage_error.as_deref(),
-            Some("UV coverage is only available for the most recent completed listobs run.")
-        );
-
-        app.last_listobs_uv_plan = Some(ExecutionPlan {
-            command: ResolvedCommand::direct("/definitely/missing-uv-loader"),
-            arguments: Vec::new(),
-            renderer: None,
-            file_output_path: None,
-        });
-        app.ensure_uv_coverage_started();
-        assert_eq!(
-            app.status_line_for_test(),
-            "Failed to launch UV coverage loader."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Error);
-        assert!(app.stderr_for_test().contains("spawn subprocess"));
-
-        let coverage = sample_uv_coverage();
-        let json = serde_json::to_string(&coverage).expect("serialize coverage");
-        app.result.stderr.clear();
-        app.last_listobs_uv_plan = Some(ExecutionPlan {
-            command: ResolvedCommand::direct("sh"),
-            arguments: vec![
-                "-c".into(),
-                "printf '%s' \"$1\"".into(),
-                "uv-loader".into(),
-                json.into(),
-            ],
-            renderer: None,
-            file_output_path: None,
-        });
-        app.ensure_uv_coverage_started();
-        assert!(app.uv_loading_active_for_test());
-        assert!(app.wait_for_all_idle_for_test(Duration::from_secs(2)));
-        assert_eq!(app.status_line_for_test(), "UV coverage loaded.");
-        assert_eq!(app.result.status_kind, StatusKind::Ok);
-        assert_eq!(app.uv_coverage_for_test(), Some(&coverage));
-    }
-
-    #[test]
-    fn cancel_current_covers_uv_and_running_cancel_paths() {
-        let mut app = test_app();
-        app.uv_loading = Some(UvCoverageLoadState {
-            process: spawn_process(&ExecutionPlan {
-                command: ResolvedCommand::direct("sh"),
-                arguments: vec!["-c".into(), "sleep 5".into()],
-                renderer: None,
-                file_output_path: None,
-            })
-            .expect("spawn long-running uv loader"),
-            stdout: String::new(),
-            stderr: String::new(),
-            cancel_requested: false,
-        });
-        app.cancel_current();
-        assert_eq!(
-            app.status_line_for_test(),
-            "Cancel requested for UV coverage load..."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Warning);
-        assert!(
-            app.uv_loading
-                .as_ref()
-                .is_some_and(|loading| loading.cancel_requested)
-        );
-
-        let mut app = test_app();
-        app.uv_loading = Some(UvCoverageLoadState {
-            process: exited_process(),
-            stdout: String::new(),
-            stderr: String::new(),
-            cancel_requested: false,
-        });
-        app.cancel_current();
-        assert_eq!(
-            app.status_line_for_test(),
-            "Cancel requested for UV coverage load..."
-        );
-        assert!(
-            app.uv_loading
-                .as_ref()
-                .is_some_and(|loading| loading.cancel_requested)
-        );
-        app.cancel_current();
-        assert_eq!(
-            app.status_line_for_test(),
-            "Cancel requested for UV coverage load..."
-        );
-
-        let mut app = test_app();
-        app.running = Some(running_state(None, None));
-        app.cancel_current();
-        assert_eq!(
-            app.status_line_for_test(),
-            "Cancel requested for listobs..."
-        );
-        assert!(
-            app.running
-                .as_ref()
-                .is_some_and(|running| running.cancel_requested)
-        );
-        app.cancel_current();
-        assert_eq!(
-            app.status_line_for_test(),
-            "Cancel requested for listobs..."
-        );
-    }
-
-    #[test]
-    fn parameter_and_result_actions_cover_dispatch_and_focus_helpers() {
-        let mut app = test_app();
-        let toggle_index = app
-            .fields
-            .iter()
-            .position(|field| matches!(field.value, FormValue::Toggle(_)))
-            .expect("toggle field");
-
-        app.selected_form = FormSelection::Field(toggle_index);
-        app.apply_parameter_action(ParameterAction::ChoiceNext);
-        app.apply_parameter_action(ParameterAction::ChoicePrevious);
-
-        app.apply_parameter_action(ParameterAction::SelectNext);
-        assert_ne!(app.selected_form, FormSelection::Field(toggle_index));
-        app.apply_parameter_action(ParameterAction::SelectPrevious);
-        assert_eq!(app.selected_form, FormSelection::Field(toggle_index));
-
-        let toggle_before = match app.fields[toggle_index].value {
-            FormValue::Toggle(value) => value,
-            _ => unreachable!("toggle field"),
-        };
-        app.selected_form = FormSelection::Field(toggle_index);
-        app.apply_parameter_action(ParameterAction::Activate);
-        let toggle_after = match app.fields[toggle_index].value {
-            FormValue::Toggle(value) => value,
-            _ => unreachable!("toggle field"),
-        };
-        assert_ne!(toggle_before, toggle_after);
-
-        let collapsed_before = app.sections[0].collapsed;
-        app.selected_form = FormSelection::Section(0);
-        app.apply_parameter_action(ParameterAction::Activate);
-        assert_ne!(collapsed_before, app.sections[0].collapsed);
-
-        app.active_result_tab = ResultTab::Stdout;
-        app.apply_result_action(ResultAction::Scroll(3));
-        app.apply_result_action(ResultAction::ScrollHorizontal(4));
-        assert_eq!(app.result_scrolls[ResultTab::Stdout.index()], 3);
-        assert_eq!(app.result_hscrolls[ResultTab::Stdout.index()], 4);
-
-        app.active_result_tab = ResultTab::Overview;
-        app.apply_result_action(ResultAction::NextTab);
-        assert_eq!(app.active_result_tab(), ResultTab::Observations);
-        app.apply_result_action(ResultAction::PreviousTab);
-        assert_eq!(app.active_result_tab(), ResultTab::Overview);
-
-        app.toggle_advanced();
-        assert!(app.show_advanced);
-        app.toggle_parameters_pane();
-        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
-        assert!(app.parameters_pane_collapsed());
-        app.toggle_parameters_pane();
-        assert!(!app.parameters_pane_collapsed());
-        app.toggle_focus();
-        assert_eq!(app.pane_focus_for_test(), PaneFocus::Parameters);
-        app.toggle_focus();
-        assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
-    }
-
-    #[test]
-    fn input_modes_and_path_chooser_key_dispatch_cover_interactive_branches() {
-        let mut app = test_app();
-        assert_eq!(app.input_mode(), super::InputMode::Parameters);
-
-        app.pane_focus = PaneFocus::Result;
-        assert_eq!(app.input_mode(), super::InputMode::Result);
-
-        app.edit_state = Some(super::EditState {
-            field_index: 0,
-            buffer: "draft".to_string(),
-        });
-        assert_eq!(app.input_mode(), super::InputMode::Edit);
-
-        let temp = tempdir().expect("tempdir");
-        let chooser_dir = temp.path().join("chooser-mode");
-        std::fs::create_dir(&chooser_dir).expect("create chooser dir");
-        std::fs::write(chooser_dir.join("picked.ms"), "").expect("create file");
-
-        let field_index = app
-            .fields
-            .iter()
-            .position(|field| field.schema.id == "ms_path")
-            .expect("ms_path field");
-        app.edit_state = Some(super::EditState {
-            field_index,
-            buffer: chooser_dir.to_string_lossy().to_string(),
-        });
-        app.selected_form = FormSelection::Field(field_index);
-        app.open_path_chooser_for_selected_field();
-        assert_eq!(app.input_mode(), super::InputMode::PathChooser);
-        assert!(
-            app.resolve_key_action(crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Enter,
-                crossterm::event::KeyModifiers::NONE,
-            ))
-            .is_some_and(|action| matches!(
-                action,
-                super::AppAction::PathChooser(super::PathChooserAction::Confirm)
-            ))
-        );
-        assert!(
-            app.resolve_key_action(crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char(' '),
-                crossterm::event::KeyModifiers::NONE,
-            ))
-            .is_some_and(|action| matches!(
-                action,
-                super::AppAction::PathChooser(super::PathChooserAction::SelectCurrent)
-            ))
-        );
-        assert!(
-            app.resolve_key_action(crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Down,
-                crossterm::event::KeyModifiers::NONE,
-            ))
-            .is_some_and(|action| matches!(
-                action,
-                super::AppAction::PathChooser(super::PathChooserAction::Navigate(
-                    super::ExplorerInput::Down
-                ))
-            ))
-        );
-        assert_eq!(
-            app.resolve_key_action(crossterm::event::KeyEvent {
-                code: crossterm::event::KeyCode::Esc,
-                modifiers: crossterm::event::KeyModifiers::NONE,
-                kind: crossterm::event::KeyEventKind::Release,
-                state: crossterm::event::KeyEventState::NONE,
-            }),
-            None
-        );
-
-        let spinner_before = app.spinner_frame;
-        app.on_tick();
-        assert_eq!(
-            app.spinner_frame,
-            (spinner_before + 1) % super::spinner_frames(app.theme_mode()).len()
-        );
-
-        app.handle_key_event(crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Down,
-            crossterm::event::KeyModifiers::NONE,
-        ));
-        app.handle_key_event(crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char(' '),
-            crossterm::event::KeyModifiers::NONE,
-        ));
-        assert!(app.path_chooser.is_none());
-        assert!(app.status_line_for_test().starts_with("Selected path:"));
-        assert_eq!(
-            app.input_mode(),
-            if app.pane_focus == PaneFocus::Parameters {
-                super::InputMode::Parameters
-            } else {
-                super::InputMode::Result
-            }
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn browser_actions_and_path_chooser_cover_dispatch_heavy_branches() {
-        let temp = tempdir().expect("tempdir");
-        let responses = [
-            ("cycle", ProtocolBrowserView::Columns),
-            ("left", ProtocolBrowserView::Columns),
-            ("right", ProtocolBrowserView::Columns),
-            ("up", ProtocolBrowserView::Columns),
-            ("down", ProtocolBrowserView::Columns),
-            ("page-up", ProtocolBrowserView::Columns),
-            ("page-down", ProtocolBrowserView::Columns),
-            ("activate", ProtocolBrowserView::Columns),
-            ("back", ProtocolBrowserView::Columns),
-            ("escape", ProtocolBrowserView::Columns),
-            ("scroll-down", ProtocolBrowserView::Columns),
-            ("scroll-up", ProtocolBrowserView::Columns),
-            ("hscroll-right", ProtocolBrowserView::Columns),
-            ("hscroll-left", ProtocolBrowserView::Columns),
-            ("keywords", ProtocolBrowserView::Keywords),
-        ]
-        .into_iter()
-        .map(|(status, view)| {
-            serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-                capabilities: BrowserCapabilities { editable: false },
-                view,
-                focus: BrowserFocus::Main,
-                table_path: "/tmp/fake.ms".to_string(),
-                breadcrumb: vec![BrowserBreadcrumbEntry {
-                    label: "fake.ms".to_string(),
-                    path: "/tmp/fake.ms".to_string(),
-                }],
-                viewport: BrowserViewport::new(80, 24),
-                status_line: status.to_string(),
-                content_lines: vec![status.to_string()],
-                vertical_metrics: Some(BrowserNavigationMetrics {
-                    selected_index: 2,
-                    total_items: 20,
-                    viewport_items: 5,
-                }),
-                horizontal_metrics: Some(BrowserNavigationMetrics {
-                    selected_index: 1,
-                    total_items: 10,
-                    viewport_items: 4,
-                }),
-                selected_address: None,
-                inspector: None,
-            }))
-            .expect("serialize snapshot")
-        })
-        .collect::<Vec<_>>();
-        let script = write_browser_session_script(temp.path(), &responses, None);
-        let client = BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn client");
-
-        let mut app = test_app();
-        app.browser_session = Some(BrowserSession {
-            client,
-            snapshot: fake_browser_snapshot_with_metrics(
-                "cells",
-                vec!["cells".into()],
-                Some(BrowserNavigationMetrics {
-                    selected_index: 2,
-                    total_items: 20,
-                    viewport_items: 5,
-                }),
-                Some(BrowserNavigationMetrics {
-                    selected_index: 1,
-                    total_items: 10,
-                    viewport_items: 4,
-                }),
-            ),
-            viewport: BrowserViewport::new(80, 24),
-        });
-        app.browser_session.as_mut().unwrap().snapshot.view = ProtocolBrowserView::Cells;
-
-        assert_eq!(app.active_browser_scroll(), 2);
-        assert_eq!(app.active_browser_hscroll(), 1);
-
-        app.apply_browser_action(BrowserAction::CycleView { forward: true });
-        app.apply_browser_action(BrowserAction::MoveLeft);
-        app.apply_browser_action(BrowserAction::MoveRight);
-        app.apply_browser_action(BrowserAction::MoveUp);
-        app.apply_browser_action(BrowserAction::MoveDown);
-        app.apply_browser_action(BrowserAction::PageUp);
-        app.apply_browser_action(BrowserAction::PageDown);
-        app.apply_browser_action(BrowserAction::Activate);
-        app.apply_browser_action(BrowserAction::Back);
-        app.apply_browser_action(BrowserAction::Escape);
-        assert_eq!(app.status_line_for_test(), "escape");
-
-        app.set_active_browser_scroll(5);
-        assert_eq!(app.status_line_for_test(), "scroll-down");
-        app.set_active_browser_scroll(0);
-        assert_eq!(app.status_line_for_test(), "scroll-up");
-        app.set_active_browser_hscroll(5);
-        assert_eq!(app.status_line_for_test(), "hscroll-right");
-        app.set_active_browser_hscroll(0);
-        assert_eq!(app.status_line_for_test(), "hscroll-left");
-        app.activate_browser_tab(BrowserTab::Keywords);
-        assert_eq!(app.status_line_for_test(), "keywords");
-
-        let chooser_dir = temp.path().join("chooser");
-        std::fs::create_dir(&chooser_dir).expect("create chooser dir");
-        std::fs::write(chooser_dir.join("picked.ms"), "").expect("create file");
-        app.set_text_value("ms_path", chooser_dir.to_string_lossy().as_ref());
-        let field_index = app
-            .fields
-            .iter()
-            .position(|field| field.schema.id == "ms_path")
-            .expect("ms_path field");
-        app.edit_state = Some(super::EditState {
-            field_index,
-            buffer: chooser_dir.to_string_lossy().to_string(),
-        });
-        app.selected_form = FormSelection::Field(field_index);
-        app.open_path_chooser_for_selected_field();
-        assert!(app.path_chooser.is_some());
-        assert!(app.edit_state.is_none());
-
-        let layout = crate::ui::compute_layout(Rect::new(0, 0, 120, 30), &app);
-        let chooser_area = crate::ui::path_chooser_area(layout.body);
-        let list_area = crate::ui::path_chooser_list_area(chooser_area);
-        app.handle_path_chooser_mouse(
-            crossterm::event::MouseEvent {
-                kind: crossterm::event::MouseEventKind::ScrollDown,
-                column: list_area.x,
-                row: list_area.y,
-                modifiers: crossterm::event::KeyModifiers::NONE,
-            },
-            &layout,
-        );
-        app.handle_path_chooser_mouse(
-            crossterm::event::MouseEvent {
-                kind: crossterm::event::MouseEventKind::ScrollUp,
-                column: list_area.x,
-                row: list_area.y,
-                modifiers: crossterm::event::KeyModifiers::NONE,
-            },
-            &layout,
-        );
-        app.apply_path_chooser_action(super::PathChooserAction::SelectCurrent);
-        assert!(app.status_line_for_test().starts_with("Selected path:"));
-
-        app.open_path_chooser(field_index);
-        app.handle_path_chooser_mouse(
-            crossterm::event::MouseEvent {
-                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                column: 0,
-                row: 0,
-                modifiers: crossterm::event::KeyModifiers::NONE,
-            },
-            &layout,
-        );
-        assert_eq!(app.status_line_for_test(), "Path chooser canceled.");
-        assert!(app.path_chooser.is_none());
-    }
-
-    #[test]
-    fn copy_output_selection_covers_warning_and_uv_summary_clipboard_paths() {
-        let mut app = test_app();
-        app.copy_output_selection();
-        assert_eq!(app.status_line_for_test(), "Nothing copyable is selected.");
-        assert_eq!(app.result.status_kind, StatusKind::Warning);
-
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let temp = tempfile::tempdir().expect("tempdir");
-        let clipboard_path = temp.path().join("clipboard.txt");
-        unsafe {
-            std::env::set_var("CASARS_TEST_CLIPBOARD_FILE", &clipboard_path);
-        }
-
-        let mut app = test_app();
-        app.active_result_tab = ResultTab::Uv;
-        app.uv_coverage = Some(sample_uv_coverage());
-        app.copy_output_selection();
-
-        unsafe {
-            std::env::remove_var("CASARS_TEST_CLIPBOARD_FILE");
-        }
-
-        assert_eq!(
-            app.status_line_for_test(),
-            "Copied uv coverage summary to clipboard."
-        );
-        assert_eq!(app.result.status_kind, StatusKind::Ok);
-        let copied = std::fs::read_to_string(&clipboard_path).expect("read clipboard override");
-        assert!(copied.contains("Tracks=2"));
-        assert!(copied.contains("UV coverage in M"));
     }
 }

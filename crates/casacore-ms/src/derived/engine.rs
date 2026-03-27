@@ -46,8 +46,9 @@ pub struct MsCalEngine {
 impl MsCalEngine {
     /// Create a new engine by extracting metadata from the MS subtables.
     ///
-    /// Reads ANTENNA positions, FIELD phase directions, and the observatory
-    /// position from the ANTENNA subtable (uses antenna 0 as the array center).
+    /// Reads ANTENNA positions, FIELD phase directions, and resolves the
+    /// observatory position from `OBSERVATION::TELESCOPE_NAME` when possible,
+    /// falling back to antenna 0 only when no catalog entry is available.
     pub fn new(ms: &MeasurementSet) -> MsResult<Self> {
         let ant = ms.antenna()?;
         let n_ant = ant.row_count();
@@ -67,14 +68,16 @@ impl MsCalEngine {
             field_directions.push(MDirection::from_angles(ra, dec, DirectionRef::J2000));
         }
 
-        // Use antenna 0 as observatory position (C++ MSCalEngine uses OBSERVATION
-        // TELESCOPE_NAME to look up the observatory, but for simplicity we use
-        // the first antenna position as the reference).
-        let observatory_position = if antenna_positions.is_empty() {
-            MPosition::new_itrf(0.0, 0.0, 0.0)
-        } else {
-            antenna_positions[0].clone()
-        };
+        let observatory_position = ms
+            .observation()
+            .ok()
+            .and_then(|observation| {
+                (0..observation.row_count())
+                    .find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
+            })
+            .and_then(|name| MPosition::from_observatory_name(&name))
+            .or_else(|| antenna_positions.first().cloned())
+            .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0));
 
         Ok(Self {
             antenna_positions,

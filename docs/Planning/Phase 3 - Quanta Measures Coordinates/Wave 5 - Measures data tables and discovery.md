@@ -111,8 +111,10 @@
 - Skips/blockers/follow-ups:
   - JPL ephemerides (`MeasJPL`) not implemented — SOFA analytical models are used
     instead for Earth/Sun position and velocity.
-  - Observatory catalog (`Observatories` table) not implemented — positions are
-    provided directly by the user via `MPosition`.
+- Observatory catalog (`Observatories` table) was out of scope for the original
+  Wave 5 delivery, but it is implemented later as a Rust-native bundled
+  snapshot sourced from casacore-data. This note is historical, not a permanent
+  scope exclusion.
   - Source/line catalogs not implemented — out of scope for current use cases.
   - Data update mechanism (`update_eop` example with `--features update`) is
     functional but the `update` feature is behind a feature flag.
