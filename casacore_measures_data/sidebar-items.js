@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["BUNDLED_STALENESS_THRESHOLD_DAYS"],"enum":["EopError"],"fn":["bundled_eop_table","check_bundled_freshness","load_eop"],"struct":["EopEntry","EopSummary","EopTable","EopValues"]};
+window.SIDEBAR_ITEMS = {"constant":["BUNDLED_STALENESS_THRESHOLD_DAYS"],"enum":["EopError"],"fn":["bundled_eop_table","bundled_observatory_catalog","check_bundled_freshness","load_eop","load_observatories"],"struct":["EopEntry","EopSummary","EopTable","EopValues","ObservatoryCatalog","ObservatoryEntry"]};

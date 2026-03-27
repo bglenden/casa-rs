@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["import_observatories_table","observatories_table_candidates","write_observatories_snapshot"]};
