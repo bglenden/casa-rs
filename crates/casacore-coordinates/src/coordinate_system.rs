@@ -292,9 +292,11 @@ mod tests {
     use crate::spectral::SpectralCoordinate;
     use crate::stokes::{StokesCoordinate, StokesType};
     use crate::tabular::TabularCoordinate;
-    use casacore_types::measures::direction::DirectionRef;
-    use casacore_types::measures::frequency::FrequencyRef;
-    use casacore_types::measures::{EpochRef, PositionRef};
+    use casacore_types::measures::direction::{DirectionRef, MDirection};
+    use casacore_types::measures::epoch::MEpoch;
+    use casacore_types::measures::frequency::{FrequencyRef, MFrequency};
+    use casacore_types::measures::position::MPosition;
+    use casacore_types::measures::{EpochRef, MeasFrame, PositionRef};
     use casacore_types::{ArrayD, ArrayValue, RecordField};
     use ndarray::IxDyn;
 
@@ -475,6 +477,46 @@ mod tests {
         ])
     }
 
+    fn casa_spectral_tabular_record_with_conversion() -> RecordValue {
+        let mut record = casa_spectral_tabular_record();
+        let conversion = RecordValue::new(vec![
+            RecordField::new(
+                "direction",
+                Value::Record(RecordValue::new(vec![
+                    RecordField::new(
+                        "type",
+                        Value::Scalar(ScalarValue::String("direction".into())),
+                    ),
+                    RecordField::new("refer", Value::Scalar(ScalarValue::String("J2000".into()))),
+                    RecordField::new(
+                        "m0",
+                        Value::Record(quantity_record(-2.8940293347227444, "rad")),
+                    ),
+                    RecordField::new(
+                        "m1",
+                        Value::Record(quantity_record(0.3784702849718404, "rad")),
+                    ),
+                ])),
+            ),
+            RecordField::new(
+                "position",
+                Value::Record(measure_position_record(
+                    "WGS84",
+                    -2.1200320498502676,
+                    0.7123949192959743,
+                    1021.0,
+                )),
+            ),
+            RecordField::new(
+                "epoch",
+                Value::Record(measure_epoch_record(50_919.14846423176, "UTC")),
+            ),
+            RecordField::new("system", Value::Scalar(ScalarValue::String("LSRK".into()))),
+        ]);
+        record.upsert("conversion", Value::Record(conversion));
+        record
+    }
+
     fn casa_spectral_non_linear_tabular_record() -> RecordValue {
         let tabular = RecordValue::new(vec![
             RecordField::new(
@@ -625,6 +667,41 @@ mod tests {
             RecordField::new(
                 "spectral2",
                 Value::Record(casa_spectral_non_linear_tabular_record()),
+            ),
+            RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
+            RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
+        ])
+    }
+
+    fn casa_style_coords_with_tabular_spectral_conversion() -> RecordValue {
+        RecordValue::new(vec![
+            RecordField::new(
+                "telescope",
+                Value::Scalar(ScalarValue::String("BIMA".into())),
+            ),
+            RecordField::new(
+                "observer",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new(
+                "obsdate",
+                Value::Record(measure_epoch_record(50_919.14846423176, "UTC")),
+            ),
+            RecordField::new("direction0", Value::Record(casa_direction_record())),
+            RecordField::new(
+                "worldmap0",
+                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
+            ),
+            RecordField::new(
+                "pixelmap0",
+                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
+            ),
+            RecordField::new("stokes1", Value::Record(casa_stokes_record())),
+            RecordField::new("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
+            RecordField::new("pixelmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
+            RecordField::new(
+                "spectral2",
+                Value::Record(casa_spectral_tabular_record_with_conversion()),
             ),
             RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
             RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
@@ -962,5 +1039,38 @@ mod tests {
 
         let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, 1.150345e11]).unwrap();
         assert!((pixel[3] - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn from_record_applies_casa_style_spectral_conversion_state() {
+        let cs =
+            CoordinateSystem::from_record(&casa_style_coords_with_tabular_spectral_conversion())
+                .unwrap();
+
+        let expected = MFrequency::new(1.15022e11, FrequencyRef::LSRD)
+            .convert_to(
+                FrequencyRef::LSRK,
+                &MeasFrame::new()
+                    .with_direction(MDirection::from_angles(
+                        -2.8940293347227444,
+                        0.3784702849718404,
+                        DirectionRef::J2000,
+                    ))
+                    .with_position(MPosition::new_wgs84(
+                        -2.1200320498502676,
+                        0.7123949192959743,
+                        1021.0,
+                    ))
+                    .with_epoch(MEpoch::from_mjd(50_919.14846423176, EpochRef::UTC)),
+            )
+            .unwrap()
+            .hz();
+
+        let world = cs.to_world(&[128.0, 128.0, 0.0, 0.0]).unwrap();
+        assert_eq!(world.len(), 4);
+        assert!((world[3] - expected).abs() < 1.0);
+
+        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, expected]).unwrap();
+        assert!((pixel[3] - 0.0).abs() < 1e-6);
     }
 }

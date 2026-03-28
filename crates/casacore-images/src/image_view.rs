@@ -1051,11 +1051,18 @@ fn coordinate_header_details(coord_type: CoordinateType, record: &RecordValue) -
             format!("frame={frame} projection={projection}")
         }
         CoordinateType::Spectral => {
-            let frame = record_string(record, "frequency_ref").unwrap_or("unknown");
+            let native_frame = record_string(record, "frequency_ref").unwrap_or("unknown");
+            let frame = record_subrecord(record, "conversion")
+                .and_then(|conversion| record_string(conversion, "system"))
+                .unwrap_or(native_frame);
             let restfreq = record_f64(record, "restfreq")
                 .map(|value| format!(" restfreq={value}"))
                 .unwrap_or_default();
-            format!("frame={frame}{restfreq}")
+            if frame == native_frame {
+                format!("frame={frame}{restfreq}")
+            } else {
+                format!("frame={frame} native={native_frame}{restfreq}")
+            }
         }
         CoordinateType::Stokes => {
             let stokes = record_stokes_values(record);
@@ -1076,6 +1083,13 @@ fn coordinate_header_details(coord_type: CoordinateType, record: &RecordValue) -
 fn record_string<'a>(record: &'a RecordValue, key: &str) -> Option<&'a str> {
     match record.get(key) {
         Some(Value::Scalar(ScalarValue::String(value))) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn record_subrecord<'a>(record: &'a RecordValue, key: &str) -> Option<&'a RecordValue> {
+    match record.get(key) {
+        Some(Value::Record(value)) => Some(value),
         _ => None,
     }
 }
@@ -1560,5 +1574,18 @@ mod tests {
         assert!(!opened.capabilities().pixel_only_mode);
         let probe = opened.probe((128, 128), 0).unwrap();
         assert!(!probe.world_axes.is_empty());
+        let spectral = probe.world_axes.last().unwrap();
+        assert_eq!(spectral.name, "Frequency");
+        assert!((spectral.value - 115_022_033_339.31976).abs() < 1_000.0);
+
+        let coordinates = opened
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Coordinates")
+            .unwrap();
+        assert!(coordinates.lines.iter().any(|line| {
+            line.contains("Spectral 2: frame=LSRK native=LSRD restfreq=115271200000")
+        }));
     }
 }

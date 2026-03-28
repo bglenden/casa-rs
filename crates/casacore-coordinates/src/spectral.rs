@@ -7,7 +7,13 @@
 
 use std::str::FromStr;
 
-use casacore_types::measures::frequency::FrequencyRef;
+use casacore_types::measures::direction_to_record;
+use casacore_types::measures::epoch_to_record;
+use casacore_types::measures::frequency::{FrequencyRef, MFrequency};
+use casacore_types::measures::position_to_record;
+use casacore_types::measures::{
+    MeasFrame, direction_from_record, epoch_from_record, position_from_record,
+};
 use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
@@ -33,6 +39,12 @@ enum SpectralMapping {
     },
 }
 
+#[derive(Debug, Clone)]
+struct SpectralConversion {
+    frequency_ref: FrequencyRef,
+    frame: MeasFrame,
+}
+
 /// A one-axis spectral coordinate with linear or tabulated pixel-to-world mapping.
 ///
 /// Stores the frequency reference frame, a rest frequency for velocity
@@ -45,6 +57,8 @@ enum SpectralMapping {
 pub struct SpectralCoordinate {
     /// The velocity reference frame (LSRK, BARY, TOPO, etc.).
     frequency_ref: FrequencyRef,
+    /// Optional CASA conversion-layer state for world-coordinate display.
+    conversion: Option<SpectralConversion>,
     /// The rest frequency in Hz (used for velocity conversions).
     rest_frequency: f64,
     /// Pixel-to-world mapping state.
@@ -72,6 +86,7 @@ impl SpectralCoordinate {
     ) -> Self {
         Self {
             frequency_ref,
+            conversion: None,
             rest_frequency,
             mapping: SpectralMapping::Linear {
                 crval,
@@ -105,6 +120,7 @@ impl SpectralCoordinate {
         }
         Ok(Self {
             frequency_ref,
+            conversion: None,
             rest_frequency,
             mapping: SpectralMapping::Tabular {
                 pixel_values,
@@ -124,6 +140,15 @@ impl SpectralCoordinate {
         self
     }
 
+    /// Sets the CASA conversion-layer frame used for displayed world coordinates.
+    pub fn with_conversion(mut self, frequency_ref: FrequencyRef, frame: MeasFrame) -> Self {
+        self.conversion = Some(SpectralConversion {
+            frequency_ref,
+            frame,
+        });
+        self
+    }
+
     /// Sets the world axis name. Returns `self` for chaining.
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -133,6 +158,19 @@ impl SpectralCoordinate {
     /// Returns the velocity reference frame.
     pub fn frequency_ref(&self) -> FrequencyRef {
         self.frequency_ref
+    }
+
+    /// Returns the CASA conversion-layer frequency frame, if configured.
+    pub fn conversion_frequency_ref(&self) -> Option<FrequencyRef> {
+        self.conversion
+            .as_ref()
+            .map(|conversion| conversion.frequency_ref)
+    }
+
+    /// Returns the world-coordinate frame presented by pixel/world conversion.
+    pub fn world_frequency_ref(&self) -> FrequencyRef {
+        self.conversion_frequency_ref()
+            .unwrap_or(self.frequency_ref)
     }
 
     /// Returns the rest frequency in Hz.
@@ -208,6 +246,9 @@ impl SpectralCoordinate {
         }) {
             coord = coord.with_unit(unit);
         }
+        if let Some(conversion) = parse_conversion(rec) {
+            coord = coord.with_conversion(conversion.frequency_ref, conversion.frame);
+        }
         Ok(coord)
     }
 }
@@ -244,7 +285,7 @@ impl Coordinate for SpectralCoordinate {
                 ..
             } => interpolate(pixel_values, world_values, pixel[0])?,
         };
-        Ok(vec![world])
+        Ok(vec![self.convert_native_to_world(world)?])
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
@@ -254,6 +295,7 @@ impl Coordinate for SpectralCoordinate {
                 got: world.len(),
             });
         }
+        let native_world = self.convert_world_to_native(world[0])?;
         let pixel = match &self.mapping {
             SpectralMapping::Linear {
                 crval,
@@ -265,13 +307,13 @@ impl Coordinate for SpectralCoordinate {
                         "zero spectral increment".into(),
                     ));
                 }
-                crpix + (world[0] - crval) / cdelt
+                crpix + (native_world - crval) / cdelt
             }
             SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
                 ..
-            } => interpolate(world_values, pixel_values, world[0])?,
+            } => interpolate(world_values, pixel_values, native_world)?,
         };
         Ok(vec![pixel])
     }
@@ -392,12 +434,91 @@ impl Coordinate for SpectralCoordinate {
             }
         }
 
+        if let Some(conversion) = &self.conversion {
+            if let (Some(direction), Some(position), Some(epoch)) = (
+                conversion.frame.direction(),
+                conversion.frame.position(),
+                conversion.frame.epoch(),
+            ) {
+                let mut conversion_record = RecordValue::default();
+                conversion_record.upsert(
+                    "system",
+                    Value::Scalar(ScalarValue::String(
+                        conversion.frequency_ref.as_str().into(),
+                    )),
+                );
+                conversion_record
+                    .upsert("direction", Value::Record(direction_to_record(direction)));
+                conversion_record.upsert("position", Value::Record(position_to_record(position)));
+                conversion_record.upsert("epoch", Value::Record(epoch_to_record(epoch)));
+                rec.upsert("conversion", Value::Record(conversion_record));
+            }
+        }
+
         rec
     }
 
     fn clone_box(&self) -> Box<dyn Coordinate> {
         Box::new(self.clone())
     }
+}
+
+impl SpectralCoordinate {
+    fn convert_native_to_world(&self, native_hz: f64) -> Result<f64, CoordinateError> {
+        let Some(conversion) = &self.conversion else {
+            return Ok(native_hz);
+        };
+        MFrequency::new(native_hz, self.frequency_ref)
+            .convert_to(conversion.frequency_ref, &conversion.frame)
+            .map(|frequency| frequency.hz())
+            .map_err(|err| {
+                CoordinateError::ConversionFailed(format!(
+                    "spectral frame conversion {} -> {} failed: {err}",
+                    self.frequency_ref, conversion.frequency_ref
+                ))
+            })
+    }
+
+    fn convert_world_to_native(&self, world_hz: f64) -> Result<f64, CoordinateError> {
+        let Some(conversion) = &self.conversion else {
+            return Ok(world_hz);
+        };
+        MFrequency::new(world_hz, conversion.frequency_ref)
+            .convert_to(self.frequency_ref, &conversion.frame)
+            .map(|frequency| frequency.hz())
+            .map_err(|err| {
+                CoordinateError::ConversionFailed(format!(
+                    "spectral frame conversion {} -> {} failed: {err}",
+                    conversion.frequency_ref, self.frequency_ref
+                ))
+            })
+    }
+}
+
+fn parse_conversion(rec: &RecordValue) -> Option<SpectralConversion> {
+    let Value::Record(conversion) = rec.get("conversion")? else {
+        return None;
+    };
+    let target = FrequencyRef::from_str(&get_optional_string(conversion, "system")?).ok()?;
+    let Value::Record(direction_rec) = conversion.get("direction")? else {
+        return None;
+    };
+    let Value::Record(position_rec) = conversion.get("position")? else {
+        return None;
+    };
+    let Value::Record(epoch_rec) = conversion.get("epoch")? else {
+        return None;
+    };
+    let direction = direction_from_record(direction_rec).ok()?;
+    let position = position_from_record(position_rec).ok()?;
+    let epoch = epoch_from_record(epoch_rec).ok()?;
+    Some(SpectralConversion {
+        frequency_ref: target,
+        frame: MeasFrame::new()
+            .with_direction(direction)
+            .with_position(position)
+            .with_epoch(epoch),
+    })
 }
 
 fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
@@ -437,6 +558,20 @@ fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casacore_types::measures::direction::{DirectionRef, MDirection};
+    use casacore_types::measures::epoch::{EpochRef, MEpoch};
+    use casacore_types::measures::position::MPosition;
+
+    fn conversion_frame() -> MeasFrame {
+        MeasFrame::new()
+            .with_direction(MDirection::from_angles(1.0, 0.5, DirectionRef::J2000))
+            .with_position(MPosition::new_wgs84(
+                -2.1200320498502676,
+                0.7123949192959743,
+                1021.0,
+            ))
+            .with_epoch(MEpoch::from_mjd(50_919.14846423176, EpochRef::UTC))
+    }
 
     #[test]
     fn reference_pixel_gives_crval() {
@@ -493,6 +628,15 @@ mod tests {
         let coord =
             SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 0.0).with_name("Velocity");
         assert_eq!(coord.axis_names(), vec!["Velocity"]);
+    }
+
+    #[test]
+    fn with_conversion_changes_world_frame() {
+        let coord = SpectralCoordinate::new(FrequencyRef::LSRD, 1.15022e11, 6.25005e6, 0.0, 1.0)
+            .with_conversion(FrequencyRef::LSRK, conversion_frame());
+        assert_eq!(coord.frequency_ref(), FrequencyRef::LSRD);
+        assert_eq!(coord.conversion_frequency_ref(), Some(FrequencyRef::LSRK));
+        assert_eq!(coord.world_frequency_ref(), FrequencyRef::LSRK);
     }
 
     #[test]
@@ -556,6 +700,35 @@ mod tests {
         assert_eq!(restored.increment(), vec![5.0e5]);
         let restored_world = restored.to_world(&[2.0]).unwrap();
         assert!((restored_world[0] - 1.41125e9).abs() < 1.0);
+    }
+
+    #[test]
+    fn conversion_record_roundtrip_applies_measure_frame_conversion() {
+        let frame = conversion_frame();
+        let coord =
+            SpectralCoordinate::new(FrequencyRef::LSRD, 1.15022e11, 6.25005e6, 0.0, 1.152712e11)
+                .with_conversion(FrequencyRef::LSRK, frame.clone());
+
+        let native = 1.15022e11 + 2.0 * 6.25005e6;
+        let expected = MFrequency::new(native, FrequencyRef::LSRD)
+            .convert_to(FrequencyRef::LSRK, &frame)
+            .unwrap()
+            .hz();
+
+        let world = coord.to_world(&[2.0]).unwrap();
+        assert!((world[0] - expected).abs() < 1.0);
+
+        let back = coord.to_pixel(&world).unwrap();
+        assert!((back[0] - 2.0).abs() < 1e-10);
+
+        let restored = SpectralCoordinate::from_record(&coord.to_record()).unwrap();
+        assert_eq!(restored.frequency_ref(), FrequencyRef::LSRD);
+        assert_eq!(
+            restored.conversion_frequency_ref(),
+            Some(FrequencyRef::LSRK)
+        );
+        let restored_world = restored.to_world(&[2.0]).unwrap();
+        assert!((restored_world[0] - expected).abs() < 1.0);
     }
 
     #[test]
