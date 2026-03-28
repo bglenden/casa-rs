@@ -1453,14 +1453,14 @@ fn should_fallback_to_absolute_antenna_coordinates(summary: &ListObsSummary) -> 
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "macos"))]
+    use super::ensure_non_macos_plot_font;
     use super::{
         ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
         ListObsPlotTheme, UvAxisScale, build_listobs_plot_payload_from_summary,
         build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick,
         render_listobs_plot_image, scan_timeline_axis_offset, uv_axis_scale,
     };
-    #[cfg(not(target_os = "macos"))]
-    use super::ensure_non_macos_plot_font;
     use crate::listobs::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
         ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary, SpectralWindowSummary,
