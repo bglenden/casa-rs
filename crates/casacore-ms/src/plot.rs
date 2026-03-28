@@ -1507,6 +1507,22 @@ mod tests {
     }
 
     #[test]
+    fn uv_points_mode_and_single_sample_tracks_render() {
+        let mut coverage = synthetic_uv_coverage();
+        coverage.tracks[0].samples.truncate(1);
+        let spec = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::UvCoverage,
+            &["draw_mode=points".to_string(), "mirror=off".to_string()],
+        )
+        .unwrap();
+        let payload = build_listobs_uv_plot_payload(&coverage, &spec).unwrap();
+        let image =
+            render_listobs_plot_image(&payload, ListObsPlotTheme::dark(), 512, 512).unwrap();
+        assert_eq!(image.width(), 512);
+        assert_eq!(image.height(), 512);
+    }
+
+    #[test]
     fn uv_axis_scale_is_fixed_to_kilolambda() {
         assert_eq!(
             uv_axis_scale(42.0),
@@ -1556,6 +1572,16 @@ mod tests {
         assert!(pdf_path.exists());
         assert!(std::fs::metadata(&png_path).unwrap().len() > 0);
         assert!(std::fs::metadata(&pdf_path).unwrap().len() > 0);
+    }
+
+    #[test]
+    fn render_listobs_plot_image_rejects_zero_dimensions() {
+        let summary = synthetic_summary();
+        let spec = ListObsPlotKind::AntennaLayout.default_spec();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let error =
+            render_listobs_plot_image(&payload, ListObsPlotTheme::light(), 0, 360).unwrap_err();
+        assert!(error.contains("plot size must be non-zero"));
     }
 
     #[test]
@@ -1764,6 +1790,58 @@ mod tests {
             .map(|bar| bar.color_group.clone())
             .collect::<Vec<_>>();
         assert_eq!(color_groups, vec!["pol-0".to_string(), "pol-1".to_string()]);
+    }
+
+    #[test]
+    fn spectral_window_plot_supports_mhz_units_and_hidden_labels() {
+        let summary = synthetic_summary();
+        let spec = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::SpectralWindowCoverage,
+            &["unit=mhz".to_string(), "labels=off".to_string()],
+        )
+        .unwrap();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let ListObsPlotPayload::SpectralWindowCoverage(payload) = payload else {
+            panic!("expected spectral window payload");
+        };
+        assert_eq!(payload.x_label, "Frequency (MHz)");
+        assert!(payload.bars.iter().all(|bar| bar.label.is_empty()));
+        assert!(payload.bars.iter().all(|bar| bar.start > 900.0));
+    }
+
+    #[test]
+    fn scan_timeline_plot_supports_field_lanes_and_hidden_labels() {
+        let summary = synthetic_summary();
+        let spec = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::ScanTimeline,
+            &[
+                "lanes=field".to_string(),
+                "color_by=intent".to_string(),
+                "labels=none".to_string(),
+            ],
+        )
+        .unwrap();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let ListObsPlotPayload::ScanTimeline(payload) = payload else {
+            panic!("expected scan timeline payload");
+        };
+        assert_eq!(
+            payload.lane_labels,
+            vec!["FIELD_A".to_string(), "FIELD_B".to_string()]
+        );
+        assert!(
+            payload
+                .bars
+                .iter()
+                .all(|bar| bar.label.is_empty() && bar.color_group.contains("ON_SOURCE"))
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_plot_font_registration_is_idempotent() {
+        ensure_non_macos_plot_font().expect("first registration");
+        ensure_non_macos_plot_font().expect("second registration");
     }
 
     #[test]
