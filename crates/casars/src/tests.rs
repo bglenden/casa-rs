@@ -1912,8 +1912,8 @@ fn imexplore_copy_formats_radec_probe_axes() {
     app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
 
     let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
-    assert!(clipboard.contains("Right Ascension: 18:00:00.000000"));
-    assert!(clipboard.contains("Declination: -12.30.00.00000"));
+    assert!(clipboard.contains("Right Ascension: 18:00:00.000000 hms"));
+    assert!(clipboard.contains("Declination: -12.30.00.00000 dms"));
     clear_test_clipboard_file();
 }
 

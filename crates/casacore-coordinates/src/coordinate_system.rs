@@ -475,6 +475,57 @@ mod tests {
         ])
     }
 
+    fn casa_spectral_non_linear_tabular_record() -> RecordValue {
+        let tabular = RecordValue::new(vec![
+            RecordField::new(
+                "crval",
+                Value::Array(ArrayValue::from_f64_vec(vec![1.15022e11])),
+            ),
+            RecordField::new("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0]))),
+            RecordField::new(
+                "cdelt",
+                Value::Array(ArrayValue::from_f64_vec(vec![6.25005e6])),
+            ),
+            RecordField::new("pc", matrix_record(&[1.0], &[1, 1])),
+            RecordField::new(
+                "axes",
+                Value::Array(ArrayValue::from_string_vec(vec!["Frequency".into()])),
+            ),
+            RecordField::new(
+                "units",
+                Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
+            ),
+            RecordField::new(
+                "pixelvalues",
+                Value::Array(ArrayValue::from_f64_vec(vec![0.0, 1.0, 3.0, 4.0])),
+            ),
+            RecordField::new(
+                "worldvalues",
+                Value::Array(ArrayValue::from_f64_vec(vec![
+                    1.15022e11,
+                    1.1502825e11,
+                    1.1504075e11,
+                    1.15047e11,
+                ])),
+            ),
+        ]);
+        RecordValue::new(vec![
+            RecordField::new("system", Value::Scalar(ScalarValue::String("LSRD".into()))),
+            RecordField::new("restfreq", Value::Scalar(ScalarValue::Float64(1.15271e11))),
+            RecordField::new(
+                "restfreqs",
+                Value::Array(ArrayValue::from_f64_vec(vec![1.15271e11])),
+            ),
+            RecordField::new("velType", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("velUnit", Value::Scalar(ScalarValue::String("km/s".into()))),
+            RecordField::new(
+                "formatUnit",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new("tabular", Value::Record(tabular)),
+        ])
+    }
+
     fn casa_style_coords_with_wcs_spectral() -> RecordValue {
         RecordValue::new(vec![
             RecordField::new(
@@ -540,6 +591,41 @@ mod tests {
             RecordField::new("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
             RecordField::new("pixelmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
             RecordField::new("spectral2", Value::Record(casa_spectral_tabular_record())),
+            RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
+            RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
+        ])
+    }
+
+    fn casa_style_coords_with_non_linear_tabular_spectral() -> RecordValue {
+        RecordValue::new(vec![
+            RecordField::new(
+                "telescope",
+                Value::Scalar(ScalarValue::String("BIMA".into())),
+            ),
+            RecordField::new(
+                "observer",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new(
+                "obsdate",
+                Value::Record(measure_epoch_record(50_919.1, "UTC")),
+            ),
+            RecordField::new("direction0", Value::Record(casa_direction_record())),
+            RecordField::new(
+                "worldmap0",
+                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
+            ),
+            RecordField::new(
+                "pixelmap0",
+                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
+            ),
+            RecordField::new("stokes1", Value::Record(casa_stokes_record())),
+            RecordField::new("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
+            RecordField::new("pixelmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
+            RecordField::new(
+                "spectral2",
+                Value::Record(casa_spectral_non_linear_tabular_record()),
+            ),
             RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
             RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
         ])
@@ -858,5 +944,23 @@ mod tests {
         let world = cs.to_world(&[128.0, 128.0, 0.0, 0.0]).unwrap();
         assert_eq!(world.len(), 4);
         assert!((world[3] - 1.15022e11).abs() < 10.0);
+    }
+
+    #[test]
+    fn from_record_parses_non_linear_casa_style_tabular_spectral_coords() {
+        let cs =
+            CoordinateSystem::from_record(&casa_style_coords_with_non_linear_tabular_spectral())
+                .unwrap();
+
+        assert_eq!(cs.obs_info().telescope, "BIMA");
+        assert_eq!(cs.n_coordinates(), 3);
+        assert_eq!(cs.coordinate(2).coordinate_type(), CoordinateType::Spectral);
+
+        let world = cs.to_world(&[128.0, 128.0, 0.0, 2.0]).unwrap();
+        assert_eq!(world.len(), 4);
+        assert!((world[3] - 1.150345e11).abs() < 10.0);
+
+        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, 1.150345e11]).unwrap();
+        assert!((pixel[3] - 2.0).abs() < 1e-10);
     }
 }

@@ -8,7 +8,9 @@ use casacore_imagebrowser_protocol::{
     ImageBrowserProbe, ImageBrowserSnapshot, ImageBrowserView, ImageBrowserViewport,
     ImageHiddenAxisState, ImageNavigationMetrics, ImagePlaneRaster,
 };
-use casacore_types::measures::direction::{format_declination, format_right_ascension};
+use casacore_types::measures::direction::{
+    format_declination_labeled, format_right_ascension_labeled,
+};
 
 use crate::error::ImageError;
 use crate::{
@@ -282,10 +284,15 @@ impl ImageBrowserSession {
     }
 
     fn content_lines(&self) -> Result<Vec<String>, ImageError> {
-        let sections = self.view.metadata_sections()?;
+        let mut sections = self.view.metadata_sections()?;
         let filtered = match self.active_view {
             ImageBrowserView::Metadata => filter_sections(&sections, &["Summary", "Axes", "Misc"]),
-            ImageBrowserView::Coordinates => filter_sections(&sections, &["Coordinates", "Axes"]),
+            ImageBrowserView::Coordinates => {
+                if let Some(active_cursor) = self.active_cursor_section()? {
+                    sections.insert(0, active_cursor);
+                }
+                filter_sections(&sections, &["Active Cursor", "Coordinates", "Axes"])
+            }
             ImageBrowserView::Plane => Vec::new(),
         };
         Ok(flatten_sections(&filtered))
@@ -300,6 +307,32 @@ impl ImageBrowserSession {
             self.hidden_index,
             (self.cursor_x, self.cursor_y),
         )
+    }
+
+    fn active_cursor_section(&self) -> Result<Option<ImageMetadataSection>, ImageError> {
+        if !self.view.capabilities().renderable_plane {
+            return Ok(None);
+        }
+        let probe = self
+            .view
+            .probe((self.cursor_x, self.cursor_y), self.hidden_index)?;
+        let mut lines = vec![
+            format!("pixel: {}", join_usize_list(&probe.pixel_indices)),
+            format!("value: {}", probe.value),
+        ];
+        if probe.masked {
+            lines.push("masked: true".into());
+        }
+        if !probe.finite {
+            lines.push("finite: false".into());
+        }
+        for axis in &probe.world_axes {
+            lines.push(format_world_axis_line(axis));
+        }
+        Ok(Some(ImageMetadataSection {
+            title: "Active Cursor".into(),
+            lines,
+        }))
     }
 }
 
@@ -396,6 +429,14 @@ fn map_axis_value(value: ImageAxisValue) -> ImageBrowserAxisValue {
     }
 }
 
+fn join_usize_list(values: &[usize]) -> String {
+    values
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn format_world_axis_line(axis: &ImageAxisValue) -> String {
     format!(
         "{}: {}",
@@ -406,13 +447,13 @@ fn format_world_axis_line(axis: &ImageAxisValue) -> String {
 
 fn format_world_axis_value(axis_name: &str, unit: &str, value: f64) -> String {
     if axis_name.eq_ignore_ascii_case("Right Ascension") || axis_name.eq_ignore_ascii_case("RA") {
-        return format_right_ascension(value, 6);
+        return format_right_ascension_labeled(value, 6);
     }
     if axis_name.eq_ignore_ascii_case("Declination") || axis_name.eq_ignore_ascii_case("DEC") {
-        return format_declination(value, 5);
+        return format_declination_labeled(value, 5);
     }
     if unit.is_empty() {
-        value.to_string()
+        format!("{value} unitless")
     } else {
         format!("{value} {unit}")
     }
@@ -630,13 +671,80 @@ mod tests {
             snapshot
                 .inspector_lines
                 .iter()
-                .any(|line| line.contains("Right Ascension: 00:00:00.000000"))
+                .any(|line| line.contains("Right Ascension: 00:00:00.000000 hms"))
         );
         assert!(
             snapshot
                 .inspector_lines
                 .iter()
-                .any(|line| line.contains("Declination: +45.00.00.00000"))
+                .any(|line| line.contains("Declination: +45.00.00.00000 dms"))
+        );
+    }
+
+    #[test]
+    fn coordinates_view_includes_active_cursor_world_readout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coordinates-cube.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    vec![
+                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                    ],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 12)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CycleView { forward: true })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CycleView { forward: true })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
+            .unwrap();
+        let snapshot = session
+            .handle_command(ImageBrowserCommand::CycleView { forward: false })
+            .unwrap();
+
+        assert_eq!(snapshot.active_view, ImageBrowserView::Coordinates);
+        assert!(
+            snapshot
+                .content_lines
+                .iter()
+                .any(|line| line == "== Active Cursor ==")
+        );
+        assert!(
+            snapshot
+                .content_lines
+                .iter()
+                .any(|line| line.contains("pixel: 1, 1, 0"))
+        );
+        assert!(
+            snapshot
+                .content_lines
+                .iter()
+                .any(|line| line.contains("Right Ascension: 00:00:00.000000 hms"))
+        );
+        assert!(
+            snapshot
+                .content_lines
+                .iter()
+                .any(|line| line.contains("Declination: +45.00.00.00000 dms"))
+        );
+        assert!(
+            snapshot
+                .content_lines
+                .iter()
+                .any(|line| line.contains("Frequency: 1420000000 Hz"))
         );
     }
 

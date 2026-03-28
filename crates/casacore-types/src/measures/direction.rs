@@ -69,6 +69,7 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 use crate::quanta::MvAngle;
+use crate::quanta::{Quantity, Unit};
 
 use super::epoch::EpochRef;
 use super::error::MeasureError;
@@ -382,12 +383,24 @@ impl MDirection {
         format_right_ascension(self.longitude_rad(), second_decimals)
     }
 
+    /// Formats the longitude as conventional right ascension with an explicit
+    /// display-unit label.
+    pub fn format_right_ascension_labeled(&self, second_decimals: usize) -> String {
+        format_right_ascension_labeled(self.longitude_rad(), second_decimals)
+    }
+
     /// Formats the latitude as conventional declination.
     ///
     /// This mirrors the common C++ casacore usage
     /// `MVAngle(dec).string(MVAngle::DIG2, 6 + second_decimals)`.
     pub fn format_declination(&self, second_decimals: usize) -> String {
         format_declination(self.latitude_rad(), second_decimals)
+    }
+
+    /// Formats the latitude as conventional declination with an explicit
+    /// display-unit label.
+    pub fn format_declination_labeled(&self, second_decimals: usize) -> String {
+        format_declination_labeled(self.latitude_rad(), second_decimals)
     }
 
     /// Converts this direction to a different reference frame.
@@ -430,12 +443,38 @@ pub fn format_right_ascension(radians: f64, second_decimals: usize) -> String {
         .format_time(second_decimals)
 }
 
+/// Formats a right-ascension value in radians as `hh:mm:ss[.f...] hms`.
+pub fn format_right_ascension_labeled(radians: f64, second_decimals: usize) -> String {
+    format!("{} hms", format_right_ascension(radians, second_decimals))
+}
+
 /// Formats a declination value in radians as signed `dd.mm.ss[.f...]`.
 ///
 /// This uses the existing `MvAngle` `DIG2` formatter, which is already
 /// cross-validated against C++ casacore in the quanta interop tests.
 pub fn format_declination(radians: f64, second_decimals: usize) -> String {
     MvAngle::from_radians(radians).format_angle_dig2(second_decimals)
+}
+
+/// Formats a declination value in radians as signed `dd.mm.ss[.f...] dms`.
+pub fn format_declination_labeled(radians: f64, second_decimals: usize) -> String {
+    format!("{} dms", format_declination(radians, second_decimals))
+}
+
+/// Converts an angular increment in radians to a right-ascension time offset.
+pub fn right_ascension_increment_seconds(radians: f64) -> Quantity {
+    Quantity::with_unit(
+        radians * (86_400.0 / std::f64::consts::TAU),
+        Unit::new("s").expect("built-in seconds unit must parse"),
+    )
+}
+
+/// Converts an angular increment in radians to a declination offset.
+pub fn declination_increment_arcseconds(radians: f64) -> Quantity {
+    Quantity::with_unit(
+        radians * (180.0 / std::f64::consts::PI) * 3_600.0,
+        Unit::new("arcsec").expect("built-in arcsec unit must parse"),
+    )
 }
 
 impl fmt::Display for MDirection {
@@ -1435,12 +1474,36 @@ mod tests {
         assert_eq!(direction.format_right_ascension(6), "18:00:00.000000");
         assert_eq!(direction.format_declination(5), "-12.30.00.00000");
         assert_eq!(
+            direction.format_right_ascension_labeled(6),
+            "18:00:00.000000 hms"
+        );
+        assert_eq!(
+            direction.format_declination_labeled(5),
+            "-12.30.00.00000 dms"
+        );
+        assert_eq!(
             format_right_ascension(-0.25 * std::f64::consts::TAU, 6),
             "18:00:00.000000"
         );
         assert_eq!(
             format_declination((-12.5_f64).to_radians(), 5),
             "-12.30.00.00000"
+        );
+        assert_eq!(
+            format_right_ascension_labeled(-0.25 * std::f64::consts::TAU, 6),
+            "18:00:00.000000 hms"
+        );
+        assert_eq!(
+            format_declination_labeled((-12.5_f64).to_radians(), 5),
+            "-12.30.00.00000 dms"
+        );
+        assert_eq!(
+            right_ascension_increment_seconds(-1e-4).to_string(),
+            "-1.3750987083139758 s"
+        );
+        assert_eq!(
+            declination_increment_arcseconds(1e-4).to_string(),
+            "20.626480624709636 arcsec"
         );
     }
 

@@ -3,9 +3,12 @@
 
 use std::path::{Path, PathBuf};
 
-use casacore_coordinates::{CoordinateSystem, CoordinateType};
-use casacore_types::measures::direction::{format_declination, format_right_ascension};
-use casacore_types::{ArrayD, RecordValue, ScalarValue, Value};
+use casacore_coordinates::{CoordinateSystem, CoordinateType, StokesType};
+use casacore_types::measures::direction::{
+    declination_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
+    right_ascension_increment_seconds,
+};
+use casacore_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, Axis, Ix2, IxDyn};
 
 use crate::error::ImageError;
@@ -206,9 +209,13 @@ impl OpenedImageView {
                         axis.coord_type,
                         if axis.unit.is_empty() { "<none>" } else { &axis.unit },
                         self.shape().get(index).copied().unwrap_or_default(),
-                        format_optional_f64(axis.reference_pixel),
-                        format_axis_value_for_display(axis.reference_value, &axis.name),
-                        format_optional_f64(axis.increment),
+                        format_reference_pixel_for_display(axis.reference_pixel),
+                        format_axis_value_for_display(
+                            axis.reference_value,
+                            &axis.name,
+                            &axis.unit,
+                        ),
+                        format_axis_increment_for_display(axis.increment, &axis.name, &axis.unit),
                     )
                 })
                 .collect(),
@@ -240,6 +247,10 @@ impl OpenedImageView {
                     .saturating_sub(1),
             ));
         }
+        coordinate_lines.extend(build_coordinate_summary_lines(
+            image_coordinates(&self.image),
+            self.shape(),
+        ));
         sections.push(ImageMetadataSection {
             title: "Coordinates".into(),
             lines: coordinate_lines,
@@ -896,23 +907,73 @@ fn axis_names(image: &AnyPagedImage) -> Vec<String> {
         .collect()
 }
 
-fn format_optional_f64(value: Option<f64>) -> String {
-    value
-        .map(|value| format!("{value}"))
-        .unwrap_or_else(|| "<none>".into())
+fn format_reference_pixel_for_display(value: Option<f64>) -> String {
+    value.map_or_else(|| "<none>".into(), |value| format!("{value} px"))
 }
 
-fn format_axis_value_for_display(value: Option<f64>, axis_name: &str) -> String {
+fn format_axis_value_for_display(value: Option<f64>, axis_name: &str, axis_unit: &str) -> String {
     let Some(value) = value else {
         return "<none>".into();
     };
     if is_right_ascension_axis(axis_name) {
-        return format_right_ascension(value, 6);
+        return format_right_ascension_labeled(value, 6);
     }
     if is_declination_axis(axis_name) {
-        return format_declination(value, 5);
+        return format_declination_labeled(value, 5);
     }
-    format!("{value}")
+    format_numeric_value_with_unit(value, fallback_axis_unit(axis_name, axis_unit))
+}
+
+fn format_axis_increment_for_display(
+    value: Option<f64>,
+    axis_name: &str,
+    axis_unit: &str,
+) -> String {
+    let Some(value) = value else {
+        return "<none>".into();
+    };
+    if is_right_ascension_axis(axis_name) {
+        return format!(
+            "{} s/pixel",
+            trim_float_text(format!(
+                "{:.6}",
+                right_ascension_increment_seconds(value).value()
+            ))
+        );
+    }
+    if is_declination_axis(axis_name) {
+        return format!(
+            "{} arcsec/pixel",
+            trim_float_text(format!(
+                "{:.6}",
+                declination_increment_arcseconds(value).value()
+            ))
+        );
+    }
+    let unit = fallback_axis_unit(axis_name, axis_unit);
+    if unit == "unitless" {
+        format!("{value} unitless/pixel")
+    } else {
+        format!("{value} {unit}/pixel")
+    }
+}
+
+fn format_numeric_value_with_unit(value: f64, unit: &str) -> String {
+    if unit == "unitless" {
+        format!("{value} {unit}")
+    } else {
+        format!("{value} {unit}")
+    }
+}
+
+fn fallback_axis_unit<'a>(axis_name: &'a str, axis_unit: &'a str) -> &'a str {
+    if !axis_unit.is_empty() {
+        axis_unit
+    } else if axis_name.eq_ignore_ascii_case("Stokes") {
+        "code"
+    } else {
+        "unitless"
+    }
 }
 
 fn is_right_ascension_axis(axis_name: &str) -> bool {
@@ -921,6 +982,125 @@ fn is_right_ascension_axis(axis_name: &str) -> bool {
 
 fn is_declination_axis(axis_name: &str) -> bool {
     axis_name.eq_ignore_ascii_case("Declination") || axis_name.eq_ignore_ascii_case("DEC")
+}
+
+fn build_coordinate_summary_lines(coords: &CoordinateSystem, shape: &[usize]) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut pixel_axis_offset = 0usize;
+    for index in 0..coords.n_coordinates() {
+        let coord = coords.coordinate(index);
+        let axis_names = coord.axis_names();
+        let axis_units = coord.axis_units();
+        let reference_values = coord.reference_value();
+        let reference_pixels = coord.reference_pixel();
+        let increments = coord.increment();
+        let record = coord.to_record();
+
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(format!(
+            "{} {}: {}",
+            coord.coordinate_type(),
+            index,
+            coordinate_header_details(coord.coordinate_type(), &record)
+        ));
+        for axis in 0..coord.n_world_axes() {
+            let axis_name = axis_names
+                .get(axis)
+                .cloned()
+                .unwrap_or_else(|| format!("Axis{}", pixel_axis_offset + axis));
+            let axis_unit = axis_units.get(axis).cloned().unwrap_or_default();
+            let axis_len = shape
+                .get(pixel_axis_offset + axis)
+                .copied()
+                .unwrap_or_default();
+            lines.push(format!(
+                "  axis {}: name={} unit={} len={} ref_pix={} ref_val={} incr={}",
+                pixel_axis_offset + axis,
+                axis_name,
+                if axis_unit.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    axis_unit.clone()
+                },
+                axis_len,
+                format_reference_pixel_for_display(reference_pixels.get(axis).copied()),
+                format_axis_value_for_display(
+                    reference_values.get(axis).copied(),
+                    &axis_name,
+                    &axis_unit,
+                ),
+                format_axis_increment_for_display(
+                    increments.get(axis).copied(),
+                    &axis_name,
+                    &axis_unit,
+                ),
+            ));
+        }
+        pixel_axis_offset += coord.n_pixel_axes();
+    }
+    lines
+}
+
+fn coordinate_header_details(coord_type: CoordinateType, record: &RecordValue) -> String {
+    match coord_type {
+        CoordinateType::Direction => {
+            let frame = record_string(record, "direction_ref").unwrap_or("unknown");
+            let projection = record_string(record, "projection").unwrap_or("unknown");
+            format!("frame={frame} projection={projection}")
+        }
+        CoordinateType::Spectral => {
+            let frame = record_string(record, "frequency_ref").unwrap_or("unknown");
+            let restfreq = record_f64(record, "restfreq")
+                .map(|value| format!(" restfreq={value}"))
+                .unwrap_or_default();
+            format!("frame={frame}{restfreq}")
+        }
+        CoordinateType::Stokes => {
+            let stokes = record_stokes_values(record);
+            if stokes.is_empty() {
+                "values=<unknown>".into()
+            } else {
+                format!("values={}", stokes.join(","))
+            }
+        }
+        CoordinateType::Linear => "linear mapping".into(),
+        CoordinateType::Tabular => {
+            let name = record_string(record, "name").unwrap_or("lookup");
+            format!("lookup={name}")
+        }
+    }
+}
+
+fn record_string<'a>(record: &'a RecordValue, key: &str) -> Option<&'a str> {
+    match record.get(key) {
+        Some(Value::Scalar(ScalarValue::String(value))) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn record_f64(record: &RecordValue, key: &str) -> Option<f64> {
+    match record.get(key) {
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Some(*value),
+        Some(Value::Scalar(ScalarValue::Float32(value))) => Some(f64::from(*value)),
+        _ => None,
+    }
+}
+
+fn record_stokes_values(record: &RecordValue) -> Vec<String> {
+    match record.get("stokes") {
+        Some(Value::Array(ArrayValue::Int32(values))) => values
+            .iter()
+            .map(|value| {
+                StokesType::from_code(*value)
+                    .map(|stokes| stokes.to_string())
+                    .unwrap_or_else(|| value.to_string())
+            })
+            .collect(),
+        Some(Value::Array(ArrayValue::String(values))) => values.iter().cloned().collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn format_value(value: &Value) -> String {
@@ -971,6 +1151,30 @@ mod tests {
             0.0,
             1.42040575e9,
         )));
+        coords
+    }
+
+    fn direction_tabular_spectral_coords() -> CoordinateSystem {
+        let mut coords = CoordinateSystem::new();
+        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, std::f64::consts::FRAC_PI_4],
+            [-1e-4, 1e-4],
+            [1.0, 1.0],
+        )));
+        coords.add_coordinate(Box::new(
+            SpectralCoordinate::from_tabular(
+                FrequencyRef::LSRK,
+                vec![0.0, 1.0, 3.0, 4.0],
+                vec![1.42e9, 1.4205e9, 1.422e9, 1.423e9],
+                1.42e9,
+                5.0e5,
+                0.0,
+                1.42040575e9,
+            )
+            .unwrap(),
+        ));
         coords
     }
 
@@ -1228,11 +1432,102 @@ mod tests {
             .find(|section| section.title == "Axes")
             .unwrap();
         assert!(axes.lines.iter().any(|line| {
-            line.contains("Right Ascension") && line.contains("ref_val=00:00:00.000000")
+            line.contains("Right Ascension") && line.contains("ref_val=00:00:00.000000 hms")
         }));
         assert!(axes.lines.iter().any(|line| {
-            line.contains("Declination") && line.contains("ref_val=+45.00.00.00000")
+            line.contains("Declination") && line.contains("ref_val=+45.00.00.00000 dms")
         }));
+        assert!(axes.lines.iter().any(|line| {
+            line.contains("Right Ascension") && line.contains("incr=-1.375099 s/pixel")
+        }));
+        assert!(axes.lines.iter().any(|line| {
+            line.contains("Declination") && line.contains("incr=20.626481 arcsec/pixel")
+        }));
+    }
+
+    #[test]
+    fn coordinates_section_includes_direction_and_spectral_details() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coordinates-details.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2, 2], direction_spectral_coords(), &path).unwrap();
+        image.save().unwrap();
+
+        let coordinates = OpenedImageView::open(&path)
+            .unwrap()
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Coordinates")
+            .unwrap();
+        assert!(
+            coordinates
+                .lines
+                .iter()
+                .any(|line| line.contains("Direction 0: frame=J2000 projection=SIN"))
+        );
+        assert!(coordinates.lines.iter().any(|line| {
+            line.contains("axis 0")
+                && line.contains("Right Ascension")
+                && line.contains("ref_val=00:00:00.000000 hms")
+        }));
+        assert!(coordinates.lines.iter().any(|line| {
+            line.contains("axis 1")
+                && line.contains("Declination")
+                && line.contains("ref_val=+45.00.00.00000 dms")
+        }));
+        assert!(
+            coordinates
+                .lines
+                .iter()
+                .any(|line| { line.contains("axis 0") && line.contains("incr=-1.375099 s/pixel") })
+        );
+        assert!(coordinates.lines.iter().any(|line| {
+            line.contains("axis 1") && line.contains("incr=20.626481 arcsec/pixel")
+        }));
+        assert!(
+            coordinates
+                .lines
+                .iter()
+                .any(|line| line.contains("Spectral 1: frame=LSRK restfreq=1420405750"))
+        );
+        assert!(
+            coordinates
+                .lines
+                .iter()
+                .any(|line| line.contains("axis 2") && line.contains("Frequency"))
+        );
+    }
+
+    #[test]
+    fn tabular_spectral_images_keep_world_coordinates_and_spectral_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tabular-spectral.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2, 5], direction_tabular_spectral_coords(), &path)
+                .unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        assert!(opened.capabilities().world_coords_available);
+        assert!(!opened.capabilities().pixel_only_mode);
+
+        let probe = opened.probe((1, 1), 2).unwrap();
+        assert_eq!(probe.world_axes.len(), 3);
+        assert!((probe.world_axes[2].value - 1.42125e9).abs() < 1.0);
+
+        let coordinates = opened
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Coordinates")
+            .unwrap();
+        assert!(
+            coordinates
+                .lines
+                .iter()
+                .any(|line| line.contains("Spectral 1: frame=LSRK restfreq=1420405750"))
+        );
     }
 
     #[test]

@@ -21,7 +21,9 @@ use casacore_tablebrowser_protocol::{
     BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
     BrowserView as TableBrowserView, BrowserViewport,
 };
-use casacore_types::measures::direction::{format_declination, format_right_ascension};
+use casacore_types::measures::direction::{
+    format_declination_labeled, format_right_ascension_labeled,
+};
 use casacore_types::quanta::{MvAngle, MvTime};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -5973,13 +5975,13 @@ fn render_image_probe(probe: &casacore_imagebrowser_protocol::ImageBrowserProbe)
 
 fn format_world_axis_probe_value(axis_name: &str, unit: &str, value: f64) -> String {
     if axis_name.eq_ignore_ascii_case("Right Ascension") || axis_name.eq_ignore_ascii_case("RA") {
-        return format_right_ascension(value, 6);
+        return format_right_ascension_labeled(value, 6);
     }
     if axis_name.eq_ignore_ascii_case("Declination") || axis_name.eq_ignore_ascii_case("DEC") {
-        return format_declination(value, 5);
+        return format_declination_labeled(value, 5);
     }
     if unit.is_empty() {
-        value.to_string()
+        format!("{value} unitless")
     } else {
         format!("{value} {unit}")
     }

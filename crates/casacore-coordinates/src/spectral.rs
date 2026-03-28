@@ -1,20 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! One-axis spectral (frequency/velocity) coordinate.
 //!
-//! [`SpectralCoordinate`] implements a linear mapping between pixel position
-//! and frequency (or velocity) in a specified reference frame. This
-//! corresponds to C++ `SpectralCoordinate` in its simplest (non-tabular) mode.
-//!
-//! The conversion is:
-//!
-//! ```text
-//! world = crval + cdelt * (pixel - crpix)
-//! ```
+//! [`SpectralCoordinate`] implements a one-axis spectral coordinate in a
+//! specified reference frame. It supports both the simple linear WCS form and
+//! the tabulated lookup-table form used by C++ `SpectralCoordinate`.
 
 use std::str::FromStr;
 
 use casacore_types::measures::frequency::FrequencyRef;
-use casacore_types::{RecordValue, ScalarValue, Value};
+use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
@@ -23,11 +17,28 @@ use crate::record_utils::{
     get_required_f64, get_required_vec_f64,
 };
 
-/// A one-axis spectral coordinate with linear pixel-to-frequency mapping.
+#[derive(Debug, Clone)]
+enum SpectralMapping {
+    Linear {
+        crval: f64,
+        cdelt: f64,
+        crpix: f64,
+    },
+    Tabular {
+        pixel_values: Vec<f64>,
+        world_values: Vec<f64>,
+        crval: f64,
+        cdelt: f64,
+        crpix: f64,
+    },
+}
+
+/// A one-axis spectral coordinate with linear or tabulated pixel-to-world mapping.
 ///
 /// Stores the frequency reference frame, a rest frequency for velocity
-/// conversions, and the standard FITS WCS linear parameters (crval, cdelt,
-/// crpix).
+/// conversions, axis metadata, and either the standard FITS WCS linear
+/// parameters or an explicit spectral lookup table. This corresponds to C++
+/// `SpectralCoordinate`, including its tabulated non-linear form.
 ///
 /// Corresponds to C++ `SpectralCoordinate`.
 #[derive(Debug, Clone)]
@@ -36,12 +47,10 @@ pub struct SpectralCoordinate {
     frequency_ref: FrequencyRef,
     /// The rest frequency in Hz (used for velocity conversions).
     rest_frequency: f64,
-    /// Reference frequency in Hz.
-    crval: f64,
-    /// Frequency increment per pixel in Hz.
-    cdelt: f64,
-    /// Reference pixel position.
-    crpix: f64,
+    /// Pixel-to-world mapping state.
+    mapping: SpectralMapping,
+    /// The world axis name.
+    name: String,
     /// The world axis unit string.
     unit: String,
 }
@@ -64,16 +73,60 @@ impl SpectralCoordinate {
         Self {
             frequency_ref,
             rest_frequency,
-            crval,
-            cdelt,
-            crpix,
+            mapping: SpectralMapping::Linear {
+                crval,
+                cdelt,
+                crpix,
+            },
+            name: "Frequency".into(),
             unit: "Hz".into(),
         }
+    }
+
+    /// Creates a tabulated spectral coordinate from explicit lookup tables.
+    ///
+    /// This mirrors the non-linear record form used by C++
+    /// `SpectralCoordinate` when a `tabular` sub-record contains
+    /// `pixelvalues/worldvalues`.
+    pub fn from_tabular(
+        frequency_ref: FrequencyRef,
+        pixel_values: Vec<f64>,
+        world_values: Vec<f64>,
+        crval: f64,
+        cdelt: f64,
+        crpix: f64,
+        rest_frequency: f64,
+    ) -> Result<Self, CoordinateError> {
+        if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
+            return Err(CoordinateError::InvalidRecord(
+                "tabular spectral coordinates require matching pixel/world tables with at least 2 entries"
+                    .into(),
+            ));
+        }
+        Ok(Self {
+            frequency_ref,
+            rest_frequency,
+            mapping: SpectralMapping::Tabular {
+                pixel_values,
+                world_values,
+                crval,
+                cdelt,
+                crpix,
+            },
+            name: "Frequency".into(),
+            unit: "Hz".into(),
+        })
     }
 
     /// Sets the world axis unit string. Returns `self` for chaining.
     pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
         self.unit = unit.into();
+        self
+    }
+
+    /// Sets the world axis name. Returns `self` for chaining.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
         self
     }
 
@@ -107,21 +160,18 @@ impl SpectralCoordinate {
             ));
         };
 
-        let parameter_record = if let Some(Value::Record(wcs)) = rec.get("wcs") {
-            wcs
+        let mut parameter_record = rec;
+        let mut lookup_tables = None;
+        if let Some(Value::Record(wcs)) = rec.get("wcs") {
+            parameter_record = wcs;
         } else if let Some(Value::Record(tabular)) = rec.get("tabular") {
             let pixelvalues = get_optional_vec_f64(tabular, "pixelvalues").unwrap_or_default();
             let worldvalues = get_optional_vec_f64(tabular, "worldvalues").unwrap_or_default();
             if !pixelvalues.is_empty() || !worldvalues.is_empty() {
-                return Err(CoordinateError::InvalidRecord(
-                    "tabular spectral coordinates with explicit lookup tables are not supported"
-                        .into(),
-                ));
+                lookup_tables = Some((pixelvalues, worldvalues));
             }
-            tabular
-        } else {
-            rec
-        };
+            parameter_record = tabular;
+        }
 
         let crval = get_required_vec_f64(parameter_record, "crval")?;
         let cdelt = get_required_vec_f64(parameter_record, "cdelt")?;
@@ -133,7 +183,25 @@ impl SpectralCoordinate {
         }
 
         let rest_frequency = get_required_f64(rec, "restfreq")?;
-        let mut coord = Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency);
+        let mut coord = if let Some((pixel_values, world_values)) = lookup_tables {
+            Self::from_tabular(
+                frequency_ref,
+                pixel_values,
+                world_values,
+                crval[0],
+                cdelt[0],
+                crpix[0],
+                rest_frequency,
+            )?
+        } else {
+            Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency)
+        };
+        if let Some(name) = get_optional_string(rec, "name").or_else(|| {
+            get_optional_vec_string(parameter_record, "axes")
+                .and_then(|names| names.into_iter().next())
+        }) {
+            coord = coord.with_name(name);
+        }
         if let Some(unit) = get_optional_string(rec, "unit").or_else(|| {
             get_optional_vec_string(parameter_record, "units")
                 .and_then(|units| units.into_iter().next())
@@ -164,7 +232,18 @@ impl Coordinate for SpectralCoordinate {
                 got: pixel.len(),
             });
         }
-        let world = self.crval + self.cdelt * (pixel[0] - self.crpix);
+        let world = match &self.mapping {
+            SpectralMapping::Linear {
+                crval,
+                cdelt,
+                crpix,
+            } => crval + cdelt * (pixel[0] - crpix),
+            SpectralMapping::Tabular {
+                pixel_values,
+                world_values,
+                ..
+            } => interpolate(pixel_values, world_values, pixel[0])?,
+        };
         Ok(vec![world])
     }
 
@@ -175,29 +254,54 @@ impl Coordinate for SpectralCoordinate {
                 got: world.len(),
             });
         }
-        if self.cdelt.abs() < 1e-300 {
-            return Err(CoordinateError::ConversionFailed(
-                "zero spectral increment".into(),
-            ));
-        }
-        let pixel = self.crpix + (world[0] - self.crval) / self.cdelt;
+        let pixel = match &self.mapping {
+            SpectralMapping::Linear {
+                crval,
+                cdelt,
+                crpix,
+            } => {
+                if cdelt.abs() < 1e-300 {
+                    return Err(CoordinateError::ConversionFailed(
+                        "zero spectral increment".into(),
+                    ));
+                }
+                crpix + (world[0] - crval) / cdelt
+            }
+            SpectralMapping::Tabular {
+                pixel_values,
+                world_values,
+                ..
+            } => interpolate(world_values, pixel_values, world[0])?,
+        };
         Ok(vec![pixel])
     }
 
     fn reference_value(&self) -> Vec<f64> {
-        vec![self.crval]
+        vec![match &self.mapping {
+            SpectralMapping::Linear { crval, .. } | SpectralMapping::Tabular { crval, .. } => {
+                *crval
+            }
+        }]
     }
 
     fn reference_pixel(&self) -> Vec<f64> {
-        vec![self.crpix]
+        vec![match &self.mapping {
+            SpectralMapping::Linear { crpix, .. } | SpectralMapping::Tabular { crpix, .. } => {
+                *crpix
+            }
+        }]
     }
 
     fn increment(&self) -> Vec<f64> {
-        vec![self.cdelt]
+        vec![match &self.mapping {
+            SpectralMapping::Linear { cdelt, .. } | SpectralMapping::Tabular { cdelt, .. } => {
+                *cdelt
+            }
+        }]
     }
 
     fn axis_names(&self) -> Vec<String> {
-        vec!["Frequency".into()]
+        vec![self.name.clone()]
     }
 
     fn axis_units(&self) -> Vec<String> {
@@ -220,21 +324,73 @@ impl Coordinate for SpectralCoordinate {
             Value::Scalar(ScalarValue::Float64(self.rest_frequency)),
         );
         rec.upsert(
-            "crval",
-            Value::Array(casacore_types::ArrayValue::from_f64_vec(vec![self.crval])),
-        );
-        rec.upsert(
-            "cdelt",
-            Value::Array(casacore_types::ArrayValue::from_f64_vec(vec![self.cdelt])),
-        );
-        rec.upsert(
-            "crpix",
-            Value::Array(casacore_types::ArrayValue::from_f64_vec(vec![self.crpix])),
-        );
-        rec.upsert(
             "unit",
             Value::Scalar(ScalarValue::String(self.unit.clone())),
         );
+        rec.upsert(
+            "name",
+            Value::Scalar(ScalarValue::String(self.name.clone())),
+        );
+
+        match &self.mapping {
+            SpectralMapping::Linear {
+                crval,
+                cdelt,
+                crpix,
+            } => {
+                rec.upsert(
+                    "crval",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crval])),
+                );
+                rec.upsert(
+                    "cdelt",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt])),
+                );
+                rec.upsert(
+                    "crpix",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crpix])),
+                );
+            }
+            SpectralMapping::Tabular {
+                pixel_values,
+                world_values,
+                crval,
+                cdelt,
+                crpix,
+            } => {
+                let mut tabular = RecordValue::default();
+                tabular.upsert(
+                    "crval",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crval])),
+                );
+                tabular.upsert(
+                    "cdelt",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt])),
+                );
+                tabular.upsert(
+                    "crpix",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crpix])),
+                );
+                tabular.upsert("pc", Value::Array(ArrayValue::from_f64_vec(vec![1.0])));
+                tabular.upsert(
+                    "axes",
+                    Value::Array(ArrayValue::from_string_vec(vec![self.name.clone()])),
+                );
+                tabular.upsert(
+                    "units",
+                    Value::Array(ArrayValue::from_string_vec(vec![self.unit.clone()])),
+                );
+                tabular.upsert(
+                    "pixelvalues",
+                    Value::Array(ArrayValue::from_f64_vec(pixel_values.clone())),
+                );
+                tabular.upsert(
+                    "worldvalues",
+                    Value::Array(ArrayValue::from_f64_vec(world_values.clone())),
+                );
+                rec.upsert("tabular", Value::Record(tabular));
+            }
+        }
 
         rec
     }
@@ -242,6 +398,40 @@ impl Coordinate for SpectralCoordinate {
     fn clone_box(&self) -> Box<dyn Coordinate> {
         Box::new(self.clone())
     }
+}
+
+fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
+    let n = xs.len();
+    if n < 2 || ys.len() != n {
+        return Err(CoordinateError::ConversionFailed(
+            "tabular interpolation requires matching lookup tables with at least 2 entries".into(),
+        ));
+    }
+
+    let increasing = xs[n - 1] > xs[0];
+    let idx = if increasing {
+        match xs.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
+            Ok(i) => return Ok(ys[i]),
+            Err(i) => i,
+        }
+    } else {
+        let rev: Vec<f64> = xs.iter().rev().copied().collect();
+        match rev.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
+            Ok(i) => return Ok(ys[n - 1 - i]),
+            Err(i) => n - i,
+        }
+    };
+
+    let lo = if idx == 0 { 0 } else { (idx - 1).min(n - 2) };
+    let hi = lo + 1;
+    let dx = xs[hi] - xs[lo];
+    if dx.abs() < 1e-300 {
+        return Err(CoordinateError::ConversionFailed(
+            "duplicate values in tabular spectral coordinate".into(),
+        ));
+    }
+    let t = (x - xs[lo]) / dx;
+    Ok(ys[lo] + t * (ys[hi] - ys[lo]))
 }
 
 #[cfg(test)]
@@ -299,6 +489,13 @@ mod tests {
     }
 
     #[test]
+    fn with_name() {
+        let coord =
+            SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 0.0).with_name("Velocity");
+        assert_eq!(coord.axis_names(), vec!["Velocity"]);
+    }
+
+    #[test]
     fn to_record_has_fields() {
         let coord = SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 1.42e9);
         let rec = coord.to_record();
@@ -328,5 +525,95 @@ mod tests {
         assert_eq!(restored.increment(), vec![-5.0e5]);
         assert!((restored.rest_frequency() - 1.42040575e9).abs() < 1.0);
         assert_eq!(restored.axis_units(), vec!["GHz"]);
+    }
+
+    #[test]
+    fn tabular_record_roundtrip() {
+        let coord = SpectralCoordinate::from_tabular(
+            FrequencyRef::TOPO,
+            vec![0.0, 1.0, 3.0, 4.0],
+            vec![1.41e9, 1.4105e9, 1.412e9, 1.413e9],
+            1.41e9,
+            5.0e5,
+            0.0,
+            1.42040575e9,
+        )
+        .unwrap()
+        .with_name("Frequency")
+        .with_unit("Hz");
+
+        let world = coord.to_world(&[2.0]).unwrap();
+        assert!((world[0] - 1.41125e9).abs() < 1.0);
+        let back = coord.to_pixel(&world).unwrap();
+        assert!((back[0] - 2.0).abs() < 1e-10);
+
+        let restored = SpectralCoordinate::from_record(&coord.to_record()).unwrap();
+        assert_eq!(restored.frequency_ref(), FrequencyRef::TOPO);
+        assert_eq!(restored.axis_names(), vec!["Frequency"]);
+        assert_eq!(restored.axis_units(), vec!["Hz"]);
+        assert_eq!(restored.reference_value(), vec![1.41e9]);
+        assert_eq!(restored.reference_pixel(), vec![0.0]);
+        assert_eq!(restored.increment(), vec![5.0e5]);
+        let restored_world = restored.to_world(&[2.0]).unwrap();
+        assert!((restored_world[0] - 1.41125e9).abs() < 1.0);
+    }
+
+    #[test]
+    fn from_record_parses_casa_style_tabular_lookup_tables() {
+        let tabular = RecordValue::new(vec![
+            casacore_types::RecordField::new(
+                "crval",
+                Value::Array(ArrayValue::from_f64_vec(vec![1.41e9])),
+            ),
+            casacore_types::RecordField::new(
+                "crpix",
+                Value::Array(ArrayValue::from_f64_vec(vec![0.0])),
+            ),
+            casacore_types::RecordField::new(
+                "cdelt",
+                Value::Array(ArrayValue::from_f64_vec(vec![5.0e5])),
+            ),
+            casacore_types::RecordField::new(
+                "axes",
+                Value::Array(ArrayValue::from_string_vec(vec!["Frequency".into()])),
+            ),
+            casacore_types::RecordField::new(
+                "units",
+                Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
+            ),
+            casacore_types::RecordField::new(
+                "pixelvalues",
+                Value::Array(ArrayValue::from_f64_vec(vec![0.0, 1.0, 3.0, 4.0])),
+            ),
+            casacore_types::RecordField::new(
+                "worldvalues",
+                Value::Array(ArrayValue::from_f64_vec(vec![
+                    1.41e9, 1.4105e9, 1.412e9, 1.413e9,
+                ])),
+            ),
+        ]);
+        let record = RecordValue::new(vec![
+            casacore_types::RecordField::new(
+                "system",
+                Value::Scalar(ScalarValue::String("TOPO".into())),
+            ),
+            casacore_types::RecordField::new(
+                "restfreq",
+                Value::Scalar(ScalarValue::Float64(1.42040575e9)),
+            ),
+            casacore_types::RecordField::new("tabular", Value::Record(tabular)),
+        ]);
+
+        let coord = SpectralCoordinate::from_record(&record).unwrap();
+        assert_eq!(coord.frequency_ref(), FrequencyRef::TOPO);
+        assert_eq!(coord.axis_names(), vec!["Frequency"]);
+        assert_eq!(coord.axis_units(), vec!["Hz"]);
+        assert_eq!(coord.reference_value(), vec![1.41e9]);
+        assert_eq!(coord.reference_pixel(), vec![0.0]);
+        assert_eq!(coord.increment(), vec![5.0e5]);
+        let world = coord.to_world(&[2.0]).unwrap();
+        assert!((world[0] - 1.41125e9).abs() < 1.0);
+        let pixel = coord.to_pixel(&[1.41125e9]).unwrap();
+        assert!((pixel[0] - 2.0).abs() < 1e-10);
     }
 }
