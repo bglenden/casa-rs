@@ -3,6 +3,8 @@
 
 #[cfg(has_casacore_cpp)]
 use std::ffi::CString;
+#[cfg(has_casacore_cpp)]
+use std::sync::{Mutex, Once, OnceLock};
 
 #[cfg(has_casacore_cpp)]
 unsafe extern "C" {
@@ -77,14 +79,20 @@ unsafe extern "C" {
 /// Initialise the C++ unit system (idempotent).
 #[cfg(has_casacore_cpp)]
 pub fn init_cpp() {
-    use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| unsafe { quanta_shim_init() });
+}
+
+#[cfg(has_casacore_cpp)]
+fn quanta_cpp_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 /// Parse a unit string with C++ casacore and return the factor.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_parse_factor(unit: &str) -> Option<f64> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     let cstr = CString::new(unit).ok()?;
     let mut factor = 0.0f64;
@@ -95,6 +103,7 @@ pub fn cpp_parse_factor(unit: &str) -> Option<f64> {
 /// Check conformance of two unit strings via C++.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_conformant(a: &str, b: &str) -> Option<bool> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     let ca = CString::new(a).ok()?;
     let cb = CString::new(b).ok()?;
@@ -109,6 +118,7 @@ pub fn cpp_conformant(a: &str, b: &str) -> Option<bool> {
 /// Get QC::c() from C++.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_qc_c() -> f64 {
+    let _guard = quanta_cpp_lock().lock().expect("quanta C++ lock poisoned");
     init_cpp();
     let mut val = 0.0f64;
     let mut buf = [0u8; 64];
@@ -119,6 +129,7 @@ pub fn cpp_qc_c() -> f64 {
 /// Get QC::h() from C++.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_qc_h() -> f64 {
+    let _guard = quanta_cpp_lock().lock().expect("quanta C++ lock poisoned");
     init_cpp();
     let mut val = 0.0f64;
     let mut buf = [0u8; 64];
@@ -129,6 +140,7 @@ pub fn cpp_qc_h() -> f64 {
 /// Parse a unit string with C++ casacore, returning factor and 10 dimension exponents.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_parse_full(unit: &str) -> Option<(f64, [i32; 10])> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     let cstr = CString::new(unit).ok()?;
     let mut factor = 0.0f64;
@@ -141,6 +153,7 @@ pub fn cpp_parse_full(unit: &str) -> Option<(f64, [i32; 10])> {
 /// Returns (value, unit_string, dims).
 #[cfg(has_casacore_cpp)]
 pub fn cpp_qc_constant(name: &str) -> Option<(f64, String, [i32; 10])> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     let cname = CString::new(name).ok()?;
     let mut value = 0.0f64;
@@ -171,6 +184,7 @@ pub fn cpp_qc_constant(name: &str) -> Option<(f64, String, [i32; 10])> {
 /// Returns total elapsed nanoseconds.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_bench_parse(units: &[&str], iterations: i32) -> Option<u64> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     let cstrings: Vec<CString> = units.iter().filter_map(|u| CString::new(*u).ok()).collect();
     if cstrings.len() != units.len() {
@@ -193,6 +207,7 @@ pub fn cpp_bench_parse(units: &[&str], iterations: i32) -> Option<u64> {
 /// Returns total elapsed nanoseconds.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_bench_convert(value: f64, from: &str, to: &str, iterations: i32) -> Option<u64> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     let cfrom = CString::new(from).ok()?;
     let cto = CString::new(to).ok()?;
@@ -229,6 +244,7 @@ where
 /// Format an angle with C++ `MVAngle::ANGLE`.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_mvangle_format_angle(radians: f64, second_decimals: usize) -> Option<String> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     read_cpp_string(|buf, len| unsafe {
         quanta_shim_mvangle_format_angle(radians, second_decimals as i32, buf, len)
@@ -238,6 +254,7 @@ pub fn cpp_mvangle_format_angle(radians: f64, second_decimals: usize) -> Option<
 /// Format an angle with C++ `MVAngle::DIG2`.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_mvangle_format_angle_dig2(radians: f64, second_decimals: usize) -> Option<String> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     read_cpp_string(|buf, len| unsafe {
         quanta_shim_mvangle_format_angle_dig2(radians, second_decimals as i32, buf, len)
@@ -251,6 +268,7 @@ pub fn cpp_mvangle_format_time(
     lower_turns: f64,
     second_decimals: usize,
 ) -> Option<String> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     read_cpp_string(|buf, len| unsafe {
         quanta_shim_mvangle_format_time(radians, lower_turns, second_decimals as i32, buf, len)
@@ -260,6 +278,7 @@ pub fn cpp_mvangle_format_time(
 /// Format an MJD day value with C++ `MVTime::DMY`.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_mvtime_format_dmy(mjd_days: f64, second_decimals: usize) -> Option<String> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     read_cpp_string(|buf, len| unsafe {
         quanta_shim_mvtime_format_dmy(mjd_days, second_decimals as i32, buf, len)
@@ -269,6 +288,7 @@ pub fn cpp_mvtime_format_dmy(mjd_days: f64, second_decimals: usize) -> Option<St
 /// Format an MJD day value with C++ `MVTime::TIME`.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_mvtime_format_time(mjd_days: f64, second_decimals: usize) -> Option<String> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     read_cpp_string(|buf, len| unsafe {
         quanta_shim_mvtime_format_time(mjd_days, second_decimals as i32, buf, len)
@@ -278,6 +298,31 @@ pub fn cpp_mvtime_format_time(mjd_days: f64, second_decimals: usize) -> Option<S
 /// Format an MJD day value with C++ `MVTime::DMY | NO_TIME`.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_mvtime_format_dmy_date(mjd_days: f64) -> Option<String> {
+    let _guard = quanta_cpp_lock().lock().ok()?;
     init_cpp();
     read_cpp_string(|buf, len| unsafe { quanta_shim_mvtime_format_dmy_date(mjd_days, buf, len) })
+}
+
+#[cfg(all(test, has_casacore_cpp))]
+mod tests {
+    use super::{cpp_parse_factor, cpp_qc_constant};
+
+    #[test]
+    fn quanta_cpp_shims_serialize_parallel_callers() {
+        let workers: Vec<_> = ["m", "km/s", "Jy"]
+            .into_iter()
+            .map(|unit| {
+                std::thread::spawn(move || {
+                    for _ in 0..8 {
+                        assert!(cpp_parse_factor(unit).is_some());
+                        assert!(cpp_qc_constant("c").is_some());
+                    }
+                })
+            })
+            .collect();
+
+        for worker in workers {
+            worker.join().expect("parallel quanta worker should finish");
+        }
+    }
 }
