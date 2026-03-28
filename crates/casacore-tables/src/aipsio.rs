@@ -41,3 +41,33 @@ pub(crate) fn decode_value(
     let mut reader = AipsReader::with_byte_order(bytes, config.byte_order);
     Ok(reader.read_value(type_tag)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AipsIoConfig, decode_value, encode_value};
+    use casacore_aipsio::{ByteOrder, ScalarValue, Value};
+
+    #[test]
+    fn default_config_uses_big_endian() {
+        assert_eq!(AipsIoConfig::default().byte_order, ByteOrder::BigEndian);
+    }
+
+    #[test]
+    fn encode_decode_round_trip_respects_configured_byte_order() {
+        let value = Value::Scalar(ScalarValue::Int32(42));
+
+        for byte_order in [ByteOrder::BigEndian, ByteOrder::LittleEndian] {
+            let config = AipsIoConfig { byte_order };
+            let encoded = encode_value(&value, config).expect("value should encode");
+            let decoded = decode_value(
+                &encoded,
+                value
+                    .type_tag()
+                    .expect("scalar values always have a type tag"),
+                config,
+            )
+            .expect("encoded value should decode");
+            assert_eq!(decoded, value);
+        }
+    }
+}

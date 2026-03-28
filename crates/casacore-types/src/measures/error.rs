@@ -76,3 +76,52 @@ impl fmt::Display for MeasureError {
 }
 
 impl std::error::Error for MeasureError {}
+
+#[cfg(test)]
+mod tests {
+    use super::MeasureError;
+
+    #[test]
+    fn display_covers_all_measure_error_variants() {
+        let cases = [
+            (
+                MeasureError::MissingFrameData { what: "dUT1" },
+                "missing frame data: dUT1",
+            ),
+            (
+                MeasureError::UnknownRefType {
+                    input: "BAD".to_string(),
+                },
+                "unknown reference type: \"BAD\"",
+            ),
+            (
+                MeasureError::InvalidRecord {
+                    reason: "missing value".to_string(),
+                },
+                "invalid measure record: missing value",
+            ),
+            (
+                MeasureError::NonConformantUnit {
+                    expected: "time",
+                    got: "m".to_string(),
+                },
+                "non-conformant unit: expected time, got \"m\"",
+            ),
+            (
+                MeasureError::NotYetImplemented {
+                    route: "UT2 -> TDB".to_string(),
+                },
+                "conversion not yet implemented: UT2 -> TDB",
+            ),
+            (
+                MeasureError::SofarsError { code: -42 },
+                "sofars error: status code -42",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected);
+            assert!(std::error::Error::source(&error).is_none());
+        }
+    }
+}

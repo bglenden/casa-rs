@@ -70,3 +70,43 @@ impl fmt::Display for UnitError {
 }
 
 impl std::error::Error for UnitError {}
+
+#[cfg(test)]
+mod tests {
+    use super::UnitError;
+
+    #[test]
+    fn display_covers_all_unit_error_variants() {
+        let cases = [
+            (
+                UnitError::InvalidUnit {
+                    input: "m//s".to_string(),
+                },
+                "invalid unit expression: \"m//s\"",
+            ),
+            (
+                UnitError::NonConformant {
+                    lhs: "m".to_string(),
+                    rhs: "s".to_string(),
+                },
+                "non-conformant units: \"m\" vs \"s\"",
+            ),
+            (
+                UnitError::IndivisibleRoot,
+                "root would produce fractional dimension exponents",
+            ),
+            (UnitError::ZeroRoot, "root of degree zero is undefined"),
+            (
+                UnitError::UnknownUnit {
+                    name: "furlong".to_string(),
+                },
+                "unknown unit: \"furlong\"",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected);
+            assert!(std::error::Error::source(&error).is_none());
+        }
+    }
+}
