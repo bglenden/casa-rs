@@ -22,7 +22,7 @@ Default local release gates:
   - cargo test --workspace
 
 Use --full to additionally run:
-  - scripts/run-coverage.sh
+  - scripts/run-coverage.sh --ci-like
 
 Examples:
   scripts/release.sh 0.3.1
@@ -110,8 +110,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
 if [[ "$run_full" == "true" ]]; then
-  echo "==> Running full coverage gate"
-  scripts/run-coverage.sh
+  echo "==> Running full coverage gate (CI-like)"
+  scripts/run-coverage.sh --ci-like
 fi
 
 for cargo_toml in crates/*/Cargo.toml; do
