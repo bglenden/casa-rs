@@ -21,6 +21,7 @@ use casacore_tablebrowser_protocol::{
     BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
     BrowserView as TableBrowserView, BrowserViewport,
 };
+use casacore_types::measures::direction::{format_declination, format_right_ascension};
 use casacore_types::quanta::{MvAngle, MvTime};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -5962,14 +5963,26 @@ fn render_image_probe(probe: &casacore_imagebrowser_protocol::ImageBrowserProbe)
     }
     for axis in &probe.world_axes {
         lines.push(format!(
-            "{}: {}{}{}",
+            "{}: {}",
             axis.name,
-            axis.value,
-            if axis.unit.is_empty() { "" } else { " " },
-            axis.unit
+            format_world_axis_probe_value(&axis.name, &axis.unit, axis.value)
         ));
     }
     lines.join("\n")
+}
+
+fn format_world_axis_probe_value(axis_name: &str, unit: &str, value: f64) -> String {
+    if axis_name.eq_ignore_ascii_case("Right Ascension") || axis_name.eq_ignore_ascii_case("RA") {
+        return format_right_ascension(value, 6);
+    }
+    if axis_name.eq_ignore_ascii_case("Declination") || axis_name.eq_ignore_ascii_case("DEC") {
+        return format_declination(value, 5);
+    }
+    if unit.is_empty() {
+        value.to_string()
+    } else {
+        format!("{value} {unit}")
+    }
 }
 
 fn render_browser_scalar(value: &BrowserScalarValue) -> String {

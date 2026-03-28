@@ -8,6 +8,7 @@ use casacore_imagebrowser_protocol::{
     ImageBrowserProbe, ImageBrowserSnapshot, ImageBrowserView, ImageBrowserViewport,
     ImageHiddenAxisState, ImageNavigationMetrics, ImagePlaneRaster,
 };
+use casacore_types::measures::direction::{format_declination, format_right_ascension};
 
 use crate::error::ImageError;
 use crate::{
@@ -274,12 +275,7 @@ impl ImageBrowserSession {
                 lines.push("Masked: true".into());
             }
             for axis in probe.world_axes {
-                lines.push(format!(
-                    "{}: {} {}",
-                    axis.name,
-                    axis.value,
-                    if axis.unit.is_empty() { "" } else { &axis.unit }
-                ));
+                lines.push(format_world_axis_line(&axis));
             }
         }
         Ok(lines)
@@ -397,6 +393,28 @@ fn map_axis_value(value: ImageAxisValue) -> ImageBrowserAxisValue {
         name: value.name,
         unit: value.unit,
         value: value.value,
+    }
+}
+
+fn format_world_axis_line(axis: &ImageAxisValue) -> String {
+    format!(
+        "{}: {}",
+        axis.name,
+        format_world_axis_value(&axis.name, &axis.unit, axis.value)
+    )
+}
+
+fn format_world_axis_value(axis_name: &str, unit: &str, value: f64) -> String {
+    if axis_name.eq_ignore_ascii_case("Right Ascension") || axis_name.eq_ignore_ascii_case("RA") {
+        return format_right_ascension(value, 6);
+    }
+    if axis_name.eq_ignore_ascii_case("Declination") || axis_name.eq_ignore_ascii_case("DEC") {
+        return format_declination(value, 5);
+    }
+    if unit.is_empty() {
+        value.to_string()
+    } else {
+        format!("{value} {unit}")
     }
 }
 
@@ -574,6 +592,51 @@ mod tests {
                 .content_lines
                 .iter()
                 .any(|line| line.contains("200"))
+        );
+    }
+
+    #[test]
+    fn inspector_formats_radec_probe_axes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("radec-cube.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    vec![
+                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                    ],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(48, 8)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CycleView { forward: true })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CycleView { forward: true })
+            .unwrap();
+        let snapshot = session
+            .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
+            .unwrap();
+
+        assert!(
+            snapshot
+                .inspector_lines
+                .iter()
+                .any(|line| line.contains("Right Ascension: 00:00:00.000000"))
+        );
+        assert!(
+            snapshot
+                .inspector_lines
+                .iter()
+                .any(|line| line.contains("Declination: +45.00.00.00000"))
         );
     }
 

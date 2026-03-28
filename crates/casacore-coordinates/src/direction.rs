@@ -248,7 +248,9 @@ impl DirectionCoordinate {
 
     /// Reconstructs a direction coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
-        let direction_ref = if let Some(name) = get_optional_string(rec, "direction_ref") {
+        let direction_ref = if let Some(name) =
+            get_optional_string(rec, "direction_ref").or_else(|| get_optional_string(rec, "system"))
+        {
             DirectionRef::from_str(&name).map_err(|err| {
                 CoordinateError::InvalidRecord(format!("invalid direction_ref: {err}"))
             })?

@@ -18,7 +18,10 @@ use casacore_types::{RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
-use crate::record_utils::{get_optional_i32, get_optional_string, get_required_vec_f64};
+use crate::record_utils::{
+    get_optional_i32, get_optional_string, get_optional_vec_f64, get_optional_vec_string,
+    get_required_f64, get_required_vec_f64,
+};
 
 /// A one-axis spectral coordinate with linear pixel-to-frequency mapping.
 ///
@@ -86,7 +89,9 @@ impl SpectralCoordinate {
 
     /// Reconstructs a spectral coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
-        let frequency_ref = if let Some(name) = get_optional_string(rec, "frequency_ref") {
+        let frequency_ref = if let Some(name) =
+            get_optional_string(rec, "frequency_ref").or_else(|| get_optional_string(rec, "system"))
+        {
             FrequencyRef::from_str(&name).map_err(|err| {
                 CoordinateError::InvalidRecord(format!("invalid spectral frequency_ref: {err}"))
             })?
@@ -102,18 +107,37 @@ impl SpectralCoordinate {
             ));
         };
 
-        let crval = get_required_vec_f64(rec, "crval")?;
-        let cdelt = get_required_vec_f64(rec, "cdelt")?;
-        let crpix = get_required_vec_f64(rec, "crpix")?;
+        let parameter_record = if let Some(Value::Record(wcs)) = rec.get("wcs") {
+            wcs
+        } else if let Some(Value::Record(tabular)) = rec.get("tabular") {
+            let pixelvalues = get_optional_vec_f64(tabular, "pixelvalues").unwrap_or_default();
+            let worldvalues = get_optional_vec_f64(tabular, "worldvalues").unwrap_or_default();
+            if !pixelvalues.is_empty() || !worldvalues.is_empty() {
+                return Err(CoordinateError::InvalidRecord(
+                    "tabular spectral coordinates with explicit lookup tables are not supported"
+                        .into(),
+                ));
+            }
+            tabular
+        } else {
+            rec
+        };
+
+        let crval = get_required_vec_f64(parameter_record, "crval")?;
+        let cdelt = get_required_vec_f64(parameter_record, "cdelt")?;
+        let crpix = get_required_vec_f64(parameter_record, "crpix")?;
         if crval.len() != 1 || cdelt.len() != 1 || crpix.len() != 1 {
             return Err(CoordinateError::InvalidRecord(
                 "spectral coordinate expects single-valued crval/cdelt/crpix".into(),
             ));
         }
 
-        let rest_frequency = crate::record_utils::get_required_f64(rec, "restfreq")?;
+        let rest_frequency = get_required_f64(rec, "restfreq")?;
         let mut coord = Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency);
-        if let Some(unit) = get_optional_string(rec, "unit") {
+        if let Some(unit) = get_optional_string(rec, "unit").or_else(|| {
+            get_optional_vec_string(parameter_record, "units")
+                .and_then(|units| units.into_iter().next())
+        }) {
             coord = coord.with_unit(unit);
         }
         Ok(coord)

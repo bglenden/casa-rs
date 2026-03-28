@@ -456,6 +456,7 @@ dependencies = [
  "casacore-imagebrowser-protocol",
  "casacore-lattices",
  "casacore-tables",
+ "casacore-test-support",
  "casacore-types",
  "ndarray",
  "serde",

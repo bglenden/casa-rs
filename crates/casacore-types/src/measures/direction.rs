@@ -68,6 +68,8 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
+use crate::quanta::MvAngle;
+
 use super::epoch::EpochRef;
 use super::error::MeasureError;
 use super::frame::{IauModel, MeasFrame};
@@ -372,6 +374,22 @@ impl MDirection {
         self.as_angles().1
     }
 
+    /// Formats the longitude as conventional right ascension.
+    ///
+    /// This mirrors the common C++ casacore usage
+    /// `MVAngle(ra)(0.0).string(MVAngle::TIME, 6 + second_decimals)`.
+    pub fn format_right_ascension(&self, second_decimals: usize) -> String {
+        format_right_ascension(self.longitude_rad(), second_decimals)
+    }
+
+    /// Formats the latitude as conventional declination.
+    ///
+    /// This mirrors the common C++ casacore usage
+    /// `MVAngle(dec).string(MVAngle::DIG2, 6 + second_decimals)`.
+    pub fn format_declination(&self, second_decimals: usize) -> String {
+        format_declination(self.latitude_rad(), second_decimals)
+    }
+
     /// Converts this direction to a different reference frame.
     ///
     /// Uses BFS on the routing graph to find the shortest conversion path,
@@ -400,6 +418,24 @@ impl MDirection {
             refer: target,
         })
     }
+}
+
+/// Formats a right-ascension value in radians as `hh:mm:ss[.f...]`.
+///
+/// This uses the existing `MvAngle` `TIME` formatter, which is already
+/// cross-validated against C++ casacore in the quanta interop tests.
+pub fn format_right_ascension(radians: f64, second_decimals: usize) -> String {
+    MvAngle::from_radians(radians)
+        .normalized(0.0)
+        .format_time(second_decimals)
+}
+
+/// Formats a declination value in radians as signed `dd.mm.ss[.f...]`.
+///
+/// This uses the existing `MvAngle` `DIG2` formatter, which is already
+/// cross-validated against C++ casacore in the quanta interop tests.
+pub fn format_declination(radians: f64, second_decimals: usize) -> String {
+    MvAngle::from_radians(radians).format_angle_dig2(second_decimals)
 }
 
 impl fmt::Display for MDirection {
@@ -1387,6 +1423,25 @@ mod tests {
         let (lon2, lat2) = d.as_angles();
         assert!(close(lon2, lon, 1e-14));
         assert!(close(lat2, lat, 1e-14));
+    }
+
+    #[test]
+    fn formats_equatorial_angles_for_display() {
+        let direction = MDirection::from_angles(
+            -0.25 * std::f64::consts::TAU,
+            (-12.5_f64).to_radians(),
+            DirectionRef::J2000,
+        );
+        assert_eq!(direction.format_right_ascension(6), "18:00:00.000000");
+        assert_eq!(direction.format_declination(5), "-12.30.00.00000");
+        assert_eq!(
+            format_right_ascension(-0.25 * std::f64::consts::TAU, 6),
+            "18:00:00.000000"
+        );
+        assert_eq!(
+            format_declination((-12.5_f64).to_radians(), 5),
+            "-12.30.00.00000"
+        );
     }
 
     #[test]

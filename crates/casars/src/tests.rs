@@ -1864,6 +1864,61 @@ fn imexplore_copy_shortcut_writes_probe_summary_to_clipboard() {
 
 #[cfg(unix)]
 #[test]
+fn imexplore_copy_formats_radec_probe_axes() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard-radec.txt");
+    set_test_clipboard_file(&clipboard_path);
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["@".to_string()],
+            vec!["View: Plane".to_string(), "Value: 42".to_string()],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0],
+                pixel_axes: vec![],
+                value: 42.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![
+                    ImageBrowserAxisValue {
+                        name: "Right Ascension".to_string(),
+                        unit: "rad".to_string(),
+                        value: -0.25 * std::f64::consts::TAU,
+                    },
+                    ImageBrowserAxisValue {
+                        name: "Declination".to_string(),
+                        unit: "rad".to_string(),
+                        value: (-12.5_f64).to_radians(),
+                    },
+                ],
+            }),
+            None,
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert!(clipboard.contains("Right Ascension: 18:00:00.000000"));
+    assert!(clipboard.contains("Declination: -12.30.00.00000"));
+    clear_test_clipboard_file();
+}
+
+#[cfg(unix)]
+#[test]
 fn imexplore_tab_focuses_live_parameters_pane() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");

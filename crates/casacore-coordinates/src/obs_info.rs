@@ -7,8 +7,9 @@
 //!
 //! Corresponds to C++ `ObsInfo`.
 
-use casacore_types::measures::epoch::MEpoch;
+use casacore_types::measures::epoch::{EpochRef, MEpoch};
 use casacore_types::measures::position::MPosition;
+use casacore_types::measures::{epoch_from_record, position_from_record};
 use casacore_types::{RecordValue, ScalarValue, Value};
 
 use crate::error::CoordinateError;
@@ -107,41 +108,52 @@ impl ObsInfo {
             Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
             _ => String::new(),
         };
-        let date = match rec.get("date") {
-            Some(Value::Scalar(ScalarValue::Float64(mjd))) => Some(MEpoch::from_mjd(
-                *mjd,
-                casacore_types::measures::epoch::EpochRef::UTC,
-            )),
+        let date = match rec.get("date").or_else(|| rec.get("obsdate")) {
+            Some(Value::Scalar(ScalarValue::Float64(mjd))) => {
+                Some(MEpoch::from_mjd(*mjd, EpochRef::UTC))
+            }
+            Some(Value::Record(epoch_rec)) => {
+                Some(epoch_from_record(epoch_rec).map_err(|err| {
+                    CoordinateError::InvalidRecord(format!("invalid observation date: {err}"))
+                })?)
+            }
             _ => None,
         };
-        // Telescope position: simplified deserialization
         let telescope_position = match rec.get("telescopeposition") {
             Some(Value::Record(pos_rec)) => {
-                let m0 = match pos_rec.get("m0") {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => {
-                        return Err(CoordinateError::InvalidRecord(
-                            "missing m0 in telescopeposition".into(),
-                        ));
-                    }
-                };
-                let m1 = match pos_rec.get("m1") {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => {
-                        return Err(CoordinateError::InvalidRecord(
-                            "missing m1 in telescopeposition".into(),
-                        ));
-                    }
-                };
-                let m2 = match pos_rec.get("m2") {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => {
-                        return Err(CoordinateError::InvalidRecord(
-                            "missing m2 in telescopeposition".into(),
-                        ));
-                    }
-                };
-                Some(MPosition::new_itrf(m0, m1, m2))
+                if pos_rec.get("refer").is_some() {
+                    Some(position_from_record(pos_rec).map_err(|err| {
+                        CoordinateError::InvalidRecord(format!(
+                            "invalid telescopeposition measure: {err}"
+                        ))
+                    })?)
+                } else {
+                    let m0 = match pos_rec.get("m0") {
+                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
+                        _ => {
+                            return Err(CoordinateError::InvalidRecord(
+                                "missing m0 in telescopeposition".into(),
+                            ));
+                        }
+                    };
+                    let m1 = match pos_rec.get("m1") {
+                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
+                        _ => {
+                            return Err(CoordinateError::InvalidRecord(
+                                "missing m1 in telescopeposition".into(),
+                            ));
+                        }
+                    };
+                    let m2 = match pos_rec.get("m2") {
+                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
+                        _ => {
+                            return Err(CoordinateError::InvalidRecord(
+                                "missing m2 in telescopeposition".into(),
+                            ));
+                        }
+                    };
+                    Some(MPosition::new_itrf(m0, m1, m2))
+                }
             }
             _ => None,
         };

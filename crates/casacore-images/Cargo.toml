@@ -22,4 +22,5 @@ serde_json = "1"
 thiserror.workspace = true
 
 [dev-dependencies]
+casacore-test-support = { path = "../casacore-test-support" }
 tempfile = "3"

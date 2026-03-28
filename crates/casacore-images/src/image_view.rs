@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use casacore_coordinates::{CoordinateSystem, CoordinateType};
+use casacore_types::measures::direction::{format_declination, format_right_ascension};
 use casacore_types::{ArrayD, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, Axis, Ix2, IxDyn};
 
@@ -206,7 +207,7 @@ impl OpenedImageView {
                         if axis.unit.is_empty() { "<none>" } else { &axis.unit },
                         self.shape().get(index).copied().unwrap_or_default(),
                         format_optional_f64(axis.reference_pixel),
-                        format_optional_f64(axis.reference_value),
+                        format_axis_value_for_display(axis.reference_value, &axis.name),
                         format_optional_f64(axis.increment),
                     )
                 })
@@ -901,6 +902,27 @@ fn format_optional_f64(value: Option<f64>) -> String {
         .unwrap_or_else(|| "<none>".into())
 }
 
+fn format_axis_value_for_display(value: Option<f64>, axis_name: &str) -> String {
+    let Some(value) = value else {
+        return "<none>".into();
+    };
+    if is_right_ascension_axis(axis_name) {
+        return format_right_ascension(value, 6);
+    }
+    if is_declination_axis(axis_name) {
+        return format_declination(value, 5);
+    }
+    format!("{value}")
+}
+
+fn is_right_ascension_axis(axis_name: &str) -> bool {
+    axis_name.eq_ignore_ascii_case("Right Ascension") || axis_name.eq_ignore_ascii_case("RA")
+}
+
+fn is_declination_axis(axis_name: &str) -> bool {
+    axis_name.eq_ignore_ascii_case("Declination") || axis_name.eq_ignore_ascii_case("DEC")
+}
+
 fn format_value(value: &Value) -> String {
     match value {
         Value::Scalar(ScalarValue::Bool(value)) => value.to_string(),
@@ -926,6 +948,7 @@ mod tests {
     use casacore_coordinates::{
         CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     };
+    use casacore_test_support::casatestdata_path;
     use casacore_types::measures::direction::DirectionRef;
     use casacore_types::measures::frequency::FrequencyRef;
 
@@ -1187,5 +1210,60 @@ mod tests {
                 .iter()
                 .any(|section| section.title == "Coordinates")
         );
+    }
+
+    #[test]
+    fn metadata_sections_format_radec_reference_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("radec-metadata.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2, 2], direction_spectral_coords(), &path).unwrap();
+        image.save().unwrap();
+
+        let axes = OpenedImageView::open(&path)
+            .unwrap()
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Axes")
+            .unwrap();
+        assert!(axes.lines.iter().any(|line| {
+            line.contains("Right Ascension") && line.contains("ref_val=00:00:00.000000")
+        }));
+        assert!(axes.lines.iter().any(|line| {
+            line.contains("Declination") && line.contains("ref_val=+45.00.00.00000")
+        }));
+    }
+
+    #[test]
+    fn shared_ngc5921_image_exposes_world_coordinates_when_testdata_is_available() {
+        let Some(path) = casatestdata_path("unittest/imhead/ngc5921.clean.image") else {
+            return;
+        };
+        if !path.exists() {
+            return;
+        }
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        assert!(opened.capabilities().world_coords_available);
+        assert!(!opened.capabilities().pixel_only_mode);
+        let probe = opened.probe((128, 128), 0).unwrap();
+        assert!(!probe.world_axes.is_empty());
+    }
+
+    #[test]
+    fn shared_n4826_image_exposes_world_coordinates_when_testdata_is_available() {
+        let Some(path) = casatestdata_path("unittest/imval/n4826_bima.im") else {
+            return;
+        };
+        if !path.exists() {
+            return;
+        }
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        assert!(opened.capabilities().world_coords_available);
+        assert!(!opened.capabilities().pixel_only_mode);
+        let probe = opened.probe((128, 128), 0).unwrap();
+        assert!(!probe.world_axes.is_empty());
     }
 }
