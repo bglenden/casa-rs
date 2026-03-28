@@ -17,6 +17,7 @@
 //! This corresponds to C++ `DirectionCoordinate`.
 
 use std::f64::consts::{FRAC_PI_2, PI};
+use std::str::FromStr;
 
 use casacore_types::measures::direction::DirectionRef;
 use casacore_types::{RecordValue, ScalarValue, Value};
@@ -24,7 +25,11 @@ use ndarray::Array2;
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
-use crate::projection::Projection;
+use crate::projection::{Projection, ProjectionType};
+use crate::record_utils::{
+    get_optional_f64, get_optional_i32, get_optional_string, get_optional_vec_f64,
+    get_required_vec_f64,
+};
 
 /// A two-axis celestial coordinate with projection.
 ///
@@ -239,6 +244,74 @@ impl DirectionCoordinate {
     /// Returns a reference to the PC rotation/coupling matrix.
     pub fn pc_matrix(&self) -> &Array2<f64> {
         &self.pc
+    }
+
+    /// Reconstructs a direction coordinate from a serialized record.
+    pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let direction_ref = if let Some(name) = get_optional_string(rec, "direction_ref") {
+            DirectionRef::from_str(&name).map_err(|err| {
+                CoordinateError::InvalidRecord(format!("invalid direction_ref: {err}"))
+            })?
+        } else if let Some(code) = get_optional_i32(rec, "direction_ref") {
+            DirectionRef::from_casacore_code(code).ok_or_else(|| {
+                CoordinateError::InvalidRecord(format!("invalid direction_ref code {code}"))
+            })?
+        } else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing or invalid direction_ref".into(),
+            ));
+        };
+
+        let projection_name = get_optional_string(rec, "projection").ok_or_else(|| {
+            CoordinateError::InvalidRecord("missing or invalid projection".into())
+        })?;
+        let projection_type = ProjectionType::from_name(&projection_name).ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!("unsupported projection {projection_name}"))
+        })?;
+        let projection =
+            if let Some(parameters) = get_optional_vec_f64(rec, "projection_parameters") {
+                Projection::with_parameters(projection_type, parameters)
+            } else {
+                Projection::new(projection_type)
+            };
+
+        let crval = get_required_vec_f64(rec, "crval")?;
+        let cdelt = get_required_vec_f64(rec, "cdelt")?;
+        let crpix = get_required_vec_f64(rec, "crpix")?;
+        if crval.len() != 2 || cdelt.len() != 2 || crpix.len() != 2 {
+            return Err(CoordinateError::InvalidRecord(
+                "direction coordinate expects two-valued crval/cdelt/crpix".into(),
+            ));
+        }
+
+        let mut coord = Self::new(
+            direction_ref,
+            projection,
+            [crval[0], crval[1]],
+            [cdelt[0], cdelt[1]],
+            [crpix[0], crpix[1]],
+        );
+
+        if let Some(pc_flat) = get_optional_vec_f64(rec, "pc") {
+            if pc_flat.len() != 4 {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "direction pc matrix has {} elements, expected 4",
+                    pc_flat.len()
+                )));
+            }
+            let pc = Array2::from_shape_vec((2, 2), pc_flat).map_err(|err| {
+                CoordinateError::InvalidRecord(format!("invalid direction pc matrix: {err}"))
+            })?;
+            coord = coord.with_pc_matrix(pc);
+        }
+        if let Some(longpole) = get_optional_f64(rec, "longpole") {
+            coord = coord.with_longpole(longpole);
+        }
+        if let Some(latpole) = get_optional_f64(rec, "latpole") {
+            coord = coord.with_latpole(latpole);
+        }
+
+        Ok(coord)
     }
 
     /// Pixel to intermediate world coordinates.
@@ -622,5 +695,33 @@ mod tests {
         let boxed: Box<dyn Coordinate> = Box::new(coord);
         let cloned = boxed.clone_box();
         assert_eq!(cloned.coordinate_type(), CoordinateType::Direction);
+    }
+
+    #[test]
+    fn record_roundtrip() {
+        let proj = Projection::with_parameters(ProjectionType::SIN, vec![0.25, -0.5]);
+        let pc = Array2::from_shape_vec((2, 2), vec![0.9, -0.1, 0.2, 1.1]).unwrap();
+        let coord = DirectionCoordinate::new(
+            DirectionRef::GALACTIC,
+            proj,
+            [1.0, 0.5],
+            [-1e-4, 2e-4],
+            [128.0, 64.0],
+        )
+        .with_pc_matrix(pc.clone())
+        .with_longpole(0.25)
+        .with_latpole(1.2);
+
+        let restored = DirectionCoordinate::from_record(&coord.to_record()).unwrap();
+
+        assert_eq!(restored.direction_ref(), DirectionRef::GALACTIC);
+        assert_eq!(restored.reference_value(), vec![1.0, 0.5]);
+        assert_eq!(restored.reference_pixel(), vec![128.0, 64.0]);
+        assert_eq!(restored.increment(), vec![-1e-4, 2e-4]);
+        assert_eq!(restored.pc_matrix(), &pc);
+        assert_eq!(restored.projection().projection_type(), ProjectionType::SIN);
+        assert_eq!(restored.projection().parameters(), &[0.25, -0.5]);
+        assert!((restored.longpole() - 0.25).abs() < TOL);
+        assert!((restored.latpole() - 1.2).abs() < TOL);
     }
 }

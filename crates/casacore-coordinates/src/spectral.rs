@@ -11,11 +11,14 @@
 //! world = crval + cdelt * (pixel - crpix)
 //! ```
 
+use std::str::FromStr;
+
 use casacore_types::measures::frequency::FrequencyRef;
 use casacore_types::{RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
+use crate::record_utils::{get_optional_i32, get_optional_string, get_required_vec_f64};
 
 /// A one-axis spectral coordinate with linear pixel-to-frequency mapping.
 ///
@@ -79,6 +82,41 @@ impl SpectralCoordinate {
     /// Returns the rest frequency in Hz.
     pub fn rest_frequency(&self) -> f64 {
         self.rest_frequency
+    }
+
+    /// Reconstructs a spectral coordinate from a serialized record.
+    pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let frequency_ref = if let Some(name) = get_optional_string(rec, "frequency_ref") {
+            FrequencyRef::from_str(&name).map_err(|err| {
+                CoordinateError::InvalidRecord(format!("invalid spectral frequency_ref: {err}"))
+            })?
+        } else if let Some(code) = get_optional_i32(rec, "frequency_ref") {
+            FrequencyRef::from_casacore_code(code).ok_or_else(|| {
+                CoordinateError::InvalidRecord(format!(
+                    "invalid spectral frequency_ref code {code}"
+                ))
+            })?
+        } else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing or invalid frequency_ref".into(),
+            ));
+        };
+
+        let crval = get_required_vec_f64(rec, "crval")?;
+        let cdelt = get_required_vec_f64(rec, "cdelt")?;
+        let crpix = get_required_vec_f64(rec, "crpix")?;
+        if crval.len() != 1 || cdelt.len() != 1 || crpix.len() != 1 {
+            return Err(CoordinateError::InvalidRecord(
+                "spectral coordinate expects single-valued crval/cdelt/crpix".into(),
+            ));
+        }
+
+        let rest_frequency = crate::record_utils::get_required_f64(rec, "restfreq")?;
+        let mut coord = Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency);
+        if let Some(unit) = get_optional_string(rec, "unit") {
+            coord = coord.with_unit(unit);
+        }
+        Ok(coord)
     }
 }
 
@@ -251,5 +289,20 @@ mod tests {
         let boxed: Box<dyn Coordinate> = Box::new(coord);
         let cloned = boxed.clone_box();
         assert_eq!(cloned.coordinate_type(), CoordinateType::Spectral);
+    }
+
+    #[test]
+    fn record_roundtrip() {
+        let coord =
+            SpectralCoordinate::new(FrequencyRef::BARY, 1.42e9, -5.0e5, 256.0, 1.42040575e9)
+                .with_unit("GHz");
+        let restored = SpectralCoordinate::from_record(&coord.to_record()).unwrap();
+
+        assert_eq!(restored.frequency_ref(), FrequencyRef::BARY);
+        assert_eq!(restored.reference_value(), vec![1.42e9]);
+        assert_eq!(restored.reference_pixel(), vec![256.0]);
+        assert_eq!(restored.increment(), vec![-5.0e5]);
+        assert!((restored.rest_frequency() - 1.42040575e9).abs() < 1.0);
+        assert_eq!(restored.axis_units(), vec!["GHz"]);
     }
 }

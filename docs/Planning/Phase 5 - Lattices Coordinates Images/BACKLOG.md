@@ -84,3 +84,13 @@ by read-only reductions and chunk pipelines.
 **Reason:** The current small-image fallback is a pragmatic performance tradeoff.
 Replacing it with a tighter dedicated serial reduction kernel remains worthwhile,
 but it needs its own benchmark-guided pass.
+
+---
+
+### 12.4 Image Browser Cursor Anchoring And Recenter Controls
+
+**Status:** DEFER
+
+**Reason:** `imexplore` now supports direct pixel activation by mouse click, but
+follow-cursor viewport anchoring and an explicit recenter command need a
+separate UX pass so they do not fight manual scrolling and horizontal pan.

@@ -4,6 +4,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use casacore_imagebrowser_protocol::{
+    ImageBrowserCommand, ImageBrowserFocus, ImageBrowserSnapshot, ImageBrowserView,
+    ImageBrowserViewport,
+};
 use casacore_ms::listobs::cli::{
     UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
 };
@@ -25,18 +29,19 @@ use ratatui::layout::Rect;
 use ratatui_explorer::{FileExplorer, FileExplorerBuilder, Input as ExplorerInput};
 use ratatui_graphics::{PanelProtocol, PanelRenderer, Picker, Resize};
 
-use crate::browser_client::BrowserClient;
+use crate::browser_client::{BrowserClient, ImageBrowserClient};
 use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
 use crate::graphics::{ListObsPlotRenderInput, plot_theme, render_plot_image};
-use crate::registry::RegistryApp;
+use crate::registry::{BrowserAppKind, RegistryApp};
 use crate::ui::UiLayout;
 
 const DENSE_SPINNER_FRAMES: &[&str] = &["|", "/", "-", "\\"];
 const RICH_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠴", "⠦"];
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(450);
 const HORIZONTAL_SCROLL_STEP: i16 = 8;
+const IMAGE_PLANE_CELL_WIDTH: usize = 11;
 const RESULT_TAB_COUNT: usize = 10;
 const BROWSE_SUFFIX: &str = " [browse]";
 
@@ -81,6 +86,44 @@ enum BrowserAction {
     MoveDown,
     PageUp,
     PageDown,
+    Activate,
+    Back,
+    Escape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserRequest {
+    Resize {
+        width: u16,
+        height: u16,
+        inspector_height: u16,
+    },
+    SetFocus(BrowserPaneFocus),
+    CycleView {
+        forward: bool,
+    },
+    MoveLeft {
+        steps: usize,
+    },
+    MoveRight {
+        steps: usize,
+    },
+    MoveUp {
+        steps: usize,
+    },
+    MoveDown {
+        steps: usize,
+    },
+    SetImageCursor {
+        x: usize,
+        y: usize,
+    },
+    PageUp {
+        pages: usize,
+    },
+    PageDown {
+        pages: usize,
+    },
     Activate,
     Back,
     Escape,
@@ -285,16 +328,21 @@ pub(crate) enum BrowserTab {
     Keywords,
     Cells,
     Subtables,
+    Plane,
+    Metadata,
+    Coordinates,
 }
 
 impl BrowserTab {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const TABLE_ALL: [Self; 5] = [
         Self::Overview,
         Self::Columns,
         Self::Keywords,
         Self::Cells,
         Self::Subtables,
     ];
+
+    pub(crate) const IMAGE_ALL: [Self; 3] = [Self::Metadata, Self::Coordinates, Self::Plane];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -303,6 +351,9 @@ impl BrowserTab {
             Self::Keywords => "Keywords",
             Self::Cells => "Cells",
             Self::Subtables => "Subtables",
+            Self::Plane => "Plane",
+            Self::Metadata => "Metadata",
+            Self::Coordinates => "Coordinates",
         }
     }
 
@@ -316,13 +367,11 @@ impl BrowserTab {
         }
     }
 
-    fn index(self) -> usize {
-        match self {
-            Self::Overview => 0,
-            Self::Columns => 1,
-            Self::Keywords => 2,
-            Self::Cells => 3,
-            Self::Subtables => 4,
+    fn from_image_view(view: ImageBrowserView) -> Self {
+        match view {
+            ImageBrowserView::Plane => Self::Plane,
+            ImageBrowserView::Metadata => Self::Metadata,
+            ImageBrowserView::Coordinates => Self::Coordinates,
         }
     }
 }
@@ -417,9 +466,191 @@ struct RunningState {
 
 #[derive(Debug)]
 struct BrowserSession {
+    root_path: String,
+    kind: BrowserSessionKind,
+}
+
+#[derive(Debug)]
+enum BrowserSessionKind {
+    Table(TableBrowserSession),
+    Image(ImageBrowserSessionState),
+}
+
+#[derive(Debug)]
+struct TableBrowserSession {
     client: BrowserClient,
     snapshot: BrowserSnapshot,
     viewport: BrowserViewport,
+}
+
+#[derive(Debug)]
+struct ImageBrowserSessionState {
+    client: ImageBrowserClient,
+    snapshot: ImageBrowserSnapshot,
+    viewport: ImageBrowserViewport,
+    hscroll: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BrowserPaneFocus {
+    Main,
+    Inspector,
+}
+
+impl BrowserSession {
+    fn kind(&self) -> BrowserAppKind {
+        match self.kind {
+            BrowserSessionKind::Table(_) => BrowserAppKind::Table,
+            BrowserSessionKind::Image(_) => BrowserAppKind::Image,
+        }
+    }
+
+    fn focus(&self) -> BrowserPaneFocus {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => match session.snapshot.focus {
+                BrowserFocus::Inspector => BrowserPaneFocus::Inspector,
+                BrowserFocus::Main => BrowserPaneFocus::Main,
+            },
+            BrowserSessionKind::Image(session) => match session.snapshot.focus {
+                ImageBrowserFocus::Inspector => BrowserPaneFocus::Inspector,
+                ImageBrowserFocus::Content => BrowserPaneFocus::Main,
+            },
+        }
+    }
+
+    fn has_inspector(&self) -> bool {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => session.snapshot.inspector.is_some(),
+            BrowserSessionKind::Image(_) => true,
+        }
+    }
+
+    fn active_tab(&self) -> BrowserTab {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => BrowserTab::from_view(session.snapshot.view),
+            BrowserSessionKind::Image(session) => {
+                BrowserTab::from_image_view(session.snapshot.active_view)
+            }
+        }
+    }
+
+    fn tabs(&self) -> &'static [BrowserTab] {
+        match self.kind() {
+            BrowserAppKind::Table => &BrowserTab::TABLE_ALL,
+            BrowserAppKind::Image => &BrowserTab::IMAGE_ALL,
+        }
+    }
+
+    fn status_line(&self) -> &str {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => &session.snapshot.status_line,
+            BrowserSessionKind::Image(session) => &session.snapshot.status_line,
+        }
+    }
+
+    fn vertical_metrics(&self) -> Option<(usize, usize)> {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => session
+                .snapshot
+                .vertical_metrics
+                .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1))),
+            BrowserSessionKind::Image(session) => Some((
+                session.snapshot.navigation.total_items,
+                session.snapshot.navigation.viewport_items.max(1),
+            )),
+        }
+    }
+
+    fn horizontal_metrics(&self, viewport_width: u16) -> Option<(usize, usize)> {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => session
+                .snapshot
+                .horizontal_metrics
+                .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1))),
+            BrowserSessionKind::Image(session) => {
+                let viewport_width = viewport_width as usize;
+                if viewport_width == 0 {
+                    return None;
+                }
+                Some((
+                    image_browser_content_width(&session.snapshot),
+                    viewport_width,
+                ))
+            }
+        }
+    }
+
+    fn active_scroll(&self) -> u16 {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => session
+                .snapshot
+                .vertical_metrics
+                .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
+                .unwrap_or(0),
+            BrowserSessionKind::Image(session) => session
+                .snapshot
+                .navigation
+                .selected_index
+                .min(u16::MAX as usize) as u16,
+        }
+    }
+
+    fn active_hscroll(&self) -> u16 {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => session
+                .snapshot
+                .horizontal_metrics
+                .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
+                .unwrap_or(0),
+            BrowserSessionKind::Image(session) => session.hscroll,
+        }
+    }
+
+    fn inspector_lines(&self) -> Option<Vec<String>> {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => session
+                .snapshot
+                .inspector
+                .as_ref()
+                .map(browser_inspector_lines),
+            BrowserSessionKind::Image(session) => Some(session.snapshot.inspector_lines.clone()),
+        }
+    }
+
+    fn main_content_lines(&self) -> Vec<String> {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => browser_main_content_lines(&session.snapshot),
+            BrowserSessionKind::Image(session) => session.snapshot.content_lines.clone(),
+        }
+    }
+
+    fn cells_view_active(&self) -> bool {
+        matches!(
+            &self.kind,
+            BrowserSessionKind::Table(session) if session.snapshot.view == TableBrowserView::Cells
+        )
+    }
+
+    fn clipboard_payload(&self) -> Option<(String, &'static str)> {
+        match &self.kind {
+            BrowserSessionKind::Table(session) => session
+                .snapshot
+                .inspector
+                .as_ref()
+                .map(copyable_browser_text),
+            BrowserSessionKind::Image(session) => {
+                let probe = session.snapshot.probe.as_ref()?;
+                Some((render_image_probe(probe), "probe"))
+            }
+        }
+    }
+
+    fn cancel(self) -> Result<(), String> {
+        match self.kind {
+            BrowserSessionKind::Table(session) => session.client.cancel(),
+            BrowserSessionKind::Image(session) => session.client.cancel(),
+        }
+    }
 }
 
 struct PlotPanelState {
@@ -905,7 +1136,11 @@ impl AppState {
         } else if self.edit_state.is_some() {
             InputMode::Edit
         } else if self.browser_session.is_some() {
-            InputMode::Browser
+            if self.browser_uses_parameter_pane() && self.pane_focus == PaneFocus::Parameters {
+                InputMode::Parameters
+            } else {
+                InputMode::Browser
+            }
         } else {
             match self.pane_focus {
                 PaneFocus::Parameters => InputMode::Parameters,
@@ -914,16 +1149,26 @@ impl AppState {
         }
     }
 
+    pub(crate) fn browser_uses_parameter_pane(&self) -> bool {
+        self.browser_session()
+            .is_some_and(|session| session.kind() == BrowserAppKind::Image)
+    }
+
     fn browser_inspector_reachable(&self) -> bool {
-        !self.parameters_pane_collapsed()
+        !self.browser_uses_parameter_pane()
+            && !self.parameters_pane_collapsed()
             && self
                 .browser_session()
-                .is_some_and(|session| session.snapshot.inspector.is_some())
+                .is_some_and(BrowserSession::has_inspector)
     }
 
     fn focus_ring(&self) -> Vec<FocusTarget> {
         if self.browser_session.is_some() {
-            let mut ring = vec![FocusTarget::BrowserMain];
+            let mut ring = Vec::new();
+            if self.browser_uses_parameter_pane() && !self.parameters_pane_collapsed() {
+                ring.push(FocusTarget::ParametersPane);
+            }
+            ring.push(FocusTarget::BrowserMain);
             if self.browser_inspector_reachable() {
                 ring.push(FocusTarget::BrowserInspector);
             }
@@ -948,8 +1193,11 @@ impl AppState {
 
     fn current_focus_target(&self) -> FocusTarget {
         if let Some(session) = self.browser_session() {
-            return match session.snapshot.focus {
-                BrowserFocus::Inspector if self.browser_inspector_reachable() => {
+            if self.browser_uses_parameter_pane() && self.pane_focus == PaneFocus::Parameters {
+                return FocusTarget::ParametersPane;
+            }
+            return match session.focus() {
+                BrowserPaneFocus::Inspector if self.browser_inspector_reachable() => {
                     FocusTarget::BrowserInspector
                 }
                 _ => FocusTarget::BrowserMain,
@@ -977,7 +1225,7 @@ impl AppState {
     fn set_focus_target(&mut self, target: FocusTarget) {
         match target {
             FocusTarget::ParametersPane => {
-                if !self.parameters_pane_collapsed() {
+                if self.browser_uses_parameter_pane() || !self.parameters_pane_collapsed() {
                     self.pane_focus = PaneFocus::Parameters;
                 }
             }
@@ -1000,12 +1248,9 @@ impl AppState {
                 self.pane_focus = PaneFocus::Result;
                 if self
                     .browser_session()
-                    .is_some_and(|session| session.snapshot.focus != BrowserFocus::Main)
+                    .is_some_and(|session| session.focus() != BrowserPaneFocus::Main)
                 {
-                    self.send_browser_command(BrowserCommand::SetFocus {
-                        focus: BrowserFocus::Main,
-                        viewport: None,
-                    });
+                    self.send_browser_command(BrowserRequest::SetFocus(BrowserPaneFocus::Main));
                 }
             }
             FocusTarget::BrowserInspector => {
@@ -1013,12 +1258,11 @@ impl AppState {
                     self.pane_focus = PaneFocus::Parameters;
                     if self
                         .browser_session()
-                        .is_some_and(|session| session.snapshot.focus != BrowserFocus::Inspector)
+                        .is_some_and(|session| session.focus() != BrowserPaneFocus::Inspector)
                     {
-                        self.send_browser_command(BrowserCommand::SetFocus {
-                            focus: BrowserFocus::Inspector,
-                            viewport: None,
-                        });
+                        self.send_browser_command(BrowserRequest::SetFocus(
+                            BrowserPaneFocus::Inspector,
+                        ));
                     }
                 }
             }
@@ -1112,21 +1356,21 @@ impl AppState {
             KeyCode::Char('r')
                 if key_event.modifiers.is_empty()
                     && mode != InputMode::Edit
-                    && !self.has_active_session() =>
+                    && (!self.has_active_session() || self.browser_uses_parameter_pane()) =>
             {
                 return Some(AppAction::StartRun);
             }
             KeyCode::Char('a')
                 if key_event.modifiers.is_empty()
                     && mode != InputMode::Edit
-                    && !self.has_active_session() =>
+                    && (!self.has_active_session() || self.browser_uses_parameter_pane()) =>
             {
                 return Some(AppAction::ToggleAdvanced);
             }
             KeyCode::Char('o')
                 if key_event.modifiers == KeyModifiers::CONTROL
                     && mode != InputMode::Edit
-                    && !self.has_active_session() =>
+                    && (!self.has_active_session() || self.browser_uses_parameter_pane()) =>
             {
                 return Some(AppAction::OpenPathChooser);
             }
@@ -1195,7 +1439,10 @@ impl AppState {
             AppAction::FocusNext => self.cycle_focus(true),
             AppAction::FocusPrevious => self.cycle_focus(false),
             AppAction::StartRun => {
-                if !self.has_active_session() {
+                if self.has_active_session() && self.browser_uses_parameter_pane() {
+                    self.cancel_current();
+                    self.start_run();
+                } else if !self.has_active_session() {
                     self.start_run();
                 }
             }
@@ -1311,15 +1558,23 @@ impl AppState {
                 "Bksp delete".to_string(),
             ]);
         } else if self.browser_session.is_some() {
-            parts.extend([
-                "[/] views".to_string(),
-                "Arrows/hjkl move".to_string(),
-                "PgUp/PgDn page".to_string(),
-                "Enter open".to_string(),
-                "Esc back".to_string(),
-                "Bksp parent table".to_string(),
-                "y copy".to_string(),
-            ]);
+            parts.push("[/] views".to_string());
+            parts.push("Arrows/hjkl move".to_string());
+            parts.push("PgUp/PgDn page".to_string());
+            if self.browser_uses_parameter_pane() {
+                parts.push("r reopen".to_string());
+                parts.push("a adv".to_string());
+                parts.push("^o browse".to_string());
+            }
+            if self
+                .browser_session()
+                .is_some_and(|session| session.kind() == BrowserAppKind::Table)
+            {
+                parts.push("Enter open".to_string());
+                parts.push("Esc back".to_string());
+                parts.push("Bksp parent table".to_string());
+            }
+            parts.push("y copy".to_string());
         } else if self.active_result_tab == ResultTab::Plots {
             parts.extend([
                 "[/] tabs".to_string(),
@@ -1419,18 +1674,33 @@ impl AppState {
                     "Focus: Browser main pane".to_string(),
                     "Move: Arrows or h/j/k/l".to_string(),
                     "Page: PgUp/PgDn".to_string(),
-                    "Activate: Enter".to_string(),
-                    "Back: Esc  Parent table: Backspace".to_string(),
                 ]);
+                if self
+                    .browser_session()
+                    .is_some_and(|session| session.kind() == BrowserAppKind::Table)
+                {
+                    lines.extend([
+                        "Activate: Enter".to_string(),
+                        "Back: Esc  Parent table: Backspace".to_string(),
+                    ]);
+                }
             }
             FocusTarget::BrowserInspector => {
                 lines.extend([
                     "Focus: Browser inspector".to_string(),
                     "Move: Arrows or h/j/k/l".to_string(),
                     "Page: PgUp/PgDn".to_string(),
-                    "Activate: Enter".to_string(),
-                    "Back: Esc".to_string(),
                 ]);
+                if self
+                    .browser_session()
+                    .is_some_and(|session| session.kind() == BrowserAppKind::Table)
+                {
+                    lines.extend(["Activate: Enter".to_string(), "Back: Esc".to_string()]);
+                } else if self.browser_session().is_some_and(|session| {
+                    matches!(&session.kind, BrowserSessionKind::Image(state) if state.snapshot.hidden_axis.is_some())
+                }) {
+                    lines.push("Adjust hidden axis: Left/Right".to_string());
+                }
             }
         }
         lines
@@ -1453,9 +1723,16 @@ impl AppState {
                 focus
             )
         } else if self.browser_session.is_some() {
-            match self.theme_mode() {
-                ThemeMode::DenseAnsi => format!("Inspector [live]{focus}"),
-                ThemeMode::RichPanel => format!("◈ Inspector [live]{focus}"),
+            if self.browser_uses_parameter_pane() {
+                match self.theme_mode() {
+                    ThemeMode::DenseAnsi => format!("Parameters [live]{focus}"),
+                    ThemeMode::RichPanel => format!("◈ Parameters [live]{focus}"),
+                }
+            } else {
+                match self.theme_mode() {
+                    ThemeMode::DenseAnsi => format!("Inspector [live]{focus}"),
+                    ThemeMode::RichPanel => format!("◈ Inspector [live]{focus}"),
+                }
             }
         } else if self.schema_error.is_some() {
             format!("{title} (schema unavailable){focus}")
@@ -1494,7 +1771,7 @@ impl AppState {
     }
 
     pub(crate) fn form_rows(&self) -> Vec<FormRowView> {
-        if self.browser_session.is_some() {
+        if self.browser_session.is_some() && !self.browser_uses_parameter_pane() {
             return self.browser_inspector_rows();
         }
 
@@ -1582,16 +1859,13 @@ impl AppState {
             lines.push("Structured output will appear when the subprocess exits.".to_string());
         } else if let Some(session) = self.browser_session() {
             lines.push(format!(
-                "View: {}  Table: {}  Breadcrumb: {}",
-                session.snapshot.view.label(),
-                session.snapshot.table_path,
-                session
-                    .snapshot
-                    .breadcrumb
-                    .iter()
-                    .map(|entry| entry.label.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" / ")
+                "View: {}  Path: {}  Mode: {}",
+                session.active_tab().label(),
+                session.root_path,
+                match session.kind() {
+                    BrowserAppKind::Table => "tablebrowser",
+                    BrowserAppKind::Image => "imexplore",
+                }
             ));
         } else {
             lines.push(format!(
@@ -1622,7 +1896,9 @@ impl AppState {
     }
 
     pub(crate) fn browser_tabs(&self) -> &'static [BrowserTab] {
-        &BrowserTab::ALL
+        self.browser_session()
+            .map(BrowserSession::tabs)
+            .unwrap_or(&BrowserTab::TABLE_ALL)
     }
 
     pub(crate) fn active_browser_tab_label(&self) -> Option<&'static str> {
@@ -1633,28 +1909,18 @@ impl AppState {
         &self,
         _viewport_height: u16,
     ) -> Option<(usize, usize)> {
-        let session = self.browser_session()?;
-        session
-            .snapshot
-            .vertical_metrics
-            .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1)))
+        self.browser_session()?.vertical_metrics()
     }
 
     pub(crate) fn active_browser_hscroll_metrics(
         &self,
-        _viewport_width: u16,
+        viewport_width: u16,
     ) -> Option<(usize, usize)> {
-        let session = self.browser_session()?;
-        session
-            .snapshot
-            .horizontal_metrics
-            .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1)))
+        self.browser_session()?.horizontal_metrics(viewport_width)
     }
 
     pub(crate) fn browser_inspector_lines(&self) -> Option<Vec<String>> {
-        let session = self.browser_session()?;
-        let inspector = session.snapshot.inspector.as_ref()?;
-        Some(browser_inspector_lines(inspector))
+        self.browser_session()?.inspector_lines()
     }
 
     fn browser_inspector_rows(&self) -> Vec<FormRowView> {
@@ -1679,49 +1945,38 @@ impl AppState {
     }
 
     fn browser_main_content_lines(&self) -> Option<Vec<String>> {
-        let session = self.browser_session()?;
-        Some(browser_main_content_lines(&session.snapshot))
+        Some(self.browser_session()?.main_content_lines())
     }
 
     pub(crate) fn sync_browser_viewport(&mut self, width: u16, height: u16, inspector_height: u16) {
-        let Some(current_viewport) = self
-            .browser_session
-            .as_ref()
-            .map(|session| session.viewport)
+        let Some(current_viewport) =
+            self.browser_session
+                .as_ref()
+                .map(|session| match &session.kind {
+                    BrowserSessionKind::Table(state) => (
+                        state.viewport.width,
+                        state.viewport.height,
+                        state.viewport.inspector_height,
+                    ),
+                    BrowserSessionKind::Image(state) => (
+                        state.viewport.width,
+                        state.viewport.height,
+                        state.viewport.inspector_height,
+                    ),
+                })
         else {
             return;
         };
-        let viewport = BrowserViewport::with_inspector_height(width, height, inspector_height);
+        let viewport = (width, height, inspector_height);
         if viewport == current_viewport {
             return;
         }
         self.clear_output_selection();
-        let Some(session) = self.browser_session.as_mut() else {
-            return;
-        };
-        match session.client.request(BrowserCommand::Resize { viewport }) {
-            Ok(snapshot) => {
-                session.viewport = viewport;
-                session.snapshot = snapshot.clone();
-                self.result.status_line = snapshot.status_line;
-                self.result.status_kind = StatusKind::Info;
-            }
-            Err(error) => {
-                let stderr = session.client.stderr_text();
-                let details = if stderr.trim().is_empty() {
-                    format!("{error}\n")
-                } else {
-                    format!("{error}\n{stderr}")
-                };
-                if let Some(session) = self.browser_session.take() {
-                    let _ = session.client.cancel();
-                }
-                self.report_browser_error(
-                    "Browser session resize failed. Session closed.",
-                    details,
-                );
-            }
-        }
+        self.send_browser_command(BrowserRequest::Resize {
+            width,
+            height,
+            inspector_height,
+        });
     }
 
     pub(crate) fn active_result_content(&self) -> ResultContent {
@@ -1961,10 +2216,8 @@ impl AppState {
     }
 
     #[cfg(test)]
-    pub(crate) fn browser_focus_for_test(&self) -> Option<BrowserFocus> {
-        self.browser_session
-            .as_ref()
-            .map(|session| session.snapshot.focus)
+    pub(crate) fn browser_focus_for_test(&self) -> Option<BrowserPaneFocus> {
+        self.browser_session.as_ref().map(BrowserSession::focus)
     }
 
     #[cfg(test)]
@@ -2045,8 +2298,15 @@ impl AppState {
             OutputPane::Result => {
                 if self.browser_is_active() {
                     let lines = self.browser_main_content_lines()?;
-                    let browser_cells =
-                        self.active_browser_tab_label() == Some(BrowserTab::Cells.label());
+                    let browser_session = self.browser_session()?;
+                    let browser_cells = browser_session.cells_view_active();
+                    let (image_plane_view, image_hscroll) = match &browser_session.kind {
+                        BrowserSessionKind::Image(state) => (
+                            state.snapshot.active_view == ImageBrowserView::Plane,
+                            self.active_browser_hscroll() as usize,
+                        ),
+                        BrowserSessionKind::Table(_) => (false, 0),
+                    };
                     Some(VisibleTextBuffer {
                         area,
                         lines: lines
@@ -2055,8 +2315,19 @@ impl AppState {
                             .map(|line| {
                                 if browser_cells {
                                     browser_cells_visible_line(&line)
+                                } else if image_hscroll > 0 || image_plane_view {
+                                    image_browser_visible_line(
+                                        &line,
+                                        image_plane_view,
+                                        image_hscroll,
+                                        area.width as usize,
+                                    )
                                 } else {
-                                    VisibleTextLine::plain(line)
+                                    VisibleTextLine::plain(slice_visible_text(
+                                        &line,
+                                        image_hscroll,
+                                        area.width as usize,
+                                    ))
                                 }
                             })
                             .collect(),
@@ -2214,6 +2485,54 @@ impl AppState {
         true
     }
 
+    fn image_plane_click_target(
+        &self,
+        column: u16,
+        row: u16,
+        layout: &UiLayout,
+    ) -> Option<(usize, usize)> {
+        let area = result_text_area(layout);
+        if !rect_contains(area, column, row) {
+            return None;
+        }
+        let BrowserSessionKind::Image(state) = &self.browser_session()?.kind else {
+            return None;
+        };
+        if state.snapshot.active_view != ImageBrowserView::Plane {
+            return None;
+        }
+
+        let relative_row = usize::from(row.saturating_sub(area.y));
+        if relative_row == 0 {
+            return None;
+        }
+        let line = state.snapshot.content_lines.get(relative_row)?;
+        let pipe_index = line.find('|')?;
+        let pixel_y = line[..pipe_index].trim().parse::<usize>().ok()?;
+
+        let absolute_col =
+            self.active_browser_hscroll() as usize + usize::from(column.saturating_sub(area.x));
+        let after_pipe = absolute_col.checked_sub(pipe_index + 1)?;
+        if after_pipe == 0 {
+            return None;
+        }
+
+        let chunk_offset = after_pipe - 1;
+        let stride = IMAGE_PLANE_CELL_WIDTH + 1;
+        let offset_in_chunk = chunk_offset % stride;
+        if offset_in_chunk >= IMAGE_PLANE_CELL_WIDTH {
+            return None;
+        }
+
+        let pixel_x = chunk_offset / stride;
+        let max_x = image_plane_column_count(&state.snapshot)?;
+        if pixel_x >= max_x {
+            return None;
+        }
+
+        Some((pixel_x, pixel_y))
+    }
+
     fn finalize_output_selection(&mut self) {
         let Some(selection) = self.output_selection else {
             return;
@@ -2352,52 +2671,27 @@ impl AppState {
     fn apply_browser_action(&mut self, action: BrowserAction) {
         match action {
             BrowserAction::CycleView { forward } => {
-                self.send_browser_command(BrowserCommand::CycleView {
-                    forward,
-                    viewport: None,
-                });
+                self.send_browser_command(BrowserRequest::CycleView { forward });
             }
             BrowserAction::MoveLeft => {
-                self.send_browser_command(BrowserCommand::MoveLeft {
-                    steps: 1,
-                    viewport: None,
-                });
+                self.send_browser_command(BrowserRequest::MoveLeft { steps: 1 });
             }
             BrowserAction::MoveRight => {
-                self.send_browser_command(BrowserCommand::MoveRight {
-                    steps: 1,
-                    viewport: None,
-                });
+                self.send_browser_command(BrowserRequest::MoveRight { steps: 1 });
             }
             BrowserAction::MoveUp => {
-                self.send_browser_command(BrowserCommand::MoveUp {
-                    steps: 1,
-                    viewport: None,
-                });
+                self.send_browser_command(BrowserRequest::MoveUp { steps: 1 });
             }
             BrowserAction::MoveDown => {
-                self.send_browser_command(BrowserCommand::MoveDown {
-                    steps: 1,
-                    viewport: None,
-                });
+                self.send_browser_command(BrowserRequest::MoveDown { steps: 1 });
             }
-            BrowserAction::PageUp => self.send_browser_command(BrowserCommand::PageUp {
-                pages: 1,
-                viewport: None,
-            }),
-            BrowserAction::PageDown => self.send_browser_command(BrowserCommand::PageDown {
-                pages: 1,
-                viewport: None,
-            }),
-            BrowserAction::Activate => {
-                self.send_browser_command(BrowserCommand::Activate { viewport: None })
+            BrowserAction::PageUp => self.send_browser_command(BrowserRequest::PageUp { pages: 1 }),
+            BrowserAction::PageDown => {
+                self.send_browser_command(BrowserRequest::PageDown { pages: 1 })
             }
-            BrowserAction::Back => {
-                self.send_browser_command(BrowserCommand::Back { viewport: None })
-            }
-            BrowserAction::Escape => {
-                self.send_browser_command(BrowserCommand::Escape { viewport: None })
-            }
+            BrowserAction::Activate => self.send_browser_command(BrowserRequest::Activate),
+            BrowserAction::Back => self.send_browser_command(BrowserRequest::Back),
+            BrowserAction::Escape => self.send_browser_command(BrowserRequest::Escape),
         }
     }
 
@@ -2409,18 +2703,22 @@ impl AppState {
             return;
         }
 
-        let current_index = current.index();
-        let target_index = tab.index();
+        let tabs = self.browser_tabs();
+        let current_index = tabs
+            .iter()
+            .position(|candidate| *candidate == current)
+            .unwrap_or(0);
+        let target_index = tabs
+            .iter()
+            .position(|candidate| *candidate == tab)
+            .unwrap_or(0);
         let (steps, forward) = if target_index >= current_index {
             (target_index - current_index, true)
         } else {
             (current_index - target_index, false)
         };
         for _ in 0..steps {
-            self.send_browser_command(BrowserCommand::CycleView {
-                forward,
-                viewport: None,
-            });
+            self.send_browser_command(BrowserRequest::CycleView { forward });
         }
     }
 
@@ -2702,6 +3000,19 @@ impl AppState {
             }
         }
 
+        if let Some((x, y)) =
+            self.image_plane_click_target(mouse_event.column, mouse_event.row, layout)
+        {
+            self.set_focus_target(FocusTarget::BrowserMain);
+            self.clear_output_selection_for_target(OutputPane::Result);
+            self.send_browser_command(BrowserRequest::SetImageCursor { x, y });
+            self.last_click = Some(ClickState {
+                target: ClickTarget::Pane(PaneFocus::Result),
+                at: Instant::now(),
+            });
+            return;
+        }
+
         if let Some((target, point)) =
             self.selection_point_at(mouse_event.column, mouse_event.row, layout)
         {
@@ -2739,12 +3050,14 @@ impl AppState {
             return;
         }
 
-        if self.has_active_session() {
+        if self.has_active_session() && !self.browser_uses_parameter_pane() {
             return;
         }
 
         if let Some(target) = layout.form_target_at(mouse_event.column, mouse_event.row) {
-            if self.browser_session.is_some() {
+            if self.browser_uses_parameter_pane() {
+                self.pane_focus = PaneFocus::Parameters;
+            } else if self.browser_session.is_some() {
                 self.set_focus_target(FocusTarget::BrowserInspector);
             } else {
                 self.pane_focus = PaneFocus::Parameters;
@@ -3012,12 +3325,13 @@ impl AppState {
     }
 
     fn active_browser_tab(&self) -> Option<BrowserTab> {
-        self.browser_session()
-            .map(|session| BrowserTab::from_view(session.snapshot.view))
+        self.browser_session().map(BrowserSession::active_tab)
     }
 
     fn toggle_primary_aux_pane(&mut self) {
-        if self.browser_session.is_some() || self.sections.is_empty() {
+        if (self.browser_session.is_some() && !self.browser_uses_parameter_pane())
+            || self.sections.is_empty()
+        {
             return;
         }
         self.clear_output_selection();
@@ -3039,38 +3353,26 @@ impl AppState {
     }
 
     pub(crate) fn active_browser_scroll(&self) -> u16 {
-        let Some(session) = self.browser_session() else {
-            return 0;
-        };
-        session
-            .snapshot
-            .vertical_metrics
-            .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
+        self.browser_session()
+            .map(BrowserSession::active_scroll)
             .unwrap_or(0)
     }
 
     pub(crate) fn active_browser_hscroll(&self) -> u16 {
-        let Some(session) = self.browser_session() else {
-            return 0;
-        };
-        session
-            .snapshot
-            .horizontal_metrics
-            .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
+        self.browser_session()
+            .map(BrowserSession::active_hscroll)
             .unwrap_or(0)
     }
 
     fn scroll_active_browser(&mut self, delta: i16) {
         self.clear_output_selection_for_target(OutputPane::Result);
         if delta.is_negative() {
-            self.send_browser_command(BrowserCommand::MoveUp {
+            self.send_browser_command(BrowserRequest::MoveUp {
                 steps: delta.unsigned_abs() as usize,
-                viewport: None,
             });
         } else {
-            self.send_browser_command(BrowserCommand::MoveDown {
+            self.send_browser_command(BrowserRequest::MoveDown {
                 steps: delta as usize,
-                viewport: None,
             });
         }
     }
@@ -3086,20 +3388,41 @@ impl AppState {
 
     fn scroll_active_browser_horizontal(&mut self, delta: i16) {
         self.clear_output_selection_for_target(OutputPane::Result);
+        if let Some(BrowserSession {
+            kind: BrowserSessionKind::Image(state),
+            ..
+        }) = self.browser_session.as_mut()
+        {
+            let max_scroll = image_browser_max_hscroll(&state.snapshot, state.viewport.width);
+            let next = if delta.is_negative() {
+                usize::from(state.hscroll).saturating_sub(delta.unsigned_abs() as usize)
+            } else {
+                usize::from(state.hscroll).saturating_add(delta as usize)
+            };
+            state.hscroll = next.min(max_scroll).min(u16::MAX as usize) as u16;
+            return;
+        }
         if delta.is_negative() {
-            self.send_browser_command(BrowserCommand::MoveLeft {
+            self.send_browser_command(BrowserRequest::MoveLeft {
                 steps: delta.unsigned_abs() as usize,
-                viewport: None,
             });
         } else {
-            self.send_browser_command(BrowserCommand::MoveRight {
+            self.send_browser_command(BrowserRequest::MoveRight {
                 steps: delta as usize,
-                viewport: None,
             });
         }
     }
 
     fn set_active_browser_hscroll(&mut self, scroll: usize) {
+        if let Some(BrowserSession {
+            kind: BrowserSessionKind::Image(state),
+            ..
+        }) = self.browser_session.as_mut()
+        {
+            let max_scroll = image_browser_max_hscroll(&state.snapshot, state.viewport.width);
+            state.hscroll = scroll.min(max_scroll).min(u16::MAX as usize) as u16;
+            return;
+        }
         let current = self.active_browser_hscroll() as usize;
         if scroll > current {
             self.scroll_active_browser_horizontal((scroll - current).min(i16::MAX as usize) as i16);
@@ -3335,7 +3658,7 @@ impl AppState {
         }
 
         if self.app.is_browser_session() {
-            self.start_table_browser();
+            self.start_browser_session();
             return;
         }
 
@@ -3376,82 +3699,374 @@ impl AppState {
         }
     }
 
-    fn start_table_browser(&mut self) {
+    fn start_browser_session(&mut self) {
         self.clear_output_selection();
+        let Some(path_field) = self.app.browser_path_field_id() else {
+            self.result.status_line =
+                "Browser session is missing a startup path field.".to_string();
+            self.result.status_kind = StatusKind::Error;
+            return;
+        };
         let Some(path) = self
-            .field_text("table_path")
+            .field_text(path_field)
             .filter(|value| !value.trim().is_empty())
         else {
-            self.result.status_line = "Table Path is required.".to_string();
+            self.result.status_line = format!(
+                "{} is required.",
+                self.fields
+                    .iter()
+                    .find(|field| field.schema.id == path_field)
+                    .map(|field| field.schema.label.as_str())
+                    .unwrap_or("Path")
+            );
             self.result.status_kind = StatusKind::Error;
             return;
         };
 
-        let viewport = BrowserViewport::new(120, 24);
-        match self
-            .app
-            .resolve_command()
-            .and_then(|command| BrowserClient::spawn(&command))
-        {
-            Ok(client) => match client.request_startup(BrowserCommand::OpenRoot { path, viewport })
-            {
-                Ok(snapshot) => {
-                    self.result = ResultState {
-                        status_line: snapshot.status_line.clone(),
-                        status_kind: StatusKind::Info,
-                        ..ResultState::default()
-                    };
-                    self.edit_state = None;
-                    self.pane_focus = PaneFocus::Result;
-                    self.browser_session = Some(BrowserSession {
-                        client,
-                        snapshot,
+        let Some(browser_kind) = self.app.browser_kind() else {
+            self.result.status_line = "Selected app is not a browser session.".to_string();
+            self.result.status_kind = StatusKind::Error;
+            return;
+        };
+
+        match browser_kind {
+            BrowserAppKind::Table => {
+                let viewport = BrowserViewport::new(120, 24);
+                match self
+                    .app
+                    .resolve_command()
+                    .and_then(|command| BrowserClient::spawn(&command))
+                {
+                    Ok(client) => match client.request_startup(BrowserCommand::OpenRoot {
+                        path: path.clone(),
                         viewport,
-                    });
+                    }) {
+                        Ok(snapshot) => {
+                            self.result = ResultState {
+                                status_line: snapshot.status_line.clone(),
+                                status_kind: StatusKind::Info,
+                                ..ResultState::default()
+                            };
+                            self.edit_state = None;
+                            self.pane_focus = PaneFocus::Result;
+                            self.browser_session = Some(BrowserSession {
+                                root_path: path,
+                                kind: BrowserSessionKind::Table(TableBrowserSession {
+                                    client,
+                                    snapshot,
+                                    viewport,
+                                }),
+                            });
+                        }
+                        Err(error) => {
+                            let _ = client.cancel();
+                            self.report_browser_error(
+                                "Failed to open table browser.",
+                                format!("{error}\n"),
+                            );
+                        }
+                    },
+                    Err(error) => {
+                        self.report_browser_error(
+                            "Failed to launch table browser.",
+                            format!("{error}\n"),
+                        );
+                    }
                 }
-                Err(error) => {
-                    let _ = client.cancel();
-                    self.report_browser_error(
-                        "Failed to open table browser.",
-                        format!("{error}\n"),
-                    );
+            }
+            BrowserAppKind::Image => {
+                let viewport = ImageBrowserViewport::new(120, 24);
+                match self
+                    .app
+                    .resolve_command()
+                    .and_then(|command| ImageBrowserClient::spawn(&command))
+                {
+                    Ok(client) => match client.request_startup(ImageBrowserCommand::OpenRoot {
+                        path: path.clone(),
+                        viewport,
+                    }) {
+                        Ok(snapshot) => {
+                            self.result = ResultState {
+                                status_line: snapshot.status_line.clone(),
+                                status_kind: StatusKind::Info,
+                                ..ResultState::default()
+                            };
+                            self.edit_state = None;
+                            self.pane_focus = PaneFocus::Result;
+                            self.browser_session = Some(BrowserSession {
+                                root_path: path,
+                                kind: BrowserSessionKind::Image(ImageBrowserSessionState {
+                                    client,
+                                    snapshot,
+                                    viewport,
+                                    hscroll: 0,
+                                }),
+                            });
+                        }
+                        Err(error) => {
+                            let _ = client.cancel();
+                            self.report_browser_error(
+                                "Failed to open imexplore.",
+                                format!("{error}\n"),
+                            );
+                        }
+                    },
+                    Err(error) => {
+                        self.report_browser_error(
+                            "Failed to launch imexplore.",
+                            format!("{error}\n"),
+                        );
+                    }
                 }
-            },
-            Err(error) => {
-                self.report_browser_error("Failed to launch table browser.", format!("{error}\n"));
             }
         }
     }
 
-    fn send_browser_command(&mut self, command: BrowserCommand) {
+    fn send_browser_command(&mut self, command: BrowserRequest) {
         let result = {
             let Some(session) = self.browser_session.as_mut() else {
                 return;
             };
-            match session.client.request(command) {
-                Ok(snapshot) => {
-                    session.snapshot = snapshot.clone();
-                    Ok(snapshot)
+            match &mut session.kind {
+                BrowserSessionKind::Table(state) => {
+                    let request = match command {
+                        BrowserRequest::Resize {
+                            width,
+                            height,
+                            inspector_height,
+                        } => Some(BrowserCommand::Resize {
+                            viewport: BrowserViewport::with_inspector_height(
+                                width,
+                                height,
+                                inspector_height,
+                            ),
+                        }),
+                        BrowserRequest::SetFocus(BrowserPaneFocus::Main) => {
+                            Some(BrowserCommand::SetFocus {
+                                focus: BrowserFocus::Main,
+                                viewport: None,
+                            })
+                        }
+                        BrowserRequest::SetFocus(BrowserPaneFocus::Inspector) => {
+                            Some(BrowserCommand::SetFocus {
+                                focus: BrowserFocus::Inspector,
+                                viewport: None,
+                            })
+                        }
+                        BrowserRequest::CycleView { forward } => Some(BrowserCommand::CycleView {
+                            forward,
+                            viewport: None,
+                        }),
+                        BrowserRequest::MoveLeft { steps } => Some(BrowserCommand::MoveLeft {
+                            steps,
+                            viewport: None,
+                        }),
+                        BrowserRequest::MoveRight { steps } => Some(BrowserCommand::MoveRight {
+                            steps,
+                            viewport: None,
+                        }),
+                        BrowserRequest::MoveUp { steps } => Some(BrowserCommand::MoveUp {
+                            steps,
+                            viewport: None,
+                        }),
+                        BrowserRequest::MoveDown { steps } => Some(BrowserCommand::MoveDown {
+                            steps,
+                            viewport: None,
+                        }),
+                        BrowserRequest::PageUp { pages } => Some(BrowserCommand::PageUp {
+                            pages,
+                            viewport: None,
+                        }),
+                        BrowserRequest::PageDown { pages } => Some(BrowserCommand::PageDown {
+                            pages,
+                            viewport: None,
+                        }),
+                        BrowserRequest::Activate => {
+                            Some(BrowserCommand::Activate { viewport: None })
+                        }
+                        BrowserRequest::Back => Some(BrowserCommand::Back { viewport: None }),
+                        BrowserRequest::Escape => Some(BrowserCommand::Escape { viewport: None }),
+                        BrowserRequest::SetImageCursor { .. } => None,
+                    };
+                    let Some(request) = request else {
+                        return;
+                    };
+                    match state.client.request(request) {
+                        Ok(snapshot) => {
+                            if let BrowserRequest::Resize {
+                                width,
+                                height,
+                                inspector_height,
+                            } = command
+                            {
+                                state.viewport = BrowserViewport::with_inspector_height(
+                                    width,
+                                    height,
+                                    inspector_height,
+                                );
+                            }
+                            state.snapshot = snapshot;
+                            Ok(())
+                        }
+                        Err(error) => Err((error, state.client.stderr_text())),
+                    }
                 }
-                Err(error) => Err((error, session.client.stderr_text())),
+                BrowserSessionKind::Image(state) => {
+                    let request = match command {
+                        BrowserRequest::Resize {
+                            width,
+                            height,
+                            inspector_height,
+                        } => Some(ImageBrowserCommand::Resize {
+                            viewport: ImageBrowserViewport::with_inspector_height(
+                                width,
+                                height,
+                                inspector_height,
+                            ),
+                        }),
+                        BrowserRequest::SetFocus(BrowserPaneFocus::Main) => {
+                            Some(ImageBrowserCommand::SetFocus {
+                                focus: ImageBrowserFocus::Content,
+                            })
+                        }
+                        BrowserRequest::SetFocus(BrowserPaneFocus::Inspector) => {
+                            Some(ImageBrowserCommand::SetFocus {
+                                focus: ImageBrowserFocus::Inspector,
+                            })
+                        }
+                        BrowserRequest::CycleView { forward } => {
+                            Some(ImageBrowserCommand::CycleView { forward })
+                        }
+                        BrowserRequest::MoveLeft { steps } => {
+                            if state.snapshot.focus == ImageBrowserFocus::Inspector
+                                && state.snapshot.hidden_axis.is_some()
+                            {
+                                Some(ImageBrowserCommand::StepHiddenAxis {
+                                    delta: -(steps as i32),
+                                })
+                            } else if state.snapshot.active_view != ImageBrowserView::Plane {
+                                state.hscroll = state.hscroll.saturating_sub(steps as u16);
+                                None
+                            } else {
+                                Some(ImageBrowserCommand::MoveCursor {
+                                    dx: -(steps as i32),
+                                    dy: 0,
+                                })
+                            }
+                        }
+                        BrowserRequest::MoveRight { steps } => {
+                            if state.snapshot.focus == ImageBrowserFocus::Inspector
+                                && state.snapshot.hidden_axis.is_some()
+                            {
+                                Some(ImageBrowserCommand::StepHiddenAxis {
+                                    delta: steps as i32,
+                                })
+                            } else if state.snapshot.active_view != ImageBrowserView::Plane {
+                                let max_scroll = image_browser_max_hscroll(
+                                    &state.snapshot,
+                                    state.viewport.width,
+                                );
+                                state.hscroll = state
+                                    .hscroll
+                                    .saturating_add(steps as u16)
+                                    .min(max_scroll.min(u16::MAX as usize) as u16);
+                                None
+                            } else {
+                                Some(ImageBrowserCommand::MoveCursor {
+                                    dx: steps as i32,
+                                    dy: 0,
+                                })
+                            }
+                        }
+                        BrowserRequest::MoveUp { steps } => Some(ImageBrowserCommand::MoveCursor {
+                            dx: 0,
+                            dy: -(steps as i32),
+                        }),
+                        BrowserRequest::MoveDown { steps } => {
+                            Some(ImageBrowserCommand::MoveCursor {
+                                dx: 0,
+                                dy: steps as i32,
+                            })
+                        }
+                        BrowserRequest::SetImageCursor { x, y } => {
+                            match image_plane_selected_pixel(&state.snapshot) {
+                                Some((current_x, current_y)) => {
+                                    let dx = x as i32 - current_x as i32;
+                                    let dy = y as i32 - current_y as i32;
+                                    if dx == 0 && dy == 0 {
+                                        None
+                                    } else {
+                                        Some(ImageBrowserCommand::MoveCursor { dx, dy })
+                                    }
+                                }
+                                None => None,
+                            }
+                        }
+                        BrowserRequest::PageUp { pages } => Some(ImageBrowserCommand::MoveCursor {
+                            dx: 0,
+                            dy: -((pages as i32) * i32::from(state.viewport.height.max(1))),
+                        }),
+                        BrowserRequest::PageDown { pages } => {
+                            Some(ImageBrowserCommand::MoveCursor {
+                                dx: 0,
+                                dy: (pages as i32) * i32::from(state.viewport.height.max(1)),
+                            })
+                        }
+                        BrowserRequest::Activate
+                        | BrowserRequest::Back
+                        | BrowserRequest::Escape => None,
+                    };
+                    let Some(request) = request else {
+                        return;
+                    };
+                    match state.client.request(request) {
+                        Ok(snapshot) => {
+                            if let BrowserRequest::Resize {
+                                width,
+                                height,
+                                inspector_height,
+                            } = command
+                            {
+                                state.viewport = ImageBrowserViewport::with_inspector_height(
+                                    width,
+                                    height,
+                                    inspector_height,
+                                );
+                            }
+                            state.snapshot = snapshot;
+                            state.hscroll = state.hscroll.min(
+                                image_browser_max_hscroll(&state.snapshot, state.viewport.width)
+                                    .min(u16::MAX as usize) as u16,
+                            );
+                            Ok(())
+                        }
+                        Err(error) => Err((error, state.client.stderr_text())),
+                    }
+                }
             }
         };
 
         match result {
-            Ok(snapshot) => {
+            Ok(()) => {
                 self.clear_output_selection();
-                self.pane_focus = match snapshot.focus {
-                    BrowserFocus::Inspector if self.browser_inspector_reachable() => {
+                self.pane_focus = match self.browser_session() {
+                    Some(session)
+                        if session.focus() == BrowserPaneFocus::Inspector
+                            && self.browser_inspector_reachable() =>
+                    {
                         PaneFocus::Parameters
                     }
                     _ => PaneFocus::Result,
                 };
-                self.result.status_line = snapshot.status_line;
+                self.result.status_line = self
+                    .browser_session()
+                    .map(|session| session.status_line().to_string())
+                    .unwrap_or_else(|| "Browser session updated.".to_string());
                 self.result.status_kind = StatusKind::Info;
             }
             Err((error, stderr)) => {
                 if let Some(session) = self.browser_session.take() {
-                    let _ = session.client.cancel();
+                    let _ = session.cancel();
                 }
                 let details = if stderr.trim().is_empty() {
                     format!("{error}\n")
@@ -3472,9 +4087,7 @@ impl AppState {
     }
 
     fn browser_clipboard_payload(&self) -> Option<(String, &'static str)> {
-        let session = self.browser_session()?;
-        let inspector = session.snapshot.inspector.as_ref()?;
-        Some(copyable_browser_text(inspector))
+        self.browser_session()?.clipboard_payload()
     }
 
     fn mark_plot_snapshot_dirty(&mut self) {
@@ -4202,7 +4815,7 @@ impl AppState {
 
     fn cancel_current(&mut self) {
         if let Some(session) = self.browser_session.take() {
-            let _ = session.client.cancel();
+            let _ = session.cancel();
             self.result.status_line = "Browser session closed.".to_string();
             self.result.status_kind = StatusKind::Info;
             self.pane_focus = PaneFocus::Parameters;
@@ -4375,7 +4988,7 @@ impl AppState {
         }
 
         if let Some(session) = self.browser_session() {
-            return session.snapshot.content_lines.clone();
+            return session.main_content_lines();
         }
 
         if let Some(error) = &self.result.structured_error {
@@ -5060,7 +5673,11 @@ fn result_text_area(layout: &UiLayout) -> Rect {
 }
 
 fn left_output_area(app: &AppState, layout: &UiLayout) -> Option<Rect> {
-    if app.browser_is_active() && layout.form_inner.width > 0 && layout.form_inner.height > 0 {
+    if app.browser_is_active()
+        && !app.browser_uses_parameter_pane()
+        && layout.form_inner.width > 0
+        && layout.form_inner.height > 0
+    {
         Some(layout.form_inner)
     } else {
         None
@@ -5132,6 +5749,44 @@ fn browser_cells_visible_line(raw_line: &str) -> VisibleTextLine {
     VisibleTextLine { text, roles }
 }
 
+fn image_browser_visible_line(
+    raw_line: &str,
+    plane_view: bool,
+    offset: usize,
+    width: usize,
+) -> VisibleTextLine {
+    let line = if plane_view {
+        image_plane_visible_line(raw_line)
+    } else {
+        VisibleTextLine::plain(raw_line.to_string())
+    };
+    slice_visible_line(&line, offset, width)
+}
+
+fn image_plane_visible_line(raw_line: &str) -> VisibleTextLine {
+    let mut text = String::new();
+    let mut roles = Vec::new();
+    let mut in_selected_cell = false;
+
+    for ch in raw_line.chars() {
+        if ch == '[' {
+            in_selected_cell = true;
+        }
+        let role = if in_selected_cell {
+            VisibleTextRole::BrowserSelectedCell
+        } else {
+            VisibleTextRole::Plain
+        };
+        text.push(ch);
+        roles.push(role);
+        if ch == ']' {
+            in_selected_cell = false;
+        }
+    }
+
+    VisibleTextLine { text, roles }
+}
+
 fn strip_browser_selection_markers(segment: &str) -> Option<String> {
     let mut chars = segment.chars().collect::<Vec<_>>();
     let first = chars
@@ -5156,6 +5811,38 @@ fn slice_visible_text(text: &str, offset: usize, width: usize) -> String {
     fit_visible_text(&sliced, width)
 }
 
+fn slice_visible_line(line: &VisibleTextLine, offset: usize, width: usize) -> VisibleTextLine {
+    if width == 0 {
+        return VisibleTextLine::plain(String::new());
+    }
+
+    let chars = line.text.chars().collect::<Vec<_>>();
+    if offset >= chars.len() {
+        return VisibleTextLine::plain(String::new());
+    }
+
+    let remaining = chars.len() - offset;
+    if remaining <= width {
+        return VisibleTextLine {
+            text: chars[offset..].iter().collect(),
+            roles: line.roles[offset..].to_vec(),
+        };
+    }
+
+    if width <= 3 {
+        return VisibleTextLine::plain(".".repeat(width));
+    }
+
+    let visible_len = width - 3;
+    let mut text = chars[offset..offset + visible_len]
+        .iter()
+        .collect::<String>();
+    text.push_str("...");
+    let mut roles = line.roles[offset..offset + visible_len].to_vec();
+    roles.extend(std::iter::repeat_n(VisibleTextRole::Plain, 3));
+    VisibleTextLine { text, roles }
+}
+
 fn fit_visible_text(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
@@ -5169,6 +5856,46 @@ fn fit_visible_text(text: &str, width: usize) -> String {
     let mut out = text.chars().take(width - 3).collect::<String>();
     out.push_str("...");
     out
+}
+
+fn image_browser_content_width(snapshot: &ImageBrowserSnapshot) -> usize {
+    snapshot
+        .content_lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+fn image_plane_column_count(snapshot: &ImageBrowserSnapshot) -> Option<usize> {
+    let header = snapshot.content_lines.first()?;
+    let pipe_index = header.find('|')?;
+    let right_width = header.get(pipe_index + 1..)?.chars().count();
+    let stride = IMAGE_PLANE_CELL_WIDTH + 1;
+    Some(right_width / stride)
+}
+
+fn image_plane_selected_pixel(snapshot: &ImageBrowserSnapshot) -> Option<(usize, usize)> {
+    let header = snapshot.content_lines.first()?;
+    let pipe_index = header.find('|')?;
+    let stride = IMAGE_PLANE_CELL_WIDTH + 1;
+
+    for line in snapshot.content_lines.iter().skip(1) {
+        let Some(selected_index) = line.find('[') else {
+            continue;
+        };
+        let y = line[..pipe_index].trim().parse::<usize>().ok()?;
+        let after_pipe = selected_index.checked_sub(pipe_index + 1)?;
+        let x = after_pipe.checked_sub(1)? / stride;
+        return Some((x, y));
+    }
+
+    None
+}
+
+fn image_browser_max_hscroll(snapshot: &ImageBrowserSnapshot, viewport_width: u16) -> usize {
+    let viewport_width = usize::from(viewport_width);
+    image_browser_content_width(snapshot).saturating_sub(viewport_width)
 }
 
 fn slice_chars(text: &str, start: usize, end: usize) -> String {
@@ -5212,6 +5939,37 @@ fn copyable_browser_text(inspector: &BrowserInspectorSnapshot) -> (String, &'sta
             "inspector view",
         ),
     }
+}
+
+fn render_image_probe(probe: &casacore_imagebrowser_protocol::ImageBrowserProbe) -> String {
+    let mut lines = vec![
+        format!("value: {}", probe.value),
+        format!(
+            "pixel: {}",
+            probe
+                .pixel_indices
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ];
+    if probe.masked {
+        lines.push("masked: true".to_string());
+    }
+    if !probe.finite {
+        lines.push("finite: false".to_string());
+    }
+    for axis in &probe.world_axes {
+        lines.push(format!(
+            "{}: {}{}{}",
+            axis.name,
+            axis.value,
+            if axis.unit.is_empty() { "" } else { " " },
+            axis.unit
+        ));
+    }
+    lines.join("\n")
 }
 
 fn render_browser_scalar(value: &BrowserScalarValue) -> String {

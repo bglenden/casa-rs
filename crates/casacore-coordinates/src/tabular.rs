@@ -12,6 +12,7 @@ use casacore_types::{RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
+use crate::record_utils::{get_optional_string, get_required_vec_f64};
 
 /// A one-axis coordinate defined by a pair of lookup tables.
 ///
@@ -68,6 +69,21 @@ impl TabularCoordinate {
     /// Returns the world lookup table.
     pub fn world_values(&self) -> &[f64] {
         &self.world_values
+    }
+
+    /// Reconstructs a tabular coordinate from a serialized record.
+    pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let pixel_values = get_required_vec_f64(rec, "pixelvalues")?;
+        let world_values = get_required_vec_f64(rec, "worldvalues")?;
+        let name = get_optional_string(rec, "name").unwrap_or_else(|| "Tabular".into());
+        let unit = get_optional_string(rec, "unit").unwrap_or_default();
+        if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
+            return Err(CoordinateError::InvalidRecord(
+                "tabular coordinate requires matching pixel/world tables with at least 2 entries"
+                    .into(),
+            ));
+        }
+        Ok(Self::new(pixel_values, world_values, name, unit))
     }
 }
 
@@ -313,5 +329,16 @@ mod tests {
         let boxed: Box<dyn Coordinate> = Box::new(coord);
         let cloned = boxed.clone_box();
         assert_eq!(cloned.coordinate_type(), CoordinateType::Tabular);
+    }
+
+    #[test]
+    fn record_roundtrip() {
+        let coord = make_linear_tab();
+        let restored = TabularCoordinate::from_record(&coord.to_record()).unwrap();
+
+        assert_eq!(restored.pixel_values(), coord.pixel_values());
+        assert_eq!(restored.world_values(), coord.world_values());
+        assert_eq!(restored.axis_names(), coord.axis_names());
+        assert_eq!(restored.axis_units(), coord.axis_units());
     }
 }

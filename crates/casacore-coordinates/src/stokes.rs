@@ -11,6 +11,7 @@ use casacore_types::{RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
+use crate::record_utils::get_required_vec_i32;
 
 /// Stokes parameter types, matching C++ `Stokes::StokesTypes`.
 ///
@@ -134,6 +135,20 @@ impl StokesCoordinate {
     /// Returns the Stokes types in order.
     pub fn stokes(&self) -> &[StokesType] {
         &self.stokes
+    }
+
+    /// Reconstructs a Stokes coordinate from a serialized record.
+    pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let codes = get_required_vec_i32(rec, "stokes")?;
+        let stokes = codes
+            .into_iter()
+            .map(|code| {
+                StokesType::from_code(code).ok_or_else(|| {
+                    CoordinateError::InvalidRecord(format!("invalid stokes code {code}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::new(stokes))
     }
 }
 
@@ -352,5 +367,12 @@ mod tests {
     fn stokes_display() {
         assert_eq!(format!("{}", StokesType::V), "V");
         assert_eq!(format!("{}", StokesType::XX), "XX");
+    }
+
+    #[test]
+    fn record_roundtrip() {
+        let coord = StokesCoordinate::new(vec![StokesType::RR, StokesType::RL, StokesType::LL]);
+        let restored = StokesCoordinate::from_record(&coord.to_record()).unwrap();
+        assert_eq!(restored.stokes(), coord.stokes());
     }
 }

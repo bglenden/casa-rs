@@ -769,7 +769,7 @@ impl<T: ImagePixel> PagedImage<T> {
             Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)?,
+            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
             _ => CoordinateSystem::new(),
         };
         let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
@@ -851,7 +851,7 @@ impl<T: ImagePixel> PagedImage<T> {
             Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)?,
+            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
             _ => CoordinateSystem::new(),
         };
         let units = match table.keywords().get("units") {

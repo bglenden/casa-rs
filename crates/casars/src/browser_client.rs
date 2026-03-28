@@ -6,6 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use casacore_imagebrowser_protocol::{
+    ImageBrowserCommand, ImageBrowserRequestEnvelope, ImageBrowserResponse,
+    ImageBrowserResponseEnvelope, ImageBrowserSnapshot,
+};
 use casacore_tablebrowser_protocol::{
     BrowserCommand, BrowserRequestEnvelope, BrowserResponse, BrowserResponseEnvelope,
     BrowserSnapshot,
@@ -18,14 +22,24 @@ const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Debug)]
 pub(crate) struct BrowserClient {
+    process: SessionProcessClient,
+}
+
+#[derive(Debug)]
+pub(crate) struct ImageBrowserClient {
+    process: SessionProcessClient,
+}
+
+#[derive(Debug)]
+struct SessionProcessClient {
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
-    responses: Receiver<BrowserResponseEnvelope>,
+    responses: Receiver<String>,
     stderr: Arc<Mutex<String>>,
 }
 
-impl BrowserClient {
-    pub(crate) fn spawn(command: &ResolvedCommand) -> Result<Self, String> {
+impl SessionProcessClient {
+    fn spawn(command: &ResolvedCommand, session_name: &str) -> Result<Self, String> {
         let mut process = command.command();
         process
             .arg("--session")
@@ -35,19 +49,19 @@ impl BrowserClient {
 
         let mut child = process
             .spawn()
-            .map_err(|error| format!("spawn tablebrowser session: {error}"))?;
+            .map_err(|error| format!("spawn {session_name} session: {error}"))?;
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "tablebrowser session stdin was not captured".to_string())?;
+            .ok_or_else(|| format!("{session_name} session stdin was not captured"))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "tablebrowser session stdout was not captured".to_string())?;
+            .ok_or_else(|| format!("{session_name} session stdout was not captured"))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| "tablebrowser session stderr was not captured".to_string())?;
+            .ok_or_else(|| format!("{session_name} session stderr was not captured"))?;
 
         let child = Arc::new(Mutex::new(child));
         let stdin = Arc::new(Mutex::new(stdin));
@@ -63,14 +77,7 @@ impl BrowserClient {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let response = serde_json::from_str::<BrowserResponseEnvelope>(&line)
-                    .unwrap_or_else(|error| {
-                        BrowserResponseEnvelope::error(
-                            "invalid_response",
-                            format!("parse browser response: {error}"),
-                        )
-                    });
-                if tx.send(response).is_err() {
+                if tx.send(line).is_err() {
                     break;
                 }
             }
@@ -98,24 +105,12 @@ impl BrowserClient {
         })
     }
 
-    pub(crate) fn request(&self, command: BrowserCommand) -> Result<BrowserSnapshot, String> {
-        self.request_with_timeout(command, request_timeout())
-    }
-
-    pub(crate) fn request_startup(
+    fn request_raw(
         &self,
-        command: BrowserCommand,
-    ) -> Result<BrowserSnapshot, String> {
-        self.request_with_timeout(command, startup_timeout())
-    }
-
-    fn request_with_timeout(
-        &self,
-        command: BrowserCommand,
+        payload: &str,
         timeout: Duration,
-    ) -> Result<BrowserSnapshot, String> {
-        let payload = serde_json::to_string(&BrowserRequestEnvelope::new(command))
-            .map_err(|error| format!("serialize browser request: {error}"))?;
+        session_name: &str,
+    ) -> Result<String, String> {
         {
             let mut stdin = self
                 .stdin
@@ -125,17 +120,16 @@ impl BrowserClient {
                 .write_all(payload.as_bytes())
                 .and_then(|_| stdin.write_all(b"\n"))
                 .and_then(|_| stdin.flush())
-                .map_err(|error| format!("write browser request: {error}"))?;
+                .map_err(|error| format!("write {session_name} request: {error}"))?;
         }
 
-        let response = self
-            .responses
+        self.responses
             .recv_timeout(timeout)
             .map_err(|error| match error {
                 RecvTimeoutError::Timeout => {
                     let _ = self.terminate_and_wait();
                     format_browser_failure(
-                        "timed out waiting for browser response",
+                        &format!("timed out waiting for {session_name} response"),
                         self.stderr_text(),
                         None,
                     )
@@ -143,17 +137,12 @@ impl BrowserClient {
                 RecvTimeoutError::Disconnected => {
                     let status = self.reap_exit_status();
                     format_browser_failure(
-                        "tablebrowser session exited",
+                        &format!("{session_name} session exited"),
                         self.stderr_text(),
                         status,
                     )
                 }
-            })?;
-
-        match response.response {
-            BrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
-            BrowserResponse::Error(error) => Err(format!("{}: {}", error.code, error.message)),
-        }
+            })
     }
 
     pub(crate) fn cancel(&self) -> Result<(), String> {
@@ -195,7 +184,114 @@ impl BrowserClient {
 
 impl Drop for BrowserClient {
     fn drop(&mut self) {
-        let _ = self.terminate_and_wait();
+        let _ = self.process.terminate_and_wait();
+    }
+}
+
+impl Drop for ImageBrowserClient {
+    fn drop(&mut self) {
+        let _ = self.process.terminate_and_wait();
+    }
+}
+
+impl BrowserClient {
+    pub(crate) fn spawn(command: &ResolvedCommand) -> Result<Self, String> {
+        Ok(Self {
+            process: SessionProcessClient::spawn(command, "tablebrowser")?,
+        })
+    }
+
+    pub(crate) fn request(&self, command: BrowserCommand) -> Result<BrowserSnapshot, String> {
+        self.request_with_timeout(command, request_timeout())
+    }
+
+    pub(crate) fn request_startup(
+        &self,
+        command: BrowserCommand,
+    ) -> Result<BrowserSnapshot, String> {
+        self.request_with_timeout(command, startup_timeout())
+    }
+
+    pub(crate) fn cancel(&self) -> Result<(), String> {
+        self.process.cancel()
+    }
+
+    pub(crate) fn stderr_text(&self) -> String {
+        self.process.stderr_text()
+    }
+
+    fn request_with_timeout(
+        &self,
+        command: BrowserCommand,
+        timeout: Duration,
+    ) -> Result<BrowserSnapshot, String> {
+        let payload = serde_json::to_string(&BrowserRequestEnvelope::new(command))
+            .map_err(|error| format!("serialize tablebrowser request: {error}"))?;
+        let line = self
+            .process
+            .request_raw(&payload, timeout, "tablebrowser")?;
+        let response =
+            serde_json::from_str::<BrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
+                BrowserResponseEnvelope::error(
+                    "invalid_response",
+                    format!("parse browser response: {error}"),
+                )
+            });
+        match response.response {
+            BrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
+            BrowserResponse::Error(error) => Err(format!("{}: {}", error.code, error.message)),
+        }
+    }
+}
+
+impl ImageBrowserClient {
+    pub(crate) fn spawn(command: &ResolvedCommand) -> Result<Self, String> {
+        Ok(Self {
+            process: SessionProcessClient::spawn(command, "imexplore")?,
+        })
+    }
+
+    pub(crate) fn request(
+        &self,
+        command: ImageBrowserCommand,
+    ) -> Result<ImageBrowserSnapshot, String> {
+        self.request_with_timeout(command, request_timeout())
+    }
+
+    pub(crate) fn request_startup(
+        &self,
+        command: ImageBrowserCommand,
+    ) -> Result<ImageBrowserSnapshot, String> {
+        self.request_with_timeout(command, startup_timeout())
+    }
+
+    pub(crate) fn cancel(&self) -> Result<(), String> {
+        self.process.cancel()
+    }
+
+    pub(crate) fn stderr_text(&self) -> String {
+        self.process.stderr_text()
+    }
+
+    fn request_with_timeout(
+        &self,
+        command: ImageBrowserCommand,
+        timeout: Duration,
+    ) -> Result<ImageBrowserSnapshot, String> {
+        let payload = serde_json::to_string(&ImageBrowserRequestEnvelope::new(command))
+            .map_err(|error| format!("serialize imexplore request: {error}"))?;
+        let line = self.process.request_raw(&payload, timeout, "imexplore")?;
+        let response =
+            serde_json::from_str::<ImageBrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
+                ImageBrowserResponseEnvelope::error(
+                    "invalid_response",
+                    format!("parse imexplore response: {error}"),
+                )
+            });
+        match response.response {
+            ImageBrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
+            ImageBrowserResponse::Error(error) => Err(format!("{}: {}", error.code, error.message)),
+        }
     }
 }
 
@@ -262,7 +358,7 @@ mod tests {
         let error = client
             .request(BrowserCommand::GetSnapshot { viewport: None })
             .expect_err("request should time out");
-        assert!(error.contains("timed out waiting for browser response"));
+        assert!(error.contains("timed out waiting for"));
 
         thread::sleep(Duration::from_millis(250));
         assert!(

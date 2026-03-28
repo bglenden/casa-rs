@@ -440,14 +440,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "casacore-imagebrowser-protocol"
+version = "0.8.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "casacore-images"
 version = "0.8.0"
 dependencies = [
  "casacore-coordinates",
+ "casacore-imagebrowser-protocol",
  "casacore-lattices",
  "casacore-tables",
  "casacore-types",
  "ndarray",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
@@ -571,6 +582,7 @@ name = "casars"
 version = "0.8.0"
 dependencies = [
  "arboard",
+ "casacore-imagebrowser-protocol",
  "casacore-ms",
  "casacore-tablebrowser-protocol",
  "casacore-tables",

@@ -432,7 +432,7 @@ fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: 
     let block = form_block_widget(app, palette);
     frame.render_widget(block, layout.form_block);
 
-    if app.browser_is_active() {
+    if app.browser_is_active() && !app.browser_uses_parameter_pane() {
         if let Some(buffer) = app.visible_text_buffer(OutputPane::LeftOutput, layout) {
             render_visible_text_buffer(
                 frame,
@@ -479,6 +479,58 @@ fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: 
             ListItem::new(Line::from(line)).style(style)
         })
         .collect::<Vec<_>>();
+
+    if app.browser_is_active() && app.browser_uses_parameter_pane() {
+        let rows_height = layout
+            .form_rows
+            .len()
+            .min(layout.form_inner.height as usize) as u16;
+        let form_area = Rect {
+            x: layout.form_inner.x,
+            y: layout.form_inner.y,
+            width: layout.form_inner.width,
+            height: rows_height,
+        };
+        if form_area.height > 0 {
+            frame.render_widget(List::new(items), form_area);
+        }
+
+        let gap = u16::from(form_area.height > 0);
+        let summary_area = Rect {
+            x: layout.form_inner.x,
+            y: layout
+                .form_inner
+                .y
+                .saturating_add(form_area.height)
+                .saturating_add(gap),
+            width: layout.form_inner.width,
+            height: layout
+                .form_inner
+                .height
+                .saturating_sub(form_area.height.saturating_add(gap)),
+        };
+        if summary_area.height > 0 {
+            let mut lines = vec![Line::styled(
+                "Live",
+                Style::default()
+                    .fg(palette.section_fg)
+                    .add_modifier(Modifier::BOLD),
+            )];
+            lines.extend(
+                app.browser_inspector_lines()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Line::from),
+            );
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .style(Style::default().fg(palette.footer_fg))
+                    .wrap(Wrap { trim: false }),
+                summary_area,
+            );
+        }
+        return;
+    }
 
     frame.render_widget(List::new(items), layout.form_inner);
 }
@@ -1347,6 +1399,9 @@ fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {
         BrowserTab::Keywords => "Keys",
         BrowserTab::Cells => "Cells",
         BrowserTab::Subtables => "Links",
+        BrowserTab::Plane => "Plane",
+        BrowserTab::Metadata => "Meta",
+        BrowserTab::Coordinates => "Coords",
     };
     if active {
         format!("◖ {} ◗", tab.label())
