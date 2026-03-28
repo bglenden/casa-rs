@@ -1456,10 +1456,10 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     use super::ensure_non_macos_plot_font;
     use super::{
-        ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
-        ListObsPlotTheme, UvAxisScale, build_listobs_plot_payload_from_summary,
-        build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick,
-        render_listobs_plot_image, scan_timeline_axis_offset, uv_axis_scale,
+        ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
+        ListObsPlotSpec, ListObsPlotTheme, UvAxisScale, build_listobs_plot_payload_from_summary,
+        build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick, palette_color,
+        parse_on_off, render_listobs_plot_image, scan_timeline_axis_offset, uv_axis_scale,
     };
     use crate::listobs::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
@@ -1478,6 +1478,116 @@ mod tests {
                 ListObsPlotSpec::from_cli_assignments(kind, &spec.cli_assignments()).unwrap();
             assert_eq!(rebuilt, spec);
         }
+    }
+
+    #[test]
+    fn plot_kinds_and_export_formats_parse_aliases_and_errors() {
+        let aliases = [
+            ("uv_coverage", ListObsPlotKind::UvCoverage),
+            ("uv", ListObsPlotKind::UvCoverage),
+            ("antenna_layout", ListObsPlotKind::AntennaLayout),
+            ("antennas", ListObsPlotKind::AntennaLayout),
+            ("scan_timeline", ListObsPlotKind::ScanTimeline),
+            ("scans", ListObsPlotKind::ScanTimeline),
+            (
+                "spectral_window_coverage",
+                ListObsPlotKind::SpectralWindowCoverage,
+            ),
+            ("spw_coverage", ListObsPlotKind::SpectralWindowCoverage),
+            ("spws", ListObsPlotKind::SpectralWindowCoverage),
+        ];
+        for (value, expected) in aliases {
+            assert_eq!(ListObsPlotKind::parse(value).unwrap(), expected);
+            assert_eq!(expected.to_string(), expected.as_str());
+            assert!(!expected.display_name().is_empty());
+        }
+
+        let error = ListObsPlotKind::parse("bogus").unwrap_err();
+        assert!(error.contains("unsupported plot kind"));
+
+        assert_eq!(
+            ListObsPlotExportFormat::parse("png").unwrap(),
+            ListObsPlotExportFormat::Png
+        );
+        assert_eq!(
+            ListObsPlotExportFormat::parse("pdf").unwrap(),
+            ListObsPlotExportFormat::Pdf
+        );
+        assert_eq!(ListObsPlotExportFormat::Png.extension(), "png");
+        assert_eq!(ListObsPlotExportFormat::Pdf.extension(), "pdf");
+        let error = ListObsPlotExportFormat::parse("svg").unwrap_err();
+        assert!(error.contains("unsupported plot format"));
+    }
+
+    #[test]
+    fn render_styles_and_palette_helpers_cover_non_render_paths() {
+        let bitmap = ListObsPlotRenderStyle::for_bitmap_size(1280, 720);
+        let terminal = ListObsPlotRenderStyle::for_terminal_cells(9, 21);
+        assert!(bitmap.margin_px >= 10);
+        assert!(bitmap.label_area_px >= 56);
+        assert!(bitmap.wide_y_label_area_px >= bitmap.label_area_px);
+        assert!(bitmap.axis_desc_font_px > bitmap.axis_label_font_px);
+        assert!(terminal.point_radius_px >= 5);
+        assert!(terminal.mirror_point_radius_px >= 4);
+        assert!(terminal.line_width_px >= 2);
+        assert!(terminal.antenna_marker_scale_pct > bitmap.antenna_marker_scale_pct);
+
+        assert!(parse_on_off("on", "labels").unwrap());
+        assert!(parse_on_off("true", "labels").unwrap());
+        assert!(!parse_on_off("off", "labels").unwrap());
+        assert!(!parse_on_off("false", "labels").unwrap());
+        let error = parse_on_off("maybe", "labels").unwrap_err();
+        assert!(error.contains("expected on/off"));
+
+        let theme = ListObsPlotTheme::light();
+        let color = palette_color("field-a", theme);
+        assert_eq!(color, palette_color("field-a", theme));
+        assert!(
+            theme
+                .accents
+                .iter()
+                .any(|accent| color == super::rgb(*accent))
+        );
+        assert_ne!(
+            ListObsPlotTheme::light().background,
+            ListObsPlotTheme::dark().background
+        );
+    }
+
+    #[test]
+    fn plot_specs_validate_options_and_preserve_assignments() {
+        let mut spec = ListObsPlotSpec::new(ListObsPlotKind::AntennaLayout);
+        spec.set_option("labels", "id").unwrap();
+        spec.set_option("coordinates", "absolute").unwrap();
+        spec.set_option("size_by_diameter", "false").unwrap();
+        assert_eq!(spec.option("labels"), Some("id"));
+        assert_eq!(spec.option("coordinates"), Some("absolute"));
+        assert_eq!(spec.option("size_by_diameter"), Some("false"));
+        assert_eq!(
+            spec.cli_assignments(),
+            vec![
+                "coordinates=absolute".to_string(),
+                "labels=id".to_string(),
+                "size_by_diameter=false".to_string(),
+            ]
+        );
+
+        let error = spec.set_option("labels", "bogus").unwrap_err();
+        assert!(error.contains("unsupported option"));
+
+        let error = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::ScanTimeline,
+            &["missing-separator".to_string()],
+        )
+        .unwrap_err();
+        assert!(error.contains("expected key=value"));
+
+        let error = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::SpectralWindowCoverage,
+            &["labels=maybe".to_string()],
+        )
+        .unwrap_err();
+        assert!(error.contains("expected on/off"));
     }
 
     #[test]
@@ -1522,6 +1632,49 @@ mod tests {
             render_listobs_plot_image(&payload, ListObsPlotTheme::dark(), 512, 512).unwrap();
         assert_eq!(image.width(), 512);
         assert_eq!(image.height(), 512);
+    }
+
+    #[test]
+    fn uv_payload_builder_covers_runtime_validation_paths() {
+        let coverage = synthetic_uv_coverage();
+
+        let error = build_listobs_plot_payload_from_summary(
+            &synthetic_summary(),
+            &ListObsPlotKind::UvCoverage.default_spec(),
+        )
+        .unwrap_err();
+        assert!(error.contains("build_listobs_uv_plot_payload"));
+
+        let error = build_listobs_uv_plot_payload(
+            &coverage,
+            &ListObsPlotKind::AntennaLayout.default_spec(),
+        )
+        .unwrap_err();
+        assert!(error.contains("does not match UV coverage payload builder"));
+
+        let mut spec = ListObsPlotKind::UvCoverage.default_spec();
+        spec.options
+            .insert("axis_extent".to_string(), "42.5".to_string());
+        let payload = build_listobs_uv_plot_payload(&coverage, &spec).unwrap();
+        assert_eq!(payload.kind(), ListObsPlotKind::UvCoverage);
+        let ListObsPlotPayload::UvCoverage(payload) = payload else {
+            panic!("expected uv payload");
+        };
+        assert_eq!(payload.axis_extent_lambda, 42.5);
+
+        let mut invalid_axis = ListObsPlotKind::UvCoverage.default_spec();
+        invalid_axis
+            .options
+            .insert("axis_extent".to_string(), "oops".to_string());
+        let error = build_listobs_uv_plot_payload(&coverage, &invalid_axis).unwrap_err();
+        assert!(error.contains("invalid axis_extent"));
+
+        let mut invalid_draw_mode = ListObsPlotKind::UvCoverage.default_spec();
+        invalid_draw_mode
+            .options
+            .insert("draw_mode".to_string(), "bogus".to_string());
+        let error = build_listobs_uv_plot_payload(&coverage, &invalid_draw_mode).unwrap_err();
+        assert!(error.contains("invalid draw_mode"));
     }
 
     #[test]
@@ -1613,6 +1766,33 @@ mod tests {
         assert_eq!(payload.y_label, "ITRF Y (m)");
         assert!(payload.summary.contains("using ITRF X/Y"));
         assert!(payload.antennas.iter().any(|point| point.x.abs() > 1.0));
+    }
+
+    #[test]
+    fn antenna_layout_supports_id_labels_absolute_coordinates_and_fixed_marker_sizes() {
+        let summary = synthetic_summary();
+        let spec = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::AntennaLayout,
+            &[
+                "labels=id".to_string(),
+                "coordinates=absolute".to_string(),
+                "size_by_diameter=off".to_string(),
+            ],
+        )
+        .unwrap();
+        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
+        let ListObsPlotPayload::AntennaLayout(payload) = payload else {
+            panic!("expected antenna layout payload");
+        };
+        assert_eq!(payload.x_label, "ITRF X (m)");
+        assert_eq!(payload.y_label, "ITRF Y (m)");
+        assert!(payload.labels_enabled);
+        assert!(
+            payload
+                .antennas
+                .iter()
+                .all(|point| point.marker_radius == 5 && point.label.parse::<usize>().is_ok())
+        );
     }
 
     #[test]
@@ -1837,6 +2017,54 @@ mod tests {
                 .iter()
                 .all(|bar| bar.label.is_empty() && bar.color_group.contains("ON_SOURCE"))
         );
+    }
+
+    #[test]
+    fn scan_timeline_and_spectral_payloads_handle_empty_and_fallback_data() {
+        let mut empty_summary = synthetic_summary();
+        empty_summary.scans.clear();
+        empty_summary.spectral_windows = vec![SpectralWindowSummary {
+            spectral_window_id: 9,
+            name: String::new(),
+            num_channels: 8,
+            frame: Some("TOPO".to_string()),
+            first_channel_frequency_hz: 1.4e9,
+            channel_width_hz: 1.0e6,
+            reference_frequency_hz: 1.4e9,
+            center_frequency_hz: 1.404e9,
+            min_frequency_hz: 1.3995e9,
+            max_frequency_hz: 1.4085e9,
+            total_bandwidth_hz: 8.0e6,
+            data_description_ids: vec![0],
+            polarization_ids: vec![],
+            correlation_types: vec!["XX".to_string()],
+        }];
+
+        let timeline = build_listobs_plot_payload_from_summary(
+            &empty_summary,
+            &ListObsPlotKind::ScanTimeline.default_spec(),
+        )
+        .unwrap();
+        let ListObsPlotPayload::ScanTimeline(timeline) = timeline else {
+            panic!("expected scan timeline payload");
+        };
+        assert!(timeline.bars.is_empty());
+        assert!(timeline.lane_labels.is_empty());
+        assert_eq!(timeline.start_mjd_seconds, 0.0);
+        assert_eq!(timeline.end_mjd_seconds, 1.0);
+
+        let spec = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::SpectralWindowCoverage,
+            &["color_by=polarization".to_string()],
+        )
+        .unwrap();
+        let payload = build_listobs_plot_payload_from_summary(&empty_summary, &spec).unwrap();
+        let ListObsPlotPayload::SpectralWindowCoverage(payload) = payload else {
+            panic!("expected spectral window payload");
+        };
+        assert_eq!(payload.bars.len(), 1);
+        assert_eq!(payload.bars[0].label, "SPW 9");
+        assert_eq!(payload.bars[0].color_group, "pol-none");
     }
 
     #[cfg(not(target_os = "macos"))]
