@@ -250,7 +250,7 @@ fn render_casars_help() -> String {
         ));
     }
     out.push_str(
-        "\nExamples:\n  casars\n  casars tablebrowser /path/to/table\n  casars imexplore /path/to/image\n  casars --app listobs /path/to.ms --field 3C286\n",
+        "\nExamples:\n  casars\n  casars tablebrowser /path/to/table\n  casars imexplore /path/to/image\n  casars --app listobs /path/to.ms --field 3C286\n  casars --app msexplore /path/to.ms --preset amplitude_vs_time --plot-output amp-time.png\n",
     );
     out
 }

@@ -416,6 +416,22 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionSpec {
                 common: ArgumentCommon {
                     order: 16,
+                    id: "msselect",
+                    label: "MSSelect",
+                    help: "Raw TaQL/MSSelection expression applied after the structured selectors",
+                    group: "Selection",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
+                flags: &["--msselect"],
+                metavar: "EXPR",
+                value_kind: UiValueKind::String,
+                default: None,
+                choices: &[],
+            }),
+            option_argument(OptionSpec {
+                common: ArgumentCommon {
+                    order: 17,
                     id: "feed",
                     label: "Feed",
                     help: "Select feed ids or ranges (currently unsupported)",
@@ -431,7 +447,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             toggle_argument(ToggleSpec {
                 common: ArgumentCommon {
-                    order: 17,
+                    order: 18,
                     id: "listunfl",
                     label: "List Unflagged Rows",
                     help: "Include fractional unflagged-row counts",
@@ -445,7 +461,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             option_argument(OptionSpec {
                 common: ArgumentCommon {
-                    order: 18,
+                    order: 19,
                     id: "cachesize",
                     label: "Cache Size",
                     help: "CASA-style metadata cache size in MiB (currently unsupported)",
@@ -461,7 +477,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             toggle_argument(ToggleSpec {
                 common: ArgumentCommon {
-                    order: 19,
+                    order: 20,
                     id: "overwrite",
                     label: "Overwrite Output",
                     help: "Replace an existing --output/--listfile target",
@@ -475,7 +491,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             toggle_argument(ToggleSpec {
                 common: ArgumentCommon {
-                    order: 20,
+                    order: 21,
                     id: "uv_coverage_json",
                     label: "UV Coverage JSON",
                     help: "Emit lazy-load UV coverage JSON for the current selection",
@@ -489,7 +505,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             option_argument(OptionSpec {
                 common: ArgumentCommon {
-                    order: 21,
+                    order: 22,
                     id: "plot",
                     label: "Plot Kind",
                     help: "Export one plot instead of the text/json summary",
@@ -513,7 +529,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             option_argument(OptionSpec {
                 common: ArgumentCommon {
-                    order: 22,
+                    order: 23,
                     id: "plot_option",
                     label: "Plot Option",
                     help: "Repeatable plot-specific key=value option",
@@ -529,7 +545,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             option_argument(OptionSpec {
                 common: ArgumentCommon {
-                    order: 23,
+                    order: 24,
                     id: "plot_output",
                     label: "Plot Output",
                     help: "Write the exported plot to PATH when --plot is active",
@@ -545,7 +561,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             option_argument(OptionSpec {
                 common: ArgumentCommon {
-                    order: 24,
+                    order: 25,
                     id: "plot_format",
                     label: "Plot Format",
                     help: "Plot export format: png or pdf (default: png)",
@@ -561,7 +577,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             option_argument(OptionSpec {
                 common: ArgumentCommon {
-                    order: 25,
+                    order: 26,
                     id: "plot_width",
                     label: "Plot Width",
                     help: "Rendered plot width in pixels (default: 1600)",
@@ -577,7 +593,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             option_argument(OptionSpec {
                 common: ArgumentCommon {
-                    order: 26,
+                    order: 27,
                     id: "plot_height",
                     label: "Plot Height",
                     help: "Rendered plot height in pixels (default: 900)",
@@ -592,7 +608,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 choices: &[],
             }),
             action_argument(
-                27,
+                28,
                 "ui_schema",
                 "UI Schema",
                 &["--ui-schema"],
@@ -600,7 +616,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "Print the machine-readable UI schema for this command",
             ),
             action_argument(
-                28,
+                29,
                 "help",
                 "Help",
                 &["-h", "--help"],
@@ -1191,6 +1207,7 @@ fn build_run_options(
             uvrange: parsed.optional_string("uvrange")?,
             correlation: parsed.optional_string("correlation")?,
             intent: parsed.optional_string("intent")?,
+            msselect: parsed.optional_string("msselect")?,
             feed: parsed.optional_string("feed")?,
             listunfl: parsed.bool_or_default(schema, "listunfl")?,
             cachesize_mb,

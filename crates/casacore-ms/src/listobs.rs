@@ -41,7 +41,7 @@ const LISTOBS_UV_SCHEMA_VERSION: u32 = 1;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
 /// Output formats supported by the `listobs` renderers and CLI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ListObsOutputFormat {
     /// CASA-like human-readable text.
     Text,
@@ -92,6 +92,8 @@ pub struct ListObsOptions {
     pub correlation: Option<String>,
     /// Intent selector in CASA task syntax.
     pub intent: Option<String>,
+    /// Raw TaQL/MSSelection expression applied after the structured selectors.
+    pub msselect: Option<String>,
     ///
     /// CASA's `listobs` task documents this as not yet implemented, so the
     /// current Rust implementation rejects it explicitly rather than silently
@@ -128,6 +130,7 @@ impl Default for ListObsOptions {
             uvrange: None,
             correlation: None,
             intent: None,
+            msselect: None,
             feed: None,
             listunfl: false,
             cachesize_mb: None,
@@ -148,6 +151,7 @@ impl ListObsOptions {
             || self.uvrange.is_some()
             || self.correlation.is_some()
             || self.intent.is_some()
+            || self.msselect.is_some()
             || self.feed.is_some()
     }
 
@@ -1809,7 +1813,10 @@ pub(crate) fn resolve_selected_rows(
     Ok(Some(selection.apply(ms)?))
 }
 
-fn selection_from_options(ms: &MeasurementSet, options: &ListObsOptions) -> MsResult<MsSelection> {
+pub(crate) fn selection_from_options(
+    ms: &MeasurementSet,
+    options: &ListObsOptions,
+) -> MsResult<MsSelection> {
     let mut selection = MsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
@@ -1850,6 +1857,12 @@ fn selection_from_options(ms: &MeasurementSet, options: &ListObsOptions) -> MsRe
     }
     if let Some(timerange) = options.timerange.as_deref() {
         selection = apply_timerange_selector(ms, selection, timerange)?;
+    }
+    if let Some(msselect) = options.msselect.as_deref() {
+        let trimmed = msselect.trim();
+        if !trimmed.is_empty() {
+            selection = selection.taql(trimmed);
+        }
     }
 
     Ok(selection)

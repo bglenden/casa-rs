@@ -33,6 +33,7 @@ fn listobs_help_mentions_core_options() {
     assert!(stdout.contains("--uvrange <EXPR>"));
     assert!(stdout.contains("--correlation <EXPR>"));
     assert!(stdout.contains("--intent <EXPR>"));
+    assert!(stdout.contains("--msselect <EXPR>"));
     assert!(stdout.contains("--listunfl"));
     assert!(stdout.contains("--no-verbose"));
     assert!(stdout.contains("--overwrite"));
@@ -93,6 +94,11 @@ fn listobs_ui_schema_describes_launcher_contract() {
     let listfile = schema.argument("listfile").expect("listfile argument");
     assert!(listfile.advanced);
     assert_eq!(listfile.group, "Output");
+
+    let msselect = schema.argument("msselect").expect("msselect argument");
+    assert!(msselect.advanced);
+    assert_eq!(msselect.group, "Selection");
+    assert_eq!(msselect.value_kind, UiValueKind::String);
 
     let uv_coverage_json = schema
         .argument("uv_coverage_json")

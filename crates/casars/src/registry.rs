@@ -173,16 +173,22 @@ impl RegistryApp {
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
     match id.unwrap_or("listobs") {
         "listobs" => Ok(listobs_app()),
+        "msexplore" => Ok(msexplore_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: listobs, tablebrowser, imexplore"
+            "unknown casars app {other:?}; expected one of: listobs, msexplore, tablebrowser, imexplore"
         )),
     }
 }
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
-    vec![listobs_app(), tablebrowser_app(), imexplore_app()]
+    vec![
+        listobs_app(),
+        msexplore_app(),
+        tablebrowser_app(),
+        imexplore_app(),
+    ]
 }
 
 pub(crate) fn listobs_app() -> RegistryApp {
@@ -227,6 +233,20 @@ pub(crate) fn imexplore_app() -> RegistryApp {
     }
 }
 
+pub(crate) fn msexplore_app() -> RegistryApp {
+    RegistryApp {
+        id: "msexplore",
+        category: "MeasurementSet",
+        display_name: "MSExplore",
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "msexplore",
+            cargo_package: "casacore-ms",
+            override_env: "CASARS_MSEXPLORE_BIN",
+            interaction: AppInteraction::OneShot,
+        },
+    }
+}
+
 fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
     let mut path = env::current_exe().ok()?;
     path.pop();
@@ -242,6 +262,7 @@ mod tests {
     #[test]
     fn resolve_app_defaults_and_rejects_unknown_ids() {
         assert_eq!(resolve_app(None).unwrap().id, "listobs");
+        assert_eq!(resolve_app(Some("msexplore")).unwrap().id, "msexplore");
         assert_eq!(
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
@@ -260,6 +281,13 @@ mod tests {
         assert!(!listobs.is_browser_session());
         assert_eq!(
             listobs.ready_status_line(),
+            "Ready. Press r to run the selected command."
+        );
+
+        let msexplore = msexplore_app();
+        assert!(!msexplore.is_browser_session());
+        assert_eq!(
+            msexplore.ready_status_line(),
             "Ready. Press r to run the selected command."
         );
 

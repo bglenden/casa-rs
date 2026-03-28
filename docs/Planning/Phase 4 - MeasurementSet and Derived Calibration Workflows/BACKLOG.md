@@ -96,11 +96,11 @@ plot rendering without pulling raw visibility extraction into the first wave.
 
 ### 11.4 Raw Visibility Plots (`Amplitude vs Time`, `Phase vs Time`, `Amplitude vs UV Distance`)
 
-**Status:** DEFER
+**Status:** IMPLEMENT
 
-**Reason:** These need a second wave of payload extraction, averaging, and
-selection semantics from MAIN-table data. Ship the reusable plot substrate
-first, then add raw visibility plots on top of it.
+**Reason:** The shared plot substrate now supports the most common curated
+raw-MAIN-table views used from CASA `plotms`, using existing `listobs`
+selection semantics plus vector-averaged visibility extraction from MS data.
 
 ---
 

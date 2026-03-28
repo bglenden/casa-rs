@@ -72,7 +72,7 @@ Current v1 coverage:
 - `listobs` with a schema-driven parameter pane
 - collapsible parameter sections and sticky UI theme/split preferences
 - structured MeasurementSet summary rendering with tabbed result views
-- UV coverage plotting for `listobs`
+- common MeasurementSet plotting for `listobs` (UV coverage, metadata, and raw visibility views)
 - raw stdout/stderr views for troubleshooting
 - mouse support for focus, clicks, wheel scrolling, and divider dragging
 - cancel support while a command is running

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use casacore_test_support::casatestdata_path;
 use tempfile::tempdir;
 
-const CASA_PYTHON: &str = "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python";
+mod common;
+
+use common::casa_plotms::{discover_casa_python, ngc5921_ms_path, skip_reason};
 
 #[derive(Debug)]
 struct RunResult {
@@ -19,7 +19,7 @@ struct RunResult {
 #[test]
 fn listobs_verbose_matches_casa_core_sections() {
     if !casa_environment_available() {
-        eprintln!("skipping CASA parity test: CASA python or dataset is unavailable");
+        eprintln!("{}", skip_reason(false));
         return;
     }
 
@@ -69,7 +69,7 @@ fn listobs_verbose_matches_casa_core_sections() {
 #[test]
 fn listobs_terse_matches_casa_core_sections() {
     if !casa_environment_available() {
-        eprintln!("skipping CASA parity test: CASA python or dataset is unavailable");
+        eprintln!("{}", skip_reason(false));
         return;
     }
 
@@ -105,7 +105,7 @@ fn listobs_terse_matches_casa_core_sections() {
 #[test]
 fn listobs_field_selection_matches_casa_core_sections() {
     if !casa_environment_available() {
-        eprintln!("skipping CASA parity test: CASA python or dataset is unavailable");
+        eprintln!("{}", skip_reason(false));
         return;
     }
 
@@ -138,7 +138,7 @@ fn listobs_field_selection_matches_casa_core_sections() {
 #[test]
 fn listobs_uvrange_selection_matches_casa_core_sections() {
     if !casa_environment_available() {
-        eprintln!("skipping CASA parity test: CASA python or dataset is unavailable");
+        eprintln!("{}", skip_reason(false));
         return;
     }
 
@@ -170,7 +170,7 @@ fn listobs_uvrange_selection_matches_casa_core_sections() {
 #[test]
 fn listobs_listunfl_matches_casa_core_sections() {
     if !casa_environment_available() {
-        eprintln!("skipping CASA parity test: CASA python or dataset is unavailable");
+        eprintln!("{}", skip_reason(false));
         return;
     }
 
@@ -207,7 +207,7 @@ fn listobs_listunfl_matches_casa_core_sections() {
 #[test]
 fn listobs_timerange_selection_matches_casa_core_sections() {
     if !casa_environment_available() {
-        eprintln!("skipping CASA parity test: CASA python or dataset is unavailable");
+        eprintln!("{}", skip_reason(false));
         return;
     }
 
@@ -239,7 +239,7 @@ fn listobs_timerange_selection_matches_casa_core_sections() {
 }
 
 fn casa_environment_available() -> bool {
-    Path::new(CASA_PYTHON).is_file() && ngc5921_ms_path().is_some()
+    discover_casa_python().is_some() && ngc5921_ms_path().is_some()
 }
 
 fn run_rust_listobs(extra_args: &[&str]) -> Result<RunResult, String> {
@@ -270,6 +270,7 @@ fn run_casa_listobs(
     timerange: Option<&str>,
     listunfl: bool,
 ) -> Result<RunResult, String> {
+    let casa = discover_casa_python().ok_or_else(|| skip_reason(false))?;
     let ms_path = ngc5921_ms_path().ok_or_else(missing_testdata_message)?;
     let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
     let output = temp.path().join("casa-listobs.txt");
@@ -296,7 +297,7 @@ if timerange:
 listobs(**kwargs)
 "#;
     let start = Instant::now();
-    let result = Command::new(CASA_PYTHON)
+    let result = Command::new(&casa.program)
         .arg("-c")
         .arg(script)
         .env("CASA_VIS", &ms_path)
@@ -316,12 +317,8 @@ listobs(**kwargs)
     Ok(RunResult { text, elapsed_ms })
 }
 
-fn ngc5921_ms_path() -> Option<PathBuf> {
-    casatestdata_path("measurementset/vla/ngc5921.ms").filter(|path| path.exists())
-}
-
 fn missing_testdata_message() -> String {
-    "missing ngc5921.ms under CASA_RS_TESTDATA_ROOT or ../casatestdata".to_string()
+    "missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, or ~/SoftwareProjects/casatestdata".to_string()
 }
 
 fn measure_rust_case(extra_args: &[&str]) -> Vec<u128> {

@@ -47,7 +47,7 @@ use crate::{KittyMovieOverlayMode, kitty_movie_overlay_mode, test_env_lock};
 fn launcher_lists_registered_apps_in_expected_order() {
     let apps = registered_apps();
     let ids = apps.iter().map(|app| app.id).collect::<Vec<_>>();
-    assert_eq!(ids, vec!["listobs", "tablebrowser", "imexplore"]);
+    assert_eq!(ids, vec!["listobs", "msexplore", "tablebrowser", "imexplore"]);
 }
 
 #[test]
@@ -69,8 +69,10 @@ fn launcher_screen_renders_available_apps() {
 
     assert!(rendered.contains("Select Application"));
     assert!(rendered.contains("listobs"));
+    assert!(rendered.contains("msexplore"));
     assert!(rendered.contains("tablebrowser"));
     assert!(rendered.contains("imexplore"));
+    assert!(rendered.contains("MSExplore"));
     assert!(rendered.contains("Table Browser"));
     assert!(rendered.contains("ImExplore"));
 }

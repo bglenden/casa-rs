@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![allow(dead_code)]
+
+pub mod casa_plotms;
 
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
 use casacore_ms::ms::MeasurementSet;
@@ -184,6 +187,7 @@ pub fn populate_subtables(ms: &mut MeasurementSet) {
     }
 }
 
+#[allow(dead_code)]
 pub fn populate_main_rows(ms: &mut MeasurementSet, num_rows: usize) {
     for row in 0..num_rows {
         add_main_row(
