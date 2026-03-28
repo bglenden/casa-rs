@@ -1459,6 +1459,8 @@ mod tests {
         build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick,
         render_listobs_plot_image, scan_timeline_axis_offset, uv_axis_scale,
     };
+    #[cfg(not(target_os = "macos"))]
+    use super::ensure_non_macos_plot_font;
     use crate::listobs::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
         ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary, SpectralWindowSummary,
