@@ -17,6 +17,25 @@ use crate::listobs::SpectralWindowSummary;
 use crate::{ListObsSummary, ListObsUvCoverage};
 
 const EXPORT_DPI: f32 = 72.0;
+#[cfg(not(target_os = "macos"))]
+const NON_MACOS_PLOT_FONT: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_non_macos_plot_font() -> Result<(), String> {
+    use std::sync::OnceLock;
+
+    use plotters::style::{FontStyle, register_font};
+
+    static FONT_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
+
+    FONT_REGISTRATION
+        .get_or_init(|| {
+            // Plotters' ab_glyph backend does not discover system fonts on its own.
+            register_font("sans-serif", FontStyle::Normal, NON_MACOS_PLOT_FONT)
+                .map_err(|_| "failed to register bundled sans-serif plot font".to_string())
+        })
+        .clone()
+}
 
 /// Stable plot identifiers supported by `listobs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -545,6 +564,9 @@ pub fn render_listobs_plot_image_with_style(
     height: u32,
     style: ListObsPlotRenderStyle,
 ) -> Result<DynamicImage, String> {
+    #[cfg(not(target_os = "macos"))]
+    ensure_non_macos_plot_font()?;
+
     if width == 0 || height == 0 {
         return Err("plot size must be non-zero".to_string());
     }
