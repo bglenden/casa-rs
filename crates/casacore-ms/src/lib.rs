@@ -70,8 +70,8 @@ pub use ms::MeasurementSet;
 pub use plot::{
     ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
     ListObsPlotSpec, ListObsPlotTheme, build_listobs_plot_payload_from_summary,
-    build_listobs_uv_plot_payload, export_listobs_plot, render_listobs_plot_image,
-    render_listobs_plot_image_with_style,
+    build_listobs_uv_plot_payload, build_listobs_visibility_plot_payload, export_listobs_plot,
+    render_listobs_plot_image, render_listobs_plot_image_with_style,
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};

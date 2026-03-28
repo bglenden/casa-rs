@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared plot specification, payload building, rendering, and export support
-//! for `listobs`.
+//! for `listobs` metadata plots plus curated raw MeasurementSet visibility
+//! plots analogous to the common CASA `plotms` views.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Cursor;
 use std::path::Path;
 
+use casacore_types::{ArrayValue, Complex64};
 use image::{DynamicImage, ImageFormat, RgbImage};
+use ndarray::Ix2;
 use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 use serde::{Deserialize, Serialize};
 
-use crate::listobs::SpectralWindowSummary;
-use crate::{ListObsSummary, ListObsUvCoverage};
+use crate::columns::{main_ids, time_columns::TimeColumn, uvw_column::UvwColumn};
+use crate::listobs::{self, SpectralWindowSummary};
+use crate::schema::main_table::VisibilityDataColumn;
+use crate::{ListObsOptions, ListObsSummary, ListObsUvCoverage, MeasurementSet};
 
 const EXPORT_DPI: f32 = 72.0;
 #[cfg(not(target_os = "macos"))]
@@ -49,15 +54,24 @@ pub enum ListObsPlotKind {
     ScanTimeline,
     /// SPECTRAL_WINDOW frequency-coverage plot.
     SpectralWindowCoverage,
+    /// Vector-averaged visibility amplitude against MAIN.TIME.
+    AmplitudeVsTime,
+    /// Vector-averaged visibility phase against MAIN.TIME.
+    PhaseVsTime,
+    /// Vector-averaged visibility amplitude against `sqrt(u² + v²)` in meters.
+    AmplitudeVsUvDistance,
 }
 
 impl ListObsPlotKind {
-    /// All plot kinds shipped in the first `listobs` plot workspace wave.
-    pub const ALL: [Self; 4] = [
+    /// All plot kinds shipped in the curated `listobs` plot workspace.
+    pub const ALL: [Self; 7] = [
         Self::UvCoverage,
         Self::AntennaLayout,
         Self::ScanTimeline,
         Self::SpectralWindowCoverage,
+        Self::AmplitudeVsTime,
+        Self::PhaseVsTime,
+        Self::AmplitudeVsUvDistance,
     ];
 
     /// Stable machine-readable identifier used by CLI and serialized specs.
@@ -67,6 +81,9 @@ impl ListObsPlotKind {
             Self::AntennaLayout => "antenna_layout",
             Self::ScanTimeline => "scan_timeline",
             Self::SpectralWindowCoverage => "spectral_window_coverage",
+            Self::AmplitudeVsTime => "amplitude_vs_time",
+            Self::PhaseVsTime => "phase_vs_time",
+            Self::AmplitudeVsUvDistance => "amplitude_vs_uv_distance",
         }
     }
 
@@ -77,7 +94,18 @@ impl ListObsPlotKind {
             Self::AntennaLayout => "Antenna Layout",
             Self::ScanTimeline => "Scan Timeline",
             Self::SpectralWindowCoverage => "Spectral Window Coverage",
+            Self::AmplitudeVsTime => "Amplitude vs Time",
+            Self::PhaseVsTime => "Phase vs Time",
+            Self::AmplitudeVsUvDistance => "Amplitude vs UV Distance",
         }
+    }
+
+    /// Returns `true` when this plot needs MAIN-table visibility data.
+    pub fn is_raw_visibility(self) -> bool {
+        matches!(
+            self,
+            Self::AmplitudeVsTime | Self::PhaseVsTime | Self::AmplitudeVsUvDistance
+        )
     }
 
     /// Parse a stable CLI / serialized identifier.
@@ -89,8 +117,13 @@ impl ListObsPlotKind {
             "spectral_window_coverage" | "spw_coverage" | "spws" => {
                 Ok(Self::SpectralWindowCoverage)
             }
+            "amplitude_vs_time" | "amp_time" => Ok(Self::AmplitudeVsTime),
+            "phase_vs_time" | "phase_time" => Ok(Self::PhaseVsTime),
+            "amplitude_vs_uv_distance" | "amplitude_vs_uvdist" | "amp_uvdist" => {
+                Ok(Self::AmplitudeVsUvDistance)
+            }
             other => Err(format!(
-                "unsupported plot kind {other:?}; expected one of: uv_coverage, antenna_layout, scan_timeline, spectral_window_coverage"
+                "unsupported plot kind {other:?}; expected one of: uv_coverage, antenna_layout, scan_timeline, spectral_window_coverage, amplitude_vs_time, phase_vs_time, amplitude_vs_uv_distance"
             )),
         }
     }
@@ -118,6 +151,17 @@ impl ListObsPlotKind {
                 options.insert("unit".to_string(), "ghz".to_string());
                 options.insert("labels".to_string(), "on".to_string());
                 options.insert("color_by".to_string(), "spw".to_string());
+            }
+            Self::AmplitudeVsTime | Self::PhaseVsTime | Self::AmplitudeVsUvDistance => {
+                options.insert("data_column".to_string(), "data".to_string());
+                options.insert(
+                    "color_by".to_string(),
+                    match self {
+                        Self::AmplitudeVsUvDistance => "spw",
+                        _ => "field",
+                    }
+                    .to_string(),
+                );
             }
         }
         ListObsPlotSpec {
@@ -338,6 +382,8 @@ impl ListObsPlotTheme {
 pub enum ListObsPlotPayload {
     /// UV-coverage series grouped by baseline / field / SPW.
     UvCoverage(UvCoveragePlotPayload),
+    /// Curated raw visibility scatter payload.
+    VisibilityScatter(VisibilityScatterPlotPayload),
     /// Antenna layout scatter payload.
     AntennaLayout(AntennaLayoutPlotPayload),
     /// Scan timeline bar payload.
@@ -351,6 +397,7 @@ impl ListObsPlotPayload {
     pub fn kind(&self) -> ListObsPlotKind {
         match self {
             Self::UvCoverage(_) => ListObsPlotKind::UvCoverage,
+            Self::VisibilityScatter(payload) => payload.kind,
             Self::AntennaLayout(_) => ListObsPlotKind::AntennaLayout,
             Self::ScanTimeline(_) => ListObsPlotKind::ScanTimeline,
             Self::SpectralWindowCoverage(_) => ListObsPlotKind::SpectralWindowCoverage,
@@ -379,6 +426,34 @@ pub struct UvCoverageSeries {
     /// Stable label for hover/debug/export summaries.
     pub label: String,
     /// Plot points in lambda units.
+    pub points: Vec<(f64, f64)>,
+}
+
+/// Generic scatter payload for curated raw visibility plots.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibilityScatterPlotPayload {
+    /// Specific plot kind represented by this scatter payload.
+    pub kind: ListObsPlotKind,
+    /// X-axis label.
+    pub x_label: String,
+    /// Y-axis label.
+    pub y_label: String,
+    /// Optional fixed y-axis bounds.
+    pub fixed_y_bounds: Option<(f64, f64)>,
+    /// Series keyed by one selected metadata grouping.
+    pub series: Vec<VisibilityScatterSeries>,
+    /// Render summary.
+    pub summary: String,
+}
+
+/// One grouped visibility scatter series.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibilityScatterSeries {
+    /// Stable label for hover/debug/export summaries.
+    pub label: String,
+    /// Stable color-group key.
+    pub color_group: String,
+    /// Plot points.
     pub points: Vec<(f64, f64)>,
 }
 
@@ -483,6 +558,12 @@ pub fn build_listobs_plot_payload_from_summary(
         ListObsPlotKind::SpectralWindowCoverage => {
             build_spectral_window_coverage_payload(summary, spec)
         }
+        ListObsPlotKind::AmplitudeVsTime
+        | ListObsPlotKind::PhaseVsTime
+        | ListObsPlotKind::AmplitudeVsUvDistance => Err(format!(
+            "{} requires MAIN-table visibility data; build it with build_listobs_visibility_plot_payload",
+            spec.kind.display_name()
+        )),
     }
 }
 
@@ -540,6 +621,458 @@ pub fn build_listobs_uv_plot_payload(
     }))
 }
 
+/// Build one curated raw-visibility plot payload directly from a MeasurementSet.
+///
+/// This supports the common CASA `plotms` views implemented in this crate:
+/// amplitude vs time, phase vs time, and amplitude vs UV distance.
+pub fn build_listobs_visibility_plot_payload(
+    ms: &MeasurementSet,
+    options: &ListObsOptions,
+    spec: &ListObsPlotSpec,
+) -> Result<ListObsPlotPayload, String> {
+    if !spec.kind.is_raw_visibility() {
+        return Err(format!(
+            "plot spec kind {} does not match raw visibility payload builder",
+            spec.kind
+        ));
+    }
+
+    let data_column_name = spec.option("data_column").unwrap_or("data");
+    let data_column = parse_visibility_data_column(data_column_name)?;
+    let color_by = spec
+        .option("color_by")
+        .unwrap_or(default_visibility_color_by(spec.kind));
+
+    let row_numbers = listobs::resolve_selected_rows(ms, options)
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| (0..ms.row_count()).collect());
+
+    let data = ms.data_column(data_column).map_err(|error| {
+        format!(
+            "{} requires the {} column: {error}",
+            spec.kind.display_name(),
+            data_column.name()
+        )
+    })?;
+    let flag = ms.flag_column();
+    let flag_row = ms.flag_row_column();
+    let time = TimeColumn::new(ms.main_table());
+    let uvw = UvwColumn::new(ms.main_table());
+    let field_id = main_ids::field_id(ms.main_table());
+    let scan_number = main_ids::scan_number(ms.main_table());
+    let data_desc_id = main_ids::data_desc_id(ms.main_table());
+    let antenna1 = main_ids::antenna1(ms.main_table());
+    let antenna2 = main_ids::antenna2(ms.main_table());
+
+    let field = ms.field().map_err(|error| error.to_string())?;
+    let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
+    let polarization = ms.polarization().map_err(|error| error.to_string())?;
+    let data_description = ms.data_description().map_err(|error| error.to_string())?;
+
+    let requested_corr_codes = options
+        .correlation
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(listobs::parse_correlation_selector)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+
+    let mut series = BTreeMap::<String, VisibilityScatterSeries>::new();
+    let mut contributing_rows = 0usize;
+    let mut contributing_samples = 0usize;
+
+    for row in row_numbers {
+        if flag_row.get(row).map_err(|error| error.to_string())? {
+            continue;
+        }
+
+        let ddid = data_desc_id.get(row).map_err(|error| error.to_string())?;
+        if ddid < 0 || (ddid as usize) >= data_description.row_count() {
+            continue;
+        }
+        let ddid = ddid as usize;
+        let spw_id = data_description
+            .spectral_window_id(ddid)
+            .map_err(|error| error.to_string())?;
+        let pol_id = data_description
+            .polarization_id(ddid)
+            .map_err(|error| error.to_string())?;
+        let corr_types = if pol_id >= 0 && (pol_id as usize) < polarization.row_count() {
+            polarization
+                .corr_type(pol_id as usize)
+                .map_err(|error| error.to_string())?
+        } else {
+            Vec::new()
+        };
+
+        let selected_correlations = selected_correlation_slots(
+            data.get(row).map_err(|error| error.to_string())?,
+            &corr_types,
+            requested_corr_codes.as_deref(),
+        )?;
+        if selected_correlations.is_empty() {
+            continue;
+        }
+
+        let x_value = match spec.kind {
+            ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime => time
+                .get_mjd_seconds(row)
+                .map_err(|error| error.to_string())?,
+            ListObsPlotKind::AmplitudeVsUvDistance => {
+                let [u, v, _w] = uvw.get(row).map_err(|error| error.to_string())?;
+                (u * u + v * v).sqrt()
+            }
+            _ => unreachable!("validated by is_raw_visibility"),
+        };
+
+        let field_id_value = field_id.get(row).map_err(|error| error.to_string())?;
+        let scan_number_value = scan_number.get(row).map_err(|error| error.to_string())?;
+        let antenna1_value = antenna1.get(row).map_err(|error| error.to_string())?;
+        let antenna2_value = antenna2.get(row).map_err(|error| error.to_string())?;
+        let flags = flag.get(row).map_err(|error| error.to_string())?;
+
+        let mut row_contributed = false;
+        if color_by == "correlation" {
+            for (corr_index, corr_label) in &selected_correlations {
+                if let Some((aggregated, sample_count)) = average_visibility_samples(
+                    data.get(row).map_err(|error| error.to_string())?,
+                    flags,
+                    &[*corr_index],
+                )? {
+                    let y_value = visibility_y_value(spec.kind, aggregated);
+                    if !y_value.is_finite() {
+                        continue;
+                    }
+                    let (group_key, group_label) = visibility_group(
+                        color_by,
+                        field_id_value,
+                        &field,
+                        spw_id,
+                        &spectral_window,
+                        scan_number_value,
+                        antenna1_value,
+                        antenna2_value,
+                        Some(corr_label),
+                    );
+                    series
+                        .entry(group_key.clone())
+                        .or_insert_with(|| VisibilityScatterSeries {
+                            label: group_label,
+                            color_group: group_key,
+                            points: Vec::new(),
+                        })
+                        .points
+                        .push((x_value, y_value));
+                    contributing_samples += sample_count;
+                    row_contributed = true;
+                }
+            }
+        } else if let Some((aggregated, sample_count)) = average_visibility_samples(
+            data.get(row).map_err(|error| error.to_string())?,
+            flags,
+            &selected_correlations
+                .iter()
+                .map(|(index, _label)| *index)
+                .collect::<Vec<_>>(),
+        )? {
+            let y_value = visibility_y_value(spec.kind, aggregated);
+            if y_value.is_finite() {
+                let (group_key, group_label) = visibility_group(
+                    color_by,
+                    field_id_value,
+                    &field,
+                    spw_id,
+                    &spectral_window,
+                    scan_number_value,
+                    antenna1_value,
+                    antenna2_value,
+                    None,
+                );
+                series
+                    .entry(group_key.clone())
+                    .or_insert_with(|| VisibilityScatterSeries {
+                        label: group_label,
+                        color_group: group_key,
+                        points: Vec::new(),
+                    })
+                    .points
+                    .push((x_value, y_value));
+                contributing_samples += sample_count;
+                row_contributed = true;
+            }
+        }
+
+        if row_contributed {
+            contributing_rows += 1;
+        }
+    }
+
+    let mut series = series.into_values().collect::<Vec<_>>();
+    for entry in &mut series {
+        entry
+            .points
+            .sort_by(|left, right| left.0.total_cmp(&right.0));
+    }
+    let point_count = series.iter().map(|entry| entry.points.len()).sum::<usize>();
+    if point_count == 0 {
+        return Err(format!(
+            "{} produced no unflagged visibility samples for the current selection.",
+            spec.kind.display_name()
+        ));
+    }
+
+    let (x_label, y_label, fixed_y_bounds) = match spec.kind {
+        ListObsPlotKind::AmplitudeVsTime => (
+            "Time (MJD seconds)".to_string(),
+            "Amplitude".to_string(),
+            None,
+        ),
+        ListObsPlotKind::PhaseVsTime => (
+            "Time (MJD seconds)".to_string(),
+            "Phase (deg)".to_string(),
+            Some((-180.0, 180.0)),
+        ),
+        ListObsPlotKind::AmplitudeVsUvDistance => {
+            ("UV Distance (m)".to_string(), "Amplitude".to_string(), None)
+        }
+        _ => unreachable!("validated by is_raw_visibility"),
+    };
+
+    Ok(ListObsPlotPayload::VisibilityScatter(
+        VisibilityScatterPlotPayload {
+            kind: spec.kind,
+            x_label,
+            y_label,
+            fixed_y_bounds,
+            series,
+            summary: format!(
+                "{}. Rows={} Points={} Samples={} Data column={}",
+                spec.kind.display_name(),
+                contributing_rows,
+                point_count,
+                contributing_samples,
+                data_column.name()
+            ),
+        },
+    ))
+}
+
+fn parse_visibility_data_column(value: &str) -> Result<VisibilityDataColumn, String> {
+    match value {
+        "data" => Ok(VisibilityDataColumn::Data),
+        "corrected" | "corrected_data" => Ok(VisibilityDataColumn::CorrectedData),
+        "model" | "model_data" => Ok(VisibilityDataColumn::ModelData),
+        other => Err(format!(
+            "invalid data_column {other:?}; expected one of: data, corrected, model"
+        )),
+    }
+}
+
+fn default_visibility_color_by(kind: ListObsPlotKind) -> &'static str {
+    match kind {
+        ListObsPlotKind::AmplitudeVsUvDistance => "spw",
+        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime => "field",
+        _ => "field",
+    }
+}
+
+fn selected_correlation_slots(
+    data: &ArrayValue,
+    corr_types: &[i32],
+    requested_corr_codes: Option<&[i32]>,
+) -> Result<Vec<(usize, String)>, String> {
+    let corr_count = match data {
+        ArrayValue::Complex32(values) => values
+            .view()
+            .into_dimensionality::<Ix2>()
+            .map_err(|_| {
+                "visibility plots expect complex visibility cells with shape [num_corr, num_chan]"
+                    .to_string()
+            })?
+            .nrows(),
+        ArrayValue::Complex64(values) => values
+            .view()
+            .into_dimensionality::<Ix2>()
+            .map_err(|_| {
+                "visibility plots expect complex visibility cells with shape [num_corr, num_chan]"
+                    .to_string()
+            })?
+            .nrows(),
+        other => {
+            return Err(format!(
+                "visibility plots require complex visibility data, found {:?}",
+                other.primitive_type()
+            ));
+        }
+    };
+
+    let requested_corr_codes = requested_corr_codes.unwrap_or(&[]);
+    let mut slots = Vec::new();
+    for corr_index in 0..corr_count {
+        let corr_label = corr_types
+            .get(corr_index)
+            .map(|code| listobs::stokes_name(*code).to_string())
+            .unwrap_or_else(|| format!("corr-{corr_index}"));
+        let corr_code = corr_types.get(corr_index).copied();
+        if requested_corr_codes.is_empty()
+            || corr_code.is_some_and(|code| requested_corr_codes.contains(&code))
+        {
+            slots.push((corr_index, corr_label));
+        }
+    }
+    Ok(slots)
+}
+
+fn average_visibility_samples(
+    data: &ArrayValue,
+    flags: &ArrayValue,
+    corr_indices: &[usize],
+) -> Result<Option<(Complex64, usize)>, String> {
+    let flags = match flags {
+        ArrayValue::Bool(values) => values.view().into_dimensionality::<Ix2>().map_err(|_| {
+            "visibility plots expect FLAG cells with shape [num_corr, num_chan]".to_string()
+        })?,
+        other => {
+            return Err(format!(
+                "visibility plots require BOOL flag cells, found {:?}",
+                other.primitive_type()
+            ));
+        }
+    };
+
+    match data {
+        ArrayValue::Complex32(values) => {
+            let values = values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                "visibility plots expect complex visibility cells with shape [num_corr, num_chan]"
+                    .to_string()
+            })?;
+            if values.raw_dim() != flags.raw_dim() {
+                return Err(format!(
+                    "visibility data shape {:?} does not match flag shape {:?}",
+                    values.shape(),
+                    flags.shape()
+                ));
+            }
+            average_visibility_grid(
+                values.nrows(),
+                values.ncols(),
+                corr_indices,
+                |corr, chan| {
+                    (!flags[(corr, chan)]).then_some(Complex64::new(
+                        values[(corr, chan)].re as f64,
+                        values[(corr, chan)].im as f64,
+                    ))
+                },
+            )
+        }
+        ArrayValue::Complex64(values) => {
+            let values = values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                "visibility plots expect complex visibility cells with shape [num_corr, num_chan]"
+                    .to_string()
+            })?;
+            if values.raw_dim() != flags.raw_dim() {
+                return Err(format!(
+                    "visibility data shape {:?} does not match flag shape {:?}",
+                    values.shape(),
+                    flags.shape()
+                ));
+            }
+            average_visibility_grid(
+                values.nrows(),
+                values.ncols(),
+                corr_indices,
+                |corr, chan| (!flags[(corr, chan)]).then_some(values[(corr, chan)]),
+            )
+        }
+        other => Err(format!(
+            "visibility plots require complex visibility data, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn average_visibility_grid<F>(
+    corr_count: usize,
+    chan_count: usize,
+    corr_indices: &[usize],
+    mut sample: F,
+) -> Result<Option<(Complex64, usize)>, String>
+where
+    F: FnMut(usize, usize) -> Option<Complex64>,
+{
+    let mut sum = Complex64::new(0.0, 0.0);
+    let mut count = 0usize;
+    for &corr_index in corr_indices {
+        if corr_index >= corr_count {
+            return Err(format!(
+                "correlation index {corr_index} is out of bounds for {corr_count} correlations"
+            ));
+        }
+        for chan_index in 0..chan_count {
+            if let Some(value) = sample(corr_index, chan_index) {
+                sum += value;
+                count += 1;
+            }
+        }
+    }
+    Ok((count > 0).then_some((sum / count as f64, count)))
+}
+
+fn visibility_y_value(kind: ListObsPlotKind, value: Complex64) -> f64 {
+    match kind {
+        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::AmplitudeVsUvDistance => value.norm(),
+        ListObsPlotKind::PhaseVsTime => value.arg().to_degrees(),
+        _ => unreachable!("visibility_y_value only supports raw visibility plots"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visibility_group(
+    color_by: &str,
+    field_id: i32,
+    field: &crate::subtables::MsField<'_>,
+    spw_id: i32,
+    spectral_window: &crate::subtables::MsSpectralWindow<'_>,
+    scan_number: i32,
+    antenna1: i32,
+    antenna2: i32,
+    correlation_label: Option<&str>,
+) -> (String, String) {
+    match color_by {
+        "none" => ("all".to_string(), "All data".to_string()),
+        "field" => {
+            let field_name = if field_id >= 0 && (field_id as usize) < field.row_count() {
+                field
+                    .name(field_id as usize)
+                    .unwrap_or_else(|_| format!("FIELD {field_id}"))
+            } else {
+                format!("FIELD {field_id}")
+            };
+            (format!("field-{field_id}"), field_name)
+        }
+        "scan" => (format!("scan-{scan_number}"), format!("Scan {scan_number}")),
+        "spw" => {
+            let spw_name = if spw_id >= 0 && (spw_id as usize) < spectral_window.row_count() {
+                spectral_window
+                    .name(spw_id as usize)
+                    .unwrap_or_else(|_| format!("SPW {spw_id}"))
+            } else {
+                format!("SPW {spw_id}")
+            };
+            (format!("spw-{spw_id}"), spw_name)
+        }
+        "baseline" => {
+            let label = format!("a{antenna1}-a{antenna2}");
+            (format!("baseline-{label}"), label)
+        }
+        "correlation" => {
+            let label = correlation_label.unwrap_or("corr").to_string();
+            (format!("corr-{label}"), label)
+        }
+        _ => ("all".to_string(), "All data".to_string()),
+    }
+}
+
 /// Render one plot payload into a bitmap image.
 pub fn render_listobs_plot_image(
     payload: &ListObsPlotPayload,
@@ -579,6 +1112,9 @@ pub fn render_listobs_plot_image_with_style(
     match payload {
         ListObsPlotPayload::UvCoverage(payload) => {
             render_uv_coverage_plot(&root, payload, theme, style)?
+        }
+        ListObsPlotPayload::VisibilityScatter(payload) => {
+            render_visibility_scatter_plot(&root, payload, theme, style)?
         }
         ListObsPlotPayload::AntennaLayout(payload) => {
             render_antenna_layout_plot(&root, payload, theme, style)?
@@ -979,6 +1515,100 @@ fn render_uv_coverage_plot(
     Ok(())
 }
 
+fn render_visibility_scatter_plot(
+    root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
+    payload: &VisibilityScatterPlotPayload,
+    theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
+) -> Result<(), String> {
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = bounds(
+        payload
+            .series
+            .iter()
+            .flat_map(|series| series.points.iter().copied()),
+    )
+    .ok_or_else(|| "visibility scatter plot has no finite points".to_string())?;
+    if let Some((fixed_min, fixed_max)) = payload.fixed_y_bounds {
+        min_y = fixed_min;
+        max_y = fixed_max;
+    } else {
+        (min_y, max_y) = padded_range(min_y, max_y);
+    }
+    (min_x, max_x) = padded_range(min_x, max_x);
+
+    let x_offset = if matches!(
+        payload.kind,
+        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime
+    ) {
+        scan_timeline_axis_offset(min_x, max_x)
+    } else {
+        0.0
+    };
+    let x_label = if x_offset == 0.0 {
+        payload.x_label.clone()
+    } else if matches!(
+        payload.kind,
+        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime
+    ) {
+        format!("Time (MJD seconds - {:.0})", x_offset)
+    } else {
+        format!("{} - {:.0}", payload.x_label, x_offset)
+    };
+    let x_span = (max_x - min_x).abs();
+    let y_span = (max_y - min_y).abs();
+
+    let mut chart = ChartBuilder::on(root)
+        .margin(style.margin_px)
+        .x_label_area_size(style.label_area_px)
+        .y_label_area_size(style.wide_y_label_area_px)
+        .build_cartesian_2d((min_x - x_offset)..(max_x - x_offset), min_y..max_y)
+        .map_err(|error| error.to_string())?;
+    chart
+        .configure_mesh()
+        .x_desc(&x_label)
+        .y_desc(&payload.y_label)
+        .axis_desc_style(
+            ("sans-serif", style.axis_desc_font_px)
+                .into_font()
+                .color(&rgb(theme.axis)),
+        )
+        .axis_style(rgb(theme.axis))
+        .label_style(
+            ("sans-serif", style.axis_label_font_px)
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
+        .light_line_style(rgb(theme.grid).mix(0.55))
+        .bold_line_style(rgb(theme.grid))
+        .x_labels(6)
+        .y_labels(6)
+        .x_label_formatter(&|value| format_numeric_tick(*value, x_span))
+        .y_label_formatter(&|value| format_numeric_tick(*value, y_span))
+        .draw()
+        .map_err(|error| error.to_string())?;
+
+    let point_radius = style.point_radius_px.saturating_sub(1).max(3);
+    for series in &payload.series {
+        let color = palette_color(&series.color_group, theme);
+        chart
+            .draw_series(PointSeries::of_element(
+                series
+                    .points
+                    .iter()
+                    .map(|(x, y)| (*x - x_offset, *y))
+                    .collect::<Vec<_>>(),
+                point_radius,
+                color.filled(),
+                &|coord, size, draw_style| {
+                    EmptyElement::at(coord) + Circle::new((0, 0), size, draw_style)
+                },
+            ))
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 fn render_antenna_layout_plot(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     payload: &AntennaLayoutPlotPayload,
@@ -1271,6 +1901,23 @@ fn validate_option(kind: ListObsPlotKind, key: &str, value: &str) -> Result<(), 
                 "unsupported option {key:?}={value:?} for spectral_window_coverage"
             )),
         },
+        ListObsPlotKind::AmplitudeVsTime
+        | ListObsPlotKind::PhaseVsTime
+        | ListObsPlotKind::AmplitudeVsUvDistance => match key {
+            "data_column" if matches!(value, "data" | "corrected" | "model") => Ok(()),
+            "color_by"
+                if matches!(
+                    value,
+                    "field" | "scan" | "spw" | "baseline" | "correlation" | "none"
+                ) =>
+            {
+                Ok(())
+            }
+            _ => Err(format!(
+                "unsupported option {key:?}={value:?} for {}",
+                kind.as_str()
+            )),
+        },
     }
 }
 
@@ -1352,6 +1999,20 @@ fn equal_axis_ranges(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> ((f64, f
         (center_x - half_extent, center_x + half_extent),
         (center_y - half_extent, center_y + half_extent),
     )
+}
+
+fn padded_range(min_value: f64, max_value: f64) -> (f64, f64) {
+    let span = (max_value - min_value).abs();
+    if !min_value.is_finite() || !max_value.is_finite() {
+        return (-1.0, 1.0);
+    }
+    if span < 1e-9 {
+        let padding = min_value.abs().max(1.0) * 0.1;
+        (min_value - padding, max_value + padding)
+    } else {
+        let padding = span * 0.08;
+        (min_value - padding, max_value + padding)
+    }
 }
 
 fn bounds(points: impl Iterator<Item = (f64, f64)>) -> Option<(f64, f64, f64, f64)> {

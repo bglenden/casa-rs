@@ -1797,7 +1797,7 @@ fn build_state_intent_lookup(ms: &MeasurementSet) -> MsResult<HashMap<i32, Strin
     Ok(lookup)
 }
 
-fn resolve_selected_rows(
+pub(crate) fn resolve_selected_rows(
     ms: &MeasurementSet,
     options: &ListObsOptions,
 ) -> MsResult<Option<Vec<usize>>> {
@@ -2464,7 +2464,7 @@ fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> 
     Ok(dedup_i32(ids))
 }
 
-fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {
+pub(crate) fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {
     let mut codes = Vec::new();
     for raw_part in value.split(',') {
         let part = raw_part.trim();
@@ -3170,7 +3170,7 @@ fn format_float_compact(value: f64, decimals: usize) -> String {
     formatted
 }
 
-fn stokes_name(code: i32) -> &'static str {
+pub(crate) fn stokes_name(code: i32) -> &'static str {
     match code {
         1 => "I",
         2 => "Q",
@@ -3188,7 +3188,7 @@ fn stokes_name(code: i32) -> &'static str {
     }
 }
 
-fn stokes_code(name: &str) -> Option<i32> {
+pub(crate) fn stokes_code(name: &str) -> Option<i32> {
     match name {
         "I" => Some(1),
         "Q" => Some(2),

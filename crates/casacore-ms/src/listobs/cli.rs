@@ -10,9 +10,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::{ListObsOptions, ListObsOutputFormat, ListObsSummary, ListObsUvCoverage};
+use crate::MeasurementSet;
 use crate::plot::{
     ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotTheme,
-    build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, export_listobs_plot,
+    build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload,
+    build_listobs_visibility_plot_payload, export_listobs_plot,
 };
 
 const UI_SCHEMA_VERSION: u32 = 1;
@@ -109,6 +111,11 @@ pub fn run_env(program_name: &str) -> i32 {
                         )
                         .map_err(|error| error.to_string())
                         .and_then(|coverage| build_listobs_uv_plot_payload(&coverage, spec)),
+                        kind if kind.is_raw_visibility() => MeasurementSet::open(&options.path)
+                            .map_err(|error| error.to_string())
+                            .and_then(|ms| {
+                                build_listobs_visibility_plot_payload(&ms, &options.listobs, spec)
+                            }),
                         _ => {
                             ListObsSummary::from_path_with_options(&options.path, &options.listobs)
                                 .map_err(|error| error.to_string())
@@ -499,6 +506,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                     "antenna_layout",
                     "scan_timeline",
                     "spectral_window_coverage",
+                    "amplitude_vs_time",
+                    "phase_vs_time",
+                    "amplitude_vs_uv_distance",
                 ],
             }),
             option_argument(OptionSpec {

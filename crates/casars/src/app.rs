@@ -22,8 +22,8 @@ use casacore_ms::listobs::cli::{
 };
 use casacore_ms::{
     ListObsOptions, ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
-    ListObsSummary, ListObsUvCoverage, build_listobs_plot_payload_from_summary,
-    build_listobs_uv_plot_payload, export_listobs_plot,
+    ListObsSummary, ListObsUvCoverage, MeasurementSet, build_listobs_plot_payload_from_summary,
+    build_listobs_uv_plot_payload, build_listobs_visibility_plot_payload, export_listobs_plot,
 };
 use casacore_tablebrowser_protocol::{
     BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
@@ -1835,7 +1835,6 @@ struct PlotRequestKey {
     snapshot_generation: u64,
     plot_kind: ListObsPlotKind,
     spec_key: String,
-    uv_sample_count: usize,
 }
 
 impl fmt::Debug for PlotPanelState {
@@ -1875,6 +1874,9 @@ struct PlotWorkspaceState {
     antenna_spec: ListObsPlotSpec,
     scan_spec: ListObsPlotSpec,
     spw_spec: ListObsPlotSpec,
+    amplitude_time_spec: ListObsPlotSpec,
+    phase_time_spec: ListObsPlotSpec,
+    amplitude_uv_distance_spec: ListObsPlotSpec,
     snapshot: Option<ListObsRunSnapshot>,
     next_generation: u64,
     cached_uv_coverage: Option<(u64, ListObsUvCoverage)>,
@@ -1896,6 +1898,11 @@ impl PlotWorkspaceState {
             antenna_spec: ListObsPlotSpec::new(ListObsPlotKind::AntennaLayout),
             scan_spec: ListObsPlotSpec::new(ListObsPlotKind::ScanTimeline),
             spw_spec: ListObsPlotSpec::new(ListObsPlotKind::SpectralWindowCoverage),
+            amplitude_time_spec: ListObsPlotSpec::new(ListObsPlotKind::AmplitudeVsTime),
+            phase_time_spec: ListObsPlotSpec::new(ListObsPlotKind::PhaseVsTime),
+            amplitude_uv_distance_spec: ListObsPlotSpec::new(
+                ListObsPlotKind::AmplitudeVsUvDistance,
+            ),
             snapshot: None,
             next_generation: 1,
             cached_uv_coverage: None,
@@ -7942,6 +7949,11 @@ impl AppState {
             ListObsPlotKind::AntennaLayout => &self.plot_workspace.antenna_spec,
             ListObsPlotKind::ScanTimeline => &self.plot_workspace.scan_spec,
             ListObsPlotKind::SpectralWindowCoverage => &self.plot_workspace.spw_spec,
+            ListObsPlotKind::AmplitudeVsTime => &self.plot_workspace.amplitude_time_spec,
+            ListObsPlotKind::PhaseVsTime => &self.plot_workspace.phase_time_spec,
+            ListObsPlotKind::AmplitudeVsUvDistance => {
+                &self.plot_workspace.amplitude_uv_distance_spec
+            }
         }
     }
 
@@ -7951,6 +7963,11 @@ impl AppState {
             ListObsPlotKind::AntennaLayout => &mut self.plot_workspace.antenna_spec,
             ListObsPlotKind::ScanTimeline => &mut self.plot_workspace.scan_spec,
             ListObsPlotKind::SpectralWindowCoverage => &mut self.plot_workspace.spw_spec,
+            ListObsPlotKind::AmplitudeVsTime => &mut self.plot_workspace.amplitude_time_spec,
+            ListObsPlotKind::PhaseVsTime => &mut self.plot_workspace.phase_time_spec,
+            ListObsPlotKind::AmplitudeVsUvDistance => {
+                &mut self.plot_workspace.amplitude_uv_distance_spec
+            }
         }
     }
 
@@ -7992,6 +8009,20 @@ impl AppState {
             ListObsPlotKind::UvCoverage => {
                 let coverage = self.current_uv_coverage(&snapshot)?;
                 build_listobs_uv_plot_payload(&coverage, self.selected_plot_spec())
+            }
+            kind if kind.is_raw_visibility() => {
+                let Some(path) = snapshot.path.as_ref() else {
+                    return Err(
+                        "Raw visibility plots require a disk-backed MeasurementSet from the last successful run."
+                            .to_string(),
+                    );
+                };
+                let ms = MeasurementSet::open(path).map_err(|error| error.to_string())?;
+                build_listobs_visibility_plot_payload(
+                    &ms,
+                    &snapshot.options,
+                    self.selected_plot_spec(),
+                )
             }
             _ => build_listobs_plot_payload_from_summary(
                 &snapshot.summary,
@@ -8549,6 +8580,31 @@ impl AppState {
         if area.is_empty() {
             return;
         }
+        let spec_key = self.selected_plot_spec().cli_assignments().join(";");
+        let snapshot_generation = self
+            .plot_workspace
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.generation)
+            .unwrap_or_default();
+        let theme_mode = self.theme_mode();
+        let request_key = PlotRequestKey {
+            area,
+            theme_mode,
+            snapshot_generation,
+            plot_kind: self.plot_workspace.selected_plot,
+            spec_key,
+        };
+
+        if self
+            .plot_workspace
+            .panel
+            .as_ref()
+            .is_some_and(|panel| panel.request_key == Some(request_key.clone()))
+        {
+            return;
+        }
+
         let payload = match self.current_plot_payload() {
             Ok(payload) => payload,
             Err(error) => {
@@ -8558,20 +8614,6 @@ impl AppState {
                 return;
             }
         };
-        let spec_key = self.selected_plot_spec().cli_assignments().join(";");
-        let snapshot_generation = self
-            .plot_workspace
-            .snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.generation)
-            .unwrap_or_default();
-        let uv_sample_count = self
-            .plot_workspace
-            .cached_uv_coverage
-            .as_ref()
-            .map(|(_, coverage)| coverage.sample_count)
-            .unwrap_or(0);
-        let theme_mode = self.theme_mode();
 
         let panel = self.plot_workspace.panel.get_or_insert_with(|| {
             let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
@@ -8588,15 +8630,6 @@ impl AppState {
                 image_size: None,
             }
         });
-
-        let request_key = PlotRequestKey {
-            area,
-            theme_mode,
-            snapshot_generation,
-            plot_kind: self.plot_workspace.selected_plot,
-            spec_key,
-            uv_sample_count,
-        };
         if panel.request_key == Some(request_key.clone()) {
             return;
         }
@@ -11959,12 +11992,28 @@ const SPW_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
     },
 ];
 
+const RAW_VISIBILITY_PLOT_CONTROLS: [PlotChoiceDescriptor; 2] = [
+    PlotChoiceDescriptor {
+        key: "data_column",
+        label: "Data column",
+        choices: &["data", "corrected", "model"],
+    },
+    PlotChoiceDescriptor {
+        key: "color_by",
+        label: "Color by",
+        choices: &["field", "spw", "scan", "baseline", "correlation", "none"],
+    },
+];
+
 fn plot_choice_descriptors(kind: ListObsPlotKind) -> &'static [PlotChoiceDescriptor] {
     match kind {
         ListObsPlotKind::UvCoverage => &UV_PLOT_CONTROLS,
         ListObsPlotKind::AntennaLayout => &ANTENNA_PLOT_CONTROLS,
         ListObsPlotKind::ScanTimeline => &SCAN_PLOT_CONTROLS,
         ListObsPlotKind::SpectralWindowCoverage => &SPW_PLOT_CONTROLS,
+        ListObsPlotKind::AmplitudeVsTime
+        | ListObsPlotKind::PhaseVsTime
+        | ListObsPlotKind::AmplitudeVsUvDistance => &RAW_VISIBILITY_PLOT_CONTROLS,
     }
 }
 

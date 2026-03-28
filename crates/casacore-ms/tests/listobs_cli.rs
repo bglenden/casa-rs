@@ -103,6 +103,20 @@ fn listobs_ui_schema_describes_launcher_contract() {
     let plot = schema.argument("plot").expect("plot argument");
     assert!(plot.hidden_in_tui);
     assert_eq!(plot.value_kind, UiValueKind::Choice);
+    assert!(matches!(
+        plot.parser,
+        UiArgumentParser::Option { ref choices, .. }
+            if choices
+                == &vec![
+                    "uv_coverage".to_string(),
+                    "antenna_layout".to_string(),
+                    "scan_timeline".to_string(),
+                    "spectral_window_coverage".to_string(),
+                    "amplitude_vs_time".to_string(),
+                    "phase_vs_time".to_string(),
+                    "amplitude_vs_uv_distance".to_string(),
+                ]
+    ));
 
     let plot_option = schema
         .argument("plot_option")
@@ -384,6 +398,87 @@ fn listobs_plot_mode_exports_pdf() {
     assert!(output_path.is_file());
     let bytes = std::fs::read(&output_path).expect("pdf bytes");
     assert!(bytes.starts_with(b"%PDF-"));
+    assert!(bytes.len() > 512);
+}
+
+#[test]
+fn listobs_plot_mode_exports_amplitude_vs_time_png() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small.ms.tgz");
+    let output_dir = tempdir().expect("tempdir");
+    let output_path = output_dir.path().join("amplitude-vs-time.png");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--plot", "amplitude_vs_time", "--plot-output"])
+        .arg(&output_path)
+        .args([
+            "--plot-format",
+            "png",
+            "--plot-width",
+            "640",
+            "--plot-height",
+            "360",
+        ])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs raw plot export");
+    assert!(output.status.success(), "{output:?}");
+    assert!(output_path.is_file());
+    let bytes = std::fs::read(&output_path).expect("png bytes");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(bytes.len() > 512);
+}
+
+#[test]
+fn listobs_plot_mode_exports_phase_vs_time_png() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small.ms.tgz");
+    let output_dir = tempdir().expect("tempdir");
+    let output_path = output_dir.path().join("phase-vs-time.png");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--plot", "phase_vs_time", "--plot-output"])
+        .arg(&output_path)
+        .args([
+            "--plot-format",
+            "png",
+            "--plot-width",
+            "640",
+            "--plot-height",
+            "360",
+        ])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs raw plot export");
+    assert!(output.status.success(), "{output:?}");
+    assert!(output_path.is_file());
+    let bytes = std::fs::read(&output_path).expect("png bytes");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(bytes.len() > 512);
+}
+
+#[test]
+fn listobs_plot_mode_exports_amplitude_vs_uv_distance_png() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small.ms.tgz");
+    let output_dir = tempdir().expect("tempdir");
+    let output_path = output_dir.path().join("amplitude-vs-uv-distance.png");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_listobs"))
+        .args(["--plot", "amplitude_vs_uv_distance", "--plot-output"])
+        .arg(&output_path)
+        .args([
+            "--plot-format",
+            "png",
+            "--plot-width",
+            "640",
+            "--plot-height",
+            "360",
+        ])
+        .arg(&ms_path)
+        .output()
+        .expect("run listobs raw plot export");
+    assert!(output.status.success(), "{output:?}");
+    assert!(output_path.is_file());
+    let bytes = std::fs::read(&output_path).expect("png bytes");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
     assert!(bytes.len() > 512);
 }
 

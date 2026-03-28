@@ -6074,6 +6074,17 @@ fn plots_tab_loads_uv_coverage_after_listobs_run() {
 }
 
 #[test]
+fn plots_tab_catalog_lists_raw_visibility_plot_kinds() {
+    let (_temp, mut app) = test_app();
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let rendered = render_app(&app, 180, 36);
+    assert!(rendered.contains("Amplitude vs Time"));
+    assert!(rendered.contains("Phase vs Time"));
+    assert!(rendered.contains("Amplitude vs UV Distance"));
+}
+
+#[test]
 fn divider_chevron_can_collapse_parameters_sidebar_from_plots() {
     let (_temp, mut app) = test_app();
     app.set_active_result_tab(ResultTab::Plots);
