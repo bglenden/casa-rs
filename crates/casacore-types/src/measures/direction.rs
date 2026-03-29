@@ -461,6 +461,18 @@ pub fn format_declination_labeled(radians: f64, second_decimals: usize) -> Strin
     format!("{} dms", format_declination(radians, second_decimals))
 }
 
+/// Converts an angular increment in radians to an angular offset in arcseconds.
+///
+/// This matches casacore's default direction-coordinate unit model, where
+/// direction axis increments are angular quantities even when right ascension
+/// values themselves may be formatted as time-like strings for display.
+pub fn angular_increment_arcseconds(radians: f64) -> Quantity {
+    Quantity::with_unit(
+        radians * (180.0 / std::f64::consts::PI) * 3_600.0,
+        Unit::new("arcsec").expect("built-in arcsec unit must parse"),
+    )
+}
+
 /// Converts an angular increment in radians to a right-ascension time offset.
 pub fn right_ascension_increment_seconds(radians: f64) -> Quantity {
     Quantity::with_unit(
@@ -471,10 +483,7 @@ pub fn right_ascension_increment_seconds(radians: f64) -> Quantity {
 
 /// Converts an angular increment in radians to a declination offset.
 pub fn declination_increment_arcseconds(radians: f64) -> Quantity {
-    Quantity::with_unit(
-        radians * (180.0 / std::f64::consts::PI) * 3_600.0,
-        Unit::new("arcsec").expect("built-in arcsec unit must parse"),
-    )
+    angular_increment_arcseconds(radians)
 }
 
 impl fmt::Display for MDirection {
@@ -1500,6 +1509,10 @@ mod tests {
         assert_eq!(
             right_ascension_increment_seconds(-1e-4).to_string(),
             "-1.3750987083139758 s"
+        );
+        assert_eq!(
+            angular_increment_arcseconds(-1e-4).to_string(),
+            "-20.626480624709636 arcsec"
         );
         assert_eq!(
             declination_increment_arcseconds(1e-4).to_string(),

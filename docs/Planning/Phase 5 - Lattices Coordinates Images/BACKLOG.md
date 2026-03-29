@@ -94,3 +94,36 @@ but it needs its own benchmark-guided pass.
 **Reason:** `imexplore` now supports direct pixel activation by mouse click, but
 follow-cursor viewport anchoring and an explicit recenter command need a
 separate UX pass so they do not fight manual scrolling and horizontal pan.
+
+### 12.5 Image Browser Source-Plane And Tile Cache Layer
+
+**Status:** DEFER
+
+**Reason:** `imexplore` currently recomputes source planes on demand. Large-cube
+work needs an explicit bounded cache for decoded/source numeric planes and tile
+reuse keyed by image identity, view window, and non-display axis selections.
+
+### 12.6 Image Browser Interleaved I/O And Compute Pipeline
+
+**Status:** DEFER
+
+**Reason:** The current browser plane path is synchronous. Larger datasets need
+worker-local paged-image handles plus an overlapped read/stats/downsample/stretch
+pipeline so tile I/O and plane calculations can run concurrently instead of as
+one monolithic request.
+
+### 12.7 Image Browser Rendered Raster Cache And Plane Prefetch
+
+**Status:** DEFER
+
+**Reason:** `imexplore` needs a separate bounded raster cache keyed by source
+plane identity, viewport pixel budget, and display settings, plus adjacent-plane
+prefetch for responsive movie mode and cube stepping.
+
+### 12.8 Image Browser Dropped Multi-Probe Spectrum Panels
+
+**Status:** DEFER
+
+**Reason:** Multiple independently pinned spectra with connector lines, drag and
+resize handles, and shared probe state need a fuller windowing and hit-testing
+model than the current linked Plane/Spectrum workspace wave.

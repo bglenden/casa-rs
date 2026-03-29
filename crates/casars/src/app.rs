@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use casacore_imagebrowser_protocol::{
-    ImageBrowserCommand, ImageBrowserFocus, ImageBrowserSnapshot, ImageBrowserView,
-    ImageBrowserViewport,
+    ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserSnapshot,
+    ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImageProfilePayload,
 };
 use casacore_ms::listobs::cli::{
     UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
@@ -22,9 +22,9 @@ use casacore_tablebrowser_protocol::{
     BrowserView as TableBrowserView, BrowserViewport,
 };
 use casacore_types::measures::direction::{
-    format_declination_labeled, format_right_ascension_labeled,
+    angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
 };
-use casacore_types::quanta::{MvAngle, MvTime};
+use casacore_types::quanta::{MvAngle, MvTime, Quantity, Unit};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -36,7 +36,11 @@ use crate::browser_client::{BrowserClient, ImageBrowserClient};
 use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
-use crate::graphics::{ListObsPlotRenderInput, plot_theme, render_plot_image};
+use crate::graphics::{
+    ImagePlaneRenderInput, ImageSpectrumRenderInput, ListObsPlotRenderInput,
+    image_plane_draw_geometry, plot_theme, render_image_plane_image, render_image_spectrum_image,
+    render_plot_image,
+};
 use crate::registry::{BrowserAppKind, RegistryApp};
 use crate::ui::UiLayout;
 
@@ -45,6 +49,8 @@ const RICH_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠴", "⠦"]
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(450);
 const HORIZONTAL_SCROLL_STEP: i16 = 8;
 const IMAGE_PLANE_CELL_WIDTH: usize = 11;
+const IMAGE_MOVIE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
+const IMEXPLORE_WINDOW_FIELD_IDS: [&str; 3] = ["blc", "trc", "inc"];
 const RESULT_TAB_COUNT: usize = 10;
 const BROWSE_SUFFIX: &str = " [browse]";
 
@@ -83,6 +89,9 @@ enum ResultAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BrowserAction {
     CycleView { forward: bool },
+    TogglePlaneMode,
+    ToggleSpectrumPane,
+    ToggleMovie,
     MoveLeft,
     MoveRight,
     MoveUp,
@@ -94,7 +103,7 @@ enum BrowserAction {
     Escape,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum BrowserRequest {
     Resize {
         width: u16,
@@ -120,6 +129,13 @@ enum BrowserRequest {
     SetImageCursor {
         x: usize,
         y: usize,
+    },
+    StepImageNonDisplayAxis {
+        axis: usize,
+        delta: i32,
+    },
+    SetImageViewParameters {
+        parameters: ImageBrowserParameters,
     },
     PageUp {
         pages: usize,
@@ -332,6 +348,7 @@ pub(crate) enum BrowserTab {
     Cells,
     Subtables,
     Plane,
+    Spectrum,
     Metadata,
     Coordinates,
 }
@@ -345,7 +362,12 @@ impl BrowserTab {
         Self::Subtables,
     ];
 
-    pub(crate) const IMAGE_ALL: [Self; 3] = [Self::Metadata, Self::Coordinates, Self::Plane];
+    pub(crate) const IMAGE_ALL: [Self; 4] = [
+        Self::Metadata,
+        Self::Coordinates,
+        Self::Plane,
+        Self::Spectrum,
+    ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -355,6 +377,7 @@ impl BrowserTab {
             Self::Cells => "Cells",
             Self::Subtables => "Subtables",
             Self::Plane => "Plane",
+            Self::Spectrum => "Spectrum",
             Self::Metadata => "Metadata",
             Self::Coordinates => "Coordinates",
         }
@@ -373,6 +396,7 @@ impl BrowserTab {
     fn from_image_view(view: ImageBrowserView) -> Self {
         match view {
             ImageBrowserView::Plane => Self::Plane,
+            ImageBrowserView::Spectrum => Self::Spectrum,
             ImageBrowserView::Metadata => Self::Metadata,
             ImageBrowserView::Coordinates => Self::Coordinates,
         }
@@ -447,6 +471,9 @@ pub(crate) struct AppState {
     browser_session: Option<BrowserSession>,
     spinner_frame: usize,
     dragging_divider: bool,
+    dragging_image_workspace_divider: bool,
+    dragging_image_cursor: bool,
+    dragging_image_profile: bool,
     dragging_result_scrollbar: bool,
     dragging_result_hscrollbar: bool,
     dragging_result_hscrollbar_grab: u16,
@@ -475,8 +502,8 @@ struct BrowserSession {
 
 #[derive(Debug)]
 enum BrowserSessionKind {
-    Table(TableBrowserSession),
-    Image(ImageBrowserSessionState),
+    Table(Box<TableBrowserSession>),
+    Image(Box<ImageBrowserSessionState>),
 }
 
 #[derive(Debug)]
@@ -492,12 +519,143 @@ struct ImageBrowserSessionState {
     snapshot: ImageBrowserSnapshot,
     viewport: ImageBrowserViewport,
     hscroll: u16,
+    selected_non_display_axis: usize,
+    plane_mode: ImagePlaneMode,
+    panel: Option<ImagePlanePanelState>,
+    spectrum_panel: Option<ImageSpectrumPanelState>,
+    snapshot_generation: u64,
+    movie: ImageMovieState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImagePlaneMode {
+    Raster,
+    Spreadsheet,
+}
+
+impl ImagePlaneMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Raster => "raster",
+            Self::Spreadsheet => "spreadsheet",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ImageMovieState {
+    playing: bool,
+    frame_interval: Duration,
+    last_advanced_at: Option<Instant>,
+}
+
+impl Default for ImageMovieState {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            frame_interval: IMAGE_MOVIE_FRAME_INTERVAL,
+            last_advanced_at: None,
+        }
+    }
+}
+
+struct ImagePlanePanelState {
+    renderer: PanelRenderer<ImagePlaneRenderInput, String>,
+    font_size: (u16, u16),
+    request_key: Option<ImagePlaneRequestKey>,
+    last_error: Option<String>,
+    image_size: Option<(u32, u32)>,
+}
+
+struct ImageSpectrumPanelState {
+    renderer: PanelRenderer<ImageSpectrumRenderInput, String>,
+    font_size: (u16, u16),
+    request_key: Option<ImageSpectrumRequestKey>,
+    last_error: Option<String>,
+    image_size: Option<(u32, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImagePlaneRequestKey {
+    area: Rect,
+    theme_mode: ThemeMode,
+    snapshot_generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImageSpectrumRequestKey {
+    area: Rect,
+    theme_mode: ThemeMode,
+    snapshot_generation: u64,
+}
+
+impl fmt::Debug for ImagePlanePanelState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImagePlanePanelState")
+            .field("font_size", &self.font_size)
+            .field("request_key", &self.request_key)
+            .field("last_error", &self.last_error)
+            .field("image_size", &self.image_size)
+            .finish()
+    }
+}
+
+impl fmt::Debug for ImageSpectrumPanelState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImageSpectrumPanelState")
+            .field("font_size", &self.font_size)
+            .field("request_key", &self.request_key)
+            .field("last_error", &self.last_error)
+            .field("image_size", &self.image_size)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BrowserPaneFocus {
     Main,
     Inspector,
+}
+
+impl ImageBrowserSessionState {
+    fn raster_plane_active(&self) -> bool {
+        self.snapshot.active_view == ImageBrowserView::Plane
+            && self.plane_mode == ImagePlaneMode::Raster
+            && self.snapshot.plane.is_some()
+    }
+
+    fn spreadsheet_plane_active(&self) -> bool {
+        self.snapshot.active_view == ImageBrowserView::Plane
+            && self.plane_mode == ImagePlaneMode::Spreadsheet
+    }
+
+    fn movie_available(&self) -> bool {
+        self.snapshot.active_view == ImageBrowserView::Plane
+            && self.selected_non_display_axis_state().is_some()
+    }
+
+    fn linked_profile_active(&self) -> bool {
+        self.raster_plane_active() && self.snapshot.profile.is_some()
+    }
+
+    fn selected_non_display_axis_state(
+        &self,
+    ) -> Option<&casacore_imagebrowser_protocol::ImageNonDisplayAxisState> {
+        self.snapshot
+            .non_display_axes
+            .get(self.selected_non_display_axis)
+            .or_else(|| self.snapshot.non_display_axes.first())
+    }
+
+    fn clamp_selected_non_display_axis(&mut self) {
+        if self.snapshot.non_display_axes.is_empty() {
+            self.selected_non_display_axis = 0;
+        } else {
+            self.selected_non_display_axis = self
+                .selected_non_display_axis
+                .min(self.snapshot.non_display_axes.len().saturating_sub(1));
+        }
+    }
 }
 
 impl BrowserSession {
@@ -551,13 +709,20 @@ impl BrowserSession {
         }
     }
 
+    fn image_parameters(&self) -> Option<ImageBrowserParameters> {
+        match &self.kind {
+            BrowserSessionKind::Image(session) => Some(session.snapshot.parameters.clone()),
+            BrowserSessionKind::Table(_) => None,
+        }
+    }
+
     fn vertical_metrics(&self) -> Option<(usize, usize)> {
         match &self.kind {
             BrowserSessionKind::Table(session) => session
                 .snapshot
                 .vertical_metrics
                 .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1))),
-            BrowserSessionKind::Image(session) => Some((
+            BrowserSessionKind::Image(session) => (!session.raster_plane_active()).then_some((
                 session.snapshot.navigation.total_items,
                 session.snapshot.navigation.viewport_items.max(1),
             )),
@@ -571,6 +736,9 @@ impl BrowserSession {
                 .horizontal_metrics
                 .map(|metrics| (metrics.total_items, metrics.viewport_items.max(1))),
             BrowserSessionKind::Image(session) => {
+                if session.raster_plane_active() {
+                    return None;
+                }
                 let viewport_width = viewport_width as usize;
                 if viewport_width == 0 {
                     return None;
@@ -590,11 +758,17 @@ impl BrowserSession {
                 .vertical_metrics
                 .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
                 .unwrap_or(0),
-            BrowserSessionKind::Image(session) => session
-                .snapshot
-                .navigation
-                .selected_index
-                .min(u16::MAX as usize) as u16,
+            BrowserSessionKind::Image(session) => {
+                if session.raster_plane_active() {
+                    0
+                } else {
+                    session
+                        .snapshot
+                        .navigation
+                        .selected_index
+                        .min(u16::MAX as usize) as u16
+                }
+            }
         }
     }
 
@@ -605,7 +779,13 @@ impl BrowserSession {
                 .horizontal_metrics
                 .map(|metrics| metrics.selected_index.min(u16::MAX as usize) as u16)
                 .unwrap_or(0),
-            BrowserSessionKind::Image(session) => session.hscroll,
+            BrowserSessionKind::Image(session) => {
+                if session.raster_plane_active() {
+                    0
+                } else {
+                    session.hscroll
+                }
+            }
         }
     }
 
@@ -616,7 +796,39 @@ impl BrowserSession {
                 .inspector
                 .as_ref()
                 .map(browser_inspector_lines),
-            BrowserSessionKind::Image(session) => Some(session.snapshot.inspector_lines.clone()),
+            BrowserSessionKind::Image(session) => {
+                let mut lines = session.snapshot.inspector_lines.clone();
+                if !session.snapshot.non_display_axes.is_empty() {
+                    lines.push("Non-display axes:".to_string());
+                    for (index, axis) in session.snapshot.non_display_axes.iter().enumerate() {
+                        let marker = if index == session.selected_non_display_axis {
+                            ">"
+                        } else {
+                            " "
+                        };
+                        lines.push(format!(
+                            "{marker} {} ({}): pixel {} [{}/{}]",
+                            axis.label,
+                            axis.axis,
+                            axis.pixel,
+                            axis.index,
+                            axis.length.saturating_sub(1)
+                        ));
+                    }
+                }
+                lines.push(format!("Plane mode: {}", session.plane_mode.label()));
+                if session.movie_available() {
+                    lines.push(format!(
+                        "Movie: {}",
+                        if session.movie.playing {
+                            "playing"
+                        } else {
+                            "paused"
+                        }
+                    ));
+                }
+                Some(lines)
+            }
         }
     }
 
@@ -865,6 +1077,9 @@ impl AppState {
             browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
+            dragging_image_workspace_divider: false,
+            dragging_image_cursor: false,
+            dragging_image_profile: false,
             dragging_result_scrollbar: false,
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
@@ -914,6 +1129,9 @@ impl AppState {
             browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
+            dragging_image_workspace_divider: false,
+            dragging_image_cursor: false,
+            dragging_image_profile: false,
             dragging_result_scrollbar: false,
             dragging_result_hscrollbar: false,
             dragging_result_hscrollbar_grab: 0,
@@ -1126,7 +1344,10 @@ impl AppState {
 
     pub(crate) fn on_tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % spinner_frames(self.theme_mode()).len();
+        self.advance_image_movie();
         self.pump_plot_panel();
+        self.pump_image_plane_panel();
+        self.pump_image_spectrum_panel();
     }
 
     fn key_profile(&self) -> KeyProfile {
@@ -1377,6 +1598,27 @@ impl AppState {
             {
                 return Some(AppAction::OpenPathChooser);
             }
+            KeyCode::Char('g')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::TogglePlaneMode));
+            }
+            KeyCode::Char('s')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::ToggleSpectrumPane));
+            }
+            KeyCode::Char('m')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::ToggleMovie));
+            }
             KeyCode::Tab if mode == InputMode::Edit => {
                 return Some(AppAction::Edit(EditAction::CommitAndNext));
             }
@@ -1463,6 +1705,9 @@ impl AppState {
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if self.should_stop_image_movie_for_key(key_event) {
+            self.stop_image_movie(false);
+        }
         if let Some(action) = self.resolve_key_action(key_event) {
             self.apply_action(action);
         }
@@ -1492,6 +1737,9 @@ impl AppState {
 
     pub(crate) fn handle_mouse_event(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
         self.cache_output_layout(layout);
+        if self.image_movie_active() {
+            self.stop_image_movie(false);
+        }
         if self.path_chooser.is_some() {
             self.handle_path_chooser_mouse(mouse_event, layout);
             return;
@@ -1503,6 +1751,9 @@ impl AppState {
             MouseEventKind::Up(MouseButton::Left) => {
                 self.finalize_output_selection();
                 self.dragging_divider = false;
+                self.dragging_image_workspace_divider = false;
+                self.dragging_image_cursor = false;
+                self.dragging_image_profile = false;
                 self.dragging_result_scrollbar = false;
                 self.dragging_result_hscrollbar = false;
                 self.dragging_result_hscrollbar_grab = 0;
@@ -1564,6 +1815,9 @@ impl AppState {
             parts.push("[/] views".to_string());
             parts.push("Arrows/hjkl move".to_string());
             parts.push("PgUp/PgDn page".to_string());
+            if self.image_plane_has_linked_profile() {
+                parts.push("s spectrum pane".to_string());
+            }
             if self.browser_uses_parameter_pane() {
                 parts.push("r reopen".to_string());
                 parts.push("a adv".to_string());
@@ -1686,6 +1940,29 @@ impl AppState {
                         "Activate: Enter".to_string(),
                         "Back: Esc  Parent table: Backspace".to_string(),
                     ]);
+                } else if self
+                    .browser_session()
+                    .is_some_and(|session| session.kind() == BrowserAppKind::Image)
+                {
+                    lines.push("Plane view: g toggle raster/spreadsheet".to_string());
+                    lines.push("Spectrum view: follows the active plane cursor".to_string());
+                    if self.image_plane_has_linked_profile() {
+                        lines.push("Plane workspace: s collapse/expand spectrum".to_string());
+                        lines.push("Plane workspace: drag divider to resize spectrum".to_string());
+                        lines.push(
+                            "Plane workspace: click chevron to collapse/expand spectrum"
+                                .to_string(),
+                        );
+                    }
+                    if self
+                        .image_browser_session_state()
+                        .is_some_and(|state| state.movie_available())
+                    {
+                        lines.push("Plane view: m play/pause movie".to_string());
+                    }
+                    if self.image_raster_plane_active() {
+                        lines.push("Raster: click to select active pixel".to_string());
+                    }
                 }
             }
             FocusTarget::BrowserInspector => {
@@ -1700,9 +1977,16 @@ impl AppState {
                 {
                     lines.extend(["Activate: Enter".to_string(), "Back: Esc".to_string()]);
                 } else if self.browser_session().is_some_and(|session| {
-                    matches!(&session.kind, BrowserSessionKind::Image(state) if state.snapshot.hidden_axis.is_some())
+                    matches!(&session.kind, BrowserSessionKind::Image(state) if !state.snapshot.non_display_axes.is_empty())
                 }) {
-                    lines.push("Adjust hidden axis: Left/Right".to_string());
+                    if self
+                        .image_browser_session_state()
+                        .is_some_and(|state| state.snapshot.non_display_axes.len() > 1)
+                    {
+                        lines.push("Select non-display axis: Up/Down".to_string());
+                    }
+                    lines.push("Adjust selected axis: Left/Right".to_string());
+                    lines.push("Use Tab to focus this pane, then arrows or h/j/k/l".to_string());
                 }
             }
         }
@@ -1765,8 +2049,16 @@ impl AppState {
         self.config_store.pane_split_ratio()
     }
 
+    pub(crate) fn image_workspace_split_ratio(&self) -> f32 {
+        self.config_store.image_workspace_split_ratio()
+    }
+
     pub(crate) fn parameters_pane_collapsed(&self) -> bool {
         self.pane_split_ratio() <= 0.0
+    }
+
+    pub(crate) fn image_spectrum_pane_collapsed(&self) -> bool {
+        self.image_workspace_split_ratio() >= 1.0
     }
 
     pub(crate) fn pane_focus(&self) -> PaneFocus {
@@ -1861,15 +2153,29 @@ impl AppState {
         } else if self.running.is_some() {
             lines.push("Structured output will appear when the subprocess exits.".to_string());
         } else if let Some(session) = self.browser_session() {
-            lines.push(format!(
-                "View: {}  Path: {}  Mode: {}",
-                session.active_tab().label(),
-                session.root_path,
-                match session.kind() {
-                    BrowserAppKind::Table => "tablebrowser",
-                    BrowserAppKind::Image => "imexplore",
+            match &session.kind {
+                BrowserSessionKind::Table(_) => lines.push(format!(
+                    "View: {}  Path: {}  Mode: tablebrowser",
+                    session.active_tab().label(),
+                    session.root_path,
+                )),
+                BrowserSessionKind::Image(state) => {
+                    let mut detail = format!(
+                        "View: {}  Path: {}  Mode: imexplore/{}",
+                        session.active_tab().label(),
+                        session.root_path,
+                        state.plane_mode.label(),
+                    );
+                    if state.movie_available() {
+                        detail.push_str(if state.movie.playing {
+                            "  Movie: playing"
+                        } else {
+                            "  Movie: paused"
+                        });
+                    }
+                    lines.push(detail);
                 }
-            ));
+            }
         } else {
             lines.push(format!(
                 "View: {}  Theme: {}  Verbose: {}",
@@ -1896,6 +2202,30 @@ impl AppState {
 
     pub(crate) fn browser_is_active(&self) -> bool {
         self.browser_session.is_some()
+    }
+
+    fn image_browser_session_state(&self) -> Option<&ImageBrowserSessionState> {
+        match &self.browser_session()?.kind {
+            BrowserSessionKind::Image(state) => Some(state),
+            BrowserSessionKind::Table(_) => None,
+        }
+    }
+
+    fn image_browser_session_state_mut(&mut self) -> Option<&mut ImageBrowserSessionState> {
+        match &mut self.browser_session.as_mut()?.kind {
+            BrowserSessionKind::Image(state) => Some(state),
+            BrowserSessionKind::Table(_) => None,
+        }
+    }
+
+    pub(crate) fn image_raster_plane_active(&self) -> bool {
+        self.image_browser_session_state()
+            .is_some_and(ImageBrowserSessionState::raster_plane_active)
+    }
+
+    fn image_movie_active(&self) -> bool {
+        self.image_browser_session_state()
+            .is_some_and(|state| state.movie.playing)
     }
 
     pub(crate) fn browser_tabs(&self) -> &'static [BrowserTab] {
@@ -1952,6 +2282,9 @@ impl AppState {
     }
 
     pub(crate) fn sync_browser_viewport(&mut self, width: u16, height: u16, inspector_height: u16) {
+        if self.defer_image_browser_resize_during_divider_drag() {
+            return;
+        }
         let Some(current_viewport) =
             self.browser_session
                 .as_ref()
@@ -1980,6 +2313,34 @@ impl AppState {
             height,
             inspector_height,
         });
+    }
+
+    fn image_plane_font_size(&self) -> (u16, u16) {
+        self.image_browser_session_state()
+            .and_then(|state| state.panel.as_ref().map(|panel| panel.font_size))
+            .unwrap_or_else(|| {
+                Picker::from_query_stdio()
+                    .unwrap_or_else(|_| Picker::halfblocks())
+                    .font_size()
+            })
+    }
+
+    fn defer_image_browser_resize_during_divider_drag(&self) -> bool {
+        self.dragging_divider
+            && self
+                .browser_session
+                .as_ref()
+                .is_some_and(|session| matches!(session.kind, BrowserSessionKind::Image(_)))
+    }
+
+    fn defer_image_plane_render_during_divider_drag(&self) -> bool {
+        (self.dragging_divider || self.dragging_image_workspace_divider)
+            && self.image_raster_plane_active()
+    }
+
+    fn defer_image_spectrum_render_during_divider_drag(&self) -> bool {
+        (self.dragging_divider || self.dragging_image_workspace_divider)
+            && self.image_plane_has_linked_profile()
     }
 
     pub(crate) fn active_result_content(&self) -> ResultContent {
@@ -2030,6 +2391,17 @@ impl AppState {
     pub(crate) fn set_text_value(&mut self, id: &str, value: &str) {
         self.apply_startup_text_value(id, value.to_string())
             .expect("set text value in test");
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_text_value_and_apply(&mut self, id: &str, value: &str) {
+        let field_index = self
+            .fields
+            .iter()
+            .position(|field| field.schema.id == id)
+            .expect("known test field");
+        self.fields[field_index].set_text(value.to_string());
+        self.apply_live_image_view_parameters_if_needed(field_index);
     }
 
     #[cfg(test)]
@@ -2165,6 +2537,11 @@ impl AppState {
     }
 
     #[cfg(test)]
+    pub(crate) fn field_text_for_test(&self, id: &str) -> Option<String> {
+        self.field_text(id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn structured_for_test(&self) -> Option<&ListObsSummary> {
         self.result.structured.as_ref()
     }
@@ -2190,6 +2567,11 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn pane_split_ratio_for_test(&self) -> f32 {
         self.pane_split_ratio()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_workspace_split_ratio_for_test(&self) -> f32 {
+        self.image_workspace_split_ratio()
     }
 
     #[cfg(test)]
@@ -2224,18 +2606,48 @@ impl AppState {
     }
 
     #[cfg(test)]
-    pub(crate) fn field_text_for_test(&self, id: &str) -> Option<String> {
-        self.fields
-            .iter()
-            .find(|field| field.schema.id == id)
-            .and_then(|field| field.text_value())
-    }
-
-    #[cfg(test)]
     pub(crate) fn prepare_graphics_for_test(&mut self, width: u16, height: u16) {
         let layout = crate::ui::compute_layout(Rect::new(0, 0, width, height), self);
         self.cache_output_layout(&layout);
         self.prepare_graphics(&layout);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_plane_mode_label_for_test(&self) -> Option<&'static str> {
+        self.image_browser_session_state()
+            .map(|state| state.plane_mode.label())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_browser_snapshot_for_test(&self) -> Option<&ImageBrowserSnapshot> {
+        self.image_browser_session_state()
+            .map(|state| &state.snapshot)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_plane_image_size_for_test(&self) -> Option<(u32, u32)> {
+        self.image_browser_session_state()?
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.image_size)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_spectrum_image_size_for_test(&self) -> Option<(u32, u32)> {
+        self.image_browser_session_state()?
+            .spectrum_panel
+            .as_ref()
+            .and_then(|panel| panel.image_size)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_plane_font_size_for_test(&self) -> (u16, u16) {
+        self.image_plane_font_size()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_movie_playing_for_test(&self) -> bool {
+        self.image_movie_active()
     }
 
     pub(crate) fn cache_output_layout(&mut self, layout: &UiLayout) {
@@ -2283,10 +2695,14 @@ impl AppState {
     }
 
     pub(crate) fn prepare_graphics(&mut self, layout: &UiLayout) {
-        if self.active_result_tab != ResultTab::Plots {
+        if self.active_result_tab == ResultTab::Plots {
+            self.ensure_plot_requested(layout);
+        }
+        if self.defer_image_plane_render_during_divider_drag() {
             return;
         }
-        self.ensure_plot_requested(layout);
+        self.ensure_image_plane_requested(layout);
+        self.ensure_image_spectrum_requested(layout);
     }
 
     fn visible_text_buffer_for_area(
@@ -2300,6 +2716,9 @@ impl AppState {
         match target {
             OutputPane::Result => {
                 if self.browser_is_active() {
+                    if self.image_raster_plane_active() {
+                        return None;
+                    }
                     let lines = self.browser_main_content_lines()?;
                     let browser_session = self.browser_session()?;
                     let browser_cells = browser_session.cells_view_active();
@@ -2504,6 +2923,14 @@ impl AppState {
         if state.snapshot.active_view != ImageBrowserView::Plane {
             return None;
         }
+        if state.raster_plane_active() {
+            let canvas = crate::ui::image_plane_canvas_area_for_browser(
+                layout,
+                state.linked_profile_active(),
+                self.image_workspace_split_ratio(),
+            );
+            return image_raster_click_target(state, column, row, canvas);
+        }
 
         let relative_row = usize::from(row.saturating_sub(area.y));
         if relative_row == 0 {
@@ -2527,13 +2954,108 @@ impl AppState {
             return None;
         }
 
-        let pixel_x = chunk_offset / stride;
+        let column = chunk_offset / stride;
         let max_x = image_plane_column_count(&state.snapshot)?;
-        if pixel_x >= max_x {
+        if column >= max_x {
             return None;
         }
+        let pixel_x = image_plane_header_pixel(&state.snapshot, column)?;
 
         Some((pixel_x, pixel_y))
+    }
+
+    fn image_workspace_divider_toggle_hit(&self, column: u16, row: u16, layout: &UiLayout) -> bool {
+        let Some(session) = self.browser_session() else {
+            return false;
+        };
+        let BrowserSessionKind::Image(state) = &session.kind else {
+            return false;
+        };
+        if !state.linked_profile_active() {
+            return false;
+        }
+        crate::ui::image_workspace_divider_toggle_area(
+            layout,
+            true,
+            self.image_workspace_split_ratio(),
+        )
+        .is_some_and(|rect| rect_contains(rect, column, row))
+    }
+
+    fn image_workspace_divider_hit(&self, column: u16, row: u16, layout: &UiLayout) -> bool {
+        let Some(session) = self.browser_session() else {
+            return false;
+        };
+        let BrowserSessionKind::Image(state) = &session.kind else {
+            return false;
+        };
+        if !state.linked_profile_active() {
+            return false;
+        }
+        crate::ui::image_workspace_divider_area(layout, true, self.image_workspace_split_ratio())
+            .is_some_and(|rect| rect_contains(rect, column, row))
+    }
+
+    fn image_workspace_split_ratio_from_mouse(&self, row: u16, layout: &UiLayout) -> Option<f32> {
+        let BrowserSessionKind::Image(state) = &self.browser_session()?.kind else {
+            return None;
+        };
+        if !state.linked_profile_active() {
+            return None;
+        }
+        let area = layout.result_content;
+        if area.height < 4 {
+            return None;
+        }
+        let available_canvas = area.height.saturating_sub(3);
+        if available_canvas < 3 {
+            return None;
+        }
+        let plane_canvas_height = row.saturating_sub(area.y.saturating_add(2));
+        if plane_canvas_height >= available_canvas.saturating_sub(1) {
+            return Some(1.0);
+        }
+        Some(f32::from(plane_canvas_height) / f32::from(available_canvas.max(1)))
+    }
+
+    fn image_spectrum_click_target(
+        &self,
+        column: u16,
+        row: u16,
+        layout: &UiLayout,
+    ) -> Option<(usize, i32)> {
+        let BrowserSessionKind::Image(state) = &self.browser_session()?.kind else {
+            return None;
+        };
+        if !state.linked_profile_active() {
+            return None;
+        }
+        let spectrum_area = crate::ui::image_spectrum_canvas_area(
+            layout,
+            state.linked_profile_active(),
+            self.image_workspace_split_ratio(),
+        )?;
+        if !rect_contains(spectrum_area, column, row) {
+            return None;
+        }
+        let profile = state.snapshot.profile.as_ref()?;
+        let axis_state = state
+            .snapshot
+            .non_display_axes
+            .iter()
+            .find(|axis| axis.axis == profile.axis)
+            .or_else(|| state.selected_non_display_axis_state())?;
+        if profile.samples.is_empty() {
+            return None;
+        }
+        let relative_x = usize::from(column.saturating_sub(spectrum_area.x));
+        let target_index = image_click_sample_index(
+            relative_x,
+            usize::from(spectrum_area.width.max(1)),
+            profile.samples.len(),
+        );
+        let delta = target_index as i32 - axis_state.index as i32;
+        Some((axis_state.axis, delta))
     }
 
     fn finalize_output_selection(&mut self) {
@@ -2676,6 +3198,9 @@ impl AppState {
             BrowserAction::CycleView { forward } => {
                 self.send_browser_command(BrowserRequest::CycleView { forward });
             }
+            BrowserAction::TogglePlaneMode => self.toggle_image_plane_mode(),
+            BrowserAction::ToggleSpectrumPane => self.toggle_image_spectrum_pane(),
+            BrowserAction::ToggleMovie => self.toggle_image_movie(),
             BrowserAction::MoveLeft => {
                 self.send_browser_command(BrowserRequest::MoveLeft { steps: 1 });
             }
@@ -2696,6 +3221,74 @@ impl AppState {
             BrowserAction::Back => self.send_browser_command(BrowserRequest::Back),
             BrowserAction::Escape => self.send_browser_command(BrowserRequest::Escape),
         }
+    }
+
+    fn toggle_image_plane_mode(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        if state.snapshot.active_view != ImageBrowserView::Plane {
+            self.result.status_line =
+                "Plane mode toggle is only available in the Plane view.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        state.plane_mode = match state.plane_mode {
+            ImagePlaneMode::Raster => ImagePlaneMode::Spreadsheet,
+            ImagePlaneMode::Spreadsheet => ImagePlaneMode::Raster,
+        };
+        let mode_label = state.plane_mode.label();
+        if state.plane_mode == ImagePlaneMode::Spreadsheet {
+            keep_image_plane_selection_visible(state);
+        }
+        let _ = state;
+        self.clear_output_selection_for_target(OutputPane::Result);
+        self.result.status_line = format!("Plane view switched to {mode_label} mode.");
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn toggle_image_movie(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        if !state.movie_available() {
+            self.result.status_line =
+                "Movie mode is only available for Plane views with a selected non-display axis."
+                    .into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        state.movie.playing = !state.movie.playing;
+        state.movie.last_advanced_at = Some(Instant::now());
+        self.result.status_line = if state.movie.playing {
+            "Movie playback started.".into()
+        } else {
+            "Movie playback paused.".into()
+        };
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn stop_image_movie(&mut self, update_status: bool) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        if !state.movie.playing {
+            return;
+        }
+        state.movie.playing = false;
+        state.movie.last_advanced_at = None;
+        if update_status {
+            self.result.status_line = "Movie playback paused.".into();
+            self.result.status_kind = StatusKind::Info;
+        }
+    }
+
+    fn should_stop_image_movie_for_key(&self, key_event: KeyEvent) -> bool {
+        self.image_movie_active()
+            && key_event.kind == KeyEventKind::Press
+            && !(matches!(key_event.code, KeyCode::Char('m'))
+                && key_event.modifiers.is_empty()
+                && self.image_browser_session_state().is_some())
     }
 
     fn activate_browser_tab(&mut self, tab: BrowserTab) {
@@ -2874,6 +3467,9 @@ impl AppState {
     }
 
     fn handle_left_mouse_down(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
+        self.dragging_image_workspace_divider = false;
+        self.dragging_image_cursor = false;
+        self.dragging_image_profile = false;
         if layout.in_divider_toggle(mouse_event.column, mouse_event.row) {
             self.clear_output_selection();
             self.dragging_divider = false;
@@ -2949,6 +3545,31 @@ impl AppState {
             return;
         }
 
+        if self.image_workspace_divider_toggle_hit(mouse_event.column, mouse_event.row, layout) {
+            self.clear_output_selection_for_target(OutputPane::Result);
+            self.set_focus_target(FocusTarget::BrowserMain);
+            self.dragging_divider = false;
+            self.dragging_image_workspace_divider = false;
+            self.toggle_image_spectrum_pane();
+            self.last_click = Some(ClickState {
+                target: ClickTarget::Pane(PaneFocus::Result),
+                at: Instant::now(),
+            });
+            return;
+        }
+
+        if self.image_workspace_divider_hit(mouse_event.column, mouse_event.row, layout) {
+            self.clear_output_selection_for_target(OutputPane::Result);
+            self.set_focus_target(FocusTarget::BrowserMain);
+            self.dragging_divider = false;
+            self.dragging_image_workspace_divider = true;
+            self.last_click = Some(ClickState {
+                target: ClickTarget::Pane(PaneFocus::Result),
+                at: Instant::now(),
+            });
+            return;
+        }
+
         if self.active_result_tab == ResultTab::Plots {
             if let Some(row) = layout.plot_catalog_at(mouse_event.column, mouse_event.row) {
                 self.pane_focus = PaneFocus::Result;
@@ -3008,7 +3629,24 @@ impl AppState {
         {
             self.set_focus_target(FocusTarget::BrowserMain);
             self.clear_output_selection_for_target(OutputPane::Result);
+            self.dragging_image_cursor = true;
             self.send_browser_command(BrowserRequest::SetImageCursor { x, y });
+            self.last_click = Some(ClickState {
+                target: ClickTarget::Pane(PaneFocus::Result),
+                at: Instant::now(),
+            });
+            return;
+        }
+
+        if let Some((axis, delta)) =
+            self.image_spectrum_click_target(mouse_event.column, mouse_event.row, layout)
+        {
+            self.set_focus_target(FocusTarget::BrowserMain);
+            self.clear_output_selection_for_target(OutputPane::Result);
+            self.dragging_image_profile = true;
+            if delta != 0 {
+                self.send_browser_command(BrowserRequest::StepImageNonDisplayAxis { axis, delta });
+            }
             self.last_click = Some(ClickState {
                 target: ClickTarget::Pane(PaneFocus::Result),
                 at: Instant::now(),
@@ -3119,6 +3757,15 @@ impl AppState {
             self.config_store.set_pane_split_ratio(ratio);
             return;
         }
+        if self.dragging_image_workspace_divider {
+            self.clear_output_selection_for_target(OutputPane::Result);
+            if let Some(ratio) =
+                self.image_workspace_split_ratio_from_mouse(mouse_event.row, layout)
+            {
+                self.config_store.set_image_workspace_split_ratio(ratio);
+            }
+            return;
+        }
         if self.dragging_result_scrollbar {
             self.clear_output_selection_for_target(OutputPane::Result);
             self.scroll_result_to_mouse(mouse_event.row, layout);
@@ -3127,6 +3774,27 @@ impl AppState {
         if self.dragging_result_hscrollbar {
             self.clear_output_selection_for_target(OutputPane::Result);
             self.scroll_result_horizontally_to_mouse(mouse_event.column, layout);
+            return;
+        }
+        if self.dragging_image_profile {
+            self.clear_output_selection_for_target(OutputPane::Result);
+            if let Some((axis, delta)) =
+                self.image_spectrum_click_target(mouse_event.column, mouse_event.row, layout)
+                && delta != 0
+            {
+                self.set_focus_target(FocusTarget::BrowserMain);
+                self.send_browser_command(BrowserRequest::StepImageNonDisplayAxis { axis, delta });
+            }
+            return;
+        }
+        if self.dragging_image_cursor {
+            self.clear_output_selection_for_target(OutputPane::Result);
+            if let Some((x, y)) =
+                self.image_plane_click_target(mouse_event.column, mouse_event.row, layout)
+            {
+                self.set_focus_target(FocusTarget::BrowserMain);
+                self.send_browser_command(BrowserRequest::SetImageCursor { x, y });
+            }
             return;
         }
         if self.update_output_selection(mouse_event.column, mouse_event.row) {
@@ -3355,6 +4023,19 @@ impl AppState {
         }
     }
 
+    fn toggle_image_spectrum_pane(&mut self) {
+        if !self.image_plane_has_linked_profile() {
+            return;
+        }
+        self.clear_output_selection_for_target(OutputPane::Result);
+        let next = if self.image_spectrum_pane_collapsed() {
+            self.config_store.image_workspace_restore_ratio()
+        } else {
+            1.0
+        };
+        self.config_store.set_image_workspace_split_ratio(next);
+    }
+
     pub(crate) fn active_browser_scroll(&self) -> u16 {
         self.browser_session()
             .map(BrowserSession::active_scroll)
@@ -3396,6 +4077,9 @@ impl AppState {
             ..
         }) = self.browser_session.as_mut()
         {
+            if state.raster_plane_active() {
+                return;
+            }
             let max_scroll = image_browser_max_hscroll(&state.snapshot, state.viewport.width);
             let next = if delta.is_negative() {
                 usize::from(state.hscroll).saturating_sub(delta.unsigned_abs() as usize)
@@ -3422,6 +4106,9 @@ impl AppState {
             ..
         }) = self.browser_session.as_mut()
         {
+            if state.raster_plane_active() {
+                return;
+            }
             let max_scroll = image_browser_max_hscroll(&state.snapshot, state.viewport.width);
             state.hscroll = scroll.min(max_scroll).min(u16::MAX as usize) as u16;
             return;
@@ -3433,6 +4120,16 @@ impl AppState {
             self.scroll_active_browser_horizontal(
                 -((current - scroll).min(i16::MAX as usize) as i16),
             );
+        }
+    }
+
+    fn keep_active_image_plane_selection_visible(&mut self) {
+        if let Some(BrowserSession {
+            kind: BrowserSessionKind::Image(state),
+            ..
+        }) = self.browser_session.as_mut()
+        {
+            keep_image_plane_selection_visible(state);
         }
     }
 
@@ -3754,18 +4451,18 @@ impl AppState {
                             self.pane_focus = PaneFocus::Result;
                             self.browser_session = Some(BrowserSession {
                                 root_path: path,
-                                kind: BrowserSessionKind::Table(TableBrowserSession {
+                                kind: BrowserSessionKind::Table(Box::new(TableBrowserSession {
                                     client,
                                     snapshot,
                                     viewport,
-                                }),
+                                })),
                             });
                         }
                         Err(error) => {
                             let _ = client.cancel();
                             self.report_browser_error(
                                 "Failed to open table browser.",
-                                format!("{error}\n"),
+                                format!("{}\n", error.message()),
                             );
                         }
                     },
@@ -3778,7 +4475,14 @@ impl AppState {
                 }
             }
             BrowserAppKind::Image => {
-                let viewport = ImageBrowserViewport::new(120, 24);
+                let font_size = self.image_plane_font_size();
+                let viewport = ImageBrowserViewport::with_plane_pixels(
+                    120,
+                    24,
+                    0,
+                    120u16.saturating_mul(font_size.0.max(1)),
+                    24u16.saturating_mul(font_size.1.max(1)),
+                );
                 match self
                     .app
                     .resolve_command()
@@ -3787,6 +4491,7 @@ impl AppState {
                     Ok(client) => match client.request_startup(ImageBrowserCommand::OpenRoot {
                         path: path.clone(),
                         viewport,
+                        parameters: Some(self.current_image_browser_parameters()),
                     }) {
                         Ok(snapshot) => {
                             self.result = ResultState {
@@ -3798,19 +4503,34 @@ impl AppState {
                             self.pane_focus = PaneFocus::Result;
                             self.browser_session = Some(BrowserSession {
                                 root_path: path,
-                                kind: BrowserSessionKind::Image(ImageBrowserSessionState {
-                                    client,
-                                    snapshot,
-                                    viewport,
-                                    hscroll: 0,
-                                }),
+                                kind: BrowserSessionKind::Image(Box::new(
+                                    ImageBrowserSessionState {
+                                        client,
+                                        snapshot,
+                                        viewport,
+                                        hscroll: 0,
+                                        selected_non_display_axis: 0,
+                                        plane_mode: ImagePlaneMode::Raster,
+                                        panel: None,
+                                        spectrum_panel: None,
+                                        snapshot_generation: 1,
+                                        movie: ImageMovieState::default(),
+                                    },
+                                )),
                             });
+                            if let Some(parameters) = self
+                                .browser_session()
+                                .and_then(BrowserSession::image_parameters)
+                            {
+                                self.sync_image_parameter_fields(&parameters);
+                            }
+                            self.keep_active_image_plane_selection_visible();
                         }
                         Err(error) => {
                             let _ = client.cancel();
                             self.report_browser_error(
                                 "Failed to open imexplore.",
-                                format!("{error}\n"),
+                                format!("{}\n", error.message()),
                             );
                         }
                     },
@@ -3889,7 +4609,9 @@ impl AppState {
                         }
                         BrowserRequest::Back => Some(BrowserCommand::Back { viewport: None }),
                         BrowserRequest::Escape => Some(BrowserCommand::Escape { viewport: None }),
-                        BrowserRequest::SetImageCursor { .. } => None,
+                        BrowserRequest::SetImageCursor { .. }
+                        | BrowserRequest::StepImageNonDisplayAxis { .. }
+                        | BrowserRequest::SetImageViewParameters { .. } => None,
                     };
                     let Some(request) = request else {
                         return;
@@ -3915,16 +4637,27 @@ impl AppState {
                     }
                 }
                 BrowserSessionKind::Image(state) => {
+                    let font_size = state
+                        .panel
+                        .as_ref()
+                        .map(|panel| panel.font_size)
+                        .unwrap_or_else(|| {
+                            Picker::from_query_stdio()
+                                .unwrap_or_else(|_| Picker::halfblocks())
+                                .font_size()
+                        });
                     let request = match command {
                         BrowserRequest::Resize {
                             width,
                             height,
                             inspector_height,
                         } => Some(ImageBrowserCommand::Resize {
-                            viewport: ImageBrowserViewport::with_inspector_height(
+                            viewport: ImageBrowserViewport::with_plane_pixels(
                                 width,
                                 height,
                                 inspector_height,
+                                width.saturating_mul(font_size.0.max(1)),
+                                height.saturating_mul(font_size.1.max(1)),
                             ),
                         }),
                         BrowserRequest::SetFocus(BrowserPaneFocus::Main) => {
@@ -3942,10 +4675,13 @@ impl AppState {
                         }
                         BrowserRequest::MoveLeft { steps } => {
                             if state.snapshot.focus == ImageBrowserFocus::Inspector
-                                && state.snapshot.hidden_axis.is_some()
+                                && !state.snapshot.non_display_axes.is_empty()
                             {
-                                Some(ImageBrowserCommand::StepHiddenAxis {
-                                    delta: -(steps as i32),
+                                state.selected_non_display_axis_state().map(|axis_state| {
+                                    ImageBrowserCommand::StepNonDisplayAxis {
+                                        axis: axis_state.axis,
+                                        delta: -(steps as i32),
+                                    }
                                 })
                             } else if state.snapshot.active_view != ImageBrowserView::Plane {
                                 state.hscroll = state.hscroll.saturating_sub(steps as u16);
@@ -3959,10 +4695,13 @@ impl AppState {
                         }
                         BrowserRequest::MoveRight { steps } => {
                             if state.snapshot.focus == ImageBrowserFocus::Inspector
-                                && state.snapshot.hidden_axis.is_some()
+                                && !state.snapshot.non_display_axes.is_empty()
                             {
-                                Some(ImageBrowserCommand::StepHiddenAxis {
-                                    delta: steps as i32,
+                                state.selected_non_display_axis_state().map(|axis_state| {
+                                    ImageBrowserCommand::StepNonDisplayAxis {
+                                        axis: axis_state.axis,
+                                        delta: steps as i32,
+                                    }
                                 })
                             } else if state.snapshot.active_view != ImageBrowserView::Plane {
                                 let max_scroll = image_browser_max_hscroll(
@@ -3981,29 +4720,49 @@ impl AppState {
                                 })
                             }
                         }
-                        BrowserRequest::MoveUp { steps } => Some(ImageBrowserCommand::MoveCursor {
-                            dx: 0,
-                            dy: -(steps as i32),
-                        }),
+                        BrowserRequest::MoveUp { steps } => {
+                            if state.snapshot.focus == ImageBrowserFocus::Inspector
+                                && state.snapshot.non_display_axes.len() > 1
+                            {
+                                state.selected_non_display_axis =
+                                    state.selected_non_display_axis.saturating_sub(steps);
+                                state.selected_non_display_axis_state().map(|axis_state| {
+                                    ImageBrowserCommand::SetSelectedNonDisplayAxis {
+                                        axis: axis_state.axis,
+                                    }
+                                })
+                            } else {
+                                Some(ImageBrowserCommand::MoveCursor {
+                                    dx: 0,
+                                    dy: -(steps as i32),
+                                })
+                            }
+                        }
                         BrowserRequest::MoveDown { steps } => {
-                            Some(ImageBrowserCommand::MoveCursor {
-                                dx: 0,
-                                dy: steps as i32,
-                            })
+                            if state.snapshot.focus == ImageBrowserFocus::Inspector
+                                && state.snapshot.non_display_axes.len() > 1
+                            {
+                                state.selected_non_display_axis = state
+                                    .selected_non_display_axis
+                                    .saturating_add(steps)
+                                    .min(state.snapshot.non_display_axes.len().saturating_sub(1));
+                                state.selected_non_display_axis_state().map(|axis_state| {
+                                    ImageBrowserCommand::SetSelectedNonDisplayAxis {
+                                        axis: axis_state.axis,
+                                    }
+                                })
+                            } else {
+                                Some(ImageBrowserCommand::MoveCursor {
+                                    dx: 0,
+                                    dy: steps as i32,
+                                })
+                            }
                         }
                         BrowserRequest::SetImageCursor { x, y } => {
-                            match image_plane_selected_pixel(&state.snapshot) {
-                                Some((current_x, current_y)) => {
-                                    let dx = x as i32 - current_x as i32;
-                                    let dy = y as i32 - current_y as i32;
-                                    if dx == 0 && dy == 0 {
-                                        None
-                                    } else {
-                                        Some(ImageBrowserCommand::MoveCursor { dx, dy })
-                                    }
-                                }
-                                None => None,
-                            }
+                            Some(ImageBrowserCommand::SetCursor { x, y })
+                        }
+                        BrowserRequest::StepImageNonDisplayAxis { axis, delta } => {
+                            Some(ImageBrowserCommand::StepNonDisplayAxis { axis, delta })
                         }
                         BrowserRequest::PageUp { pages } => Some(ImageBrowserCommand::MoveCursor {
                             dx: 0,
@@ -4013,6 +4772,11 @@ impl AppState {
                             Some(ImageBrowserCommand::MoveCursor {
                                 dx: 0,
                                 dy: (pages as i32) * i32::from(state.viewport.height.max(1)),
+                            })
+                        }
+                        BrowserRequest::SetImageViewParameters { ref parameters } => {
+                            Some(ImageBrowserCommand::SetViewWindow {
+                                parameters: parameters.clone(),
                             })
                         }
                         BrowserRequest::Activate
@@ -4030,17 +4794,30 @@ impl AppState {
                                 inspector_height,
                             } = command
                             {
-                                state.viewport = ImageBrowserViewport::with_inspector_height(
+                                state.viewport = ImageBrowserViewport::with_plane_pixels(
                                     width,
                                     height,
                                     inspector_height,
+                                    width.saturating_mul(font_size.0.max(1)),
+                                    height.saturating_mul(font_size.1.max(1)),
                                 );
                             }
                             state.snapshot = snapshot;
+                            state.clamp_selected_non_display_axis();
+                            state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+                            sync_image_parameter_fields(
+                                &mut self.fields,
+                                &state.snapshot.parameters,
+                            );
+                            if !state.movie_available() {
+                                state.movie.playing = false;
+                                state.movie.last_advanced_at = None;
+                            }
                             state.hscroll = state.hscroll.min(
                                 image_browser_max_hscroll(&state.snapshot, state.viewport.width)
                                     .min(u16::MAX as usize) as u16,
                             );
+                            keep_image_plane_selection_visible(state);
                             Ok(())
                         }
                         Err(error) => Err((error, state.client.stderr_text())),
@@ -4068,15 +4845,29 @@ impl AppState {
                 self.result.status_kind = StatusKind::Info;
             }
             Err((error, stderr)) => {
-                if let Some(session) = self.browser_session.take() {
-                    let _ = session.cancel();
+                let keep_session = !error.is_transport()
+                    && self
+                        .browser_session()
+                        .is_some_and(|session| session.kind() == BrowserAppKind::Image);
+                if keep_session {
+                    self.stop_image_movie(false);
+                }
+                if !keep_session {
+                    if let Some(session) = self.browser_session.take() {
+                        let _ = session.cancel();
+                    }
                 }
                 let details = if stderr.trim().is_empty() {
-                    format!("{error}\n")
+                    format!("{}\n", error.message())
                 } else {
-                    format!("{error}\n{stderr}")
+                    format!("{}\n{stderr}", error.message())
                 };
-                self.report_browser_error("Browser command failed. Session closed.", details);
+                let status = if keep_session {
+                    "Browser command failed."
+                } else {
+                    "Browser command failed. Session closed."
+                };
+                self.report_browser_error(status, details);
             }
         }
     }
@@ -4223,6 +5014,206 @@ impl AppState {
         }
     }
 
+    fn pump_image_plane_panel(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        let Some(panel) = state.panel.as_mut() else {
+            return;
+        };
+        match panel.renderer.pump() {
+            Ok(changed) => {
+                if changed {
+                    panel.image_size = panel.renderer.image_size();
+                }
+            }
+            Err(error) => {
+                panel.last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn pump_image_spectrum_panel(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        let Some(panel) = state.spectrum_panel.as_mut() else {
+            return;
+        };
+        match panel.renderer.pump() {
+            Ok(changed) => {
+                if changed {
+                    panel.image_size = panel.renderer.image_size();
+                }
+            }
+            Err(error) => {
+                panel.last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn ensure_image_plane_requested(&mut self, layout: &UiLayout) {
+        if self.defer_image_plane_render_during_divider_drag() {
+            return;
+        }
+        let theme_mode = self.theme_mode();
+        let split_ratio = self.image_workspace_split_ratio();
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        if !state.raster_plane_active() {
+            return;
+        }
+        let area = crate::ui::image_plane_canvas_area_for_browser(
+            layout,
+            state.linked_profile_active(),
+            split_ratio,
+        );
+        if area.is_empty() {
+            return;
+        }
+        let Some(raster) = state.snapshot.plane.clone() else {
+            return;
+        };
+        let panel = state.panel.get_or_insert_with(|| {
+            let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+            let font_size = picker.font_size();
+            let renderer = PanelRenderer::new(picker, Resize::Scale(None), |job| {
+                render_image_plane_image(job.max_pixel_width, job.max_pixel_height, &job.input)
+            })
+            .expect("image plane panel renderer");
+            ImagePlanePanelState {
+                renderer,
+                font_size,
+                request_key: None,
+                last_error: None,
+                image_size: None,
+            }
+        });
+        let request_key = ImagePlaneRequestKey {
+            area,
+            theme_mode,
+            snapshot_generation: state.snapshot_generation,
+        };
+        if panel.request_key == Some(request_key.clone()) {
+            return;
+        }
+        let cursor = image_plane_sample_cursor(&state.snapshot);
+        let sampled_shape = image_plane_sampled_shape(&state.snapshot);
+        let pixel_width = u32::from(area.width.max(1)) * u32::from(panel.font_size.0.max(1));
+        let pixel_height = u32::from(area.height.max(1)) * u32::from(panel.font_size.1.max(1));
+        if let Err(error) = panel.renderer.request(
+            area,
+            pixel_width.max(1),
+            pixel_height.max(1),
+            ImagePlaneRenderInput {
+                raster,
+                cursor_sample: cursor,
+                sampled_shape,
+                display_aspect_ratio: image_plane_display_aspect_ratio(&state.snapshot),
+                theme_mode,
+            },
+        ) {
+            panel.last_error = Some(error.to_string());
+            return;
+        }
+        panel.request_key = Some(request_key);
+    }
+
+    fn ensure_image_spectrum_requested(&mut self, layout: &UiLayout) {
+        let theme_mode = self.theme_mode();
+        if self.defer_image_spectrum_render_during_divider_drag() {
+            return;
+        }
+        let split_ratio = self.image_workspace_split_ratio();
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        if !state.linked_profile_active() {
+            return;
+        }
+        let Some(area) = crate::ui::image_spectrum_canvas_area(layout, true, split_ratio) else {
+            return;
+        };
+        if area.is_empty() {
+            return;
+        }
+        let Some(profile) = state.snapshot.profile.clone() else {
+            return;
+        };
+        let panel = state.spectrum_panel.get_or_insert_with(|| {
+            let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+            let font_size = picker.font_size();
+            let renderer = PanelRenderer::new(picker, Resize::Fit(None), |job| {
+                render_image_spectrum_image(job.max_pixel_width, job.max_pixel_height, &job.input)
+            })
+            .expect("image spectrum panel renderer");
+            ImageSpectrumPanelState {
+                renderer,
+                font_size,
+                request_key: None,
+                last_error: None,
+                image_size: None,
+            }
+        });
+        let request_key = ImageSpectrumRequestKey {
+            area,
+            theme_mode,
+            snapshot_generation: state.snapshot_generation,
+        };
+        if panel.request_key == Some(request_key.clone()) {
+            return;
+        }
+        let pixel_width = u32::from(area.width.max(1)) * u32::from(panel.font_size.0.max(1));
+        let pixel_height = u32::from(area.height.max(1)) * u32::from(panel.font_size.1.max(1));
+        if let Err(error) = panel.renderer.request(
+            area,
+            pixel_width.max(1),
+            pixel_height.max(1),
+            ImageSpectrumRenderInput {
+                profile,
+                theme_mode,
+            },
+        ) {
+            panel.last_error = Some(error.to_string());
+            return;
+        }
+        panel.request_key = Some(request_key);
+    }
+
+    fn advance_image_movie(&mut self) {
+        let Some(state) = self.image_browser_session_state() else {
+            return;
+        };
+        if !state.movie.playing || !state.movie_available() {
+            return;
+        }
+        let now = Instant::now();
+        if state
+            .movie
+            .last_advanced_at
+            .is_some_and(|last| now.duration_since(last) < state.movie.frame_interval)
+        {
+            return;
+        }
+        let Some((axis, index, length)) = state
+            .selected_non_display_axis_state()
+            .map(|axis_state| (axis_state.axis, axis_state.index, axis_state.length))
+        else {
+            self.stop_image_movie(false);
+            return;
+        };
+        let delta = if index + 1 < length {
+            1
+        } else {
+            -((length.saturating_sub(1)) as i32)
+        };
+        if let Some(state) = self.image_browser_session_state_mut() {
+            state.movie.last_advanced_at = Some(now);
+        }
+        self.send_browser_command(BrowserRequest::StepImageNonDisplayAxis { axis, delta });
+    }
+
     fn ensure_plot_requested(&mut self, layout: &UiLayout) {
         if self.active_result_tab != ResultTab::Plots {
             return;
@@ -4324,6 +5315,78 @@ impl AppState {
             .panel
             .as_ref()
             .and_then(|panel| panel.last_error.as_deref())
+    }
+
+    pub(crate) fn image_plane_protocol(&self) -> Option<&PanelProtocol> {
+        self.image_browser_session_state()?
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.renderer.protocol())
+    }
+
+    pub(crate) fn image_plane_pending(&self) -> bool {
+        self.image_browser_session_state()
+            .and_then(|state| state.panel.as_ref())
+            .is_some_and(|panel| panel.renderer.is_pending())
+    }
+
+    pub(crate) fn image_plane_last_error(&self) -> Option<&str> {
+        self.image_browser_session_state()?
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.last_error.as_deref())
+    }
+
+    pub(crate) fn image_spectrum_protocol(&self) -> Option<&PanelProtocol> {
+        self.image_browser_session_state()?
+            .spectrum_panel
+            .as_ref()
+            .and_then(|panel| panel.renderer.protocol())
+    }
+
+    pub(crate) fn image_spectrum_pending(&self) -> bool {
+        self.image_browser_session_state()
+            .and_then(|state| state.spectrum_panel.as_ref())
+            .is_some_and(|panel| panel.renderer.is_pending())
+    }
+
+    pub(crate) fn image_spectrum_last_error(&self) -> Option<&str> {
+        self.image_browser_session_state()?
+            .spectrum_panel
+            .as_ref()
+            .and_then(|panel| panel.last_error.as_deref())
+    }
+
+    pub(crate) fn image_plane_axis_labels(&self) -> Option<(String, String)> {
+        let state = self.image_browser_session_state()?;
+        let x = state.snapshot.display_axes.first()?;
+        let y = state.snapshot.display_axes.get(1)?;
+        Some((format_image_axis_label(x), format_image_axis_label(y)))
+    }
+
+    pub(crate) fn image_plane_has_linked_profile(&self) -> bool {
+        self.image_browser_session_state()
+            .is_some_and(ImageBrowserSessionState::linked_profile_active)
+    }
+
+    pub(crate) fn image_profile_title_line(&self) -> Option<String> {
+        let profile = self
+            .image_browser_session_state()?
+            .snapshot
+            .profile
+            .as_ref()?;
+        let kind = if profile.coord_type.eq_ignore_ascii_case("Spectral") {
+            "Spectrum"
+        } else {
+            "Profile"
+        };
+        let axis_label = format_profile_axis_label(profile);
+        let selected = profile
+            .samples
+            .get(profile.selected_sample_index)
+            .map(|sample| format_profile_selected_label(sample, &profile.value_unit))
+            .unwrap_or_else(|| "<none>".to_string());
+        Some(format!("{kind}: {axis_label}  Selected: {selected}"))
     }
 
     pub(crate) fn plot_focus(&self) -> PlotPaneFocus {
@@ -4524,6 +5587,7 @@ impl AppState {
                     field.set_text(edit_state.buffer);
                     self.mark_plot_snapshot_dirty();
                 }
+                self.apply_live_image_view_parameters_if_needed(field_index);
             }
             EditTarget::PlotExportPath => {
                 self.plot_workspace.export_path = edit_state.buffer.trim().to_string();
@@ -4728,6 +5792,36 @@ impl AppState {
             .iter()
             .find(|field| field.schema.id == id)
             .and_then(|field| field.text_value())
+    }
+
+    fn current_image_browser_parameters(&self) -> ImageBrowserParameters {
+        ImageBrowserParameters {
+            blc: self.field_text("blc").unwrap_or_default(),
+            trc: self.field_text("trc").unwrap_or_default(),
+            inc: self.field_text("inc").unwrap_or_default(),
+        }
+    }
+
+    fn sync_image_parameter_fields(&mut self, parameters: &ImageBrowserParameters) {
+        sync_image_parameter_fields(&mut self.fields, parameters);
+    }
+
+    fn apply_live_image_view_parameters_if_needed(&mut self, field_index: usize) {
+        let Some(field) = self.fields.get(field_index) else {
+            return;
+        };
+        if !IMEXPLORE_WINDOW_FIELD_IDS.contains(&field.schema.id.as_str()) {
+            return;
+        }
+        if !self
+            .browser_session()
+            .is_some_and(|session| session.kind() == BrowserAppKind::Image)
+        {
+            return;
+        }
+        self.send_browser_command(BrowserRequest::SetImageViewParameters {
+            parameters: self.current_image_browser_parameters(),
+        });
     }
 
     fn bool_field_value(&self, id: &str) -> Option<bool> {
@@ -5870,6 +6964,18 @@ fn image_browser_content_width(snapshot: &ImageBrowserSnapshot) -> usize {
         .unwrap_or(0)
 }
 
+fn sync_image_parameter_fields(fields: &mut [FormField], parameters: &ImageBrowserParameters) {
+    for (id, value) in [
+        ("blc", parameters.blc.as_str()),
+        ("trc", parameters.trc.as_str()),
+        ("inc", parameters.inc.as_str()),
+    ] {
+        if let Some(field) = fields.iter_mut().find(|field| field.schema.id == id) {
+            field.set_text(value.to_string());
+        }
+    }
+}
+
 fn image_plane_column_count(snapshot: &ImageBrowserSnapshot) -> Option<usize> {
     let header = snapshot.content_lines.first()?;
     let pipe_index = header.find('|')?;
@@ -5878,27 +6984,210 @@ fn image_plane_column_count(snapshot: &ImageBrowserSnapshot) -> Option<usize> {
     Some(right_width / stride)
 }
 
-fn image_plane_selected_pixel(snapshot: &ImageBrowserSnapshot) -> Option<(usize, usize)> {
+fn image_plane_header_pixel(snapshot: &ImageBrowserSnapshot, column: usize) -> Option<usize> {
     let header = snapshot.content_lines.first()?;
     let pipe_index = header.find('|')?;
     let stride = IMAGE_PLANE_CELL_WIDTH + 1;
+    let start = pipe_index
+        .checked_add(2)?
+        .checked_add(column.checked_mul(stride)?)?;
+    let text = slice_chars(header, start, start + IMAGE_PLANE_CELL_WIDTH);
+    text.trim().parse::<usize>().ok()
+}
 
+fn image_plane_selected_span(snapshot: &ImageBrowserSnapshot) -> Option<(usize, usize)> {
     for line in snapshot.content_lines.iter().skip(1) {
-        let Some(selected_index) = line.find('[') else {
+        let Some(start) = line.find('[') else {
             continue;
         };
-        let y = line[..pipe_index].trim().parse::<usize>().ok()?;
-        let after_pipe = selected_index.checked_sub(pipe_index + 1)?;
-        let x = after_pipe.checked_sub(1)? / stride;
-        return Some((x, y));
+        let Some(end) = line[start..].find(']').map(|offset| start + offset + 1) else {
+            continue;
+        };
+        return Some((start, end));
     }
 
     None
 }
 
+fn image_plane_sample_cursor(snapshot: &ImageBrowserSnapshot) -> Option<(usize, usize)> {
+    let cursor = snapshot.plane_cursor.as_ref()?;
+    Some((cursor.sampled_x, cursor.sampled_y))
+}
+
+fn image_plane_sampled_shape(snapshot: &ImageBrowserSnapshot) -> Option<(usize, usize)> {
+    let display_x = snapshot.display_axes.first()?;
+    let display_y = snapshot.display_axes.get(1)?;
+    if display_x.sampled_len == 0 || display_y.sampled_len == 0 {
+        return None;
+    }
+    Some((display_x.sampled_len, display_y.sampled_len))
+}
+
+fn image_raster_click_target(
+    state: &ImageBrowserSessionState,
+    column: u16,
+    row: u16,
+    canvas: Rect,
+) -> Option<(usize, usize)> {
+    let font_size = state
+        .panel
+        .as_ref()
+        .map(|panel| panel.font_size)
+        .unwrap_or((1, 1));
+    let draw_rect = image_plane_draw_rect(canvas, &state.snapshot, font_size)?;
+    if !rect_contains(draw_rect, column, row) {
+        return None;
+    }
+    let display_x = state.snapshot.display_axes.first()?;
+    let display_y = state.snapshot.display_axes.get(1)?;
+    if display_x.sampled_len == 0 || display_y.sampled_len == 0 {
+        return None;
+    }
+    let relative_x = usize::from(column.saturating_sub(draw_rect.x));
+    let relative_y = usize::from(row.saturating_sub(draw_rect.y));
+    let sampled_x = image_click_sample_index(
+        relative_x,
+        usize::from(draw_rect.width.max(1)),
+        display_x.sampled_len,
+    );
+    let sampled_y = image_click_sample_index(
+        relative_y,
+        usize::from(draw_rect.height.max(1)),
+        display_y.sampled_len,
+    );
+    Some((
+        display_x.blc + sampled_x * display_x.inc,
+        display_y.blc + sampled_y * display_y.inc,
+    ))
+}
+
+pub(crate) fn image_plane_draw_rect(
+    canvas: Rect,
+    snapshot: &ImageBrowserSnapshot,
+    font_size: (u16, u16),
+) -> Option<Rect> {
+    if canvas.is_empty() {
+        return None;
+    }
+    let font_width = u32::from(font_size.0.max(1));
+    let font_height = u32::from(font_size.1.max(1));
+    let geometry = image_plane_draw_geometry(
+        u32::from(canvas.width.max(1)) * font_width,
+        u32::from(canvas.height.max(1)) * font_height,
+        image_plane_display_aspect_ratio(snapshot),
+    );
+    let start_x = geometry.x / font_width;
+    let start_y = geometry.y / font_height;
+    let end_x = div_ceil_u32(geometry.x + geometry.width, font_width);
+    let end_y = div_ceil_u32(geometry.y + geometry.height, font_height);
+    Some(Rect {
+        x: canvas.x.saturating_add(start_x as u16),
+        y: canvas.y.saturating_add(start_y as u16),
+        width: (end_x.saturating_sub(start_x)).min(u32::from(canvas.width)) as u16,
+        height: (end_y.saturating_sub(start_y)).min(u32::from(canvas.height)) as u16,
+    })
+}
+
+fn image_click_sample_index(relative: usize, draw_len: usize, sampled_len: usize) -> usize {
+    if draw_len == 0 || sampled_len == 0 {
+        return 0;
+    }
+    let numerator = (relative.saturating_mul(2).saturating_add(1)).saturating_mul(sampled_len);
+    (numerator / draw_len.saturating_mul(2)).min(sampled_len.saturating_sub(1))
+}
+
+fn div_ceil_u32(value: u32, divisor: u32) -> u32 {
+    value.div_ceil(divisor.max(1))
+}
+
+fn image_plane_display_aspect_ratio(snapshot: &ImageBrowserSnapshot) -> Option<f64> {
+    let x = snapshot.display_axes.first()?;
+    let y = snapshot.display_axes.get(1)?;
+    let x_span = x.trc.saturating_sub(x.blc).saturating_add(1).max(1) as f64;
+    let y_span = y.trc.saturating_sub(y.blc).saturating_add(1).max(1) as f64;
+    let (x_scale, y_scale) = image_plane_axis_scales(x, y);
+    let aspect = (x_span * x_scale) / (y_span * y_scale);
+    (aspect.is_finite() && aspect > 0.0).then_some(aspect)
+}
+
+fn image_plane_axis_scales(x: &ImageDisplayAxisState, y: &ImageDisplayAxisState) -> (f64, f64) {
+    if is_direction_display_axis(&x.name) && is_direction_display_axis(&y.name) {
+        return (
+            x.world_increment
+                .map(|increment| angular_increment_arcseconds(increment).value().abs())
+                .filter(|value| *value > 0.0)
+                .unwrap_or(1.0),
+            y.world_increment
+                .map(|increment| angular_increment_arcseconds(increment).value().abs())
+                .filter(|value| *value > 0.0)
+                .unwrap_or(1.0),
+        );
+    }
+    if !x.unit.is_empty() && x.unit == y.unit {
+        return (
+            x.world_increment
+                .map(f64::abs)
+                .filter(|value| *value > 0.0)
+                .unwrap_or(1.0),
+            y.world_increment
+                .map(f64::abs)
+                .filter(|value| *value > 0.0)
+                .unwrap_or(1.0),
+        );
+    }
+    (1.0, 1.0)
+}
+
+fn is_direction_display_axis(name: &str) -> bool {
+    name.eq_ignore_ascii_case("Right Ascension")
+        || name.eq_ignore_ascii_case("RA")
+        || name.eq_ignore_ascii_case("Declination")
+        || name.eq_ignore_ascii_case("DEC")
+}
+
+fn format_image_axis_label(axis: &ImageDisplayAxisState) -> String {
+    if axis.unit.is_empty() {
+        axis.name.clone()
+    } else {
+        format!("{} [{}]", axis.name, axis.unit)
+    }
+}
+
 fn image_browser_max_hscroll(snapshot: &ImageBrowserSnapshot, viewport_width: u16) -> usize {
     let viewport_width = usize::from(viewport_width);
     image_browser_content_width(snapshot).saturating_sub(viewport_width)
+}
+
+fn image_plane_visible_width(state: &ImageBrowserSessionState) -> usize {
+    let viewport_width = usize::from(state.viewport.width.max(1));
+    let needs_vscroll =
+        state.snapshot.navigation.total_items > state.snapshot.navigation.viewport_items;
+    viewport_width.saturating_sub(usize::from(needs_vscroll))
+}
+
+fn keep_image_plane_selection_visible(state: &mut ImageBrowserSessionState) {
+    if !state.spreadsheet_plane_active() {
+        return;
+    }
+
+    let Some((selected_start, selected_end)) = image_plane_selected_span(&state.snapshot) else {
+        return;
+    };
+    let visible_width = image_plane_visible_width(state);
+    if visible_width == 0 {
+        return;
+    }
+
+    let current = usize::from(state.hscroll);
+    let max_scroll = image_browser_max_hscroll(&state.snapshot, state.viewport.width);
+    let next = if selected_start < current {
+        selected_start
+    } else if selected_end > current.saturating_add(visible_width) {
+        selected_end.saturating_sub(visible_width)
+    } else {
+        current
+    };
+    state.hscroll = next.min(max_scroll).min(u16::MAX as usize) as u16;
 }
 
 fn slice_chars(text: &str, start: usize, end: usize) -> String {
@@ -5983,8 +7272,110 @@ fn format_world_axis_probe_value(axis_name: &str, unit: &str, value: f64) -> Str
     if unit.is_empty() {
         format!("{value} unitless")
     } else {
-        format!("{value} {unit}")
+        format_numeric_value_with_unit(value, unit)
     }
+}
+
+fn format_numeric_value_with_unit(value: f64, unit: &str) -> String {
+    format_frequency_quantity_auto(value, unit).unwrap_or_else(|| format!("{value} {unit}"))
+}
+
+fn format_profile_axis_label(profile: &ImageProfilePayload) -> String {
+    let unit = frequency_display_unit_for_profile(profile)
+        .map(str::to_string)
+        .unwrap_or_else(|| profile.axis_unit.clone());
+    if unit.is_empty() {
+        profile.axis_name.clone()
+    } else {
+        format!("{} [{unit}]", profile.axis_name)
+    }
+}
+
+fn frequency_display_unit_for_profile(profile: &ImageProfilePayload) -> Option<&'static str> {
+    let axis_unit = profile.axis_unit.as_str();
+    let hz = Unit::new("Hz").ok()?;
+    let axis = Unit::new(axis_unit).ok()?;
+    if !axis.conformant(&hz) {
+        return None;
+    }
+    let max_abs_hz = profile
+        .samples
+        .iter()
+        .filter_map(|sample| {
+            sample
+                .world_axis
+                .as_ref()
+                .filter(|axis| axis.unit == axis_unit)
+                .and_then(|axis| Quantity::new(axis.value, axis_unit).ok())
+                .and_then(|quantity| quantity.get_value_in(&hz).ok())
+                .map(f64::abs)
+        })
+        .fold(0.0, f64::max);
+    Some(if max_abs_hz >= 1e9 {
+        "GHz"
+    } else if max_abs_hz >= 1e6 {
+        "MHz"
+    } else if max_abs_hz >= 1e3 {
+        "kHz"
+    } else {
+        "Hz"
+    })
+}
+
+fn format_profile_selected_label(
+    sample: &casacore_imagebrowser_protocol::ImageProfileSampleState,
+    value_unit: &str,
+) -> String {
+    let world = sample
+        .world_axis
+        .as_ref()
+        .map(|axis| format_world_axis_probe_value(&axis.name, &axis.unit, axis.value))
+        .unwrap_or_else(|| format!("pixel {}", sample.pixel_index));
+    let value = if sample.masked {
+        "masked".to_string()
+    } else if sample.finite && sample.value.is_finite() {
+        if value_unit.is_empty() {
+            format!("{:.6e}", sample.value)
+        } else {
+            format!("{:.6e} {value_unit}", sample.value)
+        }
+    } else {
+        sample.value.to_string()
+    };
+    format!("{world} -> {value}")
+}
+
+fn format_frequency_quantity_auto(value: f64, unit: &str) -> Option<String> {
+    let quantity = Quantity::new(value, unit).ok()?;
+    let hz = Unit::new("Hz").ok()?;
+    if !quantity.unit().conformant(&hz) {
+        return None;
+    }
+    let abs_hz = quantity.get_value_in(&hz).ok()?.abs();
+    let display_unit = if abs_hz >= 1e9 {
+        "GHz"
+    } else if abs_hz >= 1e6 {
+        "MHz"
+    } else if abs_hz >= 1e3 {
+        "kHz"
+    } else {
+        "Hz"
+    };
+    let converted = quantity.get_value_in(&Unit::new(display_unit).ok()?).ok()?;
+    Some(format!(
+        "{} {display_unit}",
+        trim_float_text(format!("{converted:.6}"))
+    ))
+}
+
+fn trim_float_text(mut text: String) -> String {
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" { "0".into() } else { text }
 }
 
 fn render_browser_scalar(value: &BrowserScalarValue) -> String {

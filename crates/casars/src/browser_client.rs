@@ -20,6 +20,29 @@ use crate::registry::ResolvedCommand;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 120_000;
 
+#[derive(Debug, Clone)]
+pub(crate) enum SessionRequestError {
+    Backend(String),
+    Transport(String),
+}
+
+impl SessionRequestError {
+    pub(crate) fn message(&self) -> &str {
+        match self {
+            Self::Backend(message) | Self::Transport(message) => message,
+        }
+    }
+
+    pub(crate) fn is_transport(&self) -> bool {
+        matches!(self, Self::Transport(_))
+    }
+
+    #[cfg(test)]
+    fn contains(&self, needle: &str) -> bool {
+        self.message().contains(needle)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct BrowserClient {
     process: SessionProcessClient,
@@ -201,14 +224,17 @@ impl BrowserClient {
         })
     }
 
-    pub(crate) fn request(&self, command: BrowserCommand) -> Result<BrowserSnapshot, String> {
+    pub(crate) fn request(
+        &self,
+        command: BrowserCommand,
+    ) -> Result<BrowserSnapshot, SessionRequestError> {
         self.request_with_timeout(command, request_timeout())
     }
 
     pub(crate) fn request_startup(
         &self,
         command: BrowserCommand,
-    ) -> Result<BrowserSnapshot, String> {
+    ) -> Result<BrowserSnapshot, SessionRequestError> {
         self.request_with_timeout(command, startup_timeout())
     }
 
@@ -224,12 +250,15 @@ impl BrowserClient {
         &self,
         command: BrowserCommand,
         timeout: Duration,
-    ) -> Result<BrowserSnapshot, String> {
-        let payload = serde_json::to_string(&BrowserRequestEnvelope::new(command))
-            .map_err(|error| format!("serialize tablebrowser request: {error}"))?;
+    ) -> Result<BrowserSnapshot, SessionRequestError> {
+        let payload =
+            serde_json::to_string(&BrowserRequestEnvelope::new(command)).map_err(|error| {
+                SessionRequestError::Transport(format!("serialize tablebrowser request: {error}"))
+            })?;
         let line = self
             .process
-            .request_raw(&payload, timeout, "tablebrowser")?;
+            .request_raw(&payload, timeout, "tablebrowser")
+            .map_err(SessionRequestError::Transport)?;
         let response =
             serde_json::from_str::<BrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
                 BrowserResponseEnvelope::error(
@@ -239,7 +268,10 @@ impl BrowserClient {
             });
         match response.response {
             BrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
-            BrowserResponse::Error(error) => Err(format!("{}: {}", error.code, error.message)),
+            BrowserResponse::Error(error) => Err(SessionRequestError::Backend(format!(
+                "{}: {}",
+                error.code, error.message
+            ))),
         }
     }
 }
@@ -254,14 +286,14 @@ impl ImageBrowserClient {
     pub(crate) fn request(
         &self,
         command: ImageBrowserCommand,
-    ) -> Result<ImageBrowserSnapshot, String> {
+    ) -> Result<ImageBrowserSnapshot, SessionRequestError> {
         self.request_with_timeout(command, request_timeout())
     }
 
     pub(crate) fn request_startup(
         &self,
         command: ImageBrowserCommand,
-    ) -> Result<ImageBrowserSnapshot, String> {
+    ) -> Result<ImageBrowserSnapshot, SessionRequestError> {
         self.request_with_timeout(command, startup_timeout())
     }
 
@@ -277,10 +309,15 @@ impl ImageBrowserClient {
         &self,
         command: ImageBrowserCommand,
         timeout: Duration,
-    ) -> Result<ImageBrowserSnapshot, String> {
-        let payload = serde_json::to_string(&ImageBrowserRequestEnvelope::new(command))
-            .map_err(|error| format!("serialize imexplore request: {error}"))?;
-        let line = self.process.request_raw(&payload, timeout, "imexplore")?;
+    ) -> Result<ImageBrowserSnapshot, SessionRequestError> {
+        let payload =
+            serde_json::to_string(&ImageBrowserRequestEnvelope::new(command)).map_err(|error| {
+                SessionRequestError::Transport(format!("serialize imexplore request: {error}"))
+            })?;
+        let line = self
+            .process
+            .request_raw(&payload, timeout, "imexplore")
+            .map_err(SessionRequestError::Transport)?;
         let response =
             serde_json::from_str::<ImageBrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
                 ImageBrowserResponseEnvelope::error(
@@ -290,7 +327,10 @@ impl ImageBrowserClient {
             });
         match response.response {
             ImageBrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
-            ImageBrowserResponse::Error(error) => Err(format!("{}: {}", error.code, error.message)),
+            ImageBrowserResponse::Error(error) => Err(SessionRequestError::Backend(format!(
+                "{}: {}",
+                error.code, error.message
+            ))),
         }
     }
 }

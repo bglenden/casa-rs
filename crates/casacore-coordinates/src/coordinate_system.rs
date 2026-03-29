@@ -568,6 +568,16 @@ mod tests {
         ])
     }
 
+    fn casa_pointing_center_record(longitude_rad: f64, latitude_rad: f64) -> RecordValue {
+        RecordValue::new(vec![
+            RecordField::new(
+                "value",
+                Value::Array(ArrayValue::from_f64_vec(vec![longitude_rad, latitude_rad])),
+            ),
+            RecordField::new("initial", Value::Scalar(ScalarValue::Bool(false))),
+        ])
+    }
+
     fn casa_style_coords_with_wcs_spectral() -> RecordValue {
         RecordValue::new(vec![
             RecordField::new(
@@ -587,6 +597,10 @@ mod tests {
                 Value::Record(measure_position_record(
                     "ITRF", -1.87829, 0.591675, 6.37358e6,
                 )),
+            ),
+            RecordField::new(
+                "pointingcenter",
+                Value::Record(casa_pointing_center_record(4.02298, 0.08843)),
             ),
             RecordField::new("direction0", Value::Record(casa_direction_record())),
             RecordField::new(
@@ -620,6 +634,13 @@ mod tests {
                 "obsdate",
                 Value::Record(measure_epoch_record(50_919.1, "UTC")),
             ),
+            RecordField::new(
+                "pointingcenter",
+                Value::Record(casa_pointing_center_record(
+                    -2.8940293347227444,
+                    0.3784702849718404,
+                )),
+            ),
             RecordField::new("direction0", Value::Record(casa_direction_record())),
             RecordField::new(
                 "worldmap0",
@@ -651,6 +672,13 @@ mod tests {
             RecordField::new(
                 "obsdate",
                 Value::Record(measure_epoch_record(50_919.1, "UTC")),
+            ),
+            RecordField::new(
+                "pointingcenter",
+                Value::Record(casa_pointing_center_record(
+                    -2.8940293347227444,
+                    0.3784702849718404,
+                )),
             ),
             RecordField::new("direction0", Value::Record(casa_direction_record())),
             RecordField::new(
@@ -686,6 +714,13 @@ mod tests {
             RecordField::new(
                 "obsdate",
                 Value::Record(measure_epoch_record(50_919.14846423176, "UTC")),
+            ),
+            RecordField::new(
+                "pointingcenter",
+                Value::Record(casa_pointing_center_record(
+                    -2.8940293347227444,
+                    0.3784702849718404,
+                )),
             ),
             RecordField::new("direction0", Value::Record(casa_direction_record())),
             RecordField::new(
@@ -988,6 +1023,8 @@ mod tests {
             cs.obs_info().telescope_position.as_ref().unwrap().refer(),
             PositionRef::ITRF
         );
+        assert_eq!(cs.obs_info().pointing_center_rad, [4.02298, 0.08843]);
+        assert!(!cs.obs_info().pointing_center_initial);
         assert_eq!(cs.n_coordinates(), 3);
         assert_eq!(
             cs.coordinate(0).coordinate_type(),
@@ -1010,6 +1047,11 @@ mod tests {
 
         assert_eq!(cs.obs_info().telescope, "BIMA");
         assert_eq!(cs.obs_info().date.as_ref().unwrap().refer(), EpochRef::UTC);
+        assert_eq!(
+            cs.obs_info().pointing_center_rad,
+            [-2.8940293347227444, 0.3784702849718404]
+        );
+        assert!(!cs.obs_info().pointing_center_initial);
         assert_eq!(cs.n_coordinates(), 3);
         assert_eq!(
             cs.coordinate(0).coordinate_type(),

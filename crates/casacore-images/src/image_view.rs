@@ -3,14 +3,17 @@
 
 use std::path::{Path, PathBuf};
 
-use casacore_coordinates::{CoordinateSystem, CoordinateType, StokesType};
+use casacore_coordinates::{CoordinateSystem, CoordinateType, ObsInfo, StokesType};
 use casacore_types::measures::direction::{
-    declination_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
-    right_ascension_increment_seconds,
+    angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
+    format_right_ascension_labeled,
 };
+use casacore_types::measures::position::PositionRef;
+use casacore_types::quanta::{MvTime, Quantity, Unit};
 use casacore_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, Axis, Ix2, IxDyn};
 
+use crate::beam::{GaussianBeam, ImageBeamSet};
 use crate::error::ImageError;
 use crate::image::{AnyPagedImage, ImagePixelType};
 
@@ -20,7 +23,7 @@ pub struct ImageViewCapabilities {
     pub renderable_plane: bool,
     pub world_coords_available: bool,
     pub pixel_only_mode: bool,
-    pub single_hidden_axis_stepper: bool,
+    pub non_display_axis_selectors: bool,
     pub mask_present: bool,
     pub complex_unsupported: bool,
 }
@@ -29,9 +32,7 @@ pub struct ImageViewCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageAxisModel {
     pub display_axes: Option<[usize; 2]>,
-    pub hidden_axis: Option<usize>,
-    pub hidden_axis_name: Option<String>,
-    pub hidden_axis_len: Option<usize>,
+    pub non_display_axes: Vec<usize>,
 }
 
 /// An 8-bit grayscale raster ready for UI transport.
@@ -54,6 +55,29 @@ pub struct ImageAxisValue {
     pub value: f64,
 }
 
+/// Display-axis metadata for the active rendered plane window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageDisplayAxis {
+    pub name: String,
+    pub unit: String,
+    pub blc: usize,
+    pub trc: usize,
+    pub inc: usize,
+    pub sampled_len: usize,
+    /// World-coordinate increment per source pixel, in the native axis units.
+    pub world_increment: Option<f64>,
+}
+
+/// Non-display axis metadata for the active rendered plane window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageNonDisplayAxis {
+    pub axis: usize,
+    pub name: String,
+    pub index: usize,
+    pub length: usize,
+    pub pixel: usize,
+}
+
 /// Cursor probe output for the current image plane.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageProbe {
@@ -65,11 +89,101 @@ pub struct ImageProbe {
     pub world_axes: Vec<ImageAxisValue>,
 }
 
+/// A single sample in a 1D spectrum/profile extraction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageProfileSample {
+    pub sample_index: usize,
+    pub pixel_index: usize,
+    pub value: f64,
+    pub masked: bool,
+    pub finite: bool,
+    pub world_axis: Option<ImageAxisValue>,
+}
+
+/// A 1D spectrum/profile through the active cursor position.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageProfile {
+    pub axis: usize,
+    pub axis_name: String,
+    pub axis_unit: String,
+    pub value_unit: String,
+    pub coord_type: CoordinateType,
+    pub selected_sample_index: usize,
+    pub samples: Vec<ImageProfileSample>,
+}
+
 /// A titled metadata section for inspector rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageMetadataSection {
     pub title: String,
     pub lines: Vec<String>,
+}
+
+/// Normalized BLC/TRC/INC pixel-selection state for an opened image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageViewWindow {
+    blc: Vec<usize>,
+    trc: Vec<usize>,
+    inc: Vec<usize>,
+}
+
+impl ImageViewWindow {
+    /// Returns the inclusive bottom-left-corner pixel indices.
+    pub fn blc(&self) -> &[usize] {
+        &self.blc
+    }
+
+    /// Returns the inclusive top-right-corner pixel indices.
+    pub fn trc(&self) -> &[usize] {
+        &self.trc
+    }
+
+    /// Returns the per-axis pixel increments.
+    pub fn inc(&self) -> &[usize] {
+        &self.inc
+    }
+
+    /// Returns the normalized BLC text shown in the UI.
+    pub fn format_blc(&self) -> String {
+        format_axis_list(&self.blc)
+    }
+
+    /// Returns the normalized TRC text shown in the UI.
+    pub fn format_trc(&self) -> String {
+        format_axis_list(&self.trc)
+    }
+
+    /// Returns the normalized INC text shown in the UI.
+    pub fn format_inc(&self) -> String {
+        format_axis_list(&self.inc)
+    }
+
+    pub(crate) fn sampled_axis_len(&self, axis: usize) -> usize {
+        sampled_axis_len(self.blc[axis], self.trc[axis], self.inc[axis])
+    }
+
+    pub(crate) fn sampled_axis_value(&self, axis: usize, sample_index: usize) -> Option<usize> {
+        (sample_index < self.sampled_axis_len(axis))
+            .then_some(self.blc[axis] + sample_index * self.inc[axis])
+    }
+
+    pub(crate) fn sampled_axis_values(&self, axis: usize) -> Vec<usize> {
+        (0..self.sampled_axis_len(axis))
+            .map(|index| self.blc[axis] + index * self.inc[axis])
+            .collect()
+    }
+
+    pub(crate) fn nearest_sample_index(&self, axis: usize, pixel: usize) -> usize {
+        let start = self.blc[axis];
+        let end = self.trc[axis];
+        if pixel <= start {
+            return 0;
+        }
+        if pixel >= end {
+            return self.sampled_axis_len(axis).saturating_sub(1);
+        }
+        ((pixel - start) / self.inc[axis]).min(self.sampled_axis_len(axis).saturating_sub(1))
+    }
 }
 
 /// Read-only image browser backend built on top of [`AnyPagedImage`].
@@ -87,7 +201,6 @@ impl OpenedImageView {
         let path = path.as_ref().to_path_buf();
         let image = AnyPagedImage::open(&path)?;
         let axis_model = determine_axis_model(&image);
-        let supported_hidden_axes = supported_hidden_axes(image.shape(), axis_model.display_axes);
         let world_coords_available =
             coordinates_cover_image_axes(image_coordinates(&image), image.shape())
                 && image_coordinates(&image)
@@ -97,11 +210,10 @@ impl OpenedImageView {
             renderable_plane: matches!(
                 image.pixel_type(),
                 ImagePixelType::Float32 | ImagePixelType::Float64
-            ) && axis_model.display_axes.is_some()
-                && supported_hidden_axes <= 1,
+            ) && axis_model.display_axes.is_some(),
             world_coords_available,
             pixel_only_mode: !world_coords_available,
-            single_hidden_axis_stepper: axis_model.hidden_axis.is_some(),
+            non_display_axis_selectors: !axis_model.non_display_axes.is_empty(),
             mask_present: image_has_pixel_mask(&image),
             complex_unsupported: matches!(
                 image.pixel_type(),
@@ -137,9 +249,42 @@ impl OpenedImageView {
         &self.capabilities
     }
 
+    /// Returns the brightness unit string for image pixel values.
+    pub fn brightness_unit(&self) -> &str {
+        image_units(&self.image)
+    }
+
     /// Returns the display and hidden-axis model.
     pub fn axis_model(&self) -> &ImageAxisModel {
         &self.axis_model
+    }
+
+    /// Returns the default full-image selection window.
+    pub fn default_window(&self) -> ImageViewWindow {
+        ImageViewWindow {
+            blc: vec![0; self.shape().len()],
+            trc: self
+                .shape()
+                .iter()
+                .map(|len| len.saturating_sub(1))
+                .collect(),
+            inc: vec![1; self.shape().len()],
+        }
+    }
+
+    /// Parses and validates user-facing `blc`, `trc`, and `inc` text fields.
+    pub fn window_from_text(
+        &self,
+        blc_text: &str,
+        trc_text: &str,
+        inc_text: &str,
+    ) -> Result<ImageViewWindow, ImageError> {
+        let defaults = self.default_window();
+        let blc = parse_window_axis_values("BLC", blc_text, self.shape(), defaults.blc())?;
+        let trc = parse_window_axis_values("TRC", trc_text, self.shape(), defaults.trc())?;
+        let inc = parse_window_axis_values("INC", inc_text, self.shape(), defaults.inc())?;
+        validate_window(self.shape(), &blc, &trc, &inc)?;
+        Ok(ImageViewWindow { blc, trc, inc })
     }
 
     /// Returns a short status line describing degraded or unsupported modes.
@@ -147,8 +292,7 @@ impl OpenedImageView {
         if self.capabilities.complex_unsupported {
             "complex images unsupported in wave 1".into()
         } else if !self.capabilities.renderable_plane {
-            "viewer supports one 2D plane plus at most one non-degenerate hidden axis in wave 1"
-                .into()
+            "viewer requires at least two displayable axes for Plane view".into()
         } else if self.capabilities.pixel_only_mode {
             "pixel-only mode: coordinate reconstruction unavailable".into()
         } else {
@@ -163,39 +307,35 @@ impl OpenedImageView {
             image_default_mask_name(&self.image).unwrap_or_else(|| "none".into());
         let history = image_history(&self.image)?;
         let image_info = image_image_info(&self.image)?;
-        let beam_line = if let Some(beam) = image_info.beam_set.single_beam() {
-            format!(
-                "beam: major={} rad minor={} rad pa={} rad",
-                beam.major, beam.minor, beam.position_angle
-            )
-        } else if image_info.beam_set.is_multi() {
-            format!("beam: {} per-plane beams", image_info.beam_set.size())
-        } else {
-            "beam: none".into()
-        };
+        let beam_lines = format_beam_summary_lines(&image_info.beam_set)?;
 
         let mut sections = Vec::new();
+        let mut summary_lines = vec![
+            format!("path: {}", self.path.display()),
+            format!("pixel type: {:?}", self.pixel_type()),
+            format!("shape: {:?}", self.shape()),
+            format!("units: {}", image_units(&self.image)),
+            format!("default mask: {default_mask_name}"),
+            format!("history entries: {}", history.len()),
+            format!("image type: {}", image_info.image_type),
+            format!(
+                "object name: {}",
+                if image_info.object_name.is_empty() {
+                    "<none>"
+                } else {
+                    &image_info.object_name
+                }
+            ),
+        ];
+        summary_lines.extend(beam_lines);
+        summary_lines.push(format!("status: {}", self.status_line()));
         sections.push(ImageMetadataSection {
             title: "Summary".into(),
-            lines: vec![
-                format!("path: {}", self.path.display()),
-                format!("pixel type: {:?}", self.pixel_type()),
-                format!("shape: {:?}", self.shape()),
-                format!("units: {}", image_units(&self.image)),
-                format!("default mask: {default_mask_name}"),
-                format!("history entries: {}", history.len()),
-                format!("image type: {}", image_info.image_type),
-                format!(
-                    "object name: {}",
-                    if image_info.object_name.is_empty() {
-                        "<none>"
-                    } else {
-                        &image_info.object_name
-                    }
-                ),
-                beam_line,
-                format!("status: {}", self.status_line()),
-            ],
+            lines: summary_lines,
+        });
+        sections.push(ImageMetadataSection {
+            title: "Observation".into(),
+            lines: build_observation_lines(image_coordinates(&self.image).obs_info()),
         });
         sections.push(ImageMetadataSection {
             title: "Axes".into(),
@@ -234,15 +374,16 @@ impl OpenedImageView {
                 display_axes[1],
             ));
         }
-        if let Some(hidden_axis) = self.axis_model.hidden_axis {
+        for &axis in &self.axis_model.non_display_axes {
             coordinate_lines.push(format!(
-                "hidden axis: {} ({hidden_axis}), index range 0..{}",
-                self.axis_model
-                    .hidden_axis_name
-                    .as_deref()
+                "non-display axis: {} ({axis}), index range 0..{}",
+                axis_names(&self.image)
+                    .get(axis)
+                    .map(String::as_str)
                     .unwrap_or("Axis"),
-                self.axis_model
-                    .hidden_axis_len
+                self.shape()
+                    .get(axis)
+                    .copied()
                     .unwrap_or_default()
                     .saturating_sub(1),
             ));
@@ -279,10 +420,36 @@ impl OpenedImageView {
         viewport: (usize, usize),
         hidden_index: usize,
     ) -> Result<PlaneRaster, ImageError> {
+        let window = self.default_window();
+        self.render_plane_with_window(viewport, &window, hidden_index)
+    }
+
+    /// Renders the current 2D plane for an explicit `blc`/`trc`/`inc` window.
+    pub fn render_plane_with_window(
+        &self,
+        viewport: (usize, usize),
+        window: &ImageViewWindow,
+        hidden_index: usize,
+    ) -> Result<PlaneRaster, ImageError> {
+        let mut indices = self.default_non_display_sample_indices();
+        if let Some(first) = indices.first_mut() {
+            *first = hidden_index;
+        }
+        self.render_plane_with_window_and_axes(viewport, window, &indices)
+    }
+
+    /// Renders the current 2D plane for an explicit `blc`/`trc`/`inc` window and
+    /// non-display-axis sample selections.
+    pub fn render_plane_with_window_and_axes(
+        &self,
+        viewport: (usize, usize),
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<PlaneRaster, ImageError> {
         if !self.capabilities.renderable_plane {
             return Err(ImageError::InvalidMetadata(self.status_line()));
         }
-        let (plane, mask) = self.read_plane(hidden_index)?;
+        let (plane, mask) = self.read_plane(window, non_display_indices)?;
         let plane_stats = collect_plane_stats(&plane, mask.as_ref());
         let width = viewport.0.max(1).min(plane.shape()[0].max(1));
         let height = viewport.1.max(1).min(plane.shape()[1].max(1));
@@ -306,9 +473,7 @@ impl OpenedImageView {
                         count += 1;
                     }
                 }
-                let sample = if count == 0 {
-                    0
-                } else if plane_stats.no_finite_values {
+                let sample = if count == 0 || plane_stats.no_finite_values {
                     0
                 } else if (clip_max - clip_min).abs() < f64::EPSILON {
                     128
@@ -338,23 +503,68 @@ impl OpenedImageView {
         hidden_index: usize,
         cursor_xy: (usize, usize),
     ) -> Result<Vec<String>, ImageError> {
+        let window = self.default_window();
+        self.render_plane_value_grid_with_window(viewport_chars, &window, hidden_index, cursor_xy)
+    }
+
+    /// Returns a spreadsheet-style exact-value window for an explicit view window.
+    pub fn render_plane_value_grid_with_window(
+        &self,
+        viewport_chars: (usize, usize),
+        window: &ImageViewWindow,
+        hidden_index: usize,
+        cursor_xy: (usize, usize),
+    ) -> Result<Vec<String>, ImageError> {
+        let mut indices = self.default_non_display_sample_indices();
+        if let Some(first) = indices.first_mut() {
+            *first = hidden_index;
+        }
+        self.render_plane_value_grid_with_window_and_axes(
+            viewport_chars,
+            window,
+            &indices,
+            cursor_xy,
+        )
+    }
+
+    /// Returns a spreadsheet-style exact-value window for an explicit view
+    /// window and non-display-axis sample selections.
+    pub fn render_plane_value_grid_with_window_and_axes(
+        &self,
+        viewport_chars: (usize, usize),
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+        cursor_xy: (usize, usize),
+    ) -> Result<Vec<String>, ImageError> {
         if !self.capabilities.renderable_plane {
             return Err(ImageError::InvalidMetadata(self.status_line()));
         }
-        let (plane, mask) = self.read_plane(hidden_index)?;
+        let (plane, mask) = self.read_plane(window, non_display_indices)?;
         let plane_width = plane.shape()[0];
         let plane_height = plane.shape()[1];
         if plane_width == 0 || plane_height == 0 {
             return Ok(Vec::new());
         }
-
-        let row_label_width = index_label_width(plane_height.max(plane_width));
         let min_cell_width = 7usize;
         let preferred_cell_width = 11usize;
         let _viewport_width = viewport_chars.0;
         let cols = plane_width;
         let cell_width = preferred_cell_width.max(min_cell_width);
         let rows = viewport_chars.1.saturating_sub(1).max(1).min(plane_height);
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        let x_pixels = window.sampled_axis_values(display_axes[0]);
+        let y_pixels = window.sampled_axis_values(display_axes[1]);
+        let row_label_width = index_label_width(
+            x_pixels
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .max(y_pixels.last().copied().unwrap_or_default())
+                .saturating_add(1),
+        );
 
         let cursor_x = cursor_xy.0.min(plane_width.saturating_sub(1));
         let cursor_y = cursor_xy.1.min(plane_height.saturating_sub(1));
@@ -362,14 +572,14 @@ impl OpenedImageView {
 
         let mut lines = Vec::with_capacity(rows + 1);
         let mut header = format!("{:>width$} |", "y/x", width = row_label_width);
-        for x in 0..cols {
+        for &x_pixel in &x_pixels {
             header.push(' ');
-            header.push_str(&format!("{:>width$}", x, width = cell_width));
+            header.push_str(&format!("{:>width$}", x_pixel, width = cell_width));
         }
         lines.push(header);
 
-        for y in y_start..y_start + rows {
-            let mut line = format!("{:>width$} |", y, width = row_label_width);
+        for (y, &y_pixel) in y_pixels.iter().enumerate().skip(y_start).take(rows) {
+            let mut line = format!("{:>width$} |", y_pixel, width = row_label_width);
             for x in 0..cols {
                 let text = plane_cell_text(&plane, mask.as_ref(), x, y);
                 line.push(' ');
@@ -391,23 +601,63 @@ impl OpenedImageView {
         pixel_xy: (usize, usize),
         hidden_index: usize,
     ) -> Result<ImageProbe, ImageError> {
+        let window = self.default_window();
+        self.probe_with_window(pixel_xy, &window, hidden_index)
+    }
+
+    /// Returns the current cursor probe for an explicit view window.
+    pub fn probe_with_window(
+        &self,
+        pixel_xy: (usize, usize),
+        window: &ImageViewWindow,
+        hidden_index: usize,
+    ) -> Result<ImageProbe, ImageError> {
+        let mut indices = self.default_non_display_sample_indices();
+        if let Some(first) = indices.first_mut() {
+            *first = hidden_index;
+        }
+        self.probe_with_window_and_axes(pixel_xy, window, &indices)
+    }
+
+    /// Returns the current cursor probe for an explicit view window and
+    /// non-display-axis sample selections.
+    pub fn probe_with_window_and_axes(
+        &self,
+        pixel_xy: (usize, usize),
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<ImageProbe, ImageError> {
         let display_axes = self
             .axis_model
             .display_axes
             .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
-        let mut pixel_indices = vec![0usize; self.shape().len()];
-        pixel_indices[display_axes[0]] = pixel_xy.0;
-        pixel_indices[display_axes[1]] = pixel_xy.1;
-        if let Some(hidden_axis) = self.axis_model.hidden_axis {
-            let hidden_len = self.shape()[hidden_axis];
-            if hidden_index >= hidden_len {
-                return Err(ImageError::ShapeMismatch {
-                    expected: vec![hidden_len],
-                    got: vec![hidden_index],
-                });
-            }
-            pixel_indices[hidden_axis] = hidden_index;
+        let sampled_width = window.sampled_axis_len(display_axes[0]);
+        let sampled_height = window.sampled_axis_len(display_axes[1]);
+        if pixel_xy.0 >= sampled_width || pixel_xy.1 >= sampled_height {
+            return Err(ImageError::ShapeMismatch {
+                expected: vec![sampled_width, sampled_height],
+                got: vec![pixel_xy.0, pixel_xy.1],
+            });
         }
+        let mut pixel_indices = window.blc.clone();
+        pixel_indices[display_axes[0]] = window
+            .sampled_axis_value(display_axes[0], pixel_xy.0)
+            .ok_or_else(|| ImageError::ShapeMismatch {
+                expected: vec![sampled_width],
+                got: vec![pixel_xy.0],
+            })?;
+        pixel_indices[display_axes[1]] = window
+            .sampled_axis_value(display_axes[1], pixel_xy.1)
+            .ok_or_else(|| ImageError::ShapeMismatch {
+                expected: vec![sampled_height],
+                got: vec![pixel_xy.1],
+            })?;
+        apply_non_display_axis_selections(
+            &mut pixel_indices,
+            window,
+            &self.axis_model.non_display_axes,
+            non_display_indices,
+        )?;
         for (axis, &pixel) in pixel_indices.iter().enumerate() {
             if pixel >= self.shape()[axis] {
                 return Err(ImageError::ShapeMismatch {
@@ -464,28 +714,232 @@ impl OpenedImageView {
         })
     }
 
+    /// Returns display-axis metadata for the current rendered plane window.
+    pub fn display_axes_with_window(&self, window: &ImageViewWindow) -> Vec<ImageDisplayAxis> {
+        let Some(display_axes) = self.axis_model.display_axes else {
+            return Vec::new();
+        };
+        let descriptors = build_axis_descriptors(image_coordinates(&self.image), self.shape());
+        display_axes
+            .into_iter()
+            .map(|axis| ImageDisplayAxis {
+                name: descriptors
+                    .get(axis)
+                    .map(|descriptor| descriptor.name.clone())
+                    .unwrap_or_else(|| format!("Axis{axis}")),
+                unit: descriptors
+                    .get(axis)
+                    .map(|descriptor| descriptor.unit.clone())
+                    .unwrap_or_default(),
+                blc: window.blc()[axis],
+                trc: window.trc()[axis],
+                inc: window.inc()[axis],
+                sampled_len: window.sampled_axis_len(axis),
+                world_increment: descriptors
+                    .get(axis)
+                    .and_then(|descriptor| descriptor.increment),
+            })
+            .collect()
+    }
+
+    /// Returns non-display-axis metadata for the current rendered plane window.
+    pub fn non_display_axes_with_window(
+        &self,
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<Vec<ImageNonDisplayAxis>, ImageError> {
+        let axis_names = axis_names(&self.image);
+        selected_non_display_axes(
+            window,
+            &self.axis_model.non_display_axes,
+            non_display_indices,
+        )
+        .map(|selections| {
+            selections
+                .into_iter()
+                .map(|(axis, index, pixel)| ImageNonDisplayAxis {
+                    axis,
+                    name: axis_names
+                        .get(axis)
+                        .cloned()
+                        .unwrap_or_else(|| format!("Axis{axis}")),
+                    index,
+                    length: window.sampled_axis_len(axis),
+                    pixel,
+                })
+                .collect()
+        })
+    }
+
+    /// Returns the preferred non-display axis for a 1D spectrum/profile.
+    pub fn preferred_profile_axis(&self) -> Option<usize> {
+        let descriptors = build_axis_descriptors(image_coordinates(&self.image), self.shape());
+        self.axis_model
+            .non_display_axes
+            .iter()
+            .copied()
+            .find(|&axis| {
+                descriptors
+                    .get(axis)
+                    .is_some_and(|descriptor| descriptor.coord_type == CoordinateType::Spectral)
+            })
+            .or_else(|| self.axis_model.non_display_axes.first().copied())
+    }
+
+    /// Extracts a 1D spectrum/profile along the requested non-display axis.
+    pub fn profile_with_window_and_axes(
+        &self,
+        pixel_xy: (usize, usize),
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+        profile_axis: usize,
+    ) -> Result<ImageProfile, ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        let sampled_width = window.sampled_axis_len(display_axes[0]);
+        let sampled_height = window.sampled_axis_len(display_axes[1]);
+        if pixel_xy.0 >= sampled_width || pixel_xy.1 >= sampled_height {
+            return Err(ImageError::ShapeMismatch {
+                expected: vec![sampled_width, sampled_height],
+                got: vec![pixel_xy.0, pixel_xy.1],
+            });
+        }
+        let profile_position = self
+            .axis_model
+            .non_display_axes
+            .iter()
+            .position(|axis| *axis == profile_axis)
+            .ok_or_else(|| {
+                ImageError::InvalidMetadata(format!(
+                    "axis {profile_axis} is not a non-display axis in this view"
+                ))
+            })?;
+        let selections = selected_non_display_axes(
+            window,
+            &self.axis_model.non_display_axes,
+            non_display_indices,
+        )?;
+        let descriptors = build_axis_descriptors(image_coordinates(&self.image), self.shape());
+        let profile_descriptor =
+            descriptors
+                .get(profile_axis)
+                .cloned()
+                .unwrap_or_else(|| AxisDescriptor {
+                    coord_type: CoordinateType::Linear,
+                    name: format!("Axis{profile_axis}"),
+                    unit: String::new(),
+                    reference_value: None,
+                    reference_pixel: None,
+                    increment: None,
+                });
+        let selected_sample_index = selections
+            .get(profile_position)
+            .map(|(_, index, _)| *index)
+            .unwrap_or_default();
+
+        let mut fixed_pixel_indices = window.blc.clone();
+        fixed_pixel_indices[display_axes[0]] = window
+            .sampled_axis_value(display_axes[0], pixel_xy.0)
+            .ok_or_else(|| ImageError::ShapeMismatch {
+                expected: vec![sampled_width],
+                got: vec![pixel_xy.0],
+            })?;
+        fixed_pixel_indices[display_axes[1]] = window
+            .sampled_axis_value(display_axes[1], pixel_xy.1)
+            .ok_or_else(|| ImageError::ShapeMismatch {
+                expected: vec![sampled_height],
+                got: vec![pixel_xy.1],
+            })?;
+        for &(axis, _index, pixel) in &selections {
+            fixed_pixel_indices[axis] = pixel;
+        }
+
+        let axis_len = window.sampled_axis_len(profile_axis);
+        let samples = (0..axis_len)
+            .map(|sample_index| {
+                let pixel = window
+                    .sampled_axis_value(profile_axis, sample_index)
+                    .ok_or_else(|| ImageError::ShapeMismatch {
+                        expected: vec![axis_len],
+                        got: vec![sample_index],
+                    })?;
+                let mut pixel_indices = fixed_pixel_indices.clone();
+                pixel_indices[profile_axis] = pixel;
+                let value = image_real_get_at(&self.image, &pixel_indices)?;
+                let mask = image_get_mask(&self.image)?;
+                let masked = mask
+                    .as_ref()
+                    .is_some_and(|data| !data[IxDyn(&pixel_indices)]);
+                let world_axis = if self.capabilities.world_coords_available {
+                    let world = image_coordinates(&self.image)
+                        .to_world(
+                            &pixel_indices
+                                .iter()
+                                .map(|&pixel| pixel as f64)
+                                .collect::<Vec<_>>(),
+                        )
+                        .map_err(ImageError::from)?;
+                    Some(ImageAxisValue {
+                        name: profile_descriptor.name.clone(),
+                        unit: profile_descriptor.unit.clone(),
+                        value: world[profile_axis],
+                    })
+                } else {
+                    None
+                };
+                Ok(ImageProfileSample {
+                    sample_index,
+                    pixel_index: pixel,
+                    value,
+                    masked,
+                    finite: value.is_finite(),
+                    world_axis,
+                })
+            })
+            .collect::<Result<Vec<_>, ImageError>>()?;
+
+        Ok(ImageProfile {
+            axis: profile_axis,
+            axis_name: profile_descriptor.name,
+            axis_unit: profile_descriptor.unit,
+            value_unit: image_units(&self.image).to_string(),
+            coord_type: profile_descriptor.coord_type,
+            selected_sample_index,
+            samples,
+        })
+    }
+
+    fn default_non_display_sample_indices(&self) -> Vec<usize> {
+        vec![0; self.axis_model.non_display_axes.len()]
+    }
+
     fn read_plane(
         &self,
-        hidden_index: usize,
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
     ) -> Result<(Array2<f64>, Option<Array2<bool>>), ImageError> {
         let display_axes = self
             .axis_model
             .display_axes
             .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
-        let mut start = vec![0usize; self.shape().len()];
-        let mut shape = self.shape().to_vec();
-        let squeeze_axes = squeezed_axes(self.shape(), display_axes, self.axis_model.hidden_axis);
-        if let Some(hidden_axis) = self.axis_model.hidden_axis {
-            let hidden_len = self.shape()[hidden_axis];
-            if hidden_index >= hidden_len {
-                return Err(ImageError::ShapeMismatch {
-                    expected: vec![hidden_len],
-                    got: vec![hidden_index],
-                });
-            }
-            start[hidden_axis] = hidden_index;
-            shape[hidden_axis] = 1;
+        let mut start = window.blc.clone();
+        let mut shape = window
+            .blc
+            .iter()
+            .zip(window.trc.iter())
+            .map(|(blc, trc)| trc - blc + 1)
+            .collect::<Vec<_>>();
+        for (axis, _index, pixel) in selected_non_display_axes(
+            window,
+            &self.axis_model.non_display_axes,
+            non_display_indices,
+        )? {
+            start[axis] = pixel;
+            shape[axis] = 1;
         }
+        let squeeze_axes = squeezed_axes(self.shape(), display_axes);
         for &axis in &squeeze_axes {
             shape[axis] = 1;
         }
@@ -497,17 +951,48 @@ impl OpenedImageView {
         let plane = plane.into_dimensionality::<Ix2>().map_err(|_| {
             ImageError::InvalidMetadata(format!("expected 2D plane for axes {:?}", display_axes))
         })?;
+        let plane = sample_plane_axes(
+            &plane,
+            window.inc[display_axes[0]],
+            window.inc[display_axes[1]],
+        );
 
         let mask = match image_get_mask(&self.image)? {
-            Some(mask_data) => Some(
-                squeeze_plane_axes(mask_data, &squeeze_axes)
-                    .into_dimensionality::<Ix2>()
-                    .map_err(|_| ImageError::InvalidMetadata("mask plane is not 2D".into()))?,
-            ),
+            Some(mask_data) => {
+                Some(self.read_mask_plane(mask_data, window, display_axes, non_display_indices)?)
+            }
             None => None,
         };
 
         Ok((plane, mask))
+    }
+
+    fn read_mask_plane(
+        &self,
+        mask_data: ArrayD<bool>,
+        window: &ImageViewWindow,
+        display_axes: [usize; 2],
+        non_display_indices: &[usize],
+    ) -> Result<Array2<bool>, ImageError> {
+        let x_pixels = window.sampled_axis_values(display_axes[0]);
+        let y_pixels = window.sampled_axis_values(display_axes[1]);
+        let non_display_pixels = selected_non_display_axes(
+            window,
+            &self.axis_model.non_display_axes,
+            non_display_indices,
+        )?;
+        Ok(Array2::from_shape_fn(
+            (x_pixels.len(), y_pixels.len()),
+            |(x_index, y_index)| {
+                let mut indices = window.blc.clone();
+                indices[display_axes[0]] = x_pixels[x_index];
+                indices[display_axes[1]] = y_pixels[y_index];
+                for &(axis, _index, pixel) in &non_display_pixels {
+                    indices[axis] = pixel;
+                }
+                mask_data[IxDyn(&indices)]
+            },
+        ))
     }
 }
 
@@ -553,6 +1038,141 @@ fn index_label_width(len: usize) -> usize {
     len.saturating_sub(1).to_string().len().max(3)
 }
 
+fn format_axis_list(values: &[usize]) -> String {
+    values
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn sampled_axis_len(blc: usize, trc: usize, inc: usize) -> usize {
+    (trc - blc) / inc + 1
+}
+
+fn selected_non_display_axes(
+    window: &ImageViewWindow,
+    non_display_axes: &[usize],
+    non_display_indices: &[usize],
+) -> Result<Vec<(usize, usize, usize)>, ImageError> {
+    if non_display_axes.len() != non_display_indices.len() {
+        return Err(ImageError::ShapeMismatch {
+            expected: vec![non_display_axes.len()],
+            got: vec![non_display_indices.len()],
+        });
+    }
+    non_display_axes
+        .iter()
+        .copied()
+        .zip(non_display_indices.iter().copied())
+        .map(|(axis, index)| {
+            let length = window.sampled_axis_len(axis);
+            if index >= length {
+                return Err(ImageError::ShapeMismatch {
+                    expected: vec![length],
+                    got: vec![index],
+                });
+            }
+            let pixel = window.sampled_axis_value(axis, index).ok_or_else(|| {
+                ImageError::ShapeMismatch {
+                    expected: vec![length],
+                    got: vec![index],
+                }
+            })?;
+            Ok((axis, index, pixel))
+        })
+        .collect()
+}
+
+fn apply_non_display_axis_selections(
+    pixel_indices: &mut [usize],
+    window: &ImageViewWindow,
+    non_display_axes: &[usize],
+    non_display_indices: &[usize],
+) -> Result<(), ImageError> {
+    for (axis, _index, pixel) in
+        selected_non_display_axes(window, non_display_axes, non_display_indices)?
+    {
+        pixel_indices[axis] = pixel;
+    }
+    Ok(())
+}
+
+fn parse_window_axis_values(
+    label: &str,
+    text: &str,
+    shape: &[usize],
+    default: &[usize],
+) -> Result<Vec<usize>, ImageError> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(default.to_vec());
+    }
+    let values = trimmed
+        .split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse::<usize>().map_err(|_| {
+                ImageError::InvalidMetadata(format!(
+                    "{label} expects comma-separated integer pixel indices"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.len() != shape.len() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{label} expects {} value(s), received {}",
+            shape.len(),
+            values.len()
+        )));
+    }
+    Ok(values)
+}
+
+fn validate_window(
+    shape: &[usize],
+    blc: &[usize],
+    trc: &[usize],
+    inc: &[usize],
+) -> Result<(), ImageError> {
+    if blc.len() != shape.len() || trc.len() != shape.len() || inc.len() != shape.len() {
+        return Err(ImageError::InvalidMetadata(
+            "BLC/TRC/INC dimensionality does not match image shape".into(),
+        ));
+    }
+    for axis in 0..shape.len() {
+        if shape[axis] == 0 {
+            return Err(ImageError::InvalidMetadata(format!(
+                "axis {axis} has zero length"
+            )));
+        }
+        if inc[axis] == 0 {
+            return Err(ImageError::InvalidMetadata(format!(
+                "INC axis {axis} must be >= 1"
+            )));
+        }
+        if blc[axis] >= shape[axis] {
+            return Err(ImageError::InvalidMetadata(format!(
+                "BLC axis {axis}={} is outside image length {}",
+                blc[axis], shape[axis]
+            )));
+        }
+        if trc[axis] >= shape[axis] {
+            return Err(ImageError::InvalidMetadata(format!(
+                "TRC axis {axis}={} is outside image length {}",
+                trc[axis], shape[axis]
+            )));
+        }
+        if blc[axis] > trc[axis] {
+            return Err(ImageError::InvalidMetadata(format!(
+                "BLC axis {axis}={} must be <= TRC {}",
+                blc[axis], trc[axis]
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn window_start(cursor: usize, window: usize, full_len: usize) -> usize {
     cursor
         .saturating_sub(window / 2)
@@ -579,17 +1199,17 @@ fn format_plane_value(value: f64) -> String {
     let abs = value.abs();
     let candidates = if abs >= 1.0e4 || (abs > 0.0 && abs < 1.0e-3) {
         [
+            format!("{value:.5e}"),
             format!("{value:.4e}"),
             format!("{value:.3e}"),
             format!("{value:.2e}"),
-            format!("{value:.1e}"),
         ]
     } else {
         [
-            trim_float_text(format!("{value:.6}")),
+            trim_float_text(format!("{value:.7}")),
+            trim_float_text(format!("{value:.5}")),
             trim_float_text(format!("{value:.4}")),
             trim_float_text(format!("{value:.3}")),
-            trim_float_text(format!("{value:.2}")),
         ]
     };
     candidates
@@ -634,24 +1254,45 @@ fn fit_cell_text(text: &str, width: usize) -> String {
     fitted
 }
 
+fn sample_plane_axes<T: Clone>(plane: &Array2<T>, x_step: usize, y_step: usize) -> Array2<T> {
+    let width = sampled_axis_len(0, plane.shape()[0].saturating_sub(1), x_step);
+    let height = sampled_axis_len(0, plane.shape()[1].saturating_sub(1), y_step);
+    Array2::from_shape_fn((width, height), |(x, y)| {
+        plane[[x * x_step, y * y_step]].clone()
+    })
+}
+
 fn determine_axis_model(image: &AnyPagedImage) -> ImageAxisModel {
     let display_axes = select_display_axes(image_coordinates(image), image.shape());
-    let hidden_axis = display_axes.and_then(|display_axes| {
-        let mut hidden = non_singleton_axes(image.shape())
-            .into_iter()
-            .filter(|axis| !display_axes.contains(axis));
-        let hidden_axis = hidden.next()?;
-        if hidden.next().is_some() {
-            None
-        } else {
-            Some(hidden_axis)
-        }
-    });
+    let descriptors = build_axis_descriptors(image_coordinates(image), image.shape());
+    let non_display_axes = display_axes
+        .map(|display_axes| {
+            let mut axes = non_singleton_axes(image.shape())
+                .into_iter()
+                .filter(|axis| !display_axes.contains(axis))
+                .collect::<Vec<_>>();
+            axes.sort_by_key(|axis| {
+                let coord_type = descriptors
+                    .get(*axis)
+                    .map(|descriptor| descriptor.coord_type)
+                    .unwrap_or(CoordinateType::Linear);
+                (
+                    match coord_type {
+                        CoordinateType::Spectral => 0u8,
+                        CoordinateType::Linear => 1,
+                        CoordinateType::Direction => 2,
+                        CoordinateType::Stokes => 3,
+                        CoordinateType::Tabular => 4,
+                    },
+                    *axis,
+                )
+            });
+            axes
+        })
+        .unwrap_or_default();
     ImageAxisModel {
         display_axes,
-        hidden_axis,
-        hidden_axis_name: hidden_axis.map(|axis| axis_names(image)[axis].clone()),
-        hidden_axis_len: hidden_axis.map(|axis| image.shape()[axis]),
+        non_display_axes,
     }
 }
 
@@ -687,9 +1328,7 @@ fn select_display_axes(coords: &CoordinateSystem, shape: &[usize]) -> Option<[us
         }
     }
 
-    candidates
-        .into_iter()
-        .find(|axes| supported_hidden_axes(shape, Some(*axes)) <= 1)
+    candidates.into_iter().next()
 }
 
 fn preferred_display_axis_order(shape: &[usize]) -> Vec<usize> {
@@ -711,24 +1350,9 @@ fn non_singleton_axes(shape: &[usize]) -> Vec<usize> {
         .collect()
 }
 
-fn supported_hidden_axes(shape: &[usize], display_axes: Option<[usize; 2]>) -> usize {
-    let Some(display_axes) = display_axes else {
-        return usize::MAX;
-    };
-    non_singleton_axes(shape)
-        .into_iter()
-        .filter(|axis| !display_axes.contains(axis))
-        .count()
-}
-
-fn squeezed_axes(
-    shape: &[usize],
-    display_axes: [usize; 2],
-    hidden_axis: Option<usize>,
-) -> Vec<usize> {
+fn squeezed_axes(shape: &[usize], display_axes: [usize; 2]) -> Vec<usize> {
     (0..shape.len())
-        .filter(|axis| !display_axes.contains(axis) && Some(*axis) != hidden_axis)
-        .chain(hidden_axis)
+        .filter(|axis| !display_axes.contains(axis))
         .collect()
 }
 
@@ -907,6 +1531,130 @@ fn axis_names(image: &AnyPagedImage) -> Vec<String> {
         .collect()
 }
 
+fn build_observation_lines(obs_info: &ObsInfo) -> Vec<String> {
+    vec![
+        format!(
+            "telescope: {}",
+            if obs_info.telescope.is_empty() {
+                "<none>"
+            } else {
+                &obs_info.telescope
+            }
+        ),
+        format!(
+            "observer: {}",
+            if obs_info.observer.is_empty() {
+                "<none>"
+            } else {
+                &obs_info.observer
+            }
+        ),
+        format!(
+            "obs date: {}",
+            obs_info
+                .date
+                .as_ref()
+                .map_or_else(|| "<none>".into(), format_epoch_for_display)
+        ),
+        format!(
+            "telescope position: {}",
+            obs_info
+                .telescope_position
+                .as_ref()
+                .map_or_else(|| "<none>".into(), format_position_for_display)
+        ),
+        format!(
+            "pointing center: {}",
+            format_pointing_center_for_display(obs_info)
+        ),
+    ]
+}
+
+fn format_single_beam_line(beam: crate::beam::GaussianBeam) -> Result<String, ImageError> {
+    Ok(format!("beam: {}", format_beam_descriptor(beam)?))
+}
+
+fn format_beam_summary_lines(beam_set: &ImageBeamSet) -> Result<Vec<String>, ImageError> {
+    if let Some(beam) = beam_set.single_beam() {
+        return Ok(vec![format_single_beam_line(beam)?]);
+    }
+    if beam_set.is_empty() {
+        return Ok(vec!["beam: none".into()]);
+    }
+
+    let (nchan, nstokes) = beam_set.shape();
+    let mut lines = vec![format!(
+        "beam: {} per-plane beams (channels={} stokes={})",
+        beam_set.size(),
+        nchan,
+        nstokes,
+    )];
+
+    if let Some(min_beam) = beam_set.min_area_beam().copied() {
+        let suffix = find_beam_position(beam_set, min_beam)
+            .map(|(chan, stokes)| format!(" at chan={chan} stokes={stokes}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "beam min area: {}{}",
+            format_beam_descriptor(min_beam)?,
+            suffix,
+        ));
+    }
+    if let Some(median_beam) = beam_set.median_area_beam() {
+        let suffix = find_beam_position(beam_set, median_beam)
+            .map(|(chan, stokes)| format!(" at chan={chan} stokes={stokes}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "beam median area: {}{}",
+            format_beam_descriptor(median_beam)?,
+            suffix,
+        ));
+    }
+    if let Some(max_beam) = beam_set.max_area_beam().copied() {
+        let suffix = find_beam_position(beam_set, max_beam)
+            .map(|(chan, stokes)| format!(" at chan={chan} stokes={stokes}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "beam max area: {}{}",
+            format_beam_descriptor(max_beam)?,
+            suffix,
+        ));
+    }
+
+    Ok(lines)
+}
+
+fn format_beam_descriptor(beam: GaussianBeam) -> Result<String, ImageError> {
+    Ok(format!(
+        "major={} arcsec minor={} arcsec pa={} deg",
+        trim_float_text(format!("{:.6}", beam.major_in("arcsec")?)),
+        trim_float_text(format!("{:.6}", beam.minor_in("arcsec")?)),
+        trim_float_text(format!("{:.6}", beam.position_angle_in("deg")?)),
+    ))
+}
+
+fn find_beam_position(beam_set: &ImageBeamSet, target: GaussianBeam) -> Option<(usize, usize)> {
+    for chan in 0..beam_set.nchan() {
+        for stokes in 0..beam_set.nstokes() {
+            if *beam_set.beam(chan, stokes) == target {
+                return Some((chan, stokes));
+            }
+        }
+    }
+    None
+}
+
+fn format_epoch_for_display(epoch: &casacore_types::measures::epoch::MEpoch) -> String {
+    let mjd = epoch.value().as_mjd();
+    let civil = MvTime::from_mjd_days(mjd).format_dmy(0);
+    format!(
+        "{} {} ({} MJD)",
+        civil,
+        epoch.refer(),
+        trim_float_text(format!("{:.11}", mjd)),
+    )
+}
+
 fn format_reference_pixel_for_display(value: Option<f64>) -> String {
     value.map_or_else(|| "<none>".into(), |value| format!("{value} px"))
 }
@@ -934,10 +1682,10 @@ fn format_axis_increment_for_display(
     };
     if is_right_ascension_axis(axis_name) {
         return format!(
-            "{} s/pixel",
+            "{} arcsec/pixel",
             trim_float_text(format!(
                 "{:.6}",
-                right_ascension_increment_seconds(value).value()
+                angular_increment_arcseconds(value).value()
             ))
         );
     }
@@ -953,17 +1701,38 @@ fn format_axis_increment_for_display(
     let unit = fallback_axis_unit(axis_name, axis_unit);
     if unit == "unitless" {
         format!("{value} unitless/pixel")
+    } else if let Some(formatted) = format_frequency_quantity_auto(value, unit) {
+        format!("{formatted}/pixel")
     } else {
         format!("{value} {unit}/pixel")
     }
 }
 
-fn format_numeric_value_with_unit(value: f64, unit: &str) -> String {
-    if unit == "unitless" {
-        format!("{value} {unit}")
-    } else {
-        format!("{value} {unit}")
+pub(crate) fn format_numeric_value_with_unit(value: f64, unit: &str) -> String {
+    format_frequency_quantity_auto(value, unit).unwrap_or_else(|| format!("{value} {unit}"))
+}
+
+fn format_frequency_quantity_auto(value: f64, unit: &str) -> Option<String> {
+    let quantity = Quantity::new(value, unit).ok()?;
+    let hz = Unit::new("Hz").ok()?;
+    if !quantity.unit().conformant(&hz) {
+        return None;
     }
+    let abs_hz = quantity.get_value_in(&hz).ok()?.abs();
+    let display_unit = if abs_hz >= 1e9 {
+        "GHz"
+    } else if abs_hz >= 1e6 {
+        "MHz"
+    } else if abs_hz >= 1e3 {
+        "kHz"
+    } else {
+        "Hz"
+    };
+    let converted = quantity.get_value_in(&Unit::new(display_unit).ok()?).ok()?;
+    Some(format!(
+        "{} {display_unit}",
+        trim_float_text(format!("{converted:.6}"))
+    ))
 }
 
 fn fallback_axis_unit<'a>(axis_name: &'a str, axis_unit: &'a str) -> &'a str {
@@ -982,6 +1751,49 @@ fn is_right_ascension_axis(axis_name: &str) -> bool {
 
 fn is_declination_axis(axis_name: &str) -> bool {
     axis_name.eq_ignore_ascii_case("Declination") || axis_name.eq_ignore_ascii_case("DEC")
+}
+
+fn format_position_for_display(position: &casacore_types::measures::position::MPosition) -> String {
+    match position.refer() {
+        PositionRef::ITRF => {
+            let [x, y, z] = position.as_itrf();
+            format!(
+                "frame=ITRF x={} m y={} m z={} m",
+                trim_float_text(format!("{x:.3}")),
+                trim_float_text(format!("{y:.3}")),
+                trim_float_text(format!("{z:.3}")),
+            )
+        }
+        PositionRef::WGS84 => {
+            let [lon_rad, lat_rad, height_m] = position.values();
+            format!(
+                "frame=WGS84 lon={} deg lat={} deg height={} m",
+                trim_float_text(format!("{:.6}", lon_rad.to_degrees())),
+                trim_float_text(format!("{:.6}", lat_rad.to_degrees())),
+                trim_float_text(format!("{height_m:.3}")),
+            )
+        }
+    }
+}
+
+fn format_pointing_center_for_display(obs_info: &ObsInfo) -> String {
+    if obs_info.pointing_center_initial
+        && obs_info.pointing_center_rad[0].abs() < f64::EPSILON
+        && obs_info.pointing_center_rad[1].abs() < f64::EPSILON
+    {
+        return "<initial>".into();
+    }
+
+    let center = format!(
+        "{}, {}",
+        format_right_ascension_labeled(obs_info.pointing_center_rad[0], 6),
+        format_declination_labeled(obs_info.pointing_center_rad[1], 5),
+    );
+    if obs_info.pointing_center_initial {
+        format!("{center} (initial)")
+    } else {
+        center
+    }
 }
 
 fn build_coordinate_summary_lines(coords: &CoordinateSystem, shape: &[usize]) -> Vec<String> {
@@ -1056,7 +1868,7 @@ fn coordinate_header_details(coord_type: CoordinateType, record: &RecordValue) -
                 .and_then(|conversion| record_string(conversion, "system"))
                 .unwrap_or(native_frame);
             let restfreq = record_f64(record, "restfreq")
-                .map(|value| format!(" restfreq={value}"))
+                .map(|value| format!(" restfreq={}", format_numeric_value_with_unit(value, "Hz")))
                 .unwrap_or_default();
             if frame == native_frame {
                 format!("frame={frame}{restfreq}")
@@ -1140,14 +1952,20 @@ fn format_value(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use casacore_coordinates::{
-        CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
+        CoordinateSystem, DirectionCoordinate, ObsInfo, Projection, ProjectionType,
+        SpectralCoordinate,
     };
     use casacore_test_support::casatestdata_path;
     use casacore_types::measures::direction::DirectionRef;
+    use casacore_types::measures::epoch::{EpochRef, MEpoch};
     use casacore_types::measures::frequency::FrequencyRef;
+    use casacore_types::measures::position::MPosition;
+    use casacore_types::quanta::{MvTime, Quantity, Unit};
 
     use super::*;
+    use crate::beam::{GaussianBeam, ImageBeamSet};
     use crate::image::PagedImage;
+    use crate::image_info::{ImageInfo, ImageType};
 
     fn direction_spectral_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
@@ -1192,6 +2010,20 @@ mod tests {
         coords
     }
 
+    fn direction_spectral_coords_with_obs_info() -> CoordinateSystem {
+        direction_spectral_coords().with_obs_info(
+            ObsInfo::new("ALMA")
+                .with_observer("Test Observer")
+                .with_date(MEpoch::from_mjd(59000.25, EpochRef::UTC))
+                .with_telescope_position(MPosition::new_itrf(
+                    2_225_142.18,
+                    -5_440_307.37,
+                    -2_481_029.85,
+                ))
+                .with_pointing_center(0.0, std::f64::consts::FRAC_PI_4),
+        )
+    }
+
     #[test]
     fn open_real_images_and_probe_pixel_only_mode() {
         let dir = tempfile::tempdir().unwrap();
@@ -1219,6 +2051,81 @@ mod tests {
         assert_eq!(probe.pixel_indices, vec![2, 1]);
         assert_eq!(probe.value, 7.0);
         assert!(probe.world_axes.is_empty());
+    }
+
+    #[test]
+    fn window_parameters_apply_roi_and_sampling_to_plane_and_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("windowed.image");
+        let values = (0..5)
+            .flat_map(|x| (0..4).map(move |y| (x * 10 + y) as f32))
+            .collect::<Vec<_>>();
+        let mut image =
+            PagedImage::<f32>::create(vec![5, 4], CoordinateSystem::new(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[5, 4]), values).unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        let window = opened.window_from_text("1,1", "4,3", "2,1").unwrap();
+        assert_eq!(window.format_blc(), "1,1");
+        assert_eq!(window.format_trc(), "4,3");
+        assert_eq!(window.format_inc(), "2,1");
+
+        let probe = opened.probe_with_window((1, 2), &window, 0).unwrap();
+        assert_eq!(probe.pixel_indices, vec![3, 3]);
+        assert_eq!(probe.value, 33.0);
+
+        let raster = opened.render_plane_with_window((8, 8), &window, 0).unwrap();
+        assert_eq!(raster.width, 2);
+        assert_eq!(raster.height, 3);
+
+        let grid = opened
+            .render_plane_value_grid_with_window((80, 6), &window, 0, (1, 1))
+            .unwrap();
+        assert!(grid.first().is_some_and(|line| line.contains("1")));
+        assert!(grid.first().is_some_and(|line| line.contains("3")));
+        assert!(grid.iter().any(|line| line.starts_with("  3 |")));
+    }
+
+    #[test]
+    fn profile_extraction_follows_cursor_along_selected_non_display_axis() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2, 3], direction_spectral_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    vec![
+                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                    ],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        let window = opened.default_window();
+        let profile = opened
+            .profile_with_window_and_axes((1, 1), &window, &[1], 2)
+            .unwrap();
+        assert_eq!(profile.axis, 2);
+        assert_eq!(profile.axis_name, "Frequency");
+        assert_eq!(profile.selected_sample_index, 1);
+        assert_eq!(profile.samples.len(), 3);
+        assert_eq!(profile.samples[0].pixel_index, 0);
+        assert_eq!(profile.samples[0].value, 4.0);
+        assert_eq!(profile.samples[1].value, 40.0);
+        assert_eq!(profile.samples[2].value, 400.0);
+        assert!(profile.samples[1].world_axis.is_some());
     }
 
     #[test]
@@ -1271,7 +2178,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_axis_stepper_renders_3d_cubes() {
+    fn non_display_axis_selectors_render_3d_cubes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cube.image");
         let mut image =
@@ -1291,8 +2198,8 @@ mod tests {
         image.save().unwrap();
 
         let opened = OpenedImageView::open(&path).unwrap();
-        assert!(opened.capabilities().single_hidden_axis_stepper);
-        assert_eq!(opened.axis_model().hidden_axis, Some(2));
+        assert!(opened.capabilities().non_display_axis_selectors);
+        assert_eq!(opened.axis_model().non_display_axes, vec![2]);
         assert_eq!(opened.axis_model().display_axes, Some([0, 1]));
 
         let plane0 = opened.render_plane((2, 2), 0).unwrap();
@@ -1330,9 +2237,9 @@ mod tests {
 
         let opened = OpenedImageView::open(&path).unwrap();
         assert!(opened.capabilities().renderable_plane);
-        assert!(opened.capabilities().single_hidden_axis_stepper);
+        assert!(opened.capabilities().non_display_axis_selectors);
         assert_eq!(opened.axis_model().display_axes, Some([0, 1]));
-        assert_eq!(opened.axis_model().hidden_axis, Some(3));
+        assert_eq!(opened.axis_model().non_display_axes, vec![3]);
 
         let plane = opened.render_plane((2, 2), 2).unwrap();
         assert_eq!(plane.width, 2);
@@ -1354,11 +2261,11 @@ mod tests {
         let opened = OpenedImageView::open(&path).unwrap();
         assert!(opened.capabilities().renderable_plane);
         assert_eq!(opened.axis_model().display_axes, Some([1, 2]));
-        assert_eq!(opened.axis_model().hidden_axis, Some(3));
+        assert_eq!(opened.axis_model().non_display_axes, vec![3]);
     }
 
     #[test]
-    fn complex_and_4d_images_open_in_metadata_mode() {
+    fn complex_images_degrade_but_multi_axis_images_stay_renderable() {
         let dir = tempfile::tempdir().unwrap();
         let complex_path = dir.path().join("complex.image");
         let mut complex_image = PagedImage::<casacore_types::Complex32>::create(
@@ -1380,10 +2287,12 @@ mod tests {
         hyper_image.save().unwrap();
 
         let hyper_view = OpenedImageView::open(&hyper_path).unwrap();
-        assert!(!hyper_view.capabilities().renderable_plane);
+        assert!(hyper_view.capabilities().renderable_plane);
+        assert!(hyper_view.capabilities().non_display_axis_selectors);
+        assert_eq!(hyper_view.axis_model().non_display_axes, vec![2, 3]);
         assert_eq!(
             hyper_view.status_line(),
-            "viewer supports one 2D plane plus at most one non-degenerate hidden axis in wave 1"
+            "pixel-only mode: coordinate reconstruction unavailable"
         );
     }
 
@@ -1415,19 +2324,35 @@ mod tests {
     fn metadata_sections_include_coordinate_status() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("metadata.image");
-        let mut image =
-            PagedImage::<f32>::create(vec![2, 2, 2], direction_spectral_coords(), &path).unwrap();
+        let mut image = PagedImage::<f32>::create(
+            vec![2, 2, 2],
+            direction_spectral_coords_with_obs_info(),
+            &path,
+        )
+        .unwrap();
         image.save().unwrap();
 
         let opened = OpenedImageView::open(&path).unwrap();
         let sections = opened.metadata_sections().unwrap();
         assert!(sections.iter().any(|section| section.title == "Summary"));
+        assert!(
+            sections
+                .iter()
+                .any(|section| section.title == "Observation")
+        );
         assert!(sections.iter().any(|section| section.title == "Axes"));
         assert!(
             sections
                 .iter()
                 .any(|section| section.title == "Coordinates")
         );
+    }
+
+    #[test]
+    fn plane_value_formatter_shows_one_more_significant_figure() {
+        assert_eq!(format_plane_value(1.23456), "1.235");
+        assert_eq!(format_plane_value(12.3456), "12.346");
+        assert_eq!(format_plane_value(12_345.6), "1.23e4");
     }
 
     #[test]
@@ -1452,11 +2377,127 @@ mod tests {
             line.contains("Declination") && line.contains("ref_val=+45.00.00.00000 dms")
         }));
         assert!(axes.lines.iter().any(|line| {
-            line.contains("Right Ascension") && line.contains("incr=-1.375099 s/pixel")
+            line.contains("Right Ascension") && line.contains("incr=-20.626481 arcsec/pixel")
         }));
         assert!(axes.lines.iter().any(|line| {
             line.contains("Declination") && line.contains("incr=20.626481 arcsec/pixel")
         }));
+    }
+
+    #[test]
+    fn metadata_sections_include_observation_details() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("observation-details.image");
+        let mut image = PagedImage::<f32>::create(
+            vec![2, 2, 2],
+            direction_spectral_coords_with_obs_info(),
+            &path,
+        )
+        .unwrap();
+        image.save().unwrap();
+
+        let observation = OpenedImageView::open(&path)
+            .unwrap()
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Observation")
+            .unwrap();
+        assert!(
+            observation
+                .lines
+                .iter()
+                .any(|line| line == "telescope: ALMA")
+        );
+        assert!(
+            observation
+                .lines
+                .iter()
+                .any(|line| line == "observer: Test Observer")
+        );
+        assert!(observation.lines.iter().any(|line| {
+            line == &format!(
+                "obs date: {} UTC (59000.25 MJD)",
+                MvTime::from_mjd_days(59000.25).format_dmy(0)
+            )
+        }));
+        assert!(observation.lines.iter().any(|line| {
+            line.contains(
+                "telescope position: frame=ITRF x=2225142.18 m y=-5440307.37 m z=-2481029.85 m",
+            )
+        }));
+        assert!(observation.lines.iter().any(|line| {
+            line.contains("pointing center: 00:00:00.000000 hms, +45.00.00.00000 dms")
+        }));
+    }
+
+    #[test]
+    fn wgs84_position_formatter_preserves_units_and_frame() {
+        let rendered = format_position_for_display(&MPosition::new_wgs84(
+            -107.618_334_f64.to_radians(),
+            34.078_749_f64.to_radians(),
+            2_124.0,
+        ));
+        assert!(rendered.starts_with("frame=WGS84 "));
+        assert!(rendered.contains(" lon="));
+        assert!(rendered.contains(" lat="));
+        assert!(rendered.contains(" deg "));
+        assert!(rendered.contains(" height=2124 m"));
+    }
+
+    #[test]
+    fn summary_formats_single_beam_in_arcsec_and_degrees() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam-summary.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2], CoordinateSystem::new(), &path).unwrap();
+        let arcsec = Unit::new("arcsec").unwrap();
+        let deg = Unit::new("deg").unwrap();
+        let beam = crate::beam::GaussianBeam::new(
+            Quantity::new(3.5, "arcsec")
+                .unwrap()
+                .get_value_in(&Unit::new("rad").unwrap())
+                .unwrap(),
+            Quantity::new(2.25, "arcsec")
+                .unwrap()
+                .get_value_in(&Unit::new("rad").unwrap())
+                .unwrap(),
+            Quantity::new(171.3, "deg")
+                .unwrap()
+                .get_value_in(&Unit::new("rad").unwrap())
+                .unwrap(),
+        );
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: ImageBeamSet::new(beam),
+                image_type: ImageType::Intensity,
+                object_name: String::new(),
+            })
+            .unwrap();
+        image.save().unwrap();
+
+        let summary = OpenedImageView::open(&path)
+            .unwrap()
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Summary")
+            .unwrap();
+        let line = summary
+            .lines
+            .iter()
+            .find(|line| line.starts_with("beam: "))
+            .unwrap();
+        assert!(line.contains("arcsec"));
+        assert!(line.contains("deg"));
+        assert!(line.contains(&trim_float_text(format!(
+            "{:.6}",
+            beam.major_in(arcsec.name()).unwrap()
+        ))));
+        assert!(line.contains(&trim_float_text(format!(
+            "{:.6}",
+            beam.position_angle_in(deg.name()).unwrap()
+        ))));
     }
 
     #[test]
@@ -1490,12 +2531,9 @@ mod tests {
                 && line.contains("Declination")
                 && line.contains("ref_val=+45.00.00.00000 dms")
         }));
-        assert!(
-            coordinates
-                .lines
-                .iter()
-                .any(|line| { line.contains("axis 0") && line.contains("incr=-1.375099 s/pixel") })
-        );
+        assert!(coordinates.lines.iter().any(|line| {
+            line.contains("axis 0") && line.contains("incr=-20.626481 arcsec/pixel")
+        }));
         assert!(coordinates.lines.iter().any(|line| {
             line.contains("axis 1") && line.contains("incr=20.626481 arcsec/pixel")
         }));
@@ -1503,14 +2541,11 @@ mod tests {
             coordinates
                 .lines
                 .iter()
-                .any(|line| line.contains("Spectral 1: frame=LSRK restfreq=1420405750"))
+                .any(|line| line.contains("Spectral 1: frame=LSRK restfreq=1.420406 GHz"))
         );
-        assert!(
-            coordinates
-                .lines
-                .iter()
-                .any(|line| line.contains("axis 2") && line.contains("Frequency"))
-        );
+        assert!(coordinates.lines.iter().any(|line| line.contains("axis 2")
+            && line.contains("Frequency")
+            && line.contains("incr=1 MHz/pixel")));
     }
 
     #[test]
@@ -1540,8 +2575,97 @@ mod tests {
             coordinates
                 .lines
                 .iter()
-                .any(|line| line.contains("Spectral 1: frame=LSRK restfreq=1420405750"))
+                .any(|line| line.contains("Spectral 1: frame=LSRK restfreq=1.420406 GHz"))
         );
+    }
+
+    #[test]
+    fn summary_includes_multi_beam_statistics_with_units() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multibeam-summary.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2], CoordinateSystem::new(), &path).unwrap();
+        let beams = ImageBeamSet::from_grid(vec![
+            vec![GaussianBeam::new(
+                Quantity::new(3.0, "arcsec")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+                Quantity::new(2.0, "arcsec")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+                Quantity::new(10.0, "deg")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+            )],
+            vec![GaussianBeam::new(
+                Quantity::new(5.0, "arcsec")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+                Quantity::new(2.0, "arcsec")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+                Quantity::new(30.0, "deg")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+            )],
+            vec![GaussianBeam::new(
+                Quantity::new(4.0, "arcsec")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+                Quantity::new(2.0, "arcsec")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+                Quantity::new(20.0, "deg")
+                    .unwrap()
+                    .get_value_in(&Unit::new("rad").unwrap())
+                    .unwrap(),
+            )],
+        ]);
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: beams,
+                image_type: ImageType::Intensity,
+                object_name: String::new(),
+            })
+            .unwrap();
+        image.save().unwrap();
+
+        let summary = OpenedImageView::open(&path)
+            .unwrap()
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Summary")
+            .unwrap();
+        assert!(
+            summary
+                .lines
+                .iter()
+                .any(|line| { line == "beam: 3 per-plane beams (channels=3 stokes=1)" })
+        );
+        assert!(summary.lines.iter().any(|line| {
+            line.contains(
+                "beam min area: major=3 arcsec minor=2 arcsec pa=10 deg at chan=0 stokes=0",
+            )
+        }));
+        assert!(summary.lines.iter().any(|line| {
+            line.contains(
+                "beam median area: major=4 arcsec minor=2 arcsec pa=20 deg at chan=2 stokes=0",
+            )
+        }));
+        assert!(summary.lines.iter().any(|line| {
+            line.contains(
+                "beam max area: major=5 arcsec minor=2 arcsec pa=30 deg at chan=1 stokes=0",
+            )
+        }));
     }
 
     #[test]
@@ -1576,7 +2700,7 @@ mod tests {
         assert!(!probe.world_axes.is_empty());
         let spectral = probe.world_axes.last().unwrap();
         assert_eq!(spectral.name, "Frequency");
-        assert!((spectral.value - 115_022_033_339.31976).abs() < 1_000.0);
+        assert!((spectral.value - 115_022_033_339.319_76).abs() < 1_000.0);
 
         let coordinates = opened
             .metadata_sections()
@@ -1585,7 +2709,48 @@ mod tests {
             .find(|section| section.title == "Coordinates")
             .unwrap();
         assert!(coordinates.lines.iter().any(|line| {
-            line.contains("Spectral 2: frame=LSRK native=LSRD restfreq=115271200000")
+            line.contains("Spectral 2: frame=LSRK native=LSRD restfreq=115.2712 GHz")
+        }));
+
+        let observation = opened
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Observation")
+            .unwrap();
+        assert!(
+            observation
+                .lines
+                .iter()
+                .any(|line| line == "telescope: BIMA")
+        );
+        assert!(observation.lines.iter().any(|line| {
+            line.starts_with("obs date: ")
+                && line.contains(" UTC (")
+                && line.contains(" MJD)")
+                && line.contains('/')
+        }));
+        assert!(observation.lines.iter().any(|line| {
+            line.contains("telescope position: frame=ITRF ")
+                && line.contains(" x=")
+                && line.contains(" y=")
+                && line.contains(" z=")
+        }));
+        assert!(observation.lines.iter().any(|line| {
+            line.contains("pointing center: ") && line.contains("hms") && line.contains("dms")
+        }));
+
+        let summary = opened
+            .metadata_sections()
+            .unwrap()
+            .into_iter()
+            .find(|section| section.title == "Summary")
+            .unwrap();
+        assert!(summary.lines.iter().any(|line| {
+            line.starts_with("beam: ")
+                && line.contains("arcsec")
+                && line.contains("deg")
+                && !line.contains(" rad")
         }));
     }
 }

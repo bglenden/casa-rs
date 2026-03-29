@@ -14,6 +14,10 @@ pub struct ImageBrowserViewport {
     pub height: u16,
     #[serde(default)]
     pub inspector_height: u16,
+    #[serde(default)]
+    pub plane_pixel_width: u16,
+    #[serde(default)]
+    pub plane_pixel_height: u16,
 }
 
 impl ImageBrowserViewport {
@@ -22,6 +26,8 @@ impl ImageBrowserViewport {
             width,
             height,
             inspector_height: 0,
+            plane_pixel_width: 0,
+            plane_pixel_height: 0,
         }
     }
 
@@ -30,6 +36,24 @@ impl ImageBrowserViewport {
             width,
             height,
             inspector_height,
+            plane_pixel_width: 0,
+            plane_pixel_height: 0,
+        }
+    }
+
+    pub const fn with_plane_pixels(
+        width: u16,
+        height: u16,
+        inspector_height: u16,
+        plane_pixel_width: u16,
+        plane_pixel_height: u16,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            inspector_height,
+            plane_pixel_width,
+            plane_pixel_height,
         }
     }
 }
@@ -71,6 +95,8 @@ pub enum ImageBrowserCommand {
     OpenRoot {
         path: String,
         viewport: ImageBrowserViewport,
+        #[serde(default)]
+        parameters: Option<ImageBrowserParameters>,
     },
     Resize {
         viewport: ImageBrowserViewport,
@@ -85,8 +111,19 @@ pub enum ImageBrowserCommand {
         dx: i32,
         dy: i32,
     },
-    StepHiddenAxis {
+    SetCursor {
+        x: usize,
+        y: usize,
+    },
+    StepNonDisplayAxis {
+        axis: usize,
         delta: i32,
+    },
+    SetSelectedNonDisplayAxis {
+        axis: usize,
+    },
+    SetViewWindow {
+        parameters: ImageBrowserParameters,
     },
     GetSnapshot,
 }
@@ -137,6 +174,7 @@ pub struct ImageBrowserErrorPayload {
 #[serde(rename_all = "snake_case")]
 pub enum ImageBrowserView {
     Plane,
+    Spectrum,
     Metadata,
     Coordinates,
 }
@@ -145,6 +183,7 @@ impl ImageBrowserView {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Plane => "Plane",
+            Self::Spectrum => "Spectrum",
             Self::Metadata => "Metadata",
             Self::Coordinates => "Coordinates",
         }
@@ -165,9 +204,17 @@ pub struct ImageBrowserCapabilities {
     pub renderable_plane: bool,
     pub world_coords_available: bool,
     pub pixel_only_mode: bool,
-    pub single_hidden_axis_stepper: bool,
+    pub non_display_axis_selectors: bool,
     pub mask_present: bool,
     pub complex_unsupported: bool,
+}
+
+/// Normalized image view parameters reflected in the left-side live form.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+pub struct ImageBrowserParameters {
+    pub blc: String,
+    pub trc: String,
+    pub inc: String,
 }
 
 /// Quantized grayscale plane raster returned by the backend.
@@ -190,6 +237,28 @@ pub struct ImageBrowserAxisValue {
     pub value: f64,
 }
 
+/// Display-axis metadata for the current rendered plane window.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageDisplayAxisState {
+    pub name: String,
+    pub unit: String,
+    pub blc: usize,
+    pub trc: usize,
+    pub inc: usize,
+    pub sampled_len: usize,
+    /// World-coordinate increment per source pixel, in the native axis units.
+    pub world_increment: Option<f64>,
+}
+
+/// Cursor state for the active rendered plane.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ImagePlaneCursorState {
+    pub sampled_x: usize,
+    pub sampled_y: usize,
+    pub pixel_x: usize,
+    pub pixel_y: usize,
+}
+
 /// Cursor probe payload for the active image plane.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ImageBrowserProbe {
@@ -201,12 +270,37 @@ pub struct ImageBrowserProbe {
     pub world_axes: Vec<ImageBrowserAxisValue>,
 }
 
-/// Hidden-axis selector state for 3D cubes.
+/// A single sample in a 1D spectrum/profile extraction.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageProfileSampleState {
+    pub sample_index: usize,
+    pub pixel_index: usize,
+    pub value: f64,
+    pub masked: bool,
+    pub finite: bool,
+    pub world_axis: Option<ImageBrowserAxisValue>,
+}
+
+/// Structured 1D spectrum/profile payload for linked client-side rendering.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageProfilePayload {
+    pub axis: usize,
+    pub axis_name: String,
+    pub axis_unit: String,
+    pub value_unit: String,
+    pub coord_type: String,
+    pub selected_sample_index: usize,
+    pub samples: Vec<ImageProfileSampleState>,
+}
+
+/// Non-display axis selector state for the current plane.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct ImageHiddenAxisState {
+pub struct ImageNonDisplayAxisState {
+    pub axis: usize,
     pub label: String,
     pub index: usize,
     pub length: usize,
+    pub pixel: usize,
 }
 
 /// Full image browser render snapshot.
@@ -215,12 +309,20 @@ pub struct ImageBrowserSnapshot {
     pub status_line: String,
     pub active_view: ImageBrowserView,
     pub focus: ImageBrowserFocus,
+    #[serde(default)]
+    pub parameters: ImageBrowserParameters,
     pub inspector_lines: Vec<String>,
     pub content_lines: Vec<String>,
     pub navigation: ImageNavigationMetrics,
     pub plane: Option<ImagePlaneRaster>,
     pub probe: Option<ImageBrowserProbe>,
-    pub hidden_axis: Option<ImageHiddenAxisState>,
+    #[serde(default)]
+    pub profile: Option<ImageProfilePayload>,
+    #[serde(default)]
+    pub display_axes: Vec<ImageDisplayAxisState>,
+    pub plane_cursor: Option<ImagePlaneCursorState>,
+    #[serde(default)]
+    pub non_display_axes: Vec<ImageNonDisplayAxisState>,
     pub capabilities: ImageBrowserCapabilities,
 }
 
@@ -253,6 +355,11 @@ mod tests {
             status_line: "ready".into(),
             active_view: ImageBrowserView::Plane,
             focus: ImageBrowserFocus::Content,
+            parameters: ImageBrowserParameters {
+                blc: "0,0".into(),
+                trc: "3,3".into(),
+                inc: "1,1".into(),
+            },
             inspector_lines: vec!["shape: [4, 4]".into()],
             content_lines: Vec::new(),
             navigation: ImageNavigationMetrics {
@@ -281,12 +388,72 @@ mod tests {
                 finite: true,
                 world_axes: Vec::new(),
             }),
-            hidden_axis: None,
+            profile: Some(ImageProfilePayload {
+                axis: 2,
+                axis_name: "Frequency".into(),
+                axis_unit: "Hz".into(),
+                value_unit: "Jy/beam".into(),
+                coord_type: "Spectral".into(),
+                selected_sample_index: 1,
+                samples: vec![
+                    ImageProfileSampleState {
+                        sample_index: 0,
+                        pixel_index: 0,
+                        value: 1.0,
+                        masked: false,
+                        finite: true,
+                        world_axis: Some(ImageBrowserAxisValue {
+                            name: "Frequency".into(),
+                            unit: "Hz".into(),
+                            value: 1.42e9,
+                        }),
+                    },
+                    ImageProfileSampleState {
+                        sample_index: 1,
+                        pixel_index: 1,
+                        value: 2.0,
+                        masked: false,
+                        finite: true,
+                        world_axis: Some(ImageBrowserAxisValue {
+                            name: "Frequency".into(),
+                            unit: "Hz".into(),
+                            value: 1.421e9,
+                        }),
+                    },
+                ],
+            }),
+            display_axes: vec![
+                ImageDisplayAxisState {
+                    name: "Axis0".into(),
+                    unit: "px".into(),
+                    blc: 0,
+                    trc: 3,
+                    inc: 1,
+                    sampled_len: 4,
+                    world_increment: None,
+                },
+                ImageDisplayAxisState {
+                    name: "Axis1".into(),
+                    unit: "px".into(),
+                    blc: 0,
+                    trc: 3,
+                    inc: 1,
+                    sampled_len: 4,
+                    world_increment: None,
+                },
+            ],
+            plane_cursor: Some(ImagePlaneCursorState {
+                sampled_x: 1,
+                sampled_y: 1,
+                pixel_x: 1,
+                pixel_y: 1,
+            }),
+            non_display_axes: Vec::new(),
             capabilities: ImageBrowserCapabilities {
                 renderable_plane: true,
                 world_coords_available: false,
                 pixel_only_mode: true,
-                single_hidden_axis_stepper: false,
+                non_display_axis_selectors: false,
                 mask_present: false,
                 complex_unsupported: false,
             },

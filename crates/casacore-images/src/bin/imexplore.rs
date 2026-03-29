@@ -117,8 +117,19 @@ fn run_session() -> Result<(), String> {
                         ImageBrowserResponseEnvelope::error("command_failed", error.to_string())
                     }
                 },
-                (None, ImageBrowserCommand::OpenRoot { path, viewport }) => {
-                    match ImageBrowserSession::open(path, viewport) {
+                (
+                    None,
+                    ImageBrowserCommand::OpenRoot {
+                        path,
+                        viewport,
+                        parameters,
+                    },
+                ) => {
+                    match ImageBrowserSession::open_with_parameters(
+                        path,
+                        viewport,
+                        parameters.as_ref(),
+                    ) {
                         Ok(new_session) => {
                             let snapshot =
                                 new_session.snapshot().map_err(|error| error.to_string());
@@ -185,9 +196,63 @@ fn ui_schema_json() -> Result<String, String> {
                 "hidden_in_tui": false
             },
             {
+                "id": "blc",
+                "label": "BLC",
+                "order": 1,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--blc"],
+                    "metavar": "BLC",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Comma-separated inclusive bottom-left-corner pixel indices",
+                "group": "View",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "trc",
+                "label": "TRC",
+                "order": 2,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--trc"],
+                    "metavar": "TRC",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Comma-separated inclusive top-right-corner pixel indices",
+                "group": "View",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "inc",
+                "label": "INC",
+                "order": 3,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--inc"],
+                    "metavar": "INC",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Comma-separated per-axis pixel increments",
+                "group": "View",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
                 "id": "help",
                 "label": "Help",
-                "order": 1,
+                "order": 4,
                 "parser": {
                     "kind": "action",
                     "flags": ["-h", "--help"],

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Beam metadata corresponding to C++ `GaussianBeam` and `ImageBeamSet`.
 
+use casacore_types::quanta::{Quantity, Unit};
 use casacore_types::{RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::ImageError;
@@ -36,6 +37,21 @@ impl GaussianBeam {
         std::f64::consts::PI / (4.0 * 2.0_f64.ln()) * self.major * self.minor
     }
 
+    /// Returns the major axis converted to the requested angular unit.
+    pub fn major_in(&self, unit: &str) -> Result<f64, ImageError> {
+        angle_value_in(self.major, unit)
+    }
+
+    /// Returns the minor axis converted to the requested angular unit.
+    pub fn minor_in(&self, unit: &str) -> Result<f64, ImageError> {
+        angle_value_in(self.minor, unit)
+    }
+
+    /// Returns the position angle converted to the requested angular unit.
+    pub fn position_angle_in(&self, unit: &str) -> Result<f64, ImageError> {
+        angle_value_in(self.position_angle, unit)
+    }
+
     /// Serializes the beam to the casacore quantity-record representation.
     pub fn to_record(&self) -> RecordValue {
         fn quantity_record(value: f64) -> RecordValue {
@@ -59,12 +75,37 @@ impl GaussianBeam {
     pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
         fn read_quantity(rec: &RecordValue, key: &str) -> Result<f64, ImageError> {
             match rec.get(key) {
-                Some(Value::Record(sub)) => match sub.get("value") {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => Ok(*v),
-                    _ => Err(ImageError::InvalidMetadata(format!(
-                        "beam {key}: missing or invalid value field"
-                    ))),
-                },
+                Some(Value::Record(sub)) => {
+                    let value = match sub.get("value") {
+                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
+                        Some(Value::Scalar(ScalarValue::Float32(v))) => f64::from(*v),
+                        Some(Value::Scalar(ScalarValue::Int32(v))) => f64::from(*v),
+                        _ => {
+                            return Err(ImageError::InvalidMetadata(format!(
+                                "beam {key}: missing or invalid value field"
+                            )));
+                        }
+                    };
+                    let unit = match sub.get("unit") {
+                        Some(Value::Scalar(ScalarValue::String(unit))) => unit.as_str(),
+                        _ => {
+                            return Err(ImageError::InvalidMetadata(format!(
+                                "beam {key}: missing or invalid unit field"
+                            )));
+                        }
+                    };
+                    let quantity = Quantity::new(value, unit).map_err(|err| {
+                        ImageError::InvalidMetadata(format!(
+                            "beam {key}: invalid quantity unit '{unit}': {err}"
+                        ))
+                    })?;
+                    let radians = Unit::new("rad").expect("built-in radians unit must parse");
+                    quantity.get_value_in(&radians).map_err(|err| {
+                        ImageError::InvalidMetadata(format!(
+                            "beam {key}: expected angular quantity, got '{unit}': {err}"
+                        ))
+                    })
+                }
                 _ => Err(ImageError::InvalidMetadata(format!(
                     "beam: missing '{key}' sub-record"
                 ))),
@@ -77,6 +118,18 @@ impl GaussianBeam {
             position_angle: read_quantity(rec, "positionangle")?,
         })
     }
+}
+
+fn angle_value_in(radians: f64, unit: &str) -> Result<f64, ImageError> {
+    let quantity =
+        Quantity::new(radians, "rad").expect("built-in radians quantity must always parse");
+    let target = Unit::new(unit)
+        .map_err(|err| ImageError::InvalidMetadata(format!("invalid unit '{unit}': {err}")))?;
+    quantity.get_value_in(&target).map_err(|err| {
+        ImageError::InvalidMetadata(format!(
+            "cannot convert beam angle from rad to '{unit}': {err}"
+        ))
+    })
 }
 
 impl Default for GaussianBeam {
@@ -502,6 +555,30 @@ mod tests {
         let beam = GaussianBeam::new(1e-4, 5e-5, 0.3);
         let back = GaussianBeam::from_record(&beam.to_record()).unwrap();
         assert_eq!(beam, back);
+    }
+
+    #[test]
+    fn beam_record_parses_quantity_units() {
+        fn quantity_record(value: f64, unit: &str) -> RecordValue {
+            RecordValue::new(vec![
+                RecordField::new("value", Value::Scalar(ScalarValue::Float64(value))),
+                RecordField::new("unit", Value::Scalar(ScalarValue::String(unit.into()))),
+            ])
+        }
+
+        let record = RecordValue::new(vec![
+            RecordField::new("major", Value::Record(quantity_record(3.5, "arcsec"))),
+            RecordField::new("minor", Value::Record(quantity_record(2.25, "arcsec"))),
+            RecordField::new(
+                "positionangle",
+                Value::Record(quantity_record(171.3, "deg")),
+            ),
+        ]);
+
+        let beam = GaussianBeam::from_record(&record).unwrap();
+        assert!((beam.major_in("arcsec").unwrap() - 3.5).abs() < 1e-10);
+        assert!((beam.minor_in("arcsec").unwrap() - 2.25).abs() < 1e-10);
+        assert!((beam.position_angle_in("deg").unwrap() - 171.3).abs() < 1e-10);
     }
 
     #[test]

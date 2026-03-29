@@ -86,7 +86,8 @@ pub use image_expr::{
 };
 pub use image_info::{ImageInfo, ImageType};
 pub use image_view::{
-    ImageAxisModel, ImageAxisValue, ImageMetadataSection, ImageProbe, ImageViewCapabilities,
+    ImageAxisModel, ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis,
+    ImageProbe, ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow,
     OpenedImageView, PlaneRaster,
 };
 pub use imagebrowser_session::ImageBrowserSession;

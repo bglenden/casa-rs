@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 
 use casacore_imagebrowser_protocol::{
     ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus as ProtocolImageFocus,
-    ImageBrowserProbe, ImageBrowserResponseEnvelope, ImageBrowserSnapshot,
-    ImageBrowserView as ProtocolImageView, ImageHiddenAxisState, ImageNavigationMetrics,
-    ImagePlaneRaster,
+    ImageBrowserParameters, ImageBrowserProbe, ImageBrowserResponseEnvelope, ImageBrowserSnapshot,
+    ImageBrowserView as ProtocolImageView, ImageDisplayAxisState, ImageNavigationMetrics,
+    ImageNonDisplayAxisState, ImagePlaneCursorState, ImagePlaneRaster, ImageProfilePayload,
+    ImageProfileSampleState,
 };
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
 use casacore_ms::listobs::cli::command_schema;
@@ -30,6 +31,7 @@ use tempfile::tempdir;
 
 use crate::app::{
     AppState, BrowserPaneFocus, OutputPane, PaneFocus, PlotControlTarget, PlotPaneFocus, ResultTab,
+    image_plane_draw_rect,
 };
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
@@ -682,6 +684,173 @@ fn help_overlay_toggles_with_question_mark_and_escape() {
 
     app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(!app.help_visible());
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_help_overlay_lists_plane_controls() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec![
+                "View: Plane".to_string(),
+                "Hidden axis Frequency (2): 0/2".to_string(),
+            ],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+            ImageBrowserParameters {
+                blc: "0,0,0".to_string(),
+                trc: "3,3,2".to_string(),
+                inc: "1,1,1".to_string(),
+            },
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+    let rendered = render_app(&app, 140, 30);
+    assert!(rendered.contains("g toggle raster/spreadsheet"));
+    assert!(rendered.contains("s collapse/expand spectrum"));
+    assert!(rendered.contains("m play/pause movie"));
+    assert!(rendered.contains("Spectrum view: follows the active plane cursor"));
+    assert!(rendered.contains("drag divider to resize spectrum"));
+    assert!(rendered.contains("collapse/expand spectrum"));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_cycles_to_spectrum_tab() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Metadata,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["== Summary ==".to_string()],
+                vec!["View: Metadata".to_string()],
+                None,
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Coordinates,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["== Coordinates ==".to_string()],
+                vec!["View: Coordinates".to_string()],
+                None,
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Spectrum,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec![
+                    "Profile axis: Frequency (2) [Spectral]".to_string(),
+                    "Selected sample: idx=0 pixel=0 world=115020000000 Hz value=1".to_string(),
+                ],
+                vec!["View: Spectrum".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+
+    assert_eq!(app.active_browser_tab_label(), Some("Spectrum"));
+    let rendered = render_app(&app, 120, 24);
+    assert!(rendered.contains("Profile axis: Frequency (2) [Spectral]"));
 }
 
 #[test]
@@ -1593,7 +1762,7 @@ fn fake_tablebrowser_session_drives_casars_navigation() {
 
 #[cfg(unix)]
 #[test]
-fn imexplore_session_starts_from_image_path_and_renders_plane_view() {
+fn imexplore_session_starts_from_image_path_and_prepares_raster_plane_view() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let script = write_fake_imexplore_script(
@@ -1621,10 +1790,12 @@ fn imexplore_session_starts_from_image_path_and_renders_plane_view() {
                     value: 1.42040575e9,
                 }],
             }),
-            Some(ImageHiddenAxisState {
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
                 label: "Frequency".to_string(),
                 index: 0,
                 length: 3,
+                pixel: 0,
             }),
         )],
         None,
@@ -1642,9 +1813,98 @@ fn imexplore_session_starts_from_image_path_and_renders_plane_view() {
     let rendered = render_app(&app, 160, 28);
     assert!(app.browser_is_active());
     assert_eq!(app.active_browser_tab_label(), Some("Plane"));
+    assert_eq!(app.image_plane_mode_label_for_test(), Some("raster"));
     assert!(rendered.contains("Image ready"));
     assert!(rendered.contains("Hidden axis Frequency (2): 0/2"));
-    assert!(rendered.contains("..@."));
+    assert!(rendered.contains("Plane mode: raster"));
+
+    app.prepare_graphics_for_test(160, 28);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while app.image_plane_image_size_for_test().is_none() && Instant::now() < deadline {
+        app.on_tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 28), &app);
+    let canvas = ui::image_plane_canvas_area(&layout);
+    assert!(
+        app.image_plane_protocol().is_some()
+            || app.image_plane_pending()
+            || app.image_plane_last_error().is_some()
+    );
+    let image_size = app
+        .image_plane_image_size_for_test()
+        .expect("rendered raster image size");
+    assert!(image_size.0 > u32::from(canvas.width));
+    assert!(image_size.1 > u32::from(canvas.height));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_plane_view_prepares_linked_spectrum_plot() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec![
+                "View: Plane".to_string(),
+                "Shape: [4, 4, 3]".to_string(),
+                "Value: 5".to_string(),
+            ],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![1, 1, 1],
+                pixel_axes: vec![],
+                value: 5.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![ImageBrowserAxisValue {
+                    name: "Frequency".to_string(),
+                    unit: "Hz".to_string(),
+                    value: 1.150_230_333_39e11,
+                }],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 1,
+                length: 3,
+                pixel: 1,
+            }),
+            ImageBrowserParameters {
+                blc: "0,0,0".to_string(),
+                trc: "3,3,2".to_string(),
+                inc: "1,1,1".to_string(),
+            },
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.prepare_graphics_for_test(160, 32);
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while (app.image_plane_image_size_for_test().is_none()
+        || app.image_spectrum_image_size_for_test().is_none())
+        && Instant::now() < deadline
+    {
+        app.on_tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(app.image_plane_image_size_for_test().is_some());
+    assert!(app.image_spectrum_image_size_for_test().is_some());
 }
 
 #[cfg(unix)]
@@ -1673,10 +1933,12 @@ fn imexplore_uses_live_parameters_pane() {
                 finite: true,
                 world_axes: vec![],
             }),
-            Some(ImageHiddenAxisState {
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
                 label: "Frequency".to_string(),
                 index: 0,
                 length: 3,
+                pixel: 0,
             }),
         )],
         None,
@@ -1700,6 +1962,498 @@ fn imexplore_uses_live_parameters_pane() {
     assert_eq!(app.pane_focus_for_test(), PaneFocus::Parameters);
     app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     assert!(app.path_chooser_active());
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_defers_backend_resize_while_dragging_divider() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Resized",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0],
+                    pixel_axes: vec![],
+                    value: 2.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 30), &app);
+    let divider_row = layout.divider.y.saturating_add(1);
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            layout.divider.x,
+            divider_row,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            layout.divider.x.saturating_add(8),
+            divider_row,
+        ),
+        &layout,
+    );
+
+    app.sync_browser_viewport(80, 20, 10);
+    assert_eq!(
+        app.image_browser_snapshot_for_test()
+            .expect("imexplore snapshot")
+            .status_line,
+        "Image ready"
+    );
+
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            layout.divider.x.saturating_add(8),
+            divider_row,
+        ),
+        &layout,
+    );
+    app.sync_browser_viewport(80, 20, 10);
+    assert_eq!(
+        app.image_browser_snapshot_for_test()
+            .expect("imexplore snapshot")
+            .status_line,
+        "Resized"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_workspace_split_ratio_persists_after_drag() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec!["View: Plane".to_string()],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+            ImageBrowserParameters {
+                blc: "0,0,0".to_string(),
+                trc: "3,3,2".to_string(),
+                inc: "1,1,1".to_string(),
+            },
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let config_path = temp.path().join("casars.toml");
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let mut app = AppState::from_schema_with_config(
+        imexplore_app(),
+        schema,
+        ConfigStore::load_for_tests(config_path.clone()),
+    );
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    let original = app.image_workspace_split_ratio_for_test();
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 36), &app);
+    let divider =
+        ui::image_workspace_divider_area(&layout, true, original).expect("linked divider area");
+    let target_row = divider
+        .y
+        .saturating_add(3)
+        .min(layout.result_content.y + layout.result_content.height.saturating_sub(2));
+    let target_col = divider.x.saturating_add(1);
+
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target_col,
+            divider.y,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            target_col,
+            target_row,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            target_col,
+            target_row,
+        ),
+        &layout,
+    );
+
+    let resized = app.image_workspace_split_ratio_for_test();
+    assert!(resized > original);
+
+    let reloaded = AppState::from_schema_with_config(
+        imexplore_app(),
+        imexplore_app()
+            .load_schema()
+            .expect("reload fake imexplore schema"),
+        ConfigStore::load_for_tests(config_path),
+    );
+    assert!((reloaded.image_workspace_split_ratio_for_test() - resized).abs() < f32::EPSILON);
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_workspace_toggle_collapses_and_restores_spectrum() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec!["View: Plane".to_string()],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+            ImageBrowserParameters {
+                blc: "0,0,0".to_string(),
+                trc: "3,3,2".to_string(),
+                inc: "1,1,1".to_string(),
+            },
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    let original = app.image_workspace_split_ratio_for_test();
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 36), &app);
+    let toggle = ui::image_workspace_divider_toggle_area(&layout, true, original)
+        .expect("linked divider toggle");
+
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ),
+        &layout,
+    );
+    assert_eq!(app.image_workspace_split_ratio_for_test(), 1.0);
+
+    let collapsed_layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 36), &app);
+    assert!(
+        ui::image_spectrum_canvas_area(
+            &collapsed_layout,
+            true,
+            app.image_workspace_split_ratio_for_test(),
+        )
+        .is_none()
+    );
+
+    let toggle = ui::image_workspace_divider_toggle_area(
+        &collapsed_layout,
+        true,
+        app.image_workspace_split_ratio_for_test(),
+    )
+    .expect("collapsed divider toggle");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ),
+        &collapsed_layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ),
+        &collapsed_layout,
+    );
+
+    assert!((app.image_workspace_split_ratio_for_test() - original).abs() < f32::EPSILON);
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_keyboard_toggle_collapses_and_restores_spectrum() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec!["View: Plane".to_string()],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+            ImageBrowserParameters {
+                blc: "0,0,0".to_string(),
+                trc: "3,3,2".to_string(),
+                inc: "1,1,1".to_string(),
+            },
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    let original = app.image_workspace_split_ratio_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    assert_eq!(app.image_workspace_split_ratio_for_test(), 1.0);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    assert!((app.image_workspace_split_ratio_for_test() - original).abs() < f32::EPSILON);
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_live_window_parameters_update_plane_view() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let startup = fake_imexplore_snapshot_json_with_parameters(
+        ProtocolImageView::Plane,
+        ProtocolImageFocus::Content,
+        "Image ready",
+        vec![
+            "y/x |           0           1           2           3".to_string(),
+            "  0 | [        10]          20          30          40".to_string(),
+            "  1 |          11          21          31          41".to_string(),
+        ],
+        vec!["View: Plane".to_string(), "Value: 10".to_string()],
+        Some(ImageBrowserProbe {
+            pixel_indices: vec![0, 0],
+            pixel_axes: vec![],
+            value: 10.0,
+            masked: false,
+            finite: true,
+            world_axes: vec![],
+        }),
+        None,
+        ImageBrowserParameters {
+            blc: "0,0".to_string(),
+            trc: "3,1".to_string(),
+            inc: "1,1".to_string(),
+        },
+    );
+    let updated = fake_imexplore_snapshot_json_with_parameters(
+        ProtocolImageView::Plane,
+        ProtocolImageFocus::Content,
+        "Window updated",
+        vec![
+            "y/x |           1           3".to_string(),
+            "  0 | [        20]          40".to_string(),
+            "  1 |          21          41".to_string(),
+        ],
+        vec!["View: Plane".to_string(), "Value: 20".to_string()],
+        Some(ImageBrowserProbe {
+            pixel_indices: vec![1, 0],
+            pixel_axes: vec![],
+            value: 20.0,
+            masked: false,
+            finite: true,
+            world_axes: vec![],
+        }),
+        None,
+        ImageBrowserParameters {
+            blc: "1,0".to_string(),
+            trc: "3,1".to_string(),
+            inc: "2,1".to_string(),
+        },
+    );
+    let script = write_fake_imexplore_script(temp.path(), &[startup, updated], None);
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+    app.set_text_value("trc", "3,1");
+    app.set_text_value("inc", "2,1");
+    app.set_text_value_and_apply("blc", "1,0");
+
+    let rendered = render_app(&app, 120, 24);
+    assert!(rendered.contains("Window updated"));
+    assert_eq!(app.field_text_for_test("blc").as_deref(), Some("1,0"));
+    assert_eq!(app.field_text_for_test("trc").as_deref(), Some("3,1"));
+    assert_eq!(app.field_text_for_test("inc").as_deref(), Some("2,1"));
+    assert!(rendered.contains("y/x |           1           3"));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_invalid_live_window_parameters_keep_session_open() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let startup = fake_imexplore_snapshot_json_with_parameters(
+        ProtocolImageView::Plane,
+        ProtocolImageFocus::Content,
+        "Image ready",
+        vec![
+            "y/x |           0           1".to_string(),
+            "  0 | [         1]           2".to_string(),
+        ],
+        vec!["View: Plane".to_string(), "Value: 1".to_string()],
+        Some(ImageBrowserProbe {
+            pixel_indices: vec![0, 0],
+            pixel_axes: vec![],
+            value: 1.0,
+            masked: false,
+            finite: true,
+            world_axes: vec![],
+        }),
+        None,
+        ImageBrowserParameters {
+            blc: "0,0".to_string(),
+            trc: "1,0".to_string(),
+            inc: "1,1".to_string(),
+        },
+    );
+    let error = serde_json::to_string(&ImageBrowserResponseEnvelope::error(
+        "command_failed",
+        "INC axis 0 must be >= 1",
+    ))
+    .expect("serialize imexplore error");
+    let script = write_fake_imexplore_script(temp.path(), &[startup, error], None);
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.set_text_value_and_apply("inc", "0,1");
+
+    assert!(app.browser_is_active());
+    assert!(
+        app.status_line_for_test()
+            .contains("Browser command failed.")
+    );
+    assert!(
+        app.stderr_for_test()
+            .contains("command_failed: INC axis 0 must be >= 1")
+    );
 }
 
 #[cfg(unix)]
@@ -1790,6 +2544,7 @@ fn imexplore_plane_selected_cell_uses_highlight_background() {
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
     app.set_text_value("image_path", "/tmp/fake.image");
     app.start_run_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -1858,7 +2613,7 @@ fn imexplore_copy_shortcut_writes_probe_summary_to_clipboard() {
 
     let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
     assert!(clipboard.contains("value: 42"));
-    assert!(clipboard.contains("Frequency: 1420405750"));
+    assert!(clipboard.contains("Frequency: 1.420406 GHz"));
     clear_test_clipboard_file();
 }
 
@@ -1942,10 +2697,12 @@ fn imexplore_tab_focuses_live_parameters_pane() {
                     finite: true,
                     world_axes: vec![],
                 }),
-                Some(ImageHiddenAxisState {
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
                     label: "Frequency".to_string(),
                     index: 0,
                     length: 3,
+                    pixel: 0,
                 }),
             ),
             fake_imexplore_snapshot_json(
@@ -1965,10 +2722,12 @@ fn imexplore_tab_focuses_live_parameters_pane() {
                     finite: true,
                     world_axes: vec![],
                 }),
-                Some(ImageHiddenAxisState {
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
                     label: "Frequency".to_string(),
                     index: 0,
                     length: 3,
+                    pixel: 0,
                 }),
             ),
             fake_imexplore_snapshot_json(
@@ -1988,10 +2747,12 @@ fn imexplore_tab_focuses_live_parameters_pane() {
                     finite: true,
                     world_axes: vec![],
                 }),
-                Some(ImageHiddenAxisState {
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
                     label: "Frequency".to_string(),
                     index: 1,
                     length: 3,
+                    pixel: 1,
                 }),
             ),
         ],
@@ -2081,12 +2842,111 @@ fn imexplore_exposes_and_applies_horizontal_scrollbar() {
 
 #[cfg(unix)]
 #[test]
+fn imexplore_auto_scrolls_plane_view_to_keep_selected_pixel_visible() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let header = format!(
+        "{:>3} | {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11}",
+        "y/x", 0, 1, 2, 3, 4, 5, 6, 7, 8
+    );
+    let row_initial = format!(
+        "{:>3} | [{:>9}] {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11}",
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 888_888
+    );
+    let row_scrolled = format!(
+        "{:>3} | {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} [{:>9}]",
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 888_888
+    );
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec![header.clone(), row_initial.clone()],
+                vec!["View: Plane".to_string(), "Value: 1".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec![header.clone(), row_initial],
+                vec!["View: Plane".to_string(), "Value: 1".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec![header, row_scrolled],
+                vec!["View: Plane".to_string(), "Value: 888888".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![8, 0],
+                    pixel_axes: vec![],
+                    value: 888_888.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+
+    let width = 64;
+    let height = 24;
+    let provisional_layout =
+        ui::compute_layout(ratatui::layout::Rect::new(0, 0, width, height), &app);
+    app.sync_browser_viewport(
+        provisional_layout.result_content.width,
+        provisional_layout.result_content.height,
+        provisional_layout.form_inner.height,
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+
+    assert!(app.active_browser_hscroll() > 0);
+    let rendered = render_app(&app, width, height);
+    assert!(rendered.contains("[   888888]"));
+}
+
+#[cfg(unix)]
+#[test]
 fn imexplore_clicking_plane_cell_moves_active_pixel() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let header = format!("{:>3} | {:>11} {:>11}", "y/x", 0, 1);
-    let row0_initial = format!("{:>3} | {} {:>11}", 0, format!("[{:>9}]", 1), 400);
-    let row0_selected = format!("{:>3} | {:>11} {}", 0, 1, format!("[{:>9}]", 400));
+    let row0_initial = format!("{:>3} | [{:>9}] {:>11}", 0, 1, 400);
+    let row0_selected = format!("{:>3} | {:>11} [{:>9}]", 0, 1, 400);
     let row1 = format!("{:>3} | {:>11} {:>11}", 1, 3, 4);
     let script = write_fake_imexplore_script(
         temp.path(),
@@ -2135,6 +2995,7 @@ fn imexplore_clicking_plane_cell_moves_active_pixel() {
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
     app.set_text_value("image_path", "/tmp/fake.image");
     app.start_run_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 80, 24), &app);
     let buffer = app
@@ -2162,6 +3023,534 @@ fn imexplore_clicking_plane_cell_moves_active_pixel() {
 
     let rendered = render_app(&app, 80, 24);
     assert!(rendered.contains("Value: 400"));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_clicking_raster_plane_moves_active_pixel() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json_with_parameters(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string(), "Value: 1".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+                ImageBrowserParameters {
+                    blc: "0,0".to_string(),
+                    trc: "3,3".to_string(),
+                    inc: "1,1".to_string(),
+                },
+            ),
+            fake_imexplore_snapshot_json_with_parameters(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string(), "Value: 12".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![2, 1],
+                    pixel_axes: vec![],
+                    value: 12.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+                ImageBrowserParameters {
+                    blc: "0,0".to_string(),
+                    trc: "3,3".to_string(),
+                    inc: "1,1".to_string(),
+                },
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.prepare_graphics_for_test(80, 24);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 80, 24), &app);
+    let canvas = ui::image_plane_canvas_area(&layout);
+    let draw_rect = image_plane_draw_rect(
+        canvas,
+        app.image_browser_snapshot_for_test()
+            .expect("imexplore session snapshot"),
+        app.image_plane_font_size_for_test(),
+    )
+    .expect("raster draw rect");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            draw_rect.x + draw_rect.width / 2,
+            draw_rect.y + draw_rect.height / 3,
+        ),
+        &layout,
+    );
+
+    let rendered = render_app(&app, 80, 24);
+    assert!(rendered.contains("Value: 12"));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_dragging_raster_plane_updates_active_pixel() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json_with_parameters(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string(), "Value: 1".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+                ImageBrowserParameters {
+                    blc: "0,0".to_string(),
+                    trc: "3,3".to_string(),
+                    inc: "1,1".to_string(),
+                },
+            ),
+            fake_imexplore_snapshot_json_with_parameters(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string(), "Value: 4".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![1, 1],
+                    pixel_axes: vec![],
+                    value: 4.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+                ImageBrowserParameters {
+                    blc: "0,0".to_string(),
+                    trc: "3,3".to_string(),
+                    inc: "1,1".to_string(),
+                },
+            ),
+            fake_imexplore_snapshot_json_with_parameters(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string(), "Value: 16".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![3, 3],
+                    pixel_axes: vec![],
+                    value: 16.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                None,
+                ImageBrowserParameters {
+                    blc: "0,0".to_string(),
+                    trc: "3,3".to_string(),
+                    inc: "1,1".to_string(),
+                },
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.prepare_graphics_for_test(80, 24);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 80, 24), &app);
+    let canvas = ui::image_plane_canvas_area(&layout);
+    let draw_rect = image_plane_draw_rect(
+        canvas,
+        app.image_browser_snapshot_for_test()
+            .expect("imexplore session snapshot"),
+        app.image_plane_font_size_for_test(),
+    )
+    .expect("raster draw rect");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            draw_rect.x + draw_rect.width / 3,
+            draw_rect.y + draw_rect.height / 3,
+        ),
+        &layout,
+    );
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            draw_rect.x + draw_rect.width.saturating_sub(1),
+            draw_rect.y + draw_rect.height.saturating_sub(1),
+        ),
+        &layout,
+    );
+
+    let rendered = render_app(&app, 80, 24);
+    assert!(rendered.contains("Value: 16"));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_clicking_linked_spectrum_updates_plane() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json_with_profile(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string(), "Value: 1".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageProfilePayload {
+                    selected_sample_index: 0,
+                    ..fake_image_profile_payload()
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+                ImageBrowserParameters {
+                    blc: "0,0,0".to_string(),
+                    trc: "3,3,2".to_string(),
+                    inc: "1,1,1".to_string(),
+                },
+            ),
+            fake_imexplore_snapshot_json_with_profile(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string(), "Value: 2".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 2],
+                    pixel_axes: vec![],
+                    value: 2.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageProfilePayload {
+                    selected_sample_index: 2,
+                    ..fake_image_profile_payload()
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 2,
+                    length: 3,
+                    pixel: 2,
+                }),
+                ImageBrowserParameters {
+                    blc: "0,0,0".to_string(),
+                    trc: "3,3,2".to_string(),
+                    inc: "1,1,1".to_string(),
+                },
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.prepare_graphics_for_test(120, 32);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 32), &app);
+    let spectrum =
+        ui::image_spectrum_canvas_area(&layout, true, app.image_workspace_split_ratio_for_test())
+            .expect("linked spectrum area");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            spectrum.x + spectrum.width.saturating_sub(1),
+            spectrum.y + spectrum.height / 2,
+        ),
+        &layout,
+    );
+
+    let rendered = render_app(&app, 120, 32);
+    assert!(rendered.contains("Value: 2"));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_clicking_raster_letterbox_keeps_active_pixel() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_parameters(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec!["View: Plane".to_string(), "Value: 1".to_string()],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            None,
+            ImageBrowserParameters {
+                blc: "0,0".to_string(),
+                trc: "3,3".to_string(),
+                inc: "1,1".to_string(),
+            },
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.prepare_graphics_for_test(80, 24);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 80, 24), &app);
+    let canvas = ui::image_plane_canvas_area(&layout);
+    let draw_rect = image_plane_draw_rect(
+        canvas,
+        app.image_browser_snapshot_for_test()
+            .expect("imexplore session snapshot"),
+        app.image_plane_font_size_for_test(),
+    )
+    .expect("raster draw rect");
+    let (click_x, click_y) = if draw_rect.height < canvas.height {
+        (canvas.x + canvas.width / 2, canvas.y)
+    } else if draw_rect.width < canvas.width {
+        (canvas.x, canvas.y + canvas.height / 2)
+    } else {
+        panic!("expected raster letterboxing inside canvas");
+    };
+    app.handle_mouse_event(
+        mouse(MouseEventKind::Down(MouseButton::Left), click_x, click_y),
+        &layout,
+    );
+
+    let rendered = render_app(&app, 80, 24);
+    assert!(rendered.contains("Value: 1"));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_movie_mode_steps_and_loops_hidden_axis() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 0/2".to_string(),
+                    "Value: 1".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 1/2".to_string(),
+                    "Value: 10".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 1],
+                    pixel_axes: vec![],
+                    value: 10.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 1,
+                    length: 3,
+                    pixel: 1,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 2/2".to_string(),
+                    "Value: 100".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 2],
+                    pixel_axes: vec![],
+                    value: 100.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 2,
+                    length: 3,
+                    pixel: 2,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 0/2".to_string(),
+                    "Value: 1".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    assert!(!app.image_movie_playing_for_test());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert!(app.image_movie_playing_for_test());
+
+    std::thread::sleep(Duration::from_millis(300));
+    app.on_tick();
+    assert!(
+        app.browser_inspector_lines()
+            .unwrap_or_default()
+            .iter()
+            .any(|line| line.contains("Hidden axis Frequency (2): 1/2"))
+    );
+
+    std::thread::sleep(Duration::from_millis(300));
+    app.on_tick();
+    assert!(
+        app.browser_inspector_lines()
+            .unwrap_or_default()
+            .iter()
+            .any(|line| line.contains("Hidden axis Frequency (2): 2/2"))
+    );
+
+    std::thread::sleep(Duration::from_millis(300));
+    app.on_tick();
+    assert!(
+        app.browser_inspector_lines()
+            .unwrap_or_default()
+            .iter()
+            .any(|line| line.contains("Hidden axis Frequency (2): 0/2"))
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    assert!(!app.image_movie_playing_for_test());
 }
 
 #[cfg(unix)]
@@ -3327,6 +4716,60 @@ fn fake_imexplore_schema_json() -> String {
                 "group": "Input",
                 "advanced": false,
                 "hidden_in_tui": false
+            },
+            {
+                "id": "blc",
+                "label": "BLC",
+                "order": 1,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--blc"],
+                    "metavar": "BLC",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Comma-separated inclusive bottom-left-corner pixel indices",
+                "group": "View",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "trc",
+                "label": "TRC",
+                "order": 2,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--trc"],
+                    "metavar": "TRC",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Comma-separated inclusive top-right-corner pixel indices",
+                "group": "View",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "inc",
+                "label": "INC",
+                "order": 3,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--inc"],
+                    "metavar": "INC",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Comma-separated per-axis pixel increments",
+                "group": "View",
+                "advanced": false,
+                "hidden_in_tui": false
             }
         ],
         "managed_output": null
@@ -3414,13 +4857,177 @@ fn fake_imexplore_snapshot_json(
     content_lines: Vec<String>,
     inspector_lines: Vec<String>,
     probe: Option<ImageBrowserProbe>,
-    hidden_axis: Option<ImageHiddenAxisState>,
+    non_display_axis: Option<ImageNonDisplayAxisState>,
 ) -> String {
+    let ndim = probe
+        .as_ref()
+        .map_or(2, |probe| probe.pixel_indices.len().max(2));
+    fake_imexplore_snapshot_json_full(
+        view,
+        focus,
+        status_line,
+        content_lines,
+        inspector_lines,
+        probe,
+        None,
+        non_display_axis,
+        ImageBrowserParameters {
+            blc: std::iter::repeat_n("0", ndim).collect::<Vec<_>>().join(","),
+            trc: std::iter::repeat_n("0", ndim).collect::<Vec<_>>().join(","),
+            inc: std::iter::repeat_n("1", ndim).collect::<Vec<_>>().join(","),
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fake_imexplore_snapshot_json_with_parameters(
+    view: ProtocolImageView,
+    focus: ProtocolImageFocus,
+    status_line: &str,
+    content_lines: Vec<String>,
+    inspector_lines: Vec<String>,
+    probe: Option<ImageBrowserProbe>,
+    non_display_axis: Option<ImageNonDisplayAxisState>,
+    parameter_values: ImageBrowserParameters,
+) -> String {
+    fake_imexplore_snapshot_json_full(
+        view,
+        focus,
+        status_line,
+        content_lines,
+        inspector_lines,
+        probe,
+        None,
+        non_display_axis,
+        parameter_values,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fake_imexplore_snapshot_json_with_profile(
+    view: ProtocolImageView,
+    focus: ProtocolImageFocus,
+    status_line: &str,
+    content_lines: Vec<String>,
+    inspector_lines: Vec<String>,
+    probe: Option<ImageBrowserProbe>,
+    profile: Option<ImageProfilePayload>,
+    non_display_axis: Option<ImageNonDisplayAxisState>,
+    parameter_values: ImageBrowserParameters,
+) -> String {
+    fake_imexplore_snapshot_json_full(
+        view,
+        focus,
+        status_line,
+        content_lines,
+        inspector_lines,
+        probe,
+        profile,
+        non_display_axis,
+        parameter_values,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fake_imexplore_snapshot_json_full(
+    view: ProtocolImageView,
+    focus: ProtocolImageFocus,
+    status_line: &str,
+    content_lines: Vec<String>,
+    inspector_lines: Vec<String>,
+    probe: Option<ImageBrowserProbe>,
+    profile: Option<ImageProfilePayload>,
+    non_display_axis: Option<ImageNonDisplayAxisState>,
+    parameter_values: ImageBrowserParameters,
+) -> String {
+    let blc = parse_parameter_axis_values(&parameter_values.blc, 2, 0);
+    let trc = parse_parameter_axis_values(&parameter_values.trc, 2, 0);
+    let inc = parse_parameter_axis_values(&parameter_values.inc, 2, 1);
+    let sampled_x_len = sampled_axis_len(blc[0], trc[0], inc[0]);
+    let sampled_y_len = sampled_axis_len(blc[1], trc[1], inc[1]);
+    let display_axes = probe
+        .as_ref()
+        .map(|probe| {
+            vec![
+                ImageDisplayAxisState {
+                    name: probe
+                        .pixel_axes
+                        .first()
+                        .map(|axis| axis.name.clone())
+                        .unwrap_or_else(|| "X".to_string()),
+                    unit: probe
+                        .pixel_axes
+                        .first()
+                        .map(|axis| axis.unit.clone())
+                        .unwrap_or_default(),
+                    blc: blc[0],
+                    trc: trc[0],
+                    inc: inc[0],
+                    sampled_len: sampled_x_len,
+                    world_increment: None,
+                },
+                ImageDisplayAxisState {
+                    name: probe
+                        .pixel_axes
+                        .get(1)
+                        .map(|axis| axis.name.clone())
+                        .unwrap_or_else(|| "Y".to_string()),
+                    unit: probe
+                        .pixel_axes
+                        .get(1)
+                        .map(|axis| axis.unit.clone())
+                        .unwrap_or_default(),
+                    blc: blc[1],
+                    trc: trc[1],
+                    inc: inc[1],
+                    sampled_len: sampled_y_len,
+                    world_increment: None,
+                },
+            ]
+        })
+        .unwrap_or_else(|| {
+            vec![
+                ImageDisplayAxisState {
+                    name: "X".to_string(),
+                    unit: String::new(),
+                    blc: blc[0],
+                    trc: trc[0],
+                    inc: inc[0],
+                    sampled_len: sampled_x_len,
+                    world_increment: None,
+                },
+                ImageDisplayAxisState {
+                    name: "Y".to_string(),
+                    unit: String::new(),
+                    blc: blc[1],
+                    trc: trc[1],
+                    inc: inc[1],
+                    sampled_len: sampled_y_len,
+                    world_increment: None,
+                },
+            ]
+        });
+    let plane_cursor = probe.as_ref().map(|probe| ImagePlaneCursorState {
+        sampled_x: sample_index_for_pixel(
+            probe.pixel_indices.first().copied().unwrap_or_default(),
+            blc[0],
+            inc[0],
+        ),
+        sampled_y: sample_index_for_pixel(
+            probe.pixel_indices.get(1).copied().unwrap_or_default(),
+            blc[1],
+            inc[1],
+        ),
+        pixel_x: probe.pixel_indices.first().copied().unwrap_or_default(),
+        pixel_y: probe.pixel_indices.get(1).copied().unwrap_or_default(),
+    });
+    let non_display_axes = non_display_axis.into_iter().collect::<Vec<_>>();
     serde_json::to_string(&ImageBrowserResponseEnvelope::snapshot(
         ImageBrowserSnapshot {
             status_line: status_line.to_string(),
             active_view: view,
             focus,
+            parameters: parameter_values,
             inspector_lines,
             content_lines: content_lines.clone(),
             navigation: ImageNavigationMetrics {
@@ -3438,18 +5045,87 @@ fn fake_imexplore_snapshot_json(
                 no_finite_values: false,
             }),
             probe,
-            hidden_axis,
+            profile,
+            display_axes,
+            plane_cursor,
+            non_display_axes,
             capabilities: ImageBrowserCapabilities {
                 renderable_plane: true,
                 world_coords_available: true,
                 pixel_only_mode: false,
-                single_hidden_axis_stepper: true,
+                non_display_axis_selectors: true,
                 mask_present: false,
                 complex_unsupported: false,
             },
         },
     ))
     .expect("serialize fake imexplore snapshot")
+}
+
+fn fake_image_profile_payload() -> ImageProfilePayload {
+    ImageProfilePayload {
+        axis: 2,
+        axis_name: "Frequency".to_string(),
+        axis_unit: "Hz".to_string(),
+        value_unit: "Jy/beam".to_string(),
+        coord_type: "Spectral".to_string(),
+        selected_sample_index: 1,
+        samples: vec![
+            ImageProfileSampleState {
+                sample_index: 0,
+                pixel_index: 0,
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axis: Some(ImageBrowserAxisValue {
+                    name: "Frequency".to_string(),
+                    unit: "Hz".to_string(),
+                    value: 1.150_220_333_39e11,
+                }),
+            },
+            ImageProfileSampleState {
+                sample_index: 1,
+                pixel_index: 1,
+                value: 5.0,
+                masked: false,
+                finite: true,
+                world_axis: Some(ImageBrowserAxisValue {
+                    name: "Frequency".to_string(),
+                    unit: "Hz".to_string(),
+                    value: 1.150_230_333_39e11,
+                }),
+            },
+            ImageProfileSampleState {
+                sample_index: 2,
+                pixel_index: 2,
+                value: 2.0,
+                masked: false,
+                finite: true,
+                world_axis: Some(ImageBrowserAxisValue {
+                    name: "Frequency".to_string(),
+                    unit: "Hz".to_string(),
+                    value: 1.150_240_333_39e11,
+                }),
+            },
+        ],
+    }
+}
+
+fn parse_parameter_axis_values(text: &str, expected_len: usize, default: usize) -> Vec<usize> {
+    let mut values = text
+        .split(',')
+        .map(|part| part.trim().parse::<usize>().unwrap_or(default))
+        .collect::<Vec<_>>();
+    values.resize(expected_len, default);
+    values
+}
+
+fn sampled_axis_len(blc: usize, trc: usize, inc: usize) -> usize {
+    ((trc.saturating_sub(blc)) / inc.max(1)) + 1
+}
+
+fn sample_index_for_pixel(pixel: usize, blc: usize, inc: usize) -> usize {
+    pixel.saturating_sub(blc) / inc.max(1)
 }
 
 fn create_fixture_ms(root: &Path) -> PathBuf {
