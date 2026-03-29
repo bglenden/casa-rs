@@ -16,10 +16,12 @@
 //! - amplitude/phase vs UV distance
 //! - amplitude/phase vs channel/frequency
 //! - real vs imaginary
+//! - weight/sigma/flag vs time
+//! - elevation/azimuth/hour angle/parallactic angle diagnostics
 //!
-//! Additional layout, transform, and staged flag-edit fields are already
-//! modeled in the public specification types so future waves can extend the
-//! implementation without redesigning the interface.
+//! Additional transform, multi-plot page composition, and staged flag-edit
+//! fields are already modeled in the public specification types so future
+//! waves can extend the implementation without redesigning the interface.
 
 pub mod cli;
 
@@ -27,15 +29,26 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use casacore_types::measures::doppler::{DopplerRef, MDoppler};
+use casacore_types::measures::frame::MeasFrame;
+use casacore_types::measures::frequency::{FrequencyRef, MFrequency};
+use casacore_types::quanta::{Quantity, Unit};
 use casacore_types::{ArrayValue, Complex64};
 use image::{DynamicImage, ImageFormat, RgbImage};
-use ndarray::Ix2;
+use ndarray::{Ix1, Ix2};
 use plotters::prelude::*;
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 use serde::{Deserialize, Serialize};
 
 use crate::MeasurementSet;
-use crate::columns::{main_ids, time_columns::TimeColumn, uvw_column::UvwColumn};
+use crate::columns::{
+    frequency_columns::ChanFreqColumn,
+    main_ids,
+    time_columns::TimeColumn,
+    uvw_column::UvwColumn,
+    weight_columns::{SigmaSpectrumColumn, WeightSpectrumColumn},
+};
+use crate::derived::engine::MsCalEngine;
 use crate::listobs::{self, ListObsOptions, ListObsSummary, ListObsUvCoverage};
 use crate::plot::{
     ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
@@ -43,8 +56,10 @@ use crate::plot::{
     build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, export_listobs_plot,
 };
 use crate::schema::main_table::VisibilityDataColumn;
+use crate::subtables::SubTable;
 
 const EXPORT_DPI: f32 = 72.0;
+const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
 
 /// Stable preset identifiers for common MeasurementSet plots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -64,6 +79,28 @@ pub enum MsPlotPreset {
     PhaseVsTime,
     /// Vector-averaged amplitude against UV distance.
     AmplitudeVsUvDistance,
+    /// Per-correlation WEIGHT against time.
+    WeightVsTime,
+    /// Per-correlation SIGMA against time.
+    SigmaVsTime,
+    /// Per-sample FLAG against time.
+    FlagVsTime,
+    /// Per-channel WEIGHT_SPECTRUM against time.
+    WeightSpectrumVsTime,
+    /// Per-channel SIGMA_SPECTRUM against time.
+    SigmaSpectrumVsTime,
+    /// Per-row FLAG_ROW against time.
+    FlagRowVsTime,
+    /// Elevation against time.
+    ElevationVsTime,
+    /// Azimuth against time.
+    AzimuthVsTime,
+    /// Hour angle against time.
+    HourAngleVsTime,
+    /// Parallactic angle against time.
+    ParallacticAngleVsTime,
+    /// Azimuth against elevation.
+    AzimuthVsElevation,
     /// Amplitude against channel index.
     AmplitudeVsChannel,
     /// Phase against channel index.
@@ -72,13 +109,17 @@ pub enum MsPlotPreset {
     AmplitudeVsFrequency,
     /// Phase against channel center frequency.
     PhaseVsFrequency,
+    /// Amplitude against Doppler velocity.
+    AmplitudeVsVelocity,
+    /// Phase against Doppler velocity.
+    PhaseVsVelocity,
     /// Real against imaginary.
     RealVsImaginary,
 }
 
 impl MsPlotPreset {
     /// All shipped presets in stable order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 25] = [
         Self::UvCoverage,
         Self::AntennaLayout,
         Self::ScanTimeline,
@@ -86,10 +127,23 @@ impl MsPlotPreset {
         Self::AmplitudeVsTime,
         Self::PhaseVsTime,
         Self::AmplitudeVsUvDistance,
+        Self::WeightVsTime,
+        Self::SigmaVsTime,
+        Self::FlagVsTime,
+        Self::WeightSpectrumVsTime,
+        Self::SigmaSpectrumVsTime,
+        Self::FlagRowVsTime,
+        Self::ElevationVsTime,
+        Self::AzimuthVsTime,
+        Self::HourAngleVsTime,
+        Self::ParallacticAngleVsTime,
+        Self::AzimuthVsElevation,
         Self::AmplitudeVsChannel,
         Self::PhaseVsChannel,
         Self::AmplitudeVsFrequency,
         Self::PhaseVsFrequency,
+        Self::AmplitudeVsVelocity,
+        Self::PhaseVsVelocity,
         Self::RealVsImaginary,
     ];
 
@@ -103,10 +157,23 @@ impl MsPlotPreset {
             Self::AmplitudeVsTime => "amplitude_vs_time",
             Self::PhaseVsTime => "phase_vs_time",
             Self::AmplitudeVsUvDistance => "amplitude_vs_uv_distance",
+            Self::WeightVsTime => "weight_vs_time",
+            Self::SigmaVsTime => "sigma_vs_time",
+            Self::FlagVsTime => "flag_vs_time",
+            Self::WeightSpectrumVsTime => "weight_spectrum_vs_time",
+            Self::SigmaSpectrumVsTime => "sigma_spectrum_vs_time",
+            Self::FlagRowVsTime => "flagrow_vs_time",
+            Self::ElevationVsTime => "elevation_vs_time",
+            Self::AzimuthVsTime => "azimuth_vs_time",
+            Self::HourAngleVsTime => "hour_angle_vs_time",
+            Self::ParallacticAngleVsTime => "parallactic_angle_vs_time",
+            Self::AzimuthVsElevation => "azimuth_vs_elevation",
             Self::AmplitudeVsChannel => "amplitude_vs_channel",
             Self::PhaseVsChannel => "phase_vs_channel",
             Self::AmplitudeVsFrequency => "amplitude_vs_frequency",
             Self::PhaseVsFrequency => "phase_vs_frequency",
+            Self::AmplitudeVsVelocity => "amplitude_vs_velocity",
+            Self::PhaseVsVelocity => "phase_vs_velocity",
             Self::RealVsImaginary => "real_vs_imaginary",
         }
     }
@@ -121,10 +188,23 @@ impl MsPlotPreset {
             Self::AmplitudeVsTime => "Amplitude vs Time",
             Self::PhaseVsTime => "Phase vs Time",
             Self::AmplitudeVsUvDistance => "Amplitude vs UV Distance",
+            Self::WeightVsTime => "Weight vs Time",
+            Self::SigmaVsTime => "Sigma vs Time",
+            Self::FlagVsTime => "Flag vs Time",
+            Self::WeightSpectrumVsTime => "Weight Spectrum vs Time",
+            Self::SigmaSpectrumVsTime => "Sigma Spectrum vs Time",
+            Self::FlagRowVsTime => "Flag Row vs Time",
+            Self::ElevationVsTime => "Elevation vs Time",
+            Self::AzimuthVsTime => "Azimuth vs Time",
+            Self::HourAngleVsTime => "Hour Angle vs Time",
+            Self::ParallacticAngleVsTime => "Parallactic Angle vs Time",
+            Self::AzimuthVsElevation => "Azimuth vs Elevation",
             Self::AmplitudeVsChannel => "Amplitude vs Channel",
             Self::PhaseVsChannel => "Phase vs Channel",
             Self::AmplitudeVsFrequency => "Amplitude vs Frequency",
             Self::PhaseVsFrequency => "Phase vs Frequency",
+            Self::AmplitudeVsVelocity => "Amplitude vs Velocity",
+            Self::PhaseVsVelocity => "Phase vs Velocity",
             Self::RealVsImaginary => "Real vs Imaginary",
         }
     }
@@ -143,10 +223,25 @@ impl MsPlotPreset {
             "amplitude_vs_uv_distance" | "amplitude_vs_uvdist" | "amp_uvdist" => {
                 Ok(Self::AmplitudeVsUvDistance)
             }
+            "weight_vs_time" | "wt_time" => Ok(Self::WeightVsTime),
+            "sigma_vs_time" | "sigma_time" => Ok(Self::SigmaVsTime),
+            "flag_vs_time" | "flag_time" => Ok(Self::FlagVsTime),
+            "weight_spectrum_vs_time" | "wtsp_time" => Ok(Self::WeightSpectrumVsTime),
+            "sigma_spectrum_vs_time" | "sigmasp_time" => Ok(Self::SigmaSpectrumVsTime),
+            "flagrow_vs_time" | "flagrow_time" => Ok(Self::FlagRowVsTime),
+            "elevation_vs_time" | "elevation_time" => Ok(Self::ElevationVsTime),
+            "azimuth_vs_time" | "azimuth_time" => Ok(Self::AzimuthVsTime),
+            "hour_angle_vs_time" | "hourang_vs_time" | "hourang_time" => Ok(Self::HourAngleVsTime),
+            "parallactic_angle_vs_time" | "parang_vs_time" | "parang_time" => {
+                Ok(Self::ParallacticAngleVsTime)
+            }
+            "azimuth_vs_elevation" | "azimuth_elevation" => Ok(Self::AzimuthVsElevation),
             "amplitude_vs_channel" | "amp_channel" => Ok(Self::AmplitudeVsChannel),
             "phase_vs_channel" | "phase_channel" => Ok(Self::PhaseVsChannel),
             "amplitude_vs_frequency" | "amp_frequency" => Ok(Self::AmplitudeVsFrequency),
             "phase_vs_frequency" | "phase_frequency" => Ok(Self::PhaseVsFrequency),
+            "amplitude_vs_velocity" | "amp_velocity" => Ok(Self::AmplitudeVsVelocity),
+            "phase_vs_velocity" | "phase_velocity" => Ok(Self::PhaseVsVelocity),
             "real_vs_imaginary" | "real_vs_imag" => Ok(Self::RealVsImaginary),
             other => Err(format!("unsupported msexplore preset {other:?}")),
         }
@@ -234,8 +329,14 @@ pub enum MsAxis {
     Weight,
     /// Per-sample sigma axis.
     Sigma,
+    /// Per-channel WEIGHT_SPECTRUM values, with WEIGHT fallback.
+    WeightSpectrum,
+    /// Per-channel SIGMA_SPECTRUM values, with SIGMA fallback.
+    SigmaSpectrum,
     /// Per-sample flag axis.
     Flag,
+    /// Per-row FLAG_ROW values repeated across plotted samples.
+    FlagRow,
     /// Pointing right ascension for an antenna direction.
     #[serde(rename = "ant-ra")]
     AntRa,
@@ -272,7 +373,10 @@ impl MsAxis {
             Self::ParallacticAngle => "parallactic_angle",
             Self::Weight => "weight",
             Self::Sigma => "sigma",
+            Self::WeightSpectrum => "weight_spectrum",
+            Self::SigmaSpectrum => "sigma_spectrum",
             Self::Flag => "flag",
+            Self::FlagRow => "flag_row",
             Self::AntRa => "ant-ra",
             Self::AntDec => "ant-dec",
         }
@@ -305,7 +409,10 @@ impl MsAxis {
             Self::ParallacticAngle => "Parallactic Angle",
             Self::Weight => "Weight",
             Self::Sigma => "Sigma",
+            Self::WeightSpectrum => "Weight Spectrum",
+            Self::SigmaSpectrum => "Sigma Spectrum",
             Self::Flag => "Flag",
+            Self::FlagRow => "Flag Row",
             Self::AntRa => "Antenna RA",
             Self::AntDec => "Antenna Dec",
         }
@@ -334,11 +441,18 @@ impl MsAxis {
             "antenna" => Ok(Self::Antenna),
             "azimuth" => Ok(Self::Azimuth),
             "elevation" => Ok(Self::Elevation),
-            "hourangle" | "hour_angle" | "hour-angle" => Ok(Self::HourAngle),
+            "hourang" | "hourangle" | "hour_angle" | "hour-angle" => Ok(Self::HourAngle),
             "parang" | "parallactic_angle" | "parallactic-angle" => Ok(Self::ParallacticAngle),
             "weight" => Ok(Self::Weight),
             "sigma" => Ok(Self::Sigma),
+            "wtsp" | "weightspectrum" | "weight_spectrum" | "weight-spectrum" => {
+                Ok(Self::WeightSpectrum)
+            }
+            "sigmasp" | "sigmaspectrum" | "sigma_spectrum" | "sigma-spectrum" => {
+                Ok(Self::SigmaSpectrum)
+            }
             "flag" => Ok(Self::Flag),
+            "flagrow" | "flag_row" | "flag-row" => Ok(Self::FlagRow),
             "ant-ra" | "ant_ra" => Ok(Self::AntRa),
             "ant-dec" | "ant_dec" => Ok(Self::AntDec),
             other => Err(format!("unsupported msexplore axis {other:?}")),
@@ -350,6 +464,46 @@ impl MsAxis {
             self,
             Self::Amplitude | Self::Phase | Self::Real | Self::Imaginary
         )
+    }
+
+    fn uses_derived_geometry(self) -> bool {
+        matches!(
+            self,
+            Self::Azimuth | Self::Elevation | Self::HourAngle | Self::ParallacticAngle
+        )
+    }
+
+    fn uses_channel_bins(self) -> bool {
+        self.is_visibility_math()
+            || matches!(
+                self,
+                Self::Channel
+                    | Self::Frequency
+                    | Self::Velocity
+                    | Self::WeightSpectrum
+                    | Self::SigmaSpectrum
+                    | Self::Flag
+            )
+    }
+
+    fn uses_flag_rows(self) -> bool {
+        matches!(self, Self::Flag | Self::FlagRow)
+    }
+
+    fn uses_correlation_slots(self) -> bool {
+        self.is_visibility_math()
+            || matches!(
+                self,
+                Self::Weight
+                    | Self::Sigma
+                    | Self::WeightSpectrum
+                    | Self::SigmaSpectrum
+                    | Self::Flag
+            )
+    }
+
+    fn uses_spectral_coordinates(self) -> bool {
+        matches!(self, Self::Frequency | Self::Velocity)
     }
 }
 
@@ -695,11 +849,79 @@ impl Default for MsLayoutSpec {
     }
 }
 
+/// Supported iteration axes for multi-panel plot pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MsIterationAxis {
+    /// Iterate one panel per FIELD row.
+    Field,
+    /// Iterate one panel per SCAN_NUMBER.
+    Scan,
+    /// Iterate one panel per SPECTRAL_WINDOW.
+    SpectralWindow,
+    /// Iterate one panel per selected correlation product.
+    Correlation,
+}
+
+impl MsIterationAxis {
+    /// All currently implemented iteration axes.
+    pub const ALL: [Self; 4] = [
+        Self::Field,
+        Self::Scan,
+        Self::SpectralWindow,
+        Self::Correlation,
+    ];
+
+    /// Stable machine-readable identifier.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Field => "field",
+            Self::Scan => "scan",
+            Self::SpectralWindow => "spw",
+            Self::Correlation => "correlation",
+        }
+    }
+
+    /// Human-readable label.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Field => "Field",
+            Self::Scan => "Scan",
+            Self::SpectralWindow => "Spectral Window",
+            Self::Correlation => "Correlation",
+        }
+    }
+
+    /// Parse a CASA-style iteration-axis identifier.
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "field" => Ok(Self::Field),
+            "scan" => Ok(Self::Scan),
+            "spw" | "spectral_window" | "spectralwindow" => Ok(Self::SpectralWindow),
+            "correlation" | "corr" => Ok(Self::Correlation),
+            other => Err(format!(
+                "unsupported msexplore iteraxis {other:?}; expected one of {}",
+                Self::ALL
+                    .into_iter()
+                    .map(Self::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+}
+
+impl fmt::Display for MsIterationAxis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Iteration controls for multi-plot pages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MsIterationSpec {
     /// Iteration axis identifier.
-    pub iteraxis: Option<String>,
+    pub iteraxis: Option<MsIterationAxis>,
     /// Use self-scaled X ranges per iterated panel.
     pub xselfscale: bool,
     /// Use self-scaled Y ranges per iterated panel.
@@ -780,7 +1002,7 @@ pub struct MsPlotSpec {
     pub preset: Option<MsPlotPreset>,
     /// X-axis selector.
     pub x_axis: MsAxis,
-    /// Y-axis selectors. The first wave supports exactly one Y axis.
+    /// Y-axis selectors. The current engine supports exactly one Y axis.
     pub y_axes: Vec<MsAxis>,
     /// Visibility data column or derived expression.
     pub data_column: MsDataColumn,
@@ -859,6 +1081,149 @@ impl MsPlotSpec {
                 style: MsPlotStyleSpec::default(),
                 flag_edit: None,
             },
+            MsPlotPreset::WeightVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::Weight],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::SigmaVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::Sigma],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::FlagVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::Flag],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::WeightSpectrumVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::WeightSpectrum],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::SigmaSpectrumVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::SigmaSpectrum],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::FlagRowVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::FlagRow],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::ElevationVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::Elevation],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::AzimuthVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::Azimuth],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::HourAngleVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::HourAngle],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::ParallacticAngleVsTime => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::ParallacticAngle],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::AzimuthVsElevation => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Elevation,
+                y_axes: vec![MsAxis::Azimuth],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
             MsPlotPreset::AmplitudeVsChannel => Self {
                 preset: Some(preset),
                 x_axis: MsAxis::Channel,
@@ -911,6 +1276,32 @@ impl MsPlotSpec {
                 style: MsPlotStyleSpec::default(),
                 flag_edit: None,
             },
+            MsPlotPreset::AmplitudeVsVelocity => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Velocity,
+                y_axes: vec![MsAxis::Amplitude],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::SpectralWindow,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::PhaseVsVelocity => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Velocity,
+                y_axes: vec![MsAxis::Phase],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::SpectralWindow,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
             MsPlotPreset::RealVsImaginary => Self {
                 preset: Some(preset),
                 x_axis: MsAxis::Real,
@@ -927,34 +1318,38 @@ impl MsPlotSpec {
         }
     }
 
-    /// Validate the current plot specification against the first-wave engine.
+    /// Validate the current plot specification against the current engine.
     pub fn validate(&self) -> Result<(), String> {
         if self.y_axes.len() != 1 {
             return Err("msexplore currently supports exactly one y axis per plot".to_string());
         }
-        if self.layout.gridrows != 1
-            || self.layout.gridcols != 1
-            || self.layout.rowindex != 0
-            || self.layout.colindex != 0
-            || self.layout.plotindex != 0
-        {
+        if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
             return Err(
-                "msexplore page grids are modeled, but the first wave only supports a single plot per page".to_string(),
+                "msexplore per-plot rowindex/colindex/plotindex placement is reserved for a future multi-plot page wave".to_string(),
             );
         }
-        if self.iteration.iteraxis.is_some()
-            || self.iteration.xselfscale
-            || self.iteration.yselfscale
-            || self.iteration.xsharedaxis
-            || self.iteration.ysharedaxis
-        {
+        if self.layout.gridrows == 0 || self.layout.gridcols == 0 {
+            return Err("msexplore gridrows/gridcols must be positive integers".to_string());
+        }
+        let iterated = self.iteration.iteraxis.is_some();
+        if !iterated && (self.layout.gridrows != 1 || self.layout.gridcols != 1) {
             return Err(
-                "msexplore iteration controls are not implemented in the first wave".to_string(),
+                "msexplore gridrows/gridcols require --iteraxis; non-iterated plots still render a single panel".to_string(),
+            );
+        }
+        if self.iteration.xselfscale && self.iteration.xsharedaxis {
+            return Err(
+                "msexplore x-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
+            );
+        }
+        if self.iteration.yselfscale && self.iteration.ysharedaxis {
+            return Err(
+                "msexplore y-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
             );
         }
         if self.flag_edit.is_some() {
             return Err(
-                "msexplore staged flag editing is modeled but not yet implemented in the first wave".to_string(),
+                "msexplore staged flag editing is modeled but not yet implemented".to_string(),
             );
         }
         if self.averaging.avgtime.is_some()
@@ -968,20 +1363,7 @@ impl MsPlotSpec {
                 "msexplore currently supports avgchannel and scalar/vector averaging; other averaging controls are reserved for future waves".to_string(),
             );
         }
-        if matches!(self.x_axis, MsAxis::Velocity)
-            || self
-                .y_axes
-                .iter()
-                .any(|axis| matches!(axis, MsAxis::Velocity))
-        {
-            return Err(
-                "msexplore velocity axes require transform support that is not implemented yet"
-                    .to_string(),
-            );
-        }
         if self.transforms.phasecenter.is_some()
-            || self.transforms.freqframe.is_some()
-            || self.transforms.restfreq.is_some()
             || self.transforms.xframe.is_some()
             || self.transforms.xinterp.is_some()
             || self.transforms.yframe.is_some()
@@ -996,37 +1378,67 @@ impl MsPlotSpec {
             self.x_axis,
             MsAxis::Time
                 | MsAxis::UvDistance
+                | MsAxis::U
+                | MsAxis::V
+                | MsAxis::W
                 | MsAxis::Channel
                 | MsAxis::Frequency
+                | MsAxis::Velocity
                 | MsAxis::Amplitude
                 | MsAxis::Phase
                 | MsAxis::Real
                 | MsAxis::Imaginary
+                | MsAxis::Azimuth
+                | MsAxis::Elevation
+                | MsAxis::HourAngle
+                | MsAxis::ParallacticAngle
         );
         let y_axis = self.y_axes[0];
         let supported_y = matches!(
             y_axis,
-            MsAxis::Amplitude | MsAxis::Phase | MsAxis::Real | MsAxis::Imaginary
+            MsAxis::Amplitude
+                | MsAxis::Phase
+                | MsAxis::Real
+                | MsAxis::Imaginary
+                | MsAxis::U
+                | MsAxis::V
+                | MsAxis::W
+                | MsAxis::Weight
+                | MsAxis::Sigma
+                | MsAxis::WeightSpectrum
+                | MsAxis::SigmaSpectrum
+                | MsAxis::Flag
+                | MsAxis::FlagRow
+                | MsAxis::Azimuth
+                | MsAxis::Elevation
+                | MsAxis::HourAngle
+                | MsAxis::ParallacticAngle
         );
         if !supported_x {
             return Err(format!(
-                "msexplore x axis {} is modeled but not implemented in the first wave",
+                "msexplore x axis {} is modeled but not implemented yet",
                 self.x_axis
             ));
         }
         if !supported_y {
             return Err(format!(
-                "msexplore y axis {} is modeled but not implemented in the first wave",
+                "msexplore y axis {} is modeled but not implemented yet",
                 y_axis
             ));
         }
         if self.averaging.avgchannel.is_some()
-            && !matches!(self.x_axis, MsAxis::Channel | MsAxis::Frequency)
+            && !matches!(
+                self.x_axis,
+                MsAxis::Channel | MsAxis::Frequency | MsAxis::Velocity
+            )
         {
             return Err(
-                "msexplore avgchannel currently requires xaxis=channel or xaxis=frequency"
+                "msexplore avgchannel currently requires xaxis=channel, xaxis=frequency, or xaxis=velocity"
                     .to_string(),
             );
+        }
+        if self.averaging.avgchannel.is_some() && matches!(self.y_axis(), MsAxis::Flag) {
+            return Err("msexplore flag plots do not yet support avgchannel binning".to_string());
         }
         Ok(())
     }
@@ -1072,6 +1484,8 @@ pub enum MsPlotPayload {
     ListObs(ListObsPlotPayload),
     /// Generic scatter payload for raw visibility plots.
     Scatter(MsScatterPlotPayload),
+    /// Iterated multi-panel scatter payload for raw visibility plots.
+    ScatterGrid(MsScatterGridPayload),
 }
 
 impl MsPlotPayload {}
@@ -1110,6 +1524,52 @@ pub struct MsScatterSeries {
     pub points: Vec<(f64, f64)>,
 }
 
+/// One iterated scatter panel within a multi-panel page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MsScatterPanelPayload {
+    /// Stable panel key derived from the iteraxis value.
+    pub key: String,
+    /// Human-readable panel label.
+    pub label: String,
+    /// Grouped scatter series within the panel.
+    pub series: Vec<MsScatterSeries>,
+    /// Human-readable summary for the panel.
+    pub summary: String,
+}
+
+/// Multi-panel scatter payload produced by iterated `msexplore` plots.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MsScatterGridPayload {
+    /// Page title used for export naming.
+    pub title: String,
+    /// X axis kind.
+    pub x_axis: MsAxis,
+    /// Y axis kind.
+    pub y_axis: MsAxis,
+    /// X axis label.
+    pub x_label: String,
+    /// Y axis label.
+    pub y_label: String,
+    /// Optional fixed X axis bounds.
+    pub fixed_x_bounds: Option<(f64, f64)>,
+    /// Optional fixed Y axis bounds.
+    pub fixed_y_bounds: Option<(f64, f64)>,
+    /// Iteration axis used to build the page.
+    pub iteraxis: MsIterationAxis,
+    /// Resolved page grid row count.
+    pub gridrows: usize,
+    /// Resolved page grid column count.
+    pub gridcols: usize,
+    /// Share X bounds across panels.
+    pub share_x_bounds: bool,
+    /// Share Y bounds across panels.
+    pub share_y_bounds: bool,
+    /// Ordered panel payloads.
+    pub panels: Vec<MsScatterPanelPayload>,
+    /// Human-readable page summary.
+    pub summary: String,
+}
+
 /// Build a generic plot payload from one open MeasurementSet.
 pub fn build_msexplore_plot_payload(
     ms: &MeasurementSet,
@@ -1141,7 +1601,7 @@ pub fn build_msexplore_plot_payload(
         };
     }
 
-    build_generic_visibility_scatter(ms, selection, spec).map(MsPlotPayload::Scatter)
+    build_generic_visibility_scatter(ms, selection, spec)
 }
 
 /// Open a MeasurementSet path and build the requested plot payload.
@@ -1222,7 +1682,7 @@ pub(crate) fn build_listobs_compat_visibility_payload(
                 summary: payload.summary,
             },
         )),
-        MsPlotPayload::ListObs(_) => {
+        MsPlotPayload::ListObs(_) | MsPlotPayload::ScatterGrid(_) => {
             Err("internal error: raw listobs preset lowered to a metadata payload".to_string())
         }
     }
@@ -1240,6 +1700,9 @@ pub fn render_msexplore_plot_image(
             crate::plot::render_listobs_plot_image(payload, theme, width, height)
         }
         MsPlotPayload::Scatter(payload) => render_scatter_image(payload, theme, width, height),
+        MsPlotPayload::ScatterGrid(payload) => {
+            render_scatter_grid_image(payload, theme, width, height)
+        }
     }
 }
 
@@ -1272,7 +1735,8 @@ pub fn export_msexplore_plot(
         (MsPlotPayload::ListObs(_), MsExportFormat::Txt) => Err(
             "text export is currently available for raw msexplore scatter plots only".to_string(),
         ),
-        (MsPlotPayload::Scatter(_), MsExportFormat::Txt) => {
+        (MsPlotPayload::Scatter(_), MsExportFormat::Txt)
+        | (MsPlotPayload::ScatterGrid(_), MsExportFormat::Txt) => {
             std::fs::write(output_path, render_scatter_manifest(payload)?)
                 .map_err(|error| error.to_string())
         }
@@ -1281,47 +1745,116 @@ pub fn export_msexplore_plot(
                 .save_with_format(output_path, ImageFormat::Png)
                 .map_err(|error| error.to_string())
         }
+        (MsPlotPayload::ScatterGrid(payload), MsExportFormat::Png) => {
+            render_scatter_grid_image(payload, theme, width, height)?
+                .save_with_format(output_path, ImageFormat::Png)
+                .map_err(|error| error.to_string())
+        }
         (MsPlotPayload::Scatter(payload), MsExportFormat::Pdf) => {
             let image = render_scatter_image(payload, theme, width, height)?;
+            export_scatter_pdf(&image, output_path, &payload.title)
+        }
+        (MsPlotPayload::ScatterGrid(payload), MsExportFormat::Pdf) => {
+            let image = render_scatter_grid_image(payload, theme, width, height)?;
             export_scatter_pdf(&image, output_path, &payload.title)
         }
     }
 }
 
 fn render_scatter_manifest(payload: &MsPlotPayload) -> Result<String, String> {
-    let MsPlotPayload::Scatter(payload) = payload else {
-        return Err("text manifest export requires a scatter payload".to_string());
-    };
-    let mut out = String::new();
-    out.push_str("# msexplore-manifest-v1\n");
-    out.push_str(&format!("# title={}\n", payload.title));
-    out.push_str(&format!("# x_axis={}\n", payload.x_axis.as_str()));
-    out.push_str(&format!("# y_axis={}\n", payload.y_axis.as_str()));
-    out.push_str("series_key\tseries_label\tx\ty\n");
-    for series in &payload.series {
-        for (x, y) in &series.points {
-            out.push_str(&format!(
-                "{}\t{}\t{:.12}\t{:.12}\n",
-                series.color_group, series.label, x, y
-            ));
+    match payload {
+        MsPlotPayload::Scatter(payload) => {
+            let mut out = String::new();
+            out.push_str("# msexplore-manifest-v1\n");
+            out.push_str(&format!("# title={}\n", payload.title));
+            out.push_str(&format!("# x_axis={}\n", payload.x_axis.as_str()));
+            out.push_str(&format!("# y_axis={}\n", payload.y_axis.as_str()));
+            out.push_str("series_key\tseries_label\tx\ty\n");
+            for series in &payload.series {
+                for (x, y) in &series.points {
+                    out.push_str(&format!(
+                        "{}\t{}\t{:.12}\t{:.12}\n",
+                        series.color_group, series.label, x, y
+                    ));
+                }
+            }
+            Ok(out)
+        }
+        MsPlotPayload::ScatterGrid(payload) => {
+            let mut out = String::new();
+            out.push_str("# msexplore-manifest-v1\n");
+            out.push_str(&format!("# title={}\n", payload.title));
+            out.push_str(&format!("# x_axis={}\n", payload.x_axis.as_str()));
+            out.push_str(&format!("# y_axis={}\n", payload.y_axis.as_str()));
+            out.push_str(&format!("# iteraxis={}\n", payload.iteraxis.as_str()));
+            out.push_str(&format!("# gridrows={}\n", payload.gridrows));
+            out.push_str(&format!("# gridcols={}\n", payload.gridcols));
+            out.push_str(&format!("# share_x_bounds={}\n", payload.share_x_bounds));
+            out.push_str(&format!("# share_y_bounds={}\n", payload.share_y_bounds));
+            out.push_str("panel_key\tpanel_label\tseries_key\tseries_label\tx\ty\n");
+            for panel in &payload.panels {
+                for series in &panel.series {
+                    for (x, y) in &series.points {
+                        out.push_str(&format!(
+                            "{}\t{}\t{}\t{}\t{:.12}\t{:.12}\n",
+                            panel.key, panel.label, series.color_group, series.label, x, y
+                        ));
+                    }
+                }
+            }
+            Ok(out)
+        }
+        MsPlotPayload::ListObs(_) => {
+            Err("text manifest export requires a scatter payload".to_string())
         }
     }
-    Ok(out)
+}
+
+#[derive(Debug, Default)]
+struct ScatterPanelAccumulator {
+    label: String,
+    series: std::collections::BTreeMap<String, MsScatterSeries>,
+    contributing_rows: usize,
+    contributing_points: usize,
 }
 
 fn build_generic_visibility_scatter(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
-) -> Result<MsScatterPlotPayload, String> {
+) -> Result<MsPlotPayload, String> {
     let listobs_options = selection.to_listobs_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
 
-    let data_source = PreparedDataSource::new(ms, spec.data_column)?;
+    let needs_visibility_grid =
+        spec.x_axis.is_visibility_math() || spec.y_axis().is_visibility_math();
+    let needs_spectral_coordinates =
+        spec.x_axis.uses_spectral_coordinates() || spec.y_axis().uses_spectral_coordinates();
+    let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
+    let data_source = if needs_visibility_grid {
+        Some(PreparedDataSource::new(ms, spec.data_column)?)
+    } else {
+        None
+    };
     let flag = ms.flag_column();
     let flag_row = ms.flag_row_column();
+    let weight = ms.weight_column();
+    let sigma = ms.sigma_column();
+    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).ok();
+    let sigma_spectrum = SigmaSpectrumColumn::new(ms.main_table()).ok();
     let time = TimeColumn::new(ms.main_table());
     let uvw = UvwColumn::new(ms.main_table());
+    let derived_engine = if spec.x_axis.uses_derived_geometry()
+        || spec.y_axis().uses_derived_geometry()
+        || (needs_spectral_coordinates && requested_freqframe.is_some())
+    {
+        Some(MsCalEngine::new(ms).map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+    let geometry_dedup_required =
+        spec.x_axis.uses_derived_geometry() || spec.y_axis().uses_derived_geometry();
+    let mut geometry_samples_seen = std::collections::BTreeSet::<(String, String, u64, i32)>::new();
     let field_id = main_ids::field_id(ms.main_table());
     let scan_number = main_ids::scan_number(ms.main_table());
     let data_desc_id = main_ids::data_desc_id(ms.main_table());
@@ -1332,6 +1865,11 @@ fn build_generic_visibility_scatter(
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
+    let chan_freq = if needs_spectral_coordinates {
+        Some(ChanFreqColumn::new(spectral_window.table()))
+    } else {
+        None
+    };
 
     let requested_corr_codes = selection
         .correlation
@@ -1341,12 +1879,20 @@ fn build_generic_visibility_scatter(
         .transpose()
         .map_err(|error| error.to_string())?;
 
-    let mut series = std::collections::BTreeMap::<String, MsScatterSeries>::new();
+    let iteraxis = spec.iteration.iteraxis;
+    let mut panel_order = Vec::<String>::new();
+    let mut panels = std::collections::BTreeMap::<String, ScatterPanelAccumulator>::new();
     let mut contributing_rows = 0usize;
     let mut contributing_points = 0usize;
+    let include_row_flagged_points = spec.x_axis.uses_flag_rows() || spec.y_axis().uses_flag_rows();
+    let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
+        || matches!(spec.y_axis(), MsAxis::WeightSpectrum);
+    let needs_sigma_spectrum = matches!(spec.x_axis, MsAxis::SigmaSpectrum)
+        || matches!(spec.y_axis(), MsAxis::SigmaSpectrum);
 
     for row in row_numbers {
-        if flag_row.get(row).map_err(|error| error.to_string())? {
+        let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
+        if flag_row_value && !include_row_flagged_points {
             continue;
         }
 
@@ -1369,7 +1915,6 @@ fn build_generic_visibility_scatter(
             Vec::new()
         };
 
-        let grid = data_source.row(row)?;
         let flags = match flag.get(row).map_err(|error| error.to_string())? {
             ArrayValue::Bool(values) => {
                 values.view().into_dimensionality::<Ix2>().map_err(|_| {
@@ -1383,56 +1928,156 @@ fn build_generic_visibility_scatter(
                 ));
             }
         };
-        if flags.shape() != [grid.corr_count, grid.chan_count] {
+        let grid = data_source
+            .as_ref()
+            .map(|source| source.row(row))
+            .transpose()?;
+        let (corr_count, chan_count) = grid
+            .as_ref()
+            .map(|grid| (grid.corr_count, grid.chan_count))
+            .unwrap_or((flags.nrows(), flags.ncols()));
+        if flags.shape() != [corr_count, chan_count] {
             return Err(format!(
                 "visibility flag shape {:?} does not match data shape [{}, {}]",
                 flags.shape(),
-                grid.corr_count,
-                grid.chan_count
+                corr_count,
+                chan_count
             ));
         }
+        let weight_values = float_axis_values(
+            weight.get(row).map_err(|error| error.to_string())?,
+            corr_count,
+            "WEIGHT",
+        )?;
+        let sigma_values = float_axis_values(
+            sigma.get(row).map_err(|error| error.to_string())?,
+            corr_count,
+            "SIGMA",
+        )?;
+        let weight_spectrum_grid = if needs_weight_spectrum {
+            Some(
+                weight_spectrum
+                    .as_ref()
+                    .map(|column| {
+                        float_grid_from_array(
+                            column.get(row).map_err(|error| error.to_string())?,
+                            "WEIGHT_SPECTRUM",
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
+            )
+        } else {
+            None
+        };
+        let sigma_spectrum_grid = if needs_sigma_spectrum {
+            Some(
+                sigma_spectrum
+                    .as_ref()
+                    .map(|column| {
+                        float_grid_from_array(
+                            column.get(row).map_err(|error| error.to_string())?,
+                            "SIGMA_SPECTRUM",
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
+            )
+        } else {
+            None
+        };
+        for (column_name, grid) in [
+            ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
+            ("SIGMA_SPECTRUM", sigma_spectrum_grid.as_ref()),
+        ] {
+            if let Some(grid) = grid {
+                if grid.corr_count != corr_count || grid.chan_count != chan_count {
+                    return Err(format!(
+                        "{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]",
+                        grid.corr_count, grid.chan_count
+                    ));
+                }
+            }
+        }
 
-        let selected_correlations = select_correlation_slots(
-            grid.corr_count,
-            &corr_types,
-            requested_corr_codes.as_deref(),
-        );
+        let selected_correlations =
+            select_correlation_slots(corr_count, &corr_types, requested_corr_codes.as_deref());
         if selected_correlations.is_empty() {
             continue;
         }
-
-        let freq_axis = matches!(spec.x_axis, MsAxis::Frequency);
-        let channel_bins = channel_bins(grid.chan_count, spec.averaging.avgchannel)?;
-        let channel_frequencies = if freq_axis {
-            spectral_window
-                .chan_freq(spw_id as usize)
-                .map_err(|error| error.to_string())?
+        let correlation_required = spec.x_axis.uses_correlation_slots()
+            || spec.y_axis().uses_correlation_slots()
+            || matches!(spec.color_by, MsColorAxis::Correlation)
+            || matches!(iteraxis, Some(MsIterationAxis::Correlation));
+        let selected_correlations = if correlation_required {
+            selected_correlations
         } else {
-            Vec::new()
+            vec![selected_correlations[0].clone()]
         };
-        if freq_axis && channel_frequencies.len() != grid.chan_count {
-            return Err(format!(
-                "SPECTRAL_WINDOW row {spw_id} reported {} channel frequencies for {} data channels",
-                channel_frequencies.len(),
-                grid.chan_count
-            ));
-        }
+
+        let channel_bins = plot_channel_bins(chan_count, spec)?;
 
         let field_id_value = field_id.get(row).map_err(|error| error.to_string())?;
         let scan_number_value = scan_number.get(row).map_err(|error| error.to_string())?;
         let antenna1_value = antenna1.get(row).map_err(|error| error.to_string())?;
         let antenna2_value = antenna2.get(row).map_err(|error| error.to_string())?;
+        let row_time_value = time
+            .get_mjd_seconds(row)
+            .map_err(|error| error.to_string())?;
+        let spectral_context = resolve_spectral_context(
+            spec,
+            spw_id,
+            chan_count,
+            field_id_value,
+            row_time_value,
+            chan_freq.as_ref(),
+            &spectral_window,
+            derived_engine.as_ref(),
+        )?;
 
         let mut row_contributed = false;
+        let mut row_panels = std::collections::BTreeSet::<String>::new();
         for (corr_index, corr_label) in &selected_correlations {
+            let row_weight = weight_values[*corr_index];
+            let row_sigma = sigma_values[*corr_index];
             for bin in &channel_bins {
-                let samples =
-                    collect_bin_samples(&grid, &flags, &[*corr_index], bin.start, bin.end);
-                if samples.is_empty() {
-                    continue;
-                }
-                let Some((x_value, y_value)) =
-                    compute_xy_values(spec, row, &samples, bin, &channel_frequencies, &time, &uvw)?
+                let samples = grid
+                    .as_ref()
+                    .map(|grid| {
+                        collect_bin_samples(grid, &flags, &[*corr_index], bin.start, bin.end)
+                    })
+                    .unwrap_or_default();
+                let flag_samples = collect_bin_flags(&flags, *corr_index, bin.start, bin.end);
+                let weight_spectrum_samples = weight_spectrum_grid
+                    .as_ref()
+                    .map(|grid| {
+                        collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
+                    })
+                    .unwrap_or_default();
+                let sigma_spectrum_samples = sigma_spectrum_grid
+                    .as_ref()
+                    .map(|grid| {
+                        collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
+                    })
+                    .unwrap_or_default();
+                let Some((x_value, y_value)) = compute_xy_values(
+                    spec,
+                    row,
+                    &samples,
+                    &flag_samples,
+                    &weight_spectrum_samples,
+                    &sigma_spectrum_samples,
+                    flag_row_value,
+                    row_weight,
+                    row_sigma,
+                    field_id_value,
+                    antenna1_value,
+                    bin,
+                    spectral_context.as_ref(),
+                    &time,
+                    &uvw,
+                    derived_engine.as_ref(),
+                )?
                 else {
                     continue;
                 };
@@ -1447,7 +2092,40 @@ fn build_generic_visibility_scatter(
                     antenna2_value,
                     Some(corr_label),
                 );
-                series
+                let (panel_key, panel_label) = iteration_group(
+                    iteraxis,
+                    field_id_value,
+                    &field,
+                    spw_id,
+                    &spectral_window,
+                    scan_number_value,
+                    Some(corr_label),
+                );
+                if geometry_dedup_required {
+                    if !geometry_samples_seen.insert((
+                        panel_key.clone(),
+                        group_key.clone(),
+                        row_time_value.to_bits(),
+                        field_id_value,
+                    )) {
+                        continue;
+                    }
+                }
+                if !panels.contains_key(&panel_key) {
+                    panel_order.push(panel_key.clone());
+                    panels.insert(
+                        panel_key.clone(),
+                        ScatterPanelAccumulator {
+                            label: panel_label.clone(),
+                            ..Default::default()
+                        },
+                    );
+                }
+                let panel = panels
+                    .get_mut(&panel_key)
+                    .expect("panel inserted before mutation");
+                panel
+                    .series
                     .entry(group_key.clone())
                     .or_insert_with(|| MsScatterSeries {
                         label: group_label,
@@ -1456,22 +2134,23 @@ fn build_generic_visibility_scatter(
                     })
                     .points
                     .push((x_value, y_value));
+                panel.contributing_points += 1;
                 contributing_points += 1;
                 row_contributed = true;
+                row_panels.insert(panel_key);
             }
         }
 
+        for panel_key in row_panels {
+            if let Some(panel) = panels.get_mut(&panel_key) {
+                panel.contributing_rows += 1;
+            }
+        }
         if row_contributed {
             contributing_rows += 1;
         }
     }
 
-    let mut series = series.into_values().collect::<Vec<_>>();
-    for entry in &mut series {
-        entry
-            .points
-            .sort_by(|left, right| left.0.total_cmp(&right.0));
-    }
     if contributing_points == 0 {
         return Err(format!(
             "{} produced no unflagged visibility points for the current selection",
@@ -1493,22 +2172,86 @@ fn build_generic_visibility_scatter(
                 spec.x_axis.display_name()
             )
         });
-    Ok(MsScatterPlotPayload {
+    let x_label = spec
+        .style
+        .xlabel
+        .clone()
+        .unwrap_or_else(|| axis_label(spec.x_axis));
+    let y_label = spec
+        .style
+        .ylabel
+        .clone()
+        .unwrap_or_else(|| axis_label(spec.y_axis()));
+    let fixed_x_bounds = fixed_bounds(spec.x_axis);
+    let fixed_y_bounds = fixed_bounds(spec.y_axis());
+    let mut panels = panel_order
+        .into_iter()
+        .filter_map(|panel_key| {
+            let panel = panels.remove(&panel_key)?;
+            let mut series = panel.series.into_values().collect::<Vec<_>>();
+            for entry in &mut series {
+                entry
+                    .points
+                    .sort_by(|left, right| left.0.total_cmp(&right.0));
+            }
+            Some(MsScatterPanelPayload {
+                key: panel_key,
+                summary: format!(
+                    "{}. Rows={} Points={} Data column={}",
+                    panel.label,
+                    panel.contributing_rows,
+                    panel.contributing_points,
+                    spec.data_column
+                ),
+                label: panel.label,
+                series,
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some(iteraxis) = iteraxis {
+        let (gridrows, gridcols) =
+            resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?;
+        let share_x_bounds =
+            share_axis_bounds(spec.iteration.xselfscale, spec.iteration.xsharedaxis);
+        let share_y_bounds =
+            share_axis_bounds(spec.iteration.yselfscale, spec.iteration.ysharedaxis);
+        return Ok(MsPlotPayload::ScatterGrid(MsScatterGridPayload {
+            title,
+            x_axis: spec.x_axis,
+            y_axis: spec.y_axis(),
+            x_label,
+            y_label,
+            fixed_x_bounds,
+            fixed_y_bounds,
+            iteraxis,
+            gridrows,
+            gridcols,
+            share_x_bounds,
+            share_y_bounds,
+            summary: format!(
+                "{}. Panels={} Rows={} Points={} Data column={}",
+                spec.preset
+                    .map(MsPlotPreset::display_name)
+                    .unwrap_or("MeasurementSet iterated plot"),
+                panels.len(),
+                contributing_rows,
+                contributing_points,
+                spec.data_column
+            ),
+            panels,
+        }));
+    }
+    let panel = panels
+        .pop()
+        .ok_or_else(|| "msexplore scatter payload lost its only panel".to_string())?;
+    Ok(MsPlotPayload::Scatter(MsScatterPlotPayload {
         title,
         x_axis: spec.x_axis,
         y_axis: spec.y_axis(),
-        x_label: spec
-            .style
-            .xlabel
-            .clone()
-            .unwrap_or_else(|| axis_label(spec.x_axis)),
-        y_label: spec
-            .style
-            .ylabel
-            .clone()
-            .unwrap_or_else(|| axis_label(spec.y_axis())),
-        fixed_x_bounds: fixed_bounds(spec.x_axis),
-        fixed_y_bounds: fixed_bounds(spec.y_axis()),
+        x_label,
+        y_label,
+        fixed_x_bounds,
+        fixed_y_bounds,
         summary: format!(
             "{}. Rows={} Points={} Data column={}",
             spec.preset
@@ -1518,8 +2261,8 @@ fn build_generic_visibility_scatter(
             contributing_points,
             spec.data_column
         ),
-        series,
-    })
+        series: panel.series,
+    }))
 }
 
 fn resolve_selected_rows_with_msselect(
@@ -1597,6 +2340,20 @@ fn channel_bins(chan_count: usize, avgchannel: Option<usize>) -> Result<Vec<Chan
     Ok(bins)
 }
 
+fn plot_channel_bins(chan_count: usize, spec: &MsPlotSpec) -> Result<Vec<ChannelBin>, String> {
+    if spec.x_axis.uses_channel_bins() || spec.y_axis().uses_channel_bins() {
+        channel_bins(chan_count, spec.averaging.avgchannel)
+    } else if chan_count == 0 {
+        Ok(Vec::new())
+    } else {
+        Ok(vec![ChannelBin {
+            start: 0,
+            end: chan_count,
+            ordinal: 0,
+        }])
+    }
+}
+
 fn fixed_bounds(axis: MsAxis) -> Option<(f64, f64)> {
     matches!(axis, MsAxis::Phase).then_some((-180.0, 180.0))
 }
@@ -1605,44 +2362,254 @@ fn axis_label(axis: MsAxis) -> String {
     match axis {
         MsAxis::Time => "Time (MJD seconds)".to_string(),
         MsAxis::UvDistance => "UV Distance (m)".to_string(),
+        MsAxis::U => "U (m)".to_string(),
+        MsAxis::V => "V (m)".to_string(),
+        MsAxis::W => "W (m)".to_string(),
         MsAxis::Channel => "Channel".to_string(),
         MsAxis::Frequency => "Frequency (Hz)".to_string(),
+        MsAxis::Velocity => "Velocity (km/s)".to_string(),
+        MsAxis::Azimuth => "Azimuth (deg)".to_string(),
+        MsAxis::Elevation => "Elevation (deg)".to_string(),
+        MsAxis::HourAngle => "Hour Angle (hours)".to_string(),
+        MsAxis::ParallacticAngle => "Parallactic Angle (deg)".to_string(),
         MsAxis::Amplitude => "Amplitude".to_string(),
         MsAxis::Phase => "Phase (deg)".to_string(),
         MsAxis::Real => "Real".to_string(),
         MsAxis::Imaginary => "Imaginary".to_string(),
+        MsAxis::Weight => "Weight".to_string(),
+        MsAxis::Sigma => "Sigma".to_string(),
+        MsAxis::WeightSpectrum => "Weight Spectrum".to_string(),
+        MsAxis::SigmaSpectrum => "Sigma Spectrum".to_string(),
+        MsAxis::Flag => "Flag".to_string(),
+        MsAxis::FlagRow => "Flag Row".to_string(),
         _ => axis.display_name().to_string(),
     }
+}
+
+fn float_axis_values(
+    array: &ArrayValue,
+    expected_len: usize,
+    column_name: &str,
+) -> Result<Vec<f64>, String> {
+    let values = match array {
+        ArrayValue::Float32(values) => values
+            .view()
+            .into_dimensionality::<Ix1>()
+            .map_err(|_| format!("msexplore expects {column_name} cells with shape [num_corr]"))?
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>(),
+        ArrayValue::Float64(values) => values
+            .view()
+            .into_dimensionality::<Ix1>()
+            .map_err(|_| format!("msexplore expects {column_name} cells with shape [num_corr]"))?
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        other => {
+            return Err(format!(
+                "msexplore requires FLOAT {column_name} cells, found {:?}",
+                other.primitive_type()
+            ));
+        }
+    };
+    if values.len() != expected_len {
+        return Err(format!(
+            "{column_name} shape [{}] does not match correlation count {expected_len}",
+            values.len()
+        ));
+    }
+    Ok(values)
+}
+
+#[derive(Debug, Clone)]
+struct SpectralContext {
+    channel_frequencies_hz: Vec<f64>,
+    rest_frequency_hz: f64,
+    doppler_ref: DopplerRef,
+}
+
+fn parse_frequency_frame(value: Option<&str>) -> Result<Option<FrequencyRef>, String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value
+                .parse::<FrequencyRef>()
+                .map_err(|error| error.to_string())
+        })
+        .transpose()
+}
+
+fn parse_velocity_definition(value: &str) -> Result<DopplerRef, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "RADIO" => Ok(DopplerRef::RADIO),
+        "OPTICAL" | "Z" => Ok(DopplerRef::Z),
+        "TRUE" | "RELATIVISTIC" | "BETA" => Ok(DopplerRef::BETA),
+        "RATIO" => Ok(DopplerRef::RATIO),
+        "GAMMA" => Ok(DopplerRef::GAMMA),
+        other => Err(format!(
+            "unsupported msexplore velocity definition {other:?}"
+        )),
+    }
+}
+
+fn parse_rest_frequency_hz(value: &str) -> Result<f64, String> {
+    let quantity = value
+        .trim()
+        .parse::<Quantity>()
+        .map_err(|error| format!("invalid restfreq {value:?}: {error}"))?;
+    if quantity.unit().name().is_empty() {
+        return Ok(quantity.value() * 1.0e6);
+    }
+    let hz = quantity
+        .get_value_in(&Unit::new("Hz").expect("Hz is a valid unit"))
+        .map_err(|error| format!("invalid restfreq {value:?}: {error}"))?;
+    if hz <= 0.0 || !hz.is_finite() {
+        return Err(format!(
+            "restfreq must resolve to a positive finite Hz value, got {hz}"
+        ));
+    }
+    Ok(hz)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_spectral_context(
+    spec: &MsPlotSpec,
+    spw_id: i32,
+    chan_count: usize,
+    field_id_value: i32,
+    row_time_value: f64,
+    chan_freq: Option<&ChanFreqColumn<'_>>,
+    spectral_window: &crate::subtables::MsSpectralWindow<'_>,
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<Option<SpectralContext>, String> {
+    let needs_spectral_coordinates =
+        spec.x_axis.uses_spectral_coordinates() || spec.y_axis().uses_spectral_coordinates();
+    if !needs_spectral_coordinates {
+        return Ok(None);
+    }
+
+    let spw_index = usize::try_from(spw_id)
+        .map_err(|_| format!("invalid DATA_DESCRIPTION::SPECTRAL_WINDOW_ID {spw_id}"))?;
+    let chan_freq = chan_freq.ok_or_else(|| {
+        "internal error: missing channel-frequency column for spectral axis".to_string()
+    })?;
+    let source_channel_frequencies = chan_freq
+        .get_frequencies(spw_index)
+        .map_err(|error| error.to_string())?;
+    if source_channel_frequencies.len() != chan_count {
+        return Err(format!(
+            "SPECTRAL_WINDOW row {spw_id} reported {} channel frequencies for {} data channels",
+            source_channel_frequencies.len(),
+            chan_count
+        ));
+    }
+
+    let source_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(spw_index)
+            .map_err(|error| error.to_string())?,
+    )
+    .ok_or_else(|| format!("unsupported MEAS_FREQ_REF code for SPECTRAL_WINDOW row {spw_id}"))?;
+    let target_ref =
+        parse_frequency_frame(spec.transforms.freqframe.as_deref())?.unwrap_or(source_ref);
+    let channel_frequencies_hz = if target_ref == source_ref {
+        source_channel_frequencies
+            .iter()
+            .map(MFrequency::hz)
+            .collect::<Vec<_>>()
+    } else {
+        let derived_engine = derived_engine.ok_or_else(|| {
+            "internal error: missing derived engine for spectral-frame conversion".to_string()
+        })?;
+        let field_id = usize::try_from(field_id_value)
+            .map_err(|_| format!("invalid FIELD_ID {field_id_value} for spectral transform"))?;
+        let frame = derived_engine
+            .spectral_frame_observatory(row_time_value, field_id)
+            .map_err(|error| error.to_string())?;
+        source_channel_frequencies
+            .iter()
+            .map(|frequency| {
+                frequency
+                    .convert_to(target_ref, &frame)
+                    .map(|value| value.hz())
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let center_frequency_hz =
+        channel_frequencies_hz.iter().copied().sum::<f64>() / channel_frequencies_hz.len() as f64;
+    let rest_frequency_hz = spec
+        .transforms
+        .restfreq
+        .as_deref()
+        .map(parse_rest_frequency_hz)
+        .transpose()?
+        .unwrap_or(center_frequency_hz);
+    let doppler_ref = parse_velocity_definition(&spec.transforms.veldef)?;
+    Ok(Some(SpectralContext {
+        channel_frequencies_hz,
+        rest_frequency_hz,
+        doppler_ref,
+    }))
 }
 
 fn compute_xy_values(
     spec: &MsPlotSpec,
     row: usize,
     samples: &[Complex64],
+    flag_samples: &[bool],
+    weight_spectrum_samples: &[f64],
+    sigma_spectrum_samples: &[f64],
+    flag_row_value: bool,
+    row_weight: f64,
+    row_sigma: f64,
+    field_id_value: i32,
+    antenna1_value: i32,
     channel_bin: &ChannelBin,
-    channel_frequencies: &[f64],
+    spectral_context: Option<&SpectralContext>,
     time: &TimeColumn<'_>,
     uvw: &UvwColumn<'_>,
+    geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<(f64, f64)>, String> {
     let x_value = compute_axis_value(
         spec.x_axis,
         row,
         samples,
+        flag_samples,
+        weight_spectrum_samples,
+        sigma_spectrum_samples,
+        flag_row_value,
+        row_weight,
+        row_sigma,
+        field_id_value,
+        antenna1_value,
         spec.averaging.scalar,
         channel_bin,
-        channel_frequencies,
+        spectral_context,
         time,
         uvw,
+        geometry_engine,
     )?;
     let y_value = compute_axis_value(
         spec.y_axis(),
         row,
         samples,
+        flag_samples,
+        weight_spectrum_samples,
+        sigma_spectrum_samples,
+        flag_row_value,
+        row_weight,
+        row_sigma,
+        field_id_value,
+        antenna1_value,
         spec.averaging.scalar,
         channel_bin,
-        channel_frequencies,
+        spectral_context,
         time,
         uvw,
+        geometry_engine,
     )?;
     Ok(match (x_value, y_value) {
         (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Some((x, y)),
@@ -1655,15 +2622,21 @@ fn compute_axis_value(
     axis: MsAxis,
     row: usize,
     samples: &[Complex64],
+    flag_samples: &[bool],
+    weight_spectrum_samples: &[f64],
+    sigma_spectrum_samples: &[f64],
+    flag_row_value: bool,
+    row_weight: f64,
+    row_sigma: f64,
+    field_id_value: i32,
+    antenna1_value: i32,
     scalar_average: bool,
     channel_bin: &ChannelBin,
-    channel_frequencies: &[f64],
+    spectral_context: Option<&SpectralContext>,
     time: &TimeColumn<'_>,
     uvw: &UvwColumn<'_>,
+    geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<f64>, String> {
-    if samples.is_empty() {
-        return Ok(None);
-    }
     if axis.is_visibility_math() {
         return Ok(compute_visibility_math(axis, samples, scalar_average));
     }
@@ -1676,6 +2649,18 @@ fn compute_axis_value(
             let [u, v, _w] = uvw.get(row).map_err(|error| error.to_string())?;
             Ok(Some((u * u + v * v).sqrt()))
         }
+        MsAxis::U => {
+            let [u, _v, _w] = uvw.get(row).map_err(|error| error.to_string())?;
+            Ok(Some(u))
+        }
+        MsAxis::V => {
+            let [_u, v, _w] = uvw.get(row).map_err(|error| error.to_string())?;
+            Ok(Some(v))
+        }
+        MsAxis::W => {
+            let [_u, _v, w] = uvw.get(row).map_err(|error| error.to_string())?;
+            Ok(Some(w))
+        }
         MsAxis::Channel => {
             if channel_bin.end.saturating_sub(channel_bin.start) == 1 {
                 Ok(Some(channel_bin.start as f64))
@@ -1684,13 +2669,132 @@ fn compute_axis_value(
             }
         }
         MsAxis::Frequency => {
-            if channel_frequencies.is_empty() || channel_bin.end > channel_frequencies.len() {
+            let Some(spectral_context) = spectral_context else {
+                return Ok(None);
+            };
+            if spectral_context.channel_frequencies_hz.is_empty()
+                || channel_bin.end > spectral_context.channel_frequencies_hz.len()
+            {
                 return Ok(None);
             }
-            let bin = &channel_frequencies[channel_bin.start..channel_bin.end];
+            let bin = &spectral_context.channel_frequencies_hz[channel_bin.start..channel_bin.end];
             Ok(Some(bin.iter().copied().sum::<f64>() / bin.len() as f64))
         }
+        MsAxis::Velocity => {
+            let Some(spectral_context) = spectral_context else {
+                return Ok(None);
+            };
+            if spectral_context.channel_frequencies_hz.is_empty()
+                || channel_bin.end > spectral_context.channel_frequencies_hz.len()
+            {
+                return Ok(None);
+            }
+            let bin = &spectral_context.channel_frequencies_hz[channel_bin.start..channel_bin.end];
+            let mean_frequency_hz = bin.iter().copied().sum::<f64>() / bin.len() as f64;
+            let doppler = MDoppler::new(
+                mean_frequency_hz / spectral_context.rest_frequency_hz,
+                DopplerRef::RATIO,
+            )
+            .convert_to(spectral_context.doppler_ref, &MeasFrame::new())
+            .map_err(|error| error.to_string())?;
+            Ok(Some(doppler.value() * SPEED_OF_LIGHT_KM_S))
+        }
+        MsAxis::Weight => Ok(Some(row_weight)),
+        MsAxis::Sigma => Ok(Some(row_sigma)),
+        MsAxis::WeightSpectrum => Ok(average_float_samples(weight_spectrum_samples)),
+        MsAxis::SigmaSpectrum => Ok(average_float_samples(sigma_spectrum_samples)),
+        MsAxis::Flag => Ok(compute_flag_value(flag_samples)),
+        MsAxis::FlagRow => Ok(Some(if flag_row_value { 1.0 } else { 0.0 })),
+        MsAxis::Azimuth => {
+            let geometry_engine = geometry_engine.ok_or_else(|| {
+                "internal error: missing geometry engine for azimuth axis".to_string()
+            })?;
+            let time_value = time
+                .get_mjd_seconds(row)
+                .map_err(|error| error.to_string())?;
+            let field_id = usize::try_from(field_id_value)
+                .map_err(|_| format!("invalid FIELD_ID {field_id_value} for azimuth axis"))?;
+            let antenna_id = usize::try_from(antenna1_value)
+                .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for azimuth axis"))?;
+            geometry_engine
+                .azel(time_value, field_id, antenna_id)
+                .map(|(azimuth, _elevation)| Some(normalize_signed_degrees(azimuth.to_degrees())))
+                .map_err(|error| error.to_string())
+        }
+        MsAxis::Elevation => {
+            let geometry_engine = geometry_engine.ok_or_else(|| {
+                "internal error: missing geometry engine for elevation axis".to_string()
+            })?;
+            let time_value = time
+                .get_mjd_seconds(row)
+                .map_err(|error| error.to_string())?;
+            let field_id = usize::try_from(field_id_value)
+                .map_err(|_| format!("invalid FIELD_ID {field_id_value} for elevation axis"))?;
+            let antenna_id = usize::try_from(antenna1_value)
+                .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for elevation axis"))?;
+            geometry_engine
+                .azel(time_value, field_id, antenna_id)
+                .map(|(_azimuth, elevation)| Some(elevation.to_degrees()))
+                .map_err(|error| error.to_string())
+        }
+        MsAxis::HourAngle => {
+            let geometry_engine = geometry_engine.ok_or_else(|| {
+                "internal error: missing geometry engine for hour angle axis".to_string()
+            })?;
+            let time_value = time
+                .get_mjd_seconds(row)
+                .map_err(|error| error.to_string())?;
+            let field_id = usize::try_from(field_id_value)
+                .map_err(|_| format!("invalid FIELD_ID {field_id_value} for hour angle axis"))?;
+            let antenna_id = usize::try_from(antenna1_value)
+                .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for hour angle axis"))?;
+            geometry_engine
+                .hour_angle(time_value, field_id, antenna_id)
+                .map(|hour_angle| Some(hour_angle * 12.0 / std::f64::consts::PI))
+                .map_err(|error| error.to_string())
+        }
+        MsAxis::ParallacticAngle => {
+            let geometry_engine = geometry_engine.ok_or_else(|| {
+                "internal error: missing geometry engine for parallactic angle axis".to_string()
+            })?;
+            let time_value = time
+                .get_mjd_seconds(row)
+                .map_err(|error| error.to_string())?;
+            let field_id = usize::try_from(field_id_value).map_err(|_| {
+                format!("invalid FIELD_ID {field_id_value} for parallactic angle axis")
+            })?;
+            let antenna_id = usize::try_from(antenna1_value).map_err(|_| {
+                format!("invalid ANTENNA1 {antenna1_value} for parallactic angle axis")
+            })?;
+            geometry_engine
+                .parallactic_angle(time_value, field_id, antenna_id)
+                .map(|parallactic_angle| Some(parallactic_angle.to_degrees()))
+                .map_err(|error| error.to_string())
+        }
         _ => Ok(None),
+    }
+}
+
+fn average_float_samples(samples: &[f64]) -> Option<f64> {
+    if samples.is_empty() {
+        None
+    } else {
+        Some(samples.iter().copied().sum::<f64>() / samples.len() as f64)
+    }
+}
+
+fn normalize_signed_degrees(angle_degrees: f64) -> f64 {
+    let wrapped = (angle_degrees + 180.0).rem_euclid(360.0) - 180.0;
+    if wrapped == -180.0 { 180.0 } else { wrapped }
+}
+
+fn compute_flag_value(flags: &[bool]) -> Option<f64> {
+    if flags.is_empty() {
+        None
+    } else if flags.iter().any(|flag| *flag) {
+        Some(1.0)
+    } else {
+        Some(0.0)
     }
 }
 
@@ -1757,6 +2861,47 @@ fn collect_bin_samples(
             if value.re.is_finite() && value.im.is_finite() {
                 samples.push(value);
             }
+        }
+    }
+    samples
+}
+
+fn collect_bin_flags(
+    flags: &ndarray::ArrayView2<'_, bool>,
+    corr_index: usize,
+    chan_start: usize,
+    chan_end: usize,
+) -> Vec<bool> {
+    if corr_index >= flags.nrows() {
+        return Vec::new();
+    }
+    (chan_start..chan_end)
+        .filter(|chan_index| *chan_index < flags.ncols())
+        .map(|chan_index| flags[(corr_index, chan_index)])
+        .collect()
+}
+
+fn collect_bin_float_samples(
+    grid: &FloatGrid,
+    flags: &ndarray::ArrayView2<'_, bool>,
+    corr_index: usize,
+    chan_start: usize,
+    chan_end: usize,
+) -> Vec<f64> {
+    if corr_index >= grid.corr_count {
+        return Vec::new();
+    }
+    let mut samples = Vec::new();
+    for chan_index in chan_start..chan_end {
+        if chan_index >= grid.chan_count
+            || chan_index >= flags.ncols()
+            || flags[(corr_index, chan_index)]
+        {
+            continue;
+        }
+        let value = grid.values[corr_index * grid.chan_count + chan_index];
+        if value.is_finite() {
+            samples.push(value);
         }
     }
     samples
@@ -1830,11 +2975,92 @@ fn visibility_group(
     }
 }
 
+fn iteration_group(
+    iteraxis: Option<MsIterationAxis>,
+    field_id: i32,
+    field: &crate::subtables::MsField<'_>,
+    spw_id: i32,
+    spectral_window: &crate::subtables::MsSpectralWindow<'_>,
+    scan_number: i32,
+    correlation_label: Option<&str>,
+) -> (String, String) {
+    match iteraxis {
+        None => ("all".to_string(), "All data".to_string()),
+        Some(MsIterationAxis::Field) => {
+            let field_name = if field_id >= 0 && (field_id as usize) < field.row_count() {
+                field
+                    .name(field_id as usize)
+                    .unwrap_or_else(|_| format!("Field {field_id}"))
+            } else {
+                format!("Field {field_id}")
+            };
+            (format!("field-{field_id}"), field_name)
+        }
+        Some(MsIterationAxis::Scan) => {
+            (format!("scan-{scan_number}"), format!("Scan {scan_number}"))
+        }
+        Some(MsIterationAxis::SpectralWindow) => {
+            let spw_name = if spw_id >= 0 && (spw_id as usize) < spectral_window.row_count() {
+                spectral_window
+                    .name(spw_id as usize)
+                    .unwrap_or_else(|_| format!("SPW {spw_id}"))
+            } else {
+                format!("SPW {spw_id}")
+            };
+            (format!("spw-{spw_id}"), spw_name)
+        }
+        Some(MsIterationAxis::Correlation) => {
+            let label = correlation_label.unwrap_or("corr").to_string();
+            (format!("corr-{label}"), label)
+        }
+    }
+}
+
+fn resolve_iterated_grid(
+    panel_count: usize,
+    requested_rows: usize,
+    requested_cols: usize,
+) -> Result<(usize, usize), String> {
+    if panel_count == 0 {
+        return Err("msexplore iteration produced no populated panels".to_string());
+    }
+    let rows = requested_rows.max(1);
+    let cols = requested_cols.max(1);
+    if rows == 1 && cols == 1 {
+        let auto_cols = (panel_count as f64).sqrt().ceil().max(1.0) as usize;
+        let auto_rows = panel_count.div_ceil(auto_cols);
+        return Ok((auto_rows, auto_cols));
+    }
+    if rows == 1 {
+        return Ok((panel_count.div_ceil(cols), cols));
+    }
+    if cols == 1 {
+        return Ok((rows, panel_count.div_ceil(rows)));
+    }
+    if rows * cols < panel_count {
+        return Err(format!(
+            "msexplore gridrows={rows} and gridcols={cols} cannot hold {panel_count} iterated panels"
+        ));
+    }
+    Ok((rows, cols))
+}
+
+fn share_axis_bounds(self_scale: bool, shared_axis: bool) -> bool {
+    shared_axis || !self_scale
+}
+
 #[derive(Debug, Clone)]
 struct ComplexGrid {
     corr_count: usize,
     chan_count: usize,
     values: Vec<Complex64>,
+}
+
+#[derive(Debug, Clone)]
+struct FloatGrid {
+    corr_count: usize,
+    chan_count: usize,
+    values: Vec<f64>,
 }
 
 enum PreparedDataSource<'a> {
@@ -2026,6 +3252,46 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
     }
 }
 
+fn float_grid_from_array(array: &ArrayValue, column_name: &str) -> Result<FloatGrid, String> {
+    match array {
+        ArrayValue::Float32(values) => {
+            let values = values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                format!("msexplore expects {column_name} cells with shape [num_corr, num_chan]")
+            })?;
+            Ok(FloatGrid {
+                corr_count: values.nrows(),
+                chan_count: values.ncols(),
+                values: values.iter().map(|value| *value as f64).collect(),
+            })
+        }
+        ArrayValue::Float64(values) => {
+            let values = values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                format!("msexplore expects {column_name} cells with shape [num_corr, num_chan]")
+            })?;
+            Ok(FloatGrid {
+                corr_count: values.nrows(),
+                chan_count: values.ncols(),
+                values: values.iter().copied().collect(),
+            })
+        }
+        other => Err(format!(
+            "msexplore requires FLOAT {column_name} data, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn scalar_values_to_grid(values: &[f64], chan_count: usize) -> FloatGrid {
+    FloatGrid {
+        corr_count: values.len(),
+        chan_count,
+        values: values
+            .iter()
+            .flat_map(|value| std::iter::repeat(*value).take(chan_count))
+            .collect(),
+    }
+}
+
 fn combine_grids<F>(
     left: ComplexGrid,
     right: ComplexGrid,
@@ -2067,8 +3333,117 @@ fn render_scatter_image(
     let root = backend.into_drawing_area();
     root.fill(&rgb(theme.background))
         .map_err(|error| error.to_string())?;
-    render_scatter_plot(&root, payload, theme, style)?;
+    render_scatter_panel(
+        &root,
+        payload.x_axis,
+        payload.y_axis,
+        &payload.x_label,
+        &payload.y_label,
+        payload.fixed_x_bounds,
+        payload.fixed_y_bounds,
+        &payload.series,
+        None,
+        theme,
+        style,
+        None,
+    )?;
     root.present().map_err(|error| error.to_string())?;
+    drop(root);
+    let image = RgbImage::from_raw(width, height, buffer)
+        .ok_or_else(|| "failed to assemble rendered plot image".to_string())?;
+    Ok(DynamicImage::ImageRgb8(image))
+}
+
+fn render_scatter_grid_image(
+    payload: &MsScatterGridPayload,
+    theme: ListObsPlotTheme,
+    width: u32,
+    height: u32,
+) -> Result<DynamicImage, String> {
+    if width == 0 || height == 0 {
+        return Err("plot size must be non-zero".to_string());
+    }
+    let style = ListObsPlotRenderStyle::for_bitmap_size(width, height);
+    let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
+    let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
+    let root = backend.into_drawing_area();
+    root.fill(&rgb(theme.background))
+        .map_err(|error| error.to_string())?;
+    let titled = root
+        .titled(
+            &payload.title,
+            ("sans-serif", style.axis_desc_font_px().saturating_add(2))
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
+        .map_err(|error| error.to_string())?;
+    let areas = titled.split_evenly((payload.gridrows, payload.gridcols));
+    let global_bounds = if payload.share_x_bounds || payload.share_y_bounds {
+        Some(scatter_bounds(
+            payload.panels.iter().flat_map(|panel| {
+                panel
+                    .series
+                    .iter()
+                    .flat_map(|series| series.points.iter().copied())
+            }),
+            payload.fixed_x_bounds,
+            payload.fixed_y_bounds,
+        )?)
+    } else {
+        None
+    };
+    for (area, panel) in areas.iter().zip(payload.panels.iter()) {
+        let local_bounds = scatter_bounds(
+            panel
+                .series
+                .iter()
+                .flat_map(|series| series.points.iter().copied()),
+            payload.fixed_x_bounds,
+            payload.fixed_y_bounds,
+        )?;
+        let resolved_bounds = match global_bounds {
+            Some((global_min_x, global_max_x, global_min_y, global_max_y)) => Some((
+                if payload.share_x_bounds {
+                    global_min_x
+                } else {
+                    local_bounds.0
+                },
+                if payload.share_x_bounds {
+                    global_max_x
+                } else {
+                    local_bounds.1
+                },
+                if payload.share_y_bounds {
+                    global_min_y
+                } else {
+                    local_bounds.2
+                },
+                if payload.share_y_bounds {
+                    global_max_y
+                } else {
+                    local_bounds.3
+                },
+            )),
+            None => Some(local_bounds),
+        };
+        render_scatter_panel(
+            area,
+            payload.x_axis,
+            payload.y_axis,
+            &payload.x_label,
+            &payload.y_label,
+            payload.fixed_x_bounds,
+            payload.fixed_y_bounds,
+            &panel.series,
+            Some(&panel.label),
+            theme,
+            style,
+            resolved_bounds,
+        )?;
+    }
+    root.present().map_err(|error| error.to_string())?;
+    drop(areas);
+    drop(titled);
     drop(root);
     let image = RgbImage::from_raw(width, height, buffer)
         .ok_or_else(|| "failed to assemble rendered plot image".to_string())?;
@@ -2109,55 +3484,59 @@ fn export_scatter_pdf(image: &DynamicImage, output_path: &Path, title: &str) -> 
     std::fs::write(output_path, bytes).map_err(|error| error.to_string())
 }
 
-fn render_scatter_plot(
+fn render_scatter_panel(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
-    payload: &MsScatterPlotPayload,
+    x_axis: MsAxis,
+    _y_axis: MsAxis,
+    x_label: &str,
+    y_label: &str,
+    fixed_x_bounds: Option<(f64, f64)>,
+    fixed_y_bounds: Option<(f64, f64)>,
+    series: &[MsScatterSeries],
+    panel_title: Option<&str>,
     theme: ListObsPlotTheme,
     style: ListObsPlotRenderStyle,
+    bounds_override: Option<(f64, f64, f64, f64)>,
 ) -> Result<(), String> {
-    let (mut min_x, mut max_x, mut min_y, mut max_y) = bounds(
-        payload
-            .series
-            .iter()
-            .flat_map(|series| series.points.iter().copied()),
-    )
-    .ok_or_else(|| "scatter plot has no finite points".to_string())?;
-    if let Some((fixed_min, fixed_max)) = payload.fixed_x_bounds {
-        min_x = fixed_min;
-        max_x = fixed_max;
-    } else {
-        (min_x, max_x) = padded_range(min_x, max_x);
-    }
-    if let Some((fixed_min, fixed_max)) = payload.fixed_y_bounds {
-        min_y = fixed_min;
-        max_y = fixed_max;
-    } else {
-        (min_y, max_y) = padded_range(min_y, max_y);
-    }
+    let (min_x, max_x, min_y, max_y) = match bounds_override {
+        Some(bounds) => bounds,
+        None => scatter_bounds(
+            series
+                .iter()
+                .flat_map(|series| series.points.iter().copied()),
+            fixed_x_bounds,
+            fixed_y_bounds,
+        )?,
+    };
 
-    let x_offset = if payload.x_axis == MsAxis::Time {
+    let x_offset = if x_axis == MsAxis::Time {
         scan_timeline_axis_offset(min_x, max_x)
     } else {
         0.0
     };
     let x_label = if x_offset == 0.0 {
-        payload.x_label.clone()
+        x_label.to_string()
     } else {
         format!("Time (MJD seconds - {:.0})", x_offset)
     };
     let x_span = (max_x - min_x).abs();
     let y_span = (max_y - min_y).abs();
 
-    let mut chart = ChartBuilder::on(root)
+    let mut chart_builder = ChartBuilder::on(root);
+    chart_builder
         .margin(style.margin_px())
         .x_label_area_size(style.label_area_px())
-        .y_label_area_size(style.wide_y_label_area_px())
+        .y_label_area_size(style.wide_y_label_area_px());
+    if let Some(panel_title) = panel_title {
+        chart_builder.caption(panel_title, ("sans-serif", style.axis_desc_font_px()));
+    }
+    let mut chart = chart_builder
         .build_cartesian_2d((min_x - x_offset)..(max_x - x_offset), min_y..max_y)
         .map_err(|error| error.to_string())?;
     chart
         .configure_mesh()
         .x_desc(&x_label)
-        .y_desc(&payload.y_label)
+        .y_desc(y_label)
         .axis_desc_style(
             ("sans-serif", style.axis_desc_font_px())
                 .into_font()
@@ -2179,7 +3558,7 @@ fn render_scatter_plot(
         .map_err(|error| error.to_string())?;
 
     let point_radius = style.point_radius_px().saturating_sub(1).max(3);
-    for series in &payload.series {
+    for series in series {
         let color = palette_color(&series.color_group, theme);
         chart
             .draw_series(PointSeries::of_element(
@@ -2198,6 +3577,31 @@ fn render_scatter_plot(
     }
 
     Ok(())
+}
+
+fn scatter_bounds<I>(
+    points: I,
+    fixed_x_bounds: Option<(f64, f64)>,
+    fixed_y_bounds: Option<(f64, f64)>,
+) -> Result<(f64, f64, f64, f64), String>
+where
+    I: IntoIterator<Item = (f64, f64)>,
+{
+    let (mut min_x, mut max_x, mut min_y, mut max_y) =
+        bounds(points).ok_or_else(|| "scatter plot has no finite points".to_string())?;
+    if let Some((fixed_min, fixed_max)) = fixed_x_bounds {
+        min_x = fixed_min;
+        max_x = fixed_max;
+    } else {
+        (min_x, max_x) = padded_range(min_x, max_x);
+    }
+    if let Some((fixed_min, fixed_max)) = fixed_y_bounds {
+        min_y = fixed_min;
+        max_y = fixed_max;
+    } else {
+        (min_y, max_y) = padded_range(min_y, max_y);
+    }
+    Ok((min_x, max_x, min_y, max_y))
 }
 
 fn bounds<I>(points: I) -> Option<(f64, f64, f64, f64)>

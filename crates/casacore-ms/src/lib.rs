@@ -70,10 +70,10 @@ pub use listobs::{
 pub use ms::MeasurementSet;
 pub use msexplore::{
     MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,
-    MsFlagEditSpec, MsIterationSpec, MsLayoutSpec, MsPlotPayload, MsPlotPreset, MsPlotSpec,
-    MsPlotStyleSpec, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec, MsTransformSpec,
-    build_msexplore_plot_payload, build_msexplore_plot_payload_from_path, export_msexplore_plot,
-    render_msexplore_plot_image,
+    MsFlagEditSpec, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsPlotPayload, MsPlotPreset,
+    MsPlotSpec, MsPlotStyleSpec, MsScatterGridPayload, MsScatterPanelPayload, MsScatterPlotPayload,
+    MsScatterSeries, MsSelectionSpec, MsTransformSpec, build_msexplore_plot_payload,
+    build_msexplore_plot_payload_from_path, export_msexplore_plot, render_msexplore_plot_image,
 };
 pub use plot::{
     ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,

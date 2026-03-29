@@ -20,7 +20,8 @@ use std::path::Path;
 use casacore_aipsio::{AipsIo, ByteOrder};
 use ndarray::ShapeBuilder;
 
-use casacore_types::Value;
+use casacore_types::{ArrayValue, Value};
+use ndarray::{ArrayD, IxDyn};
 
 use super::StorageError;
 use super::canonical::{
@@ -53,6 +54,10 @@ fn is_ssm_variable_string(col_desc: &ColumnDescContents) -> bool {
 
 fn is_ssm_array_file_indirect(col_desc: &ColumnDescContents) -> bool {
     col_desc.is_array && (col_desc.option & 1) == 0 && !is_ssm_variable_string(col_desc)
+}
+
+fn is_ssm_indirect(col_desc: &ColumnDescContents) -> bool {
+    col_desc.is_record() || is_ssm_array_file_indirect(col_desc)
 }
 
 // ---------------------------------------------------------------------------
@@ -710,7 +715,7 @@ pub(crate) fn read_ssm_file(
     let indices = parse_ssm_indices(&mut file, &header)?;
 
     // Check if any array columns are stored indirectly via the shared array file.
-    let has_indirect = col_descs.iter().copied().any(is_ssm_array_file_indirect);
+    let has_indirect = col_descs.iter().copied().any(is_ssm_indirect);
 
     // Lazily open the shared array file for indirect columns.
     let mut array_reader: Option<StManArrayFileReader> = if has_indirect {
@@ -747,7 +752,7 @@ pub(crate) fn read_ssm_file(
         }
         let index = &indices[index_nr];
 
-        let is_indirect = is_ssm_array_file_indirect(col_desc);
+        let is_indirect = is_ssm_indirect(col_desc);
         let is_string_array = col_desc.is_array && is_ssm_variable_string(col_desc);
 
         if is_string_array {
@@ -823,8 +828,11 @@ pub(crate) fn read_ssm_file(
                 }
             };
 
-            let dt =
-                CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
+            let dt = if col_desc.is_record() {
+                CasacoreDataType::TpUChar
+            } else {
+                CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false)
+            };
             let mut per_row = Vec::with_capacity(nrrow);
             if let Some(reader) = array_reader.as_mut() {
                 for (row_idx, &off) in offset_values.iter().enumerate() {
@@ -834,6 +842,35 @@ pub(crate) fn read_ssm_file(
                             col_desc.col_name, row_idx, off, dt, err
                         ))
                     })?;
+                    let value = if col_desc.is_record() {
+                        match value {
+                            Some(Value::Array(ArrayValue::UInt8(bytes))) => {
+                                if bytes.ndim() != 1 {
+                                    return Err(StorageError::FormatMismatch(format!(
+                                        "SSM record column '{}' row {} expected 1-D u8 payload, got shape {:?}",
+                                        col_desc.col_name,
+                                        row_idx,
+                                        bytes.shape()
+                                    )));
+                                }
+                                let raw_bytes: Vec<u8> = bytes.iter().copied().collect();
+                                Some(Value::Record(
+                                    super::table_control::deserialize_record_from_uchar(
+                                        &raw_bytes,
+                                    )?,
+                                ))
+                            }
+                            Some(other) => {
+                                return Err(StorageError::FormatMismatch(format!(
+                                    "SSM record column '{}' row {} expected u8 payload, got {other:?}",
+                                    col_desc.col_name, row_idx
+                                )));
+                            }
+                            None => None,
+                        }
+                    } else {
+                        value
+                    };
                     per_row.push(value);
                 }
             } else if nrrow == 0 || offset_values.iter().all(|&off| off == 0) {
@@ -1250,7 +1287,7 @@ pub(crate) fn write_ssm_file(
     let ncol = col_descs.len();
 
     // Check if any array columns are stored indirectly.
-    let has_indirect = col_descs.iter().any(is_ssm_array_file_indirect);
+    let has_indirect = col_descs.iter().any(is_ssm_indirect);
 
     // Create shared array file for indirect columns (SSM uses version 0, no refcount).
     let mut array_writer = if has_indirect {
@@ -1274,7 +1311,7 @@ pub(crate) fn write_ssm_file(
         .map(|c| {
             if is_ssm_variable_string(c) {
                 96 // 12 bytes = 3 ints (bucketNr, offset, length) per row
-            } else if is_ssm_array_file_indirect(c) {
+            } else if is_ssm_indirect(c) {
                 64 // i64 offset = 8 bytes = 64 bits
             } else {
                 let nrelem = if c.is_array && !c.shape.is_empty() {
@@ -1344,7 +1381,7 @@ pub(crate) fn write_ssm_file(
     let mut string_buckets: Vec<Vec<u8>> = Vec::new();
 
     for (col_idx, col_desc) in col_descs.iter().enumerate() {
-        let is_indirect = is_ssm_array_file_indirect(col_desc);
+        let is_indirect = is_ssm_indirect(col_desc);
         let nrelem = if is_indirect {
             1usize
         } else if col_desc.is_array && !col_desc.shape.is_empty() {
@@ -1356,8 +1393,11 @@ pub(crate) fn write_ssm_file(
 
         if is_indirect {
             // Write array data to shared file, store i64 offsets in buckets.
-            let dt =
-                CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
+            let dt = if col_desc.is_record() {
+                CasacoreDataType::TpUChar
+            } else {
+                CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false)
+            };
             let writer = array_writer.as_mut().ok_or_else(|| {
                 StorageError::FormatMismatch(
                     "no array file writer for indirect SSM column".to_string(),
@@ -1376,10 +1416,31 @@ pub(crate) fn write_ssm_file(
                     .find(|f| f.name == col_desc.col_name)
                     .map(|f| &f.value);
 
-                let offset: i64 = match value {
-                    Some(val @ Value::Array(_)) => writer.write_array(val, dt)?,
-                    _ => 0i64, // undefined cell
-                };
+                let offset: i64 =
+                    match value {
+                        Some(Value::Record(record)) if col_desc.is_record() => {
+                            let bytes = super::table_control::serialize_record_to_uchar(record)?;
+                            let payload = Value::Array(ArrayValue::UInt8(
+                            ArrayD::from_shape_vec(IxDyn(&[bytes.len()]), bytes).map_err(|err| {
+                                StorageError::FormatMismatch(format!(
+                                    "SSM record column '{}': invalid byte payload shape: {err}",
+                                    col_desc.col_name
+                                ))
+                            })?,
+                        ));
+                            writer.write_array(&payload, dt)?
+                        }
+                        Some(val @ Value::Array(_)) if !col_desc.is_record() => {
+                            writer.write_array(val, dt)?
+                        }
+                        Some(Value::Array(_)) | Some(Value::Record(_)) => {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "SSM indirect column '{}' received incompatible value type",
+                                col_desc.col_name
+                            )));
+                        }
+                        _ => 0i64, // undefined cell
+                    };
 
                 // Write i64 offset in canonical byte order.
                 if big_endian {

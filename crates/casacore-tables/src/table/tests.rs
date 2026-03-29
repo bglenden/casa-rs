@@ -594,6 +594,43 @@ fn set_record_cell_updates_row() {
 }
 
 #[test]
+fn standard_stman_round_trips_scalar_record_columns() {
+    let schema =
+        TableSchema::new(vec![ColumnSchema::record("meta")]).expect("create record schema");
+    let payload = RecordValue::new(vec![
+        RecordField::new("code", Value::Scalar(ScalarValue::Int32(42))),
+        RecordField::new(
+            "nested",
+            Value::Record(RecordValue::new(vec![RecordField::new(
+                "label",
+                Value::Scalar(ScalarValue::String("source-model".into())),
+            )])),
+        ),
+    ]);
+
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "meta",
+            Value::Record(payload.clone()),
+        )]))
+        .expect("push defined record row");
+    table
+        .add_row(RecordValue::new(vec![]))
+        .expect("push undefined record row");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("record_ssm.tbl");
+    table
+        .save(TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan))
+        .expect("save StandardStMan record table");
+
+    let reopened = Table::open(TableOptions::new(&path)).expect("reopen StandardStMan table");
+    assert_eq!(reopened.record_cell(0, "meta"), Ok(payload));
+    assert_eq!(reopened.record_cell(1, "meta"), Ok(RecordValue::default()));
+}
+
+#[test]
 fn put_column_range_streams_values_without_column_vecs() {
     let mut table = Table::from_rows(vec![
         RecordValue::new(vec![RecordField::new(

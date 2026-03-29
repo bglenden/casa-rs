@@ -2,11 +2,13 @@
 //! Core computation engine for derived MS quantities.
 //!
 //! [`MsCalEngine`] caches antenna positions, field directions, and the
-//! observatory position from an MS, then computes hour angle, parallactic
-//! angle, azimuth/elevation, LAST, and J2000 UVW on demand.
+//! observatory position from an MS, preserves the main-table epoch reference,
+//! then computes hour angle, parallactic angle, azimuth/elevation, LAST, and
+//! J2000 UVW on demand.
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
+use casacore_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casacore_types::ArrayValue;
 use casacore_types::measures::direction::{DirectionRef, MDirection};
 use casacore_types::measures::epoch::{EpochRef, MEpoch};
@@ -37,10 +39,14 @@ use crate::ms::MeasurementSet;
 pub struct MsCalEngine {
     /// Antenna positions in ITRF.
     antenna_positions: Vec<MPosition>,
+    /// Whether each antenna uses an alt-az mount.
+    antenna_mount_alt_az: Vec<bool>,
     /// Field phase directions (constant term, J2000).
     field_directions: Vec<MDirection>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
+    /// Epoch reference used by MAIN.TIME.
+    time_reference: EpochRef,
 }
 
 impl MsCalEngine {
@@ -53,9 +59,12 @@ impl MsCalEngine {
         let ant = ms.antenna()?;
         let n_ant = ant.row_count();
         let mut antenna_positions = Vec::with_capacity(n_ant);
+        let mut antenna_mount_alt_az = Vec::with_capacity(n_ant);
         for row in 0..n_ant {
             let pos = ant.position(row)?;
             antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
+            let mount = ant.mount(row)?;
+            antenna_mount_alt_az.push(mount.to_ascii_lowercase().starts_with("alt-az"));
         }
 
         let field = ms.field()?;
@@ -78,11 +87,14 @@ impl MsCalEngine {
             .and_then(|name| MPosition::from_observatory_name(&name))
             .or_else(|| antenna_positions.first().cloned())
             .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0));
+        let time_reference = detect_time_reference(ms);
 
         Ok(Self {
             antenna_positions,
+            antenna_mount_alt_az,
             field_directions,
             observatory_position,
+            time_reference,
         })
     }
 
@@ -93,9 +105,11 @@ impl MsCalEngine {
         observatory_position: MPosition,
     ) -> Self {
         Self {
+            antenna_mount_alt_az: vec![true; antenna_positions.len()],
             antenna_positions,
             field_directions,
             observatory_position,
+            time_reference: EpochRef::UTC,
         }
     }
 
@@ -111,7 +125,7 @@ impl MsCalEngine {
 
     /// Build a MeasFrame for the given time and antenna.
     fn make_frame(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<MeasFrame> {
-        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, EpochRef::UTC);
+        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, self.time_reference);
         let position = self
             .antenna_positions
             .get(antenna_id)
@@ -125,6 +139,34 @@ impl MsCalEngine {
             .with_epoch(epoch)
             .with_position(position)
             .with_bundled_eop())
+    }
+
+    /// Build a MeasFrame for the given time and explicit position.
+    fn make_frame_with_position(
+        &self,
+        time_mjd_sec: f64,
+        position: MPosition,
+    ) -> MsResult<MeasFrame> {
+        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, self.time_reference);
+        Ok(MeasFrame::new()
+            .with_epoch(epoch)
+            .with_position(position)
+            .with_bundled_eop())
+    }
+
+    /// Build a spectral-conversion frame using the observatory position and field direction.
+    ///
+    /// This frame is suitable for frequency and velocity rendering, where the
+    /// relevant context is the array observatory, the source direction, and
+    /// the per-row epoch.
+    pub fn spectral_frame_observatory(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+    ) -> MsResult<MeasFrame> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        Ok(frame.with_direction(self.field_dir(field_id)?.clone()))
     }
 
     /// Get the field direction for the given field_id.
@@ -150,10 +192,8 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<f64> {
-        let last = self.last(time_mjd_sec, antenna_id)?;
-        let dir = self.field_dir(field_id)?;
-        let ra = dir.longitude_rad();
-        Ok(last - ra)
+        self.hadec(time_mjd_sec, field_id, antenna_id)
+            .map(|(ha, _)| ha)
     }
 
     /// Compute the parallactic angle (radians) for a given time, field, and antenna.
@@ -168,22 +208,43 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<f64> {
-        let ha = self.hour_angle(time_mjd_sec, field_id, antenna_id)?;
+        if !self.antenna_is_alt_az(antenna_id)? {
+            return Ok(0.0);
+        }
+        let frame = self.make_frame(time_mjd_sec, antenna_id)?;
+        let source_azel = self
+            .field_dir(field_id)?
+            .convert_to(DirectionRef::AZEL, &frame)?;
+        let pole_azel =
+            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
+                .convert_to(DirectionRef::AZEL, &frame)?;
+        Ok(spherical_position_angle(&source_azel, &pole_azel))
+    }
+
+    /// Compute the array-fiducial hour angle (radians) using the observatory position.
+    pub fn hour_angle_observatory(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<f64> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
         let dir = self.field_dir(field_id)?;
-        let dec = dir.latitude_rad();
+        let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
+        Ok(hadec.longitude_rad())
+    }
 
-        let pos = self
-            .antenna_positions
-            .get(antenna_id)
-            .ok_or_else(|| MsError::InvalidIndex {
-                index: antenna_id,
-                max: self.antenna_positions.len(),
-                context: "antenna_id".to_string(),
-            })?;
-        let lat = pos.latitude_rad();
-
-        let pa = ha.sin().atan2(lat.tan() * dec.cos() - dec.sin() * ha.cos());
-        Ok(pa)
+    /// Compute the array-fiducial parallactic angle (radians) using the observatory position.
+    pub fn parallactic_angle_observatory(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+    ) -> MsResult<f64> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        let source_azel = self
+            .field_dir(field_id)?
+            .convert_to(DirectionRef::AZEL, &frame)?;
+        let pole_azel =
+            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
+                .convert_to(DirectionRef::AZEL, &frame)?;
+        Ok(spherical_position_angle(&source_azel, &pole_azel))
     }
 
     /// Compute azimuth and elevation (radians) for a given time, field, and antenna.
@@ -203,6 +264,15 @@ impl MsCalEngine {
         Ok(azel.as_angles())
     }
 
+    /// Compute the array-fiducial azimuth and elevation (radians) using the observatory position.
+    pub fn azel_observatory(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<(f64, f64)> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        let dir = self.field_dir(field_id)?;
+        let azel = dir.convert_to(DirectionRef::AZEL, &frame)?;
+        Ok(azel.as_angles())
+    }
+
     /// Compute the local apparent sidereal time (radians) for a given time and antenna.
     ///
     /// Converts the epoch from UTC to LAST using the antenna position.
@@ -215,6 +285,17 @@ impl MsCalEngine {
         // LAST is stored as fraction of a day; convert to radians (1 day = 2π)
         let last_days = last_epoch.value().as_mjd();
         // Take fractional part of day and convert to radians
+        let frac = last_days - last_days.floor();
+        Ok(frac * 2.0 * std::f64::consts::PI)
+    }
+
+    /// Compute the array-fiducial LAST (radians) using the observatory position.
+    pub fn last_observatory(&self, time_mjd_sec: f64) -> MsResult<f64> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, EpochRef::UTC);
+        let last_epoch = epoch.convert_to(EpochRef::LAST, &frame)?;
+        let last_days = last_epoch.value().as_mjd();
         let frac = last_days - last_days.floor();
         Ok(frac * 2.0 * std::f64::consts::PI)
     }
@@ -307,6 +388,32 @@ impl MsCalEngine {
     pub fn observatory_position(&self) -> &MPosition {
         &self.observatory_position
     }
+
+    /// The epoch reference reconstructed from MAIN.TIME metadata.
+    pub fn time_reference(&self) -> EpochRef {
+        self.time_reference
+    }
+
+    fn antenna_is_alt_az(&self, antenna_id: usize) -> MsResult<bool> {
+        self.antenna_mount_alt_az
+            .get(antenna_id)
+            .copied()
+            .ok_or_else(|| MsError::InvalidIndex {
+                index: antenna_id,
+                max: self.antenna_mount_alt_az.len(),
+                context: "antenna_id".to_string(),
+            })
+    }
+}
+
+fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
+    let Some(desc) = TableMeasDesc::reconstruct(ms.main_table(), "TIME") else {
+        return EpochRef::UTC;
+    };
+    match desc.ref_desc() {
+        MeasRefDesc::Fixed { refer } => refer.parse::<EpochRef>().unwrap_or(EpochRef::UTC),
+        MeasRefDesc::VariableInt { .. } | MeasRefDesc::VariableString { .. } => EpochRef::UTC,
+    }
 }
 
 fn phase_dir_constant(dir: &ArrayValue) -> MsResult<(f64, f64)> {
@@ -332,12 +439,23 @@ fn phase_dir_constant(dir: &ArrayValue) -> MsResult<(f64, f64)> {
     }
 }
 
+fn spherical_position_angle(origin: &MDirection, target: &MDirection) -> f64 {
+    let (origin_lon, origin_lat) = origin.as_angles();
+    let (target_lon, target_lat) = target.as_angles();
+    let delta_lon = target_lon - origin_lon;
+    let y = delta_lon.sin() * target_lat.cos();
+    let x =
+        origin_lat.cos() * target_lat.sin() - origin_lat.sin() * target_lat.cos() * delta_lon.cos();
+    y.atan2(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::builder::MeasurementSetBuilder;
     use crate::schema;
     use crate::test_helpers::default_value_for_def;
+    use casacore_tables::table_measures::{MeasureType, TableMeasDesc};
     use casacore_types::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::{ArrayD, ShapeBuilder};
 
@@ -376,6 +494,16 @@ mod tests {
         let engine = MsCalEngine::new(&ms).unwrap();
         assert_eq!(engine.num_antennas(), 1);
         assert_eq!(engine.num_fields(), 0);
+    }
+
+    #[test]
+    fn engine_uses_main_time_measinfo_reference() {
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        TableMeasDesc::new_fixed("TIME", MeasureType::Epoch, "TAI")
+            .write(ms.main_table_mut())
+            .unwrap();
+        let engine = MsCalEngine::new(&ms).unwrap();
+        assert_eq!(engine.time_reference(), EpochRef::TAI);
     }
 
     #[test]
@@ -434,11 +562,27 @@ mod tests {
     }
 
     #[test]
+    fn hour_angle_observatory_is_finite() {
+        let engine = make_engine();
+        let time = 59000.5 * 86400.0;
+        let ha = engine.hour_angle_observatory(time, 0).unwrap();
+        assert!(ha.is_finite(), "observatory HA should be finite, got {ha}");
+    }
+
+    #[test]
     fn parallactic_angle_is_finite() {
         let engine = make_engine();
         let time = 59000.5 * 86400.0;
         let pa = engine.parallactic_angle(time, 0, 0).unwrap();
         assert!(pa.is_finite(), "PA should be finite, got {pa}");
+    }
+
+    #[test]
+    fn parallactic_angle_observatory_is_finite() {
+        let engine = make_engine();
+        let time = 59000.5 * 86400.0;
+        let pa = engine.parallactic_angle_observatory(time, 0).unwrap();
+        assert!(pa.is_finite(), "observatory PA should be finite, got {pa}");
     }
 
     #[test]
@@ -459,6 +603,26 @@ mod tests {
         assert!(
             found_visible,
             "Source at Dec=+45° should be visible from VLA at some hour"
+        );
+    }
+
+    #[test]
+    fn observatory_azel_elevation_positive_for_visible_source() {
+        let engine = make_engine();
+        let mut found_visible = false;
+        for hour in 0..24 {
+            let time = (59000.0 + hour as f64 / 24.0) * 86400.0;
+            let result = engine.azel_observatory(time, 0);
+            if let Ok((_az, el)) = result {
+                if el > 0.0 {
+                    found_visible = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            found_visible,
+            "Source at Dec=+45° should be visible from the observatory at some hour"
         );
     }
 

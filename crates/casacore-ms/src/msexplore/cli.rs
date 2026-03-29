@@ -6,8 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::{
-    MsAxis, MsColorAxis, MsDataColumn, MsExportFormat, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
-    MsSelectionSpec, build_msexplore_plot_payload, export_msexplore_plot,
+    MsAxis, MsColorAxis, MsDataColumn, MsExportFormat, MsIterationAxis, MsPlotPreset, MsPlotSpec,
+    MsPlotStyleSpec, MsSelectionSpec, build_msexplore_plot_payload, export_msexplore_plot,
 };
 use crate::MeasurementSet;
 use crate::listobs::cli::{
@@ -43,6 +43,16 @@ struct CliOptions {
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
     scalar: bool,
+    freqframe: Option<String>,
+    restfreq: Option<String>,
+    veldef: String,
+    iteraxis: Option<MsIterationAxis>,
+    gridrows: usize,
+    gridcols: usize,
+    xselfscale: bool,
+    yselfscale: bool,
+    xsharedaxis: bool,
+    ysharedaxis: bool,
     title: Option<String>,
     xlabel: Option<String>,
     ylabel: Option<String>,
@@ -344,10 +354,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                     "amplitude_vs_time",
                     "phase_vs_time",
                     "amplitude_vs_uv_distance",
+                    "weight_vs_time",
+                    "sigma_vs_time",
+                    "flag_vs_time",
+                    "weight_spectrum_vs_time",
+                    "sigma_spectrum_vs_time",
+                    "flagrow_vs_time",
+                    "elevation_vs_time",
+                    "azimuth_vs_time",
+                    "hour_angle_vs_time",
+                    "parallactic_angle_vs_time",
+                    "azimuth_vs_elevation",
                     "amplitude_vs_channel",
                     "phase_vs_channel",
                     "amplitude_vs_frequency",
                     "phase_vs_frequency",
+                    "amplitude_vs_velocity",
+                    "phase_vs_velocity",
                     "real_vs_imaginary",
                 ],
                 "Use a named common plot preset",
@@ -438,9 +461,143 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false,
             ),
             option_argument(
+                "freqframe",
+                "Frequency Frame",
+                24,
+                &["--freqframe"],
+                "FRAME",
+                UiValueKind::Choice,
+                None,
+                &[
+                    "LSRK", "LSRD", "BARY", "GEO", "TOPO", "GALACTO", "LGROUP", "CMB",
+                ],
+                "Render frequency and velocity axes in the requested frame",
+                "Transforms",
+                false,
+                false,
+            ),
+            option_argument(
+                "restfreq",
+                "Rest Frequency",
+                25,
+                &["--restfreq"],
+                "FREQ",
+                UiValueKind::String,
+                None,
+                &[],
+                "Rest frequency for velocity rendering; empty uses the SPW center frequency",
+                "Transforms",
+                false,
+                false,
+            ),
+            option_argument(
+                "veldef",
+                "Velocity Definition",
+                26,
+                &["--veldef"],
+                "DEF",
+                UiValueKind::Choice,
+                Some("RADIO"),
+                &["RADIO", "OPTICAL", "TRUE"],
+                "Velocity definition used for velocity axes",
+                "Transforms",
+                false,
+                false,
+            ),
+            option_argument(
+                "iteraxis",
+                "Iterate By",
+                27,
+                &["--iteraxis"],
+                "AXIS",
+                UiValueKind::Choice,
+                None,
+                &["field", "scan", "spw", "correlation"],
+                "Split the plot into one panel per iteraxis value",
+                "Layout",
+                false,
+                false,
+            ),
+            option_argument(
+                "gridrows",
+                "Grid Rows",
+                28,
+                &["--gridrows"],
+                "N",
+                UiValueKind::Float,
+                Some("1"),
+                &[],
+                "Requested grid row count for iterated plots",
+                "Layout",
+                false,
+                false,
+            ),
+            option_argument(
+                "gridcols",
+                "Grid Columns",
+                29,
+                &["--gridcols"],
+                "N",
+                UiValueKind::Float,
+                Some("1"),
+                &[],
+                "Requested grid column count for iterated plots",
+                "Layout",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "xselfscale",
+                "X Self Scale",
+                30,
+                &["--xselfscale"],
+                &[],
+                false,
+                "Use per-panel X bounds on iterated plots",
+                "Layout",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "yselfscale",
+                "Y Self Scale",
+                31,
+                &["--yselfscale"],
+                &[],
+                false,
+                "Use per-panel Y bounds on iterated plots",
+                "Layout",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "xsharedaxis",
+                "Share X Axis",
+                32,
+                &["--xsharedaxis"],
+                &[],
+                false,
+                "Force a shared X axis across iterated panels",
+                "Layout",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "ysharedaxis",
+                "Share Y Axis",
+                33,
+                &["--ysharedaxis"],
+                &[],
+                false,
+                "Force a shared Y axis across iterated panels",
+                "Layout",
+                false,
+                false,
+            ),
+            option_argument(
                 "title",
                 "Title",
-                24,
+                34,
                 &["--title"],
                 "TEXT",
                 UiValueKind::String,
@@ -454,7 +611,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "xlabel",
                 "X Label",
-                25,
+                35,
                 &["--xlabel"],
                 "TEXT",
                 UiValueKind::String,
@@ -468,7 +625,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "ylabel",
                 "Y Label",
-                26,
+                36,
                 &["--ylabel"],
                 "TEXT",
                 UiValueKind::String,
@@ -482,7 +639,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showlegend",
                 "Show Legend",
-                27,
+                37,
                 &["--showlegend"],
                 &[],
                 false,
@@ -494,7 +651,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showmajorgrid",
                 "Major Grid",
-                28,
+                38,
                 &["--showmajorgrid"],
                 &[],
                 false,
@@ -506,7 +663,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showminorgrid",
                 "Minor Grid",
-                29,
+                39,
                 &["--showminorgrid"],
                 &[],
                 false,
@@ -518,7 +675,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_output",
                 "Plot Output",
-                30,
+                40,
                 &["--plot-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -532,7 +689,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_format",
                 "Plot Format",
-                31,
+                41,
                 &["--plot-format"],
                 "FORMAT",
                 UiValueKind::Choice,
@@ -546,7 +703,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_width",
                 "Plot Width",
-                32,
+                42,
                 &["--plot-width"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -560,7 +717,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_height",
                 "Plot Height",
-                33,
+                43,
                 &["--plot-height"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -571,8 +728,8 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
-            action_argument(34, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(35, "help", &["-h", "--help"], UiActionKind::Help),
+            action_argument(44, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(45, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "listobs-summary-v1".to_string(),
@@ -655,6 +812,16 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
     spec.color_by = options.color_by;
     spec.averaging.avgchannel = options.avgchannel;
     spec.averaging.scalar = options.scalar;
+    spec.transforms.freqframe = options.freqframe.clone();
+    spec.transforms.restfreq = options.restfreq.clone();
+    spec.transforms.veldef = options.veldef.clone();
+    spec.layout.gridrows = options.gridrows;
+    spec.layout.gridcols = options.gridcols;
+    spec.iteration.iteraxis = options.iteraxis;
+    spec.iteration.xselfscale = options.xselfscale;
+    spec.iteration.yselfscale = options.yselfscale;
+    spec.iteration.xsharedaxis = options.xsharedaxis;
+    spec.iteration.ysharedaxis = options.ysharedaxis;
     spec.style = MsPlotStyleSpec {
         title: options.title.clone(),
         xlabel: options.xlabel.clone(),
@@ -689,6 +856,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut color_by = MsColorAxis::Field;
     let mut avgchannel = None;
     let mut scalar = false;
+    let mut freqframe = None;
+    let mut restfreq = None;
+    let mut veldef = "RADIO".to_string();
+    let mut iteraxis = None;
+    let mut gridrows = 1usize;
+    let mut gridcols = 1usize;
+    let mut xselfscale = false;
+    let mut yselfscale = false;
+    let mut xsharedaxis = false;
+    let mut ysharedaxis = false;
     let mut title = None;
     let mut xlabel = None;
     let mut ylabel = None;
@@ -756,6 +933,30 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 )
             }
             "--scalar" => scalar = true,
+            "--freqframe" => freqframe = Some(take_value(&mut index, &args, "--freqframe")?),
+            "--restfreq" => restfreq = Some(take_value(&mut index, &args, "--restfreq")?),
+            "--veldef" => veldef = take_value(&mut index, &args, "--veldef")?,
+            "--iteraxis" => {
+                iteraxis = Some(MsIterationAxis::parse(&take_value(
+                    &mut index,
+                    &args,
+                    "--iteraxis",
+                )?)?)
+            }
+            "--gridrows" => {
+                gridrows = take_value(&mut index, &args, "--gridrows")?
+                    .parse::<usize>()
+                    .map_err(|_| "invalid integer value for --gridrows".to_string())?
+            }
+            "--gridcols" => {
+                gridcols = take_value(&mut index, &args, "--gridcols")?
+                    .parse::<usize>()
+                    .map_err(|_| "invalid integer value for --gridcols".to_string())?
+            }
+            "--xselfscale" => xselfscale = true,
+            "--yselfscale" => yselfscale = true,
+            "--xsharedaxis" => xsharedaxis = true,
+            "--ysharedaxis" => ysharedaxis = true,
             "--title" => title = Some(take_value(&mut index, &args, "--title")?),
             "--xlabel" => xlabel = Some(take_value(&mut index, &args, "--xlabel")?),
             "--ylabel" => ylabel = Some(take_value(&mut index, &args, "--ylabel")?),
@@ -822,6 +1023,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         color_by,
         avgchannel,
         scalar,
+        freqframe,
+        restfreq,
+        veldef,
+        iteraxis,
+        gridrows: gridrows.max(1),
+        gridcols: gridcols.max(1),
+        xselfscale,
+        yselfscale,
+        xsharedaxis,
+        ysharedaxis,
         title,
         xlabel,
         ylabel,
