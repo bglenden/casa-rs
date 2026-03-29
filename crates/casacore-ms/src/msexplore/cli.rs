@@ -9,8 +9,8 @@ use serde::Deserialize;
 
 use super::{
     MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsIterationAxis,
-    MsPageExportRange, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec,
-    build_msexplore_payload, export_msexplore_plot,
+    MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset, MsPlotSpec,
+    MsPlotStyleSpec, MsSelectionSpec, build_msexplore_payload, export_msexplore_plot,
 };
 use crate::MeasurementSet;
 use crate::listobs::cli::{
@@ -62,8 +62,10 @@ struct CliOptions {
     xlabel: Option<String>,
     ylabel: Option<String>,
     showlegend: bool,
+    legendposition: MsLegendPosition,
     showmajorgrid: bool,
     showminorgrid: bool,
+    headeritems: Option<String>,
     plot_output: Option<PathBuf>,
     plot_format: MsExportFormat,
     plot_width: u32,
@@ -80,6 +82,8 @@ struct CliPageSpecFile {
     page_title: Option<String>,
     #[serde(default)]
     exprange: MsPageExportRange,
+    #[serde(default)]
+    headeritems: Option<String>,
     plots: Vec<CliPagePlotSpec>,
 }
 
@@ -121,6 +125,8 @@ struct CliPagePlotSpec {
     ylabel: Option<String>,
     #[serde(default)]
     showlegend: bool,
+    #[serde(default)]
+    legendposition: Option<MsLegendPosition>,
     #[serde(default)]
     showmajorgrid: bool,
     #[serde(default)]
@@ -743,10 +749,33 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
+            option_argument(
+                "legendposition",
+                "Legend Position",
+                38,
+                &["--legendposition"],
+                "POSITION",
+                UiValueKind::Choice,
+                Some("upperRight"),
+                &[
+                    "upperRight",
+                    "upperLeft",
+                    "lowerRight",
+                    "lowerLeft",
+                    "exteriorRight",
+                    "exteriorLeft",
+                    "exteriorTop",
+                    "exteriorBottom",
+                ],
+                "Position the legend inside or outside the plot",
+                "Style",
+                true,
+                false,
+            ),
             toggle_argument(
                 "showmajorgrid",
                 "Major Grid",
-                38,
+                39,
                 &["--showmajorgrid"],
                 &[],
                 false,
@@ -758,7 +787,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showminorgrid",
                 "Minor Grid",
-                39,
+                40,
                 &["--showminorgrid"],
                 &[],
                 false,
@@ -768,9 +797,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false,
             ),
             option_argument(
+                "headeritems",
+                "Header Items",
+                41,
+                &["--headeritems"],
+                "ITEMS",
+                UiValueKind::String,
+                None,
+                &[],
+                "Comma-separated CASA-style page header items",
+                "Style",
+                true,
+                false,
+            ),
+            option_argument(
                 "plot_output",
                 "Plot Output",
-                40,
+                42,
                 &["--plot-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -784,7 +827,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_format",
                 "Plot Format",
-                41,
+                43,
                 &["--plot-format"],
                 "FORMAT",
                 UiValueKind::Choice,
@@ -798,7 +841,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_width",
                 "Plot Width",
-                42,
+                44,
                 &["--plot-width"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -812,7 +855,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_height",
                 "Plot Height",
-                43,
+                45,
                 &["--plot-height"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -823,8 +866,8 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
-            action_argument(44, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(45, "help", &["-h", "--help"], UiActionKind::Help),
+            action_argument(46, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(47, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "listobs-summary-v1".to_string(),
@@ -882,6 +925,11 @@ fn run(options: CliOptions) -> Result<(), String> {
 fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
     if let Some(page_spec_path) = &options.page_spec {
         let page_spec = load_page_spec_file(page_spec_path)?;
+        let mut header_items = parse_header_items(page_spec.headeritems.as_deref())?;
+        merge_header_items(
+            &mut header_items,
+            parse_header_items(options.headeritems.as_deref())?,
+        );
         let plots = page_spec
             .plots
             .into_iter()
@@ -912,6 +960,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
                     plot.xlabel,
                     plot.ylabel,
                     plot.showlegend,
+                    plot.legendposition.unwrap_or(MsLegendPosition::UpperRight),
                     plot.showmajorgrid,
                     plot.showminorgrid,
                 )
@@ -921,6 +970,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
             ms_path: options.ms_path.clone(),
             summary_format: options.summary_format,
             selection: options.selection.clone(),
+            header_items,
             page_title: page_spec.page_title,
             exprange: page_spec.exprange,
             plots,
@@ -934,6 +984,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
         ms_path: options.ms_path.clone(),
         summary_format: options.summary_format,
         selection: options.selection.clone(),
+        header_items: parse_header_items(options.headeritems.as_deref())?,
         page_title: None,
         exprange: MsPageExportRange::Current,
         plots: vec![plot_spec],
@@ -969,6 +1020,7 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
         options.xlabel.clone(),
         options.ylabel.clone(),
         options.showlegend,
+        options.legendposition,
         options.showmajorgrid,
         options.showminorgrid,
     )?;
@@ -1003,6 +1055,7 @@ fn build_plot_spec_from_values(
     xlabel: Option<String>,
     ylabel: Option<String>,
     showlegend: bool,
+    legendposition: MsLegendPosition,
     showmajorgrid: bool,
     showminorgrid: bool,
 ) -> Result<MsPlotSpec, String> {
@@ -1067,6 +1120,7 @@ fn build_plot_spec_from_values(
         xlabel,
         ylabel,
         showlegend,
+        legendposition,
         showmajorgrid,
         showminorgrid,
     };
@@ -1078,6 +1132,47 @@ fn load_page_spec_file(path: &std::path::Path) -> Result<CliPageSpecFile, String
         .map_err(|error| format!("read --page-spec {}: {error}", path.display()))?;
     serde_json::from_str(&text)
         .map_err(|error| format!("parse --page-spec {}: {error}", path.display()))
+}
+
+fn parse_header_items(value: Option<&str>) -> Result<Vec<MsPageHeaderItem>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mut items = Vec::new();
+    for raw in value.split(',') {
+        let token = raw.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let item = match token {
+            "filename" => MsPageHeaderItem::Filename,
+            "ycolumn" => MsPageHeaderItem::YColumn,
+            "obsdate" => MsPageHeaderItem::ObsDate,
+            "obstime" => MsPageHeaderItem::ObsTime,
+            "observer" => MsPageHeaderItem::Observer,
+            "projid" => MsPageHeaderItem::ProjId,
+            "telescope" => MsPageHeaderItem::Telescope,
+            "targname" => MsPageHeaderItem::TargName,
+            "targdir" => MsPageHeaderItem::TargDir,
+            other => {
+                return Err(format!(
+                    "unsupported --headeritems value {other:?}; expected a comma-separated subset of: filename, ycolumn, obsdate, obstime, observer, projid, telescope, targname, targdir"
+                ));
+            }
+        };
+        if !items.contains(&item) {
+            items.push(item);
+        }
+    }
+    Ok(items)
+}
+
+fn merge_header_items(target: &mut Vec<MsPageHeaderItem>, extra: Vec<MsPageHeaderItem>) {
+    for item in extra {
+        if !target.contains(&item) {
+            target.push(item);
+        }
+    }
 }
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
@@ -1118,8 +1213,10 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut xlabel = None;
     let mut ylabel = None;
     let mut showlegend = false;
+    let mut legendposition = MsLegendPosition::UpperRight;
     let mut showmajorgrid = false;
     let mut showminorgrid = false;
+    let mut headeritems = None;
     let mut plot_output = None;
     let mut plot_format = MsExportFormat::Png;
     let mut plot_width = 1600u32;
@@ -1266,6 +1363,17 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 plot_control_used = true;
                 showlegend = true
             }
+            "--legendposition" => {
+                plot_control_used = true;
+                legendposition =
+                    serde_json::from_str::<MsLegendPosition>(&format!(
+                        "\"{}\"",
+                        take_value(&mut index, &args, "--legendposition")?
+                    ))
+                    .map_err(|_| {
+                        "unsupported value for --legendposition; expected one of: upperRight, upperLeft, lowerRight, lowerLeft, exteriorRight, exteriorLeft, exteriorTop, exteriorBottom".to_string()
+                    })?
+            }
             "--showmajorgrid" => {
                 plot_control_used = true;
                 showmajorgrid = true
@@ -1274,6 +1382,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 plot_control_used = true;
                 showminorgrid = true
             }
+            "--headeritems" => headeritems = Some(take_value(&mut index, &args, "--headeritems")?),
             "--plot-output" => {
                 plot_output = Some(PathBuf::from(take_value(
                     &mut index,
@@ -1359,8 +1468,10 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         xlabel,
         ylabel,
         showlegend,
+        legendposition,
         showmajorgrid,
         showminorgrid,
+        headeritems,
         plot_output,
         plot_format,
         plot_width: plot_width.max(1),

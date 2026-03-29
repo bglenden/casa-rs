@@ -543,11 +543,11 @@ fn generic_page_spec_same_cell_overplot_matches_separate_casa_plotms_txt_exports
     .expect("run casa plotms vector");
     let casa_scalar = run_casa_plotms_expr(
         &[
-        ("xaxis", "time"),
-        ("yaxis", "amp"),
-        ("field", "0"),
-        ("spw", "0"),
-        ("scan", "1"),
+            ("xaxis", "time"),
+            ("yaxis", "amp"),
+            ("field", "0"),
+            ("spw", "0"),
+            ("scan", "1"),
         ],
         &[("scalar", "True")],
     )
@@ -635,6 +635,105 @@ fn generic_page_spec_same_cell_overplot_png_export_matches_casa_page() {
     assert_same_image_dimensions(&rust_png, &casa.body);
     assert_image_has_signal(&rust_png);
     assert_image_has_signal(&casa.body);
+}
+
+#[test]
+fn page_presentation_png_export_tracks_casa_header_and_legend_regions() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust_png = run_rust_msexplore_page_spec_png(
+        &json!({
+            "page_title": "Amplitude Overplot Presentation",
+            "exprange": "all",
+            "gridrows": 1,
+            "gridcols": 1,
+            "plots": [
+                {
+                    "preset": "amplitude_vs_time",
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:vector",
+                    "showlegend": true,
+                    "legendposition": "exteriorRight"
+                },
+                {
+                    "preset": "amplitude_vs_time",
+                    "scalar": true,
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:scalar",
+                    "showlegend": true,
+                    "legendposition": "exteriorRight"
+                }
+            ]
+        }),
+        &[
+            "--field",
+            "0",
+            "--spw",
+            "0",
+            "--scan",
+            "1",
+            "--headeritems",
+            "filename,observer,projid",
+        ],
+    )
+    .expect("run rust presentation page png");
+    let casa = run_casa_plotms_sequence_png(&[
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "1"),
+                ("gridcols", "1"),
+                ("rowindex", "0"),
+                ("colindex", "0"),
+                ("plotindex", "0"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'amp'"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("showlegend", "True"),
+                ("legendposition", "'exteriorRight'"),
+                ("headeritems", "'filename,observer,projid'"),
+                ("title", "'Amplitude Overplot Presentation'"),
+                ("clearplots", "True"),
+            ],
+        },
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "1"),
+                ("gridcols", "1"),
+                ("rowindex", "0"),
+                ("colindex", "0"),
+                ("plotindex", "1"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'amp'"),
+                ("scalar", "True"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("showlegend", "True"),
+                ("legendposition", "'exteriorRight'"),
+                ("headeritems", "'filename,observer,projid'"),
+                ("title", "'Amplitude Overplot Presentation'"),
+                ("clearplots", "False"),
+            ],
+        },
+    ])
+    .expect("run casa presentation page png");
+
+    assert_same_image_width(&rust_png, &casa.body);
+    assert_image_has_signal(&rust_png);
+    assert_image_has_signal(&casa.body);
+    assert_top_band_has_signal(&rust_png);
+    assert_top_band_has_signal(&casa.body);
+    assert_right_band_has_signal(&rust_png);
+    assert_right_band_has_signal(&casa.body);
 }
 
 #[test]
@@ -1253,12 +1352,10 @@ fn run_casa_plotms_expr(
     expr_kwargs: &[(&str, &str)],
 ) -> Result<String, String> {
     let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
-    Ok(
-        String::from_utf8(
-            run_casa_plotms_export_on_with_expr(&ms_path, kwargs, expr_kwargs, "txt")?.body,
-        )
-        .map_err(|error| format!("decode CASA txt export: {error}"))?,
+    Ok(String::from_utf8(
+        run_casa_plotms_export_on_with_expr(&ms_path, kwargs, expr_kwargs, "txt")?.body,
     )
+    .map_err(|error| format!("decode CASA txt export: {error}"))?)
 }
 
 fn run_casa_plotms_png(kwargs: &[(&str, &str)]) -> Result<CasaPlotmsExport, String> {
@@ -1733,6 +1830,20 @@ fn assert_same_image_dimensions(left: &[u8], right: &[u8]) {
     );
 }
 
+fn assert_same_image_width(left: &[u8], right: &[u8]) {
+    let left = ImageReader::new(std::io::Cursor::new(left))
+        .with_guessed_format()
+        .expect("guess rust png format")
+        .decode()
+        .expect("decode rust png");
+    let right = ImageReader::new(std::io::Cursor::new(right))
+        .with_guessed_format()
+        .expect("guess CASA png format")
+        .decode()
+        .expect("decode CASA png");
+    assert_eq!(left.width(), right.width(), "image width mismatch");
+}
+
 fn assert_image_has_signal(image_bytes: &[u8]) {
     let image = ImageReader::new(std::io::Cursor::new(image_bytes))
         .with_guessed_format()
@@ -1742,6 +1853,44 @@ fn assert_image_has_signal(image_bytes: &[u8]) {
         .to_rgba8();
     let has_signal = image.pixels().any(|pixel| pixel.0 != [255, 255, 255, 255]);
     assert!(has_signal, "expected image to contain plotted signal");
+}
+
+fn assert_top_band_has_signal(image_bytes: &[u8]) {
+    let image = ImageReader::new(std::io::Cursor::new(image_bytes))
+        .with_guessed_format()
+        .expect("guess png format")
+        .decode()
+        .expect("decode png")
+        .to_rgba8();
+    let width = image.width();
+    let height = image.height();
+    let band_height = (height / 8).max(1);
+    let has_signal = (0..band_height).any(|y| {
+        (0..width).any(|x| {
+            let pixel = image.get_pixel(x, y);
+            pixel.0 != [255, 255, 255, 255]
+        })
+    });
+    assert!(has_signal, "expected top header band to contain signal");
+}
+
+fn assert_right_band_has_signal(image_bytes: &[u8]) {
+    let image = ImageReader::new(std::io::Cursor::new(image_bytes))
+        .with_guessed_format()
+        .expect("guess png format")
+        .decode()
+        .expect("decode png")
+        .to_rgba8();
+    let width = image.width();
+    let height = image.height();
+    let band_start = width.saturating_sub((width / 6).max(1));
+    let has_signal = (0..height).any(|y| {
+        (band_start..width).any(|x| {
+            let pixel = image.get_pixel(x, y);
+            pixel.0 != [255, 255, 255, 255]
+        })
+    });
+    assert!(has_signal, "expected right legend band to contain signal");
 }
 
 fn assert_vertical_halves_have_signal(image_bytes: &[u8]) {

@@ -13,9 +13,9 @@ use casacore_ms::msexplore::cli::command_schema;
 use casacore_ms::subtables::SubTable;
 use casacore_ms::{
     ListObsOutputFormat, MeasurementSet, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
-    MsIterationAxis, MsLayoutSpec, MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec,
-    MsSelectionSpec, build_msexplore_payload, build_msexplore_plot_payload,
-    render_msexplore_plot_image,
+    MsIterationAxis, MsLayoutSpec, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
+    MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec, build_msexplore_payload,
+    build_msexplore_plot_payload, render_msexplore_plot_image,
 };
 use casacore_types::measures::doppler::{DopplerRef, MDoppler};
 use casacore_types::measures::frame::MeasFrame;
@@ -49,6 +49,9 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--iteraxis <AXIS>"));
     assert!(stdout.contains("--gridrows <N>"));
     assert!(stdout.contains("--gridcols <N>"));
+    assert!(stdout.contains("--showlegend"));
+    assert!(stdout.contains("--legendposition <POSITION>"));
+    assert!(stdout.contains("--headeritems <ITEMS>"));
     assert!(stdout.contains("--plot-output <PATH>"));
     assert!(stdout.contains("--plot-format <FORMAT>"));
     assert!(stdout.contains("--msselect <EXPR>"));
@@ -92,6 +95,10 @@ fn msexplore_ui_schema_describes_launcher_contract() {
         .argument("plot_format")
         .expect("plot_format argument");
     assert_eq!(plot_format.value_kind, UiValueKind::Choice);
+    let legendposition = schema
+        .argument("legendposition")
+        .expect("legendposition argument");
+    assert_eq!(legendposition.value_kind, UiValueKind::Choice);
 
     let managed_output = schema.managed_output.expect("managed output");
     assert_eq!(managed_output.renderer, "listobs-summary-v1");
@@ -494,6 +501,7 @@ fn msexplore_dual_y_payload_tracks_secondary_axis_and_style_flags() {
     let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
     spec.y_axes.push(MsAxis::Phase);
     spec.style.showlegend = true;
+    spec.style.legendposition = MsLegendPosition::LowerLeft;
     spec.style.showmajorgrid = true;
     spec.style.showminorgrid = true;
 
@@ -506,6 +514,7 @@ fn msexplore_dual_y_payload_tracks_secondary_axis_and_style_flags() {
     assert_eq!(scatter.secondary_y_axis, Some(MsAxis::Phase));
     assert_eq!(scatter.secondary_y_label.as_deref(), Some("Phase (deg)"));
     assert!(scatter.showlegend);
+    assert_eq!(scatter.legend_position, MsLegendPosition::LowerLeft);
     assert!(scatter.showmajorgrid);
     assert!(scatter.showminorgrid);
     let series_axes = scatter
@@ -518,6 +527,77 @@ fn msexplore_dual_y_payload_tracks_secondary_axis_and_style_flags() {
         ["amplitude".to_string(), "phase".to_string()]
             .into_iter()
             .collect()
+    );
+}
+
+#[test]
+fn msexplore_single_plot_manifest_emits_header_lines_and_legend_position() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let plot_path = temp.path().join("amp-time-header.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--preset",
+            "amplitude_vs_time",
+            "--showlegend",
+            "--legendposition",
+            "lowerLeft",
+            "--headeritems",
+            "filename,ycolumn",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(output.status.success(), "{output:?}");
+
+    let manifest = std::fs::read_to_string(&plot_path).expect("read manifest");
+    assert_eq!(
+        manifest_header_value(&manifest, "legendposition"),
+        Some("lowerLeft")
+    );
+    assert!(manifest.contains("# header_line=Filename:"));
+    assert!(manifest.contains("Y Column: Amplitude"));
+}
+
+#[test]
+fn msexplore_payload_resolves_page_header_items() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+
+    let payload = build_msexplore_payload(
+        &ms,
+        &MsExploreSpec {
+            ms_path,
+            summary_format: ListObsOutputFormat::Text,
+            selection: MsSelectionSpec::default(),
+            header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
+            page_title: Some("Amplitude".to_string()),
+            exprange: MsPageExportRange::Current,
+            plots: vec![MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime)],
+        },
+    )
+    .expect("build payload");
+
+    let MsPlotPayload::Scatter(scatter) = payload else {
+        panic!("expected scatter payload");
+    };
+    assert!(!scatter.header_lines.is_empty());
+    assert!(
+        scatter
+            .header_lines
+            .iter()
+            .any(|line| line.contains("Filename:"))
+    );
+    assert!(
+        scatter
+            .header_lines
+            .iter()
+            .any(|line| line.contains("Y Column: Amplitude"))
     );
 }
 
@@ -626,6 +706,7 @@ fn msexplore_generic_page_spec_builds_side_by_side_page_payload() {
             ms_path,
             summary_format: ListObsOutputFormat::Text,
             selection: MsSelectionSpec::default(),
+            header_items: Vec::new(),
             page_title: Some("Amplitude and Phase Side by Side".to_string()),
             exprange: MsPageExportRange::Current,
             plots: vec![amplitude, phase],
@@ -765,6 +846,7 @@ fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
             ms_path,
             summary_format: ListObsOutputFormat::Text,
             selection: MsSelectionSpec::default(),
+            header_items: Vec::new(),
             page_title: Some("Amplitude Overplot".to_string()),
             exprange: MsPageExportRange::Current,
             plots: vec![left, right],

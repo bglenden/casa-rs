@@ -111,6 +111,13 @@ echo "==> amplitude-overplot"
   --field 0 \
   --spw 0 \
   --scan 1
+echo "==> amplitude-overplot-presentation"
+"$repo_root/scripts/render-msexplore-presentation-side-by-side.sh" \
+  --ms "$ms_path" \
+  --output "$output_dir/amplitude-overplot-presentation.png" \
+  --field 0 \
+  --spw 0 \
+  --scan 1
 render_case "phase-vs-time" "time" "phase" "casa-rs phase vs time" "CASA plotms phase vs time" \
   "${common_selection[@]}" --RUST-- --preset phase_vs_time --field 0 --spw 0 --scan 1
 render_case "amplitude-vs-uvdist" "uvdist" "amp" "casa-rs amplitude vs uvdist" "CASA plotms amplitude vs uvdist" \
