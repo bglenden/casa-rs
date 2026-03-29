@@ -12,8 +12,10 @@ use casacore_ms::listobs::cli::{UiArgumentParser, UiValueKind};
 use casacore_ms::msexplore::cli::command_schema;
 use casacore_ms::subtables::SubTable;
 use casacore_ms::{
-    MeasurementSet, MsIterationAxis, MsPlotPayload, MsPlotPreset, MsSelectionSpec,
-    build_msexplore_plot_payload,
+    ListObsOutputFormat, MeasurementSet, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
+    MsIterationAxis, MsLayoutSpec, MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec,
+    MsSelectionSpec, build_msexplore_payload, build_msexplore_plot_payload,
+    render_msexplore_plot_image,
 };
 use casacore_types::measures::doppler::{DopplerRef, MDoppler};
 use casacore_types::measures::frame::MeasFrame;
@@ -37,6 +39,7 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--preset <PRESET>"));
     assert!(stdout.contains("--xaxis <AXIS>"));
     assert!(stdout.contains("--yaxis <AXIS>"));
+    assert!(stdout.contains("--yaxis2 <AXIS>"));
     assert!(stdout.contains("--data-column <COLUMN>"));
     assert!(stdout.contains("--color-by <AXIS>"));
     assert!(stdout.contains("--avgchannel <N>"));
@@ -49,6 +52,7 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--plot-output <PATH>"));
     assert!(stdout.contains("--plot-format <FORMAT>"));
     assert!(stdout.contains("--msselect <EXPR>"));
+    assert!(stdout.contains("--page-spec <PATH>"));
     assert!(stdout.contains("--ui-schema"));
 }
 
@@ -73,6 +77,8 @@ fn msexplore_ui_schema_describes_launcher_contract() {
 
     let preset = schema.argument("preset").expect("preset argument");
     assert_eq!(preset.value_kind, UiValueKind::Choice);
+    let page_spec = schema.argument("page_spec").expect("page_spec argument");
+    assert_eq!(page_spec.value_kind, UiValueKind::Path);
 
     let x_axis = schema.argument("x_axis").expect("x_axis argument");
     assert!(matches!(
@@ -143,6 +149,52 @@ fn msexplore_time_manifest_emits_per_channel_and_correlation_points() {
         .filter(|line| !line.starts_with('#') && !line.starts_with("series_key"))
         .count();
     assert_eq!(point_lines, 256);
+}
+
+#[test]
+fn msexplore_dual_y_manifest_emits_axis_column_for_each_series() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let plot_path = temp.path().join("amp-phase-time.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--xaxis",
+            "time",
+            "--yaxis",
+            "amplitude",
+            "--yaxis2",
+            "phase",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(output.status.success(), "{output:?}");
+
+    let manifest = std::fs::read_to_string(&plot_path).expect("read manifest");
+    assert_eq!(
+        manifest_header_value(&manifest, "secondary_y_axis"),
+        Some("phase")
+    );
+    assert!(manifest.contains("series_key\tseries_label\ty_axis\tx\ty"));
+
+    let rows = dual_manifest_rows(&plot_path);
+    assert_eq!(rows.len(), 512);
+    assert_eq!(
+        rows.iter()
+            .filter(|(_, _, axis, _, _)| axis == "amplitude")
+            .count(),
+        256
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|(_, _, axis, _, _)| axis == "phase")
+            .count(),
+        256
+    );
 }
 
 #[test]
@@ -432,6 +484,380 @@ fn msexplore_scan_iteration_payload_resolves_grid_and_scaling() {
     assert!(!grid.share_x_bounds);
     assert!(grid.share_y_bounds);
     assert_eq!(grid.panels.len(), 4);
+}
+
+#[test]
+fn msexplore_dual_y_payload_tracks_secondary_axis_and_style_flags() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+    let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    spec.y_axes.push(MsAxis::Phase);
+    spec.style.showlegend = true;
+    spec.style.showmajorgrid = true;
+    spec.style.showminorgrid = true;
+
+    let payload = build_msexplore_plot_payload(&ms, &MsSelectionSpec::default(), &spec)
+        .expect("build dual-y payload");
+    let MsPlotPayload::Scatter(scatter) = payload else {
+        panic!("expected scatter payload");
+    };
+    assert_eq!(scatter.y_axis, MsAxis::Amplitude);
+    assert_eq!(scatter.secondary_y_axis, Some(MsAxis::Phase));
+    assert_eq!(scatter.secondary_y_label.as_deref(), Some("Phase (deg)"));
+    assert!(scatter.showlegend);
+    assert!(scatter.showmajorgrid);
+    assert!(scatter.showminorgrid);
+    let series_axes = scatter
+        .series
+        .iter()
+        .map(|series| series.y_axis.as_str().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        series_axes,
+        ["amplitude".to_string(), "phase".to_string()]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[test]
+fn msexplore_stacked_time_preset_manifest_emits_two_plots_on_one_page() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let plot_path = temp.path().join("amp-phase-stacked.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--preset",
+            "amplitude_phase_vs_time_stacked",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(output.status.success(), "{output:?}");
+
+    let manifest = std::fs::read_to_string(&plot_path).expect("read manifest");
+    assert_eq!(manifest_header_value(&manifest, "gridrows"), Some("2"));
+    assert_eq!(manifest_header_value(&manifest, "gridcols"), Some("1"));
+
+    let rows = page_manifest_rows(&plot_path);
+    assert_eq!(rows.len(), 512);
+    assert_eq!(
+        rows.iter()
+            .filter(|(plotindex, _, _, _, _, _, _, _, _, _)| *plotindex == 0)
+            .count(),
+        256
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|(plotindex, _, _, _, _, _, _, _, _, _)| *plotindex == 1)
+            .count(),
+        256
+    );
+    assert!(rows.iter().any(|(_, _, _, title, _, y_axis, _, _, _, _)| {
+        title == "Amplitude vs Time" && y_axis == "amplitude"
+    }));
+    assert!(rows.iter().any(|(_, _, _, title, _, y_axis, _, _, _, _)| {
+        title == "Phase vs Time" && y_axis == "phase"
+    }));
+}
+
+#[test]
+fn msexplore_stacked_time_preset_builds_two_row_page_payload() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+
+    let payload = build_msexplore_plot_payload(
+        &ms,
+        &MsSelectionSpec::default(),
+        &MsPlotSpec::from_preset(MsPlotPreset::AmplitudePhaseVsTimeStacked),
+    )
+    .expect("build stacked page payload");
+    let MsPlotPayload::ScatterPage(page) = payload else {
+        panic!("expected scatter page payload");
+    };
+    assert_eq!(page.gridrows, 2);
+    assert_eq!(page.gridcols, 1);
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.items[0].plotindex, 0);
+    assert_eq!(page.items[0].rowindex, 0);
+    assert_eq!(page.items[0].plot.y_axis, MsAxis::Amplitude);
+    assert_eq!(page.items[1].plotindex, 1);
+    assert_eq!(page.items[1].rowindex, 1);
+    assert_eq!(page.items[1].plot.y_axis, MsAxis::Phase);
+}
+
+#[test]
+fn msexplore_generic_page_spec_builds_side_by_side_page_payload() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+
+    let mut amplitude = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    amplitude.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 2,
+        rowindex: 0,
+        colindex: 0,
+        plotindex: 0,
+    };
+    amplitude.style.title = Some("Amplitude vs Time".to_string());
+
+    let mut phase = MsPlotSpec::from_preset(MsPlotPreset::PhaseVsTime);
+    phase.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 2,
+        rowindex: 0,
+        colindex: 1,
+        plotindex: 1,
+    };
+    phase.style.title = Some("Phase vs Time".to_string());
+    phase.color_by = MsColorAxis::Scan;
+    phase.data_column = MsDataColumn::Data;
+
+    let payload = build_msexplore_payload(
+        &ms,
+        &MsExploreSpec {
+            ms_path,
+            summary_format: ListObsOutputFormat::Text,
+            selection: MsSelectionSpec::default(),
+            page_title: Some("Amplitude and Phase Side by Side".to_string()),
+            exprange: MsPageExportRange::Current,
+            plots: vec![amplitude, phase],
+        },
+    )
+    .expect("build generic page payload");
+    let MsPlotPayload::ScatterPage(page) = payload else {
+        panic!("expected scatter page payload");
+    };
+    assert_eq!(page.title, "Amplitude and Phase Side by Side");
+    assert_eq!(page.gridrows, 1);
+    assert_eq!(page.gridcols, 2);
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.items[0].colindex, 0);
+    assert_eq!(page.items[0].plot.y_axis, MsAxis::Amplitude);
+    assert_eq!(page.items[1].colindex, 1);
+    assert_eq!(page.items[1].plot.y_axis, MsAxis::Phase);
+}
+
+#[test]
+fn msexplore_page_spec_manifest_emits_multiple_positions_on_one_page() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let plot_path = temp.path().join("amp-phase-page.txt");
+    let page_spec_path = temp.path().join("page.json");
+
+    std::fs::write(
+        &page_spec_path,
+        serde_json::json!({
+            "page_title": "Amplitude and Phase Side by Side",
+            "gridrows": 1,
+            "gridcols": 2,
+            "plots": [
+                {
+                    "preset": "amplitude_vs_time",
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude vs Time"
+                },
+                {
+                    "preset": "phase_vs_time",
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 1,
+                    "title": "Phase vs Time"
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write page spec");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--page-spec"])
+        .arg(&page_spec_path)
+        .args(["--plot-output"])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(output.status.success(), "{output:?}");
+
+    let manifest = std::fs::read_to_string(&plot_path).expect("read manifest");
+    assert_eq!(
+        manifest_header_value(&manifest, "exprange"),
+        Some("current")
+    );
+    assert_eq!(manifest_header_value(&manifest, "gridrows"), Some("1"));
+    assert_eq!(manifest_header_value(&manifest, "gridcols"), Some("2"));
+
+    let rows = page_manifest_rows(&plot_path);
+    assert_eq!(rows.len(), 512);
+    assert_eq!(
+        rows.iter()
+            .filter(
+                |(plotindex, rowindex, colindex, title, _, y_axis, _, _, _, _)| {
+                    *plotindex == 0
+                        && *rowindex == 0
+                        && *colindex == 0
+                        && title == "Amplitude vs Time"
+                        && y_axis == "amplitude"
+                }
+            )
+            .count(),
+        256
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(
+                |(plotindex, rowindex, colindex, title, _, y_axis, _, _, _, _)| {
+                    *plotindex == 1
+                        && *rowindex == 0
+                        && *colindex == 1
+                        && title == "Phase vs Time"
+                        && y_axis == "phase"
+                }
+            )
+            .count(),
+        256
+    );
+}
+
+#[test]
+fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+
+    let mut left = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    left.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 1,
+        rowindex: 0,
+        colindex: 0,
+        plotindex: 0,
+    };
+    left.style.title = Some("Amplitude:vector".to_string());
+    left.style.showlegend = true;
+
+    let mut right = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    right.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 1,
+        rowindex: 0,
+        colindex: 0,
+        plotindex: 1,
+    };
+    right.averaging.scalar = true;
+    right.style.title = Some("Amplitude:scalar".to_string());
+    right.style.showlegend = true;
+
+    let payload = build_msexplore_payload(
+        &ms,
+        &MsExploreSpec {
+            ms_path,
+            summary_format: ListObsOutputFormat::Text,
+            selection: MsSelectionSpec::default(),
+            page_title: Some("Amplitude Overplot".to_string()),
+            exprange: MsPageExportRange::Current,
+            plots: vec![left, right],
+        },
+    )
+    .expect("build overplot page payload");
+    let MsPlotPayload::ScatterPage(page) = &payload else {
+        panic!("expected scatter page payload");
+    };
+    assert_eq!(page.exprange, MsPageExportRange::Current);
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.items[0].rowindex, 0);
+    assert_eq!(page.items[1].rowindex, 0);
+    assert_eq!(page.items[0].colindex, 0);
+    assert_eq!(page.items[1].colindex, 0);
+
+    let image =
+        render_msexplore_plot_image(&payload, casacore_ms::ListObsPlotTheme::light(), 1200, 800)
+            .expect("render overplot image");
+    assert_eq!(image.width(), 1200);
+    assert_eq!(image.height(), 800);
+}
+
+#[test]
+fn msexplore_page_spec_manifest_keeps_duplicate_cell_coordinates_for_overplot() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let plot_path = temp.path().join("amp-overplot.txt");
+    let page_spec_path = temp.path().join("page-overplot.json");
+
+    std::fs::write(
+        &page_spec_path,
+        serde_json::json!({
+            "page_title": "Amplitude Overplot",
+            "exprange": "all",
+            "gridrows": 1,
+            "gridcols": 1,
+            "plots": [
+                {
+                    "preset": "amplitude_vs_time",
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:vector"
+                },
+                {
+                    "preset": "amplitude_vs_time",
+                    "scalar": true,
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:scalar"
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write overplot page spec");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--page-spec"])
+        .arg(&page_spec_path)
+        .args(["--plot-output"])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(output.status.success(), "{output:?}");
+
+    let manifest = std::fs::read_to_string(&plot_path).expect("read manifest");
+    assert_eq!(manifest_header_value(&manifest, "exprange"), Some("all"));
+    assert_eq!(manifest_header_value(&manifest, "gridrows"), Some("1"));
+    assert_eq!(manifest_header_value(&manifest, "gridcols"), Some("1"));
+
+    let rows = page_manifest_rows(&plot_path);
+    assert_eq!(rows.len(), 512);
+    assert_eq!(
+        rows.iter()
+            .filter(|(plotindex, rowindex, colindex, title, _, _, _, _, _, _)| {
+                *plotindex == 0 && *rowindex == 0 && *colindex == 0 && title == "Amplitude:vector"
+            })
+            .count(),
+        256
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|(plotindex, rowindex, colindex, title, _, _, _, _, _, _)| {
+                *plotindex == 1 && *rowindex == 0 && *colindex == 0 && title == "Amplitude:scalar"
+            })
+            .count(),
+        256
+    );
 }
 
 #[test]
@@ -782,6 +1208,89 @@ fn iterated_manifest_rows(path: &Path) -> Vec<(String, String, String, f64, f64)
                 .parse::<f64>()
                 .expect("parse y");
             (panel_key, panel_label, series_key, x, y)
+        })
+        .collect()
+}
+
+fn dual_manifest_rows(path: &Path) -> Vec<(String, String, String, f64, f64)> {
+    std::fs::read_to_string(path)
+        .expect("read dual manifest")
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("series_key"))
+        .map(|line| {
+            let mut parts = line.split('\t');
+            let key = parts.next().expect("series key").to_string();
+            let label = parts.next().expect("series label").to_string();
+            let axis = parts.next().expect("y axis").to_string();
+            let x = parts
+                .next()
+                .expect("x value")
+                .parse::<f64>()
+                .expect("parse x");
+            let y = parts
+                .next()
+                .expect("y value")
+                .parse::<f64>()
+                .expect("parse y");
+            (key, label, axis, x, y)
+        })
+        .collect()
+}
+
+fn page_manifest_rows(
+    path: &Path,
+) -> Vec<(
+    usize,
+    usize,
+    usize,
+    String,
+    String,
+    String,
+    String,
+    String,
+    f64,
+    f64,
+)> {
+    std::fs::read_to_string(path)
+        .expect("read manifest")
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("plotindex"))
+        .map(|line| {
+            let mut parts = line.split('\t');
+            let plotindex = parts
+                .next()
+                .expect("plotindex")
+                .parse()
+                .expect("parse plotindex");
+            let rowindex = parts
+                .next()
+                .expect("rowindex")
+                .parse()
+                .expect("parse rowindex");
+            let colindex = parts
+                .next()
+                .expect("colindex")
+                .parse()
+                .expect("parse colindex");
+            let plot_title = parts.next().expect("plot_title").to_string();
+            let x_axis = parts.next().expect("x_axis").to_string();
+            let y_axis = parts.next().expect("y_axis").to_string();
+            let series_key = parts.next().expect("series_key").to_string();
+            let series_label = parts.next().expect("series_label").to_string();
+            let x = parts.next().expect("x").parse().expect("parse x");
+            let y = parts.next().expect("y").parse().expect("parse y");
+            (
+                plotindex,
+                rowindex,
+                colindex,
+                plot_title,
+                x_axis,
+                y_axis,
+                series_key,
+                series_label,
+                x,
+                y,
+            )
         })
         .collect()
 }

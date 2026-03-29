@@ -7,31 +7,20 @@ cd "$repo_root"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/render-msexplore-side-by-side.sh \
+  scripts/render-msexplore-page-side-by-side.sh \
     --ms /path/to.ms \
     --output /path/to/side-by-side.png \
-    --casa-xaxis velocity \
-    --casa-yaxis amp \
-    --casa-kw field=0 \
-    --casa-expr-kw "yaxis=['amp','phase']" \
-    --casa-kw spw=0 \
-    --casa-kw scan=1 \
-    -- --xaxis velocity --yaxis amplitude --field 0 --spw 0 --scan 1
-
-Arguments before `--` configure the CASA half. Arguments after `--` are passed
-directly to the Rust `msexplore` CLI.
+    [--field 0] [--spw 0] [--scan 1]
 EOF
 }
 
 ms_path=""
 output_path=""
-casa_xaxis=""
-casa_yaxis=""
-rust_label="casa-rs"
-casa_label="CASA"
-declare -a casa_kwargs=()
-declare -a casa_expr_kwargs=()
-declare -a rust_args=()
+field="0"
+spw="0"
+scan="1"
+rust_label="casa-rs amplitude / phase vs time (generic page)"
+casa_label="CASA plotms amplitude / phase vs time (generic page)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,20 +32,16 @@ while [[ $# -gt 0 ]]; do
       output_path="$2"
       shift 2
       ;;
-    --casa-xaxis)
-      casa_xaxis="$2"
+    --field)
+      field="$2"
       shift 2
       ;;
-    --casa-yaxis)
-      casa_yaxis="$2"
+    --spw)
+      spw="$2"
       shift 2
       ;;
-    --casa-kw)
-      casa_kwargs+=("$2")
-      shift 2
-      ;;
-    --casa-expr-kw)
-      casa_expr_kwargs+=("$2")
+    --scan)
+      scan="$2"
       shift 2
       ;;
     --rust-label)
@@ -71,11 +56,6 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    --)
-      shift
-      rust_args=("$@")
-      break
-      ;;
     *)
       echo "unrecognized option: $1" >&2
       usage >&2
@@ -84,7 +64,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$ms_path" || -z "$output_path" || -z "$casa_xaxis" || -z "$casa_yaxis" || ${#rust_args[@]} -eq 0 ]]; then
+if [[ -z "$ms_path" || -z "$output_path" ]]; then
   usage >&2
   exit 1
 fi
@@ -104,66 +84,99 @@ trap 'rm -rf "$tmpdir"' EXIT
 rust_png="$tmpdir/rust.png"
 casa_png="$tmpdir/casa.png"
 casa_log="$tmpdir/casa.log"
+page_spec="$tmpdir/page-spec.json"
 
 mkdir -p "$(dirname "$output_path")"
 rust_copy="${output_path%.png}.rust.png"
 casa_copy="${output_path%.png}.casa.png"
 log_copy="${output_path%.png}.casa.log"
 
-echo "Rendering casa-rs plot..."
+cat >"$page_spec" <<EOF
+{
+  "page_title": "Amplitude and Phase Side by Side",
+  "gridrows": 1,
+  "gridcols": 2,
+  "plots": [
+    {
+      "preset": "amplitude_vs_time",
+      "plotindex": 0,
+      "rowindex": 0,
+      "colindex": 0,
+      "title": "Amplitude vs Time"
+    },
+    {
+      "preset": "phase_vs_time",
+      "plotindex": 1,
+      "rowindex": 0,
+      "colindex": 1,
+      "title": "Phase vs Time"
+    }
+  ]
+}
+EOF
+
+echo "Rendering casa-rs generic page plot..."
 cargo run -q -p casacore-ms --bin msexplore -- \
+  --page-spec "$page_spec" \
+  --field "$field" \
+  --spw "$spw" \
+  --scan "$scan" \
   --plot-output "$rust_png" \
   --plot-format png \
   --plot-width 1600 \
   --plot-height 900 \
-  "${rust_args[@]}" \
   "$ms_path"
 
-echo "Rendering CASA plot..."
+echo "Rendering CASA generic page plot..."
 (cd "$tmpdir" && \
 CASA_VIS="$ms_path" \
 CASA_OUT="$casa_png" \
-CASA_XAXIS="$casa_xaxis" \
-CASA_YAXIS="$casa_yaxis" \
-CASA_EXTRA_KWARGS="$(printf '%s\n' "${casa_kwargs[@]}")" \
-CASA_EXTRA_EXPR_KWARGS="$(
-  if ((${#casa_expr_kwargs[@]})); then
-    printf '%s\n' "${casa_expr_kwargs[@]}"
-  fi
-)" \
+CASA_FIELD="$field" \
+CASA_SPW="$spw" \
+CASA_SCAN="$scan" \
 DISPLAY="${DISPLAY:-:0}" \
 "$CASA_RS_CASA_PYTHON" - <<'PY'
 import os
-import ast
 
 try:
     from casatasks import plotms
 except Exception:
     from casaplotms import plotms
 
-kwargs = {
+common = {
     "vis": os.environ["CASA_VIS"],
-    "xaxis": os.environ["CASA_XAXIS"],
-    "yaxis": os.environ["CASA_YAXIS"],
-    "plotfile": os.environ["CASA_OUT"],
-    "expformat": "png",
-    "overwrite": True,
+    "field": os.environ["CASA_FIELD"],
+    "spw": os.environ["CASA_SPW"],
+    "scan": os.environ["CASA_SCAN"],
     "showgui": False,
     "verbose": True,
-    "width": 1600,
-    "height": 900,
+    "gridrows": 1,
+    "gridcols": 2,
 }
-for item in os.environ.get("CASA_EXTRA_KWARGS", "").splitlines():
-    if not item.strip():
-        continue
-    key, value = item.split("=", 1)
-    kwargs[key] = value
-for item in os.environ.get("CASA_EXTRA_EXPR_KWARGS", "").splitlines():
-    if not item.strip():
-        continue
-    key, value = item.split("=", 1)
-    kwargs[key] = ast.literal_eval(value)
-plotms(**kwargs)
+
+plotms(
+    xaxis="time",
+    yaxis="amp",
+    rowindex=0,
+    colindex=0,
+    plotindex=0,
+    clearplots=True,
+    **common,
+)
+plotms(
+    xaxis="time",
+    yaxis="phase",
+    rowindex=0,
+    colindex=1,
+    plotindex=1,
+    clearplots=False,
+    plotfile=os.environ["CASA_OUT"],
+    expformat="png",
+    overwrite=True,
+    width=1600,
+    height=900,
+    **common,
+)
 PY
 )
 

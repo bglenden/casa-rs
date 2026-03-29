@@ -6,7 +6,12 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
+use casacore_ms::{
+    MeasurementSet, MsAxis, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
+    build_msexplore_plot_payload,
+};
 use image::{GenericImageView, ImageReader};
+use serde_json::json;
 use tempfile::tempdir;
 
 mod common;
@@ -99,6 +104,537 @@ fn amplitude_vs_channel_avgchannel_txt_manifest_tracks_casa_plotms_line_count() 
         "expected CASA txt export to contain plotted points"
     );
     assert_eq!(rust_points, casa_points);
+}
+
+#[test]
+fn amplitude_and_phase_vs_time_match_separate_casa_plotms_txt_exports() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust = run_rust_msexplore(&[
+        "--xaxis",
+        "time",
+        "--yaxis",
+        "amplitude",
+        "--yaxis2",
+        "phase",
+        "--field",
+        "0",
+        "--spw",
+        "0",
+        "--scan",
+        "1",
+    ])
+    .expect("run rust msexplore");
+    let rust_by_axis = rust_dual_axis_points(&rust);
+
+    let casa_amp = run_casa_plotms(&[
+        ("xaxis", "time"),
+        ("yaxis", "amp"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+    ])
+    .expect("run casa plotms amp");
+    let casa_phase = run_casa_plotms(&[
+        ("xaxis", "time"),
+        ("yaxis", "phase"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+    ])
+    .expect("run casa plotms phase");
+
+    assert_points_match(
+        rust_by_axis
+            .get("amplitude")
+            .expect("rust amplitude points")
+            .as_slice(),
+        &casa_xy_points(&casa_amp),
+    );
+    assert_points_match(
+        rust_by_axis
+            .get("phase")
+            .expect("rust phase points")
+            .as_slice(),
+        &casa_xy_points(&casa_phase),
+    );
+}
+
+#[test]
+fn amplitude_and_phase_vs_time_png_export_tracks_casa_dual_axis_ranges() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let ms_path = ngc5921_ms_path().expect("shared ngc5921.ms");
+    let ms = MeasurementSet::open(&ms_path).expect("open shared ngc5921.ms");
+    let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    spec.y_axes.push(MsAxis::Phase);
+    let selection = MsSelectionSpec {
+        field: Some("0".to_string()),
+        spw: Some("0".to_string()),
+        scan: Some("1".to_string()),
+        ..Default::default()
+    };
+    let payload =
+        build_msexplore_plot_payload(&ms, &selection, &spec).expect("build rust dual-y payload");
+    let MsPlotPayload::Scatter(payload) = payload else {
+        panic!("expected scatter payload");
+    };
+    let rust_amp = numeric_range(
+        payload
+            .series
+            .iter()
+            .filter(|series| series.y_axis == MsAxis::Amplitude)
+            .flat_map(|series| series.points.iter().map(|point| point.1)),
+    )
+    .expect("rust amplitude range");
+    let rust_phase = numeric_range(
+        payload
+            .series
+            .iter()
+            .filter(|series| series.y_axis == MsAxis::Phase)
+            .flat_map(|series| series.points.iter().map(|point| point.1)),
+    )
+    .expect("rust phase range");
+
+    let rust_png = run_rust_msexplore_png(&[
+        "--xaxis",
+        "time",
+        "--yaxis",
+        "amplitude",
+        "--yaxis2",
+        "phase",
+        "--field",
+        "0",
+        "--spw",
+        "0",
+        "--scan",
+        "1",
+    ])
+    .expect("run rust dual-y png");
+    let casa = run_casa_plotms_png_expr(
+        &[
+            ("xaxis", "time"),
+            ("field", "0"),
+            ("spw", "0"),
+            ("scan", "1"),
+        ],
+        &[
+            ("yaxis", "['amp', 'phase']"),
+            ("yaxislocation", "['left', 'right']"),
+        ],
+    )
+    .expect("run casa dual-y png");
+
+    assert_same_image_dimensions(&rust_png, &casa.body);
+
+    let casa_amp = parse_casa_axis_range(&casa.log, "Amp:data").expect("CASA amp range");
+    let casa_phase = parse_casa_axis_range(&casa.log, "Phase:data").expect("CASA phase range");
+    assert!(
+        (rust_amp.0 - casa_amp.0).abs() <= 1.1e-3,
+        "amp min mismatch: rust={} casa={}",
+        rust_amp.0,
+        casa_amp.0
+    );
+    assert!(
+        (rust_amp.1 - casa_amp.1).abs() <= 1.1e-3,
+        "amp max mismatch: rust={} casa={}",
+        rust_amp.1,
+        casa_amp.1
+    );
+    assert!(
+        (rust_phase.0 - casa_phase.0).abs() <= 1.1e-3,
+        "phase min mismatch: rust={} casa={}",
+        rust_phase.0,
+        casa_phase.0
+    );
+    assert!(
+        (rust_phase.1 - casa_phase.1).abs() <= 1.1e-3,
+        "phase max mismatch: rust={} casa={}",
+        rust_phase.1,
+        casa_phase.1
+    );
+}
+
+#[test]
+fn amplitude_phase_vs_time_stacked_matches_separate_casa_plotms_txt_exports() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust = run_rust_msexplore(&[
+        "--preset",
+        "amplitude_phase_vs_time_stacked",
+        "--field",
+        "0",
+        "--spw",
+        "0",
+        "--scan",
+        "1",
+    ])
+    .expect("run rust stacked msexplore");
+    let rust_by_plot = rust_page_points_by_plot(&rust);
+
+    let casa_amp = run_casa_plotms(&[
+        ("xaxis", "time"),
+        ("yaxis", "amp"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+    ])
+    .expect("run casa plotms amp");
+    let casa_phase = run_casa_plotms(&[
+        ("xaxis", "time"),
+        ("yaxis", "phase"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+    ])
+    .expect("run casa plotms phase");
+
+    assert_points_match(
+        rust_by_plot.get(&0).expect("stacked amplitude plot points"),
+        &casa_xy_points(&casa_amp),
+    );
+    assert_points_match(
+        rust_by_plot.get(&1).expect("stacked phase plot points"),
+        &casa_xy_points(&casa_phase),
+    );
+}
+
+#[test]
+fn amplitude_phase_vs_time_stacked_png_export_matches_casa_multipanel_page() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust_png = run_rust_msexplore_png(&[
+        "--preset",
+        "amplitude_phase_vs_time_stacked",
+        "--field",
+        "0",
+        "--spw",
+        "0",
+        "--scan",
+        "1",
+    ])
+    .expect("run rust stacked png");
+    let casa = run_casa_plotms_sequence_png(&[
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "2"),
+                ("gridcols", "1"),
+                ("rowindex", "0"),
+                ("colindex", "0"),
+                ("plotindex", "0"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'amp'"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("clearplots", "True"),
+            ],
+        },
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "2"),
+                ("gridcols", "1"),
+                ("rowindex", "1"),
+                ("colindex", "0"),
+                ("plotindex", "1"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'phase'"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("clearplots", "False"),
+            ],
+        },
+    ])
+    .expect("run casa stacked page png");
+
+    assert_same_image_dimensions(&rust_png, &casa.body);
+    assert_vertical_halves_have_signal(&rust_png);
+    assert_vertical_halves_have_signal(&casa.body);
+}
+
+#[test]
+fn generic_page_spec_side_by_side_matches_separate_casa_plotms_txt_exports() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust = run_rust_msexplore_page_spec(
+        &json!({
+            "page_title": "Amplitude and Phase Side by Side",
+            "gridrows": 1,
+            "gridcols": 2,
+            "plots": [
+                {
+                    "preset": "amplitude_vs_time",
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude vs Time"
+                },
+                {
+                    "preset": "phase_vs_time",
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 1,
+                    "title": "Phase vs Time"
+                }
+            ]
+        }),
+        &["--field", "0", "--spw", "0", "--scan", "1"],
+    )
+    .expect("run rust page-spec msexplore");
+    let rust_by_plot = rust_page_points_by_plot(&rust);
+
+    let casa_amp = run_casa_plotms(&[
+        ("xaxis", "time"),
+        ("yaxis", "amp"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+    ])
+    .expect("run casa plotms amp");
+    let casa_phase = run_casa_plotms(&[
+        ("xaxis", "time"),
+        ("yaxis", "phase"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+    ])
+    .expect("run casa plotms phase");
+
+    assert_points_match(
+        rust_by_plot.get(&0).expect("page amplitude plot points"),
+        &casa_xy_points(&casa_amp),
+    );
+    assert_points_match(
+        rust_by_plot.get(&1).expect("page phase plot points"),
+        &casa_xy_points(&casa_phase),
+    );
+}
+
+#[test]
+fn generic_page_spec_side_by_side_png_export_matches_casa_multipanel_page() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust_png = run_rust_msexplore_page_spec_png(
+        &json!({
+            "page_title": "Amplitude and Phase Side by Side",
+            "gridrows": 1,
+            "gridcols": 2,
+            "plots": [
+                {
+                    "preset": "amplitude_vs_time",
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude vs Time"
+                },
+                {
+                    "preset": "phase_vs_time",
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 1,
+                    "title": "Phase vs Time"
+                }
+            ]
+        }),
+        &["--field", "0", "--spw", "0", "--scan", "1"],
+    )
+    .expect("run rust page-spec png");
+    let casa = run_casa_plotms_sequence_png(&[
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "1"),
+                ("gridcols", "2"),
+                ("rowindex", "0"),
+                ("colindex", "0"),
+                ("plotindex", "0"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'amp'"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("clearplots", "True"),
+            ],
+        },
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "1"),
+                ("gridcols", "2"),
+                ("rowindex", "0"),
+                ("colindex", "1"),
+                ("plotindex", "1"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'phase'"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("clearplots", "False"),
+            ],
+        },
+    ])
+    .expect("run casa side-by-side page png");
+
+    assert_same_image_dimensions(&rust_png, &casa.body);
+    assert_horizontal_halves_have_signal(&rust_png);
+    assert_horizontal_halves_have_signal(&casa.body);
+}
+
+#[test]
+fn generic_page_spec_same_cell_overplot_matches_separate_casa_plotms_txt_exports() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust = run_rust_msexplore_page_spec(
+        &json!({
+            "page_title": "Amplitude Overplot",
+            "exprange": "all",
+            "gridrows": 1,
+            "gridcols": 1,
+            "plots": [
+                {
+                    "preset": "amplitude_vs_time",
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:vector"
+                },
+                {
+                    "preset": "amplitude_vs_time",
+                    "scalar": true,
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:scalar"
+                }
+            ]
+        }),
+        &["--field", "0", "--spw", "0", "--scan", "1"],
+    )
+    .expect("run rust overplot page-spec msexplore");
+    let rust_by_plot = rust_page_points_by_plot(&rust);
+
+    let casa_vector = run_casa_plotms(&[
+        ("xaxis", "time"),
+        ("yaxis", "amp"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+    ])
+    .expect("run casa plotms vector");
+    let casa_scalar = run_casa_plotms_expr(
+        &[
+        ("xaxis", "time"),
+        ("yaxis", "amp"),
+        ("field", "0"),
+        ("spw", "0"),
+        ("scan", "1"),
+        ],
+        &[("scalar", "True")],
+    )
+    .expect("run casa plotms scalar");
+
+    assert_points_match(
+        rust_by_plot.get(&0).expect("overplot vector plot points"),
+        &casa_xy_points(&casa_vector),
+    );
+    assert_points_match(
+        rust_by_plot.get(&1).expect("overplot scalar plot points"),
+        &casa_xy_points(&casa_scalar),
+    );
+}
+
+#[test]
+fn generic_page_spec_same_cell_overplot_png_export_matches_casa_page() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let rust_png = run_rust_msexplore_page_spec_png(
+        &json!({
+            "page_title": "Amplitude Overplot",
+            "exprange": "all",
+            "gridrows": 1,
+            "gridcols": 1,
+            "plots": [
+                {
+                    "preset": "amplitude_vs_time",
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:vector"
+                },
+                {
+                    "preset": "amplitude_vs_time",
+                    "scalar": true,
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "title": "Amplitude:scalar"
+                }
+            ]
+        }),
+        &["--field", "0", "--spw", "0", "--scan", "1"],
+    )
+    .expect("run rust overplot page png");
+    let casa = run_casa_plotms_sequence_png(&[
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "1"),
+                ("gridcols", "1"),
+                ("rowindex", "0"),
+                ("colindex", "0"),
+                ("plotindex", "0"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'amp'"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("clearplots", "True"),
+            ],
+        },
+        CasaPlotmsCall {
+            kwargs: vec![
+                ("gridrows", "1"),
+                ("gridcols", "1"),
+                ("rowindex", "0"),
+                ("colindex", "0"),
+                ("plotindex", "1"),
+                ("xaxis", "'time'"),
+                ("yaxis", "'amp'"),
+                ("scalar", "True"),
+                ("field", "'0'"),
+                ("spw", "'0'"),
+                ("scan", "'1'"),
+                ("clearplots", "False"),
+            ],
+        },
+    ])
+    .expect("run casa overplot page png");
+
+    assert_same_image_dimensions(&rust_png, &casa.body);
+    assert_image_has_signal(&rust_png);
+    assert_image_has_signal(&casa.body);
 }
 
 #[test]
@@ -606,6 +1142,18 @@ fn run_rust_msexplore(extra_args: &[&str]) -> Result<String, String> {
     run_rust_msexplore_on(&ms_path, extra_args)
 }
 
+fn run_rust_msexplore_page_spec(
+    page_spec: &serde_json::Value,
+    extra_args: &[&str],
+) -> Result<String, String> {
+    let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
+    let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
+    let page_spec_path = temp.path().join("page-spec.json");
+    fs::write(&page_spec_path, page_spec.to_string())
+        .map_err(|error| format!("write rust page spec: {error}"))?;
+    run_rust_msexplore_on_with_page_spec(&ms_path, &page_spec_path, extra_args)
+}
+
 fn run_rust_msexplore_png(extra_args: &[&str]) -> Result<Vec<u8>, String> {
     let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
     let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
@@ -625,6 +1173,33 @@ fn run_rust_msexplore_png(extra_args: &[&str]) -> Result<Vec<u8>, String> {
     fs::read(output).map_err(|error| format!("read rust png export: {error}"))
 }
 
+fn run_rust_msexplore_page_spec_png(
+    page_spec: &serde_json::Value,
+    extra_args: &[&str],
+) -> Result<Vec<u8>, String> {
+    let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
+    let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
+    let output = temp.path().join("rust-msexplore-page.png");
+    let page_spec_path = temp.path().join("page-spec.json");
+    fs::write(&page_spec_path, page_spec.to_string())
+        .map_err(|error| format!("write rust page spec: {error}"))?;
+    let result = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--page-spec"])
+        .arg(&page_spec_path)
+        .args(["--plot-output"])
+        .arg(&output)
+        .args(["--plot-format", "png"])
+        .args(["--plot-width", "1600", "--plot-height", "900"])
+        .args(extra_args)
+        .arg(ms_path)
+        .output()
+        .map_err(|error| format!("spawn rust msexplore page png: {error}"))?;
+    if !result.status.success() {
+        return Err(String::from_utf8_lossy(&result.stderr).to_string());
+    }
+    fs::read(output).map_err(|error| format!("read rust page png export: {error}"))
+}
+
 fn run_rust_msexplore_on(ms_path: &Path, extra_args: &[&str]) -> Result<String, String> {
     let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
     let output = temp.path().join("rust-msexplore.txt");
@@ -642,6 +1217,29 @@ fn run_rust_msexplore_on(ms_path: &Path, extra_args: &[&str]) -> Result<String, 
     fs::read_to_string(output).map_err(|error| format!("read rust manifest: {error}"))
 }
 
+fn run_rust_msexplore_on_with_page_spec(
+    ms_path: &Path,
+    page_spec_path: &Path,
+    extra_args: &[&str],
+) -> Result<String, String> {
+    let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
+    let output = temp.path().join("rust-msexplore-page.txt");
+    let result = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--page-spec"])
+        .arg(page_spec_path)
+        .args(["--plot-output"])
+        .arg(&output)
+        .args(["--plot-format", "txt"])
+        .args(extra_args)
+        .arg(ms_path)
+        .output()
+        .map_err(|error| format!("spawn rust msexplore page spec: {error}"))?;
+    if !result.status.success() {
+        return Err(String::from_utf8_lossy(&result.stderr).to_string());
+    }
+    fs::read_to_string(output).map_err(|error| format!("read rust page manifest: {error}"))
+}
+
 fn run_casa_plotms(kwargs: &[(&str, &str)]) -> Result<String, String> {
     let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
     Ok(
@@ -650,14 +1248,104 @@ fn run_casa_plotms(kwargs: &[(&str, &str)]) -> Result<String, String> {
     )
 }
 
+fn run_casa_plotms_expr(
+    kwargs: &[(&str, &str)],
+    expr_kwargs: &[(&str, &str)],
+) -> Result<String, String> {
+    let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
+    Ok(
+        String::from_utf8(
+            run_casa_plotms_export_on_with_expr(&ms_path, kwargs, expr_kwargs, "txt")?.body,
+        )
+        .map_err(|error| format!("decode CASA txt export: {error}"))?,
+    )
+}
+
 fn run_casa_plotms_png(kwargs: &[(&str, &str)]) -> Result<CasaPlotmsExport, String> {
     let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
     run_casa_plotms_export_on(&ms_path, kwargs, "png")
 }
 
+#[derive(Debug)]
+struct CasaPlotmsCall<'a> {
+    kwargs: Vec<(&'a str, &'a str)>,
+}
+
+fn run_casa_plotms_sequence_png(calls: &[CasaPlotmsCall<'_>]) -> Result<CasaPlotmsExport, String> {
+    let _guard = casa_plotms_lock().lock().expect("lock CASA plotms");
+    let casa = discover_casa_python().ok_or_else(|| skip_reason(false))?;
+    let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
+    let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
+    let output = temp.path().join("casa-plotms.png");
+
+    let mut script = String::from(
+        r#"
+import os
+try:
+    from casatasks import plotms
+except Exception:
+    from casaplotms import plotms
+"#,
+    );
+    for (index, call) in calls.iter().enumerate() {
+        script.push_str("kwargs = {\n");
+        script.push_str("    \"vis\": os.environ[\"CASA_VIS\"],\n");
+        script.push_str("    \"showgui\": False,\n");
+        script.push_str("    \"verbose\": True,\n");
+        script.push_str("}\n");
+        if index + 1 == calls.len() {
+            script.push_str("kwargs[\"plotfile\"] = os.environ[\"CASA_OUT\"]\n");
+            script.push_str("kwargs[\"expformat\"] = \"png\"\n");
+            script.push_str("kwargs[\"overwrite\"] = True\n");
+            script.push_str("kwargs[\"width\"] = 1600\n");
+            script.push_str("kwargs[\"height\"] = 900\n");
+        }
+        for (key, value) in &call.kwargs {
+            script.push_str(&format!("kwargs[{key:?}] = {value}\n"));
+        }
+        script.push_str("plotms(**kwargs)\n");
+    }
+
+    let result = Command::new(&casa.program)
+        .current_dir(temp.path())
+        .arg("-c")
+        .arg(&script)
+        .env("CASA_VIS", &ms_path)
+        .env("CASA_OUT", &output)
+        .env(
+            "DISPLAY",
+            std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string()),
+        )
+        .output()
+        .map_err(|error| format!("spawn casa plotms sequence: {error}"))?;
+    if !result.status.success() {
+        return Err(String::from_utf8_lossy(&result.stderr).to_string());
+    }
+    let body = fs::read(&output).map_err(|error| format!("read casa export: {error}"))?;
+    let log = read_casa_log(temp.path())?;
+    Ok(CasaPlotmsExport { body, log })
+}
+
+fn run_casa_plotms_png_expr(
+    kwargs: &[(&str, &str)],
+    expr_kwargs: &[(&str, &str)],
+) -> Result<CasaPlotmsExport, String> {
+    let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
+    run_casa_plotms_export_on_with_expr(&ms_path, kwargs, expr_kwargs, "png")
+}
+
 fn run_casa_plotms_export_on(
     ms_path: &Path,
     kwargs: &[(&str, &str)],
+    expformat: &str,
+) -> Result<CasaPlotmsExport, String> {
+    run_casa_plotms_export_on_with_expr(ms_path, kwargs, &[], expformat)
+}
+
+fn run_casa_plotms_export_on_with_expr(
+    ms_path: &Path,
+    kwargs: &[(&str, &str)],
+    expr_kwargs: &[(&str, &str)],
     expformat: &str,
 ) -> Result<CasaPlotmsExport, String> {
     let _guard = casa_plotms_lock().lock().expect("lock CASA plotms");
@@ -691,6 +1379,9 @@ kwargs = {
     }
     for (key, value) in kwargs {
         script.push_str(&format!("kwargs[{key:?}] = {value:?}\n"));
+    }
+    for (key, value) in expr_kwargs {
+        script.push_str(&format!("kwargs[{key:?}] = {value}\n"));
     }
     script.push_str("plotms(**kwargs)\n");
 
@@ -768,6 +1459,34 @@ fn rust_xy_points(text: &str) -> Vec<(f64, f64)> {
     points
 }
 
+fn rust_dual_axis_points(text: &str) -> std::collections::BTreeMap<String, Vec<(f64, f64)>> {
+    let mut points = std::collections::BTreeMap::<String, Vec<(f64, f64)>>::new();
+    for line in text.lines().filter(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("series_key")
+    }) {
+        let mut parts = line.split('\t');
+        let _series_key = parts.next().expect("series key");
+        let _series_label = parts.next().expect("series label");
+        let y_axis = parts.next().expect("y axis").to_string();
+        let x = parts
+            .next()
+            .expect("x value")
+            .parse::<f64>()
+            .expect("parse rust x");
+        let y = parts
+            .next()
+            .expect("y value")
+            .parse::<f64>()
+            .expect("parse rust y");
+        points.entry(y_axis).or_default().push((x, y));
+    }
+    for values in points.values_mut() {
+        values.sort_by(point_order);
+    }
+    points
+}
+
 fn rust_iterated_xy_points(text: &str) -> std::collections::BTreeMap<String, Vec<(f64, f64)>> {
     let mut panels = std::collections::BTreeMap::<String, Vec<(f64, f64)>>::new();
     for line in text.lines().filter(|line| {
@@ -795,6 +1514,43 @@ fn rust_iterated_xy_points(text: &str) -> std::collections::BTreeMap<String, Vec
         points.sort_by(point_order);
     }
     panels
+}
+
+fn rust_page_points_by_plot(text: &str) -> std::collections::BTreeMap<usize, Vec<(f64, f64)>> {
+    let mut plots = std::collections::BTreeMap::<usize, Vec<(f64, f64)>>::new();
+    for line in text.lines().filter(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("plotindex")
+    }) {
+        let mut parts = line.split('\t');
+        let plotindex = parts
+            .next()
+            .expect("plot index")
+            .parse::<usize>()
+            .expect("parse plot index");
+        let _rowindex = parts.next().expect("row index");
+        let _colindex = parts.next().expect("col index");
+        let _plot_title = parts.next().expect("plot title");
+        let _x_axis = parts.next().expect("x axis");
+        let _y_axis = parts.next().expect("y axis");
+        let _series_key = parts.next().expect("series key");
+        let _series_label = parts.next().expect("series label");
+        let x = parts
+            .next()
+            .expect("x value")
+            .parse::<f64>()
+            .expect("parse rust x");
+        let y = parts
+            .next()
+            .expect("y value")
+            .parse::<f64>()
+            .expect("parse rust y");
+        plots.entry(plotindex).or_default().push((x, y));
+    }
+    for points in plots.values_mut() {
+        points.sort_by(point_order);
+    }
+    plots
 }
 
 fn casa_xy_points(text: &str) -> Vec<(f64, f64)> {
@@ -974,5 +1730,80 @@ fn assert_same_image_dimensions(left: &[u8], right: &[u8]) {
         left.dimensions(),
         right.dimensions(),
         "image dimension mismatch"
+    );
+}
+
+fn assert_image_has_signal(image_bytes: &[u8]) {
+    let image = ImageReader::new(std::io::Cursor::new(image_bytes))
+        .with_guessed_format()
+        .expect("guess png format")
+        .decode()
+        .expect("decode png")
+        .to_rgba8();
+    let has_signal = image.pixels().any(|pixel| pixel.0 != [255, 255, 255, 255]);
+    assert!(has_signal, "expected image to contain plotted signal");
+}
+
+fn assert_vertical_halves_have_signal(image_bytes: &[u8]) {
+    let image = ImageReader::new(std::io::Cursor::new(image_bytes))
+        .with_guessed_format()
+        .expect("guess png format")
+        .decode()
+        .expect("decode png")
+        .to_rgba8();
+    let width = image.width();
+    let height = image.height();
+    let midpoint = height / 2;
+    let top_has_signal = (0..midpoint).any(|y| {
+        (0..width).any(|x| {
+            let pixel = image.get_pixel(x, y);
+            pixel.0 != [255, 255, 255, 255]
+        })
+    });
+    let bottom_has_signal = (midpoint..height).any(|y| {
+        (0..width).any(|x| {
+            let pixel = image.get_pixel(x, y);
+            pixel.0 != [255, 255, 255, 255]
+        })
+    });
+    assert!(
+        top_has_signal,
+        "expected top half of stacked image to contain signal"
+    );
+    assert!(
+        bottom_has_signal,
+        "expected bottom half of stacked image to contain signal"
+    );
+}
+
+fn assert_horizontal_halves_have_signal(image_bytes: &[u8]) {
+    let image = ImageReader::new(std::io::Cursor::new(image_bytes))
+        .with_guessed_format()
+        .expect("guess png format")
+        .decode()
+        .expect("decode png")
+        .to_rgba8();
+    let width = image.width();
+    let height = image.height();
+    let midpoint = width / 2;
+    let left_has_signal = (0..height).any(|y| {
+        (0..midpoint).any(|x| {
+            let pixel = image.get_pixel(x, y);
+            pixel.0 != [255, 255, 255, 255]
+        })
+    });
+    let right_has_signal = (0..height).any(|y| {
+        (midpoint..width).any(|x| {
+            let pixel = image.get_pixel(x, y);
+            pixel.0 != [255, 255, 255, 255]
+        })
+    });
+    assert!(
+        left_has_signal,
+        "expected left half of side-by-side image to contain signal"
+    );
+    assert!(
+        right_has_signal,
+        "expected right half of side-by-side image to contain signal"
     );
 }

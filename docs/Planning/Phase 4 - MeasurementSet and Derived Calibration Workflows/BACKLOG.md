@@ -121,3 +121,17 @@ workspace and export contract before generalizing it.
 **Reason:** Raster-backed single-page PDF export is enough for the first wave.
 True vector export should wait until the rendering abstraction is stable and the
 required backend behavior is well understood.
+
+---
+
+### 11.7 Dense Dual-Y `msexplore` Readability and Stacked Alternatives
+
+**Status:** IMPLEMENT
+
+**Reason:** CASA-style dual-y overlays can become unreadable on dense
+MeasurementSet plots with repeated timestamps or heavily overplotted samples.
+The current `msexplore` dual-y support is semantically correct but can still
+collapse visually even after marker/color differentiation. Follow-on work should
+add multi-panel stacked alternatives for common paired views (for example
+amplitude over phase vs time), plus density-aware warnings or fallback
+presentation modes where overplotting hides the primary series.

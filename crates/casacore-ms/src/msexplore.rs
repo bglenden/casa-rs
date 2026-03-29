@@ -77,6 +77,8 @@ pub enum MsPlotPreset {
     AmplitudeVsTime,
     /// Vector-averaged phase against time.
     PhaseVsTime,
+    /// Stacked amplitude and phase against time on one two-row page.
+    AmplitudePhaseVsTimeStacked,
     /// Vector-averaged amplitude against UV distance.
     AmplitudeVsUvDistance,
     /// Per-correlation WEIGHT against time.
@@ -119,13 +121,14 @@ pub enum MsPlotPreset {
 
 impl MsPlotPreset {
     /// All shipped presets in stable order.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::UvCoverage,
         Self::AntennaLayout,
         Self::ScanTimeline,
         Self::SpectralWindowCoverage,
         Self::AmplitudeVsTime,
         Self::PhaseVsTime,
+        Self::AmplitudePhaseVsTimeStacked,
         Self::AmplitudeVsUvDistance,
         Self::WeightVsTime,
         Self::SigmaVsTime,
@@ -156,6 +159,7 @@ impl MsPlotPreset {
             Self::SpectralWindowCoverage => "spectral_window_coverage",
             Self::AmplitudeVsTime => "amplitude_vs_time",
             Self::PhaseVsTime => "phase_vs_time",
+            Self::AmplitudePhaseVsTimeStacked => "amplitude_phase_vs_time_stacked",
             Self::AmplitudeVsUvDistance => "amplitude_vs_uv_distance",
             Self::WeightVsTime => "weight_vs_time",
             Self::SigmaVsTime => "sigma_vs_time",
@@ -187,6 +191,7 @@ impl MsPlotPreset {
             Self::SpectralWindowCoverage => "Spectral Window Coverage",
             Self::AmplitudeVsTime => "Amplitude vs Time",
             Self::PhaseVsTime => "Phase vs Time",
+            Self::AmplitudePhaseVsTimeStacked => "Amplitude / Phase vs Time (Stacked)",
             Self::AmplitudeVsUvDistance => "Amplitude vs UV Distance",
             Self::WeightVsTime => "Weight vs Time",
             Self::SigmaVsTime => "Sigma vs Time",
@@ -220,6 +225,9 @@ impl MsPlotPreset {
             }
             "amplitude_vs_time" | "amp_time" => Ok(Self::AmplitudeVsTime),
             "phase_vs_time" | "phase_time" => Ok(Self::PhaseVsTime),
+            "amplitude_phase_vs_time_stacked" | "amp_phase_time_stacked" => {
+                Ok(Self::AmplitudePhaseVsTimeStacked)
+            }
             "amplitude_vs_uv_distance" | "amplitude_vs_uvdist" | "amp_uvdist" => {
                 Ok(Self::AmplitudeVsUvDistance)
             }
@@ -849,6 +857,33 @@ impl Default for MsLayoutSpec {
     }
 }
 
+/// Page export range behavior for multi-plot page composition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MsPageExportRange {
+    /// Resolve bounds independently for each occupied page cell.
+    #[default]
+    Current,
+    /// Reuse one page-wide range for all occupied cells.
+    All,
+}
+
+impl MsPageExportRange {
+    /// Stable machine-readable identifier.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::All => "all",
+        }
+    }
+}
+
+impl fmt::Display for MsPageExportRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Supported iteration axes for multi-panel plot pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1002,7 +1037,8 @@ pub struct MsPlotSpec {
     pub preset: Option<MsPlotPreset>,
     /// X-axis selector.
     pub x_axis: MsAxis,
-    /// Y-axis selectors. The current engine supports exactly one Y axis.
+    /// Y-axis selectors. Up to two axes are currently supported; when two are
+    /// present the second axis renders on the right side of a non-iterated plot.
     pub y_axes: Vec<MsAxis>,
     /// Visibility data column or derived expression.
     pub data_column: MsDataColumn,
@@ -1059,6 +1095,19 @@ impl MsPlotSpec {
                 preset: Some(preset),
                 x_axis: MsAxis::Time,
                 y_axes: vec![MsAxis::Phase],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::AmplitudePhaseVsTimeStacked => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::Time,
+                y_axes: vec![MsAxis::Amplitude],
                 data_column: MsDataColumn::Data,
                 color_by: MsColorAxis::Field,
                 averaging: MsAverageSpec::default(),
@@ -1320,21 +1369,58 @@ impl MsPlotSpec {
 
     /// Validate the current plot specification against the current engine.
     pub fn validate(&self) -> Result<(), String> {
-        if self.y_axes.len() != 1 {
-            return Err("msexplore currently supports exactly one y axis per plot".to_string());
-        }
+        self.validate_common()?;
         if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
             return Err(
-                "msexplore per-plot rowindex/colindex/plotindex placement is reserved for a future multi-plot page wave".to_string(),
+                "msexplore per-plot rowindex/colindex/plotindex placement is reserved for multi-plot page composition".to_string(),
+            );
+        }
+        let iterated = self.iteration.iteraxis.is_some();
+        if !iterated && (self.layout.gridrows != 1 || self.layout.gridcols != 1) {
+            return Err(
+                "msexplore gridrows/gridcols require --iteraxis; non-iterated standalone plots still render a single panel".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_for_page_child(&self) -> Result<(), String> {
+        self.validate_common()?;
+        if self.iteration.iteraxis.is_some() {
+            return Err(
+                "msexplore multi-plot pages do not yet support nested iteraxis child plots"
+                    .to_string(),
+            );
+        }
+        if self.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
+            return Err(
+                "msexplore multi-plot pages do not yet support nested stacked page presets"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_common(&self) -> Result<(), String> {
+        if self.y_axes.is_empty() {
+            return Err("msexplore requires at least one y axis per plot".to_string());
+        }
+        if self.y_axes.len() > 2 {
+            return Err("msexplore currently supports at most two y axes per plot".to_string());
+        }
+        if self.y_axes.len() == 2 && self.y_axes[0] == self.y_axes[1] {
+            return Err(
+                "msexplore does not allow duplicate y axes with the same data column".to_string(),
             );
         }
         if self.layout.gridrows == 0 || self.layout.gridcols == 0 {
             return Err("msexplore gridrows/gridcols must be positive integers".to_string());
         }
         let iterated = self.iteration.iteraxis.is_some();
-        if !iterated && (self.layout.gridrows != 1 || self.layout.gridcols != 1) {
+        if iterated && self.y_axes.len() > 1 {
             return Err(
-                "msexplore gridrows/gridcols require --iteraxis; non-iterated plots still render a single panel".to_string(),
+                "msexplore multi-y plots are currently available for non-iterated plots only"
+                    .to_string(),
             );
         }
         if self.iteration.xselfscale && self.iteration.xsharedaxis {
@@ -1393,38 +1479,39 @@ impl MsPlotSpec {
                 | MsAxis::HourAngle
                 | MsAxis::ParallacticAngle
         );
-        let y_axis = self.y_axes[0];
-        let supported_y = matches!(
-            y_axis,
-            MsAxis::Amplitude
-                | MsAxis::Phase
-                | MsAxis::Real
-                | MsAxis::Imaginary
-                | MsAxis::U
-                | MsAxis::V
-                | MsAxis::W
-                | MsAxis::Weight
-                | MsAxis::Sigma
-                | MsAxis::WeightSpectrum
-                | MsAxis::SigmaSpectrum
-                | MsAxis::Flag
-                | MsAxis::FlagRow
-                | MsAxis::Azimuth
-                | MsAxis::Elevation
-                | MsAxis::HourAngle
-                | MsAxis::ParallacticAngle
-        );
         if !supported_x {
             return Err(format!(
                 "msexplore x axis {} is modeled but not implemented yet",
                 self.x_axis
             ));
         }
-        if !supported_y {
-            return Err(format!(
-                "msexplore y axis {} is modeled but not implemented yet",
-                y_axis
-            ));
+        for y_axis in self.y_axes.iter().copied() {
+            let supported_y = matches!(
+                y_axis,
+                MsAxis::Amplitude
+                    | MsAxis::Phase
+                    | MsAxis::Real
+                    | MsAxis::Imaginary
+                    | MsAxis::U
+                    | MsAxis::V
+                    | MsAxis::W
+                    | MsAxis::Weight
+                    | MsAxis::Sigma
+                    | MsAxis::WeightSpectrum
+                    | MsAxis::SigmaSpectrum
+                    | MsAxis::Flag
+                    | MsAxis::FlagRow
+                    | MsAxis::Azimuth
+                    | MsAxis::Elevation
+                    | MsAxis::HourAngle
+                    | MsAxis::ParallacticAngle
+            );
+            if !supported_y {
+                return Err(format!(
+                    "msexplore y axis {} is modeled but not implemented yet",
+                    y_axis
+                ));
+            }
         }
         if self.averaging.avgchannel.is_some()
             && !matches!(
@@ -1437,7 +1524,13 @@ impl MsPlotSpec {
                     .to_string(),
             );
         }
-        if self.averaging.avgchannel.is_some() && matches!(self.y_axis(), MsAxis::Flag) {
+        if self.averaging.avgchannel.is_some()
+            && self
+                .y_axes
+                .iter()
+                .copied()
+                .any(|axis| matches!(axis, MsAxis::Flag))
+        {
             return Err("msexplore flag plots do not yet support avgchannel binning".to_string());
         }
         Ok(())
@@ -1446,6 +1539,11 @@ impl MsPlotSpec {
     /// Return the single Y axis after validation.
     pub fn y_axis(&self) -> MsAxis {
         self.y_axes[0]
+    }
+
+    /// Return the optional secondary Y axis after validation.
+    pub fn secondary_y_axis(&self) -> Option<MsAxis> {
+        self.y_axes.get(1).copied()
     }
 }
 
@@ -1458,6 +1556,10 @@ pub struct MsExploreSpec {
     pub summary_format: crate::listobs::ListObsOutputFormat,
     /// Shared row-selection controls.
     pub selection: MsSelectionSpec,
+    /// Optional page title override when composing multiple plots.
+    pub page_title: Option<String>,
+    /// Range behavior when exporting multi-plot pages.
+    pub exprange: MsPageExportRange,
     /// Plot definitions on the page.
     pub plots: Vec<MsPlotSpec>,
 }
@@ -1465,13 +1567,64 @@ pub struct MsExploreSpec {
 impl MsExploreSpec {
     /// Validate the high-level request.
     pub fn validate(&self) -> Result<(), String> {
-        if self.plots.len() > 1 {
+        if self.plots.is_empty() {
+            return Err("msexplore requires at least one plot per invocation".to_string());
+        }
+        if self.plots.len() == 1 {
+            self.plots[0].validate()?;
+            return Ok(());
+        }
+
+        let mut expected_grid = None;
+        let mut used_plot_indices = std::collections::BTreeSet::new();
+        let mut used_cells = std::collections::BTreeSet::new();
+        for plot in &self.plots {
+            plot.validate_for_page_child()?;
+            let layout = &plot.layout;
+            if layout.rowindex >= layout.gridrows || layout.colindex >= layout.gridcols {
+                return Err(format!(
+                    "msexplore page child plot {} is placed outside the {}x{} page grid",
+                    layout.plotindex, layout.gridrows, layout.gridcols
+                ));
+            }
+            match expected_grid {
+                None => expected_grid = Some((layout.gridrows, layout.gridcols)),
+                Some((gridrows, gridcols))
+                    if gridrows != layout.gridrows || gridcols != layout.gridcols =>
+                {
+                    return Err(
+                        "msexplore multi-plot page composition requires all child plots to agree on gridrows/gridcols".to_string(),
+                    );
+                }
+                Some(_) => {}
+            }
+            if !used_plot_indices.insert(layout.plotindex) {
+                return Err(format!(
+                    "msexplore multi-plot pages require unique plotindex values; found duplicate {}",
+                    layout.plotindex
+                ));
+            }
+            used_cells.insert((layout.rowindex, layout.colindex));
+        }
+        if let Some((gridrows, gridcols)) = expected_grid
+            && used_cells.len() > gridrows.saturating_mul(gridcols)
+        {
             return Err(
-                "msexplore currently supports one plot per invocation; multi-plot pages are reserved for a future wave".to_string(),
+                "msexplore multi-plot page composition received more occupied cells than fit in the declared grid".to_string(),
             );
         }
-        for plot in &self.plots {
-            plot.validate()?;
+        if self.exprange == MsPageExportRange::All {
+            let first = &self.plots[0];
+            let compatible = self.plots.iter().all(|plot| {
+                plot.x_axis == first.x_axis
+                    && plot.y_axis() == first.y_axis()
+                    && plot.secondary_y_axis() == first.secondary_y_axis()
+            });
+            if !compatible {
+                return Err(
+                    "msexplore exprange=all currently requires all page plots to share the same x/y axis configuration".to_string(),
+                );
+            }
         }
         Ok(())
     }
@@ -1486,6 +1639,8 @@ pub enum MsPlotPayload {
     Scatter(MsScatterPlotPayload),
     /// Iterated multi-panel scatter payload for raw visibility plots.
     ScatterGrid(MsScatterGridPayload),
+    /// Multi-plot scatter page payload for stacked/common paired views.
+    ScatterPage(MsScatterPagePayload),
 }
 
 impl MsPlotPayload {}
@@ -1499,14 +1654,26 @@ pub struct MsScatterPlotPayload {
     pub x_axis: MsAxis,
     /// Y axis kind.
     pub y_axis: MsAxis,
+    /// Optional right-side Y axis kind.
+    pub secondary_y_axis: Option<MsAxis>,
     /// X axis label.
     pub x_label: String,
     /// Y axis label.
     pub y_label: String,
+    /// Optional right-side Y axis label.
+    pub secondary_y_label: Option<String>,
     /// Optional fixed X axis bounds.
     pub fixed_x_bounds: Option<(f64, f64)>,
     /// Optional fixed Y axis bounds.
     pub fixed_y_bounds: Option<(f64, f64)>,
+    /// Optional fixed right-side Y axis bounds.
+    pub secondary_fixed_y_bounds: Option<(f64, f64)>,
+    /// Show a legend when multiple series are present.
+    pub showlegend: bool,
+    /// Show major grid lines.
+    pub showmajorgrid: bool,
+    /// Show minor grid lines.
+    pub showminorgrid: bool,
     /// Grouped scatter series.
     pub series: Vec<MsScatterSeries>,
     /// Human-readable summary.
@@ -1520,6 +1687,8 @@ pub struct MsScatterSeries {
     pub label: String,
     /// Stable group key used for palette selection.
     pub color_group: String,
+    /// Y axis rendered by this series.
+    pub y_axis: MsAxis,
     /// Plot points as `(x, y)`.
     pub points: Vec<(f64, f64)>,
 }
@@ -1554,6 +1723,12 @@ pub struct MsScatterGridPayload {
     pub fixed_x_bounds: Option<(f64, f64)>,
     /// Optional fixed Y axis bounds.
     pub fixed_y_bounds: Option<(f64, f64)>,
+    /// Show a legend when multiple series are present.
+    pub showlegend: bool,
+    /// Show major grid lines.
+    pub showmajorgrid: bool,
+    /// Show minor grid lines.
+    pub showminorgrid: bool,
     /// Iteration axis used to build the page.
     pub iteraxis: MsIterationAxis,
     /// Resolved page grid row count.
@@ -1570,13 +1745,44 @@ pub struct MsScatterGridPayload {
     pub summary: String,
 }
 
-/// Build a generic plot payload from one open MeasurementSet.
-pub fn build_msexplore_plot_payload(
+/// One scatter subplot placed on a multi-plot page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MsScatterPageItemPayload {
+    /// Zero-based plot index on the page.
+    pub plotindex: usize,
+    /// Zero-based row placement.
+    pub rowindex: usize,
+    /// Zero-based column placement.
+    pub colindex: usize,
+    /// Child scatter plot payload.
+    pub plot: MsScatterPlotPayload,
+}
+
+/// Multi-plot page payload composed from non-iterated scatter plots.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MsScatterPagePayload {
+    /// Page title used for export naming.
+    pub title: String,
+    /// Page export range behavior.
+    pub exprange: MsPageExportRange,
+    /// Resolved page grid row count.
+    pub gridrows: usize,
+    /// Resolved page grid column count.
+    pub gridcols: usize,
+    /// Ordered child plots placed on the page.
+    pub items: Vec<MsScatterPageItemPayload>,
+    /// Human-readable page summary.
+    pub summary: String,
+}
+
+fn build_msexplore_plot_payload_validated(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
 ) -> Result<MsPlotPayload, String> {
-    spec.validate()?;
+    if spec.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
+        return build_stacked_amplitude_phase_time_page(ms, selection, spec);
+    }
     if let Some(listobs_kind) = spec
         .preset
         .and_then(MsPlotPreset::lowers_to_listobs_metadata)
@@ -1602,6 +1808,104 @@ pub fn build_msexplore_plot_payload(
     }
 
     build_generic_visibility_scatter(ms, selection, spec)
+}
+
+/// Build a plot payload from a full `msexplore` request.
+pub fn build_msexplore_payload(
+    ms: &MeasurementSet,
+    spec: &MsExploreSpec,
+) -> Result<MsPlotPayload, String> {
+    spec.validate()?;
+    if spec.plots.len() == 1 {
+        return build_msexplore_plot_payload_validated(ms, &spec.selection, &spec.plots[0]);
+    }
+
+    let (gridrows, gridcols) = {
+        let layout = &spec.plots[0].layout;
+        (layout.gridrows, layout.gridcols)
+    };
+    let mut items = Vec::with_capacity(spec.plots.len());
+    for plot in &spec.plots {
+        let payload = build_msexplore_plot_payload_validated(ms, &spec.selection, plot)?;
+        let scatter = match payload {
+            MsPlotPayload::Scatter(payload) => payload,
+            MsPlotPayload::ListObs(_) => {
+                return Err(
+                    "msexplore multi-plot pages currently support raw-visibility scatter plots only"
+                        .to_string(),
+                );
+            }
+            MsPlotPayload::ScatterGrid(_) => {
+                return Err(
+                    "msexplore multi-plot pages do not yet support iterated child grids"
+                        .to_string(),
+                );
+            }
+            MsPlotPayload::ScatterPage(_) => {
+                return Err(
+                    "msexplore multi-plot pages do not yet support nested page payloads"
+                        .to_string(),
+                );
+            }
+        };
+        items.push(MsScatterPageItemPayload {
+            plotindex: plot.layout.plotindex,
+            rowindex: plot.layout.rowindex,
+            colindex: plot.layout.colindex,
+            plot: scatter,
+        });
+    }
+    items.sort_by_key(|item| item.plotindex);
+    let title = spec
+        .page_title
+        .clone()
+        .unwrap_or_else(|| "MeasurementSet Multi-Plot Page".to_string());
+
+    Ok(MsPlotPayload::ScatterPage(MsScatterPagePayload {
+        title,
+        exprange: spec.exprange,
+        gridrows,
+        gridcols,
+        summary: format!(
+            "MeasurementSet multi-plot page. Plots={} Occupied cells={} Grid={}x{} Exprange={}",
+            items.len(),
+            items
+                .iter()
+                .map(|item| (item.rowindex, item.colindex))
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            gridrows,
+            gridcols,
+            spec.exprange
+        ),
+        items,
+    }))
+}
+
+/// Open a MeasurementSet path from a full `msexplore` request and build the
+/// requested plot payload.
+pub fn build_msexplore_payload_from_spec(spec: &MsExploreSpec) -> Result<MsPlotPayload, String> {
+    let ms = MeasurementSet::open(&spec.ms_path).map_err(|error| {
+        if spec.ms_path.is_dir() {
+            format!(
+                "msexplore currently supports MeasurementSets only; failed to open {} as an MS: {error}",
+                spec.ms_path.display()
+            )
+        } else {
+            format!("open MeasurementSet {}: {error}", spec.ms_path.display())
+        }
+    })?;
+    build_msexplore_payload(&ms, spec)
+}
+
+/// Build a generic plot payload from one open MeasurementSet.
+pub fn build_msexplore_plot_payload(
+    ms: &MeasurementSet,
+    selection: &MsSelectionSpec,
+    spec: &MsPlotSpec,
+) -> Result<MsPlotPayload, String> {
+    spec.validate()?;
+    build_msexplore_plot_payload_validated(ms, selection, spec)
 }
 
 /// Open a MeasurementSet path and build the requested plot payload.
@@ -1682,7 +1986,9 @@ pub(crate) fn build_listobs_compat_visibility_payload(
                 summary: payload.summary,
             },
         )),
-        MsPlotPayload::ListObs(_) | MsPlotPayload::ScatterGrid(_) => {
+        MsPlotPayload::ListObs(_)
+        | MsPlotPayload::ScatterGrid(_)
+        | MsPlotPayload::ScatterPage(_) => {
             Err("internal error: raw listobs preset lowered to a metadata payload".to_string())
         }
     }
@@ -1702,6 +2008,9 @@ pub fn render_msexplore_plot_image(
         MsPlotPayload::Scatter(payload) => render_scatter_image(payload, theme, width, height),
         MsPlotPayload::ScatterGrid(payload) => {
             render_scatter_grid_image(payload, theme, width, height)
+        }
+        MsPlotPayload::ScatterPage(payload) => {
+            render_scatter_page_image(payload, theme, width, height)
         }
     }
 }
@@ -1736,7 +2045,8 @@ pub fn export_msexplore_plot(
             "text export is currently available for raw msexplore scatter plots only".to_string(),
         ),
         (MsPlotPayload::Scatter(_), MsExportFormat::Txt)
-        | (MsPlotPayload::ScatterGrid(_), MsExportFormat::Txt) => {
+        | (MsPlotPayload::ScatterGrid(_), MsExportFormat::Txt)
+        | (MsPlotPayload::ScatterPage(_), MsExportFormat::Txt) => {
             std::fs::write(output_path, render_scatter_manifest(payload)?)
                 .map_err(|error| error.to_string())
         }
@@ -1750,12 +2060,21 @@ pub fn export_msexplore_plot(
                 .save_with_format(output_path, ImageFormat::Png)
                 .map_err(|error| error.to_string())
         }
+        (MsPlotPayload::ScatterPage(payload), MsExportFormat::Png) => {
+            render_scatter_page_image(payload, theme, width, height)?
+                .save_with_format(output_path, ImageFormat::Png)
+                .map_err(|error| error.to_string())
+        }
         (MsPlotPayload::Scatter(payload), MsExportFormat::Pdf) => {
             let image = render_scatter_image(payload, theme, width, height)?;
             export_scatter_pdf(&image, output_path, &payload.title)
         }
         (MsPlotPayload::ScatterGrid(payload), MsExportFormat::Pdf) => {
             let image = render_scatter_grid_image(payload, theme, width, height)?;
+            export_scatter_pdf(&image, output_path, &payload.title)
+        }
+        (MsPlotPayload::ScatterPage(payload), MsExportFormat::Pdf) => {
+            let image = render_scatter_page_image(payload, theme, width, height)?;
             export_scatter_pdf(&image, output_path, &payload.title)
         }
     }
@@ -1769,13 +2088,32 @@ fn render_scatter_manifest(payload: &MsPlotPayload) -> Result<String, String> {
             out.push_str(&format!("# title={}\n", payload.title));
             out.push_str(&format!("# x_axis={}\n", payload.x_axis.as_str()));
             out.push_str(&format!("# y_axis={}\n", payload.y_axis.as_str()));
-            out.push_str("series_key\tseries_label\tx\ty\n");
+            if let Some(secondary_y_axis) = payload.secondary_y_axis {
+                out.push_str(&format!(
+                    "# secondary_y_axis={}\n",
+                    secondary_y_axis.as_str()
+                ));
+                out.push_str("series_key\tseries_label\ty_axis\tx\ty\n");
+            } else {
+                out.push_str("series_key\tseries_label\tx\ty\n");
+            }
             for series in &payload.series {
                 for (x, y) in &series.points {
-                    out.push_str(&format!(
-                        "{}\t{}\t{:.12}\t{:.12}\n",
-                        series.color_group, series.label, x, y
-                    ));
+                    if payload.secondary_y_axis.is_some() {
+                        out.push_str(&format!(
+                            "{}\t{}\t{}\t{:.12}\t{:.12}\n",
+                            series.color_group,
+                            series.label,
+                            series.y_axis.as_str(),
+                            x,
+                            y
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "{}\t{}\t{:.12}\t{:.12}\n",
+                            series.color_group, series.label, x, y
+                        ));
+                    }
                 }
             }
             Ok(out)
@@ -1804,6 +2142,37 @@ fn render_scatter_manifest(payload: &MsPlotPayload) -> Result<String, String> {
             }
             Ok(out)
         }
+        MsPlotPayload::ScatterPage(payload) => {
+            let mut out = String::new();
+            out.push_str("# msexplore-manifest-v1\n");
+            out.push_str(&format!("# title={}\n", payload.title));
+            out.push_str(&format!("# exprange={}\n", payload.exprange));
+            out.push_str(&format!("# gridrows={}\n", payload.gridrows));
+            out.push_str(&format!("# gridcols={}\n", payload.gridcols));
+            out.push_str(
+                "plotindex\trowindex\tcolindex\tplot_title\tx_axis\ty_axis\tseries_key\tseries_label\tx\ty\n",
+            );
+            for item in &payload.items {
+                for series in &item.plot.series {
+                    for (x, y) in &series.points {
+                        out.push_str(&format!(
+                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.12}\t{:.12}\n",
+                            item.plotindex,
+                            item.rowindex,
+                            item.colindex,
+                            item.plot.title,
+                            item.plot.x_axis.as_str(),
+                            series.y_axis.as_str(),
+                            series.color_group,
+                            series.label,
+                            x,
+                            y
+                        ));
+                    }
+                }
+            }
+            Ok(out)
+        }
         MsPlotPayload::ListObs(_) => {
             Err("text manifest export requires a scatter payload".to_string())
         }
@@ -1826,10 +2195,14 @@ fn build_generic_visibility_scatter(
     let listobs_options = selection.to_listobs_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
 
-    let needs_visibility_grid =
-        spec.x_axis.is_visibility_math() || spec.y_axis().is_visibility_math();
-    let needs_spectral_coordinates =
-        spec.x_axis.uses_spectral_coordinates() || spec.y_axis().uses_spectral_coordinates();
+    let needs_visibility_grid = spec.x_axis.is_visibility_math()
+        || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
+    let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let data_source = if needs_visibility_grid {
         Some(PreparedDataSource::new(ms, spec.data_column)?)
@@ -1845,16 +2218,25 @@ fn build_generic_visibility_scatter(
     let time = TimeColumn::new(ms.main_table());
     let uvw = UvwColumn::new(ms.main_table());
     let derived_engine = if spec.x_axis.uses_derived_geometry()
-        || spec.y_axis().uses_derived_geometry()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_derived_geometry)
         || (needs_spectral_coordinates && requested_freqframe.is_some())
     {
         Some(MsCalEngine::new(ms).map_err(|error| error.to_string())?)
     } else {
         None
     };
-    let geometry_dedup_required =
-        spec.x_axis.uses_derived_geometry() || spec.y_axis().uses_derived_geometry();
-    let mut geometry_samples_seen = std::collections::BTreeSet::<(String, String, u64, i32)>::new();
+    let geometry_dedup_required = spec.x_axis.uses_derived_geometry()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_derived_geometry);
+    let mut geometry_samples_seen =
+        std::collections::BTreeSet::<(String, String, String, u64, i32)>::new();
     let field_id = main_ids::field_id(ms.main_table());
     let scan_number = main_ids::scan_number(ms.main_table());
     let data_desc_id = main_ids::data_desc_id(ms.main_table());
@@ -1884,11 +2266,20 @@ fn build_generic_visibility_scatter(
     let mut panels = std::collections::BTreeMap::<String, ScatterPanelAccumulator>::new();
     let mut contributing_rows = 0usize;
     let mut contributing_points = 0usize;
-    let include_row_flagged_points = spec.x_axis.uses_flag_rows() || spec.y_axis().uses_flag_rows();
+    let include_row_flagged_points =
+        spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
-        || matches!(spec.y_axis(), MsAxis::WeightSpectrum);
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::WeightSpectrum));
     let needs_sigma_spectrum = matches!(spec.x_axis, MsAxis::SigmaSpectrum)
-        || matches!(spec.y_axis(), MsAxis::SigmaSpectrum);
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
 
     for row in row_numbers {
         let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
@@ -2006,7 +2397,11 @@ fn build_generic_visibility_scatter(
             continue;
         }
         let correlation_required = spec.x_axis.uses_correlation_slots()
-            || spec.y_axis().uses_correlation_slots()
+            || spec
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::uses_correlation_slots)
             || matches!(spec.color_by, MsColorAxis::Correlation)
             || matches!(iteraxis, Some(MsIterationAxis::Correlation));
         let selected_correlations = if correlation_required {
@@ -2060,8 +2455,8 @@ fn build_generic_visibility_scatter(
                         collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
                     })
                     .unwrap_or_default();
-                let Some((x_value, y_value)) = compute_xy_values(
-                    spec,
+                let Some(x_value) = compute_axis_value(
+                    spec.x_axis,
                     row,
                     &samples,
                     &flag_samples,
@@ -2072,6 +2467,7 @@ fn build_generic_visibility_scatter(
                     row_sigma,
                     field_id_value,
                     antenna1_value,
+                    spec.averaging.scalar,
                     bin,
                     spectral_context.as_ref(),
                     &time,
@@ -2101,16 +2497,6 @@ fn build_generic_visibility_scatter(
                     scan_number_value,
                     Some(corr_label),
                 );
-                if geometry_dedup_required {
-                    if !geometry_samples_seen.insert((
-                        panel_key.clone(),
-                        group_key.clone(),
-                        row_time_value.to_bits(),
-                        field_id_value,
-                    )) {
-                        continue;
-                    }
-                }
                 if !panels.contains_key(&panel_key) {
                     panel_order.push(panel_key.clone());
                     panels.insert(
@@ -2124,20 +2510,62 @@ fn build_generic_visibility_scatter(
                 let panel = panels
                     .get_mut(&panel_key)
                     .expect("panel inserted before mutation");
-                panel
-                    .series
-                    .entry(group_key.clone())
-                    .or_insert_with(|| MsScatterSeries {
-                        label: group_label,
-                        color_group: group_key,
-                        points: Vec::new(),
-                    })
-                    .points
-                    .push((x_value, y_value));
-                panel.contributing_points += 1;
-                contributing_points += 1;
-                row_contributed = true;
-                row_panels.insert(panel_key);
+                for y_axis in spec.y_axes.iter().copied() {
+                    let Some(y_value) = compute_axis_value(
+                        y_axis,
+                        row,
+                        &samples,
+                        &flag_samples,
+                        &weight_spectrum_samples,
+                        &sigma_spectrum_samples,
+                        flag_row_value,
+                        row_weight,
+                        row_sigma,
+                        field_id_value,
+                        antenna1_value,
+                        spec.averaging.scalar,
+                        bin,
+                        spectral_context.as_ref(),
+                        &time,
+                        &uvw,
+                        derived_engine.as_ref(),
+                    )?
+                    else {
+                        continue;
+                    };
+                    let (series_key, series_label, color_group) = scatter_series_identity(
+                        y_axis,
+                        spec.y_axes.len() > 1,
+                        &group_key,
+                        &group_label,
+                    );
+                    if geometry_dedup_required
+                        && !geometry_samples_seen.insert((
+                            panel_key.clone(),
+                            series_key.clone(),
+                            y_axis.as_str().to_string(),
+                            row_time_value.to_bits(),
+                            field_id_value,
+                        ))
+                    {
+                        continue;
+                    }
+                    panel
+                        .series
+                        .entry(series_key)
+                        .or_insert_with(|| MsScatterSeries {
+                            label: series_label,
+                            color_group,
+                            y_axis,
+                            points: Vec::new(),
+                        })
+                        .points
+                        .push((x_value, y_value));
+                    panel.contributing_points += 1;
+                    contributing_points += 1;
+                    row_contributed = true;
+                    row_panels.insert(panel_key.clone());
+                }
             }
         }
 
@@ -2182,8 +2610,10 @@ fn build_generic_visibility_scatter(
         .ylabel
         .clone()
         .unwrap_or_else(|| axis_label(spec.y_axis()));
+    let secondary_y_label = spec.secondary_y_axis().map(axis_label);
     let fixed_x_bounds = fixed_bounds(spec.x_axis);
     let fixed_y_bounds = fixed_bounds(spec.y_axis());
+    let secondary_fixed_y_bounds = spec.secondary_y_axis().and_then(fixed_bounds);
     let mut panels = panel_order
         .into_iter()
         .filter_map(|panel_key| {
@@ -2223,6 +2653,9 @@ fn build_generic_visibility_scatter(
             y_label,
             fixed_x_bounds,
             fixed_y_bounds,
+            showlegend: spec.style.showlegend,
+            showmajorgrid: spec.style.showmajorgrid,
+            showminorgrid: spec.style.showminorgrid,
             iteraxis,
             gridrows,
             gridcols,
@@ -2248,10 +2681,16 @@ fn build_generic_visibility_scatter(
         title,
         x_axis: spec.x_axis,
         y_axis: spec.y_axis(),
+        secondary_y_axis: spec.secondary_y_axis(),
         x_label,
         y_label,
+        secondary_y_label,
         fixed_x_bounds,
         fixed_y_bounds,
+        secondary_fixed_y_bounds,
+        showlegend: spec.style.showlegend,
+        showmajorgrid: spec.style.showmajorgrid,
+        showminorgrid: spec.style.showminorgrid,
         summary: format!(
             "{}. Rows={} Points={} Data column={}",
             spec.preset
@@ -2263,6 +2702,105 @@ fn build_generic_visibility_scatter(
         ),
         series: panel.series,
     }))
+}
+
+fn build_stacked_amplitude_phase_time_page(
+    ms: &MeasurementSet,
+    selection: &MsSelectionSpec,
+    spec: &MsPlotSpec,
+) -> Result<MsPlotPayload, String> {
+    if spec.iteration.iteraxis.is_some() {
+        return Err(
+            "msexplore stacked paired presets do not yet support nested iteraxis pages".to_string(),
+        );
+    }
+    if spec.secondary_y_axis().is_some() {
+        return Err(
+            "msexplore stacked paired presets already define their subplot pairing".to_string(),
+        );
+    }
+    if spec.layout.gridrows != 1
+        || spec.layout.gridcols != 1
+        || spec.layout.rowindex != 0
+        || spec.layout.colindex != 0
+        || spec.layout.plotindex != 0
+    {
+        return Err(
+            "msexplore stacked paired presets currently manage their own fixed two-row page layout"
+                .to_string(),
+        );
+    }
+
+    let page_title = spec.style.title.clone().unwrap_or_else(|| {
+        MsPlotPreset::AmplitudePhaseVsTimeStacked
+            .display_name()
+            .to_string()
+    });
+    let amplitude = build_stacked_page_child(
+        ms,
+        selection,
+        spec,
+        MsPlotPreset::AmplitudeVsTime,
+        MsAxis::Amplitude,
+        "Amplitude vs Time",
+    )?;
+    let phase = build_stacked_page_child(
+        ms,
+        selection,
+        spec,
+        MsPlotPreset::PhaseVsTime,
+        MsAxis::Phase,
+        "Phase vs Time",
+    )?;
+
+    Ok(MsPlotPayload::ScatterPage(MsScatterPagePayload {
+        title: page_title,
+        exprange: MsPageExportRange::Current,
+        gridrows: 2,
+        gridcols: 1,
+        summary: format!(
+            "{}. Plots=2 Data column={}",
+            MsPlotPreset::AmplitudePhaseVsTimeStacked.display_name(),
+            spec.data_column
+        ),
+        items: vec![
+            MsScatterPageItemPayload {
+                plotindex: 0,
+                rowindex: 0,
+                colindex: 0,
+                plot: amplitude,
+            },
+            MsScatterPageItemPayload {
+                plotindex: 1,
+                rowindex: 1,
+                colindex: 0,
+                plot: phase,
+            },
+        ],
+    }))
+}
+
+fn build_stacked_page_child(
+    ms: &MeasurementSet,
+    selection: &MsSelectionSpec,
+    spec: &MsPlotSpec,
+    preset: MsPlotPreset,
+    y_axis: MsAxis,
+    title: &str,
+) -> Result<MsScatterPlotPayload, String> {
+    let mut child = MsPlotSpec::from_preset(preset);
+    child.data_column = spec.data_column;
+    child.color_by = spec.color_by;
+    child.averaging = spec.averaging.clone();
+    child.transforms = spec.transforms.clone();
+    child.style = spec.style.clone();
+    child.style.title = Some(title.to_string());
+    child.style.ylabel = None;
+    child.y_axes = vec![y_axis];
+    match build_generic_visibility_scatter(ms, selection, &child)? {
+        MsPlotPayload::Scatter(payload) => Ok(payload),
+        _ => Err("internal error: stacked subplot lowered to a non-scatter payload".to_string()),
+    }
 }
 
 fn resolve_selected_rows_with_msselect(
@@ -2341,7 +2879,8 @@ fn channel_bins(chan_count: usize, avgchannel: Option<usize>) -> Result<Vec<Chan
 }
 
 fn plot_channel_bins(chan_count: usize, spec: &MsPlotSpec) -> Result<Vec<ChannelBin>, String> {
-    if spec.x_axis.uses_channel_bins() || spec.y_axis().uses_channel_bins() {
+    if spec.x_axis.uses_channel_bins() || spec.y_axes.iter().copied().any(MsAxis::uses_channel_bins)
+    {
         channel_bins(chan_count, spec.averaging.avgchannel)
     } else if chan_count == 0 {
         Ok(Vec::new())
@@ -2484,8 +3023,12 @@ fn resolve_spectral_context(
     spectral_window: &crate::subtables::MsSpectralWindow<'_>,
     derived_engine: Option<&MsCalEngine>,
 ) -> Result<Option<SpectralContext>, String> {
-    let needs_spectral_coordinates =
-        spec.x_axis.uses_spectral_coordinates() || spec.y_axis().uses_spectral_coordinates();
+    let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_spectral_coordinates);
     if !needs_spectral_coordinates {
         return Ok(None);
     }
@@ -2553,68 +3096,6 @@ fn resolve_spectral_context(
         rest_frequency_hz,
         doppler_ref,
     }))
-}
-
-fn compute_xy_values(
-    spec: &MsPlotSpec,
-    row: usize,
-    samples: &[Complex64],
-    flag_samples: &[bool],
-    weight_spectrum_samples: &[f64],
-    sigma_spectrum_samples: &[f64],
-    flag_row_value: bool,
-    row_weight: f64,
-    row_sigma: f64,
-    field_id_value: i32,
-    antenna1_value: i32,
-    channel_bin: &ChannelBin,
-    spectral_context: Option<&SpectralContext>,
-    time: &TimeColumn<'_>,
-    uvw: &UvwColumn<'_>,
-    geometry_engine: Option<&MsCalEngine>,
-) -> Result<Option<(f64, f64)>, String> {
-    let x_value = compute_axis_value(
-        spec.x_axis,
-        row,
-        samples,
-        flag_samples,
-        weight_spectrum_samples,
-        sigma_spectrum_samples,
-        flag_row_value,
-        row_weight,
-        row_sigma,
-        field_id_value,
-        antenna1_value,
-        spec.averaging.scalar,
-        channel_bin,
-        spectral_context,
-        time,
-        uvw,
-        geometry_engine,
-    )?;
-    let y_value = compute_axis_value(
-        spec.y_axis(),
-        row,
-        samples,
-        flag_samples,
-        weight_spectrum_samples,
-        sigma_spectrum_samples,
-        flag_row_value,
-        row_weight,
-        row_sigma,
-        field_id_value,
-        antenna1_value,
-        spec.averaging.scalar,
-        channel_bin,
-        spectral_context,
-        time,
-        uvw,
-        geometry_engine,
-    )?;
-    Ok(match (x_value, y_value) {
-        (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Some((x, y)),
-        _ => None,
-    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3016,6 +3497,28 @@ fn iteration_group(
     }
 }
 
+fn scatter_series_identity(
+    y_axis: MsAxis,
+    multi_y: bool,
+    base_key: &str,
+    base_label: &str,
+) -> (String, String, String) {
+    if !multi_y {
+        return (
+            base_key.to_string(),
+            base_label.to_string(),
+            base_key.to_string(),
+        );
+    }
+    let series_key = format!("{}::{base_key}", y_axis.as_str());
+    let series_label = if base_key == "all" {
+        y_axis.display_name().to_string()
+    } else {
+        format!("{} · {base_label}", y_axis.display_name())
+    };
+    (series_key.clone(), series_label, series_key)
+}
+
 fn resolve_iterated_grid(
     panel_count: usize,
     requested_rows: usize,
@@ -3337,14 +3840,20 @@ fn render_scatter_image(
         &root,
         payload.x_axis,
         payload.y_axis,
+        payload.secondary_y_axis,
         &payload.x_label,
         &payload.y_label,
+        payload.secondary_y_label.as_deref(),
         payload.fixed_x_bounds,
         payload.fixed_y_bounds,
+        payload.secondary_fixed_y_bounds,
         &payload.series,
         None,
         theme,
         style,
+        payload.showlegend,
+        payload.showmajorgrid,
+        payload.showminorgrid,
         None,
     )?;
     root.present().map_err(|error| error.to_string())?;
@@ -3430,14 +3939,221 @@ fn render_scatter_grid_image(
             area,
             payload.x_axis,
             payload.y_axis,
+            None,
             &payload.x_label,
             &payload.y_label,
+            None,
             payload.fixed_x_bounds,
             payload.fixed_y_bounds,
+            None,
             &panel.series,
             Some(&panel.label),
             theme,
             style,
+            payload.showlegend,
+            payload.showmajorgrid,
+            payload.showminorgrid,
+            resolved_bounds,
+        )?;
+    }
+    root.present().map_err(|error| error.to_string())?;
+    drop(areas);
+    drop(titled);
+    drop(root);
+    let image = RgbImage::from_raw(width, height, buffer)
+        .ok_or_else(|| "failed to assemble rendered plot image".to_string())?;
+    Ok(DynamicImage::ImageRgb8(image))
+}
+
+#[derive(Debug, Clone)]
+struct ScatterPageCellRender {
+    rowindex: usize,
+    colindex: usize,
+    x_axis: MsAxis,
+    y_axis: MsAxis,
+    secondary_y_axis: Option<MsAxis>,
+    x_label: String,
+    y_label: String,
+    secondary_y_label: Option<String>,
+    fixed_x_bounds: Option<(f64, f64)>,
+    fixed_y_bounds: Option<(f64, f64)>,
+    secondary_fixed_y_bounds: Option<(f64, f64)>,
+    showlegend: bool,
+    showmajorgrid: bool,
+    showminorgrid: bool,
+    title: String,
+    series: Vec<MsScatterSeries>,
+}
+
+fn resolve_scatter_page_cells(
+    payload: &MsScatterPagePayload,
+) -> Result<Vec<ScatterPageCellRender>, String> {
+    let mut cells =
+        std::collections::BTreeMap::<(usize, usize), Vec<&MsScatterPageItemPayload>>::new();
+    for item in &payload.items {
+        cells
+            .entry((item.rowindex, item.colindex))
+            .or_default()
+            .push(item);
+    }
+
+    let mut resolved = Vec::with_capacity(cells.len());
+    for ((rowindex, colindex), mut items) in cells {
+        items.sort_by_key(|item| item.plotindex);
+        let first = &items[0].plot;
+        for item in items.iter().skip(1) {
+            if item.plot.x_axis != first.x_axis
+                || item.plot.y_axis != first.y_axis
+                || item.plot.secondary_y_axis != first.secondary_y_axis
+            {
+                return Err(format!(
+                    "scatter page cell ({rowindex}, {colindex}) mixes incompatible axes; overplots currently require matching x/y axis configurations"
+                ));
+            }
+            if item.plot.fixed_x_bounds != first.fixed_x_bounds
+                || item.plot.fixed_y_bounds != first.fixed_y_bounds
+                || item.plot.secondary_fixed_y_bounds != first.secondary_fixed_y_bounds
+            {
+                return Err(format!(
+                    "scatter page cell ({rowindex}, {colindex}) mixes incompatible fixed axis bounds"
+                ));
+            }
+        }
+
+        let overplotted = items.len() > 1;
+        let mut title_parts = Vec::<String>::new();
+        let mut series = Vec::<MsScatterSeries>::new();
+        let showlegend = items.iter().any(|item| item.plot.showlegend);
+        let showmajorgrid = items.iter().any(|item| item.plot.showmajorgrid);
+        let showminorgrid = items.iter().any(|item| item.plot.showminorgrid);
+
+        for item in items {
+            let item_title = if item.plot.title.trim().is_empty() {
+                format!("Plot {}", item.plotindex)
+            } else {
+                item.plot.title.clone()
+            };
+            if !title_parts.iter().any(|part| part == &item_title) {
+                title_parts.push(item_title.clone());
+            }
+            for child_series in &item.plot.series {
+                let (label, color_group) = if overplotted {
+                    (
+                        format!("{} · {}", item_title, child_series.label),
+                        format!(
+                            "plot{}::{}::{}",
+                            item.plotindex, item_title, child_series.color_group
+                        ),
+                    )
+                } else {
+                    (child_series.label.clone(), child_series.color_group.clone())
+                };
+                series.push(MsScatterSeries {
+                    label,
+                    color_group,
+                    y_axis: child_series.y_axis,
+                    points: child_series.points.clone(),
+                });
+            }
+        }
+
+        resolved.push(ScatterPageCellRender {
+            rowindex,
+            colindex,
+            x_axis: first.x_axis,
+            y_axis: first.y_axis,
+            secondary_y_axis: first.secondary_y_axis,
+            x_label: first.x_label.clone(),
+            y_label: first.y_label.clone(),
+            secondary_y_label: first.secondary_y_label.clone(),
+            fixed_x_bounds: first.fixed_x_bounds,
+            fixed_y_bounds: first.fixed_y_bounds,
+            secondary_fixed_y_bounds: first.secondary_fixed_y_bounds,
+            showlegend,
+            showmajorgrid,
+            showminorgrid,
+            title: title_parts.join(", "),
+            series,
+        });
+    }
+    resolved.sort_by_key(|cell| (cell.rowindex, cell.colindex));
+    Ok(resolved)
+}
+
+fn render_scatter_page_image(
+    payload: &MsScatterPagePayload,
+    theme: ListObsPlotTheme,
+    width: u32,
+    height: u32,
+) -> Result<DynamicImage, String> {
+    if width == 0 || height == 0 {
+        return Err("plot size must be non-zero".to_string());
+    }
+    let style = ListObsPlotRenderStyle::for_bitmap_size(width, height);
+    let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
+    let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
+    let root = backend.into_drawing_area();
+    root.fill(&rgb(theme.background))
+        .map_err(|error| error.to_string())?;
+    let titled = root
+        .titled(
+            &payload.title,
+            ("sans-serif", style.axis_desc_font_px().saturating_add(2))
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
+        .map_err(|error| error.to_string())?;
+    let areas = titled.split_evenly((payload.gridrows, payload.gridcols));
+    let cells = resolve_scatter_page_cells(payload)?;
+    let global_bounds = if payload.exprange == MsPageExportRange::All {
+        Some(scatter_bounds(
+            cells.iter().flat_map(|cell| {
+                cell.series
+                    .iter()
+                    .flat_map(|series| series.points.iter().copied())
+            }),
+            None,
+            None,
+        )?)
+    } else {
+        None
+    };
+    for cell in &cells {
+        if cell.rowindex >= payload.gridrows || cell.colindex >= payload.gridcols {
+            return Err(format!(
+                "scatter page cell ({}, {}) is placed outside the {}x{} page grid",
+                cell.rowindex, cell.colindex, payload.gridrows, payload.gridcols
+            ));
+        }
+        let area_index = cell.rowindex * payload.gridcols + cell.colindex;
+        let area = areas.get(area_index).ok_or_else(|| {
+            format!(
+                "scatter page cell ({}, {}) could not resolve drawing area {}",
+                cell.rowindex, cell.colindex, area_index
+            )
+        })?;
+        let resolved_bounds = match global_bounds {
+            Some((min_x, max_x, min_y, max_y)) => Some((min_x, max_x, min_y, max_y)),
+            None => None,
+        };
+        render_scatter_panel(
+            area,
+            cell.x_axis,
+            cell.y_axis,
+            cell.secondary_y_axis,
+            &cell.x_label,
+            &cell.y_label,
+            cell.secondary_y_label.as_deref(),
+            cell.fixed_x_bounds,
+            cell.fixed_y_bounds,
+            cell.secondary_fixed_y_bounds,
+            &cell.series,
+            Some(&cell.title),
+            theme,
+            style,
+            cell.showlegend,
+            cell.showmajorgrid,
+            cell.showminorgrid,
             resolved_bounds,
         )?;
     }
@@ -3487,17 +4203,212 @@ fn export_scatter_pdf(image: &DynamicImage, output_path: &Path, title: &str) -> 
 fn render_scatter_panel(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     x_axis: MsAxis,
-    _y_axis: MsAxis,
+    y_axis: MsAxis,
+    secondary_y_axis: Option<MsAxis>,
     x_label: &str,
     y_label: &str,
+    secondary_y_label: Option<&str>,
     fixed_x_bounds: Option<(f64, f64)>,
     fixed_y_bounds: Option<(f64, f64)>,
+    secondary_fixed_y_bounds: Option<(f64, f64)>,
     series: &[MsScatterSeries],
     panel_title: Option<&str>,
     theme: ListObsPlotTheme,
     style: ListObsPlotRenderStyle,
+    showlegend: bool,
+    showmajorgrid: bool,
+    showminorgrid: bool,
     bounds_override: Option<(f64, f64, f64, f64)>,
 ) -> Result<(), String> {
+    let mut chart_builder = ChartBuilder::on(root);
+    chart_builder
+        .margin(style.margin_px())
+        .x_label_area_size(style.label_area_px())
+        .y_label_area_size(style.wide_y_label_area_px());
+    if secondary_y_axis.is_some() {
+        chart_builder.right_y_label_area_size(style.wide_y_label_area_px());
+    }
+    if let Some(panel_title) = panel_title {
+        chart_builder.caption(panel_title, ("sans-serif", style.axis_desc_font_px()));
+    }
+    let point_radius = style.point_radius_px().saturating_sub(1).max(3);
+    if let Some(secondary_y_axis) = secondary_y_axis {
+        let primary_axis_label_color =
+            scatter_axis_color(y_axis, y_axis, Some(secondary_y_axis), theme);
+        let secondary_axis_label_color =
+            scatter_axis_color(secondary_y_axis, y_axis, Some(secondary_y_axis), theme);
+        let primary_series = series
+            .iter()
+            .filter(|series| series.y_axis == y_axis)
+            .collect::<Vec<_>>();
+        let secondary_series = series
+            .iter()
+            .filter(|series| series.y_axis == secondary_y_axis)
+            .collect::<Vec<_>>();
+        let (min_x, max_x) = axis_bounds(
+            series
+                .iter()
+                .flat_map(|series| series.points.iter().map(|(x, _)| *x)),
+            fixed_x_bounds,
+        )?;
+        let (min_y, max_y) = axis_bounds(
+            primary_series
+                .iter()
+                .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
+            fixed_y_bounds,
+        )?;
+        let (secondary_min_y, secondary_max_y) = axis_bounds(
+            secondary_series
+                .iter()
+                .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
+            secondary_fixed_y_bounds,
+        )?;
+        let x_offset = if x_axis == MsAxis::Time {
+            scan_timeline_axis_offset(min_x, max_x)
+        } else {
+            0.0
+        };
+        let rendered_x_label = if x_offset == 0.0 {
+            x_label.to_string()
+        } else {
+            format!("Time (MJD seconds - {:.0})", x_offset)
+        };
+        let x_span = (max_x - min_x).abs();
+        let y_span = (max_y - min_y).abs();
+        let secondary_y_span = (secondary_max_y - secondary_min_y).abs();
+        let x_range = (min_x - x_offset)..(max_x - x_offset);
+        let x_label_formatter = |value: &f64| format_numeric_tick(*value, x_span);
+        let y_label_formatter = |value: &f64| format_numeric_tick(*value, y_span);
+        let secondary_y_label_formatter =
+            |value: &f64| format_numeric_tick(*value, secondary_y_span);
+
+        let mut chart = chart_builder
+            .build_cartesian_2d(x_range.clone(), min_y..max_y)
+            .map_err(|error| error.to_string())?
+            .set_secondary_coord(x_range, secondary_min_y..secondary_max_y);
+
+        let mut mesh = chart.configure_mesh();
+        mesh.x_desc(&rendered_x_label)
+            .y_desc(y_label)
+            .axis_desc_style(
+                ("sans-serif", style.axis_desc_font_px())
+                    .into_font()
+                    .color(&rgb(theme.axis)),
+            )
+            .axis_style(rgb(theme.axis))
+            .x_label_style(
+                ("sans-serif", style.axis_label_font_px())
+                    .into_font()
+                    .color(&rgb(theme.label)),
+            )
+            .y_label_style(
+                ("sans-serif", style.axis_label_font_px())
+                    .into_font()
+                    .color(&primary_axis_label_color),
+            )
+            .x_labels(6)
+            .y_labels(6)
+            .x_label_formatter(&x_label_formatter)
+            .y_label_formatter(&y_label_formatter);
+        if !showmajorgrid && !showminorgrid {
+            mesh.disable_mesh();
+        } else {
+            mesh.bold_line_style(if showmajorgrid {
+                ShapeStyle::from(&rgb(theme.grid))
+            } else {
+                ShapeStyle::from(&TRANSPARENT)
+            })
+            .light_line_style(if showminorgrid {
+                rgb(theme.grid).mix(0.55)
+            } else {
+                TRANSPARENT
+            });
+        }
+        mesh.draw().map_err(|error| error.to_string())?;
+
+        let mut secondary_axes = chart.configure_secondary_axes();
+        secondary_axes
+            .y_desc(secondary_y_label.unwrap_or_else(|| secondary_y_axis.display_name()))
+            .axis_desc_style(
+                ("sans-serif", style.axis_desc_font_px())
+                    .into_font()
+                    .color(&secondary_axis_label_color),
+            )
+            .axis_style(secondary_axis_label_color)
+            .label_style(
+                ("sans-serif", style.axis_label_font_px())
+                    .into_font()
+                    .color(&secondary_axis_label_color),
+            )
+            .y_label_formatter(&secondary_y_label_formatter)
+            .draw()
+            .map_err(|error| error.to_string())?;
+
+        for series in secondary_series {
+            let render_style = scatter_series_style(series, y_axis, Some(secondary_y_axis), theme);
+            let drawn = chart
+                .draw_secondary_series(PointSeries::of_element(
+                    series
+                        .points
+                        .iter()
+                        .map(|(x, y)| (*x - x_offset, *y))
+                        .collect::<Vec<_>>(),
+                    point_radius,
+                    render_style.shape_style(),
+                    &|coord, size, draw_style| {
+                        EmptyElement::at(coord)
+                            + Rectangle::new([(-size, -size), (size, size)], draw_style)
+                    },
+                ))
+                .map_err(|error| error.to_string())?;
+            if showlegend {
+                let legend_color = render_style.color;
+                drawn.label(series.label.clone()).legend(move |(x, y)| {
+                    Rectangle::new(
+                        [
+                            (x - point_radius, y - point_radius),
+                            (x + point_radius, y + point_radius),
+                        ],
+                        ShapeStyle::from(&legend_color).stroke_width(2),
+                    )
+                });
+            }
+        }
+        for series in primary_series {
+            let render_style = scatter_series_style(series, y_axis, Some(secondary_y_axis), theme);
+            let drawn = chart
+                .draw_series(PointSeries::of_element(
+                    series
+                        .points
+                        .iter()
+                        .map(|(x, y)| (*x - x_offset, *y))
+                        .collect::<Vec<_>>(),
+                    point_radius,
+                    render_style.shape_style(),
+                    &|coord, size, draw_style| {
+                        EmptyElement::at(coord) + Circle::new((0, 0), size, draw_style)
+                    },
+                ))
+                .map_err(|error| error.to_string())?;
+            if showlegend {
+                let legend_color = render_style.color;
+                drawn
+                    .label(series.label.clone())
+                    .legend(move |(x, y)| Circle::new((x, y), point_radius, legend_color.filled()));
+            }
+        }
+        if showlegend && series.len() > 1 {
+            chart
+                .configure_series_labels()
+                .background_style(rgb(theme.background).mix(0.92))
+                .border_style(rgb(theme.axis))
+                .label_font(("sans-serif", style.axis_label_font_px()))
+                .draw()
+                .map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+
     let (min_x, max_x, min_y, max_y) = match bounds_override {
         Some(bounds) => bounds,
         None => scatter_bounds(
@@ -3508,34 +4419,26 @@ fn render_scatter_panel(
             fixed_y_bounds,
         )?,
     };
-
     let x_offset = if x_axis == MsAxis::Time {
         scan_timeline_axis_offset(min_x, max_x)
     } else {
         0.0
     };
-    let x_label = if x_offset == 0.0 {
+    let rendered_x_label = if x_offset == 0.0 {
         x_label.to_string()
     } else {
         format!("Time (MJD seconds - {:.0})", x_offset)
     };
     let x_span = (max_x - min_x).abs();
     let y_span = (max_y - min_y).abs();
+    let x_label_formatter = |value: &f64| format_numeric_tick(*value, x_span);
+    let y_label_formatter = |value: &f64| format_numeric_tick(*value, y_span);
 
-    let mut chart_builder = ChartBuilder::on(root);
-    chart_builder
-        .margin(style.margin_px())
-        .x_label_area_size(style.label_area_px())
-        .y_label_area_size(style.wide_y_label_area_px());
-    if let Some(panel_title) = panel_title {
-        chart_builder.caption(panel_title, ("sans-serif", style.axis_desc_font_px()));
-    }
     let mut chart = chart_builder
         .build_cartesian_2d((min_x - x_offset)..(max_x - x_offset), min_y..max_y)
         .map_err(|error| error.to_string())?;
-    chart
-        .configure_mesh()
-        .x_desc(&x_label)
+    let mut mesh = chart.configure_mesh();
+    mesh.x_desc(&rendered_x_label)
         .y_desc(y_label)
         .axis_desc_style(
             ("sans-serif", style.axis_desc_font_px())
@@ -3548,19 +4451,29 @@ fn render_scatter_panel(
                 .into_font()
                 .color(&rgb(theme.label)),
         )
-        .light_line_style(rgb(theme.grid).mix(0.55))
-        .bold_line_style(rgb(theme.grid))
         .x_labels(6)
         .y_labels(6)
-        .x_label_formatter(&|value| format_numeric_tick(*value, x_span))
-        .y_label_formatter(&|value| format_numeric_tick(*value, y_span))
-        .draw()
-        .map_err(|error| error.to_string())?;
+        .x_label_formatter(&x_label_formatter)
+        .y_label_formatter(&y_label_formatter);
+    if !showmajorgrid && !showminorgrid {
+        mesh.disable_mesh();
+    } else {
+        mesh.bold_line_style(if showmajorgrid {
+            ShapeStyle::from(&rgb(theme.grid))
+        } else {
+            ShapeStyle::from(&TRANSPARENT)
+        })
+        .light_line_style(if showminorgrid {
+            rgb(theme.grid).mix(0.55)
+        } else {
+            TRANSPARENT
+        });
+    }
+    mesh.draw().map_err(|error| error.to_string())?;
 
-    let point_radius = style.point_radius_px().saturating_sub(1).max(3);
     for series in series {
-        let color = palette_color(&series.color_group, theme);
-        chart
+        let render_style = scatter_series_style(series, y_axis, None, theme);
+        let drawn = chart
             .draw_series(PointSeries::of_element(
                 series
                     .points
@@ -3568,14 +4481,28 @@ fn render_scatter_panel(
                     .map(|(x, y)| (*x - x_offset, *y))
                     .collect::<Vec<_>>(),
                 point_radius,
-                color.filled(),
+                render_style.shape_style(),
                 &|coord, size, draw_style| {
                     EmptyElement::at(coord) + Circle::new((0, 0), size, draw_style)
                 },
             ))
             .map_err(|error| error.to_string())?;
+        if showlegend {
+            let legend_color = render_style.color;
+            drawn
+                .label(series.label.clone())
+                .legend(move |(x, y)| Circle::new((x, y), point_radius, legend_color.filled()));
+        }
     }
-
+    if showlegend && series.len() > 1 {
+        chart
+            .configure_series_labels()
+            .background_style(rgb(theme.background).mix(0.92))
+            .border_style(rgb(theme.axis))
+            .label_font(("sans-serif", style.axis_label_font_px()))
+            .draw()
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -3602,6 +4529,25 @@ where
         (min_y, max_y) = padded_range(min_y, max_y);
     }
     Ok((min_x, max_x, min_y, max_y))
+}
+
+fn axis_bounds<I>(values: I, fixed_bounds: Option<(f64, f64)>) -> Result<(f64, f64), String>
+where
+    I: IntoIterator<Item = f64>,
+{
+    let mut iter = values.into_iter().filter(|value| value.is_finite());
+    let first = iter
+        .next()
+        .ok_or_else(|| "scatter plot has no finite points".to_string())?;
+    let (mut min_value, mut max_value) = (first, first);
+    for value in iter {
+        min_value = min_value.min(value);
+        max_value = max_value.max(value);
+    }
+    Ok(match fixed_bounds {
+        Some(bounds) => bounds,
+        None => padded_range(min_value, max_value),
+    })
 }
 
 fn bounds<I>(points: I) -> Option<(f64, f64, f64, f64)>
@@ -3652,19 +4598,110 @@ fn format_numeric_tick(value: f64, span: f64) -> String {
     format!("{value:.decimals$}")
 }
 
-fn palette_color(group: &str, theme: ListObsPlotTheme) -> RGBColor {
+fn palette_color_with_offset(group: &str, theme: ListObsPlotTheme, offset: usize) -> RGBColor {
     if group == "all" {
-        return rgb(theme.accents[0]);
+        return rgb(theme.accents[offset % theme.accents.len()]);
     }
     let mut hash = 0u64;
     for byte in group.as_bytes() {
         hash = hash.wrapping_mul(109).wrapping_add(u64::from(*byte));
     }
-    rgb(theme.accents[(hash as usize) % theme.accents.len()])
+    rgb(theme.accents[((hash as usize) + offset) % theme.accents.len()])
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScatterMarker {
+    FilledCircle,
+    HollowSquare,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScatterSeriesRenderStyle {
+    color: RGBColor,
+    marker: ScatterMarker,
+}
+
+impl ScatterSeriesRenderStyle {
+    fn shape_style(self) -> ShapeStyle {
+        match self.marker {
+            ScatterMarker::FilledCircle => self.color.filled(),
+            ScatterMarker::HollowSquare => ShapeStyle::from(&self.color).stroke_width(2),
+        }
+    }
+}
+
+fn scatter_axis_color(
+    axis: MsAxis,
+    primary_y_axis: MsAxis,
+    secondary_y_axis: Option<MsAxis>,
+    theme: ListObsPlotTheme,
+) -> RGBColor {
+    let offset =
+        if secondary_y_axis.is_some_and(|secondary| axis == secondary && axis != primary_y_axis) {
+            1
+        } else {
+            0
+        };
+    palette_color_with_offset("all", theme, offset)
+}
+
+fn scatter_series_style(
+    series: &MsScatterSeries,
+    primary_y_axis: MsAxis,
+    secondary_y_axis: Option<MsAxis>,
+    theme: ListObsPlotTheme,
+) -> ScatterSeriesRenderStyle {
+    let offset = if secondary_y_axis
+        .is_some_and(|secondary| series.y_axis == secondary && secondary != primary_y_axis)
+    {
+        1
+    } else {
+        0
+    };
+    let marker = if offset == 0 {
+        ScatterMarker::FilledCircle
+    } else {
+        ScatterMarker::HollowSquare
+    };
+    ScatterSeriesRenderStyle {
+        color: palette_color_with_offset(&series.color_group, theme, offset),
+        marker,
+    }
 }
 
 fn rgb(color: [u8; 3]) -> RGBColor {
     RGBColor(color[0], color[1], color[2])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dual_axis_series_styles_use_distinct_markers_and_colors() {
+        let theme = ListObsPlotTheme::light();
+        let primary = MsScatterSeries {
+            label: "Amplitude".to_string(),
+            color_group: "all".to_string(),
+            y_axis: MsAxis::Amplitude,
+            points: vec![(0.0, 1.0)],
+        };
+        let secondary = MsScatterSeries {
+            label: "Phase".to_string(),
+            color_group: "all".to_string(),
+            y_axis: MsAxis::Phase,
+            points: vec![(0.0, 2.0)],
+        };
+
+        let primary_style =
+            scatter_series_style(&primary, MsAxis::Amplitude, Some(MsAxis::Phase), theme);
+        let secondary_style =
+            scatter_series_style(&secondary, MsAxis::Amplitude, Some(MsAxis::Phase), theme);
+
+        assert_eq!(primary_style.marker, ScatterMarker::FilledCircle);
+        assert_eq!(secondary_style.marker, ScatterMarker::HollowSquare);
+        assert_ne!(primary_style.color, secondary_style.color);
+    }
 }
 
 impl ListObsPlotRenderStyle {

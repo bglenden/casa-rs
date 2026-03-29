@@ -31,6 +31,7 @@ render_case() {
   shift 5
 
   local -a casa_kwargs=()
+  local -a casa_expr_kwargs=()
   local -a rust_args=()
   local mode="casa"
   for token in "$@"; do
@@ -40,7 +41,11 @@ render_case() {
         ;;
       *)
         if [[ "$mode" == "casa" ]]; then
-          casa_kwargs+=("$token")
+          if [[ "$token" == expr:* ]]; then
+            casa_expr_kwargs+=("${token#expr:}")
+          else
+            casa_kwargs+=("$token")
+          fi
         else
           rust_args+=("$token")
         fi
@@ -62,6 +67,11 @@ render_case() {
   for kw in "${casa_kwargs[@]}"; do
     cmd+=(--casa-kw "$kw")
   done
+  if ((${#casa_expr_kwargs[@]})); then
+    for kw in "${casa_expr_kwargs[@]}"; do
+      cmd+=(--casa-expr-kw "$kw")
+    done
+  fi
   cmd+=(--)
   cmd+=("${rust_args[@]}")
 
@@ -77,6 +87,30 @@ common_selection=(
 
 render_case "amplitude-vs-time" "time" "amp" "casa-rs amplitude vs time" "CASA plotms amplitude vs time" \
   "${common_selection[@]}" --RUST-- --preset amplitude_vs_time --field 0 --spw 0 --scan 1
+render_case "amplitude-phase-vs-time" "time" "amp" "casa-rs amplitude and phase vs time" "CASA plotms amplitude and phase vs time" \
+  "${common_selection[@]}" "expr:yaxis=['amp','phase']" "expr:yaxislocation=['left','right']" "expr:showlegend=True" \
+  --RUST-- --xaxis time --yaxis amplitude --yaxis2 phase --showlegend --field 0 --spw 0 --scan 1
+echo "==> amplitude-phase-vs-time-stacked"
+"$repo_root/scripts/render-msexplore-stacked-side-by-side.sh" \
+  --ms "$ms_path" \
+  --output "$output_dir/amplitude-phase-vs-time-stacked.png" \
+  --field 0 \
+  --spw 0 \
+  --scan 1
+echo "==> amplitude-phase-vs-time-page"
+"$repo_root/scripts/render-msexplore-page-side-by-side.sh" \
+  --ms "$ms_path" \
+  --output "$output_dir/amplitude-phase-vs-time-page.png" \
+  --field 0 \
+  --spw 0 \
+  --scan 1
+echo "==> amplitude-overplot"
+"$repo_root/scripts/render-msexplore-overplot-side-by-side.sh" \
+  --ms "$ms_path" \
+  --output "$output_dir/amplitude-overplot.png" \
+  --field 0 \
+  --spw 0 \
+  --scan 1
 render_case "phase-vs-time" "time" "phase" "casa-rs phase vs time" "CASA plotms phase vs time" \
   "${common_selection[@]}" --RUST-- --preset phase_vs_time --field 0 --spw 0 --scan 1
 render_case "amplitude-vs-uvdist" "uvdist" "amp" "casa-rs amplitude vs uvdist" "CASA plotms amplitude vs uvdist" \

@@ -5,9 +5,12 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
+use serde::Deserialize;
+
 use super::{
-    MsAxis, MsColorAxis, MsDataColumn, MsExportFormat, MsIterationAxis, MsPlotPreset, MsPlotSpec,
-    MsPlotStyleSpec, MsSelectionSpec, build_msexplore_plot_payload, export_msexplore_plot,
+    MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsIterationAxis,
+    MsPageExportRange, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec,
+    build_msexplore_payload, export_msexplore_plot,
 };
 use crate::MeasurementSet;
 use crate::listobs::cli::{
@@ -36,9 +39,11 @@ struct CliOptions {
     summary_output: Option<PathBuf>,
     overwrite: bool,
     selection: MsSelectionSpec,
+    page_spec: Option<PathBuf>,
     preset: Option<MsPlotPreset>,
     x_axis: Option<MsAxis>,
     y_axis: Option<MsAxis>,
+    y_axis2: Option<MsAxis>,
     data_column: MsDataColumn,
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
@@ -63,6 +68,67 @@ struct CliOptions {
     plot_format: MsExportFormat,
     plot_width: u32,
     plot_height: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct CliPageSpecFile {
+    #[serde(default = "one")]
+    gridrows: usize,
+    #[serde(default = "one")]
+    gridcols: usize,
+    #[serde(default)]
+    page_title: Option<String>,
+    #[serde(default)]
+    exprange: MsPageExportRange,
+    plots: Vec<CliPagePlotSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CliPagePlotSpec {
+    #[serde(default)]
+    preset: Option<MsPlotPreset>,
+    #[serde(default)]
+    x_axis: Option<MsAxis>,
+    #[serde(default)]
+    y_axis: Option<MsAxis>,
+    #[serde(default)]
+    y_axis2: Option<MsAxis>,
+    #[serde(default)]
+    data_column: Option<MsDataColumn>,
+    #[serde(default)]
+    color_by: Option<MsColorAxis>,
+    #[serde(default)]
+    avgchannel: Option<usize>,
+    #[serde(default)]
+    scalar: bool,
+    #[serde(default)]
+    freqframe: Option<String>,
+    #[serde(default)]
+    restfreq: Option<String>,
+    #[serde(default)]
+    veldef: Option<String>,
+    #[serde(default)]
+    rowindex: usize,
+    #[serde(default)]
+    colindex: usize,
+    #[serde(default)]
+    plotindex: usize,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    xlabel: Option<String>,
+    #[serde(default)]
+    ylabel: Option<String>,
+    #[serde(default)]
+    showlegend: bool,
+    #[serde(default)]
+    showmajorgrid: bool,
+    #[serde(default)]
+    showminorgrid: bool,
+}
+
+const fn one() -> usize {
+    1
 }
 
 /// Parse environment arguments, run `msexplore`, and return a process exit code.
@@ -339,6 +405,20 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false,
             ),
             option_argument(
+                "page_spec",
+                "Page Spec",
+                17,
+                &["--page-spec"],
+                "PATH",
+                UiValueKind::Path,
+                None,
+                &[],
+                "Load a JSON multi-plot page spec instead of the single-plot axis/preset flags",
+                "Plot",
+                false,
+                false,
+            ),
+            option_argument(
                 "preset",
                 "Preset",
                 17,
@@ -353,6 +433,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                     "spectral_window_coverage",
                     "amplitude_vs_time",
                     "phase_vs_time",
+                    "amplitude_phase_vs_time_stacked",
                     "amplitude_vs_uv_distance",
                     "weight_vs_time",
                     "sigma_vs_time",
@@ -407,9 +488,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false,
             ),
             option_argument(
+                "y_axis2",
+                "Second Y Axis",
+                20,
+                &["--yaxis2"],
+                "AXIS",
+                UiValueKind::String,
+                None,
+                &[],
+                "Optional second y axis rendered on the right side",
+                "Plot",
+                false,
+                false,
+            ),
+            option_argument(
                 "data_column",
                 "Data Column",
-                20,
+                21,
                 &["--data-column"],
                 "COLUMN",
                 UiValueKind::String,
@@ -423,7 +518,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "color_by",
                 "Color By",
-                21,
+                22,
                 &["--color-by"],
                 "AXIS",
                 UiValueKind::Choice,
@@ -437,7 +532,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "avgchannel",
                 "Average Channels",
-                22,
+                23,
                 &["--avgchannel"],
                 "N",
                 UiValueKind::Float,
@@ -451,7 +546,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "scalar",
                 "Scalar Average",
-                23,
+                24,
                 &["--scalar"],
                 &[],
                 false,
@@ -769,8 +864,8 @@ fn run(options: CliOptions) -> Result<(), String> {
     )?;
 
     if let Some(plot_output) = &options.plot_output {
-        let plot_spec = build_plot_spec(&options)?;
-        let payload = build_msexplore_plot_payload(&ms, &options.selection, &plot_spec)?;
+        let explore_spec = build_explore_spec(&options)?;
+        let payload = build_msexplore_payload(&ms, &explore_spec)?;
         export_msexplore_plot(
             &payload,
             crate::plot::ListObsPlotTheme::light(),
@@ -784,22 +879,152 @@ fn run(options: CliOptions) -> Result<(), String> {
     Ok(())
 }
 
+fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
+    if let Some(page_spec_path) = &options.page_spec {
+        let page_spec = load_page_spec_file(page_spec_path)?;
+        let plots = page_spec
+            .plots
+            .into_iter()
+            .map(|plot| {
+                build_plot_spec_from_values(
+                    plot.preset,
+                    plot.x_axis,
+                    plot.y_axis,
+                    plot.y_axis2,
+                    plot.data_column.unwrap_or(MsDataColumn::Data),
+                    plot.color_by.unwrap_or(MsColorAxis::Field),
+                    plot.avgchannel,
+                    plot.scalar,
+                    plot.freqframe,
+                    plot.restfreq,
+                    plot.veldef.unwrap_or_else(|| "RADIO".to_string()),
+                    None,
+                    page_spec.gridrows.max(1),
+                    page_spec.gridcols.max(1),
+                    plot.rowindex,
+                    plot.colindex,
+                    plot.plotindex,
+                    false,
+                    false,
+                    false,
+                    false,
+                    plot.title,
+                    plot.xlabel,
+                    plot.ylabel,
+                    plot.showlegend,
+                    plot.showmajorgrid,
+                    plot.showminorgrid,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let spec = MsExploreSpec {
+            ms_path: options.ms_path.clone(),
+            summary_format: options.summary_format,
+            selection: options.selection.clone(),
+            page_title: page_spec.page_title,
+            exprange: page_spec.exprange,
+            plots,
+        };
+        spec.validate()?;
+        return Ok(spec);
+    }
+
+    let plot_spec = build_plot_spec(options)?;
+    let spec = MsExploreSpec {
+        ms_path: options.ms_path.clone(),
+        summary_format: options.summary_format,
+        selection: options.selection.clone(),
+        page_title: None,
+        exprange: MsPageExportRange::Current,
+        plots: vec![plot_spec],
+    };
+    spec.validate()?;
+    Ok(spec)
+}
+
 fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
-    let mut spec = if let Some(preset) = options.preset {
+    let spec = build_plot_spec_from_values(
+        options.preset,
+        options.x_axis,
+        options.y_axis,
+        options.y_axis2,
+        options.data_column,
+        options.color_by,
+        options.avgchannel,
+        options.scalar,
+        options.freqframe.clone(),
+        options.restfreq.clone(),
+        options.veldef.clone(),
+        options.iteraxis,
+        options.gridrows,
+        options.gridcols,
+        0,
+        0,
+        0,
+        options.xselfscale,
+        options.yselfscale,
+        options.xsharedaxis,
+        options.ysharedaxis,
+        options.title.clone(),
+        options.xlabel.clone(),
+        options.ylabel.clone(),
+        options.showlegend,
+        options.showmajorgrid,
+        options.showminorgrid,
+    )?;
+    spec.validate()?;
+    Ok(spec)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_plot_spec_from_values(
+    preset: Option<MsPlotPreset>,
+    x_axis: Option<MsAxis>,
+    y_axis: Option<MsAxis>,
+    y_axis2: Option<MsAxis>,
+    data_column: MsDataColumn,
+    color_by: MsColorAxis,
+    avgchannel: Option<usize>,
+    scalar: bool,
+    freqframe: Option<String>,
+    restfreq: Option<String>,
+    veldef: String,
+    iteraxis: Option<MsIterationAxis>,
+    gridrows: usize,
+    gridcols: usize,
+    rowindex: usize,
+    colindex: usize,
+    plotindex: usize,
+    xselfscale: bool,
+    yselfscale: bool,
+    xsharedaxis: bool,
+    ysharedaxis: bool,
+    title: Option<String>,
+    xlabel: Option<String>,
+    ylabel: Option<String>,
+    showlegend: bool,
+    showmajorgrid: bool,
+    showminorgrid: bool,
+) -> Result<MsPlotSpec, String> {
+    let mut spec = if let Some(preset) = preset {
         MsPlotSpec::from_preset(preset)
     } else {
-        let x_axis = options.x_axis.ok_or_else(|| {
-            "--plot-output requires either --preset or --xaxis/--yaxis".to_string()
+        let x_axis = x_axis.ok_or_else(|| {
+            "msexplore plot specs require either a preset or both x_axis and y_axis".to_string()
         })?;
-        let y_axis = options.y_axis.ok_or_else(|| {
-            "--plot-output requires either --preset or --xaxis/--yaxis".to_string()
+        let y_axis = y_axis.ok_or_else(|| {
+            "msexplore plot specs require either a preset or both x_axis and y_axis".to_string()
         })?;
+        let mut y_axes = vec![y_axis];
+        if let Some(y_axis2) = y_axis2 {
+            y_axes.push(y_axis2);
+        }
         MsPlotSpec {
             preset: None,
             x_axis,
-            y_axes: vec![y_axis],
-            data_column: options.data_column,
-            color_by: options.color_by,
+            y_axes,
+            data_column,
+            color_by,
             averaging: Default::default(),
             transforms: Default::default(),
             layout: Default::default(),
@@ -808,30 +1033,51 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
             flag_edit: None,
         }
     };
-    spec.data_column = options.data_column;
-    spec.color_by = options.color_by;
-    spec.averaging.avgchannel = options.avgchannel;
-    spec.averaging.scalar = options.scalar;
-    spec.transforms.freqframe = options.freqframe.clone();
-    spec.transforms.restfreq = options.restfreq.clone();
-    spec.transforms.veldef = options.veldef.clone();
-    spec.layout.gridrows = options.gridrows;
-    spec.layout.gridcols = options.gridcols;
-    spec.iteration.iteraxis = options.iteraxis;
-    spec.iteration.xselfscale = options.xselfscale;
-    spec.iteration.yselfscale = options.yselfscale;
-    spec.iteration.xsharedaxis = options.xsharedaxis;
-    spec.iteration.ysharedaxis = options.ysharedaxis;
+    spec.data_column = data_column;
+    spec.color_by = color_by;
+    if spec.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) && y_axis2.is_some() {
+        return Err(
+            "--yaxis2 is not supported with stacked paired presets; the preset already defines both panels"
+                .to_string(),
+        );
+    }
+    if let Some(y_axis2) = y_axis2 {
+        spec.y_axes.truncate(1);
+        spec.y_axes.push(y_axis2);
+    } else {
+        spec.y_axes.truncate(1);
+    }
+    spec.averaging.avgchannel = avgchannel;
+    spec.averaging.scalar = scalar;
+    spec.transforms.freqframe = freqframe;
+    spec.transforms.restfreq = restfreq;
+    spec.transforms.veldef = veldef;
+    spec.layout.gridrows = gridrows.max(1);
+    spec.layout.gridcols = gridcols.max(1);
+    spec.layout.rowindex = rowindex;
+    spec.layout.colindex = colindex;
+    spec.layout.plotindex = plotindex;
+    spec.iteration.iteraxis = iteraxis;
+    spec.iteration.xselfscale = xselfscale;
+    spec.iteration.yselfscale = yselfscale;
+    spec.iteration.xsharedaxis = xsharedaxis;
+    spec.iteration.ysharedaxis = ysharedaxis;
     spec.style = MsPlotStyleSpec {
-        title: options.title.clone(),
-        xlabel: options.xlabel.clone(),
-        ylabel: options.ylabel.clone(),
-        showlegend: options.showlegend,
-        showmajorgrid: options.showmajorgrid,
-        showminorgrid: options.showminorgrid,
+        title,
+        xlabel,
+        ylabel,
+        showlegend,
+        showmajorgrid,
+        showminorgrid,
     };
-    spec.validate()?;
     Ok(spec)
+}
+
+fn load_page_spec_file(path: &std::path::Path) -> Result<CliPageSpecFile, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("read --page-spec {}: {error}", path.display()))?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("parse --page-spec {}: {error}", path.display()))
 }
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
@@ -849,9 +1095,11 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut summary_output = None;
     let mut overwrite = false;
     let mut selection = MsSelectionSpec::default();
+    let mut page_spec = None;
     let mut preset = None;
     let mut x_axis = None;
     let mut y_axis = None;
+    let mut y_axis2 = None;
     let mut data_column = MsDataColumn::Data;
     let mut color_by = MsColorAxis::Field;
     let mut avgchannel = None;
@@ -876,6 +1124,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut plot_format = MsExportFormat::Png;
     let mut plot_width = 1600u32;
     let mut plot_height = 900u32;
+    let mut plot_control_used = false;
 
     while index < args.len() {
         let raw = args[index].to_string_lossy().to_string();
@@ -912,31 +1161,61 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             "--intent" => selection.intent = Some(take_value(&mut index, &args, "--intent")?),
             "--feed" => selection.feed = Some(take_value(&mut index, &args, "--feed")?),
             "--msselect" => selection.msselect = Some(take_value(&mut index, &args, "--msselect")?),
+            "--page-spec" => {
+                page_spec = Some(PathBuf::from(take_value(&mut index, &args, "--page-spec")?))
+            }
             "--preset" => {
+                plot_control_used = true;
                 preset = Some(MsPlotPreset::parse(&take_value(
                     &mut index, &args, "--preset",
                 )?)?)
             }
-            "--xaxis" => x_axis = Some(MsAxis::parse(&take_value(&mut index, &args, "--xaxis")?)?),
-            "--yaxis" => y_axis = Some(MsAxis::parse(&take_value(&mut index, &args, "--yaxis")?)?),
+            "--xaxis" => {
+                plot_control_used = true;
+                x_axis = Some(MsAxis::parse(&take_value(&mut index, &args, "--xaxis")?)?)
+            }
+            "--yaxis" => {
+                plot_control_used = true;
+                y_axis = Some(MsAxis::parse(&take_value(&mut index, &args, "--yaxis")?)?)
+            }
+            "--yaxis2" => {
+                plot_control_used = true;
+                y_axis2 = Some(MsAxis::parse(&take_value(&mut index, &args, "--yaxis2")?)?)
+            }
             "--data-column" => {
+                plot_control_used = true;
                 data_column = MsDataColumn::parse(&take_value(&mut index, &args, "--data-column")?)?
             }
             "--color-by" => {
+                plot_control_used = true;
                 color_by = MsColorAxis::parse(&take_value(&mut index, &args, "--color-by")?)?
             }
             "--avgchannel" => {
+                plot_control_used = true;
                 avgchannel = Some(
                     take_value(&mut index, &args, "--avgchannel")?
                         .parse::<usize>()
                         .map_err(|_| "invalid integer value for --avgchannel".to_string())?,
                 )
             }
-            "--scalar" => scalar = true,
-            "--freqframe" => freqframe = Some(take_value(&mut index, &args, "--freqframe")?),
-            "--restfreq" => restfreq = Some(take_value(&mut index, &args, "--restfreq")?),
-            "--veldef" => veldef = take_value(&mut index, &args, "--veldef")?,
+            "--scalar" => {
+                plot_control_used = true;
+                scalar = true
+            }
+            "--freqframe" => {
+                plot_control_used = true;
+                freqframe = Some(take_value(&mut index, &args, "--freqframe")?)
+            }
+            "--restfreq" => {
+                plot_control_used = true;
+                restfreq = Some(take_value(&mut index, &args, "--restfreq")?)
+            }
+            "--veldef" => {
+                plot_control_used = true;
+                veldef = take_value(&mut index, &args, "--veldef")?
+            }
             "--iteraxis" => {
+                plot_control_used = true;
                 iteraxis = Some(MsIterationAxis::parse(&take_value(
                     &mut index,
                     &args,
@@ -944,25 +1223,57 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 )?)?)
             }
             "--gridrows" => {
+                plot_control_used = true;
                 gridrows = take_value(&mut index, &args, "--gridrows")?
                     .parse::<usize>()
                     .map_err(|_| "invalid integer value for --gridrows".to_string())?
             }
             "--gridcols" => {
+                plot_control_used = true;
                 gridcols = take_value(&mut index, &args, "--gridcols")?
                     .parse::<usize>()
                     .map_err(|_| "invalid integer value for --gridcols".to_string())?
             }
-            "--xselfscale" => xselfscale = true,
-            "--yselfscale" => yselfscale = true,
-            "--xsharedaxis" => xsharedaxis = true,
-            "--ysharedaxis" => ysharedaxis = true,
-            "--title" => title = Some(take_value(&mut index, &args, "--title")?),
-            "--xlabel" => xlabel = Some(take_value(&mut index, &args, "--xlabel")?),
-            "--ylabel" => ylabel = Some(take_value(&mut index, &args, "--ylabel")?),
-            "--showlegend" => showlegend = true,
-            "--showmajorgrid" => showmajorgrid = true,
-            "--showminorgrid" => showminorgrid = true,
+            "--xselfscale" => {
+                plot_control_used = true;
+                xselfscale = true
+            }
+            "--yselfscale" => {
+                plot_control_used = true;
+                yselfscale = true
+            }
+            "--xsharedaxis" => {
+                plot_control_used = true;
+                xsharedaxis = true
+            }
+            "--ysharedaxis" => {
+                plot_control_used = true;
+                ysharedaxis = true
+            }
+            "--title" => {
+                plot_control_used = true;
+                title = Some(take_value(&mut index, &args, "--title")?)
+            }
+            "--xlabel" => {
+                plot_control_used = true;
+                xlabel = Some(take_value(&mut index, &args, "--xlabel")?)
+            }
+            "--ylabel" => {
+                plot_control_used = true;
+                ylabel = Some(take_value(&mut index, &args, "--ylabel")?)
+            }
+            "--showlegend" => {
+                plot_control_used = true;
+                showlegend = true
+            }
+            "--showmajorgrid" => {
+                plot_control_used = true;
+                showmajorgrid = true
+            }
+            "--showminorgrid" => {
+                plot_control_used = true;
+                showminorgrid = true
+            }
             "--plot-output" => {
                 plot_output = Some(PathBuf::from(take_value(
                     &mut index,
@@ -1005,7 +1316,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             ));
         }
     };
-    if plot_output.is_some() && preset.is_none() && (x_axis.is_none() || y_axis.is_none()) {
+    if page_spec.is_some() && plot_control_used {
+        return Err(
+            "--page-spec cannot be combined with the single-plot preset/axis/layout flags; put those settings in the JSON page spec instead".to_string(),
+        );
+    }
+    if plot_output.is_some()
+        && page_spec.is_none()
+        && preset.is_none()
+        && (x_axis.is_none() || y_axis.is_none())
+    {
         return Err(
             "--plot-output requires either --preset or both --xaxis and --yaxis".to_string(),
         );
@@ -1016,9 +1336,11 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         summary_output,
         overwrite,
         selection,
+        page_spec,
         preset,
         x_axis,
         y_axis,
+        y_axis2,
         data_column,
         color_by,
         avgchannel,
