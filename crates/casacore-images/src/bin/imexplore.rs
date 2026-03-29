@@ -53,7 +53,7 @@ fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String>
 }
 
 fn run_snapshot(path: &PathBuf) -> Result<(), String> {
-    let session = ImageBrowserSession::open(path, ImageBrowserViewport::new(120, 40))
+    let mut session = ImageBrowserSession::open(path, ImageBrowserViewport::new(120, 40))
         .map_err(|error| error.to_string())?;
     let snapshot = session.snapshot().map_err(|error| error.to_string())?;
     println!("{}", snapshot.status_line);
@@ -131,6 +131,7 @@ fn run_session() -> Result<(), String> {
                         parameters.as_ref(),
                     ) {
                         Ok(new_session) => {
+                            let mut new_session = new_session;
                             let snapshot =
                                 new_session.snapshot().map_err(|error| error.to_string());
                             session = Some(new_session);
@@ -250,9 +251,99 @@ fn ui_schema_json() -> Result<String, String> {
                 "hidden_in_tui": false
             },
             {
+                "id": "stretch",
+                "label": "Stretch",
+                "order": 4,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--stretch"],
+                    "metavar": "STRETCH",
+                    "choices": ["percentile99", "percentile95", "minmax", "zscale", "manual"]
+                },
+                "value_kind": "choice",
+                "required": false,
+                "default": "percentile99",
+                "help": "Plane stretch preset",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "autoscale",
+                "label": "Autoscale",
+                "order": 5,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--autoscale"],
+                    "metavar": "AUTOSCALE",
+                    "choices": ["per_plane", "frozen"]
+                },
+                "value_kind": "choice",
+                "required": false,
+                "default": "per_plane",
+                "help": "Whether clip bounds update per plane or stay frozen while stepping cubes",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "clip_low",
+                "label": "Clip Low",
+                "order": 6,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--clip-low"],
+                    "metavar": "LOW",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Manual lower clip bound in image value units",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "clip_high",
+                "label": "Clip High",
+                "order": 7,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--clip-high"],
+                    "metavar": "HIGH",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Manual upper clip bound in image value units",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "fps",
+                "label": "FPS",
+                "order": 8,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--fps"],
+                    "metavar": "FPS",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "1",
+                "help": "Movie playback frames per second",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
                 "id": "help",
                 "label": "Help",
-                "order": 4,
+                "order": 9,
                 "parser": {
                     "kind": "action",
                     "flags": ["-h", "--help"],

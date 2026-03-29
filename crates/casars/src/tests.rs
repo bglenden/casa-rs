@@ -718,11 +718,7 @@ fn imexplore_help_overlay_lists_plane_controls() {
                 length: 3,
                 pixel: 0,
             }),
-            ImageBrowserParameters {
-                blc: "0,0,0".to_string(),
-                trc: "3,3,2".to_string(),
-                inc: "1,1,1".to_string(),
-            },
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
         )],
         None,
     );
@@ -744,13 +740,11 @@ fn imexplore_help_overlay_lists_plane_controls() {
     assert!(rendered.contains("H/J/K/L pan view"));
     assert!(rendered.contains("c cycle colormap"));
     assert!(rendered.contains("i invert"));
-    assert!(rendered.contains("s collapse/expand spectrum"));
-    assert!(rendered.contains("P pin current"));
-    assert!(rendered.contains("n/N cycle pinned"));
-    assert!(rendered.contains("Esc return to the live cursor"));
-    assert!(rendered.contains("Spectrum view: follows the active plane cursor"));
-    assert!(rendered.contains("drag divider to resize spectrum"));
-    assert!(rendered.contains("collapse/expand spectrum"));
+    assert!(rendered.contains("stretch/autoscale/clip_low/clip_high"));
+    assert!(rendered.contains("percentile99 percentile95 minmax zscale manual"));
+    assert!(rendered.contains("per_plane or frozen"));
+    assert!(rendered.contains("stretch=manual"));
+    assert!(rendered.contains("edit fps in Parameters"));
 }
 
 #[cfg(unix)]
@@ -774,7 +768,13 @@ fn imexplore_local_display_controls_update_inspector_lines() {
                 finite: true,
                 world_axes: vec![],
             }),
-            None,
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
         )],
         None,
     );
@@ -794,6 +794,11 @@ fn imexplore_local_display_controls_update_inspector_lines() {
     let rendered = render_app(&app, 140, 30);
     assert!(rendered.contains("Colormap: viridis"));
     assert!(rendered.contains("Invert: on"));
+    assert!(rendered.contains("Movie FPS: 1"));
+
+    app.set_text_value_and_apply("fps", "4");
+    let rendered = render_app(&app, 140, 30);
+    assert!(rendered.contains("Movie FPS: 4"));
 }
 
 #[cfg(unix)]
@@ -1925,11 +1930,7 @@ fn imexplore_plane_view_prepares_linked_spectrum_plot() {
                 length: 3,
                 pixel: 1,
             }),
-            ImageBrowserParameters {
-                blc: "0,0,0".to_string(),
-                trc: "3,3,2".to_string(),
-                inc: "1,1,1".to_string(),
-            },
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
         )],
         None,
     );
@@ -2140,11 +2141,7 @@ fn imexplore_workspace_split_ratio_persists_after_drag() {
                 length: 3,
                 pixel: 0,
             }),
-            ImageBrowserParameters {
-                blc: "0,0,0".to_string(),
-                trc: "3,3,2".to_string(),
-                inc: "1,1,1".to_string(),
-            },
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
         )],
         None,
     );
@@ -2239,11 +2236,7 @@ fn imexplore_workspace_toggle_collapses_and_restores_spectrum() {
                 length: 3,
                 pixel: 0,
             }),
-            ImageBrowserParameters {
-                blc: "0,0,0".to_string(),
-                trc: "3,3,2".to_string(),
-                inc: "1,1,1".to_string(),
-            },
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
         )],
         None,
     );
@@ -2345,11 +2338,7 @@ fn imexplore_keyboard_toggle_collapses_and_restores_spectrum() {
                 length: 3,
                 pixel: 0,
             }),
-            ImageBrowserParameters {
-                blc: "0,0,0".to_string(),
-                trc: "3,3,2".to_string(),
-                inc: "1,1,1".to_string(),
-            },
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
         )],
         None,
     );
@@ -2395,11 +2384,7 @@ fn imexplore_live_window_parameters_update_plane_view() {
             world_axes: vec![],
         }),
         None,
-        ImageBrowserParameters {
-            blc: "0,0".to_string(),
-            trc: "3,1".to_string(),
-            inc: "1,1".to_string(),
-        },
+        image_parameters("0,0", "3,1", "1,1"),
     );
     let updated = fake_imexplore_snapshot_json_with_parameters(
         ProtocolImageView::Plane,
@@ -2420,11 +2405,7 @@ fn imexplore_live_window_parameters_update_plane_view() {
             world_axes: vec![],
         }),
         None,
-        ImageBrowserParameters {
-            blc: "1,0".to_string(),
-            trc: "3,1".to_string(),
-            inc: "2,1".to_string(),
-        },
+        image_parameters("1,0", "3,1", "2,1"),
     );
     let script = write_fake_imexplore_script(temp.path(), &[startup, updated], None);
     set_imexplore_launcher_bin(&script);
@@ -2472,11 +2453,7 @@ fn imexplore_invalid_live_window_parameters_keep_session_open() {
             world_axes: vec![],
         }),
         None,
-        ImageBrowserParameters {
-            blc: "0,0".to_string(),
-            trc: "1,0".to_string(),
-            inc: "1,1".to_string(),
-        },
+        image_parameters("0,0", "1,0", "1,1"),
     );
     let error = serde_json::to_string(&ImageBrowserResponseEnvelope::error(
         "command_failed",
@@ -3098,11 +3075,7 @@ fn imexplore_clicking_raster_plane_moves_active_pixel() {
                     world_axes: vec![],
                 }),
                 None,
-                ImageBrowserParameters {
-                    blc: "0,0".to_string(),
-                    trc: "3,3".to_string(),
-                    inc: "1,1".to_string(),
-                },
+                image_parameters("0,0", "3,3", "1,1"),
             ),
             fake_imexplore_snapshot_json_with_parameters(
                 ProtocolImageView::Plane,
@@ -3119,11 +3092,7 @@ fn imexplore_clicking_raster_plane_moves_active_pixel() {
                     world_axes: vec![],
                 }),
                 None,
-                ImageBrowserParameters {
-                    blc: "0,0".to_string(),
-                    trc: "3,3".to_string(),
-                    inc: "1,1".to_string(),
-                },
+                image_parameters("0,0", "3,3", "1,1"),
             ),
         ],
         None,
@@ -3184,11 +3153,7 @@ fn imexplore_dragging_raster_plane_updates_active_pixel() {
                     world_axes: vec![],
                 }),
                 None,
-                ImageBrowserParameters {
-                    blc: "0,0".to_string(),
-                    trc: "3,3".to_string(),
-                    inc: "1,1".to_string(),
-                },
+                image_parameters("0,0", "3,3", "1,1"),
             ),
             fake_imexplore_snapshot_json_with_parameters(
                 ProtocolImageView::Plane,
@@ -3205,11 +3170,7 @@ fn imexplore_dragging_raster_plane_updates_active_pixel() {
                     world_axes: vec![],
                 }),
                 None,
-                ImageBrowserParameters {
-                    blc: "0,0".to_string(),
-                    trc: "3,3".to_string(),
-                    inc: "1,1".to_string(),
-                },
+                image_parameters("0,0", "3,3", "1,1"),
             ),
             fake_imexplore_snapshot_json_with_parameters(
                 ProtocolImageView::Plane,
@@ -3226,11 +3187,7 @@ fn imexplore_dragging_raster_plane_updates_active_pixel() {
                     world_axes: vec![],
                 }),
                 None,
-                ImageBrowserParameters {
-                    blc: "0,0".to_string(),
-                    trc: "3,3".to_string(),
-                    inc: "1,1".to_string(),
-                },
+                image_parameters("0,0", "3,3", "1,1"),
             ),
         ],
         None,
@@ -3309,11 +3266,7 @@ fn imexplore_clicking_linked_spectrum_updates_plane() {
                     length: 3,
                     pixel: 0,
                 }),
-                ImageBrowserParameters {
-                    blc: "0,0,0".to_string(),
-                    trc: "3,3,2".to_string(),
-                    inc: "1,1,1".to_string(),
-                },
+                image_parameters("0,0,0", "3,3,2", "1,1,1"),
             ),
             fake_imexplore_snapshot_json_with_profile(
                 ProtocolImageView::Plane,
@@ -3340,11 +3293,7 @@ fn imexplore_clicking_linked_spectrum_updates_plane() {
                     length: 3,
                     pixel: 2,
                 }),
-                ImageBrowserParameters {
-                    blc: "0,0,0".to_string(),
-                    trc: "3,3,2".to_string(),
-                    inc: "1,1,1".to_string(),
-                },
+                image_parameters("0,0,0", "3,3,2", "1,1,1"),
             ),
         ],
         None,
@@ -3399,11 +3348,7 @@ fn imexplore_clicking_raster_letterbox_keeps_active_pixel() {
                 world_axes: vec![],
             }),
             None,
-            ImageBrowserParameters {
-                blc: "0,0".to_string(),
-                trc: "3,3".to_string(),
-                inc: "1,1".to_string(),
-            },
+            image_parameters("0,0", "3,3", "1,1"),
         )],
         None,
     );
@@ -3427,12 +3372,22 @@ fn imexplore_clicking_raster_letterbox_keeps_active_pixel() {
         app.image_plane_font_size_for_test(),
     )
     .expect("raster draw rect");
-    let (click_x, click_y) = if draw_rect.height < canvas.height {
-        (canvas.x + canvas.width / 2, canvas.y)
-    } else if draw_rect.width < canvas.width {
-        (canvas.x, canvas.y + canvas.height / 2)
+    let (click_x, click_y) = if draw_rect.x > canvas.x {
+        (draw_rect.x - 1, draw_rect.y + draw_rect.height / 2)
+    } else if draw_rect.y > canvas.y {
+        (draw_rect.x + draw_rect.width / 2, draw_rect.y - 1)
+    } else if draw_rect.x + draw_rect.width < canvas.x + canvas.width {
+        (
+            draw_rect.x + draw_rect.width,
+            draw_rect.y + draw_rect.height / 2,
+        )
+    } else if draw_rect.y + draw_rect.height < canvas.y + canvas.height {
+        (
+            draw_rect.x + draw_rect.width / 2,
+            draw_rect.y + draw_rect.height,
+        )
     } else {
-        panic!("expected raster letterboxing inside canvas");
+        panic!("expected raster gutter inside canvas");
     };
     app.handle_mouse_event(
         mouse(MouseEventKind::Down(MouseButton::Left), click_x, click_y),
@@ -3567,6 +3522,7 @@ fn imexplore_movie_mode_steps_and_loops_hidden_axis() {
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
     app.set_text_value("image_path", "/tmp/fake.image");
     app.start_run_for_test();
+    app.set_text_value_and_apply("fps", "4");
 
     assert!(!app.image_movie_playing_for_test());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -3692,11 +3648,7 @@ fn imexplore_can_pin_cycle_and_remove_probes() {
                     length: 3,
                     pixel: 0,
                 }),
-                ImageBrowserParameters {
-                    blc: "0,0,0".to_string(),
-                    trc: "3,3,2".to_string(),
-                    inc: "1,1,1".to_string(),
-                },
+                image_parameters("0,0,0", "3,3,2", "1,1,1"),
             ),
             fake_imexplore_snapshot_json_with_profile(
                 ProtocolImageView::Plane,
@@ -3720,11 +3672,7 @@ fn imexplore_can_pin_cycle_and_remove_probes() {
                     length: 3,
                     pixel: 0,
                 }),
-                ImageBrowserParameters {
-                    blc: "0,0,0".to_string(),
-                    trc: "3,3,2".to_string(),
-                    inc: "1,1,1".to_string(),
-                },
+                image_parameters("0,0,0", "3,3,2", "1,1,1"),
             ),
             fake_imexplore_snapshot_json_with_profile(
                 ProtocolImageView::Plane,
@@ -3748,11 +3696,7 @@ fn imexplore_can_pin_cycle_and_remove_probes() {
                     length: 3,
                     pixel: 0,
                 }),
-                ImageBrowserParameters {
-                    blc: "0,0,0".to_string(),
-                    trc: "3,3,2".to_string(),
-                    inc: "1,1,1".to_string(),
-                },
+                image_parameters("0,0,0", "3,3,2", "1,1,1"),
             ),
         ],
         None,
@@ -5031,6 +4975,96 @@ fn fake_imexplore_schema_json() -> String {
                 "group": "View",
                 "advanced": false,
                 "hidden_in_tui": false
+            },
+            {
+                "id": "stretch",
+                "label": "Stretch",
+                "order": 4,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--stretch"],
+                    "metavar": "STRETCH",
+                    "choices": ["percentile99", "percentile95", "minmax", "zscale", "manual"]
+                },
+                "value_kind": "choice",
+                "required": false,
+                "default": "percentile99",
+                "help": "Plane stretch preset",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "autoscale",
+                "label": "Autoscale",
+                "order": 5,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--autoscale"],
+                    "metavar": "AUTOSCALE",
+                    "choices": ["per_plane", "frozen"]
+                },
+                "value_kind": "choice",
+                "required": false,
+                "default": "per_plane",
+                "help": "Whether clip bounds update per plane or stay frozen while stepping cubes",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "clip_low",
+                "label": "Clip Low",
+                "order": 6,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--clip-low"],
+                    "metavar": "LOW",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Manual lower clip bound in image value units",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "clip_high",
+                "label": "Clip High",
+                "order": 7,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--clip-high"],
+                    "metavar": "HIGH",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "",
+                "help": "Manual upper clip bound in image value units",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
+            },
+            {
+                "id": "fps",
+                "label": "FPS",
+                "order": 8,
+                "parser": {
+                    "kind": "option",
+                    "flags": ["--fps"],
+                    "metavar": "FPS",
+                    "choices": []
+                },
+                "value_kind": "string",
+                "required": false,
+                "default": "1",
+                "help": "Movie playback frames per second",
+                "group": "Display",
+                "advanced": false,
+                "hidden_in_tui": false
             }
         ],
         "managed_output": null
@@ -5132,11 +5166,11 @@ fn fake_imexplore_snapshot_json(
         probe,
         None,
         non_display_axis,
-        ImageBrowserParameters {
-            blc: std::iter::repeat_n("0", ndim).collect::<Vec<_>>().join(","),
-            trc: std::iter::repeat_n("0", ndim).collect::<Vec<_>>().join(","),
-            inc: std::iter::repeat_n("1", ndim).collect::<Vec<_>>().join(","),
-        },
+        image_parameters(
+            &std::iter::repeat_n("0", ndim).collect::<Vec<_>>().join(","),
+            &std::iter::repeat_n("0", ndim).collect::<Vec<_>>().join(","),
+            &std::iter::repeat_n("1", ndim).collect::<Vec<_>>().join(","),
+        ),
     )
 }
 
@@ -5335,6 +5369,10 @@ fn fake_imexplore_snapshot_json_full(
                 pixels_u8: vec![128; content_lines.iter().map(|line| line.chars().count()).sum()],
                 clip_min: 0.0,
                 clip_max: 1.0,
+                data_min: 0.0,
+                data_max: 1.0,
+                value_unit: "Jy/beam".to_string(),
+                histogram_bins: vec![0, 1, 0, 0],
                 masked_or_non_finite_count: 0,
                 no_finite_values: false,
             }),
@@ -5402,6 +5440,18 @@ fn fake_image_profile_payload() -> ImageProfilePayload {
                 }),
             },
         ],
+    }
+}
+
+fn image_parameters(blc: &str, trc: &str, inc: &str) -> ImageBrowserParameters {
+    ImageBrowserParameters {
+        blc: blc.to_string(),
+        trc: trc.to_string(),
+        inc: inc.to_string(),
+        stretch: "percentile99".to_string(),
+        autoscale: "per_plane".to_string(),
+        clip_low: String::new(),
+        clip_high: String::new(),
     }
 }
 

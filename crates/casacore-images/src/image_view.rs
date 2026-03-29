@@ -43,8 +43,47 @@ pub struct PlaneRaster {
     pub pixels_u8: Vec<u8>,
     pub clip_min: f64,
     pub clip_max: f64,
+    pub data_min: f64,
+    pub data_max: f64,
+    pub value_unit: String,
+    pub histogram_bins: Vec<u32>,
     pub masked_or_non_finite_count: usize,
     pub no_finite_values: bool,
+}
+
+/// Backend-controlled stretch preset for 2D plane rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlaneStretchPreset {
+    Percentile99,
+    Percentile95,
+    MinMax,
+    ZScale,
+    Manual,
+}
+
+/// Autoscaling policy for plane rendering across cube stepping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlaneAutoscaleMode {
+    PerPlane,
+    Frozen,
+}
+
+/// Normalized plane stretch settings applied by the image browser backend.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PlaneStretchSettings {
+    pub preset: PlaneStretchPreset,
+    pub autoscale: PlaneAutoscaleMode,
+    pub manual_clip: Option<(f64, f64)>,
+}
+
+impl Default for PlaneStretchSettings {
+    fn default() -> Self {
+        Self {
+            preset: PlaneStretchPreset::Percentile99,
+            autoscale: PlaneAutoscaleMode::PerPlane,
+            manual_clip: None,
+        }
+    }
 }
 
 /// A named numeric axis value.
@@ -447,6 +486,25 @@ impl OpenedImageView {
         window: &ImageViewWindow,
         non_display_indices: &[usize],
     ) -> Result<PlaneRaster, ImageError> {
+        self.render_plane_with_window_and_axes_and_stretch(
+            viewport,
+            window,
+            non_display_indices,
+            &PlaneStretchSettings::default(),
+            None,
+        )
+    }
+
+    /// Renders the current 2D plane for an explicit `blc`/`trc`/`inc` window,
+    /// non-display-axis selections, and explicit stretch settings.
+    pub(crate) fn render_plane_with_window_and_axes_and_stretch(
+        &self,
+        viewport: (usize, usize),
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+        stretch: &PlaneStretchSettings,
+        clip_override: Option<(f64, f64)>,
+    ) -> Result<PlaneRaster, ImageError> {
         if !self.capabilities.renderable_plane {
             return Err(ImageError::InvalidMetadata(self.status_line()));
         }
@@ -454,7 +512,9 @@ impl OpenedImageView {
         let plane_stats = collect_plane_stats(&plane, mask.as_ref());
         let width = viewport.0.max(1).min(plane.shape()[0].max(1));
         let height = viewport.1.max(1).min(plane.shape()[1].max(1));
-        let (clip_min, clip_max) = plane_stats.clip_bounds().unwrap_or((0.0, 0.0));
+        let (clip_min, clip_max) = clip_override
+            .or_else(|| plane_stats.clip_bounds_for(stretch))
+            .unwrap_or((0.0, 0.0));
 
         let mut pixels_u8 = Vec::with_capacity(width * height);
         for y in 0..height {
@@ -492,6 +552,10 @@ impl OpenedImageView {
             pixels_u8,
             clip_min,
             clip_max,
+            data_min: plane_stats.data_min.unwrap_or(0.0),
+            data_max: plane_stats.data_max.unwrap_or(0.0),
+            value_unit: image_units(&self.image).to_string(),
+            histogram_bins: plane_stats.histogram_bins(48),
             masked_or_non_finite_count: plane_stats.masked_or_non_finite_count,
             no_finite_values: plane_stats.no_finite_values,
         })
@@ -1011,29 +1075,91 @@ struct AxisDescriptor {
 #[derive(Debug)]
 struct PlaneStats {
     finite_values: Vec<f64>,
+    data_min: Option<f64>,
+    data_max: Option<f64>,
     masked_or_non_finite_count: usize,
     no_finite_values: bool,
 }
 
 impl PlaneStats {
-    fn clip_bounds(&self) -> Option<(f64, f64)> {
-        if self.finite_values.is_empty() {
-            return None;
+    fn clip_bounds_for(&self, stretch: &PlaneStretchSettings) -> Option<(f64, f64)> {
+        let values = self.sorted_finite_values()?;
+        let (min_value, max_value) = (*values.first()?, *values.last()?);
+        match stretch.preset {
+            PlaneStretchPreset::Percentile99 => Some(percentile_clip_bounds(&values, 0.01, 0.99)),
+            PlaneStretchPreset::Percentile95 => Some(percentile_clip_bounds(&values, 0.05, 0.95)),
+            PlaneStretchPreset::MinMax => Some((min_value, max_value)),
+            PlaneStretchPreset::ZScale => zscale_like_clip_bounds(&values),
+            PlaneStretchPreset::Manual => stretch.manual_clip,
         }
-        let mut values = self.finite_values.clone();
-        values.sort_by(f64::total_cmp);
-        let low = percentile_index(values.len(), 0.01);
-        let high = percentile_index(values.len(), 0.99);
-        Some((values[low], values[high]))
     }
 
     fn is_valid(&self, mask: Option<&Array2<bool>>, x: usize, y: usize) -> bool {
         mask.is_none_or(|data| data[[x, y]])
     }
+
+    fn histogram_bins(&self, bins: usize) -> Vec<u32> {
+        if bins == 0 || self.finite_values.is_empty() {
+            return Vec::new();
+        }
+        let Some(min_value) = self.data_min else {
+            return Vec::new();
+        };
+        let Some(max_value) = self.data_max else {
+            return Vec::new();
+        };
+        let mut histogram = vec![0u32; bins];
+        if (max_value - min_value).abs() < f64::EPSILON {
+            histogram[bins / 2] = self.finite_values.len() as u32;
+            return histogram;
+        }
+        for &value in &self.finite_values {
+            let scaled = ((value - min_value) / (max_value - min_value)).clamp(0.0, 1.0);
+            let index = ((scaled * bins.saturating_sub(1) as f64).round() as usize)
+                .min(bins.saturating_sub(1));
+            histogram[index] = histogram[index].saturating_add(1);
+        }
+        histogram
+    }
+
+    fn sorted_finite_values(&self) -> Option<Vec<f64>> {
+        if self.finite_values.is_empty() {
+            return None;
+        }
+        let mut values = self.finite_values.clone();
+        values.sort_by(f64::total_cmp);
+        Some(values)
+    }
 }
 
 fn percentile_index(len: usize, percentile: f64) -> usize {
     ((len.saturating_sub(1)) as f64 * percentile).round() as usize
+}
+
+fn percentile_clip_bounds(values: &[f64], low_percentile: f64, high_percentile: f64) -> (f64, f64) {
+    let low = percentile_index(values.len(), low_percentile);
+    let high = percentile_index(values.len(), high_percentile);
+    (values[low], values[high])
+}
+
+fn zscale_like_clip_bounds(values: &[f64]) -> Option<(f64, f64)> {
+    let median = *values.get(values.len() / 2)?;
+    let mut deviations = values
+        .iter()
+        .map(|value| (value - median).abs())
+        .collect::<Vec<_>>();
+    deviations.sort_by(f64::total_cmp);
+    let mad = *deviations.get(deviations.len() / 2)?;
+    let sigma = (1.4826 * mad).max(f64::EPSILON);
+    let min_value = *values.first()?;
+    let max_value = *values.last()?;
+    let clip_min = (median - 2.5 * sigma).max(min_value);
+    let clip_max = (median + 2.5 * sigma).min(max_value);
+    Some(if clip_min <= clip_max {
+        (clip_min, clip_max)
+    } else {
+        (min_value, max_value)
+    })
 }
 
 fn index_label_width(len: usize) -> usize {
@@ -1410,6 +1536,8 @@ fn coordinates_cover_image_axes(coords: &CoordinateSystem, shape: &[usize]) -> b
 
 fn collect_plane_stats(plane: &Array2<f64>, mask: Option<&Array2<bool>>) -> PlaneStats {
     let mut finite_values = Vec::new();
+    let mut data_min = None::<f64>;
+    let mut data_max = None::<f64>;
     let mut masked_or_non_finite_count = 0usize;
     for x in 0..plane.shape()[0] {
         for y in 0..plane.shape()[1] {
@@ -1419,12 +1547,22 @@ fn collect_plane_stats(plane: &Array2<f64>, mask: Option<&Array2<bool>>) -> Plan
                 masked_or_non_finite_count += 1;
                 continue;
             }
+            data_min = Some(match data_min {
+                Some(current) => current.min(value),
+                None => value,
+            });
+            data_max = Some(match data_max {
+                Some(current) => current.max(value),
+                None => value,
+            });
             finite_values.push(value);
         }
     }
     let no_finite_values = finite_values.is_empty();
     PlaneStats {
         finite_values,
+        data_min,
+        data_max,
         masked_or_non_finite_count,
         no_finite_values,
     }
@@ -2177,6 +2315,43 @@ mod tests {
         assert_eq!(raster.pixels_u8.len(), 4);
         assert_eq!(raster.masked_or_non_finite_count, 2);
         assert!(!raster.no_finite_values);
+    }
+
+    #[test]
+    fn render_plane_manual_stretch_preserves_requested_clip_bounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manual_stretch.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2], CoordinateSystem::new(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 5.0, 10.0, 20.0]).unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        let raster = opened
+            .render_plane_with_window_and_axes_and_stretch(
+                (2, 2),
+                &opened.default_window(),
+                &[],
+                &PlaneStretchSettings {
+                    preset: PlaneStretchPreset::Manual,
+                    autoscale: PlaneAutoscaleMode::PerPlane,
+                    manual_clip: Some((5.0, 10.0)),
+                },
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(raster.clip_min, 5.0);
+        assert_eq!(raster.clip_max, 10.0);
+        assert_eq!(raster.data_min, 0.0);
+        assert_eq!(raster.data_max, 20.0);
+        assert!(raster.value_unit.is_empty());
+        assert_eq!(raster.histogram_bins.iter().sum::<u32>(), 4);
     }
 
     #[test]

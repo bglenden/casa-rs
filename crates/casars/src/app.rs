@@ -39,8 +39,8 @@ use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
 use crate::graphics::{
     ImagePlaneColormap, ImagePlaneOverlayMarker, ImagePlaneRenderInput, ImageSpectrumOverlaySeries,
-    ImageSpectrumRenderInput, ListObsPlotRenderInput, image_plane_draw_geometry, plot_theme,
-    render_image_plane_image, render_image_spectrum_image, render_plot_image,
+    ImageSpectrumRenderInput, ListObsPlotRenderInput, image_plane_layout, image_spectrum_layout,
+    plot_theme, render_image_plane_image, render_image_spectrum_image, render_plot_image,
 };
 use crate::registry::{BrowserAppKind, RegistryApp};
 use crate::ui::UiLayout;
@@ -50,8 +50,17 @@ const RICH_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠴", "⠦"]
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(450);
 const HORIZONTAL_SCROLL_STEP: i16 = 8;
 const IMAGE_PLANE_CELL_WIDTH: usize = 11;
-const IMAGE_MOVIE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
-const IMEXPLORE_WINDOW_FIELD_IDS: [&str; 3] = ["blc", "trc", "inc"];
+const IMAGE_MOVIE_DEFAULT_FPS: f64 = 1.0;
+const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 8] = [
+    "blc",
+    "trc",
+    "inc",
+    "stretch",
+    "autoscale",
+    "clip_low",
+    "clip_high",
+    "fps",
+];
 const RESULT_TAB_COUNT: usize = 10;
 const BROWSE_SUFFIX: &str = " [browse]";
 
@@ -575,17 +584,30 @@ impl ImagePlaneMode {
 #[derive(Debug)]
 struct ImageMovieState {
     playing: bool,
+    fps: f64,
     frame_interval: Duration,
     last_advanced_at: Option<Instant>,
 }
 
 impl Default for ImageMovieState {
     fn default() -> Self {
+        Self::with_fps(IMAGE_MOVIE_DEFAULT_FPS)
+    }
+}
+
+impl ImageMovieState {
+    fn with_fps(fps: f64) -> Self {
         Self {
             playing: false,
-            frame_interval: IMAGE_MOVIE_FRAME_INTERVAL,
+            fps,
+            frame_interval: Duration::from_secs_f64(1.0 / fps),
             last_advanced_at: None,
         }
+    }
+
+    fn set_fps(&mut self, fps: f64) {
+        self.fps = fps;
+        self.frame_interval = Duration::from_secs_f64(1.0 / fps);
     }
 }
 
@@ -989,6 +1011,10 @@ impl BrowserSession {
                         } else {
                             "paused"
                         }
+                    ));
+                    lines.push(format!(
+                        "Movie FPS: {}",
+                        trim_float_text(format!("{:.3}", session.movie.fps))
                     ));
                 }
                 Some(lines)
@@ -2226,6 +2252,20 @@ impl AppState {
                     lines.push("Plane view: +/- zoom  0 reset view".to_string());
                     lines.push("Plane view: H/J/K/L pan view".to_string());
                     lines.push("Plane view: c cycle colormap  i invert".to_string());
+                    lines.push(
+                        "Display params: edit stretch/autoscale/clip_low/clip_high in Parameters"
+                            .to_string(),
+                    );
+                    lines.push(
+                        "Display stretch: percentile99 percentile95 minmax zscale manual"
+                            .to_string(),
+                    );
+                    lines.push("Display autoscale: per_plane or frozen".to_string());
+                    lines.push(
+                        "Manual clip: set stretch=manual and both clip fields in image units"
+                            .to_string(),
+                    );
+                    lines.push("Movie params: edit fps in Parameters (default 1)".to_string());
                     lines.push("Spectrum view: follows the active plane cursor".to_string());
                     lines.push("Probes: P pin current  n/N cycle pinned  u remove".to_string());
                     lines.push(
@@ -3370,7 +3410,15 @@ impl AppState {
             state.linked_profile_active(),
             self.image_workspace_split_ratio(),
         )?;
-        if !rect_contains(spectrum_area, column, row) {
+        let plot_rect = image_spectrum_plot_rect(
+            spectrum_area,
+            state
+                .spectrum_panel
+                .as_ref()
+                .map(|panel| panel.font_size)
+                .unwrap_or((1, 1)),
+        )?;
+        if !rect_contains(plot_rect, column, row) {
             return None;
         }
         let profile = state.snapshot.profile.as_ref()?;
@@ -3383,10 +3431,10 @@ impl AppState {
         if profile.samples.is_empty() {
             return None;
         }
-        let relative_x = usize::from(column.saturating_sub(spectrum_area.x));
+        let relative_x = usize::from(column.saturating_sub(plot_rect.x));
         let target_index = image_click_sample_index(
             relative_x,
-            usize::from(spectrum_area.width.max(1)),
+            usize::from(plot_rect.width.max(1)),
             profile.samples.len(),
         );
         let delta = target_index as i32 - axis_state.index as i32;
@@ -4523,6 +4571,7 @@ impl AppState {
         if let Some(field) = self.fields.get_mut(field_index) {
             field.cycle_choice(forward);
         }
+        self.apply_live_image_view_parameters_if_needed(field_index);
     }
 
     fn adjust_selected_choice(&mut self, forward: bool) {
@@ -5057,7 +5106,9 @@ impl AppState {
                                         panel: None,
                                         spectrum_panel: None,
                                         snapshot_generation: 1,
-                                        movie: ImageMovieState::default(),
+                                        movie: ImageMovieState::with_fps(
+                                            self.current_image_movie_fps(),
+                                        ),
                                     },
                                 )),
                             });
@@ -5506,7 +5557,15 @@ impl AppState {
             return;
         }
         self.send_browser_command(BrowserRequest::SetImageViewParameters {
-            parameters: ImageBrowserParameters::default(),
+            parameters: ImageBrowserParameters {
+                blc: String::new(),
+                trc: String::new(),
+                inc: String::new(),
+                stretch: snapshot.parameters.stretch.clone(),
+                autoscale: snapshot.parameters.autoscale.clone(),
+                clip_low: snapshot.parameters.clip_low.clone(),
+                clip_high: snapshot.parameters.clip_high.clone(),
+            },
         });
         self.result.status_line = "Reset image view.".into();
         self.result.status_kind = StatusKind::Info;
@@ -5737,6 +5796,8 @@ impl AppState {
                 raster,
                 cursor_sample: cursor,
                 sampled_shape,
+                display_axes: state.snapshot.display_axes.clone(),
+                probe: state.snapshot.probe.clone(),
                 overlay_markers,
                 display_aspect_ratio: image_plane_display_aspect_ratio(&state.snapshot),
                 colormap: state.plane_colormap,
@@ -6424,6 +6485,14 @@ impl AppState {
             blc: self.field_text("blc").unwrap_or_default(),
             trc: self.field_text("trc").unwrap_or_default(),
             inc: self.field_text("inc").unwrap_or_default(),
+            stretch: self
+                .field_text("stretch")
+                .unwrap_or_else(|| "percentile99".into()),
+            autoscale: self
+                .field_text("autoscale")
+                .unwrap_or_else(|| "per_plane".into()),
+            clip_low: self.field_text("clip_low").unwrap_or_default(),
+            clip_high: self.field_text("clip_high").unwrap_or_default(),
         }
     }
 
@@ -6435,7 +6504,7 @@ impl AppState {
         let Some(field) = self.fields.get(field_index) else {
             return;
         };
-        if !IMEXPLORE_WINDOW_FIELD_IDS.contains(&field.schema.id.as_str()) {
+        if !IMEXPLORE_LIVE_PARAMETER_FIELD_IDS.contains(&field.schema.id.as_str()) {
             return;
         }
         if !self
@@ -6444,9 +6513,34 @@ impl AppState {
         {
             return;
         }
+        if field.schema.id == "fps" {
+            self.apply_live_image_movie_fps();
+            return;
+        }
         self.send_browser_command(BrowserRequest::SetImageViewParameters {
             parameters: self.current_image_browser_parameters(),
         });
+    }
+
+    fn current_image_movie_fps(&self) -> f64 {
+        self.field_text("fps")
+            .and_then(|value| parse_image_movie_fps(&value).ok())
+            .unwrap_or(IMAGE_MOVIE_DEFAULT_FPS)
+    }
+
+    fn apply_live_image_movie_fps(&mut self) {
+        let fps_text = self.field_text("fps").unwrap_or_else(|| "1".into());
+        let Ok(fps) = parse_image_movie_fps(&fps_text) else {
+            self.result.status_line = "FPS must be a positive number.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        if let Some(state) = self.image_browser_session_state_mut() {
+            state.movie.set_fps(fps);
+        }
+        self.result.status_line =
+            format!("Movie FPS set to {}.", trim_float_text(format!("{fps:.3}")));
+        self.result.status_kind = StatusKind::Info;
     }
 
     fn bool_field_value(&self, id: &str) -> Option<bool> {
@@ -7594,11 +7688,29 @@ fn sync_image_parameter_fields(fields: &mut [FormField], parameters: &ImageBrows
         ("blc", parameters.blc.as_str()),
         ("trc", parameters.trc.as_str()),
         ("inc", parameters.inc.as_str()),
+        ("stretch", parameters.stretch.as_str()),
+        ("autoscale", parameters.autoscale.as_str()),
+        ("clip_low", parameters.clip_low.as_str()),
+        ("clip_high", parameters.clip_high.as_str()),
     ] {
         if let Some(field) = fields.iter_mut().find(|field| field.schema.id == id) {
-            field.set_text(value.to_string());
+            let _ = field.apply_text_value(value.to_string());
         }
     }
+}
+
+fn parse_image_movie_fps(text: &str) -> Result<f64, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(IMAGE_MOVIE_DEFAULT_FPS);
+    }
+    let fps = trimmed
+        .parse::<f64>()
+        .map_err(|_| "FPS must be a positive number.".to_string())?;
+    if !fps.is_finite() || fps <= 0.0 {
+        return Err("FPS must be a positive number.".to_string());
+    }
+    Ok(fps)
 }
 
 fn image_plane_column_count(snapshot: &ImageBrowserSnapshot) -> Option<usize> {
@@ -7749,15 +7861,40 @@ pub(crate) fn image_plane_draw_rect(
     }
     let font_width = u32::from(font_size.0.max(1));
     let font_height = u32::from(font_size.1.max(1));
-    let geometry = image_plane_draw_geometry(
+    let geometry = image_plane_layout(
         u32::from(canvas.width.max(1)) * font_width,
         u32::from(canvas.height.max(1)) * font_height,
         image_plane_display_aspect_ratio(snapshot),
-    );
+        snapshot.display_axes.len() >= 2,
+    )
+    .image;
     let start_x = geometry.x / font_width;
     let start_y = geometry.y / font_height;
     let end_x = div_ceil_u32(geometry.x + geometry.width, font_width);
     let end_y = div_ceil_u32(geometry.y + geometry.height, font_height);
+    Some(Rect {
+        x: canvas.x.saturating_add(start_x as u16),
+        y: canvas.y.saturating_add(start_y as u16),
+        width: (end_x.saturating_sub(start_x)).min(u32::from(canvas.width)) as u16,
+        height: (end_y.saturating_sub(start_y)).min(u32::from(canvas.height)) as u16,
+    })
+}
+
+pub(crate) fn image_spectrum_plot_rect(canvas: Rect, font_size: (u16, u16)) -> Option<Rect> {
+    if canvas.is_empty() {
+        return None;
+    }
+    let font_width = u32::from(font_size.0.max(1));
+    let font_height = u32::from(font_size.1.max(1));
+    let plot = image_spectrum_layout(
+        u32::from(canvas.width.max(1)) * font_width,
+        u32::from(canvas.height.max(1)) * font_height,
+    )
+    .plot;
+    let start_x = plot.x / font_width;
+    let start_y = plot.y / font_height;
+    let end_x = div_ceil_u32(plot.x + plot.width, font_width);
+    let end_y = div_ceil_u32(plot.y + plot.height, font_height);
     Some(Rect {
         x: canvas.x.saturating_add(start_x as u16),
         y: canvas.y.saturating_add(start_y as u16),
@@ -7859,6 +7996,10 @@ fn image_zoom_parameters(
         blc: format_usize_axis_list(&blc),
         trc: format_usize_axis_list(&trc),
         inc: format_usize_axis_list(&inc),
+        stretch: snapshot.parameters.stretch.clone(),
+        autoscale: snapshot.parameters.autoscale.clone(),
+        clip_low: snapshot.parameters.clip_low.clone(),
+        clip_high: snapshot.parameters.clip_high.clone(),
     })
 }
 
@@ -7890,6 +8031,10 @@ fn image_pan_parameters(
         blc: format_usize_axis_list(&blc),
         trc: format_usize_axis_list(&trc),
         inc: format_usize_axis_list(&inc),
+        stretch: snapshot.parameters.stretch.clone(),
+        autoscale: snapshot.parameters.autoscale.clone(),
+        clip_low: snapshot.parameters.clip_low.clone(),
+        clip_high: snapshot.parameters.clip_high.clone(),
     })
 }
 
@@ -8600,10 +8745,11 @@ mod tests {
         ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserSnapshot,
         ImageBrowserView, ImageDisplayAxisState, ImageNavigationMetrics, ImagePlaneCursorState,
     };
+    use ratatui::layout::Rect;
 
     use super::{
         centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
-        image_zoom_parameters,
+        image_plane_draw_rect, image_zoom_parameters,
     };
     use std::path::{Path, PathBuf};
 
@@ -8641,6 +8787,10 @@ mod tests {
                 blc: "0,0,0".into(),
                 trc: "255,255,29".into(),
                 inc: "1,1,1".into(),
+                stretch: "percentile99".into(),
+                autoscale: "per_plane".into(),
+                clip_low: String::new(),
+                clip_high: String::new(),
             },
             inspector_lines: vec!["Shape: [256, 256, 30]".into()],
             content_lines: Vec::new(),
@@ -8715,10 +8865,32 @@ mod tests {
             blc: "64,64,7".into(),
             trc: "191,191,7".into(),
             inc: "1,1,1".into(),
+            stretch: "percentile99".into(),
+            autoscale: "per_plane".into(),
+            clip_low: String::new(),
+            clip_high: String::new(),
         };
         let parameters = image_pan_parameters(&snapshot, 1, -1).expect("pan parameters");
         assert_eq!(parameters.blc, "85,43,7");
         assert_eq!(parameters.trc, "212,170,7");
         assert_eq!(parameters.inc, "1,1,1");
+    }
+
+    #[test]
+    fn image_plane_draw_rect_reserves_space_for_axis_annotations() {
+        let snapshot = plane_snapshot();
+        let rect = image_plane_draw_rect(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 40,
+            },
+            &snapshot,
+            (8, 16),
+        )
+        .expect("plane draw rect");
+        assert!(rect.x > 0);
+        assert!(rect.height < 40);
     }
 }

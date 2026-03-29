@@ -215,6 +215,14 @@ pub struct ImageBrowserParameters {
     pub blc: String,
     pub trc: String,
     pub inc: String,
+    #[serde(default)]
+    pub stretch: String,
+    #[serde(default)]
+    pub autoscale: String,
+    #[serde(default)]
+    pub clip_low: String,
+    #[serde(default)]
+    pub clip_high: String,
 }
 
 /// Quantized grayscale plane raster returned by the backend.
@@ -225,6 +233,14 @@ pub struct ImagePlaneRaster {
     pub pixels_u8: Vec<u8>,
     pub clip_min: f64,
     pub clip_max: f64,
+    #[serde(default)]
+    pub data_min: f64,
+    #[serde(default)]
+    pub data_max: f64,
+    #[serde(default)]
+    pub value_unit: String,
+    #[serde(default)]
+    pub histogram_bins: Vec<u32>,
     pub masked_or_non_finite_count: usize,
     pub no_finite_values: bool,
 }
@@ -363,6 +379,10 @@ mod tests {
                 blc: "0,0".into(),
                 trc: "3,3".into(),
                 inc: "1,1".into(),
+                stretch: "percentile99".into(),
+                autoscale: "per_plane".into(),
+                clip_low: String::new(),
+                clip_high: String::new(),
             },
             inspector_lines: vec!["shape: [4, 4]".into()],
             content_lines: Vec::new(),
@@ -377,6 +397,10 @@ mod tests {
                 pixels_u8: vec![0, 64, 128, 255],
                 clip_min: 0.0,
                 clip_max: 1.0,
+                data_min: 0.0,
+                data_max: 1.0,
+                value_unit: "Jy/beam".into(),
+                histogram_bins: vec![1, 1, 1, 1],
                 masked_or_non_finite_count: 0,
                 no_finite_values: false,
             }),

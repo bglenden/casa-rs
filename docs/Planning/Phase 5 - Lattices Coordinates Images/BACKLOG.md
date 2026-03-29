@@ -127,3 +127,13 @@ prefetch for responsive movie mode and cube stepping.
 **Reason:** Multiple independently pinned spectra with connector lines, drag and
 resize handles, and shared probe state need a fuller windowing and hit-testing
 model than the current linked Plane/Spectrum workspace wave.
+
+### 12.9 Image Browser Nonlinear WCS-Aware Axis Ticks And Labels
+
+**Status:** DEFER
+
+**Reason:** The current `imexplore` plane annotations assume locally linear
+world-coordinate spacing across the displayed window. Proper sky-projection
+labeling for strongly curved or rotated views, including cases like a pole near
+the display center, needs a dedicated nonlinear tick-placement pass that samples
+the full WCS rather than extrapolating from one cursor probe and one increment.

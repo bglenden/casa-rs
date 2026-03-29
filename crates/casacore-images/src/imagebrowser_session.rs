@@ -14,7 +14,9 @@ use casacore_types::measures::direction::{
 };
 
 use crate::error::ImageError;
-use crate::image_view::format_numeric_value_with_unit;
+use crate::image_view::{
+    PlaneAutoscaleMode, PlaneStretchPreset, PlaneStretchSettings, format_numeric_value_with_unit,
+};
 use crate::{
     ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis, ImageProbe,
     ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow, OpenedImageView,
@@ -26,6 +28,8 @@ use crate::{
 pub struct ImageBrowserSession {
     view: OpenedImageView,
     window: ImageViewWindow,
+    stretch: SessionStretchState,
+    frozen_clip_bounds: Option<(f64, f64)>,
     active_view: ImageBrowserView,
     focus: ImageBrowserFocus,
     viewport: ImageBrowserViewport,
@@ -34,6 +38,33 @@ pub struct ImageBrowserSession {
     non_display_indices: Vec<usize>,
     selected_profile_axis: Option<usize>,
     content_offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SessionStretchState {
+    preset: PlaneStretchPreset,
+    autoscale: PlaneAutoscaleMode,
+    manual_clip: Option<(f64, f64)>,
+}
+
+impl Default for SessionStretchState {
+    fn default() -> Self {
+        Self {
+            preset: PlaneStretchPreset::Percentile99,
+            autoscale: PlaneAutoscaleMode::PerPlane,
+            manual_clip: None,
+        }
+    }
+}
+
+impl SessionStretchState {
+    fn plane_settings(&self) -> PlaneStretchSettings {
+        PlaneStretchSettings {
+            preset: self.preset,
+            autoscale: self.autoscale,
+            manual_clip: self.manual_clip,
+        }
+    }
 }
 
 impl ImageBrowserSession {
@@ -53,16 +84,28 @@ impl ImageBrowserSession {
     ) -> Result<Self, ImageError> {
         let view = OpenedImageView::open(path)?;
         let non_display_axis_count = session_non_display_axis_count(&view);
+        let stretch = parameters
+            .map(parse_stretch_parameters)
+            .transpose()?
+            .unwrap_or_default();
         let window = match parameters {
             Some(parameters) => {
                 view.window_from_text(&parameters.blc, &parameters.trc, &parameters.inc)?
             }
             None => view.default_window(),
         };
-        let active_view = ImageBrowserView::Metadata;
+        let default_display_pixels = centered_display_pixels(&view, &window);
+        let default_non_display_pixels = centered_non_display_pixels(&view, &window);
+        let active_view = if view.capabilities().renderable_plane {
+            ImageBrowserView::Plane
+        } else {
+            ImageBrowserView::Metadata
+        };
         let mut session = Self {
             view,
             window,
+            stretch,
+            frozen_clip_bounds: None,
             active_view,
             focus: ImageBrowserFocus::Content,
             viewport,
@@ -73,7 +116,12 @@ impl ImageBrowserSession {
             content_offset: 0,
         };
         session.selected_profile_axis = session.view.preferred_profile_axis();
-        session.clamp_cursor_to_window(None, None, None);
+        session.clamp_cursor_to_window(
+            None,
+            None,
+            default_display_pixels,
+            Some(default_non_display_pixels),
+        );
         Ok(session)
     }
 
@@ -137,19 +185,33 @@ impl ImageBrowserSession {
     }
 
     /// Returns the current snapshot without changing state.
-    pub fn snapshot(&self) -> Result<ImageBrowserSnapshot, ImageError> {
-        let inspector_lines = self.inspector_lines()?;
+    pub fn snapshot(&mut self) -> Result<ImageBrowserSnapshot, ImageError> {
         let plane_raster = if self.active_view == ImageBrowserView::Plane
             && self.view.capabilities().renderable_plane
         {
-            Some(self.view.render_plane_with_window_and_axes(
+            let clip_override = match self.stretch.autoscale {
+                PlaneAutoscaleMode::PerPlane => None,
+                PlaneAutoscaleMode::Frozen => self.frozen_clip_bounds,
+            };
+            let raster = self.view.render_plane_with_window_and_axes_and_stretch(
                 self.plane_pixel_viewport(),
                 &self.window,
                 &self.non_display_indices,
-            )?)
+                &self.stretch.plane_settings(),
+                clip_override,
+            )?;
+            if self.stretch.autoscale == PlaneAutoscaleMode::Frozen
+                && self.frozen_clip_bounds.is_none()
+                && !raster.no_finite_values
+            {
+                self.frozen_clip_bounds = Some((raster.clip_min, raster.clip_max));
+            }
+            Some(raster)
         } else {
             None
         };
+        let mut inspector_lines = self.inspector_lines()?;
+        inspector_lines.extend(self.plane_display_lines(plane_raster.as_ref()));
         let profile = if self.view.capabilities().renderable_plane
             && matches!(
                 self.active_view,
@@ -493,6 +555,18 @@ impl ImageBrowserSession {
             blc: self.window.format_blc(),
             trc: self.window.format_trc(),
             inc: self.window.format_inc(),
+            stretch: stretch_preset_name(self.stretch.preset).into(),
+            autoscale: autoscale_mode_name(self.stretch.autoscale).into(),
+            clip_low: self
+                .stretch
+                .manual_clip
+                .map(|(low, _)| trim_float_text(format!("{low:.6}")))
+                .unwrap_or_default(),
+            clip_high: self
+                .stretch
+                .manual_clip
+                .map(|(_, high)| trim_float_text(format!("{high:.6}")))
+                .unwrap_or_default(),
         }
     }
 
@@ -514,12 +588,49 @@ impl ImageBrowserSession {
     fn set_view_window(&mut self, parameters: &ImageBrowserParameters) -> Result<(), ImageError> {
         let old_display_pixels = self.current_display_pixels();
         let old_non_display_pixels = self.current_non_display_pixels();
+        self.stretch = parse_stretch_parameters(parameters)?;
+        self.frozen_clip_bounds = None;
         let window =
             self.view
                 .window_from_text(&parameters.blc, &parameters.trc, &parameters.inc)?;
         self.window = window;
-        self.clamp_cursor_to_window(old_display_pixels, old_non_display_pixels, None);
+        self.clamp_cursor_to_window(old_display_pixels, old_non_display_pixels, None, None);
         Ok(())
+    }
+
+    fn plane_display_lines(&self, raster: Option<&PlaneRaster>) -> Vec<String> {
+        let mut lines = vec![
+            format!("Stretch: {}", stretch_preset_label(self.stretch.preset)),
+            format!(
+                "Autoscale: {}",
+                match self.stretch.autoscale {
+                    PlaneAutoscaleMode::PerPlane => "per-plane",
+                    PlaneAutoscaleMode::Frozen => "frozen",
+                }
+            ),
+        ];
+        if let Some((low, high)) = self.stretch.manual_clip {
+            lines.push(format!(
+                "Manual clip: {} .. {}",
+                format_numeric_value_with_unit(low, self.view.brightness_unit()),
+                format_numeric_value_with_unit(high, self.view.brightness_unit()),
+            ));
+        }
+        if let Some(raster) = raster
+            && !raster.no_finite_values
+        {
+            lines.push(format!(
+                "Display clip: {} .. {}",
+                format_numeric_value_with_unit(raster.clip_min, &raster.value_unit),
+                format_numeric_value_with_unit(raster.clip_max, &raster.value_unit),
+            ));
+            lines.push(format!(
+                "Plane range: {} .. {}",
+                format_numeric_value_with_unit(raster.data_min, &raster.value_unit),
+                format_numeric_value_with_unit(raster.data_max, &raster.value_unit),
+            ));
+        }
+        lines
     }
 
     fn set_cursor_pixels(&mut self, x: usize, y: usize) {
@@ -563,10 +674,11 @@ impl ImageBrowserSession {
         &mut self,
         old_display_pixels: Option<(usize, usize)>,
         old_non_display_pixels: Option<Vec<usize>>,
+        default_display_pixels: Option<(usize, usize)>,
         default_non_display_pixels: Option<Vec<usize>>,
     ) {
         if let Some(display_axes) = self.view.axis_model().display_axes {
-            let (old_x, old_y) = old_display_pixels.unwrap_or((
+            let (old_x, old_y) = old_display_pixels.or(default_display_pixels).unwrap_or((
                 self.window.blc()[display_axes[0]],
                 self.window.blc()[display_axes[1]],
             ));
@@ -598,6 +710,32 @@ impl ImageBrowserSession {
                 .resize(self.view.axis_model().non_display_axes.len(), 0);
         }
     }
+}
+
+fn centered_display_pixels(
+    view: &OpenedImageView,
+    window: &ImageViewWindow,
+) -> Option<(usize, usize)> {
+    let display_axes = view.axis_model().display_axes?;
+    Some((
+        centered_sample_pixel(window, display_axes[0]),
+        centered_sample_pixel(window, display_axes[1]),
+    ))
+}
+
+fn centered_non_display_pixels(view: &OpenedImageView, window: &ImageViewWindow) -> Vec<usize> {
+    view.axis_model()
+        .non_display_axes
+        .iter()
+        .map(|&axis| centered_sample_pixel(window, axis))
+        .collect()
+}
+
+fn centered_sample_pixel(window: &ImageViewWindow, axis: usize) -> usize {
+    let center_index = window.sampled_axis_len(axis) / 2;
+    window
+        .sampled_axis_value(axis, center_index)
+        .unwrap_or(window.blc()[axis])
 }
 
 fn cycle_view(
@@ -789,6 +927,10 @@ fn map_plane_raster(raster: PlaneRaster) -> ImagePlaneRaster {
         pixels_u8: raster.pixels_u8,
         clip_min: raster.clip_min,
         clip_max: raster.clip_max,
+        data_min: raster.data_min,
+        data_max: raster.data_max,
+        value_unit: raster.value_unit,
+        histogram_bins: raster.histogram_bins,
         masked_or_non_finite_count: raster.masked_or_non_finite_count,
         no_finite_values: raster.no_finite_values,
     }
@@ -893,6 +1035,101 @@ fn format_world_axis_value(axis_name: &str, unit: &str, value: f64) -> String {
     }
 }
 
+fn parse_stretch_parameters(
+    parameters: &ImageBrowserParameters,
+) -> Result<SessionStretchState, ImageError> {
+    let preset = match parameters.stretch.trim() {
+        "" | "percentile99" => PlaneStretchPreset::Percentile99,
+        "percentile95" => PlaneStretchPreset::Percentile95,
+        "minmax" => PlaneStretchPreset::MinMax,
+        "zscale" => PlaneStretchPreset::ZScale,
+        "manual" => PlaneStretchPreset::Manual,
+        other => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "unsupported stretch preset: {other}"
+            )));
+        }
+    };
+    let autoscale = match parameters.autoscale.trim() {
+        "" | "per_plane" => PlaneAutoscaleMode::PerPlane,
+        "frozen" => PlaneAutoscaleMode::Frozen,
+        other => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "unsupported autoscale mode: {other}"
+            )));
+        }
+    };
+    let clip_low = parse_optional_clip("clip_low", &parameters.clip_low)?;
+    let clip_high = parse_optional_clip("clip_high", &parameters.clip_high)?;
+    let manual_clip = match (clip_low, clip_high) {
+        (Some(low), Some(high)) if low < high => Some((low, high)),
+        (Some(_), Some(_)) => {
+            return Err(ImageError::InvalidMetadata(
+                "clip_low must be smaller than clip_high".into(),
+            ));
+        }
+        (None, None) => None,
+        _ => {
+            return Err(ImageError::InvalidMetadata(
+                "manual clip requires both clip_low and clip_high".into(),
+            ));
+        }
+    };
+    if preset == PlaneStretchPreset::Manual && manual_clip.is_none() {
+        return Err(ImageError::InvalidMetadata(
+            "manual stretch requires clip_low and clip_high".into(),
+        ));
+    }
+    Ok(SessionStretchState {
+        preset,
+        autoscale,
+        manual_clip,
+    })
+}
+
+fn parse_optional_clip(field: &str, value: &str) -> Result<Option<f64>, ImageError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let parsed = value.parse::<f64>().map_err(|error| {
+        ImageError::InvalidMetadata(format!("invalid {field} value '{value}': {error}"))
+    })?;
+    if !parsed.is_finite() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{field} must be finite"
+        )));
+    }
+    Ok(Some(parsed))
+}
+
+fn stretch_preset_name(preset: PlaneStretchPreset) -> &'static str {
+    match preset {
+        PlaneStretchPreset::Percentile99 => "percentile99",
+        PlaneStretchPreset::Percentile95 => "percentile95",
+        PlaneStretchPreset::MinMax => "minmax",
+        PlaneStretchPreset::ZScale => "zscale",
+        PlaneStretchPreset::Manual => "manual",
+    }
+}
+
+fn stretch_preset_label(preset: PlaneStretchPreset) -> &'static str {
+    match preset {
+        PlaneStretchPreset::Percentile99 => "percentile 1/99",
+        PlaneStretchPreset::Percentile95 => "percentile 5/95",
+        PlaneStretchPreset::MinMax => "min/max",
+        PlaneStretchPreset::ZScale => "zscale-like",
+        PlaneStretchPreset::Manual => "manual",
+    }
+}
+
+fn autoscale_mode_name(mode: PlaneAutoscaleMode) -> &'static str {
+    match mode {
+        PlaneAutoscaleMode::PerPlane => "per_plane",
+        PlaneAutoscaleMode::Frozen => "frozen",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use casacore_coordinates::{
@@ -964,15 +1201,13 @@ mod tests {
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(4, 4)).unwrap();
         let snapshot = session.snapshot().unwrap();
-        assert_eq!(snapshot.active_view, ImageBrowserView::Metadata);
-        assert!(snapshot.plane.is_none());
+        assert_eq!(snapshot.active_view, ImageBrowserView::Plane);
+        assert!(snapshot.plane.is_some());
+        assert_eq!(snapshot.plane_cursor.as_ref().unwrap().pixel_x, 2);
+        assert_eq!(snapshot.plane_cursor.as_ref().unwrap().pixel_y, 2);
+        assert_eq!(snapshot.probe.as_ref().unwrap().pixel_indices, vec![2, 2]);
 
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        let plane = session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
+        let plane = session.snapshot().unwrap();
         assert_eq!(plane.active_view, ImageBrowserView::Plane);
         assert!(plane.plane.is_some());
 
@@ -1002,6 +1237,9 @@ mod tests {
 
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(40, 3)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CycleView { forward: true })
+            .unwrap();
         let coordinates = session
             .handle_command(ImageBrowserCommand::CycleView { forward: true })
             .unwrap();
@@ -1022,9 +1260,13 @@ mod tests {
             PagedImage::<f32>::create(vec![2, 2, 2], cube_coords_with_obs_info(), &path).unwrap();
         image.save().unwrap();
 
-        let snapshot = ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 24))
-            .unwrap()
-            .snapshot()
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 24)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CycleView { forward: true })
+            .unwrap();
+        let snapshot = session
+            .handle_command(ImageBrowserCommand::CycleView { forward: true })
             .unwrap();
 
         assert!(
@@ -1061,12 +1303,6 @@ mod tests {
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 12)).unwrap();
         session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
             .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
             .unwrap();
         let snapshot = session
@@ -1084,7 +1320,7 @@ mod tests {
             snapshot
                 .content_lines
                 .iter()
-                .any(|line| line.contains("Selected sample: idx=0"))
+                .any(|line| line.contains("Selected sample: idx=1"))
         );
         assert!(
             snapshot
@@ -1130,12 +1366,6 @@ mod tests {
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 12)).unwrap();
         session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
             .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
             .unwrap();
         let snapshot = session.snapshot().unwrap();
@@ -1145,10 +1375,57 @@ mod tests {
         assert_eq!(profile.axis_name, "Frequency");
         assert_eq!(profile.coord_type, "Spectral");
         assert_eq!(profile.value_unit, "Jy/beam");
-        assert_eq!(profile.selected_sample_index, 0);
+        assert_eq!(profile.selected_sample_index, 1);
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.samples[2].pixel_index, 2);
         assert_eq!(profile.samples[2].value, 400.0);
+    }
+
+    #[test]
+    fn frozen_autoscale_keeps_clip_bounds_across_plane_stepping() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("frozen-scale.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 2], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 2]),
+                    vec![1.0, 100.0, 2.0, 200.0, 3.0, 300.0, 4.0, 400.0],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image.save().unwrap();
+
+        let mut session = ImageBrowserSession::open_with_parameters(
+            &path,
+            ImageBrowserViewport::new(32, 12),
+            Some(&ImageBrowserParameters {
+                blc: "0,0,0".into(),
+                trc: "1,1,1".into(),
+                inc: "1,1,1".into(),
+                stretch: "percentile99".into(),
+                autoscale: "frozen".into(),
+                clip_low: String::new(),
+                clip_high: String::new(),
+            }),
+        )
+        .unwrap();
+        let first = session.snapshot().unwrap();
+        let first_plane = first.plane.expect("first plane");
+        assert_eq!(first_plane.clip_min, 100.0);
+        assert_eq!(first_plane.clip_max, 400.0);
+
+        let second = session
+            .handle_command(ImageBrowserCommand::StepNonDisplayAxis { axis: 2, delta: -1 })
+            .unwrap();
+        let second_plane = second.plane.expect("second plane");
+        assert_eq!(second_plane.clip_min, 100.0);
+        assert_eq!(second_plane.clip_max, 400.0);
+        assert_eq!(second_plane.data_min, 1.0);
+        assert_eq!(second_plane.data_max, 4.0);
     }
 
     #[test]
@@ -1172,16 +1449,10 @@ mod tests {
 
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(2, 2)).unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
         let moved = session
             .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
             .unwrap();
-        assert_eq!(moved.probe.as_ref().unwrap().pixel_indices, vec![1, 1, 0]);
+        assert_eq!(moved.probe.as_ref().unwrap().pixel_indices, vec![1, 1, 1]);
 
         let stepped = session
             .handle_command(ImageBrowserCommand::StepNonDisplayAxis { axis: 2, delta: 2 })
@@ -1209,18 +1480,16 @@ mod tests {
 
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 6)).unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
         let snapshot = session
             .handle_command(ImageBrowserCommand::SetViewWindow {
                 parameters: ImageBrowserParameters {
                     blc: "1,1".into(),
                     trc: "4,3".into(),
                     inc: "2,1".into(),
+                    stretch: "percentile99".into(),
+                    autoscale: "per_plane".into(),
+                    clip_low: String::new(),
+                    clip_high: String::new(),
                 },
             })
             .unwrap();
@@ -1239,7 +1508,7 @@ mod tests {
                 .first()
                 .is_some_and(|line| line.contains("3"))
         );
-        assert_eq!(snapshot.probe.as_ref().unwrap().pixel_indices, vec![1, 1]);
+        assert_eq!(snapshot.probe.as_ref().unwrap().pixel_indices, vec![1, 2]);
 
         let moved = session
             .handle_command(ImageBrowserCommand::SetCursor { x: 3, y: 3 })
@@ -1268,12 +1537,7 @@ mod tests {
 
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(48, 6)).unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        let snapshot = session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
+        let snapshot = session.snapshot().unwrap();
         assert_eq!(snapshot.active_view, ImageBrowserView::Plane);
         assert!(snapshot.content_lines.first().unwrap().contains("y/x"));
         assert!(
@@ -1311,12 +1575,6 @@ mod tests {
 
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(48, 8)).unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
         let snapshot = session
             .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
             .unwrap();
@@ -1357,12 +1615,6 @@ mod tests {
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 12)).unwrap();
         session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        session
             .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
             .unwrap();
         let snapshot = session
@@ -1380,7 +1632,7 @@ mod tests {
             snapshot
                 .content_lines
                 .iter()
-                .any(|line| line.contains("pixel: 1, 1, 0"))
+                .any(|line| line.contains("pixel: 1, 1, 1"))
         );
         assert!(
             snapshot
@@ -1398,7 +1650,7 @@ mod tests {
             snapshot
                 .content_lines
                 .iter()
-                .any(|line| line.contains("Frequency: 1.42 GHz"))
+                .any(|line| line.contains("Frequency: 1.421 GHz"))
         );
     }
 
@@ -1422,12 +1674,7 @@ mod tests {
 
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(24, 4)).unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        let snapshot = session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
+        let snapshot = session.snapshot().unwrap();
 
         assert!(
             snapshot
@@ -1459,24 +1706,23 @@ mod tests {
 
         let mut session =
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(2, 2)).unwrap();
-        session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
-        let snapshot = session
-            .handle_command(ImageBrowserCommand::CycleView { forward: true })
-            .unwrap();
+        let snapshot = session.snapshot().unwrap();
         assert_eq!(snapshot.active_view, ImageBrowserView::Plane);
-        assert_eq!(snapshot.non_display_axes.first().unwrap().index, 0);
+        assert_eq!(snapshot.non_display_axes.first().unwrap().index, 1);
         assert_eq!(snapshot.non_display_axes.first().unwrap().length, 3);
+        assert_eq!(
+            snapshot.probe.as_ref().unwrap().pixel_indices,
+            vec![1, 1, 0, 1]
+        );
 
         let stepped = session
             .handle_command(ImageBrowserCommand::StepNonDisplayAxis { axis: 3, delta: 2 })
             .unwrap();
         assert_eq!(
             stepped.probe.as_ref().unwrap().pixel_indices,
-            vec![0, 0, 0, 2]
+            vec![1, 1, 0, 2]
         );
-        assert_eq!(stepped.probe.as_ref().unwrap().value, 100.0);
+        assert_eq!(stepped.probe.as_ref().unwrap().value, 400.0);
     }
 
     #[test]
