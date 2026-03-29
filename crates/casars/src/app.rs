@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use casacore_imagebrowser_protocol::{
-    ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserSnapshot,
-    ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImageProfilePayload,
+    ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserProbe,
+    ImageBrowserSnapshot, ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState,
+    ImageProfilePayload,
 };
 use casacore_ms::listobs::cli::{
     UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
@@ -37,9 +38,9 @@ use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
 use crate::graphics::{
-    ImagePlaneRenderInput, ImageSpectrumRenderInput, ListObsPlotRenderInput,
-    image_plane_draw_geometry, plot_theme, render_image_plane_image, render_image_spectrum_image,
-    render_plot_image,
+    ImagePlaneColormap, ImagePlaneOverlayMarker, ImagePlaneRenderInput, ImageSpectrumOverlaySeries,
+    ImageSpectrumRenderInput, ListObsPlotRenderInput, image_plane_draw_geometry, plot_theme,
+    render_image_plane_image, render_image_spectrum_image, render_plot_image,
 };
 use crate::registry::{BrowserAppKind, RegistryApp};
 use crate::ui::UiLayout;
@@ -92,6 +93,18 @@ enum BrowserAction {
     TogglePlaneMode,
     ToggleSpectrumPane,
     ToggleMovie,
+    ZoomIn,
+    ZoomOut,
+    ResetViewWindow,
+    PanLeft,
+    PanRight,
+    PanUp,
+    PanDown,
+    CycleColormap,
+    ToggleInvert,
+    PinProbe,
+    RemovePinnedProbe,
+    CyclePinnedProbe { forward: bool },
     MoveLeft,
     MoveRight,
     MoveUp,
@@ -520,11 +533,28 @@ struct ImageBrowserSessionState {
     viewport: ImageBrowserViewport,
     hscroll: u16,
     selected_non_display_axis: usize,
+    pinned_probes: Vec<ImagePinnedProbe>,
+    selected_pinned_probe_id: Option<u64>,
+    next_pinned_probe_id: u64,
+    restoring_selected_pinned_probe: bool,
+    show_live_reticle: bool,
     plane_mode: ImagePlaneMode,
+    plane_colormap: ImagePlaneColormap,
+    plane_invert: bool,
     panel: Option<ImagePlanePanelState>,
     spectrum_panel: Option<ImageSpectrumPanelState>,
     snapshot_generation: u64,
     movie: ImageMovieState,
+}
+
+#[derive(Debug, Clone)]
+struct ImagePinnedProbe {
+    id: u64,
+    label: String,
+    plane_pixel: (usize, usize),
+    probe: ImageBrowserProbe,
+    profile: Option<ImageProfilePayload>,
+    non_display_axis_indices: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -656,6 +686,106 @@ impl ImageBrowserSessionState {
                 .min(self.snapshot.non_display_axes.len().saturating_sub(1));
         }
     }
+
+    fn selected_pinned_probe_index(&self) -> Option<usize> {
+        let selected_id = self.selected_pinned_probe_id?;
+        self.pinned_probes
+            .iter()
+            .position(|probe| probe.id == selected_id)
+    }
+
+    fn selected_pinned_probe(&self) -> Option<&ImagePinnedProbe> {
+        self.selected_pinned_probe_index()
+            .and_then(|index| self.pinned_probes.get(index))
+    }
+
+    fn selected_pinned_probe_mut(&mut self) -> Option<&mut ImagePinnedProbe> {
+        let index = self.selected_pinned_probe_index()?;
+        self.pinned_probes.get_mut(index)
+    }
+
+    fn pin_from_snapshot(&mut self) -> bool {
+        let Some(probe) = self.snapshot.probe.clone() else {
+            return false;
+        };
+        let Some(cursor) = self.snapshot.plane_cursor.as_ref() else {
+            return false;
+        };
+        let pinned = ImagePinnedProbe {
+            id: self.next_pinned_probe_id,
+            label: format!("P{}", self.next_pinned_probe_id),
+            plane_pixel: (cursor.pixel_x, cursor.pixel_y),
+            probe,
+            profile: self.snapshot.profile.clone(),
+            non_display_axis_indices: self
+                .snapshot
+                .non_display_axes
+                .iter()
+                .map(|axis| (axis.axis, axis.index))
+                .collect(),
+        };
+        self.next_pinned_probe_id = self.next_pinned_probe_id.saturating_add(1);
+        self.pinned_probes.push(pinned);
+        true
+    }
+
+    fn remove_selected_pinned_probe(&mut self) -> bool {
+        let Some(index) = self.selected_pinned_probe_index() else {
+            return false;
+        };
+        self.pinned_probes.remove(index);
+        self.selected_pinned_probe_id = None;
+        true
+    }
+
+    fn cycle_selected_pinned_probe(&mut self, forward: bool) -> bool {
+        if self.pinned_probes.is_empty() {
+            return false;
+        }
+        let next_index = match self.selected_pinned_probe_index() {
+            Some(index) if forward => (index + 1) % self.pinned_probes.len(),
+            Some(0) => self.pinned_probes.len() - 1,
+            Some(index) => index - 1,
+            None => {
+                if forward {
+                    0
+                } else {
+                    self.pinned_probes.len() - 1
+                }
+            }
+        };
+        self.selected_pinned_probe_id = self.pinned_probes.get(next_index).map(|probe| probe.id);
+        true
+    }
+
+    fn clear_selected_pinned_probe(&mut self) -> bool {
+        self.selected_pinned_probe_id.take().is_some()
+    }
+
+    fn sync_selected_pinned_probe_from_snapshot(&mut self) {
+        let snapshot_probe = self.snapshot.probe.clone();
+        let snapshot_cursor = self.snapshot.plane_cursor.clone();
+        let snapshot_profile = self.snapshot.profile.clone();
+        let snapshot_axis_indices = self
+            .snapshot
+            .non_display_axes
+            .iter()
+            .map(|axis| (axis.axis, axis.index))
+            .collect::<Vec<_>>();
+        let Some(probe) = self.selected_pinned_probe_mut() else {
+            return;
+        };
+        if let Some(snapshot_probe) = snapshot_probe {
+            probe.probe = snapshot_probe;
+        }
+        if let Some(cursor) = snapshot_cursor.as_ref() {
+            probe.plane_pixel = (cursor.pixel_x, cursor.pixel_y);
+        }
+        if snapshot_profile.is_some() {
+            probe.profile = snapshot_profile;
+        }
+        probe.non_display_axis_indices = snapshot_axis_indices;
+    }
 }
 
 impl BrowserSession {
@@ -712,6 +842,13 @@ impl BrowserSession {
     fn image_parameters(&self) -> Option<ImageBrowserParameters> {
         match &self.kind {
             BrowserSessionKind::Image(session) => Some(session.snapshot.parameters.clone()),
+            BrowserSessionKind::Table(_) => None,
+        }
+    }
+
+    fn image_snapshot(&self) -> Option<&ImageBrowserSnapshot> {
+        match &self.kind {
+            BrowserSessionKind::Image(session) => Some(&session.snapshot),
             BrowserSessionKind::Table(_) => None,
         }
     }
@@ -816,7 +953,34 @@ impl BrowserSession {
                         ));
                     }
                 }
+                if !session.pinned_probes.is_empty() {
+                    lines.push(format!("Pinned probes: {}", session.pinned_probes.len()));
+                    for probe in &session.pinned_probes {
+                        let marker = if session.selected_pinned_probe_id == Some(probe.id) {
+                            "*"
+                        } else {
+                            " "
+                        };
+                        lines.push(format!(
+                            "{marker} {} x={} y={}",
+                            probe.label, probe.plane_pixel.0, probe.plane_pixel.1
+                        ));
+                    }
+                }
                 lines.push(format!("Plane mode: {}", session.plane_mode.label()));
+                lines.push(format!("Colormap: {}", session.plane_colormap.label()));
+                lines.push(format!(
+                    "Invert: {}",
+                    if session.plane_invert { "on" } else { "off" }
+                ));
+                lines.push(format!(
+                    "Reticle: {}",
+                    if session.show_live_reticle {
+                        "visible"
+                    } else {
+                        "hidden"
+                    }
+                ));
                 if session.movie_available() {
                     lines.push(format!(
                         "Movie: {}",
@@ -1619,6 +1783,107 @@ impl AppState {
             {
                 return Some(AppAction::Browser(BrowserAction::ToggleMovie));
             }
+            KeyCode::Char('+') | KeyCode::Char('=')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::ZoomIn));
+            }
+            KeyCode::Char('-')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::ZoomOut));
+            }
+            KeyCode::Char('0')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::ResetViewWindow));
+            }
+            KeyCode::Char('H')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::PanLeft));
+            }
+            KeyCode::Char('L')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::PanRight));
+            }
+            KeyCode::Char('K')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::PanUp));
+            }
+            KeyCode::Char('J')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::PanDown));
+            }
+            KeyCode::Char('c')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::CycleColormap));
+            }
+            KeyCode::Char('i')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::ToggleInvert));
+            }
+            KeyCode::Char('P')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::PinProbe));
+            }
+            KeyCode::Char('u')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::RemovePinnedProbe));
+            }
+            KeyCode::Char('n')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::CyclePinnedProbe {
+                    forward: true,
+                }));
+            }
+            KeyCode::Char('N')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::CyclePinnedProbe {
+                    forward: false,
+                }));
+            }
             KeyCode::Tab if mode == InputMode::Edit => {
                 return Some(AppAction::Edit(EditAction::CommitAndNext));
             }
@@ -1818,6 +2083,14 @@ impl AppState {
             if self.image_plane_has_linked_profile() {
                 parts.push("s spectrum pane".to_string());
             }
+            if self.image_browser_session_state().is_some() {
+                parts.push("+/- zoom".to_string());
+                parts.push("HJKL pan".to_string());
+                parts.push("c map".to_string());
+                parts.push("i invert".to_string());
+                parts.push("P pin".to_string());
+                parts.push("n/N probe".to_string());
+            }
             if self.browser_uses_parameter_pane() {
                 parts.push("r reopen".to_string());
                 parts.push("a adv".to_string());
@@ -1830,6 +2103,11 @@ impl AppState {
                 parts.push("Enter open".to_string());
                 parts.push("Esc back".to_string());
                 parts.push("Bksp parent table".to_string());
+            } else if self
+                .browser_session()
+                .is_some_and(|session| session.kind() == BrowserAppKind::Image)
+            {
+                parts.push("Esc reticle".to_string());
             }
             parts.push("y copy".to_string());
         } else if self.active_result_tab == ResultTab::Plots {
@@ -1945,7 +2223,14 @@ impl AppState {
                     .is_some_and(|session| session.kind() == BrowserAppKind::Image)
                 {
                     lines.push("Plane view: g toggle raster/spreadsheet".to_string());
+                    lines.push("Plane view: +/- zoom  0 reset view".to_string());
+                    lines.push("Plane view: H/J/K/L pan view".to_string());
+                    lines.push("Plane view: c cycle colormap  i invert".to_string());
                     lines.push("Spectrum view: follows the active plane cursor".to_string());
+                    lines.push("Probes: P pin current  n/N cycle pinned  u remove".to_string());
+                    lines.push(
+                        "Probes: Esc return to the live cursor, then hide/show reticle".to_string(),
+                    );
                     if self.image_plane_has_linked_profile() {
                         lines.push("Plane workspace: s collapse/expand spectrum".to_string());
                         lines.push("Plane workspace: drag divider to resize spectrum".to_string());
@@ -1962,6 +2247,9 @@ impl AppState {
                     }
                     if self.image_raster_plane_active() {
                         lines.push("Raster: click to select active pixel".to_string());
+                        lines.push("Raster: mouse wheel zooms the plane".to_string());
+                        lines
+                            .push("Raster: click a pinned marker to select that probe".to_string());
                     }
                 }
             }
@@ -2650,6 +2938,35 @@ impl AppState {
         self.image_movie_active()
     }
 
+    #[cfg(test)]
+    pub(crate) fn image_live_reticle_visible_for_test(&self) -> bool {
+        self.image_browser_session_state()
+            .map(|state| state.show_live_reticle)
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_pinned_probe_labels_for_test(&self) -> Vec<String> {
+        self.image_browser_session_state()
+            .map(|state| {
+                state
+                    .pinned_probes
+                    .iter()
+                    .map(|probe| probe.label.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_image_pinned_probe_label_for_test(&self) -> Option<String> {
+        self.image_browser_session_state().and_then(|state| {
+            state
+                .selected_pinned_probe()
+                .map(|probe| probe.label.clone())
+        })
+    }
+
     pub(crate) fn cache_output_layout(&mut self, layout: &UiLayout) {
         let next_result = result_text_area(layout);
         let next_left = left_output_area(self, layout);
@@ -3018,6 +3335,24 @@ impl AppState {
         Some(f32::from(plane_canvas_height) / f32::from(available_canvas.max(1)))
     }
 
+    fn image_raster_plane_canvas_hit(&self, column: u16, row: u16, layout: &UiLayout) -> bool {
+        let Some(session) = self.browser_session() else {
+            return false;
+        };
+        let BrowserSessionKind::Image(state) = &session.kind else {
+            return false;
+        };
+        if !state.raster_plane_active() {
+            return false;
+        }
+        let canvas = crate::ui::image_plane_canvas_area_for_browser(
+            layout,
+            state.linked_profile_active(),
+            self.image_workspace_split_ratio(),
+        );
+        rect_contains(canvas, column, row)
+    }
+
     fn image_spectrum_click_target(
         &self,
         column: u16,
@@ -3201,6 +3536,18 @@ impl AppState {
             BrowserAction::TogglePlaneMode => self.toggle_image_plane_mode(),
             BrowserAction::ToggleSpectrumPane => self.toggle_image_spectrum_pane(),
             BrowserAction::ToggleMovie => self.toggle_image_movie(),
+            BrowserAction::ZoomIn => self.zoom_image_view(true),
+            BrowserAction::ZoomOut => self.zoom_image_view(false),
+            BrowserAction::ResetViewWindow => self.reset_image_view_window(),
+            BrowserAction::PanLeft => self.pan_image_view(-1, 0),
+            BrowserAction::PanRight => self.pan_image_view(1, 0),
+            BrowserAction::PanUp => self.pan_image_view(0, -1),
+            BrowserAction::PanDown => self.pan_image_view(0, 1),
+            BrowserAction::CycleColormap => self.cycle_image_plane_colormap(),
+            BrowserAction::ToggleInvert => self.toggle_image_plane_invert(),
+            BrowserAction::PinProbe => self.pin_current_image_probe(),
+            BrowserAction::RemovePinnedProbe => self.remove_selected_image_probe(),
+            BrowserAction::CyclePinnedProbe { forward } => self.cycle_selected_image_probe(forward),
             BrowserAction::MoveLeft => {
                 self.send_browser_command(BrowserRequest::MoveLeft { steps: 1 });
             }
@@ -3219,7 +3566,11 @@ impl AppState {
             }
             BrowserAction::Activate => self.send_browser_command(BrowserRequest::Activate),
             BrowserAction::Back => self.send_browser_command(BrowserRequest::Back),
-            BrowserAction::Escape => self.send_browser_command(BrowserRequest::Escape),
+            BrowserAction::Escape => {
+                if !self.clear_selected_image_probe() && !self.toggle_image_live_reticle() {
+                    self.send_browser_command(BrowserRequest::Escape);
+                }
+            }
         }
     }
 
@@ -3266,6 +3617,173 @@ impl AppState {
             "Movie playback paused.".into()
         };
         self.result.status_kind = StatusKind::Info;
+    }
+
+    fn pin_current_image_probe(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        if !state.pin_from_snapshot() {
+            self.result.status_line = "No active probe available to pin yet.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        let label = state
+            .pinned_probes
+            .last()
+            .map(|probe| probe.label.clone())
+            .unwrap_or_else(|| "probe".to_string());
+        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+        self.result.status_line = format!("Pinned {label}.");
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn remove_selected_image_probe(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        let label = state
+            .selected_pinned_probe()
+            .map(|probe| probe.label.clone())
+            .unwrap_or_else(|| "probe".to_string());
+        if !state.remove_selected_pinned_probe() {
+            self.result.status_line = "No pinned probe is currently selected.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        state.restoring_selected_pinned_probe = false;
+        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+        self.result.status_line = format!("Removed {label}.");
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn clear_selected_image_probe(&mut self) -> bool {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return false;
+        };
+        if !state.clear_selected_pinned_probe() {
+            return false;
+        }
+        state.restoring_selected_pinned_probe = false;
+        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+        self.result.status_line = "Returned to the live cursor.".into();
+        self.result.status_kind = StatusKind::Info;
+        true
+    }
+
+    fn toggle_image_live_reticle(&mut self) -> bool {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return false;
+        };
+        state.show_live_reticle = !state.show_live_reticle;
+        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+        self.result.status_line = if state.show_live_reticle {
+            "Live reticle shown.".into()
+        } else {
+            "Live reticle hidden.".into()
+        };
+        self.result.status_kind = StatusKind::Info;
+        true
+    }
+
+    fn cycle_selected_image_probe(&mut self, forward: bool) {
+        let probe_id = {
+            let Some(state) = self.image_browser_session_state_mut() else {
+                return;
+            };
+            if !state.cycle_selected_pinned_probe(forward) {
+                self.result.status_line = "No pinned probes available yet.".into();
+                self.result.status_kind = StatusKind::Warning;
+                return;
+            }
+            state.selected_pinned_probe_id
+        };
+        let Some(probe_id) = probe_id else {
+            return;
+        };
+        self.activate_image_pinned_probe(probe_id);
+    }
+
+    fn activate_image_pinned_probe(&mut self, probe_id: u64) -> bool {
+        let target = {
+            let Some(state) = self.image_browser_session_state_mut() else {
+                return false;
+            };
+            let Some(target) = state
+                .pinned_probes
+                .iter()
+                .find(|probe| probe.id == probe_id)
+                .cloned()
+            else {
+                return false;
+            };
+            state.selected_pinned_probe_id = Some(probe_id);
+            state.restoring_selected_pinned_probe = true;
+            state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+            target
+        };
+
+        self.restore_image_browser_to_pinned_probe(&target);
+
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return false;
+        };
+        state.restoring_selected_pinned_probe = false;
+        state.sync_selected_pinned_probe_from_snapshot();
+        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+        self.result.status_line = format!("Selected {}.", target.label);
+        self.result.status_kind = StatusKind::Info;
+        true
+    }
+
+    fn restore_image_browser_to_pinned_probe(&mut self, target: &ImagePinnedProbe) {
+        let Some((current_x, current_y)) = self
+            .image_browser_session_state()
+            .and_then(|state| state.snapshot.plane_cursor.as_ref())
+            .map(|cursor| (cursor.pixel_x, cursor.pixel_y))
+        else {
+            return;
+        };
+        if (current_x, current_y) != target.plane_pixel {
+            self.send_browser_command(BrowserRequest::SetImageCursor {
+                x: target.plane_pixel.0,
+                y: target.plane_pixel.1,
+            });
+        }
+        for (axis, target_index) in &target.non_display_axis_indices {
+            let current_index = self
+                .image_browser_session_state()
+                .and_then(|state| {
+                    state
+                        .snapshot
+                        .non_display_axes
+                        .iter()
+                        .find(|state_axis| state_axis.axis == *axis)
+                        .map(|state_axis| state_axis.index)
+                })
+                .unwrap_or(*target_index);
+            let delta = *target_index as i32 - current_index as i32;
+            if delta != 0 {
+                self.send_browser_command(BrowserRequest::StepImageNonDisplayAxis {
+                    axis: *axis,
+                    delta,
+                });
+            }
+        }
+    }
+
+    fn select_image_pinned_probe_by_pixel(&mut self, pixel: (usize, usize)) -> bool {
+        let selected_id = self.image_browser_session_state().and_then(|state| {
+            state
+                .pinned_probes
+                .iter()
+                .rev()
+                .find(|probe| probe.plane_pixel == pixel)
+                .map(|probe| probe.id)
+        });
+        selected_id
+            .map(|probe_id| self.activate_image_pinned_probe(probe_id))
+            .unwrap_or(false)
     }
 
     fn stop_image_movie(&mut self, update_status: bool) {
@@ -3630,6 +4148,13 @@ impl AppState {
             self.set_focus_target(FocusTarget::BrowserMain);
             self.clear_output_selection_for_target(OutputPane::Result);
             self.dragging_image_cursor = true;
+            if self.select_image_pinned_probe_by_pixel((x, y)) {
+                self.last_click = Some(ClickState {
+                    target: ClickTarget::Pane(PaneFocus::Result),
+                    at: Instant::now(),
+                });
+                return;
+            }
             self.send_browser_command(BrowserRequest::SetImageCursor { x, y });
             self.last_click = Some(ClickState {
                 target: ClickTarget::Pane(PaneFocus::Result),
@@ -3803,6 +4328,17 @@ impl AppState {
     }
 
     fn handle_mouse_scroll(&mut self, mouse_event: MouseEvent, layout: &UiLayout, delta: i16) {
+        if self.image_raster_plane_canvas_hit(mouse_event.column, mouse_event.row, layout) {
+            self.clear_output_selection_for_target(OutputPane::Result);
+            self.set_focus_target(FocusTarget::BrowserMain);
+            if delta.is_negative() {
+                self.zoom_image_view(true);
+            } else {
+                self.zoom_image_view(false);
+            }
+            return;
+        }
+
         if self.active_result_tab == ResultTab::Plots {
             if layout
                 .plot_catalog_at(mouse_event.column, mouse_event.row)
@@ -4510,7 +5046,14 @@ impl AppState {
                                         viewport,
                                         hscroll: 0,
                                         selected_non_display_axis: 0,
+                                        pinned_probes: Vec::new(),
+                                        selected_pinned_probe_id: None,
+                                        next_pinned_probe_id: 1,
+                                        restoring_selected_pinned_probe: false,
+                                        show_live_reticle: true,
                                         plane_mode: ImagePlaneMode::Raster,
+                                        plane_colormap: ImagePlaneColormap::Grayscale,
+                                        plane_invert: false,
                                         panel: None,
                                         spectrum_panel: None,
                                         snapshot_generation: 1,
@@ -4804,6 +5347,9 @@ impl AppState {
                             }
                             state.snapshot = snapshot;
                             state.clamp_selected_non_display_axis();
+                            if !state.restoring_selected_pinned_probe {
+                                state.sync_selected_pinned_probe_from_snapshot();
+                            }
                             state.snapshot_generation = state.snapshot_generation.saturating_add(1);
                             sync_image_parameter_fields(
                                 &mut self.fields,
@@ -4911,6 +5457,83 @@ impl AppState {
             self.plot_workspace.selected_plot,
             ListObsPlotExportFormat::Png,
         );
+    }
+
+    fn zoom_image_view(&mut self, zoom_in: bool) {
+        let Some(parameters) = self
+            .browser_session()
+            .and_then(BrowserSession::image_snapshot)
+            .and_then(|snapshot| image_zoom_parameters(snapshot, zoom_in))
+        else {
+            self.result.status_line = "Zoom controls are only available for plane views.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.send_browser_command(BrowserRequest::SetImageViewParameters { parameters });
+        self.result.status_line = if zoom_in {
+            "Zoomed in.".into()
+        } else {
+            "Zoomed out.".into()
+        };
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn pan_image_view(&mut self, dx: i32, dy: i32) {
+        let Some(parameters) = self
+            .browser_session()
+            .and_then(BrowserSession::image_snapshot)
+            .and_then(|snapshot| image_pan_parameters(snapshot, dx, dy))
+        else {
+            self.result.status_line = "Pan controls are only available for plane views.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.send_browser_command(BrowserRequest::SetImageViewParameters { parameters });
+        self.result.status_line = "Panned image view.".into();
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn reset_image_view_window(&mut self) {
+        let Some(snapshot) = self
+            .browser_session()
+            .and_then(BrowserSession::image_snapshot)
+        else {
+            return;
+        };
+        if snapshot.active_view != ImageBrowserView::Plane {
+            self.result.status_line = "Reset view is only available in the Plane view.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        self.send_browser_command(BrowserRequest::SetImageViewParameters {
+            parameters: ImageBrowserParameters::default(),
+        });
+        self.result.status_line = "Reset image view.".into();
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn cycle_image_plane_colormap(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        state.plane_colormap = state.plane_colormap.next();
+        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+        self.result.status_line = format!("Colormap: {}.", state.plane_colormap.label());
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn toggle_image_plane_invert(&mut self) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        state.plane_invert = !state.plane_invert;
+        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+        self.result.status_line = if state.plane_invert {
+            "Image colors inverted.".into()
+        } else {
+            "Image colors restored.".into()
+        };
+        self.result.status_kind = StatusKind::Info;
     }
 
     fn clear_plot_render_cache(&mut self) {
@@ -5075,6 +5698,12 @@ impl AppState {
         let Some(raster) = state.snapshot.plane.clone() else {
             return;
         };
+        let cursor = state
+            .show_live_reticle
+            .then(|| image_plane_sample_cursor(&state.snapshot))
+            .flatten();
+        let sampled_shape = image_plane_sampled_shape(&state.snapshot);
+        let overlay_markers = image_plane_overlay_markers(state);
         let panel = state.panel.get_or_insert_with(|| {
             let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
             let font_size = picker.font_size();
@@ -5098,8 +5727,6 @@ impl AppState {
         if panel.request_key == Some(request_key.clone()) {
             return;
         }
-        let cursor = image_plane_sample_cursor(&state.snapshot);
-        let sampled_shape = image_plane_sampled_shape(&state.snapshot);
         let pixel_width = u32::from(area.width.max(1)) * u32::from(panel.font_size.0.max(1));
         let pixel_height = u32::from(area.height.max(1)) * u32::from(panel.font_size.1.max(1));
         if let Err(error) = panel.renderer.request(
@@ -5110,7 +5737,10 @@ impl AppState {
                 raster,
                 cursor_sample: cursor,
                 sampled_shape,
+                overlay_markers,
                 display_aspect_ratio: image_plane_display_aspect_ratio(&state.snapshot),
+                colormap: state.plane_colormap,
+                invert: state.plane_invert,
                 theme_mode,
             },
         ) {
@@ -5141,6 +5771,7 @@ impl AppState {
         let Some(profile) = state.snapshot.profile.clone() else {
             return;
         };
+        let overlay_profiles = image_spectrum_overlay_series(state);
         let panel = state.spectrum_panel.get_or_insert_with(|| {
             let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
             let font_size = picker.font_size();
@@ -5172,6 +5803,7 @@ impl AppState {
             pixel_height.max(1),
             ImageSpectrumRenderInput {
                 profile,
+                overlay_profiles,
                 theme_mode,
             },
         ) {
@@ -5355,13 +5987,6 @@ impl AppState {
             .spectrum_panel
             .as_ref()
             .and_then(|panel| panel.last_error.as_deref())
-    }
-
-    pub(crate) fn image_plane_axis_labels(&self) -> Option<(String, String)> {
-        let state = self.image_browser_session_state()?;
-        let x = state.snapshot.display_axes.first()?;
-        let y = state.snapshot.display_axes.get(1)?;
-        Some((format_image_axis_label(x), format_image_axis_label(y)))
     }
 
     pub(crate) fn image_plane_has_linked_profile(&self) -> bool {
@@ -7023,6 +7648,59 @@ fn image_plane_sampled_shape(snapshot: &ImageBrowserSnapshot) -> Option<(usize, 
     Some((display_x.sampled_len, display_y.sampled_len))
 }
 
+fn image_plane_overlay_markers(state: &ImageBrowserSessionState) -> Vec<ImagePlaneOverlayMarker> {
+    state
+        .pinned_probes
+        .iter()
+        .enumerate()
+        .filter_map(|(color_index, probe)| {
+            image_pinned_probe_sample(state, probe).map(|sample| ImagePlaneOverlayMarker {
+                sample,
+                color_index,
+            })
+        })
+        .collect()
+}
+
+fn image_spectrum_overlay_series(
+    state: &ImageBrowserSessionState,
+) -> Vec<ImageSpectrumOverlaySeries> {
+    state
+        .pinned_probes
+        .iter()
+        .enumerate()
+        .filter_map(|(color_index, probe)| {
+            probe
+                .profile
+                .clone()
+                .map(|profile| ImageSpectrumOverlaySeries {
+                    label: probe.label.clone(),
+                    profile,
+                    color_index,
+                })
+        })
+        .collect()
+}
+
+fn image_pinned_probe_sample(
+    state: &ImageBrowserSessionState,
+    probe: &ImagePinnedProbe,
+) -> Option<(usize, usize)> {
+    let display_x = state.snapshot.display_axes.first()?;
+    let display_y = state.snapshot.display_axes.get(1)?;
+    if probe.plane_pixel.0 < display_x.blc
+        || probe.plane_pixel.0 > display_x.trc
+        || probe.plane_pixel.1 < display_y.blc
+        || probe.plane_pixel.1 > display_y.trc
+    {
+        return None;
+    }
+    let sample_x = sample_index_for_pixel(probe.plane_pixel.0, display_x.blc, display_x.inc);
+    let sample_y = sample_index_for_pixel(probe.plane_pixel.1, display_y.blc, display_y.inc);
+    (sample_x < display_x.sampled_len && sample_y < display_y.sampled_len)
+        .then_some((sample_x, sample_y))
+}
+
 fn image_raster_click_target(
     state: &ImageBrowserSessionState,
     column: u16,
@@ -7096,6 +7774,10 @@ fn image_click_sample_index(relative: usize, draw_len: usize, sampled_len: usize
     (numerator / draw_len.saturating_mul(2)).min(sampled_len.saturating_sub(1))
 }
 
+fn sample_index_for_pixel(pixel: usize, blc: usize, inc: usize) -> usize {
+    pixel.saturating_sub(blc) / inc.max(1)
+}
+
 fn div_ceil_u32(value: u32, divisor: u32) -> u32 {
     value.div_ceil(divisor.max(1))
 }
@@ -7145,12 +7827,104 @@ fn is_direction_display_axis(name: &str) -> bool {
         || name.eq_ignore_ascii_case("DEC")
 }
 
-fn format_image_axis_label(axis: &ImageDisplayAxisState) -> String {
-    if axis.unit.is_empty() {
-        axis.name.clone()
-    } else {
-        format!("{} [{}]", axis.name, axis.unit)
+fn image_zoom_parameters(
+    snapshot: &ImageBrowserSnapshot,
+    zoom_in: bool,
+) -> Option<ImageBrowserParameters> {
+    if snapshot.active_view != ImageBrowserView::Plane || snapshot.display_axes.len() < 2 {
+        return None;
     }
+    let (mut blc, mut trc, inc) = image_snapshot_window(snapshot)?;
+    let cursor = snapshot.plane_cursor.as_ref();
+    for (display_index, axis_state) in snapshot.display_axes.iter().take(2).enumerate() {
+        let axis = axis_state.axis;
+        let full_len = *snapshot.shape.get(axis)?;
+        let span = trc[axis].saturating_sub(blc[axis]).saturating_add(1).max(1);
+        let target_span = if zoom_in {
+            span.div_ceil(2).max(1)
+        } else {
+            span.saturating_mul(2).min(full_len.max(1))
+        };
+        let center_pixel = match (display_index, cursor) {
+            (0, Some(cursor)) => cursor.pixel_x,
+            (1, Some(cursor)) => cursor.pixel_y,
+            _ => blc[axis].saturating_add(span / 2),
+        }
+        .min(full_len.saturating_sub(1));
+        let new_blc = centered_window_start(center_pixel, target_span, full_len);
+        blc[axis] = new_blc;
+        trc[axis] = new_blc.saturating_add(target_span.saturating_sub(1));
+    }
+    Some(ImageBrowserParameters {
+        blc: format_usize_axis_list(&blc),
+        trc: format_usize_axis_list(&trc),
+        inc: format_usize_axis_list(&inc),
+    })
+}
+
+fn image_pan_parameters(
+    snapshot: &ImageBrowserSnapshot,
+    dx: i32,
+    dy: i32,
+) -> Option<ImageBrowserParameters> {
+    if snapshot.active_view != ImageBrowserView::Plane || snapshot.display_axes.len() < 2 {
+        return None;
+    }
+    let (mut blc, mut trc, inc) = image_snapshot_window(snapshot)?;
+    for (display_index, axis_state) in snapshot.display_axes.iter().take(2).enumerate() {
+        let axis = axis_state.axis;
+        let full_len = *snapshot.shape.get(axis)?;
+        let span = trc[axis].saturating_sub(blc[axis]).saturating_add(1).max(1);
+        let step = (span / 6).max(1) as i32;
+        let delta = match display_index {
+            0 => dx.saturating_mul(step),
+            1 => dy.saturating_mul(step),
+            _ => 0,
+        };
+        let max_start = full_len.saturating_sub(span);
+        let new_blc = (blc[axis] as i32 + delta).clamp(0, max_start as i32) as usize;
+        blc[axis] = new_blc;
+        trc[axis] = new_blc.saturating_add(span.saturating_sub(1));
+    }
+    Some(ImageBrowserParameters {
+        blc: format_usize_axis_list(&blc),
+        trc: format_usize_axis_list(&trc),
+        inc: format_usize_axis_list(&inc),
+    })
+}
+
+fn image_snapshot_window(
+    snapshot: &ImageBrowserSnapshot,
+) -> Option<(Vec<usize>, Vec<usize>, Vec<usize>)> {
+    let shape_len = snapshot.shape.len();
+    let blc = parse_usize_axis_list(&snapshot.parameters.blc, shape_len)?;
+    let trc = parse_usize_axis_list(&snapshot.parameters.trc, shape_len)?;
+    let inc = parse_usize_axis_list(&snapshot.parameters.inc, shape_len)?;
+    Some((blc, trc, inc))
+}
+
+fn parse_usize_axis_list(text: &str, expected_len: usize) -> Option<Vec<usize>> {
+    let values = text
+        .split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.parse::<usize>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    (values.len() == expected_len).then_some(values)
+}
+
+fn format_usize_axis_list(values: &[usize]) -> String {
+    values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn centered_window_start(center: usize, span: usize, full_len: usize) -> usize {
+    let span = span.clamp(1, full_len.max(1));
+    center
+        .saturating_sub(span / 2)
+        .min(full_len.saturating_sub(span))
 }
 
 fn image_browser_max_hscroll(snapshot: &ImageBrowserSnapshot, viewport_width: u16) -> usize {
@@ -7822,7 +8596,15 @@ fn shell_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::expand_tilde_path_with_home;
+    use casacore_imagebrowser_protocol::{
+        ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserSnapshot,
+        ImageBrowserView, ImageDisplayAxisState, ImageNavigationMetrics, ImagePlaneCursorState,
+    };
+
+    use super::{
+        centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
+        image_zoom_parameters,
+    };
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -7847,5 +8629,96 @@ mod tests {
             expand_tilde_path_with_home("./relative/path", Some(Path::new("/tmp/home"))),
             PathBuf::from("./relative/path")
         );
+    }
+
+    fn plane_snapshot() -> ImageBrowserSnapshot {
+        ImageBrowserSnapshot {
+            status_line: "ready".into(),
+            active_view: ImageBrowserView::Plane,
+            focus: ImageBrowserFocus::Content,
+            shape: vec![256, 256, 30],
+            parameters: ImageBrowserParameters {
+                blc: "0,0,0".into(),
+                trc: "255,255,29".into(),
+                inc: "1,1,1".into(),
+            },
+            inspector_lines: vec!["Shape: [256, 256, 30]".into()],
+            content_lines: Vec::new(),
+            navigation: ImageNavigationMetrics {
+                selected_index: 0,
+                total_items: 0,
+                viewport_items: 0,
+            },
+            plane: None,
+            probe: None,
+            profile: None,
+            display_axes: vec![
+                ImageDisplayAxisState {
+                    axis: 0,
+                    name: "Right Ascension".into(),
+                    unit: "rad".into(),
+                    blc: 0,
+                    trc: 255,
+                    inc: 1,
+                    sampled_len: 256,
+                    world_increment: Some(-1.0e-4),
+                },
+                ImageDisplayAxisState {
+                    axis: 1,
+                    name: "Declination".into(),
+                    unit: "rad".into(),
+                    blc: 0,
+                    trc: 255,
+                    inc: 1,
+                    sampled_len: 256,
+                    world_increment: Some(1.0e-4),
+                },
+            ],
+            plane_cursor: Some(ImagePlaneCursorState {
+                sampled_x: 128,
+                sampled_y: 128,
+                pixel_x: 128,
+                pixel_y: 128,
+            }),
+            non_display_axes: Vec::new(),
+            capabilities: ImageBrowserCapabilities {
+                renderable_plane: true,
+                world_coords_available: true,
+                pixel_only_mode: false,
+                non_display_axis_selectors: false,
+                mask_present: false,
+                complex_unsupported: false,
+            },
+        }
+    }
+
+    #[test]
+    fn centered_window_start_clamps_to_image_bounds() {
+        assert_eq!(centered_window_start(5, 16, 256), 0);
+        assert_eq!(centered_window_start(250, 32, 256), 224);
+        assert_eq!(centered_window_start(128, 64, 256), 96);
+    }
+
+    #[test]
+    fn zoom_in_parameters_center_on_plane_cursor() {
+        let snapshot = plane_snapshot();
+        let parameters = image_zoom_parameters(&snapshot, true).expect("zoom parameters");
+        assert_eq!(parameters.blc, "64,64,0");
+        assert_eq!(parameters.trc, "191,191,29");
+        assert_eq!(parameters.inc, "1,1,1");
+    }
+
+    #[test]
+    fn pan_parameters_shift_window_without_touching_non_display_axes() {
+        let mut snapshot = plane_snapshot();
+        snapshot.parameters = ImageBrowserParameters {
+            blc: "64,64,7".into(),
+            trc: "191,191,7".into(),
+            inc: "1,1,1".into(),
+        };
+        let parameters = image_pan_parameters(&snapshot, 1, -1).expect("pan parameters");
+        assert_eq!(parameters.blc, "85,43,7");
+        assert_eq!(parameters.trc, "212,170,7");
+        assert_eq!(parameters.inc, "1,1,1");
     }
 }

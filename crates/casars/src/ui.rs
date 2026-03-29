@@ -82,9 +82,7 @@ pub(crate) struct PlotControlHit {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ImagePlaneCanvasLayout {
-    pub top_label: Option<Rect>,
     pub canvas: Rect,
-    pub bottom_label: Option<Rect>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -893,28 +891,6 @@ fn draw_image_plane_workspace(
         app.image_workspace_split_ratio(),
     );
 
-    if let Some(rect) = workspace.plane.top_label {
-        let label = app
-            .image_plane_axis_labels()
-            .map(|(_, y)| format!("Y: {y}"))
-            .unwrap_or_else(|| "Y".to_string());
-        frame.render_widget(
-            Paragraph::new(label).style(Style::default().fg(palette.footer_fg)),
-            rect,
-        );
-    }
-
-    if let Some(rect) = workspace.plane.bottom_label {
-        let label = app
-            .image_plane_axis_labels()
-            .map(|(x, _)| format!("X: {x}"))
-            .unwrap_or_else(|| "X".to_string());
-        frame.render_widget(
-            Paragraph::new(label).style(Style::default().fg(palette.footer_fg)),
-            rect,
-        );
-    }
-
     if workspace.plane.canvas.is_empty() {
         return;
     }
@@ -1653,34 +1629,7 @@ fn content_viewport_area(area: Rect, has_vertical: bool, has_horizontal: bool) -
 }
 
 pub(crate) fn image_plane_canvas_layout(area: Rect) -> ImagePlaneCanvasLayout {
-    if area.height >= 3 {
-        ImagePlaneCanvasLayout {
-            top_label: Some(Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: 1,
-            }),
-            canvas: Rect {
-                x: area.x,
-                y: area.y + 1,
-                width: area.width,
-                height: area.height.saturating_sub(2),
-            },
-            bottom_label: Some(Rect {
-                x: area.x,
-                y: area.y + area.height.saturating_sub(1),
-                width: area.width,
-                height: 1,
-            }),
-        }
-    } else {
-        ImagePlaneCanvasLayout {
-            top_label: None,
-            canvas: area,
-            bottom_label: None,
-        }
-    }
+    ImagePlaneCanvasLayout { canvas: area }
 }
 
 #[cfg(test)]
@@ -1702,7 +1651,7 @@ pub(crate) fn image_plane_workspace_layout(
         };
     }
 
-    let fixed_rows = 3u16;
+    let fixed_rows = 1u16;
     let available_canvas = area.height.saturating_sub(fixed_rows);
     if available_canvas < 3 {
         return ImagePlaneWorkspaceLayout {
@@ -1723,28 +1672,14 @@ pub(crate) fn image_plane_workspace_layout(
     };
     let spectrum_canvas_height = available_canvas.saturating_sub(plane_canvas_height);
     let plane = ImagePlaneCanvasLayout {
-        top_label: Some(Rect {
+        canvas: Rect {
             x: area.x,
             y: area.y,
             width: area.width,
-            height: 1,
-        }),
-        canvas: Rect {
-            x: area.x,
-            y: area.y + 1,
-            width: area.width,
             height: plane_canvas_height,
         },
-        bottom_label: Some(Rect {
-            x: area.x,
-            y: area.y + 1 + plane_canvas_height,
-            width: area.width,
-            height: 1,
-        }),
     };
-    let divider_y = plane
-        .bottom_label
-        .map_or(area.y, |rect| rect.y + rect.height);
+    let divider_y = plane.canvas.y + plane.canvas.height;
     let divider = Rect {
         x: area.x,
         y: divider_y,

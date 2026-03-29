@@ -240,6 +240,7 @@ pub struct ImageBrowserAxisValue {
 /// Display-axis metadata for the current rendered plane window.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ImageDisplayAxisState {
+    pub axis: usize,
     pub name: String,
     pub unit: String,
     pub blc: usize,
@@ -310,6 +311,8 @@ pub struct ImageBrowserSnapshot {
     pub active_view: ImageBrowserView,
     pub focus: ImageBrowserFocus,
     #[serde(default)]
+    pub shape: Vec<usize>,
+    #[serde(default)]
     pub parameters: ImageBrowserParameters,
     pub inspector_lines: Vec<String>,
     pub content_lines: Vec<String>,
@@ -355,6 +358,7 @@ mod tests {
             status_line: "ready".into(),
             active_view: ImageBrowserView::Plane,
             focus: ImageBrowserFocus::Content,
+            shape: vec![4, 4],
             parameters: ImageBrowserParameters {
                 blc: "0,0".into(),
                 trc: "3,3".into(),
@@ -424,6 +428,7 @@ mod tests {
             }),
             display_axes: vec![
                 ImageDisplayAxisState {
+                    axis: 0,
                     name: "Axis0".into(),
                     unit: "px".into(),
                     blc: 0,
@@ -433,6 +438,7 @@ mod tests {
                     world_increment: None,
                 },
                 ImageDisplayAxisState {
+                    axis: 1,
                     name: "Axis1".into(),
                     unit: "px".into(),
                     blc: 0,

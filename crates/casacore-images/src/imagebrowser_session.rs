@@ -236,6 +236,7 @@ impl ImageBrowserSession {
             status_line: self.view.status_line(),
             active_view: self.active_view,
             focus: self.focus,
+            shape: self.view.shape().to_vec(),
             parameters: self.parameter_state(),
             inspector_lines: clip_lines(&inspector_lines, 0, inspector_height),
             content_lines,
@@ -837,6 +838,7 @@ fn map_axis_value(value: ImageAxisValue) -> ImageBrowserAxisValue {
 
 fn map_display_axis(axis: ImageDisplayAxis) -> ImageDisplayAxisState {
     ImageDisplayAxisState {
+        axis: axis.axis,
         name: axis.name,
         unit: axis.unit,
         blc: axis.blc,

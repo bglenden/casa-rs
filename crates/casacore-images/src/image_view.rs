@@ -58,6 +58,7 @@ pub struct ImageAxisValue {
 /// Display-axis metadata for the active rendered plane window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageDisplayAxis {
+    pub axis: usize,
     pub name: String,
     pub unit: String,
     pub blc: usize,
@@ -723,6 +724,7 @@ impl OpenedImageView {
         display_axes
             .into_iter()
             .map(|axis| ImageDisplayAxis {
+                axis,
                 name: descriptors
                     .get(axis)
                     .map(|descriptor| descriptor.name.clone())
