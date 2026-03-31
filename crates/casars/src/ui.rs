@@ -895,7 +895,9 @@ fn draw_image_plane_workspace(
         return;
     }
 
-    if let Some(protocol) = app.image_plane_protocol() {
+    if app.image_movie_terminal_looping_active() || app.image_movie_direct_overlay_active() {
+        frame.render_widget(Clear, workspace.plane.canvas);
+    } else if let Some(protocol) = app.image_plane_protocol() {
         frame.render_widget(PanelImage::new(protocol), workspace.plane.canvas);
     } else {
         let message = if let Some(error) = app.image_plane_last_error() {

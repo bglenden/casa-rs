@@ -125,7 +125,36 @@ pub enum ImageBrowserCommand {
     SetViewWindow {
         parameters: ImageBrowserParameters,
     },
+    SetPlaneContentMode {
+        mode: ImagePlaneContentMode,
+    },
+    StartRegionShape,
+    AppendRegionVertex {
+        x: usize,
+        y: usize,
+    },
+    CloseRegionShape,
+    UndoRegionVertex,
+    CancelRegionShape,
+    ClearRegion,
+    WriteRegionMask {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        set_default: bool,
+    },
+    PreviewOccurrence {
+        request: ImageBrowserPreviewRequest,
+    },
     GetSnapshot,
+}
+
+/// Content representation requested for the Plane view.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagePlaneContentMode {
+    Raster,
+    Spreadsheet,
 }
 
 /// JSON Lines response envelope sent from the backend to `casars`.
@@ -140,6 +169,13 @@ impl ImageBrowserResponseEnvelope {
         Self {
             version: PROTOCOL_VERSION,
             response: ImageBrowserResponse::Snapshot(Box::new(snapshot)),
+        }
+    }
+
+    pub fn preview(payload: ImageBrowserPreviewPayload) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            response: ImageBrowserResponse::Preview(Box::new(payload)),
         }
     }
 
@@ -159,7 +195,20 @@ impl ImageBrowserResponseEnvelope {
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum ImageBrowserResponse {
     Snapshot(Box<ImageBrowserSnapshot>),
+    Preview(Box<ImageBrowserPreviewPayload>),
     Error(ImageBrowserErrorPayload),
+}
+
+/// Stateless preview request for a specific movie/frame occurrence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ImageBrowserPreviewRequest {
+    pub viewport: ImageBrowserViewport,
+    pub parameters: ImageBrowserParameters,
+    pub plane_content_mode: ImagePlaneContentMode,
+    #[serde(default)]
+    pub non_display_indices: Vec<usize>,
+    #[serde(default)]
+    pub include_profile: bool,
 }
 
 /// Structured error payload returned by the browser backend.
@@ -310,6 +359,73 @@ pub struct ImageProfilePayload {
     pub samples: Vec<ImageProfileSampleState>,
 }
 
+/// A sampled 2D point used for region overlays in the active plane view.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageRegionOverlayVertex {
+    pub sampled_x: f64,
+    pub sampled_y: f64,
+}
+
+/// A polygonal region shape projected into the active plane view.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageRegionOverlayShapeState {
+    pub vertices: Vec<ImageRegionOverlayVertex>,
+    pub closed: bool,
+}
+
+/// Statistics for the active region in the current plane/image units.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageRegionStatsState {
+    pub pixel_count: usize,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub rms: f64,
+    pub sum: f64,
+    pub value_unit: String,
+}
+
+/// Backend plane cache classification for the current snapshot.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageBackendPlaneCacheResult {
+    Hit,
+    PrefetchHit,
+    Miss,
+}
+
+/// Backend timing payload attached to a snapshot when performance tracing is enabled.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ImageBackendTimingState {
+    pub plane_cache_result: ImageBackendPlaneCacheResult,
+    pub cached_plane_lookup_ns: u64,
+    pub plane_extract_ns: u64,
+    pub stat_collection_ns: u64,
+    pub histogram_ns: u64,
+    pub rasterize_ns: u64,
+    pub total_plane_ns: u64,
+    #[serde(default)]
+    pub profile_cache_hits: u64,
+    #[serde(default)]
+    pub profile_cache_misses: u64,
+    #[serde(default)]
+    pub profile_extract_total_ns: u64,
+}
+
+/// Active region state for the current image browser session.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageRegionState {
+    pub label: String,
+    pub shape_count: usize,
+    pub closed_shape_count: usize,
+    pub editing: bool,
+    pub active_shape_vertices: usize,
+    #[serde(default)]
+    pub overlay_shapes: Vec<ImageRegionOverlayShapeState>,
+    #[serde(default)]
+    pub stats: Option<ImageRegionStatsState>,
+}
+
 /// Non-display axis selector state for the current plane.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ImageNonDisplayAxisState {
@@ -342,7 +458,19 @@ pub struct ImageBrowserSnapshot {
     pub plane_cursor: Option<ImagePlaneCursorState>,
     #[serde(default)]
     pub non_display_axes: Vec<ImageNonDisplayAxisState>,
+    #[serde(default)]
+    pub region: Option<ImageRegionState>,
+    #[serde(default)]
+    pub backend_timing: Option<ImageBackendTimingState>,
     pub capabilities: ImageBrowserCapabilities,
+}
+
+/// Stateless preview payload for a specific movie/frame occurrence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ImageBrowserPreviewPayload {
+    #[serde(default)]
+    pub non_display_indices: Vec<usize>,
+    pub snapshot: Box<ImageBrowserSnapshot>,
 }
 
 /// Returns the JSON schema for the request envelope.
@@ -479,6 +607,19 @@ mod tests {
                 pixel_y: 1,
             }),
             non_display_axes: Vec::new(),
+            region: None,
+            backend_timing: Some(ImageBackendTimingState {
+                plane_cache_result: ImageBackendPlaneCacheResult::Miss,
+                cached_plane_lookup_ns: 100,
+                plane_extract_ns: 200,
+                stat_collection_ns: 300,
+                histogram_ns: 400,
+                rasterize_ns: 500,
+                total_plane_ns: 1_500,
+                profile_cache_hits: 2,
+                profile_cache_misses: 1,
+                profile_extract_total_ns: 600,
+            }),
             capabilities: ImageBrowserCapabilities {
                 renderable_plane: true,
                 world_coords_available: false,

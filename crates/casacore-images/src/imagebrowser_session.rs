@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Long-lived image browser session state.
 
-use std::path::Path;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::Hash;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+use std::time::Instant;
 
 use casacore_imagebrowser_protocol::{
-    ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserCommand, ImageBrowserFocus,
-    ImageBrowserParameters, ImageBrowserProbe, ImageBrowserSnapshot, ImageBrowserView,
-    ImageBrowserViewport, ImageDisplayAxisState, ImageNavigationMetrics, ImageNonDisplayAxisState,
-    ImagePlaneCursorState, ImagePlaneRaster, ImageProfilePayload, ImageProfileSampleState,
+    ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserAxisValue,
+    ImageBrowserCapabilities, ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters,
+    ImageBrowserPreviewPayload, ImageBrowserPreviewRequest, ImageBrowserProbe,
+    ImageBrowserSnapshot, ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState,
+    ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneContentMode, ImagePlaneCursorState,
+    ImagePlaneRaster, ImageProfilePayload, ImageProfileSampleState, ImageRegionOverlayShapeState,
+    ImageRegionOverlayVertex, ImageRegionState, ImageRegionStatsState,
 };
 use casacore_types::measures::direction::{
     format_declination_labeled, format_right_ascension_labeled,
@@ -15,7 +23,9 @@ use casacore_types::measures::direction::{
 
 use crate::error::ImageError;
 use crate::image_view::{
-    PlaneAutoscaleMode, PlaneStretchPreset, PlaneStretchSettings, format_numeric_value_with_unit,
+    ImageRegion, ImageRegionOverlayShape, ImageRegionShape, ImageRegionStats, PlaneAutoscaleMode,
+    PlaneRenderTelemetry, PlaneStretchPreset, PlaneStretchSettings, format_numeric_value_with_unit,
+    polygon_self_intersects,
 };
 use crate::{
     ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis, ImageProbe,
@@ -38,6 +48,17 @@ pub struct ImageBrowserSession {
     non_display_indices: Vec<usize>,
     selected_profile_axis: Option<usize>,
     content_offset: usize,
+    plane_content_mode: ImagePlaneContentMode,
+    region: Option<ImageRegion>,
+    region_revision: u64,
+    next_region_mask_index: usize,
+    perf_enabled: bool,
+    plane_cache: RecentCache<PlaneCacheKey, PlaneRaster>,
+    prefetched_plane_keys: HashSet<PlaneCacheKey>,
+    profile_cache: RecentCache<ProfileCacheKey, ImageProfile>,
+    profile_perf: ProfilePerfAggregate,
+    last_non_display_step: Option<(usize, i32)>,
+    prefetch_worker: Option<PlanePrefetchWorker>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +86,278 @@ impl SessionStretchState {
             manual_clip: self.manual_clip,
         }
     }
+}
+
+const SESSION_PLANE_CACHE_CAPACITY: usize = 48;
+const SESSION_PROFILE_CACHE_CAPACITY: usize = 24;
+const PREFETCH_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const PREFETCH_DISTANCE: usize = 2;
+const PREFETCH_FORWARD_DISTANCE: usize = 6;
+const PREFETCH_REVERSE_DISTANCE: usize = 1;
+const PREFETCH_MAX_WORKERS: usize = 3;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ProfilePerfAggregate {
+    cache_hits: u64,
+    cache_misses: u64,
+    extract_total_ns: u64,
+}
+
+#[derive(Debug)]
+struct RecentCache<K, V> {
+    capacity: usize,
+    values: HashMap<K, V>,
+    order: VecDeque<K>,
+}
+
+impl<K, V> RecentCache<K, V>
+where
+    K: Clone + Eq + Hash,
+{
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            values: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, key: &K) -> Option<V>
+    where
+        V: Clone,
+    {
+        let value = self.values.get(key).cloned()?;
+        self.touch(key);
+        Some(value)
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        if self.values.contains_key(&key) {
+            self.values.insert(key.clone(), value);
+            self.touch(&key);
+            return;
+        }
+        self.values.insert(key.clone(), value);
+        self.order.push_back(key);
+        self.evict_if_needed();
+    }
+
+    fn contains_key(&self, key: &K) -> bool {
+        self.values.contains_key(key)
+    }
+
+    fn touch(&mut self, key: &K) {
+        if let Some(index) = self.order.iter().position(|existing| existing == key)
+            && let Some(existing) = self.order.remove(index)
+        {
+            self.order.push_back(existing);
+        }
+    }
+
+    fn evict_if_needed(&mut self) {
+        while self.values.len() > self.capacity {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.values.remove(&oldest);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PlaneCacheKey {
+    viewport: (usize, usize),
+    blc: Vec<usize>,
+    trc: Vec<usize>,
+    inc: Vec<usize>,
+    non_display_indices: Vec<usize>,
+    stretch_preset: PlaneStretchPreset,
+    autoscale: PlaneAutoscaleMode,
+    manual_clip: Option<(u64, u64)>,
+    clip_override: Option<(u64, u64)>,
+    region_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ProfileCacheKey {
+    pixel_xy: (usize, usize),
+    blc: Vec<usize>,
+    trc: Vec<usize>,
+    inc: Vec<usize>,
+    normalized_non_display_indices: Vec<usize>,
+    profile_axis: usize,
+}
+
+#[derive(Debug, Clone)]
+struct SessionPreviewState {
+    viewport: ImageBrowserViewport,
+    window: ImageViewWindow,
+    stretch: SessionStretchState,
+    frozen_clip_bounds: Option<(f64, f64)>,
+    plane_content_mode: ImagePlaneContentMode,
+    non_display_indices: Vec<usize>,
+    content_offset: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PlanePrefetchRequest {
+    key: PlaneCacheKey,
+    viewport: (usize, usize),
+    window: ImageViewWindow,
+    non_display_indices: Vec<usize>,
+    stretch: PlaneStretchSettings,
+    clip_override: Option<(f64, f64)>,
+    region: Option<ImageRegion>,
+}
+
+#[derive(Debug)]
+struct PlanePrefetchResult {
+    key: PlaneCacheKey,
+    raster: Result<PlaneRaster, String>,
+}
+
+#[derive(Debug)]
+struct PlanePrefetchWorker {
+    request_txs: Vec<Sender<PlanePrefetchRequest>>,
+    response_rx: Receiver<PlanePrefetchResult>,
+    queued: HashSet<PlaneCacheKey>,
+    next_worker: usize,
+}
+
+impl PlanePrefetchWorker {
+    fn new(path: &Path) -> Result<Self, ImageError> {
+        let (response_tx, response_rx) = mpsc::channel::<PlanePrefetchResult>();
+        let path = path.to_path_buf();
+        let worker_count = thread::available_parallelism()
+            .map(|parallelism| parallelism.get().clamp(1, PREFETCH_MAX_WORKERS))
+            .unwrap_or(1);
+        let mut request_txs = Vec::with_capacity(worker_count);
+        for worker_index in 0..worker_count {
+            let (request_tx, request_rx) = mpsc::channel::<PlanePrefetchRequest>();
+            let worker_path = path.clone();
+            let worker_response_tx = response_tx.clone();
+            thread::Builder::new()
+                .name(format!("imexplore-plane-prefetch-{worker_index}"))
+                .spawn(move || {
+                    run_plane_prefetch_worker(worker_path, request_rx, worker_response_tx)
+                })
+                .map_err(|error| {
+                    ImageError::InvalidMetadata(format!("failed to spawn prefetch worker: {error}"))
+                })?;
+            request_txs.push(request_tx);
+        }
+        Ok(Self {
+            request_txs,
+            response_rx,
+            queued: HashSet::new(),
+            next_worker: 0,
+        })
+    }
+
+    fn submit(
+        &mut self,
+        request: PlanePrefetchRequest,
+        cache: &RecentCache<PlaneCacheKey, PlaneRaster>,
+    ) {
+        if cache.contains_key(&request.key) || self.queued.contains(&request.key) {
+            return;
+        }
+        let worker_count = self.request_txs.len().max(1);
+        let worker_index = self.next_worker % worker_count;
+        self.next_worker = (self.next_worker + 1) % worker_count;
+        if self.request_txs[worker_index].send(request.clone()).is_ok() {
+            self.queued.insert(request.key);
+        }
+    }
+
+    fn drain_into(
+        &mut self,
+        cache: &mut RecentCache<PlaneCacheKey, PlaneRaster>,
+        prefetched_keys: &mut Vec<PlaneCacheKey>,
+    ) {
+        while let Ok(result) = self.response_rx.try_recv() {
+            self.queued.remove(&result.key);
+            if let Ok(raster) = result.raster {
+                prefetched_keys.push(result.key.clone());
+                cache.insert(result.key, raster);
+            }
+        }
+    }
+}
+
+fn run_plane_prefetch_worker(
+    path: PathBuf,
+    request_rx: Receiver<PlanePrefetchRequest>,
+    response_tx: Sender<PlanePrefetchResult>,
+) {
+    let Ok(view) = OpenedImageView::open_with_cache_bytes(&path, PREFETCH_CACHE_BYTES) else {
+        return;
+    };
+    while let Ok(request) = request_rx.recv() {
+        let raster = view
+            .render_plane_with_window_and_axes_and_stretch(
+                request.viewport,
+                &request.window,
+                &request.non_display_indices,
+                &request.stretch,
+                request.clip_override,
+                request.region.as_ref(),
+            )
+            .map_err(|error| error.to_string());
+        if response_tx
+            .send(PlanePrefetchResult {
+                key: request.key,
+                raster,
+            })
+            .is_err()
+        {
+            break;
+        }
+    }
+}
+
+fn apply_plane_timing(
+    timing: &mut ImageBackendTimingState,
+    cache_result: ImageBackendPlaneCacheResult,
+    cached_plane_lookup_ns: u64,
+    telemetry: PlaneRenderTelemetry,
+) {
+    timing.plane_cache_result = cache_result;
+    timing.cached_plane_lookup_ns = cached_plane_lookup_ns;
+    timing.plane_extract_ns = telemetry.plane_extract_ns;
+    timing.stat_collection_ns = telemetry.stat_collection_ns;
+    timing.histogram_ns = telemetry.histogram_ns;
+    timing.rasterize_ns = telemetry.rasterize_ns;
+    timing.total_plane_ns = telemetry.total_plane_ns;
+}
+
+fn duration_ns(duration: std::time::Duration) -> u64 {
+    duration.as_nanos().min(u128::from(u64::MAX)) as u64
+}
+
+fn image_browser_perf_enabled() -> bool {
+    std::env::var_os("CASARS_IMEXPLORE_PERF").is_some()
+}
+
+fn normalize_non_display_indices(
+    view: &OpenedImageView,
+    window: &ImageViewWindow,
+    requested: &[usize],
+) -> Vec<usize> {
+    view.axis_model()
+        .non_display_axes
+        .iter()
+        .enumerate()
+        .map(|(position, axis)| {
+            let length = window.sampled_axis_len(*axis);
+            let requested_index = requested.get(position).copied().unwrap_or_default();
+            if length == 0 {
+                0
+            } else {
+                requested_index.min(length.saturating_sub(1))
+            }
+        })
+        .collect()
 }
 
 impl ImageBrowserSession {
@@ -101,7 +394,9 @@ impl ImageBrowserSession {
         } else {
             ImageBrowserView::Metadata
         };
+        let perf_enabled = image_browser_perf_enabled();
         let mut session = Self {
+            prefetch_worker: Some(PlanePrefetchWorker::new(view.path())?),
             view,
             window,
             stretch,
@@ -114,6 +409,16 @@ impl ImageBrowserSession {
             non_display_indices: vec![0; non_display_axis_count],
             selected_profile_axis: None,
             content_offset: 0,
+            plane_content_mode: default_plane_content_mode(viewport),
+            region: None,
+            region_revision: 0,
+            next_region_mask_index: 1,
+            perf_enabled,
+            plane_cache: RecentCache::new(SESSION_PLANE_CACHE_CAPACITY),
+            prefetched_plane_keys: HashSet::new(),
+            profile_cache: RecentCache::new(SESSION_PROFILE_CACHE_CAPACITY),
+            profile_perf: ProfilePerfAggregate::default(),
+            last_non_display_step: None,
         };
         session.selected_profile_axis = session.view.preferred_profile_axis();
         session.clamp_cursor_to_window(
@@ -134,6 +439,59 @@ impl ImageBrowserSession {
     ) -> Result<ImageBrowserSnapshot, ImageError> {
         *self = Self::open_with_parameters(path, viewport, parameters)?;
         self.snapshot()
+    }
+
+    /// Builds a stateless preview snapshot for a specific non-display-axis occurrence.
+    pub fn preview_occurrence(
+        &mut self,
+        request: &ImageBrowserPreviewRequest,
+    ) -> Result<ImageBrowserPreviewPayload, ImageError> {
+        let saved = SessionPreviewState {
+            viewport: self.viewport,
+            window: self.window.clone(),
+            stretch: self.stretch.clone(),
+            frozen_clip_bounds: self.frozen_clip_bounds,
+            plane_content_mode: self.plane_content_mode,
+            non_display_indices: self.non_display_indices.clone(),
+            content_offset: self.content_offset,
+        };
+
+        self.viewport = request.viewport;
+        self.stretch = parse_stretch_parameters(&request.parameters)?;
+        self.frozen_clip_bounds = None;
+        self.window = self.view.window_from_text(
+            &request.parameters.blc,
+            &request.parameters.trc,
+            &request.parameters.inc,
+        )?;
+        self.plane_content_mode = request.plane_content_mode;
+        self.content_offset = 0;
+        let preview_non_display_indices =
+            normalize_non_display_indices(&self.view, &self.window, &request.non_display_indices);
+        self.non_display_indices = preview_non_display_indices.clone();
+        self.clamp_cursor_to_window(None, None, None, None);
+        self.non_display_indices = preview_non_display_indices.clone();
+
+        let snapshot = self.snapshot();
+
+        self.viewport = saved.viewport;
+        self.window = saved.window;
+        self.stretch = saved.stretch;
+        self.frozen_clip_bounds = saved.frozen_clip_bounds;
+        self.plane_content_mode = saved.plane_content_mode;
+        self.non_display_indices = saved.non_display_indices.clone();
+        self.content_offset = saved.content_offset;
+        self.clamp_cursor_to_window(None, None, None, None);
+        self.non_display_indices = saved.non_display_indices;
+
+        let mut snapshot = snapshot?;
+        if !request.include_profile {
+            snapshot.profile = None;
+        }
+        Ok(ImageBrowserPreviewPayload {
+            non_display_indices: preview_non_display_indices,
+            snapshot: Box::new(snapshot),
+        })
     }
 
     /// Applies a session command and returns the updated snapshot.
@@ -180,12 +538,64 @@ impl ImageBrowserSession {
                 self.set_view_window(&parameters)?;
                 self.snapshot()
             }
+            ImageBrowserCommand::SetPlaneContentMode { mode } => {
+                self.plane_content_mode = mode;
+                self.snapshot()
+            }
+            ImageBrowserCommand::StartRegionShape => {
+                self.start_region_shape()?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::AppendRegionVertex { x, y } => {
+                self.append_region_vertex_pixels(x, y)?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::CloseRegionShape => {
+                self.close_region_shape()?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::UndoRegionVertex => {
+                self.undo_region_vertex()?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::CancelRegionShape => {
+                if !self.cancel_region_shape() {
+                    return Err(ImageError::InvalidMetadata(
+                        "no open polygon to cancel".into(),
+                    ));
+                }
+                self.snapshot()
+            }
+            ImageBrowserCommand::ClearRegion => {
+                self.clear_region();
+                self.snapshot()
+            }
+            ImageBrowserCommand::WriteRegionMask { name, set_default } => {
+                self.write_region_mask(name.as_deref(), set_default)?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::PreviewOccurrence { request } => {
+                Ok(*self.preview_occurrence(&request)?.snapshot)
+            }
             ImageBrowserCommand::GetSnapshot => self.snapshot(),
         }
     }
 
     /// Returns the current snapshot without changing state.
     pub fn snapshot(&mut self) -> Result<ImageBrowserSnapshot, ImageError> {
+        self.drain_prefetched_planes();
+        let mut backend_timing = self.perf_enabled.then_some(ImageBackendTimingState {
+            plane_cache_result: ImageBackendPlaneCacheResult::Miss,
+            cached_plane_lookup_ns: 0,
+            plane_extract_ns: 0,
+            stat_collection_ns: 0,
+            histogram_ns: 0,
+            rasterize_ns: 0,
+            total_plane_ns: 0,
+            profile_cache_hits: self.profile_perf.cache_hits,
+            profile_cache_misses: self.profile_perf.cache_misses,
+            profile_extract_total_ns: self.profile_perf.extract_total_ns,
+        });
         let plane_raster = if self.active_view == ImageBrowserView::Plane
             && self.view.capabilities().renderable_plane
         {
@@ -193,13 +603,7 @@ impl ImageBrowserSession {
                 PlaneAutoscaleMode::PerPlane => None,
                 PlaneAutoscaleMode::Frozen => self.frozen_clip_bounds,
             };
-            let raster = self.view.render_plane_with_window_and_axes_and_stretch(
-                self.plane_pixel_viewport(),
-                &self.window,
-                &self.non_display_indices,
-                &self.stretch.plane_settings(),
-                clip_override,
-            )?;
+            let raster = self.cached_plane_raster(clip_override, backend_timing.as_mut())?;
             if self.stretch.autoscale == PlaneAutoscaleMode::Frozen
                 && self.frozen_clip_bounds.is_none()
                 && !raster.no_finite_values
@@ -219,11 +623,10 @@ impl ImageBrowserSession {
             ) {
             self.selected_profile_axis()
                 .map(|profile_axis| {
-                    self.view.profile_with_window_and_axes(
+                    self.cached_profile(
                         (self.cursor_x, self.cursor_y),
-                        &self.window,
-                        &self.non_display_indices,
                         profile_axis,
+                        backend_timing.as_mut(),
                     )
                 })
                 .transpose()?
@@ -265,6 +668,9 @@ impl ImageBrowserSession {
             .into_iter()
             .map(map_non_display_axis)
             .collect::<Vec<_>>();
+        let region = self.region_state()?;
+
+        self.schedule_plane_prefetch();
 
         let navigation = if self.active_view == ImageBrowserView::Plane
             && self.view.capabilities().renderable_plane
@@ -309,6 +715,8 @@ impl ImageBrowserSession {
             display_axes,
             plane_cursor: self.current_plane_cursor(),
             non_display_axes,
+            region,
+            backend_timing,
             capabilities: map_capabilities(self.view.capabilities()),
         })
     }
@@ -394,6 +802,7 @@ impl ImageBrowserSession {
         self.non_display_indices[position] = (self.non_display_indices[position] as i32 + delta)
             .clamp(0, length.saturating_sub(1) as i32)
             as usize;
+        self.last_non_display_step = (delta != 0).then_some((axis, delta.signum()));
     }
 
     fn inspector_lines(&self) -> Result<Vec<String>, ImageError> {
@@ -466,6 +875,40 @@ impl ImageBrowserSession {
                 lines.push(format_world_axis_line(&axis));
             }
         }
+        if let Some(region_state) = self.region_state()? {
+            lines.push(format!(
+                "Region: {} ({} shape{})",
+                region_state.label,
+                region_state.shape_count,
+                if region_state.shape_count == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+            if region_state.editing {
+                lines.push(format!(
+                    "Region edit: open polygon with {} vert{}",
+                    region_state.active_shape_vertices,
+                    if region_state.active_shape_vertices == 1 {
+                        "ex"
+                    } else {
+                        "ices"
+                    }
+                ));
+            }
+            if let Some(stats) = region_state.stats.as_ref() {
+                lines.push(format!("Region pixels: {}", stats.pixel_count));
+                lines.push(format!(
+                    "Region mean: {}",
+                    format_numeric_value_with_unit(stats.mean, &stats.value_unit)
+                ));
+                lines.push(format!(
+                    "Region RMS: {}",
+                    format_numeric_value_with_unit(stats.rms, &stats.value_unit)
+                ));
+            }
+        }
         Ok(lines)
     }
 
@@ -494,7 +937,12 @@ impl ImageBrowserSession {
     ) -> Result<Vec<String>, ImageError> {
         if self.active_view == ImageBrowserView::Spectrum {
             Ok(render_profile_lines(profile))
-        } else if let Some(raster) = plane_raster {
+        } else if self.active_view == ImageBrowserView::Plane
+            && self.plane_content_mode == ImagePlaneContentMode::Spreadsheet
+        {
+            let Some(raster) = plane_raster else {
+                return Ok(Vec::new());
+            };
             self.plane_content_lines(raster)
         } else {
             self.content_lines()
@@ -585,6 +1033,248 @@ impl ImageBrowserSession {
         )
     }
 
+    fn cached_plane_raster(
+        &mut self,
+        clip_override: Option<(f64, f64)>,
+        backend_timing: Option<&mut ImageBackendTimingState>,
+    ) -> Result<PlaneRaster, ImageError> {
+        let key = self.plane_cache_key(self.non_display_indices.clone(), clip_override);
+        let lookup_started_at = Instant::now();
+        if let Some(raster) = self.plane_cache.get(&key) {
+            if let Some(timing) = backend_timing {
+                timing.plane_cache_result = if self.prefetched_plane_keys.contains(&key) {
+                    ImageBackendPlaneCacheResult::PrefetchHit
+                } else {
+                    ImageBackendPlaneCacheResult::Hit
+                };
+                timing.cached_plane_lookup_ns = duration_ns(lookup_started_at.elapsed());
+                timing.total_plane_ns = timing.cached_plane_lookup_ns;
+            }
+            return Ok(raster);
+        }
+        self.prefetched_plane_keys.remove(&key);
+        let (raster, telemetry) = self
+            .view
+            .render_plane_with_window_and_axes_and_stretch_timed(
+                self.plane_pixel_viewport(),
+                &self.window,
+                &self.non_display_indices,
+                &self.stretch.plane_settings(),
+                clip_override,
+                self.region.as_ref(),
+            )?;
+        if let Some(timing) = backend_timing {
+            apply_plane_timing(
+                timing,
+                ImageBackendPlaneCacheResult::Miss,
+                duration_ns(lookup_started_at.elapsed()),
+                telemetry,
+            );
+        }
+        self.plane_cache.insert(key, raster.clone());
+        Ok(raster)
+    }
+
+    fn cached_profile(
+        &mut self,
+        pixel_xy: (usize, usize),
+        profile_axis: usize,
+        backend_timing: Option<&mut ImageBackendTimingState>,
+    ) -> Result<ImageProfile, ImageError> {
+        let key = self.profile_cache_key(pixel_xy, profile_axis);
+        if let Some(mut profile) = self.profile_cache.get(&key) {
+            self.profile_perf.cache_hits = self.profile_perf.cache_hits.saturating_add(1);
+            if let Some(timing) = backend_timing {
+                timing.profile_cache_hits = self.profile_perf.cache_hits;
+                timing.profile_cache_misses = self.profile_perf.cache_misses;
+                timing.profile_extract_total_ns = self.profile_perf.extract_total_ns;
+            }
+            profile.selected_sample_index = self.current_profile_selected_index(profile_axis);
+            return Ok(profile);
+        }
+        self.profile_perf.cache_misses = self.profile_perf.cache_misses.saturating_add(1);
+        let normalized_non_display_indices =
+            self.normalized_profile_non_display_indices(profile_axis);
+        let extract_started_at = Instant::now();
+        let mut profile = self.view.profile_with_window_and_axes(
+            pixel_xy,
+            &self.window,
+            &normalized_non_display_indices,
+            profile_axis,
+        )?;
+        self.profile_perf.extract_total_ns = self
+            .profile_perf
+            .extract_total_ns
+            .saturating_add(duration_ns(extract_started_at.elapsed()));
+        profile.selected_sample_index = self.current_profile_selected_index(profile_axis);
+        self.profile_cache.insert(key, profile.clone());
+        if let Some(timing) = backend_timing {
+            timing.profile_cache_hits = self.profile_perf.cache_hits;
+            timing.profile_cache_misses = self.profile_perf.cache_misses;
+            timing.profile_extract_total_ns = self.profile_perf.extract_total_ns;
+        }
+        Ok(profile)
+    }
+
+    fn plane_cache_key(
+        &self,
+        non_display_indices: Vec<usize>,
+        clip_override: Option<(f64, f64)>,
+    ) -> PlaneCacheKey {
+        PlaneCacheKey {
+            viewport: self.plane_pixel_viewport(),
+            blc: self.window.blc().to_vec(),
+            trc: self.window.trc().to_vec(),
+            inc: self.window.inc().to_vec(),
+            non_display_indices,
+            stretch_preset: self.stretch.preset,
+            autoscale: self.stretch.autoscale,
+            manual_clip: self
+                .stretch
+                .manual_clip
+                .map(|(low, high)| (low.to_bits(), high.to_bits())),
+            clip_override: clip_override.map(|(low, high)| (low.to_bits(), high.to_bits())),
+            region_revision: self.region_revision,
+        }
+    }
+
+    fn profile_cache_key(&self, pixel_xy: (usize, usize), profile_axis: usize) -> ProfileCacheKey {
+        ProfileCacheKey {
+            pixel_xy,
+            blc: self.window.blc().to_vec(),
+            trc: self.window.trc().to_vec(),
+            inc: self.window.inc().to_vec(),
+            normalized_non_display_indices: self
+                .normalized_profile_non_display_indices(profile_axis),
+            profile_axis,
+        }
+    }
+
+    fn normalized_profile_non_display_indices(&self, profile_axis: usize) -> Vec<usize> {
+        let mut normalized = self.non_display_indices.clone();
+        if let Some(position) = self
+            .view
+            .axis_model()
+            .non_display_axes
+            .iter()
+            .position(|axis| *axis == profile_axis)
+            && let Some(index) = normalized.get_mut(position)
+        {
+            *index = 0;
+        }
+        normalized
+    }
+
+    fn current_profile_selected_index(&self, profile_axis: usize) -> usize {
+        self.view
+            .axis_model()
+            .non_display_axes
+            .iter()
+            .position(|axis| *axis == profile_axis)
+            .and_then(|position| self.non_display_indices.get(position).copied())
+            .unwrap_or_default()
+    }
+
+    fn drain_prefetched_planes(&mut self) {
+        if let Some(worker) = self.prefetch_worker.as_mut() {
+            let mut prefetched_keys = Vec::new();
+            worker.drain_into(&mut self.plane_cache, &mut prefetched_keys);
+            self.prefetched_plane_keys.extend(prefetched_keys);
+        }
+    }
+
+    fn schedule_plane_prefetch(&mut self) {
+        if !self.view.capabilities().renderable_plane {
+            return;
+        }
+        let Some(selected_axis) = self.selected_profile_axis() else {
+            return;
+        };
+        let Ok(non_display_axes) = self
+            .view
+            .non_display_axes_with_window(&self.window, &self.non_display_indices)
+        else {
+            return;
+        };
+        let Some(axis_state) = non_display_axes
+            .into_iter()
+            .find(|axis_state| axis_state.axis == selected_axis)
+        else {
+            return;
+        };
+        let Some(axis_position) = self
+            .view
+            .axis_model()
+            .non_display_axes
+            .iter()
+            .position(|axis| *axis == axis_state.axis)
+        else {
+            return;
+        };
+        let clip_override = match self.stretch.autoscale {
+            PlaneAutoscaleMode::PerPlane => None,
+            PlaneAutoscaleMode::Frozen => self.frozen_clip_bounds,
+        };
+        let viewport = self.plane_pixel_viewport();
+        let window = self.window.clone();
+        let stretch = self.stretch.plane_settings();
+        let region = self.region.clone();
+        let preferred_direction = self
+            .last_non_display_step
+            .filter(|(axis, direction)| *axis == axis_state.axis && *direction != 0)
+            .map(|(_, direction)| direction);
+        let prefetch_offsets = if let Some(direction) = preferred_direction {
+            let primary_direction = if direction < 0 { -1isize } else { 1isize };
+            (1..=PREFETCH_FORWARD_DISTANCE)
+                .map(|offset| (offset, primary_direction))
+                .chain(
+                    (1..=PREFETCH_REVERSE_DISTANCE).map(move |offset| (offset, -primary_direction)),
+                )
+                .collect::<Vec<_>>()
+        } else {
+            (1..=PREFETCH_DISTANCE)
+                .flat_map(|offset| {
+                    [-1isize, 1isize]
+                        .into_iter()
+                        .map(move |direction| (offset, direction))
+                })
+                .collect::<Vec<_>>()
+        };
+        let plane_cache_keys = prefetch_offsets
+            .into_iter()
+            .filter_map(|(offset, direction)| {
+                let next_index = if direction.is_negative() {
+                    axis_state.index.checked_sub(offset)
+                } else {
+                    axis_state.index.checked_add(offset)
+                }?;
+                (next_index < axis_state.length).then_some(next_index)
+            })
+            .map(|next_index| {
+                let mut indices = self.non_display_indices.clone();
+                if let Some(index) = indices.get_mut(axis_position) {
+                    *index = next_index;
+                }
+                let key = self.plane_cache_key(indices.clone(), clip_override);
+                PlanePrefetchRequest {
+                    key,
+                    viewport,
+                    window: window.clone(),
+                    non_display_indices: indices,
+                    stretch: stretch.clone(),
+                    clip_override,
+                    region: region.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let Some(worker) = self.prefetch_worker.as_mut() else {
+            return;
+        };
+        for request in plane_cache_keys {
+            worker.submit(request, &self.plane_cache);
+        }
+    }
+
     fn set_view_window(&mut self, parameters: &ImageBrowserParameters) -> Result<(), ImageError> {
         let old_display_pixels = self.current_display_pixels();
         let old_non_display_pixels = self.current_non_display_pixels();
@@ -645,6 +1335,209 @@ impl ImageBrowserSession {
         if self.view.axis_model().non_display_axes.contains(&axis) {
             self.selected_profile_axis = Some(axis);
         }
+    }
+
+    fn region_state(&self) -> Result<Option<ImageRegionState>, ImageError> {
+        let Some(region) = self.region.as_ref() else {
+            return Ok(None);
+        };
+        let overlay = self.view.region_overlay_with_window_and_axes(
+            region,
+            &self.window,
+            &self.non_display_indices,
+        )?;
+        let stats = self.view.region_stats_with_window_and_axes(
+            region,
+            &self.window,
+            &self.non_display_indices,
+        )?;
+        let active_shape_vertices = region
+            .shapes
+            .iter()
+            .rev()
+            .find(|shape| !shape.closed)
+            .map(|shape| shape.vertices.len())
+            .unwrap_or(0);
+        Ok(Some(ImageRegionState {
+            label: region.label.clone(),
+            shape_count: region.shapes.len(),
+            closed_shape_count: region.shapes.iter().filter(|shape| shape.closed).count(),
+            editing: region.shapes.iter().any(|shape| !shape.closed),
+            active_shape_vertices,
+            overlay_shapes: overlay
+                .shapes
+                .into_iter()
+                .map(map_region_overlay_shape)
+                .collect(),
+            stats: stats.map(map_region_stats),
+        }))
+    }
+
+    fn start_region_shape(&mut self) -> Result<(), ImageError> {
+        let Some(display_axes) = self.view.axis_model().display_axes else {
+            return Err(ImageError::InvalidMetadata(
+                "regions require a renderable plane".into(),
+            ));
+        };
+        if !self.view.capabilities().world_coords_available {
+            return Err(ImageError::InvalidMetadata(
+                "regions require world-coordinate support".into(),
+            ));
+        }
+        if self
+            .region
+            .as_ref()
+            .is_some_and(|region| region.shapes.iter().any(|shape| !shape.closed))
+        {
+            return Err(ImageError::InvalidMetadata(
+                "close or cancel the current polygon before starting another".into(),
+            ));
+        }
+        if self.region.is_none() {
+            self.region = Some(self.view.default_region("Region 1")?);
+        }
+        let label = self
+            .region
+            .as_ref()
+            .map(|region| region.label.clone())
+            .unwrap_or_else(|| "Region 1".into());
+        if self
+            .region
+            .as_ref()
+            .is_some_and(|region| region.display_axes != display_axes)
+        {
+            self.region = Some(self.view.default_region(label)?);
+        }
+        self.region
+            .as_mut()
+            .expect("region available")
+            .shapes
+            .push(ImageRegionShape {
+                vertices: Vec::new(),
+                closed: false,
+            });
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn append_region_vertex_pixels(&mut self, x: usize, y: usize) -> Result<(), ImageError> {
+        self.set_cursor_pixels(x, y);
+        let vertex = self.view.region_vertex_for_pixel_with_window_and_axes(
+            (self.cursor_x, self.cursor_y),
+            &self.window,
+            &self.non_display_indices,
+        )?;
+        let Some(region) = self.region.as_mut() else {
+            return Err(ImageError::InvalidMetadata(
+                "start a region with R before adding vertices".into(),
+            ));
+        };
+        let Some(shape) = region.shapes.iter_mut().rev().find(|shape| !shape.closed) else {
+            return Err(ImageError::InvalidMetadata(
+                "start a region with R before adding vertices".into(),
+            ));
+        };
+        if shape
+            .vertices
+            .last()
+            .is_some_and(|last| last.world == vertex.world)
+        {
+            return Ok(());
+        }
+        shape.vertices.push(vertex);
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn close_region_shape(&mut self) -> Result<(), ImageError> {
+        let Some(region) = self.region.as_mut() else {
+            return Err(ImageError::InvalidMetadata("no active region".into()));
+        };
+        let Some(shape) = region.shapes.iter_mut().rev().find(|shape| !shape.closed) else {
+            return Err(ImageError::InvalidMetadata(
+                "no open polygon to close".into(),
+            ));
+        };
+        if shape.vertices.len() < 3 {
+            return Err(ImageError::InvalidMetadata(
+                "polygon regions require at least 3 vertices".into(),
+            ));
+        }
+        if polygon_self_intersects(&shape.vertices) {
+            return Err(ImageError::InvalidMetadata(
+                "self-intersecting polygons are not supported".into(),
+            ));
+        }
+        shape.closed = true;
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn undo_region_vertex(&mut self) -> Result<(), ImageError> {
+        let Some(region) = self.region.as_mut() else {
+            return Err(ImageError::InvalidMetadata("no active region".into()));
+        };
+        let Some(shape_index) = region.shapes.iter().rposition(|shape| !shape.closed) else {
+            return Err(ImageError::InvalidMetadata(
+                "no open polygon to edit".into(),
+            ));
+        };
+        let shape = &mut region.shapes[shape_index];
+        shape.vertices.pop();
+        if shape.vertices.is_empty() {
+            region.shapes.remove(shape_index);
+        }
+        if region.shapes.is_empty() {
+            self.region = None;
+        }
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn cancel_region_shape(&mut self) -> bool {
+        let Some(region) = self.region.as_mut() else {
+            return false;
+        };
+        let Some(shape_index) = region.shapes.iter().rposition(|shape| !shape.closed) else {
+            return false;
+        };
+        region.shapes.remove(shape_index);
+        if region.shapes.is_empty() {
+            self.region = None;
+        }
+        self.region_revision = self.region_revision.saturating_add(1);
+        true
+    }
+
+    fn clear_region(&mut self) {
+        self.region = None;
+        self.region_revision = self.region_revision.saturating_add(1);
+    }
+
+    fn write_region_mask(
+        &mut self,
+        name: Option<&str>,
+        set_default: bool,
+    ) -> Result<(), ImageError> {
+        let Some(region) = self.region.as_ref() else {
+            return Err(ImageError::InvalidMetadata("no active region".into()));
+        };
+        if region.shapes.iter().all(|shape| !shape.closed) {
+            return Err(ImageError::InvalidMetadata(
+                "close the current polygon before creating a mask".into(),
+            ));
+        }
+        let name = name
+            .filter(|value| !value.trim().is_empty())
+            .map(str::trim)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                let generated = format!("region_mask_{}", self.next_region_mask_index);
+                self.next_region_mask_index = self.next_region_mask_index.saturating_add(1);
+                generated
+            });
+        self.view.write_region_mask(region, &name, set_default)?;
+        Ok(())
     }
 
     fn current_display_pixels(&self) -> Option<(usize, usize)> {
@@ -729,6 +1622,14 @@ fn centered_non_display_pixels(view: &OpenedImageView, window: &ImageViewWindow)
         .iter()
         .map(|&axis| centered_sample_pixel(window, axis))
         .collect()
+}
+
+fn default_plane_content_mode(viewport: ImageBrowserViewport) -> ImagePlaneContentMode {
+    if viewport.plane_pixel_width > 0 || viewport.plane_pixel_height > 0 {
+        ImagePlaneContentMode::Raster
+    } else {
+        ImagePlaneContentMode::Spreadsheet
+    }
 }
 
 fn centered_sample_pixel(window: &ImageViewWindow, axis: usize) -> usize {
@@ -1001,6 +1902,32 @@ fn map_non_display_axis(axis: ImageNonDisplayAxis) -> ImageNonDisplayAxisState {
     }
 }
 
+fn map_region_overlay_shape(shape: ImageRegionOverlayShape) -> ImageRegionOverlayShapeState {
+    ImageRegionOverlayShapeState {
+        vertices: shape
+            .vertices
+            .into_iter()
+            .map(|(sampled_x, sampled_y)| ImageRegionOverlayVertex {
+                sampled_x,
+                sampled_y,
+            })
+            .collect(),
+        closed: shape.closed,
+    }
+}
+
+fn map_region_stats(stats: ImageRegionStats) -> ImageRegionStatsState {
+    ImageRegionStatsState {
+        pixel_count: stats.pixel_count,
+        min: stats.min,
+        max: stats.max,
+        mean: stats.mean,
+        rms: stats.rms,
+        sum: stats.sum,
+        value_unit: stats.value_unit,
+    }
+}
+
 fn session_non_display_axis_count(view: &OpenedImageView) -> usize {
     view.axis_model().non_display_axes.len()
 }
@@ -1132,11 +2059,16 @@ fn autoscale_mode_name(mode: PlaneAutoscaleMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard};
+
     use casacore_coordinates::{
         CoordinateSystem, DirectionCoordinate, ObsInfo, Projection, ProjectionType,
         SpectralCoordinate,
     };
-    use casacore_imagebrowser_protocol::ImageBrowserCommand;
+    use casacore_imagebrowser_protocol::{
+        ImageBackendPlaneCacheResult, ImageBrowserCommand, ImageBrowserParameters,
+        ImageBrowserPreviewRequest, ImageBrowserViewport, ImagePlaneContentMode,
+    };
     use casacore_types::ArrayD;
     use casacore_types::measures::direction::DirectionRef;
     use casacore_types::measures::epoch::{EpochRef, MEpoch};
@@ -1146,6 +2078,33 @@ mod tests {
 
     use super::*;
     use crate::image::PagedImage;
+
+    static PERF_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn perf_env_lock() -> MutexGuard<'static, ()> {
+        PERF_ENV_LOCK.lock().expect("perf env lock")
+    }
+
+    fn clear_perf_env() {
+        unsafe {
+            std::env::remove_var("CASARS_IMEXPLORE_PERF");
+        }
+    }
+
+    struct PerfEnvGuard;
+
+    impl Drop for PerfEnvGuard {
+        fn drop(&mut self) {
+            clear_perf_env();
+        }
+    }
+
+    fn set_perf_env() -> PerfEnvGuard {
+        unsafe {
+            std::env::set_var("CASARS_IMEXPLORE_PERF", "1");
+        }
+        PerfEnvGuard
+    }
 
     fn cube_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
@@ -1162,6 +2121,18 @@ mod tests {
             1.0e6,
             0.0,
             1.42040575e9,
+        )));
+        coords
+    }
+
+    fn direction_coords() -> CoordinateSystem {
+        let mut coords = CoordinateSystem::new();
+        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, std::f64::consts::FRAC_PI_4],
+            [-1e-4, 1e-4],
+            [1.0, 1.0],
         )));
         coords
     }
@@ -1225,6 +2196,161 @@ mod tests {
             .unwrap();
         assert_eq!(high_res.plane.as_ref().unwrap().width, 4);
         assert_eq!(high_res.plane.as_ref().unwrap().height, 4);
+    }
+
+    #[test]
+    fn preview_occurrence_does_not_mutate_visible_session_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    (0..12).map(|value| value as f32).collect(),
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(32, 12)).unwrap();
+        let before = session.snapshot().unwrap();
+        let before_index = before.non_display_axes[0].index;
+
+        let preview = session
+            .preview_occurrence(&ImageBrowserPreviewRequest {
+                viewport: ImageBrowserViewport::new(32, 12),
+                parameters: before.parameters.clone(),
+                plane_content_mode: ImagePlaneContentMode::Raster,
+                non_display_indices: vec![2],
+                include_profile: true,
+            })
+            .unwrap();
+        assert_eq!(preview.snapshot.non_display_axes[0].index, 2);
+
+        let after = session.snapshot().unwrap();
+        assert_eq!(after.non_display_axes[0].index, before_index);
+    }
+
+    #[test]
+    fn preview_occurrence_backend_timing_is_opt_in() {
+        let _lock = perf_env_lock();
+        clear_perf_env();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview_perf.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    (0..12).map(|value| value as f32).collect(),
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let request = ImageBrowserPreviewRequest {
+            viewport: ImageBrowserViewport::new(32, 12),
+            parameters: ImageBrowserParameters {
+                blc: String::new(),
+                trc: String::new(),
+                inc: String::new(),
+                stretch: "percentile99".to_string(),
+                autoscale: "per_plane".to_string(),
+                clip_low: String::new(),
+                clip_high: String::new(),
+            },
+            plane_content_mode: ImagePlaneContentMode::Raster,
+            non_display_indices: vec![1],
+            include_profile: true,
+        };
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(32, 12)).unwrap();
+        let preview = session.preview_occurrence(&request).unwrap();
+        assert!(preview.snapshot.backend_timing.is_none());
+
+        let _perf_guard = set_perf_env();
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(32, 12)).unwrap();
+        let preview = session.preview_occurrence(&request).unwrap();
+        assert!(preview.snapshot.backend_timing.is_some());
+    }
+
+    #[test]
+    fn raster_viewport_defaults_to_raster_plane_content_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-raster.image");
+        let mut image = PagedImage::<f32>::create(vec![4, 4], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[4, 4]),
+                    (0..16).map(|value| value as f32).collect(),
+                )
+                .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session = ImageBrowserSession::open(
+            &path,
+            ImageBrowserViewport::with_plane_pixels(80, 24, 0, 800, 600),
+        )
+        .unwrap();
+        let snapshot = session.snapshot().unwrap();
+
+        assert_eq!(session.plane_content_mode, ImagePlaneContentMode::Raster);
+        assert!(snapshot.content_lines.is_empty());
+
+        let toggled = session
+            .handle_command(ImageBrowserCommand::SetPlaneContentMode {
+                mode: ImagePlaneContentMode::Spreadsheet,
+            })
+            .unwrap();
+        assert!(!toggled.content_lines.is_empty());
+        assert!(toggled.content_lines.first().unwrap().contains("y/x"));
+    }
+
+    #[test]
+    fn session_snapshot_prefetches_adjacent_planes_into_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefetch.image");
+        let mut image = PagedImage::<f32>::create(vec![4, 4, 5], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[4, 4, 5]),
+                    (0..(4 * 4 * 5)).map(|value| value as f32).collect(),
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session = ImageBrowserSession::open(
+            &path,
+            ImageBrowserViewport::with_plane_pixels(80, 24, 0, 800, 600),
+        )
+        .unwrap();
+        let snapshot = session.snapshot().unwrap();
+        assert!(snapshot.plane.is_some());
+        assert!(!session.plane_cache.values.is_empty());
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        session.drain_prefetched_planes();
+
+        assert!(session.plane_cache.values.len() >= 2);
     }
 
     #[test]
@@ -1344,6 +2470,108 @@ mod tests {
     }
 
     #[test]
+    fn session_region_polygon_updates_snapshot_and_writes_mask() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-region.image");
+        let mut image = PagedImage::<f32>::create(vec![5, 5], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[5, 5]),
+                    (0..5)
+                        .flat_map(|x| (0..5).map(move |y| (x * 10 + y) as f32))
+                        .collect(),
+                )
+                .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(64, 24)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::SetCursor { x: 1, y: 1 })
+            .unwrap();
+        let started = session
+            .handle_command(ImageBrowserCommand::StartRegionShape)
+            .unwrap();
+        let started_region = started.region.expect("region state after start");
+        assert!(started_region.editing);
+        assert_eq!(started_region.active_shape_vertices, 0);
+
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 1, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 3, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 2, y: 3 })
+            .unwrap();
+        let closed = session
+            .handle_command(ImageBrowserCommand::CloseRegionShape)
+            .unwrap();
+        let region = closed.region.expect("closed region");
+        assert!(!region.editing);
+        assert_eq!(region.shape_count, 1);
+        assert_eq!(region.overlay_shapes.len(), 1);
+        let stats = region.stats.expect("region stats");
+        assert_eq!(stats.pixel_count, 5);
+        assert_eq!(stats.min, 11.0);
+        assert_eq!(stats.max, 31.0);
+        assert!((stats.mean - 21.6).abs() < 1e-9);
+
+        session
+            .handle_command(ImageBrowserCommand::WriteRegionMask {
+                name: Some("roi".into()),
+                set_default: true,
+            })
+            .unwrap();
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reopened.default_mask_name().as_deref(), Some("roi"));
+        let mask = reopened.get_named_mask("roi").unwrap();
+        assert!(mask[IxDyn(&[2, 2])]);
+        assert!(!mask[IxDyn(&[0, 0])]);
+    }
+
+    #[test]
+    fn session_open_region_keeps_plane_visible_until_polygon_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-open-region.image");
+        let mut image = PagedImage::<f32>::create(vec![4, 4], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[4, 4]),
+                    (0..16).map(|value| value as f32).collect(),
+                )
+                .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(64, 24)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::SetCursor { x: 1, y: 1 })
+            .unwrap();
+        let started = session
+            .handle_command(ImageBrowserCommand::StartRegionShape)
+            .unwrap();
+        let plane = started.plane.expect("plane after starting region");
+        assert!(!plane.no_finite_values);
+        assert_eq!(plane.data_min, 0.0);
+        assert_eq!(plane.data_max, 15.0);
+        let region = started.region.expect("region state");
+        assert!(region.editing);
+        assert_eq!(region.active_shape_vertices, 0);
+        assert!(region.stats.is_none());
+    }
+
+    #[test]
     fn session_plane_view_snapshot_includes_profile_payload() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("linked-plane.image");
@@ -1379,6 +2607,78 @@ mod tests {
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.samples[2].pixel_index, 2);
         assert_eq!(profile.samples[2].value, 400.0);
+    }
+
+    #[test]
+    fn session_snapshot_omits_backend_timing_when_perf_disabled() {
+        let _guard = perf_env_lock();
+        clear_perf_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("perf-disabled.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session = ImageBrowserSession::open(
+            &path,
+            ImageBrowserViewport::with_plane_pixels(32, 16, 0, 320, 160),
+        )
+        .unwrap();
+        let snapshot = session.snapshot().unwrap();
+        assert!(snapshot.backend_timing.is_none());
+    }
+
+    #[test]
+    fn session_snapshot_includes_backend_timing_and_cache_classification_when_enabled() {
+        let _guard = perf_env_lock();
+        let _perf_guard = set_perf_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("perf-enabled.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    vec![
+                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                    ],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image.save().unwrap();
+
+        let mut session = ImageBrowserSession::open(
+            &path,
+            ImageBrowserViewport::with_plane_pixels(80, 24, 0, 800, 600),
+        )
+        .unwrap();
+        let first = session.snapshot().unwrap();
+        let first_timing = first.backend_timing.expect("first backend timing");
+        assert_eq!(
+            first_timing.plane_cache_result,
+            ImageBackendPlaneCacheResult::Miss
+        );
+        assert!(first_timing.total_plane_ns > 0);
+        assert_eq!(first_timing.profile_cache_misses, 1);
+
+        let second = session.snapshot().unwrap();
+        let second_timing = second.backend_timing.expect("second backend timing");
+        assert_eq!(
+            second_timing.plane_cache_result,
+            ImageBackendPlaneCacheResult::Hit
+        );
+        assert!(second_timing.cached_plane_lookup_ns > 0);
+        assert!(second_timing.total_plane_ns <= first_timing.total_plane_ns);
+        assert!(second_timing.profile_cache_hits >= 1);
+        assert_eq!(second_timing.profile_cache_misses, 1);
     }
 
     #[test]

@@ -111,6 +111,14 @@ fn run_session() -> Result<(), String> {
             )
         } else {
             match (&mut session, request.command) {
+                (Some(session), ImageBrowserCommand::PreviewOccurrence { request }) => {
+                    match session.preview_occurrence(&request) {
+                        Ok(preview) => ImageBrowserResponseEnvelope::preview(preview),
+                        Err(error) => {
+                            ImageBrowserResponseEnvelope::error("command_failed", error.to_string())
+                        }
+                    }
+                }
                 (Some(session), command) => match session.handle_command(command) {
                     Ok(snapshot) => ImageBrowserResponseEnvelope::snapshot(snapshot),
                     Err(error) => {

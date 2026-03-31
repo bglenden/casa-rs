@@ -584,6 +584,7 @@ version = "0.8.0"
 dependencies = [
  "arboard",
  "casacore-imagebrowser-protocol",
+ "casacore-images",
  "casacore-ms",
  "casacore-tablebrowser-protocol",
  "casacore-tables",
@@ -3079,6 +3080,7 @@ name = "ratatui-graphics"
 version = "0.8.0"
 dependencies = [
  "anyhow",
+ "base64-simd",
  "image",
  "kittage",
  "plotters",

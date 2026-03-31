@@ -2,6 +2,7 @@
 //! Read-only image browser backend primitives.
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use casacore_coordinates::{CoordinateSystem, CoordinateType, ObsInfo, StokesType};
 use casacore_types::measures::direction::{
@@ -15,7 +16,9 @@ use ndarray::{Array2, Axis, Ix2, IxDyn};
 
 use crate::beam::{GaussianBeam, ImageBeamSet};
 use crate::error::ImageError;
-use crate::image::{AnyPagedImage, ImagePixelType};
+use crate::image::{AnyPagedImage, ImagePixelType, PagedImage, image_pixel_type};
+
+const IMAGE_BROWSER_DEFAULT_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Capability flags exposed by the read-only image browser backend.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -51,8 +54,18 @@ pub struct PlaneRaster {
     pub no_finite_values: bool,
 }
 
+/// Timing breakdown for a single plane-raster build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct PlaneRenderTelemetry {
+    pub plane_extract_ns: u64,
+    pub stat_collection_ns: u64,
+    pub histogram_ns: u64,
+    pub rasterize_ns: u64,
+    pub total_plane_ns: u64,
+}
+
 /// Backend-controlled stretch preset for 2D plane rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PlaneStretchPreset {
     Percentile99,
     Percentile95,
@@ -62,7 +75,7 @@ pub(crate) enum PlaneStretchPreset {
 }
 
 /// Autoscaling policy for plane rendering across cube stepping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PlaneAutoscaleMode {
     PerPlane,
     Frozen,
@@ -152,6 +165,54 @@ pub struct ImageProfile {
     pub samples: Vec<ImageProfileSample>,
 }
 
+/// A polygon vertex stored in world-coordinate space for the display axes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRegionVertex {
+    pub world: [f64; 2],
+}
+
+/// A polygonal shape belonging to an image region.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRegionShape {
+    pub vertices: Vec<ImageRegionVertex>,
+    pub closed: bool,
+}
+
+/// A named collection of polygon shapes stored in display-axis world coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRegion {
+    pub label: String,
+    pub display_axes: [usize; 2],
+    pub axis_names: [String; 2],
+    pub axis_units: [String; 2],
+    pub shapes: Vec<ImageRegionShape>,
+}
+
+/// A polygon projected into the sampled plane for overlay rendering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRegionOverlayShape {
+    pub vertices: Vec<(f64, f64)>,
+    pub closed: bool,
+}
+
+/// Overlay payload for the active region in the current plane view.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRegionOverlay {
+    pub shapes: Vec<ImageRegionOverlayShape>,
+}
+
+/// Statistics for the active region in the current plane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRegionStats {
+    pub pixel_count: usize,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub rms: f64,
+    pub sum: f64,
+    pub value_unit: String,
+}
+
 /// A titled metadata section for inspector rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageMetadataSection {
@@ -238,14 +299,23 @@ pub struct OpenedImageView {
 impl OpenedImageView {
     /// Opens a persistent image and prepares browser-facing metadata.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
+        Self::open_with_cache_bytes(path, IMAGE_BROWSER_DEFAULT_CACHE_BYTES)
+    }
+
+    pub(crate) fn open_with_cache_bytes(
+        path: impl AsRef<Path>,
+        cache_bytes: usize,
+    ) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
-        let image = AnyPagedImage::open(&path)?;
+        let image = open_view_image_with_cache(&path, cache_bytes)?;
         let axis_model = determine_axis_model(&image);
         let world_coords_available =
             coordinates_cover_image_axes(image_coordinates(&image), image.shape())
-                && image_coordinates(&image)
-                    .to_world(&vec![0.0; image.shape().len()])
-                    .is_ok();
+                && coordinate_system_pixel_to_world(
+                    image_coordinates(&image),
+                    &vec![0usize; image.shape().len()],
+                )
+                .is_ok();
         let capabilities = ImageViewCapabilities {
             renderable_plane: matches!(
                 image.pixel_type(),
@@ -492,6 +562,7 @@ impl OpenedImageView {
             non_display_indices,
             &PlaneStretchSettings::default(),
             None,
+            None,
         )
     }
 
@@ -504,18 +575,55 @@ impl OpenedImageView {
         non_display_indices: &[usize],
         stretch: &PlaneStretchSettings,
         clip_override: Option<(f64, f64)>,
+        region: Option<&ImageRegion>,
     ) -> Result<PlaneRaster, ImageError> {
+        self.render_plane_with_window_and_axes_and_stretch_timed(
+            viewport,
+            window,
+            non_display_indices,
+            stretch,
+            clip_override,
+            region,
+        )
+        .map(|(raster, _)| raster)
+    }
+
+    /// Renders the current 2D plane and returns a timing breakdown for the work.
+    pub(crate) fn render_plane_with_window_and_axes_and_stretch_timed(
+        &self,
+        viewport: (usize, usize),
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+        stretch: &PlaneStretchSettings,
+        clip_override: Option<(f64, f64)>,
+        region: Option<&ImageRegion>,
+    ) -> Result<(PlaneRaster, PlaneRenderTelemetry), ImageError> {
+        let total_started_at = Instant::now();
         if !self.capabilities.renderable_plane {
             return Err(ImageError::InvalidMetadata(self.status_line()));
         }
+        let extract_started_at = Instant::now();
         let (plane, mask) = self.read_plane(window, non_display_indices)?;
-        let plane_stats = collect_plane_stats(&plane, mask.as_ref());
+        let plane_extract_ns = duration_ns(extract_started_at.elapsed());
+        let stats_started_at = Instant::now();
+        let plane_stats = if let Some(region) =
+            region.filter(|region| region_has_closed_shapes(region))
+        {
+            let region_mask = self.region_dense_plane_mask(region, window, non_display_indices)?;
+            let (dense_plane, dense_mask) = self.read_dense_plane(window, non_display_indices)?;
+            let combined_mask = combine_masks(dense_mask.as_ref(), Some(&region_mask));
+            collect_plane_stats(&dense_plane, combined_mask.as_ref())
+        } else {
+            collect_plane_stats(&plane, mask.as_ref())
+        };
+        let stat_collection_ns = duration_ns(stats_started_at.elapsed());
         let width = viewport.0.max(1).min(plane.shape()[0].max(1));
         let height = viewport.1.max(1).min(plane.shape()[1].max(1));
         let (clip_min, clip_max) = clip_override
             .or_else(|| plane_stats.clip_bounds_for(stretch))
             .unwrap_or((0.0, 0.0));
 
+        let rasterize_started_at = Instant::now();
         let mut pixels_u8 = Vec::with_capacity(width * height);
         for y in 0..height {
             let y0 = y * plane.shape()[1] / height;
@@ -545,20 +653,33 @@ impl OpenedImageView {
                 pixels_u8.push(sample);
             }
         }
+        let rasterize_ns = duration_ns(rasterize_started_at.elapsed());
+        let histogram_started_at = Instant::now();
+        let histogram_bins = plane_stats.histogram_bins(48);
+        let histogram_ns = duration_ns(histogram_started_at.elapsed());
 
-        Ok(PlaneRaster {
-            width,
-            height,
-            pixels_u8,
-            clip_min,
-            clip_max,
-            data_min: plane_stats.data_min.unwrap_or(0.0),
-            data_max: plane_stats.data_max.unwrap_or(0.0),
-            value_unit: image_units(&self.image).to_string(),
-            histogram_bins: plane_stats.histogram_bins(48),
-            masked_or_non_finite_count: plane_stats.masked_or_non_finite_count,
-            no_finite_values: plane_stats.no_finite_values,
-        })
+        Ok((
+            PlaneRaster {
+                width,
+                height,
+                pixels_u8,
+                clip_min,
+                clip_max,
+                data_min: plane_stats.data_min.unwrap_or(0.0),
+                data_max: plane_stats.data_max.unwrap_or(0.0),
+                value_unit: image_units(&self.image).to_string(),
+                histogram_bins,
+                masked_or_non_finite_count: plane_stats.masked_or_non_finite_count,
+                no_finite_values: plane_stats.no_finite_values,
+            },
+            PlaneRenderTelemetry {
+                plane_extract_ns,
+                stat_collection_ns,
+                histogram_ns,
+                rasterize_ns,
+                total_plane_ns: duration_ns(total_started_at.elapsed()),
+            },
+        ))
     }
 
     /// Returns a spreadsheet-style exact-value window centered on the cursor.
@@ -748,14 +869,7 @@ impl OpenedImageView {
             })
             .collect();
         let world_axes = if self.capabilities.world_coords_available {
-            let world = image_coordinates(&self.image)
-                .to_world(
-                    &pixel_indices
-                        .iter()
-                        .map(|&pixel| pixel as f64)
-                        .collect::<Vec<_>>(),
-                )
-                .map_err(ImageError::from)?;
+            let world = self.pixel_indices_to_world(&pixel_indices)?;
             axis_descriptors
                 .iter()
                 .enumerate()
@@ -852,6 +966,406 @@ impl OpenedImageView {
             .or_else(|| self.axis_model.non_display_axes.first().copied())
     }
 
+    fn pixel_indices_to_world(&self, pixel_indices: &[usize]) -> Result<Vec<f64>, ImageError> {
+        coordinate_system_pixel_to_world(image_coordinates(&self.image), pixel_indices)
+            .map_err(ImageError::from)
+    }
+
+    /// Creates an empty WCS-native region for the current display axes.
+    pub fn default_region(&self, label: impl Into<String>) -> Result<ImageRegion, ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        if !self.capabilities.world_coords_available {
+            return Err(ImageError::InvalidMetadata(
+                "regions require world-coordinate support".into(),
+            ));
+        }
+        let descriptors = build_axis_descriptors(image_coordinates(&self.image), self.shape());
+        Ok(ImageRegion {
+            label: label.into(),
+            display_axes,
+            axis_names: [
+                descriptors
+                    .get(display_axes[0])
+                    .map(|descriptor| descriptor.name.clone())
+                    .unwrap_or_else(|| format!("Axis{}", display_axes[0])),
+                descriptors
+                    .get(display_axes[1])
+                    .map(|descriptor| descriptor.name.clone())
+                    .unwrap_or_else(|| format!("Axis{}", display_axes[1])),
+            ],
+            axis_units: [
+                descriptors
+                    .get(display_axes[0])
+                    .map(|descriptor| descriptor.unit.clone())
+                    .unwrap_or_default(),
+                descriptors
+                    .get(display_axes[1])
+                    .map(|descriptor| descriptor.unit.clone())
+                    .unwrap_or_default(),
+            ],
+            shapes: Vec::new(),
+        })
+    }
+
+    /// Converts a displayed plane pixel to a region vertex in display-axis
+    /// world coordinates.
+    pub fn region_vertex_for_pixel_with_window_and_axes(
+        &self,
+        pixel_xy: (usize, usize),
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<ImageRegionVertex, ImageError> {
+        let probe = self.probe_with_window_and_axes(pixel_xy, window, non_display_indices)?;
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        if probe.world_axes.len() <= display_axes[1] {
+            return Err(ImageError::InvalidMetadata(
+                "regions require world-coordinate support".into(),
+            ));
+        }
+        Ok(ImageRegionVertex {
+            world: [
+                probe.world_axes[display_axes[0]].value,
+                probe.world_axes[display_axes[1]].value,
+            ],
+        })
+    }
+
+    /// Projects a WCS-native region into sampled plane coordinates for overlay
+    /// rendering.
+    pub fn region_overlay_with_window_and_axes(
+        &self,
+        region: &ImageRegion,
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<ImageRegionOverlay, ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        validate_region_axes(region, display_axes)?;
+        let base_world = plane_context_world(self, window, non_display_indices)?;
+        let shapes = region
+            .shapes
+            .iter()
+            .map(|shape| {
+                let vertices = shape
+                    .vertices
+                    .iter()
+                    .map(|vertex| {
+                        region_vertex_to_sampled_plane(
+                            image_coordinates(&self.image),
+                            &base_world,
+                            display_axes,
+                            window,
+                            vertex,
+                        )
+                        .map_err(ImageError::from)
+                    })
+                    .collect::<Result<Vec<_>, ImageError>>()?;
+                Ok(ImageRegionOverlayShape {
+                    vertices,
+                    closed: shape.closed,
+                })
+            })
+            .collect::<Result<Vec<_>, ImageError>>()?;
+        Ok(ImageRegionOverlay { shapes })
+    }
+
+    /// Computes active-region statistics for the current plane window.
+    pub fn region_stats_with_window_and_axes(
+        &self,
+        region: &ImageRegion,
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<Option<ImageRegionStats>, ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        validate_region_axes(region, display_axes)?;
+        if !region_has_closed_shapes(region) {
+            return Ok(None);
+        }
+        let dense_mask = self.region_dense_plane_mask(region, window, non_display_indices)?;
+        let (plane, mask) = self.read_dense_plane(window, non_display_indices)?;
+        let stats = collect_plane_stats(
+            &plane,
+            combine_masks(mask.as_ref(), Some(&dense_mask)).as_ref(),
+        );
+        let mut sum = 0.0;
+        let mut sum_sq = 0.0;
+        let mut pixel_count = 0usize;
+        for x in 0..plane.shape()[0] {
+            for y in 0..plane.shape()[1] {
+                if !dense_mask[[x, y]] {
+                    continue;
+                }
+                if mask.as_ref().is_some_and(|mask_data| !mask_data[[x, y]]) {
+                    continue;
+                }
+                let value = plane[[x, y]];
+                if !value.is_finite() {
+                    continue;
+                }
+                sum += value;
+                sum_sq += value * value;
+                pixel_count += 1;
+            }
+        }
+        if pixel_count == 0 {
+            return Ok(None);
+        }
+        let mean = sum / pixel_count as f64;
+        let rms = (sum_sq / pixel_count as f64).sqrt();
+        Ok(Some(ImageRegionStats {
+            pixel_count,
+            min: stats.data_min.unwrap_or(0.0),
+            max: stats.data_max.unwrap_or(0.0),
+            mean,
+            rms,
+            sum,
+            value_unit: image_units(&self.image).to_string(),
+        }))
+    }
+
+    /// Writes a named persistent image mask from a WCS-native region. The mask
+    /// is broadcast across all non-display planes.
+    pub fn write_region_mask(
+        &self,
+        region: &ImageRegion,
+        name: &str,
+        set_default: bool,
+    ) -> Result<(), ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        validate_region_axes(region, display_axes)?;
+        if self.path.as_os_str().is_empty() {
+            return Err(ImageError::InvalidMetadata(
+                "cannot write a mask for an in-memory image".into(),
+            ));
+        }
+        let mask = self.region_full_image_mask(region)?;
+        match self.image.pixel_type() {
+            ImagePixelType::Float32 => {
+                let mut image = PagedImage::<f32>::open(&self.path)?;
+                image.put_mask(name, &mask)?;
+                if set_default {
+                    image.set_default_mask(name)?;
+                }
+                image
+                    .add_history(format!("imexplore region mask '{name}' created"))
+                    .ok();
+                image.save()?;
+            }
+            ImagePixelType::Float64 => {
+                let mut image = PagedImage::<f64>::open(&self.path)?;
+                image.put_mask(name, &mask)?;
+                if set_default {
+                    image.set_default_mask(name)?;
+                }
+                image
+                    .add_history(format!("imexplore region mask '{name}' created"))
+                    .ok();
+                image.save()?;
+            }
+            ImagePixelType::Complex32 | ImagePixelType::Complex64 => {
+                return Err(ImageError::InvalidMetadata(
+                    "complex images unsupported in wave 1".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn read_dense_plane(
+        &self,
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<(Array2<f64>, Option<Array2<bool>>), ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        let mut start = window.blc.clone();
+        let mut shape = window
+            .blc
+            .iter()
+            .zip(window.trc.iter())
+            .map(|(blc, trc)| trc - blc + 1)
+            .collect::<Vec<_>>();
+        for (axis, _index, pixel) in selected_non_display_axes(
+            window,
+            &self.axis_model.non_display_axes,
+            non_display_indices,
+        )? {
+            start[axis] = pixel;
+            shape[axis] = 1;
+        }
+        let squeeze_axes = squeezed_axes(self.shape(), display_axes);
+        for &axis in &squeeze_axes {
+            shape[axis] = 1;
+        }
+
+        let plane = squeeze_plane_axes(
+            image_real_get_slice(&self.image, &start, &shape)?,
+            &squeeze_axes,
+        );
+        let plane = plane.into_dimensionality::<Ix2>().map_err(|_| {
+            ImageError::InvalidMetadata(format!("expected 2D plane for axes {:?}", display_axes))
+        })?;
+
+        let mask = match image_get_mask(&self.image)? {
+            Some(mask_data) => Some(self.read_dense_mask_plane(
+                mask_data,
+                window,
+                display_axes,
+                non_display_indices,
+            )?),
+            None => None,
+        };
+
+        Ok((plane, mask))
+    }
+
+    fn read_dense_mask_plane(
+        &self,
+        mask_data: ArrayD<bool>,
+        window: &ImageViewWindow,
+        display_axes: [usize; 2],
+        non_display_indices: &[usize],
+    ) -> Result<Array2<bool>, ImageError> {
+        let width = window.trc()[display_axes[0]] - window.blc()[display_axes[0]] + 1;
+        let height = window.trc()[display_axes[1]] - window.blc()[display_axes[1]] + 1;
+        let non_display_pixels = selected_non_display_axes(
+            window,
+            &self.axis_model.non_display_axes,
+            non_display_indices,
+        )?;
+        Ok(Array2::from_shape_fn(
+            (width, height),
+            |(x_index, y_index)| {
+                let mut indices = window.blc.clone();
+                indices[display_axes[0]] = window.blc()[display_axes[0]] + x_index;
+                indices[display_axes[1]] = window.blc()[display_axes[1]] + y_index;
+                for &(axis, _index, pixel) in &non_display_pixels {
+                    indices[axis] = pixel;
+                }
+                mask_data[IxDyn(&indices)]
+            },
+        ))
+    }
+
+    fn region_dense_plane_mask(
+        &self,
+        region: &ImageRegion,
+        window: &ImageViewWindow,
+        non_display_indices: &[usize],
+    ) -> Result<Array2<bool>, ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        validate_region_axes(region, display_axes)?;
+        let base_world = plane_context_world(self, window, non_display_indices)?;
+        let polygons = region
+            .shapes
+            .iter()
+            .filter(|shape| shape.closed && shape.vertices.len() >= 3)
+            .map(|shape| {
+                shape
+                    .vertices
+                    .iter()
+                    .map(|vertex| {
+                        region_vertex_to_plane_pixel(
+                            image_coordinates(&self.image),
+                            &base_world,
+                            display_axes,
+                            vertex,
+                        )
+                        .map_err(ImageError::from)
+                    })
+                    .collect::<Result<Vec<_>, ImageError>>()
+            })
+            .collect::<Result<Vec<_>, ImageError>>()?;
+        let width = window.trc()[display_axes[0]] - window.blc()[display_axes[0]] + 1;
+        let height = window.trc()[display_axes[1]] - window.blc()[display_axes[1]] + 1;
+        if polygons.is_empty() {
+            return Ok(Array2::from_elem((width, height), false));
+        }
+        Ok(Array2::from_shape_fn((width, height), |(x, y)| {
+            let pixel_x = window.blc()[display_axes[0]] as f64 + x as f64;
+            let pixel_y = window.blc()[display_axes[1]] as f64 + y as f64;
+            polygons
+                .iter()
+                .any(|polygon| polygon_contains_pixel(polygon, (pixel_x, pixel_y)))
+        }))
+    }
+
+    fn region_full_image_mask(&self, region: &ImageRegion) -> Result<ArrayD<bool>, ImageError> {
+        let display_axes = self
+            .axis_model
+            .display_axes
+            .ok_or_else(|| ImageError::InvalidMetadata(self.status_line()))?;
+        validate_region_axes(region, display_axes)?;
+        let shape = self.shape().to_vec();
+        let mut mask = ArrayD::from_elem(IxDyn(&shape), false);
+        let non_display_axes = self.axis_model.non_display_axes.clone();
+        let descriptors = build_axis_descriptors(image_coordinates(&self.image), self.shape());
+        let contexts = if non_display_axes.is_empty() {
+            vec![Vec::new()]
+        } else {
+            let axis_lengths = non_display_axes
+                .iter()
+                .map(|&axis| shape[axis])
+                .collect::<Vec<_>>();
+            enumerate_axis_indices(&axis_lengths)
+        };
+        for context in contexts {
+            let pixels = non_display_axes
+                .iter()
+                .copied()
+                .zip(context.iter().copied())
+                .collect::<Vec<_>>();
+            let base_world = full_world_at_pixel(
+                image_coordinates(&self.image),
+                &shape,
+                &descriptors,
+                &region.display_axes,
+                &pixels,
+            )?;
+            let polygons = region
+                .shapes
+                .iter()
+                .filter(|shape| shape.closed && shape.vertices.len() >= 3)
+                .map(|shape| {
+                    shape
+                        .vertices
+                        .iter()
+                        .map(|vertex| {
+                            region_vertex_to_plane_pixel(
+                                image_coordinates(&self.image),
+                                &base_world,
+                                display_axes,
+                                vertex,
+                            )
+                            .map_err(ImageError::from)
+                        })
+                        .collect::<Result<Vec<_>, ImageError>>()
+                })
+                .collect::<Result<Vec<_>, ImageError>>()?;
+            fill_region_mask_plane(&mut mask, &polygons, display_axes, &pixels, &shape);
+        }
+        Ok(mask)
+    }
+
     /// Extracts a 1D spectrum/profile along the requested non-display axis.
     pub fn profile_with_window_and_axes(
         &self,
@@ -939,14 +1453,7 @@ impl OpenedImageView {
                     .as_ref()
                     .is_some_and(|data| !data[IxDyn(&pixel_indices)]);
                 let world_axis = if self.capabilities.world_coords_available {
-                    let world = image_coordinates(&self.image)
-                        .to_world(
-                            &pixel_indices
-                                .iter()
-                                .map(|&pixel| pixel as f64)
-                                .collect::<Vec<_>>(),
-                        )
-                        .map_err(ImageError::from)?;
+                    let world = self.pixel_indices_to_world(&pixel_indices)?;
                     Some(ImageAxisValue {
                         name: profile_descriptor.name.clone(),
                         unit: profile_descriptor.unit.clone(),
@@ -1059,6 +1566,30 @@ impl OpenedImageView {
                 mask_data[IxDyn(&indices)]
             },
         ))
+    }
+}
+
+fn open_view_image_with_cache(
+    path: &Path,
+    cache_bytes: usize,
+) -> Result<AnyPagedImage, ImageError> {
+    match image_pixel_type(path)? {
+        ImagePixelType::Float32 => Ok(AnyPagedImage::Float32(PagedImage::open_with_cache(
+            path,
+            cache_bytes,
+        )?)),
+        ImagePixelType::Float64 => Ok(AnyPagedImage::Float64(PagedImage::open_with_cache(
+            path,
+            cache_bytes,
+        )?)),
+        ImagePixelType::Complex32 => Ok(AnyPagedImage::Complex32(PagedImage::open_with_cache(
+            path,
+            cache_bytes,
+        )?)),
+        ImagePixelType::Complex64 => Ok(AnyPagedImage::Complex64(PagedImage::open_with_cache(
+            path,
+            cache_bytes,
+        )?)),
     }
 }
 
@@ -1356,6 +1887,10 @@ fn trim_float_text(mut text: String) -> String {
     if text == "-0" { "0".into() } else { text }
 }
 
+fn duration_ns(duration: std::time::Duration) -> u64 {
+    duration.as_nanos().min(u128::from(u64::MAX)) as u64
+}
+
 fn render_grid_cell(text: &str, width: usize, cursor: bool) -> String {
     if cursor && width >= 3 {
         let inner_width = width - 2;
@@ -1566,6 +2101,271 @@ fn collect_plane_stats(plane: &Array2<f64>, mask: Option<&Array2<bool>>) -> Plan
         masked_or_non_finite_count,
         no_finite_values,
     }
+}
+
+fn combine_masks(
+    mask: Option<&Array2<bool>>,
+    region_mask: Option<&Array2<bool>>,
+) -> Option<Array2<bool>> {
+    match (mask, region_mask) {
+        (None, None) => None,
+        (Some(mask), None) => Some(mask.clone()),
+        (None, Some(region_mask)) => Some(region_mask.clone()),
+        (Some(mask), Some(region_mask)) => Some(Array2::from_shape_fn(mask.raw_dim(), |index| {
+            mask[index] && region_mask[index]
+        })),
+    }
+}
+
+fn region_has_closed_shapes(region: &ImageRegion) -> bool {
+    region
+        .shapes
+        .iter()
+        .any(|shape| shape.closed && shape.vertices.len() >= 3)
+}
+
+fn coordinate_system_pixel_to_world(
+    coords: &CoordinateSystem,
+    pixel_indices: &[usize],
+) -> Result<Vec<f64>, casacore_coordinates::CoordinateError> {
+    coords.to_world(
+        &pixel_indices
+            .iter()
+            .map(|&pixel| pixel as f64)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn coordinate_system_world_to_pixel(
+    coords: &CoordinateSystem,
+    world: &[f64],
+) -> Result<Vec<f64>, casacore_coordinates::CoordinateError> {
+    coords.to_pixel(world)
+}
+
+fn validate_region_axes(region: &ImageRegion, display_axes: [usize; 2]) -> Result<(), ImageError> {
+    if region.display_axes != display_axes {
+        return Err(ImageError::InvalidMetadata(
+            "region display axes do not match the active plane".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn plane_context_world(
+    view: &OpenedImageView,
+    window: &ImageViewWindow,
+    non_display_indices: &[usize],
+) -> Result<Vec<f64>, ImageError> {
+    let display_axes = view
+        .axis_model()
+        .display_axes
+        .ok_or_else(|| ImageError::InvalidMetadata(view.status_line()))?;
+    let center_x = window.sampled_axis_len(display_axes[0]) / 2;
+    let center_y = window.sampled_axis_len(display_axes[1]) / 2;
+    let probe =
+        view.probe_with_window_and_axes((center_x, center_y), window, non_display_indices)?;
+    if probe.world_axes.is_empty() {
+        return Err(ImageError::InvalidMetadata(
+            "regions require world-coordinate support".into(),
+        ));
+    }
+    view.pixel_indices_to_world(&probe.pixel_indices)
+}
+
+fn full_world_at_pixel(
+    coords: &CoordinateSystem,
+    shape: &[usize],
+    _descriptors: &[AxisDescriptor],
+    display_axes: &[usize; 2],
+    non_display_pixels: &[(usize, usize)],
+) -> Result<Vec<f64>, ImageError> {
+    let mut pixel = shape
+        .iter()
+        .enumerate()
+        .map(|(axis, &len)| {
+            if display_axes.contains(&axis) {
+                len.saturating_sub(1) / 2
+            } else {
+                0
+            }
+        })
+        .collect::<Vec<_>>();
+    for &(axis, value) in non_display_pixels {
+        pixel[axis] = value;
+    }
+    coordinate_system_pixel_to_world(coords, &pixel).map_err(ImageError::from)
+}
+
+fn region_vertex_to_plane_pixel(
+    coords: &CoordinateSystem,
+    base_world: &[f64],
+    display_axes: [usize; 2],
+    vertex: &ImageRegionVertex,
+) -> Result<(f64, f64), casacore_coordinates::CoordinateError> {
+    let mut world = base_world.to_vec();
+    world[display_axes[0]] = vertex.world[0];
+    world[display_axes[1]] = vertex.world[1];
+    let pixel = coordinate_system_world_to_pixel(coords, &world)?;
+    Ok((pixel[display_axes[0]], pixel[display_axes[1]]))
+}
+
+fn region_vertex_to_sampled_plane(
+    coords: &CoordinateSystem,
+    base_world: &[f64],
+    display_axes: [usize; 2],
+    window: &ImageViewWindow,
+    vertex: &ImageRegionVertex,
+) -> Result<(f64, f64), casacore_coordinates::CoordinateError> {
+    let (pixel_x, pixel_y) =
+        region_vertex_to_plane_pixel(coords, base_world, display_axes, vertex)?;
+    Ok((
+        (pixel_x - window.blc()[display_axes[0]] as f64) / window.inc()[display_axes[0]] as f64,
+        (pixel_y - window.blc()[display_axes[1]] as f64) / window.inc()[display_axes[1]] as f64,
+    ))
+}
+
+fn point_on_segment(point: (f64, f64), left: (f64, f64), right: (f64, f64)) -> bool {
+    let dx = right.0 - left.0;
+    let dy = right.1 - left.1;
+    let length_sq = dx * dx + dy * dy;
+    let length = length_sq.sqrt();
+    let tolerance = length * 1e-6 + 1e-12;
+    if length_sq <= tolerance * tolerance {
+        return (point.0 - left.0).hypot(point.1 - left.1) <= tolerance;
+    }
+    let dot = (point.0 - left.0) * dx + (point.1 - left.1) * dy;
+    let t = dot / length_sq;
+    if !(-1e-6..=1.0 + 1e-6).contains(&t) {
+        return false;
+    }
+    let projected = (left.0 + t * dx, left.1 + t * dy);
+    (point.0 - projected.0).hypot(point.1 - projected.1) <= tolerance
+}
+
+fn polygon_contains_pixel(polygon: &[(f64, f64)], point: (f64, f64)) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    for index in 0..polygon.len() {
+        let left = polygon[index];
+        let right = polygon[(index + 1) % polygon.len()];
+        if point_on_segment(point, left, right) {
+            return true;
+        }
+    }
+    let mut inside = false;
+    for index in 0..polygon.len() {
+        let left = polygon[index];
+        let right = polygon[(index + 1) % polygon.len()];
+        let intersects = ((left.1 > point.1) != (right.1 > point.1))
+            && (point.0
+                < (right.0 - left.0) * (point.1 - left.1) / (right.1 - left.1 + f64::EPSILON)
+                    + left.0);
+        if intersects {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+fn fill_region_mask_plane(
+    mask: &mut ArrayD<bool>,
+    polygons: &[Vec<(f64, f64)>],
+    display_axes: [usize; 2],
+    non_display_pixels: &[(usize, usize)],
+    shape: &[usize],
+) {
+    if polygons.is_empty() {
+        return;
+    }
+    let width = shape[display_axes[0]];
+    let height = shape[display_axes[1]];
+    for x in 0..width {
+        for y in 0..height {
+            if !polygons
+                .iter()
+                .any(|polygon| polygon_contains_pixel(polygon, (x as f64, y as f64)))
+            {
+                continue;
+            }
+            let mut indices = vec![0usize; shape.len()];
+            indices[display_axes[0]] = x;
+            indices[display_axes[1]] = y;
+            for &(axis, pixel) in non_display_pixels {
+                indices[axis] = pixel;
+            }
+            mask[IxDyn(&indices)] = true;
+        }
+    }
+}
+
+fn enumerate_axis_indices(lengths: &[usize]) -> Vec<Vec<usize>> {
+    if lengths.is_empty() {
+        return vec![Vec::new()];
+    }
+    let mut contexts = Vec::new();
+    let mut current = vec![0usize; lengths.len()];
+    loop {
+        contexts.push(current.clone());
+        let mut axis = lengths.len();
+        while axis > 0 {
+            axis -= 1;
+            current[axis] += 1;
+            if current[axis] < lengths[axis] {
+                break;
+            }
+            current[axis] = 0;
+        }
+        if axis == 0 && current[0] == 0 {
+            break;
+        }
+    }
+    contexts
+}
+
+fn segments_intersect(a0: (f64, f64), a1: (f64, f64), b0: (f64, f64), b1: (f64, f64)) -> bool {
+    fn orientation(a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> f64 {
+        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+    }
+    let o1 = orientation(a0, a1, b0);
+    let o2 = orientation(a0, a1, b1);
+    let o3 = orientation(b0, b1, a0);
+    let o4 = orientation(b0, b1, a1);
+    if (o1 > 0.0) != (o2 > 0.0) && (o3 > 0.0) != (o4 > 0.0) {
+        return true;
+    }
+    point_on_segment(b0, a0, a1)
+        || point_on_segment(b1, a0, a1)
+        || point_on_segment(a0, b0, b1)
+        || point_on_segment(a1, b0, b1)
+}
+
+pub(crate) fn polygon_self_intersects(vertices: &[ImageRegionVertex]) -> bool {
+    if vertices.len() < 4 {
+        return false;
+    }
+    for left in 0..vertices.len() {
+        let next_left = (left + 1) % vertices.len();
+        let left_segment = (vertices[left].world, vertices[next_left].world);
+        for right in left + 1..vertices.len() {
+            let next_right = (right + 1) % vertices.len();
+            if left == right || left == next_right || next_left == right || next_left == next_right
+            {
+                continue;
+            }
+            let right_segment = (vertices[right].world, vertices[next_right].world);
+            if segments_intersect(
+                (left_segment.0[0], left_segment.0[1]),
+                (left_segment.1[0], left_segment.1[1]),
+                (right_segment.0[0], right_segment.0[1]),
+                (right_segment.1[0], right_segment.1[1]),
+            ) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn image_coordinates(image: &AnyPagedImage) -> &CoordinateSystem {
@@ -2126,6 +2926,18 @@ mod tests {
         coords
     }
 
+    fn direction_coords() -> CoordinateSystem {
+        let mut coords = CoordinateSystem::new();
+        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, std::f64::consts::FRAC_PI_4],
+            [-1e-4, 1e-4],
+            [1.0, 1.0],
+        )));
+        coords
+    }
+
     fn direction_tabular_spectral_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
         coords.add_coordinate(Box::new(DirectionCoordinate::new(
@@ -2230,6 +3042,209 @@ mod tests {
         assert!(grid.first().is_some_and(|line| line.contains("1")));
         assert!(grid.first().is_some_and(|line| line.contains("3")));
         assert!(grid.iter().any(|line| line.starts_with("  3 |")));
+    }
+
+    #[test]
+    fn region_stats_and_overlay_follow_wcs_polygon_membership() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("region.image");
+        let values = (0..5)
+            .flat_map(|x| (0..5).map(move |y| (x * 10 + y) as f32))
+            .collect::<Vec<_>>();
+        let mut image = PagedImage::<f32>::create(vec![5, 5], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[5, 5]), values).unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        let window = opened.default_window();
+        let mut region = opened.default_region("Region 1").unwrap();
+        let vertices = [(1usize, 1usize), (3, 1), (3, 3), (1, 3)]
+            .into_iter()
+            .map(|pixel_xy| {
+                opened.region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        region.shapes.push(ImageRegionShape {
+            vertices,
+            closed: true,
+        });
+
+        let overlay = opened
+            .region_overlay_with_window_and_axes(&region, &window, &[])
+            .unwrap();
+        assert_eq!(overlay.shapes.len(), 1);
+        assert!(overlay.shapes[0].closed);
+        assert_eq!(overlay.shapes[0].vertices.len(), 4);
+        assert!((overlay.shapes[0].vertices[0].0 - 1.0).abs() < 1e-6);
+        assert!((overlay.shapes[0].vertices[0].1 - 1.0).abs() < 1e-6);
+
+        let stats = opened
+            .region_stats_with_window_and_axes(&region, &window, &[])
+            .unwrap()
+            .unwrap();
+        assert_eq!(stats.pixel_count, 9);
+        assert_eq!(stats.min, 11.0);
+        assert_eq!(stats.max, 33.0);
+        assert!((stats.mean - 22.0).abs() < 1e-9);
+        assert!((stats.sum - 198.0).abs() < 1e-9);
+        assert_eq!(stats.value_unit, "Jy/beam");
+    }
+
+    #[test]
+    fn wcs_region_overlay_reprojects_with_window_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("region-window.image");
+        let mut image = PagedImage::<f32>::create(vec![5, 5], direction_coords(), &path).unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        let full_window = opened.default_window();
+        let mut region = opened.default_region("Region 1").unwrap();
+        let vertex = opened
+            .region_vertex_for_pixel_with_window_and_axes((2, 2), &full_window, &[])
+            .unwrap();
+        region.shapes.push(ImageRegionShape {
+            vertices: vec![vertex.clone(), vertex.clone()],
+            closed: false,
+        });
+
+        let full_overlay = opened
+            .region_overlay_with_window_and_axes(&region, &full_window, &[])
+            .unwrap();
+        assert!((full_overlay.shapes[0].vertices[0].0 - 2.0).abs() < 1e-6);
+        assert!((full_overlay.shapes[0].vertices[0].1 - 2.0).abs() < 1e-6);
+
+        let cropped_window = opened.window_from_text("1,1", "4,4", "1,1").unwrap();
+        let cropped_overlay = opened
+            .region_overlay_with_window_and_axes(&region, &cropped_window, &[])
+            .unwrap();
+        assert!((cropped_overlay.shapes[0].vertices[0].0 - 1.0).abs() < 1e-6);
+        assert!((cropped_overlay.shapes[0].vertices[0].1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn write_region_mask_persists_named_default_mask() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("region-mask.image");
+        let mut image = PagedImage::<f32>::create(vec![5, 5], direction_coords(), &path).unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        let window = opened.default_window();
+        let mut region = opened.default_region("Region 1").unwrap();
+        let vertices = [(1usize, 1usize), (3, 1), (3, 3), (1, 3)]
+            .into_iter()
+            .map(|pixel_xy| {
+                opened.region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        region.shapes.push(ImageRegionShape {
+            vertices,
+            closed: true,
+        });
+
+        opened.write_region_mask(&region, "roi", true).unwrap();
+
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reopened.default_mask_name().as_deref(), Some("roi"));
+        let mask = reopened.get_named_mask("roi").unwrap();
+        assert!(!mask[IxDyn(&[0, 0])]);
+        assert!(mask[IxDyn(&[1, 1])]);
+        assert!(mask[IxDyn(&[2, 2])]);
+        assert!(mask[IxDyn(&[3, 3])]);
+        assert!(!mask[IxDyn(&[4, 4])]);
+    }
+
+    #[test]
+    fn open_region_does_not_blank_plane_statistics() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("open-region.image");
+        let mut image = PagedImage::<f32>::create(vec![4, 4], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[4, 4]),
+                    (0..16).map(|value| value as f32).collect(),
+                )
+                .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let opened = OpenedImageView::open(&path).unwrap();
+        let window = opened.default_window();
+        let mut region = opened.default_region("Region 1").unwrap();
+        region.shapes.push(ImageRegionShape {
+            vertices: vec![
+                opened
+                    .region_vertex_for_pixel_with_window_and_axes((1, 1), &window, &[])
+                    .unwrap(),
+                opened
+                    .region_vertex_for_pixel_with_window_and_axes((2, 1), &window, &[])
+                    .unwrap(),
+            ],
+            closed: false,
+        });
+
+        let raster = opened
+            .render_plane_with_window_and_axes_and_stretch(
+                (4, 4),
+                &window,
+                &[],
+                &PlaneStretchSettings::default(),
+                None,
+                Some(&region),
+            )
+            .unwrap();
+        assert!(!raster.no_finite_values);
+        assert_eq!(raster.data_min, 0.0);
+        assert_eq!(raster.data_max, 15.0);
+        assert_eq!(raster.histogram_bins.iter().sum::<u32>(), 16);
+    }
+
+    #[test]
+    fn polygon_self_intersection_ignores_small_world_scale_non_intersecting_shapes() {
+        let vertices = vec![
+            ImageRegionVertex { world: [3.0, 0.37] },
+            ImageRegionVertex {
+                world: [3.0 + 2.0e-5, 0.37],
+            },
+            ImageRegionVertex {
+                world: [3.0 + 2.0e-5, 0.37 + 2.0e-5],
+            },
+            ImageRegionVertex {
+                world: [3.0, 0.37 + 2.0e-5],
+            },
+        ];
+
+        assert!(!polygon_self_intersects(&vertices));
+    }
+
+    #[test]
+    fn polygon_self_intersection_still_rejects_crossing_shapes() {
+        let vertices = vec![
+            ImageRegionVertex { world: [3.0, 0.37] },
+            ImageRegionVertex {
+                world: [3.0 + 2.0e-5, 0.37 + 2.0e-5],
+            },
+            ImageRegionVertex {
+                world: [3.0, 0.37 + 2.0e-5],
+            },
+            ImageRegionVertex {
+                world: [3.0 + 2.0e-5, 0.37],
+            },
+        ];
+
+        assert!(polygon_self_intersects(&vertices));
     }
 
     #[test]
@@ -2342,6 +3357,7 @@ mod tests {
                     autoscale: PlaneAutoscaleMode::PerPlane,
                     manual_clip: Some((5.0, 10.0)),
                 },
+                None,
                 None,
             )
             .unwrap();

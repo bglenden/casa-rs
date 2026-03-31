@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use casacore_imagebrowser_protocol::{
     ImageBrowserProbe, ImageDisplayAxisState, ImagePlaneRaster, ImageProfilePayload,
+    ImageRegionOverlayShapeState,
 };
 use casacore_types::measures::direction::{format_declination, format_right_ascension};
 use casacore_types::quanta::{Quantity, Unit};
@@ -28,12 +29,14 @@ pub(crate) struct ImagePlaneOverlayMarker {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ImagePlaneRenderInput {
+    pub cache_key: u64,
     pub raster: ImagePlaneRaster,
     pub cursor_sample: Option<(usize, usize)>,
     pub sampled_shape: Option<(usize, usize)>,
     pub display_axes: Vec<ImageDisplayAxisState>,
     pub probe: Option<ImageBrowserProbe>,
     pub overlay_markers: Vec<ImagePlaneOverlayMarker>,
+    pub region_overlay_shapes: Vec<ImageRegionOverlayShapeState>,
     pub display_aspect_ratio: Option<f64>,
     pub colormap: ImagePlaneColormap,
     pub invert: bool,
@@ -49,6 +52,7 @@ pub(crate) struct ImageSpectrumOverlaySeries {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ImageSpectrumRenderInput {
+    pub cache_key: u64,
     pub profile: ImageProfilePayload,
     pub overlay_profiles: Vec<ImageSpectrumOverlaySeries>,
     pub theme_mode: ThemeMode,
@@ -175,6 +179,50 @@ pub(crate) fn render_image_plane_image(
                 out_y,
                 Rgb(image_plane_pixel_color(value, input.colormap, input.invert)),
             );
+        }
+    }
+
+    if let Some((sampled_width, sampled_height)) = input.sampled_shape {
+        let region_color = Rgb(image_region_overlay_color(input.theme_mode));
+        let region_halo = Rgb(marker_halo);
+        for shape in &input.region_overlay_shapes {
+            if shape.vertices.len() < 2 {
+                continue;
+            }
+            let screen_vertices = shape
+                .vertices
+                .iter()
+                .map(|vertex| {
+                    (
+                        sampled_coordinate_to_screen_x(
+                            geometry,
+                            sampled_width as u32,
+                            vertex.sampled_x,
+                        ),
+                        sampled_coordinate_to_screen_y(
+                            geometry,
+                            sampled_height as u32,
+                            vertex.sampled_y,
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for index in 0..screen_vertices.len().saturating_sub(1) {
+                let left = screen_vertices[index];
+                let right = screen_vertices[index + 1];
+                draw_region_segment(&mut image, left, right, region_halo, region_color);
+            }
+            if shape.closed
+                && let (Some(first), Some(last)) = (
+                    screen_vertices.first().copied(),
+                    screen_vertices.last().copied(),
+                )
+            {
+                draw_region_segment(&mut image, last, first, region_halo, region_color);
+            }
+            for &(x, y) in &screen_vertices {
+                draw_probe_marker(&mut image, x, y, 3, region_halo, region_color);
+            }
         }
     }
 
@@ -1780,6 +1828,13 @@ fn image_probe_overlay_color(theme_mode: ThemeMode, color_index: usize) -> [u8; 
     palette[color_index % palette.len()]
 }
 
+fn image_region_overlay_color(theme_mode: ThemeMode) -> [u8; 3] {
+    match theme_mode {
+        ThemeMode::DenseAnsi => [255, 255, 0],
+        ThemeMode::RichPanel => [255, 82, 82],
+    }
+}
+
 fn plane_cursor_marker_geometry(
     geometry: ImagePlaneDrawGeometry,
     raster_width: u32,
@@ -1806,6 +1861,36 @@ fn plane_cursor_marker_geometry(
         width: next_x.saturating_sub(start_x).max(1),
         height: next_y.saturating_sub(start_y).max(1),
     }
+}
+
+fn sampled_coordinate_to_screen_x(
+    geometry: ImagePlaneDrawGeometry,
+    sampled_width: u32,
+    sampled_x: f64,
+) -> u32 {
+    let width = sampled_width.max(1) as f64;
+    let normalized = ((sampled_x + 0.5) / width).clamp(0.0, 1.0);
+    (geometry.x as f64 + normalized * geometry.width.max(1) as f64)
+        .round()
+        .clamp(
+            geometry.x as f64,
+            (geometry.x + geometry.width.saturating_sub(1)) as f64,
+        ) as u32
+}
+
+fn sampled_coordinate_to_screen_y(
+    geometry: ImagePlaneDrawGeometry,
+    sampled_height: u32,
+    sampled_y: f64,
+) -> u32 {
+    let height = sampled_height.max(1) as f64;
+    let normalized = ((sampled_y + 0.5) / height).clamp(0.0, 1.0);
+    (geometry.y as f64 + normalized * geometry.height.max(1) as f64)
+        .round()
+        .clamp(
+            geometry.y as f64,
+            (geometry.y + geometry.height.saturating_sub(1)) as f64,
+        ) as u32
 }
 
 fn probe_marker_radius(geometry: ImagePlaneDrawGeometry) -> u32 {
@@ -1843,6 +1928,35 @@ fn draw_probe_marker(
         tick_radius.saturating_sub(1),
         color,
     );
+}
+
+fn draw_region_segment(
+    image: &mut RgbImage,
+    start: (u32, u32),
+    end: (u32, u32),
+    halo: Rgb<u8>,
+    color: Rgb<u8>,
+) {
+    for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+        draw_line(
+            image,
+            offset_coord(start.0, dx),
+            offset_coord(start.1, dy),
+            offset_coord(end.0, dx),
+            offset_coord(end.1, dy),
+            halo,
+        );
+    }
+    draw_line(image, start.0, start.1, end.0, end.1, halo);
+    draw_line(image, start.0, start.1, end.0, end.1, color);
+}
+
+fn offset_coord(value: u32, delta: i32) -> u32 {
+    if delta.is_negative() {
+        value.saturating_sub(delta.unsigned_abs())
+    } else {
+        value.saturating_add(delta as u32)
+    }
 }
 
 fn draw_cursor_guides(
@@ -2145,6 +2259,7 @@ mod tests {
             8,
             8,
             &ImagePlaneRenderInput {
+                cache_key: 0,
                 raster: ImagePlaneRaster {
                     width: 2,
                     height: 2,
@@ -2163,6 +2278,7 @@ mod tests {
                 display_axes: Vec::new(),
                 probe: None,
                 overlay_markers: Vec::new(),
+                region_overlay_shapes: Vec::new(),
                 display_aspect_ratio: None,
                 colormap: ImagePlaneColormap::Grayscale,
                 invert: false,
@@ -2204,6 +2320,7 @@ mod tests {
             10,
             10,
             &ImagePlaneRenderInput {
+                cache_key: 0,
                 raster: ImagePlaneRaster {
                     width: 2,
                     height: 2,
@@ -2222,6 +2339,7 @@ mod tests {
                 display_axes: Vec::new(),
                 probe: None,
                 overlay_markers: Vec::new(),
+                region_overlay_shapes: Vec::new(),
                 display_aspect_ratio: Some(2.0),
                 colormap: ImagePlaneColormap::Grayscale,
                 invert: false,
@@ -2241,6 +2359,7 @@ mod tests {
             4,
             4,
             &ImagePlaneRenderInput {
+                cache_key: 0,
                 raster: ImagePlaneRaster {
                     width: 1,
                     height: 1,
@@ -2259,6 +2378,7 @@ mod tests {
                 display_axes: Vec::new(),
                 probe: None,
                 overlay_markers: Vec::new(),
+                region_overlay_shapes: Vec::new(),
                 display_aspect_ratio: None,
                 colormap: ImagePlaneColormap::Viridis,
                 invert: false,
@@ -2276,6 +2396,7 @@ mod tests {
             2,
             2,
             &ImagePlaneRenderInput {
+                cache_key: 0,
                 raster: ImagePlaneRaster {
                     width: 1,
                     height: 1,
@@ -2294,6 +2415,7 @@ mod tests {
                 display_axes: Vec::new(),
                 probe: None,
                 overlay_markers: Vec::new(),
+                region_overlay_shapes: Vec::new(),
                 display_aspect_ratio: None,
                 colormap: ImagePlaneColormap::Grayscale,
                 invert: true,
@@ -2311,6 +2433,7 @@ mod tests {
             32,
             16,
             &ImageSpectrumRenderInput {
+                cache_key: 0,
                 profile: ImageProfilePayload {
                     axis: 2,
                     axis_name: "Frequency".into(),
@@ -2377,6 +2500,7 @@ mod tests {
             16,
             16,
             &ImagePlaneRenderInput {
+                cache_key: 0,
                 raster: ImagePlaneRaster {
                     width: 4,
                     height: 4,
@@ -2398,6 +2522,7 @@ mod tests {
                     sample: (1, 2),
                     color_index: 1,
                 }],
+                region_overlay_shapes: Vec::new(),
                 display_aspect_ratio: None,
                 colormap: ImagePlaneColormap::Grayscale,
                 invert: false,
@@ -2515,6 +2640,7 @@ mod tests {
             320,
             220,
             &ImagePlaneRenderInput {
+                cache_key: 0,
                 raster: ImagePlaneRaster {
                     width: 32,
                     height: 32,
@@ -2536,6 +2662,7 @@ mod tests {
                 ],
                 probe: Some(probe),
                 overlay_markers: Vec::new(),
+                region_overlay_shapes: Vec::new(),
                 display_aspect_ratio: Some(1.0),
                 colormap: ImagePlaneColormap::Grayscale,
                 invert: false,
@@ -2562,6 +2689,7 @@ mod tests {
             320,
             220,
             &ImagePlaneRenderInput {
+                cache_key: 0,
                 raster: ImagePlaneRaster {
                     width: 32,
                     height: 32,
@@ -2619,6 +2747,7 @@ mod tests {
                     ],
                 }),
                 overlay_markers: Vec::new(),
+                region_overlay_shapes: Vec::new(),
                 display_aspect_ratio: Some(1.0),
                 colormap: ImagePlaneColormap::Viridis,
                 invert: false,
@@ -2798,6 +2927,7 @@ mod tests {
             40,
             20,
             &ImageSpectrumRenderInput {
+                cache_key: 0,
                 profile: ImageProfilePayload {
                     axis: 2,
                     axis_name: "Frequency".into(),
@@ -2860,6 +2990,7 @@ mod tests {
     #[test]
     fn image_spectrum_value_range_uses_overlay_profiles() {
         let input = ImageSpectrumRenderInput {
+            cache_key: 0,
             profile: ImageProfilePayload {
                 axis: 2,
                 axis_name: "Frequency".into(),

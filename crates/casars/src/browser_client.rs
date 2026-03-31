@@ -7,8 +7,8 @@ use std::thread;
 use std::time::Duration;
 
 use casacore_imagebrowser_protocol::{
-    ImageBrowserCommand, ImageBrowserRequestEnvelope, ImageBrowserResponse,
-    ImageBrowserResponseEnvelope, ImageBrowserSnapshot,
+    ImageBrowserCommand, ImageBrowserPreviewPayload, ImageBrowserRequestEnvelope,
+    ImageBrowserResponse, ImageBrowserResponseEnvelope, ImageBrowserSnapshot,
 };
 use casacore_tablebrowser_protocol::{
     BrowserCommand, BrowserRequestEnvelope, BrowserResponse, BrowserResponseEnvelope,
@@ -297,6 +297,13 @@ impl ImageBrowserClient {
         self.request_with_timeout(command, startup_timeout())
     }
 
+    pub(crate) fn request_preview(
+        &self,
+        command: ImageBrowserCommand,
+    ) -> Result<ImageBrowserPreviewPayload, SessionRequestError> {
+        self.request_preview_with_timeout(command, request_timeout())
+    }
+
     pub(crate) fn cancel(&self) -> Result<(), String> {
         self.process.cancel()
     }
@@ -327,6 +334,42 @@ impl ImageBrowserClient {
             });
         match response.response {
             ImageBrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
+            ImageBrowserResponse::Preview(_) => Err(SessionRequestError::Transport(
+                "unexpected imexplore preview response".to_string(),
+            )),
+            ImageBrowserResponse::Error(error) => Err(SessionRequestError::Backend(format!(
+                "{}: {}",
+                error.code, error.message
+            ))),
+        }
+    }
+
+    fn request_preview_with_timeout(
+        &self,
+        command: ImageBrowserCommand,
+        timeout: Duration,
+    ) -> Result<ImageBrowserPreviewPayload, SessionRequestError> {
+        let payload =
+            serde_json::to_string(&ImageBrowserRequestEnvelope::new(command)).map_err(|error| {
+                SessionRequestError::Transport(format!("serialize imexplore request: {error}"))
+            })?;
+        let line = self
+            .process
+            .request_raw(&payload, timeout, "imexplore")
+            .map_err(SessionRequestError::Transport)?;
+        let response =
+            serde_json::from_str::<ImageBrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
+                ImageBrowserResponseEnvelope::error(
+                    "invalid_response",
+                    format!("parse imexplore response: {error}"),
+                )
+            });
+        match response.response {
+            ImageBrowserResponse::Preview(preview) => Ok(*preview),
+            ImageBrowserResponse::Snapshot(snapshot) => Ok(ImageBrowserPreviewPayload {
+                non_display_indices: Vec::new(),
+                snapshot,
+            }),
             ImageBrowserResponse::Error(error) => Err(SessionRequestError::Backend(format!(
                 "{}: {}",
                 error.code, error.message

@@ -772,6 +772,14 @@ impl<T: ImagePixel> PagedImage<T> {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
             _ => CoordinateSystem::new(),
         };
+        let units = match table.keywords().get("units") {
+            Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
+            _ => String::new(),
+        };
+        let misc_info = match table.keywords().get("miscinfo") {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => RecordValue::default(),
+        };
         let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
         if map_primitive != T::PRIMITIVE_TYPE {
             return Err(ImageError::InvalidMetadata(format!(
@@ -794,8 +802,8 @@ impl<T: ImagePixel> PagedImage<T> {
             tile_shape,
             coords,
             path: Some(path),
-            units: String::new(),
-            misc_info: RecordValue::default(),
+            units,
+            misc_info,
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io,
@@ -2613,6 +2621,12 @@ mod tests {
         );
         assert_eq!(image.tile_shape(), &[2, 2]);
         assert_eq!(image.cache_bytes(), 4096);
+        image.set_units("Jy/beam").unwrap();
+        let misc = RecordValue::new(vec![RecordField::new(
+            "observer",
+            Value::Scalar(ScalarValue::String("cache-test".into())),
+        )]);
+        image.set_misc_info(misc.clone()).unwrap();
 
         image
             .put_slice(
@@ -2627,6 +2641,8 @@ mod tests {
         assert_eq!(reopened.cache_bytes(), 2048);
         assert_eq!(reopened.shape(), &[4, 3]);
         assert_eq!(reopened.table().row_count(), 0);
+        assert_eq!(reopened.units(), "Jy/beam");
+        assert_eq!(reopened.misc_info(), misc);
     }
 
     #[test]

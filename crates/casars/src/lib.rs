@@ -5,12 +5,17 @@ mod clipboard;
 mod config;
 mod execution;
 mod graphics;
+mod movie_perf;
+pub mod movie_stage_support;
 mod registry;
 mod startup;
 mod theme;
 mod ui;
 
+use std::fs::OpenOptions;
 use std::io::{self, Stdout, Write as _};
+use std::num::NonZeroU32;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event};
@@ -24,11 +29,22 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui_graphics::{
+    KittyAnimationControl, KittyAnimationGap, KittyAnimationPlaybackState, KittyLayerHandle,
+    KittyLayerManager, KittyPaneSlotId, KittyPlacement, KittyStoredImageId, KittyStoredImageStore,
+    Picker, TerminalCapabilities,
+};
 use thiserror::Error;
 
 use crate::app::AppState;
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
 use crate::startup::{StartupLaunch, StartupSelection, StartupValue, parse_startup_args};
+
+const KITTY_MOVIE_OVERLAY_ID_BASE: u32 = 1_000_000;
+
+fn software_direct_movie_overlay_enabled() -> bool {
+    std::env::var_os("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY").is_none()
+}
 
 #[cfg(test)]
 fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -43,6 +59,540 @@ fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 enum RunOutcome {
     Quit,
     Launcher,
+}
+
+struct KittyMovieOverlay {
+    capabilities: TerminalCapabilities,
+    manager: Option<KittyLayerManager>,
+    software_store: Option<KittyStoredImageStore>,
+    software_slot: Option<KittyPaneSlotId>,
+    handle: Option<KittyLayerHandle>,
+    software_frame_images: Vec<Option<KittyStoredImageId>>,
+    active_movie_key: Option<u64>,
+    active_axis: Option<usize>,
+    active_axis_index: Option<usize>,
+    active_canvas: Option<ratatui::layout::Rect>,
+    uploaded_axis_indices: Vec<usize>,
+    seen_axis_indices: Vec<bool>,
+    active_fps: f64,
+    seeding_started_at: Option<Instant>,
+    looping_started_at: Option<Instant>,
+    looping: bool,
+}
+
+impl KittyMovieOverlay {
+    fn new() -> Result<Self, CasarsError> {
+        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        let mut capabilities = TerminalCapabilities::from_picker(&picker);
+        if capabilities.direct_kitty_layers
+            && !capabilities.direct_kitty_animations
+            && !software_direct_movie_overlay_enabled()
+        {
+            capabilities.direct_kitty_layers = false;
+        }
+        movie_debug_log(format!(
+            "capabilities: panel={:?} direct_layers={} direct_animations={}",
+            capabilities.panel_protocol,
+            capabilities.direct_kitty_layers,
+            capabilities.direct_kitty_animations
+        ));
+        let (manager, software_store, software_slot, handle) = if capabilities.direct_kitty_layers {
+            if capabilities.direct_kitty_animations {
+                let mut manager = KittyLayerManager::with_starting_ids(
+                    KITTY_MOVIE_OVERLAY_ID_BASE,
+                    KITTY_MOVIE_OVERLAY_ID_BASE,
+                )
+                .map_err(map_kitty_error)?;
+                let handle = manager.allocate().map_err(map_kitty_error)?;
+                (Some(manager), None, None, Some(handle))
+            } else {
+                let mut store = KittyStoredImageStore::with_starting_ids(
+                    KITTY_MOVIE_OVERLAY_ID_BASE,
+                    KITTY_MOVIE_OVERLAY_ID_BASE,
+                )
+                .map_err(map_kitty_error)?;
+                let slot = store.allocate_slot().map_err(map_kitty_error)?;
+                (None, Some(store), Some(slot), None)
+            }
+        } else {
+            (None, None, None, None)
+        };
+        Ok(Self {
+            capabilities,
+            manager,
+            software_store,
+            software_slot,
+            handle,
+            software_frame_images: Vec::new(),
+            active_movie_key: None,
+            active_axis: None,
+            active_axis_index: None,
+            active_canvas: None,
+            uploaded_axis_indices: Vec::new(),
+            seen_axis_indices: Vec::new(),
+            active_fps: 0.0,
+            seeding_started_at: None,
+            looping_started_at: None,
+            looping: false,
+        })
+    }
+
+    fn refresh(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        app: &mut AppState,
+        layout: &ui::UiLayout,
+    ) -> Result<(), CasarsError> {
+        if !self.capabilities.direct_kitty_layers {
+            return Ok(());
+        }
+        if self.capabilities.direct_kitty_animations && self.looping {
+            if app.image_movie_terminal_looping_active() {
+                self.refresh_looping_only(terminal.backend_mut(), app)?;
+                return Ok(());
+            }
+            self.clear(terminal.backend_mut(), app, true)?;
+            return Ok(());
+        }
+        let frame = app.current_direct_image_movie_frame(layout);
+        if self.capabilities.direct_kitty_animations {
+            match frame {
+                Some(frame) => self.refresh_for_frame(terminal.backend_mut(), app, frame)?,
+                None => self.clear(terminal.backend_mut(), app, true)?,
+            }
+        } else {
+            self.refresh_software_frame(terminal.backend_mut(), app, frame)?;
+        }
+        Ok(())
+    }
+
+    fn abandon_for_terminal_reset(&mut self, app: &mut AppState) {
+        self.reset_state();
+        app.set_image_movie_direct_overlay(false);
+        app.set_image_movie_terminal_looping(false);
+    }
+
+    fn clear(
+        &mut self,
+        out: &mut CrosstermBackend<Stdout>,
+        app: &mut AppState,
+        sync_current_frame: bool,
+    ) -> Result<(), CasarsError> {
+        if self.active_movie_key.is_none() {
+            return Ok(());
+        }
+        if sync_current_frame
+            && self.looping
+            && let (Some(axis), Some(axis_index)) = (
+                self.active_axis,
+                self.estimated_current_axis_index(Instant::now()),
+            )
+        {
+            app.sync_image_non_display_axis_index(axis, axis_index);
+        }
+        app.set_image_movie_direct_overlay(false);
+        app.set_image_movie_terminal_looping(false);
+        if let Some(manager) = &self.manager {
+            if self.capabilities.direct_kitty_animations {
+                if let Some(handle) = self.handle {
+                    manager
+                        .clear_and_delete(out, handle)
+                        .map_err(map_kitty_error)?;
+                }
+            }
+        }
+        if let Some(store) = &mut self.software_store {
+            if let Some(slot) = self.software_slot {
+                store.clear_slot(out, slot).map_err(map_kitty_error)?;
+            }
+            for image in self.software_frame_images.iter().flatten().copied() {
+                store.delete_image(out, image).map_err(map_kitty_error)?;
+            }
+        }
+        movie_debug_log(format!(
+            "clear overlay sync_current_frame={} looping={}",
+            sync_current_frame, self.looping
+        ));
+        self.reset_state();
+        Ok(())
+    }
+
+    fn hide_visible(
+        &mut self,
+        out: &mut CrosstermBackend<Stdout>,
+        app: &mut AppState,
+    ) -> Result<(), CasarsError> {
+        if self.active_movie_key.is_none() {
+            return Ok(());
+        }
+        app.set_image_movie_direct_overlay(false);
+        app.set_image_movie_terminal_looping(false);
+        if self.capabilities.direct_kitty_animations {
+            if let (Some(manager), Some(handle)) = (&self.manager, self.handle) {
+                manager
+                    .clear_placement(out, handle)
+                    .map_err(map_kitty_error)?;
+            }
+        } else if let Some(store) = &mut self.software_store
+            && let Some(slot) = self.software_slot
+        {
+            store.clear_slot(out, slot).map_err(map_kitty_error)?;
+        }
+        movie_debug_log("hide overlay for immediate exit");
+        self.reset_state();
+        Ok(())
+    }
+
+    fn refresh_for_frame(
+        &mut self,
+        out: &mut CrosstermBackend<Stdout>,
+        app: &mut AppState,
+        frame: crate::app::ImageDirectMovieFrame,
+    ) -> Result<(), CasarsError> {
+        if self.active_movie_key != Some(frame.movie_key) {
+            self.clear(out, app, false)?;
+            self.active_movie_key = Some(frame.movie_key);
+            self.active_axis = Some(frame.axis);
+            self.active_axis_index = Some(frame.axis_index);
+            self.active_canvas = Some(frame.canvas);
+            self.seen_axis_indices = vec![false; frame.axis_length];
+            self.uploaded_axis_indices.clear();
+            self.active_fps = frame.fps;
+            self.seeding_started_at = Some(Instant::now());
+            movie_debug_log(format!(
+                "start movie key={} axis={} len={} fps={}",
+                frame.movie_key, frame.axis, frame.axis_length, frame.fps
+            ));
+        }
+        app.set_image_movie_direct_overlay(true);
+
+        if self.active_canvas != Some(frame.canvas) {
+            self.active_canvas = Some(frame.canvas);
+            if let (Some(manager), Some(handle)) = (&self.manager, self.handle)
+                && !self.uploaded_axis_indices.is_empty()
+            {
+                manager
+                    .place(
+                        out,
+                        handle,
+                        KittyPlacement {
+                            rect: frame.canvas,
+                            z_index: 384,
+                            preserve_cursor: true,
+                        },
+                    )
+                    .map_err(map_kitty_error)?;
+                app.note_image_plane_direct_presented(frame.render_request_key_hash);
+            }
+        }
+
+        if self.looping {
+            self.active_axis_index = Some(frame.axis_index);
+            if let (Some(manager), Some(handle)) = (&self.manager, self.handle) {
+                manager
+                    .place(
+                        out,
+                        handle,
+                        KittyPlacement {
+                            rect: frame.canvas,
+                            z_index: 384,
+                            preserve_cursor: true,
+                        },
+                    )
+                    .map_err(map_kitty_error)?;
+                app.note_image_plane_direct_presented(frame.render_request_key_hash);
+            }
+            if (self.active_fps - frame.fps).abs() > f64::EPSILON {
+                self.control_animation(out, KittyAnimationPlaybackState::Looping, frame.fps)?;
+                self.active_fps = frame.fps;
+                self.looping_started_at = Some(Instant::now());
+            }
+            return Ok(());
+        }
+
+        let Some(manager) = &self.manager else {
+            return Ok(());
+        };
+        let Some(handle) = self.handle else {
+            return Ok(());
+        };
+
+        if !self
+            .seen_axis_indices
+            .get(frame.axis_index)
+            .copied()
+            .unwrap_or(false)
+        {
+            if self.uploaded_axis_indices.is_empty() {
+                manager
+                    .upload_and_place_rgba(
+                        out,
+                        handle,
+                        &frame.rendered_image,
+                        KittyPlacement {
+                            rect: frame.canvas,
+                            z_index: 384,
+                            preserve_cursor: true,
+                        },
+                    )
+                    .map_err(map_kitty_error)?;
+                manager
+                    .control_animation(
+                        out,
+                        handle,
+                        KittyAnimationControl {
+                            state: Some(KittyAnimationPlaybackState::Loading),
+                            current_frame: Some(first_movie_frame()),
+                            frame_number: Some(first_movie_frame()),
+                            gap: Some(movie_gap(frame.fps)),
+                            loops: Some(loop_forever()),
+                        },
+                    )
+                    .map_err(map_kitty_error)?;
+                app.note_image_plane_direct_presented(frame.render_request_key_hash);
+            } else {
+                manager
+                    .append_animation_frame_rgba(
+                        out,
+                        handle,
+                        &frame.rendered_image,
+                        Some(movie_gap(frame.fps)),
+                    )
+                    .map_err(map_kitty_error)?;
+                app.note_image_plane_direct_presented(frame.render_request_key_hash);
+            }
+            if let Some(seen) = self.seen_axis_indices.get_mut(frame.axis_index) {
+                *seen = true;
+            }
+            self.uploaded_axis_indices.push(frame.axis_index);
+            self.active_axis_index = Some(frame.axis_index);
+            movie_debug_log(format!(
+                "seed frame axis_index={} count={}/{}",
+                frame.axis_index,
+                self.uploaded_axis_indices.len(),
+                frame.axis_length
+            ));
+        }
+
+        if self.uploaded_axis_indices.len() == frame.axis_length {
+            self.control_animation_with(
+                out,
+                KittyAnimationControl {
+                    state: Some(KittyAnimationPlaybackState::Looping),
+                    current_frame: movie_frame_number(self.uploaded_axis_indices.len()),
+                    gap: Some(movie_gap(frame.fps)),
+                    loops: Some(loop_forever()),
+                    ..KittyAnimationControl::default()
+                },
+            )?;
+            self.active_fps = frame.fps;
+            self.looping_started_at = Some(Instant::now());
+            self.looping = true;
+            app.set_image_movie_terminal_looping(true);
+            let seeding_elapsed = self
+                .seeding_started_at
+                .map(|start| start.elapsed())
+                .unwrap_or_default();
+            let seeding_fps = if seeding_elapsed.is_zero() {
+                0.0
+            } else {
+                frame.axis_length as f64 / seeding_elapsed.as_secs_f64()
+            };
+            movie_debug_log(format!(
+                "terminal looping enabled axis={} frames={} fps={} seeding_ms={} seed_fps={:.2}",
+                frame.axis,
+                frame.axis_length,
+                frame.fps,
+                seeding_elapsed.as_millis(),
+                seeding_fps
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn refresh_software_frame(
+        &mut self,
+        out: &mut CrosstermBackend<Stdout>,
+        app: &mut AppState,
+        frame: Option<crate::app::ImageDirectMovieFrame>,
+    ) -> Result<(), CasarsError> {
+        let Some(frame) = frame else {
+            if app.image_movie_active() {
+                return Ok(());
+            }
+            self.clear(out, app, true)?;
+            return Ok(());
+        };
+        let movie_changed =
+            self.active_movie_key != Some(frame.movie_key) || self.active_axis != Some(frame.axis);
+        if movie_changed {
+            self.clear(out, app, false)?;
+            self.active_movie_key = Some(frame.movie_key);
+            self.active_axis = Some(frame.axis);
+            self.active_canvas = Some(frame.canvas);
+            self.active_fps = frame.fps;
+        }
+
+        let placement = KittyPlacement {
+            rect: frame.canvas,
+            z_index: 384,
+            preserve_cursor: true,
+        };
+        if self.software_frame_images.len() < frame.axis_length {
+            self.software_frame_images.resize(frame.axis_length, None);
+        }
+        let Some(store) = self.software_store.as_mut() else {
+            return Ok(());
+        };
+        let Some(slot) = self.software_slot else {
+            return Ok(());
+        };
+        if let Some(image) = self.software_frame_images[frame.axis_index] {
+            store
+                .place_in_slot(out, slot, image, placement)
+                .map_err(map_kitty_error)?;
+        } else {
+            let (image, info) = store
+                .store_rgba(out, &frame.rendered_image)
+                .map_err(map_kitty_error)?;
+            self.software_frame_images[frame.axis_index] = Some(image);
+            store
+                .place_in_slot(out, slot, image, placement)
+                .map_err(map_kitty_error)?;
+            movie_debug_log(format!(
+                "software preload axis_index={} image={} bytes={} total_store_bytes={}",
+                frame.axis_index,
+                image.raw(),
+                info.bytes,
+                store.total_bytes()
+            ));
+        }
+        app.note_image_plane_direct_presented(frame.render_request_key_hash);
+
+        self.active_movie_key = Some(frame.movie_key);
+        self.active_axis = Some(frame.axis);
+        self.active_axis_index = Some(frame.axis_index);
+        self.active_canvas = Some(frame.canvas);
+        self.active_fps = frame.fps;
+        app.set_image_movie_direct_overlay(true);
+        Ok(())
+    }
+
+    fn refresh_looping_only(
+        &mut self,
+        out: &mut CrosstermBackend<Stdout>,
+        app: &mut AppState,
+    ) -> Result<(), CasarsError> {
+        if let Some(fps) = app.image_movie_fps()
+            && (self.active_fps - fps).abs() > f64::EPSILON
+        {
+            self.control_animation(out, KittyAnimationPlaybackState::Looping, fps)?;
+            self.active_fps = fps;
+            self.looping_started_at = Some(Instant::now());
+        }
+        Ok(())
+    }
+
+    fn control_animation(
+        &self,
+        out: &mut CrosstermBackend<Stdout>,
+        state: KittyAnimationPlaybackState,
+        fps: f64,
+    ) -> Result<(), CasarsError> {
+        self.control_animation_with(
+            out,
+            KittyAnimationControl {
+                state: Some(state),
+                gap: Some(movie_gap(fps)),
+                loops: Some(loop_forever()),
+                ..KittyAnimationControl::default()
+            },
+        )
+    }
+
+    fn control_animation_with(
+        &self,
+        out: &mut CrosstermBackend<Stdout>,
+        control: KittyAnimationControl,
+    ) -> Result<(), CasarsError> {
+        let Some(manager) = &self.manager else {
+            return Ok(());
+        };
+        let Some(handle) = self.handle else {
+            return Ok(());
+        };
+        manager
+            .control_animation(out, handle, control)
+            .map_err(map_kitty_error)
+    }
+
+    fn estimated_current_axis_index(&self, now: Instant) -> Option<usize> {
+        if !self.looping || self.uploaded_axis_indices.is_empty() {
+            return None;
+        }
+        let start = self.looping_started_at?;
+        let elapsed = now.saturating_duration_since(start).as_secs_f64();
+        let frame_offset = (elapsed * self.active_fps).floor() as usize;
+        self.uploaded_axis_indices
+            .get(frame_offset % self.uploaded_axis_indices.len())
+            .copied()
+    }
+
+    fn reset_state(&mut self) {
+        self.active_movie_key = None;
+        self.active_axis = None;
+        self.active_axis_index = None;
+        self.active_canvas = None;
+        self.software_frame_images.clear();
+        self.uploaded_axis_indices.clear();
+        self.seen_axis_indices.clear();
+        self.active_fps = 0.0;
+        self.seeding_started_at = None;
+        self.looping_started_at = None;
+        self.looping = false;
+    }
+}
+
+fn movie_gap(fps: f64) -> KittyAnimationGap {
+    KittyAnimationGap::Timed(Duration::from_secs_f64(1.0 / fps.max(0.001)))
+}
+
+fn loop_forever() -> NonZeroU32 {
+    NonZeroU32::new(1).expect("kitty loop count")
+}
+
+fn first_movie_frame() -> NonZeroU32 {
+    movie_frame_number(1).expect("first kitty movie frame")
+}
+
+fn movie_frame_number(frame: usize) -> Option<NonZeroU32> {
+    u32::try_from(frame).ok().and_then(NonZeroU32::new)
+}
+
+fn map_kitty_error(error: ratatui_graphics::KittyLayerError) -> CasarsError {
+    CasarsError::TerminalSetup(io::Error::other(error.to_string()))
+}
+
+pub(crate) fn movie_debug_log(message: impl AsRef<str>) {
+    if std::env::var_os("CASARS_MOVIE_DEBUG").is_none() {
+        return;
+    }
+    static STARTED_AT: OnceLock<Instant> = OnceLock::new();
+    let started_at = STARTED_AT.get_or_init(Instant::now);
+    let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/casars-imexplore-movie.log")
+    else {
+        return;
+    };
+    let _ = writeln!(
+        file,
+        "[+{:>7} ms] {}",
+        started_at.elapsed().as_millis(),
+        message.as_ref()
+    );
 }
 
 /// Errors surfaced by the `casars` launcher.
@@ -158,6 +708,7 @@ fn run_selected_app(
     }
 
     let mut last_tick = Instant::now();
+    let mut kitty_movie_overlay = KittyMovieOverlay::new()?;
 
     loop {
         let area = terminal
@@ -183,22 +734,27 @@ fn run_selected_app(
             .terminal
             .draw(|frame| ui::draw(frame, &app, &layout))
             .map_err(CasarsError::TerminalSetup)?;
+        app.note_image_plane_presented();
+        kitty_movie_overlay.refresh(&mut terminal.terminal, &mut app, &layout)?;
 
         app.drain_execution_events();
         if app.should_quit() {
+            kitty_movie_overlay.clear(terminal.terminal.backend_mut(), &mut app, false)?;
             return Ok(RunOutcome::Quit);
         }
         if app.should_return_to_launcher() {
+            kitty_movie_overlay.clear(terminal.terminal.backend_mut(), &mut app, false)?;
             return Ok(RunOutcome::Launcher);
         }
 
-        let tick_rate = Duration::from_millis(100);
+        let tick_rate = app.preferred_tick_rate();
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout).map_err(CasarsError::TerminalSetup)? {
             let event = event::read().map_err(CasarsError::TerminalSetup)?;
             match event {
                 Event::Key(key_event) => {
                     if is_suspend_key(key_event) {
+                        kitty_movie_overlay.abandon_for_terminal_reset(&mut app);
                         terminal.suspend_and_resume()?;
                         last_tick = Instant::now();
                         continue;
@@ -208,6 +764,14 @@ fn run_selected_app(
                 Event::Paste(text) => app.handle_paste(text),
                 Event::Mouse(mouse_event) => app.handle_mouse_event(mouse_event, &layout),
                 _ => {}
+            }
+            if app.should_quit() {
+                kitty_movie_overlay.hide_visible(terminal.terminal.backend_mut(), &mut app)?;
+                return Ok(RunOutcome::Quit);
+            }
+            if app.should_return_to_launcher() {
+                kitty_movie_overlay.hide_visible(terminal.terminal.backend_mut(), &mut app)?;
+                return Ok(RunOutcome::Launcher);
             }
         }
 

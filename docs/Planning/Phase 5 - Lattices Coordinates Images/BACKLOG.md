@@ -137,3 +137,67 @@ world-coordinate spacing across the displayed window. Proper sky-projection
 labeling for strongly curved or rotated views, including cases like a pole near
 the display center, needs a dedicated nonlinear tick-placement pass that samples
 the full WCS rather than extrapolating from one cursor probe and one increment.
+
+### 12.10 Image Browser Nonlinear WCS-Aware Region Rasterization
+
+**Status:** DEFER
+
+**Reason:** `imexplore` polygon regions are now stored in world coordinates, but
+the current plane/mask rasterization projects vertices into pixel space once per
+plane and fills a locally linear polygon there. Strongly curved sky views or
+projections with significant distortion need a dedicated sampled-WCS region
+rasterizer instead of straight-edge pixel-space filling.
+
+### 12.11 Image Browser Persistent Editable Region Definitions
+
+**Status:** DEFER
+
+**Reason:** `imexplore` can currently convert an active WCS-native region into a
+persistent image mask, but it does not yet persist the editable region
+definition itself. A later wave should store named region objects with their WCS
+vertices and metadata so they can be reopened, edited, and reused across
+related images instead of only surviving as rasterized masks.
+
+### 12.12 Image Browser Movie Visibility-Aware Stop Policy
+
+**Status:** DEFER
+
+**Reason:** Current movie playback can be stopped by incidental terminal mouse
+drag events that happen while switching away from the app or when the `imexplore`
+window is no longer meaningfully visible. The desired policy is likely to stop
+playback only on deliberate in-app interaction or explicit visibility loss,
+but that behavior should be decided separately from the current performance wave
+so it does not distract from render/present bottleneck work.
+
+### 12.13 Image Browser Production Plane-Movie Preload-Then-Place Path
+
+**Status:** DEFER
+
+**Reason:** The staged movie harnesses now show a clear split:
+
+- Stage 1 (`preview-render`, no GUI) sustains `30 FPS`
+- Stage 2 (`preload-then-place`, direct Ghostty/Kitty presentation) sustains `30 FPS`
+- Stage 3 (minimal `ratatui` plane panel) falls to about `14 FPS`
+
+That means the proven fast path for the plane pane is to preload one terminal
+image per movie frame and then re-place those cached terminal-resident images
+during playback, rather than pushing each frame through the normal
+`ratatui-image` panel protocol path. The production `imexplore` movie path
+should be refactored around that result.
+
+The production wave should include:
+
+- a `ratatui-graphics` API for terminal-resident pixel-buffer storage plus
+  placement into a ratatui-defined pane rect
+- a plane-pane movie mode that keeps ratatui responsible for layout/chrome but
+  removes the animated plane image from the normal panel render path while movie
+  playback is active
+- a byte-budgeted frame store rather than an unbounded full-cube preload
+- preload-one-cycle-if-it-fits behavior, otherwise a sliding movie-frame window
+  around the current playback position
+- explicit handling for resize/theme/pane-geometry invalidation and for fast
+  stop/teardown without blanking
+
+This should be implemented only after the staged harness results are used to
+design the production API boundary, so the repo does not repeat the earlier
+failed direct-overlay experiments inside `imexplore`.
