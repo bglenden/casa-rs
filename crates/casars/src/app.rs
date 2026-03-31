@@ -65,10 +65,6 @@ const IMAGE_PLANE_CELL_WIDTH: usize = 11;
 const IMAGE_MOVIE_DEFAULT_FPS: f64 = 1.0;
 const IMAGE_PLANE_RENDER_CACHE_CAPACITY: usize = 32;
 const IMAGE_SPECTRUM_RENDER_CACHE_CAPACITY: usize = 64;
-const IMAGE_MOVIE_PLANE_RENDER_SCALE: f32 = 0.5;
-const IMAGE_MOVIE_SPECTRUM_RENDER_SCALE: f32 = 0.6;
-const IMAGE_MOVIE_MAX_PLANE_PIXEL_WIDTH: u32 = 1320;
-const IMAGE_MOVIE_MAX_PLANE_PIXEL_HEIGHT: u32 = 588;
 const IMAGE_MOVIE_BITMAP_CACHE_BYTES: usize = 512 * 1024 * 1024;
 const IMAGE_MOVIE_RENDER_POOL_QUEUE_CAPACITY: usize = 12;
 const IMAGE_MOVIE_PROTOCOL_POOL_QUEUE_CAPACITY: usize = 8;
@@ -1270,6 +1266,17 @@ impl fmt::Debug for ImageSpectrumPanelState {
     }
 }
 
+impl ImageSpectrumPanelState {
+    fn has_visible_content(&self) -> bool {
+        self.movie_protocol.is_some()
+            || self.renderer.protocol().is_some()
+            || self.image_size.is_some()
+            || self.movie_image_size.is_some()
+            || self.display_key.is_some()
+            || self.pending_request_key.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BrowserPaneFocus {
     Main,
@@ -1295,6 +1302,16 @@ impl ImageBrowserSessionState {
 
     fn linked_profile_active(&self) -> bool {
         self.raster_plane_active() && self.snapshot.profile.is_some()
+    }
+
+    fn spectrum_workspace_visible(&self) -> bool {
+        self.snapshot.active_view == ImageBrowserView::Plane
+            && self.plane_mode == ImagePlaneMode::Raster
+            && (self.snapshot.profile.is_some()
+                || self
+                    .spectrum_panel
+                    .as_ref()
+                    .is_some_and(ImageSpectrumPanelState::has_visible_content))
     }
 
     fn region_active(&self) -> bool {
@@ -2795,7 +2812,7 @@ impl AppState {
             }
             return true;
         }
-        if self.image_movie_active()
+        if self.image_browser_session_state().is_some()
             && matches!(key_event.code, KeyCode::Char('_'))
             && key_event.modifiers.contains(KeyModifiers::ALT)
         {
@@ -3785,6 +3802,23 @@ impl AppState {
     }
 
     #[cfg(test)]
+    pub(crate) fn clear_image_profile_for_test(&mut self) {
+        if let Some(state) = self.image_browser_session_state_mut() {
+            state.snapshot.profile = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed_image_spectrum_content_for_test(&mut self, image_size: (u32, u32)) {
+        if let Some(state) = self.image_browser_session_state_mut() {
+            let panel = state
+                .spectrum_panel
+                .get_or_insert_with(new_image_spectrum_panel_state);
+            panel.image_size = Some(image_size);
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn image_plane_font_size_for_test(&self) -> (u16, u16) {
         self.image_plane_font_size()
     }
@@ -3805,6 +3839,12 @@ impl AppState {
         self.image_browser_session_state()
             .map(|state| state.show_live_reticle)
             .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_plane_invert_for_test(&self) -> Option<bool> {
+        self.image_browser_session_state()
+            .map(|state| state.plane_invert)
     }
 
     #[cfg(test)]
@@ -4013,10 +4053,7 @@ impl AppState {
                 split_ratio: spec.split_ratio,
                 theme_mode: spec.theme_mode,
                 render_scale: self.current_image_movie_plane_render_scale(),
-                max_pixel_size: Some((
-                    IMAGE_MOVIE_MAX_PLANE_PIXEL_WIDTH,
-                    IMAGE_MOVIE_MAX_PLANE_PIXEL_HEIGHT,
-                )),
+                max_pixel_size: None,
             },
         )?;
         let overlay_profiles = image_spectrum_overlay_series_for_pinned(&spec.pinned_probes);
@@ -4786,7 +4823,7 @@ impl AppState {
         if state.raster_plane_active() {
             let canvas = crate::ui::image_plane_canvas_area_for_browser(
                 layout,
-                state.linked_profile_active(),
+                state.spectrum_workspace_visible(),
                 self.image_workspace_split_ratio(),
             );
             return image_raster_click_target(state, column, row, canvas);
@@ -4831,7 +4868,7 @@ impl AppState {
         let BrowserSessionKind::Image(state) = &session.kind else {
             return false;
         };
-        if !state.linked_profile_active() {
+        if !state.spectrum_workspace_visible() {
             return false;
         }
         crate::ui::image_workspace_divider_toggle_area(
@@ -4849,7 +4886,7 @@ impl AppState {
         let BrowserSessionKind::Image(state) = &session.kind else {
             return false;
         };
-        if !state.linked_profile_active() {
+        if !state.spectrum_workspace_visible() {
             return false;
         }
         crate::ui::image_workspace_divider_area(layout, true, self.image_workspace_split_ratio())
@@ -4860,7 +4897,7 @@ impl AppState {
         let BrowserSessionKind::Image(state) = &self.browser_session()?.kind else {
             return None;
         };
-        if !state.linked_profile_active() {
+        if !state.spectrum_workspace_visible() {
             return None;
         }
         let area = layout.result_content;
@@ -4890,7 +4927,7 @@ impl AppState {
         }
         let canvas = crate::ui::image_plane_canvas_area_for_browser(
             layout,
-            state.linked_profile_active(),
+            state.spectrum_workspace_visible(),
             self.image_workspace_split_ratio(),
         );
         rect_contains(canvas, column, row)
@@ -4905,12 +4942,12 @@ impl AppState {
         let BrowserSessionKind::Image(state) = &self.browser_session()?.kind else {
             return None;
         };
-        if !state.linked_profile_active() {
+        if !state.spectrum_workspace_visible() {
             return None;
         }
         let spectrum_area = crate::ui::image_spectrum_canvas_area(
             layout,
-            state.linked_profile_active(),
+            state.spectrum_workspace_visible(),
             self.image_workspace_split_ratio(),
         )?;
         let plot_rect = image_spectrum_plot_rect(
@@ -7644,10 +7681,7 @@ impl AppState {
                 split_ratio,
                 theme_mode,
                 render_scale: self.current_image_movie_plane_render_scale(),
-                max_pixel_size: Some((
-                    IMAGE_MOVIE_MAX_PLANE_PIXEL_WIDTH,
-                    IMAGE_MOVIE_MAX_PLANE_PIXEL_HEIGHT,
-                )),
+                max_pixel_size: None,
             },
         )
     }
@@ -7773,11 +7807,11 @@ impl AppState {
     }
 
     fn current_image_movie_plane_render_scale(&self) -> f32 {
-        IMAGE_MOVIE_PLANE_RENDER_SCALE
+        1.0
     }
 
     fn current_image_movie_spectrum_render_scale(&self) -> f32 {
-        IMAGE_MOVIE_SPECTRUM_RENDER_SCALE
+        1.0
     }
 
     fn ensure_image_plane_requested(&mut self, layout: &UiLayout) {
@@ -7787,7 +7821,10 @@ impl AppState {
         let Some(state) = self.image_browser_session_state() else {
             return;
         };
-        if !state.raster_plane_active() || state.movie.terminal_looping {
+        if !state.raster_plane_active()
+            || state.movie.terminal_looping
+            || state.movie.direct_overlay
+        {
             return;
         }
         let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
@@ -7924,7 +7961,7 @@ impl AppState {
         let Some(state) = self.image_browser_session_state() else {
             return;
         };
-        if !state.linked_profile_active() {
+        if !state.linked_profile_active() || state.movie.direct_overlay {
             return;
         }
         let overlay_profiles = image_spectrum_overlay_series(state);
@@ -8205,7 +8242,11 @@ impl AppState {
             .map(|image| image.to_rgba8())
             .or_else(|| {
                 if panel.display_key.as_ref() == Some(&request.request_key) {
-                    panel.renderer.rendered_image().cloned()
+                    panel.renderer.rendered_image().and_then(|image| {
+                        (image.width() == request.pixel_width
+                            && image.height() == request.pixel_height)
+                            .then(|| image.clone())
+                    })
                 } else {
                     None
                 }
@@ -8241,13 +8282,19 @@ impl AppState {
             ));
             return None;
         };
+        let image_hash = {
+            let mut hasher = DefaultHasher::new();
+            rendered_image.as_raw().hash(&mut hasher);
+            hasher.finish()
+        };
         crate::movie_debug_log(format!(
-            "direct frame ready axis={} index={} len={} request={}x{} display_key_match={} panel_pending={}",
+            "direct frame ready axis={} index={} len={} request={}x{} image_hash={} display_key_match={} panel_pending={}",
             axis_state.axis,
             axis_state.index,
             axis_state.length,
             request.pixel_width,
             request.pixel_height,
+            image_hash,
             display_key_matches,
             panel.renderer.is_pending()
         ));
@@ -8356,7 +8403,7 @@ impl AppState {
 
     pub(crate) fn image_plane_has_linked_profile(&self) -> bool {
         self.image_browser_session_state()
-            .is_some_and(ImageBrowserSessionState::linked_profile_active)
+            .is_some_and(ImageBrowserSessionState::spectrum_workspace_visible)
     }
 
     pub(crate) fn image_profile_title_line(&self) -> Option<String> {

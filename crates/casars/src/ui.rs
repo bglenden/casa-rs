@@ -896,7 +896,7 @@ fn draw_image_plane_workspace(
     }
 
     if app.image_movie_terminal_looping_active() || app.image_movie_direct_overlay_active() {
-        frame.render_widget(Clear, workspace.plane.canvas);
+        // Leave the canvas untouched while the direct Kitty layer owns this rectangle.
     } else if let Some(protocol) = app.image_plane_protocol() {
         frame.render_widget(PanelImage::new(protocol), workspace.plane.canvas);
     } else {

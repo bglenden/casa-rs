@@ -28,6 +28,7 @@ use casacore_types::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui_graphics::{ProtocolType, TerminalCapabilities};
 use tempfile::tempdir;
 
 use crate::app::{
@@ -39,6 +40,7 @@ use crate::is_suspend_key;
 use crate::registry::{imexplore_app, listobs_app, registered_apps, tablebrowser_app};
 use crate::theme::theme;
 use crate::ui;
+use crate::{KittyMovieOverlayMode, kitty_movie_overlay_mode, test_env_lock};
 
 #[test]
 fn launcher_lists_registered_apps_in_expected_order() {
@@ -100,6 +102,58 @@ fn ctrl_c_requests_quit() {
     let (_temp, mut app) = test_app();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     assert!(app.should_quit());
+}
+
+#[test]
+fn kitty_overlay_defaults_to_software_direct_without_animation_opt_in() {
+    let _guard = test_env_lock();
+    unsafe {
+        std::env::remove_var("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY");
+        std::env::remove_var("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY");
+    }
+
+    let capabilities = TerminalCapabilities {
+        panel_protocol: ProtocolType::Kitty,
+        direct_kitty_layers: true,
+        direct_kitty_animations: true,
+    };
+
+    assert_eq!(
+        kitty_movie_overlay_mode(&capabilities),
+        KittyMovieOverlayMode::SoftwareDirect
+    );
+}
+
+#[test]
+fn kitty_overlay_env_flags_select_disabled_or_animation_modes() {
+    let _guard = test_env_lock();
+    let capabilities = TerminalCapabilities {
+        panel_protocol: ProtocolType::Kitty,
+        direct_kitty_layers: true,
+        direct_kitty_animations: true,
+    };
+
+    unsafe {
+        std::env::remove_var("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY");
+        std::env::set_var("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY", "1");
+    }
+    assert_eq!(
+        kitty_movie_overlay_mode(&capabilities),
+        KittyMovieOverlayMode::Disabled
+    );
+
+    unsafe {
+        std::env::set_var("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY", "1");
+    }
+    assert_eq!(
+        kitty_movie_overlay_mode(&capabilities),
+        KittyMovieOverlayMode::KittyAnimation
+    );
+
+    unsafe {
+        std::env::remove_var("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY");
+        std::env::remove_var("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY");
+    }
 }
 
 #[test]
@@ -3581,7 +3635,7 @@ fn imexplore_movie_mode_steps_and_loops_hidden_axis() {
 }
 
 #[test]
-fn imexplore_direct_movie_frame_uses_movie_render_scale() {
+fn imexplore_direct_movie_frame_preserves_full_pane_render_size() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let script = write_fake_imexplore_script(
@@ -3628,6 +3682,11 @@ fn imexplore_direct_movie_frame_uses_movie_render_scale() {
     app.set_text_value_and_apply("fps", "10");
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
     app.prepare_graphics_for_test(120, 28);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while app.image_plane_image_size_for_test().is_none() && Instant::now() < deadline {
+        app.on_tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 28), &app);
     let font_size = app.image_plane_font_size_for_test();
     let direct_frame = app
@@ -3636,8 +3695,357 @@ fn imexplore_direct_movie_frame_uses_movie_render_scale() {
     let full_width = u32::from(direct_frame.canvas.width.max(1)) * u32::from(font_size.0.max(1));
     let full_height = u32::from(direct_frame.canvas.height.max(1)) * u32::from(font_size.1.max(1));
 
-    assert!(direct_frame.rendered_image.width() < full_width);
-    assert!(direct_frame.rendered_image.height() < full_height);
+    assert_eq!(direct_frame.rendered_image.width(), full_width);
+    assert_eq!(direct_frame.rendered_image.height(), full_height);
+}
+
+#[test]
+fn imexplore_direct_overlay_skips_plane_panel_requests() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec![
+                "View: Plane".to_string(),
+                "Hidden axis Frequency (2): 0/2".to_string(),
+                "Value: 1".to_string(),
+            ],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.set_text_value_and_apply("fps", "10");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    app.set_image_movie_direct_overlay(true);
+
+    app.prepare_graphics_for_test(120, 28);
+
+    assert!(!app.image_plane_pending());
+    assert!(app.image_plane_protocol().is_none());
+}
+
+#[test]
+fn imexplore_direct_overlay_skips_spectrum_panel_requests() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec![
+                "View: Plane".to_string(),
+                "Shape: [4, 4, 3]".to_string(),
+                "Value: 5".to_string(),
+            ],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![1, 1, 1],
+                pixel_axes: vec![],
+                value: 5.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![ImageBrowserAxisValue {
+                    name: "Frequency".to_string(),
+                    unit: "Hz".to_string(),
+                    value: 1.150_230_333_39e11,
+                }],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 1,
+                length: 3,
+                pixel: 1,
+            }),
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.set_text_value_and_apply("fps", "10");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    app.set_image_movie_direct_overlay(true);
+
+    app.prepare_graphics_for_test(120, 32);
+
+    assert!(!app.image_spectrum_pending());
+    assert!(app.image_spectrum_protocol().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_stopping_movie_preserves_pane_state() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec!["View: Plane".to_string()],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let config_path = temp.path().join("casars.toml");
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let mut app = AppState::from_schema_with_config(
+        imexplore_app(),
+        schema,
+        ConfigStore::load_for_tests(config_path),
+    );
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    let main_ratio = app.pane_split_ratio_for_test();
+    let workspace_ratio = app.image_workspace_split_ratio_for_test();
+    let before_layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 36), &app);
+    assert!(!app.parameters_pane_collapsed());
+    assert!(
+        ui::image_spectrum_canvas_area(&before_layout, true, workspace_ratio).is_some(),
+        "spectrum pane should be visible before starting movie"
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert!(app.image_movie_playing_for_test());
+    app.set_image_movie_direct_overlay(true);
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+
+    assert!(!app.image_movie_playing_for_test());
+    assert!((app.pane_split_ratio_for_test() - main_ratio).abs() < f32::EPSILON);
+    assert!((app.image_workspace_split_ratio_for_test() - workspace_ratio).abs() < f32::EPSILON);
+    assert!(!app.parameters_pane_collapsed());
+    assert!(app.image_plane_has_linked_profile());
+
+    let after_layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 36), &app);
+    assert!(
+        ui::image_spectrum_canvas_area(
+            &after_layout,
+            app.image_plane_has_linked_profile(),
+            app.image_workspace_split_ratio_for_test(),
+        )
+        .is_some(),
+        "spectrum pane should remain visible after stopping movie"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_stopping_movie_keeps_frozen_spectrum_workspace_visible() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json_with_profile(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(fake_image_profile_payload()),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 3,
+                    pixel: 0,
+                }),
+                image_parameters("0,0,0", "3,3,2", "1,1,1"),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec!["View: Plane".to_string()],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 1],
+                    pixel_axes: vec![],
+                    value: 2.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 1,
+                    length: 3,
+                    pixel: 1,
+                }),
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.seed_image_spectrum_content_for_test((320, 120));
+
+    assert!(app.image_spectrum_image_size_for_test().is_some());
+    assert!(app.image_profile_title_line().is_some());
+
+    app.set_text_value_and_apply("fps", "30");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    app.set_image_movie_direct_overlay(true);
+    app.clear_image_profile_for_test();
+
+    assert!(app.image_movie_playing_for_test());
+    assert!(
+        app.image_profile_title_line().is_none(),
+        "test setup should simulate a movie-stepped snapshot without a live profile"
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert!(!app.image_movie_playing_for_test());
+    assert!(app.image_plane_has_linked_profile());
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 32), &app);
+    assert!(
+        ui::image_spectrum_canvas_area(
+            &layout,
+            app.image_plane_has_linked_profile(),
+            app.image_workspace_split_ratio_for_test(),
+        )
+        .is_some(),
+        "spectrum workspace should remain visible when frozen content exists"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_late_kitty_response_after_movie_stop_does_not_toggle_ui_state() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec!["View: Plane".to_string()],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+
+    let original_ratio = app.pane_split_ratio_for_test();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert!(app.image_movie_playing_for_test());
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert!(!app.image_movie_playing_for_test());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('_'), KeyModifiers::ALT));
+    for ch in ['G', 'i', '=', '1', ',', 'p', '=', '1', ';', 'O', 'K'] {
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::ALT));
+
+    assert!((app.pane_split_ratio_for_test() - original_ratio).abs() < f32::EPSILON);
+    assert_eq!(app.image_plane_mode_label_for_test(), Some("raster"));
+    assert_eq!(app.image_plane_invert_for_test(), Some(false));
 }
 
 #[test]

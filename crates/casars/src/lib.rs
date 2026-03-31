@@ -6,7 +6,6 @@ mod config;
 mod execution;
 mod graphics;
 mod movie_perf;
-pub mod movie_stage_support;
 mod registry;
 mod startup;
 mod theme;
@@ -46,6 +45,30 @@ fn software_direct_movie_overlay_enabled() -> bool {
     std::env::var_os("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY").is_none()
 }
 
+fn kitty_animation_movie_overlay_enabled() -> bool {
+    std::env::var_os("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY").is_some()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KittyMovieOverlayMode {
+    Disabled,
+    SoftwareDirect,
+    KittyAnimation,
+}
+
+fn kitty_movie_overlay_mode(capabilities: &TerminalCapabilities) -> KittyMovieOverlayMode {
+    if !capabilities.direct_kitty_layers {
+        return KittyMovieOverlayMode::Disabled;
+    }
+    if capabilities.direct_kitty_animations && kitty_animation_movie_overlay_enabled() {
+        return KittyMovieOverlayMode::KittyAnimation;
+    }
+    if software_direct_movie_overlay_enabled() {
+        return KittyMovieOverlayMode::SoftwareDirect;
+    }
+    KittyMovieOverlayMode::Disabled
+}
+
 #[cfg(test)]
 fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
     use std::sync::{Mutex, OnceLock};
@@ -62,12 +85,12 @@ enum RunOutcome {
 }
 
 struct KittyMovieOverlay {
-    capabilities: TerminalCapabilities,
+    mode: KittyMovieOverlayMode,
     manager: Option<KittyLayerManager>,
     software_store: Option<KittyStoredImageStore>,
     software_slot: Option<KittyPaneSlotId>,
     handle: Option<KittyLayerHandle>,
-    software_frame_images: Vec<Option<KittyStoredImageId>>,
+    software_current_image: Option<KittyStoredImageId>,
     active_movie_key: Option<u64>,
     active_axis: Option<usize>,
     active_axis_index: Option<usize>,
@@ -83,21 +106,17 @@ struct KittyMovieOverlay {
 impl KittyMovieOverlay {
     fn new() -> Result<Self, CasarsError> {
         let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-        let mut capabilities = TerminalCapabilities::from_picker(&picker);
-        if capabilities.direct_kitty_layers
-            && !capabilities.direct_kitty_animations
-            && !software_direct_movie_overlay_enabled()
-        {
-            capabilities.direct_kitty_layers = false;
-        }
+        let capabilities = TerminalCapabilities::from_picker(&picker);
+        let mode = kitty_movie_overlay_mode(&capabilities);
         movie_debug_log(format!(
-            "capabilities: panel={:?} direct_layers={} direct_animations={}",
+            "capabilities: panel={:?} direct_layers={} direct_animations={} overlay_mode={:?}",
             capabilities.panel_protocol,
             capabilities.direct_kitty_layers,
-            capabilities.direct_kitty_animations
+            capabilities.direct_kitty_animations,
+            mode
         ));
-        let (manager, software_store, software_slot, handle) = if capabilities.direct_kitty_layers {
-            if capabilities.direct_kitty_animations {
+        let (manager, software_store, software_slot, handle) = match mode {
+            KittyMovieOverlayMode::KittyAnimation => {
                 let mut manager = KittyLayerManager::with_starting_ids(
                     KITTY_MOVIE_OVERLAY_ID_BASE,
                     KITTY_MOVIE_OVERLAY_ID_BASE,
@@ -105,7 +124,8 @@ impl KittyMovieOverlay {
                 .map_err(map_kitty_error)?;
                 let handle = manager.allocate().map_err(map_kitty_error)?;
                 (Some(manager), None, None, Some(handle))
-            } else {
+            }
+            KittyMovieOverlayMode::SoftwareDirect => {
                 let mut store = KittyStoredImageStore::with_starting_ids(
                     KITTY_MOVIE_OVERLAY_ID_BASE,
                     KITTY_MOVIE_OVERLAY_ID_BASE,
@@ -114,16 +134,15 @@ impl KittyMovieOverlay {
                 let slot = store.allocate_slot().map_err(map_kitty_error)?;
                 (None, Some(store), Some(slot), None)
             }
-        } else {
-            (None, None, None, None)
+            KittyMovieOverlayMode::Disabled => (None, None, None, None),
         };
         Ok(Self {
-            capabilities,
+            mode,
             manager,
             software_store,
             software_slot,
             handle,
-            software_frame_images: Vec::new(),
+            software_current_image: None,
             active_movie_key: None,
             active_axis: None,
             active_axis_index: None,
@@ -143,10 +162,10 @@ impl KittyMovieOverlay {
         app: &mut AppState,
         layout: &ui::UiLayout,
     ) -> Result<(), CasarsError> {
-        if !self.capabilities.direct_kitty_layers {
+        if self.mode == KittyMovieOverlayMode::Disabled {
             return Ok(());
         }
-        if self.capabilities.direct_kitty_animations && self.looping {
+        if self.mode == KittyMovieOverlayMode::KittyAnimation && self.looping {
             if app.image_movie_terminal_looping_active() {
                 self.refresh_looping_only(terminal.backend_mut(), app)?;
                 return Ok(());
@@ -155,7 +174,7 @@ impl KittyMovieOverlay {
             return Ok(());
         }
         let frame = app.current_direct_image_movie_frame(layout);
-        if self.capabilities.direct_kitty_animations {
+        if self.mode == KittyMovieOverlayMode::KittyAnimation {
             match frame {
                 Some(frame) => self.refresh_for_frame(terminal.backend_mut(), app, frame)?,
                 None => self.clear(terminal.backend_mut(), app, true)?,
@@ -193,7 +212,7 @@ impl KittyMovieOverlay {
         app.set_image_movie_direct_overlay(false);
         app.set_image_movie_terminal_looping(false);
         if let Some(manager) = &self.manager {
-            if self.capabilities.direct_kitty_animations {
+            if self.mode == KittyMovieOverlayMode::KittyAnimation {
                 if let Some(handle) = self.handle {
                     manager
                         .clear_and_delete(out, handle)
@@ -205,7 +224,7 @@ impl KittyMovieOverlay {
             if let Some(slot) = self.software_slot {
                 store.clear_slot(out, slot).map_err(map_kitty_error)?;
             }
-            for image in self.software_frame_images.iter().flatten().copied() {
+            if let Some(image) = self.software_current_image.take() {
                 store.delete_image(out, image).map_err(map_kitty_error)?;
             }
         }
@@ -227,7 +246,7 @@ impl KittyMovieOverlay {
         }
         app.set_image_movie_direct_overlay(false);
         app.set_image_movie_terminal_looping(false);
-        if self.capabilities.direct_kitty_animations {
+        if self.mode == KittyMovieOverlayMode::KittyAnimation {
             if let (Some(manager), Some(handle)) = (&self.manager, self.handle) {
                 manager
                     .clear_placement(out, handle)
@@ -439,35 +458,28 @@ impl KittyMovieOverlay {
             z_index: 384,
             preserve_cursor: true,
         };
-        if self.software_frame_images.len() < frame.axis_length {
-            self.software_frame_images.resize(frame.axis_length, None);
-        }
         let Some(store) = self.software_store.as_mut() else {
             return Ok(());
         };
         let Some(slot) = self.software_slot else {
             return Ok(());
         };
-        if let Some(image) = self.software_frame_images[frame.axis_index] {
-            store
-                .place_in_slot(out, slot, image, placement)
-                .map_err(map_kitty_error)?;
-        } else {
-            let (image, info) = store
-                .store_rgba(out, &frame.rendered_image)
-                .map_err(map_kitty_error)?;
-            self.software_frame_images[frame.axis_index] = Some(image);
-            store
-                .place_in_slot(out, slot, image, placement)
-                .map_err(map_kitty_error)?;
-            movie_debug_log(format!(
-                "software preload axis_index={} image={} bytes={} total_store_bytes={}",
-                frame.axis_index,
-                image.raw(),
-                info.bytes,
-                store.total_bytes()
-            ));
+        let (image, info) = store
+            .store_rgba(out, &frame.rendered_image)
+            .map_err(map_kitty_error)?;
+        store
+            .place_in_slot(out, slot, image, placement)
+            .map_err(map_kitty_error)?;
+        if let Some(previous) = self.software_current_image.replace(image) {
+            store.delete_image(out, previous).map_err(map_kitty_error)?;
         }
+        movie_debug_log(format!(
+            "software upload axis_index={} image={} bytes={} total_store_bytes={}",
+            frame.axis_index,
+            image.raw(),
+            info.bytes,
+            store.total_bytes()
+        ));
         app.note_image_plane_direct_presented(frame.render_request_key_hash);
 
         self.active_movie_key = Some(frame.movie_key);
@@ -544,7 +556,7 @@ impl KittyMovieOverlay {
         self.active_axis = None;
         self.active_axis_index = None;
         self.active_canvas = None;
-        self.software_frame_images.clear();
+        self.software_current_image = None;
         self.uploaded_axis_indices.clear();
         self.seen_axis_indices.clear();
         self.active_fps = 0.0;
@@ -729,6 +741,15 @@ fn run_selected_app(
             &app,
         );
         app.cache_output_layout(&layout);
+        if let Some(outcome) = drain_runtime_events(
+            terminal,
+            &mut app,
+            &layout,
+            &mut kitty_movie_overlay,
+            &mut last_tick,
+        )? {
+            return Ok(outcome);
+        }
         app.prepare_graphics(&layout);
         terminal
             .terminal
@@ -751,27 +772,24 @@ fn run_selected_app(
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout).map_err(CasarsError::TerminalSetup)? {
             let event = event::read().map_err(CasarsError::TerminalSetup)?;
-            match event {
-                Event::Key(key_event) => {
-                    if is_suspend_key(key_event) {
-                        kitty_movie_overlay.abandon_for_terminal_reset(&mut app);
-                        terminal.suspend_and_resume()?;
-                        last_tick = Instant::now();
-                        continue;
-                    }
-                    app.handle_key_event(key_event)
-                }
-                Event::Paste(text) => app.handle_paste(text),
-                Event::Mouse(mouse_event) => app.handle_mouse_event(mouse_event, &layout),
-                _ => {}
+            if let Some(outcome) = handle_runtime_event(
+                terminal,
+                &mut app,
+                &layout,
+                &mut kitty_movie_overlay,
+                &mut last_tick,
+                event,
+            )? {
+                return Ok(outcome);
             }
-            if app.should_quit() {
-                kitty_movie_overlay.hide_visible(terminal.terminal.backend_mut(), &mut app)?;
-                return Ok(RunOutcome::Quit);
-            }
-            if app.should_return_to_launcher() {
-                kitty_movie_overlay.hide_visible(terminal.terminal.backend_mut(), &mut app)?;
-                return Ok(RunOutcome::Launcher);
+            if let Some(outcome) = drain_runtime_events(
+                terminal,
+                &mut app,
+                &layout,
+                &mut kitty_movie_overlay,
+                &mut last_tick,
+            )? {
+                return Ok(outcome);
             }
         }
 
@@ -780,6 +798,57 @@ fn run_selected_app(
             last_tick = Instant::now();
         }
     }
+}
+
+fn drain_runtime_events(
+    terminal: &mut TerminalGuard,
+    app: &mut AppState,
+    layout: &ui::UiLayout,
+    kitty_movie_overlay: &mut KittyMovieOverlay,
+    last_tick: &mut Instant,
+) -> Result<Option<RunOutcome>, CasarsError> {
+    while event::poll(Duration::ZERO).map_err(CasarsError::TerminalSetup)? {
+        let event = event::read().map_err(CasarsError::TerminalSetup)?;
+        if let Some(outcome) =
+            handle_runtime_event(terminal, app, layout, kitty_movie_overlay, last_tick, event)?
+        {
+            return Ok(Some(outcome));
+        }
+    }
+    Ok(None)
+}
+
+fn handle_runtime_event(
+    terminal: &mut TerminalGuard,
+    app: &mut AppState,
+    layout: &ui::UiLayout,
+    kitty_movie_overlay: &mut KittyMovieOverlay,
+    last_tick: &mut Instant,
+    event: Event,
+) -> Result<Option<RunOutcome>, CasarsError> {
+    match event {
+        Event::Key(key_event) => {
+            if is_suspend_key(key_event) {
+                kitty_movie_overlay.abandon_for_terminal_reset(app);
+                terminal.suspend_and_resume()?;
+                *last_tick = Instant::now();
+                return Ok(None);
+            }
+            app.handle_key_event(key_event);
+        }
+        Event::Paste(text) => app.handle_paste(text),
+        Event::Mouse(mouse_event) => app.handle_mouse_event(mouse_event, layout),
+        _ => {}
+    }
+    if app.should_quit() {
+        kitty_movie_overlay.hide_visible(terminal.terminal.backend_mut(), app)?;
+        return Ok(Some(RunOutcome::Quit));
+    }
+    if app.should_return_to_launcher() {
+        kitty_movie_overlay.hide_visible(terminal.terminal.backend_mut(), app)?;
+        return Ok(Some(RunOutcome::Launcher));
+    }
+    Ok(None)
 }
 
 fn choose_app(terminal: &mut TerminalGuard) -> Result<Option<RegistryApp>, CasarsError> {

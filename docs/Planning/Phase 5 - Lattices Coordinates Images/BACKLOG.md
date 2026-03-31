@@ -201,3 +201,25 @@ The production wave should include:
 This should be implemented only after the staged harness results are used to
 design the production API boundary, so the repo does not repeat the earlier
 failed direct-overlay experiments inside `imexplore`.
+
+### 12.14 Image Browser Live Spectrum Movie Acceleration
+
+**Status:** DEFER
+
+**Reason:** The current safe movie path can keep the plane pane correct by
+using direct Kitty uploads, but the visible spectrum pane still goes through the
+normal `ratatui-image` renderer and significantly reduces movie FPS. The
+interim production tradeoff is to freeze or hide the spectrum during movie
+playback so the plane pane remains responsive. A later wave should add a proper
+movie-aware spectrum path, ideally with either throttled updates or an atomic
+occurrence-based plane+spectrum presentation model that preserves performance
+without desynchronizing the visible data.
+
+That later wave should explicitly avoid treating the spectrum as a full redraw
+problem on every movie step. Most of the spectrum pane is static across adjacent
+movie frames: the trace geometry is usually unchanged, while the moving selected
+sample marker and highlighted pixel/sample brightness are the parts that need to
+update with the movie. The intended optimization direction is therefore to split
+the spectrum into a reusable base plot plus lightweight per-frame overlays or
+selection-state updates, so the spectrum can stay live during movie playback
+without dragging plane FPS back down.
