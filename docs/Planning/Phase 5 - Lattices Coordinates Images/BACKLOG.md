@@ -202,6 +202,15 @@ This should be implemented only after the staged harness results are used to
 design the production API boundary, so the repo does not repeat the earlier
 failed direct-overlay experiments inside `imexplore`.
 
+See also:
+
+- [docs/kitty-graphics-protocol-details.md](/Users/brianglendenning/.codex/worktrees/a4fd/casa-rs/docs/kitty-graphics-protocol-details.md)
+
+That note captures the protocol-level finding that cached playback replacement
+is effectively keyed by `(image_id, placement_id)`, so production cached movie
+reuse should prefer explicit delete-before-place or clear-slot semantics rather
+than replace-only placement reuse.
+
 ### 12.14 Image Browser Live Spectrum Movie Acceleration
 
 **Status:** DEFER
