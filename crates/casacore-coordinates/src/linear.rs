@@ -14,7 +14,7 @@
 //!
 //! This corresponds to C++ `LinearCoordinate`.
 
-use casacore_types::{RecordValue, ScalarValue, Value};
+use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 
 use crate::coordinate::{Coordinate, CoordinateType};
@@ -288,11 +288,15 @@ impl Coordinate for LinearCoordinate {
             "crpix",
             Value::Array(casacore_types::ArrayValue::from_f64_vec(self.crpix.clone())),
         );
-        // PC matrix as flattened row-major array
-        let pc_flat: Vec<f64> = self.pc.iter().copied().collect();
         rec.upsert(
             "pc",
-            Value::Array(casacore_types::ArrayValue::from_f64_vec(pc_flat)),
+            Value::Array(ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[n, n]),
+                    self.pc.iter().copied().collect(),
+                )
+                .expect("linear pc matrix shape should match axis count"),
+            )),
         );
         rec.upsert(
             "axes",
@@ -523,6 +527,27 @@ mod tests {
         assert_eq!(restored.axis_names(), vec!["X", "Y"]);
         assert_eq!(restored.axis_units(), vec!["m", "m"]);
         assert_eq!(restored.pc_matrix(), &pc);
+    }
+
+    #[test]
+    fn to_record_writes_pc_as_matrix() {
+        let pc = Array2::from_shape_vec((2, 2), vec![1.0, 0.25, -0.5, 2.0]).unwrap();
+        let coord = LinearCoordinate::new(
+            2,
+            vec!["X".into(), "Y".into()],
+            vec!["m".into(), "m".into()],
+        )
+        .with_pc_matrix(pc);
+
+        let record = coord.to_record();
+        let Some(Value::Array(ArrayValue::Float64(pc_record))) = record.get("pc") else {
+            panic!("linear record should contain a float64 pc array");
+        };
+        assert_eq!(pc_record.shape(), &[2, 2]);
+        assert_eq!(
+            pc_record.iter().copied().collect::<Vec<_>>(),
+            vec![1.0, 0.25, -0.5, 2.0]
+        );
     }
 
     #[test]

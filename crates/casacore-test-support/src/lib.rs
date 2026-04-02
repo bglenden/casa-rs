@@ -12,6 +12,8 @@ use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 #[cfg(has_casacore_cpp)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
+#[cfg(all(has_casacore_cpp, unix))]
+use std::{fs::OpenOptions, os::fd::AsRawFd};
 
 use casacore_aipsio::{
     AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64, ScalarValue, TypeTag,
@@ -25,25 +27,82 @@ use thiserror::Error;
 /// Process-global casacore state domains used by the C++ interop shims.
 ///
 /// Some casacore APIs are configured through process-wide static state rather
-/// than per-call objects. Rust tests run concurrently in a single process, so
-/// any shim that mutates one of these domains must serialize access here rather
-/// than relying on individual tests to avoid overlap.
+/// than per-call objects. Cargo also runs integration-test binaries in parallel,
+/// so table-oriented shims need cross-process serialization as well as the usual
+/// in-process mutex.
 #[cfg(has_casacore_cpp)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CasacoreGlobalStateDomain {
     /// IAU 2000 / 2000A mode toggles driven by `AipsrcValue` and `MeasTable`.
     MeasuresIau2000A,
+    /// Table-oriented C++ shims that exercise shared casacore table state.
+    Tables,
+}
+
+#[cfg(has_casacore_cpp)]
+pub(crate) struct CasacoreGlobalStateGuard {
+    _mutex: MutexGuard<'static, ()>,
+    #[cfg(all(has_casacore_cpp, unix))]
+    _file_lock: Option<CasacoreGlobalFileLock>,
+}
+
+#[cfg(all(has_casacore_cpp, unix))]
+struct CasacoreGlobalFileLock {
+    file: std::fs::File,
+}
+
+#[cfg(all(has_casacore_cpp, unix))]
+impl Drop for CasacoreGlobalFileLock {
+    fn drop(&mut self) {
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+#[cfg(all(has_casacore_cpp, unix))]
+fn lock_casacore_global_file(domain: CasacoreGlobalStateDomain) -> CasacoreGlobalFileLock {
+    let suffix = match domain {
+        CasacoreGlobalStateDomain::MeasuresIau2000A => "measures-iau2000a",
+        CasacoreGlobalStateDomain::Tables => "tables",
+    };
+    let path = std::env::temp_dir().join(format!("casa-rs-casacore-test-support-{suffix}.lock"));
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap_or_else(|err| panic!("open global casacore lock {}: {err}", path.display()));
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        panic!("lock global casacore file {}: {err}", path.display());
+    }
+    CasacoreGlobalFileLock { file }
 }
 
 #[cfg(has_casacore_cpp)]
 pub(crate) fn lock_casacore_global_state(
     domain: CasacoreGlobalStateDomain,
-) -> MutexGuard<'static, ()> {
-    match domain {
+) -> CasacoreGlobalStateGuard {
+    let mutex = match domain {
         CasacoreGlobalStateDomain::MeasuresIau2000A => {
             static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
             LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
         }
+        CasacoreGlobalStateDomain::Tables => {
+            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        }
+    };
+    CasacoreGlobalStateGuard {
+        _mutex: mutex,
+        #[cfg(all(has_casacore_cpp, unix))]
+        _file_lock: match domain {
+            CasacoreGlobalStateDomain::Tables => Some(lock_casacore_global_file(domain)),
+            CasacoreGlobalStateDomain::MeasuresIau2000A => None,
+        },
     }
 }
 
@@ -1805,6 +1864,75 @@ unsafe extern "C" {
         nread_out: *mut i64,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    #[link_name = "cpp_write_polygon_region"]
+    fn ffi_cpp_write_polygon_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        x: *const f64,
+        y: *const f64,
+        nvertices: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_write_union_region"]
+    fn ffi_cpp_write_union_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        x1: *const f64,
+        y1: *const f64,
+        nvertices1: i32,
+        x2: *const f64,
+        y2: *const f64,
+        nvertices2: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_write_box_region"]
+    fn ffi_cpp_write_box_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_read_region_class"]
+    fn ffi_cpp_read_region_class(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_read_region_names"]
+    fn ffi_cpp_read_region_names(
+        path: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_write_unsupported_region"]
+    fn ffi_cpp_write_unsupported_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        kind: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_read_region_statistics"]
+    fn ffi_cpp_read_region_statistics(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        stats_out: *mut f64,
+        nstats: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_write_default_mask"]
+    fn ffi_cpp_write_default_mask(
+        path: *const std::ffi::c_char,
+        mask_name: *const std::ffi::c_char,
+        data: *const u8,
+        ndata: i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     fn cpp_read_pagedimage_imageinfo_object_name(
         path: *const std::ffi::c_char,
         buf: *mut std::ffi::c_char,
@@ -2570,6 +2698,15 @@ pub enum CppTableFixture {
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Result<(), String> {
+    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    cpp_table_write_unlocked(fixture, path)
+}
+
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_table_write_unlocked(
+    fixture: CppTableFixture,
+    path: &std::path::Path,
+) -> Result<(), String> {
     let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -2736,6 +2873,15 @@ pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Resu
 /// Verify a table fixture using C++ casacore. Returns an error string on failure.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Result<(), String> {
+    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    cpp_table_verify_unlocked(fixture, path)
+}
+
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_table_verify_unlocked(
+    fixture: CppTableFixture,
+    path: &std::path::Path,
+) -> Result<(), String> {
     let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -2917,11 +3063,17 @@ pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Res
 ///
 /// Use this alongside the Rust `ColumnsIndex` to compare performance.
 #[cfg(has_casacore_cpp)]
+fn lock_cpp_table_ffi() -> CasacoreGlobalStateGuard {
+    lock_casacore_global_state(CasacoreGlobalStateDomain::Tables)
+}
+
+#[cfg(has_casacore_cpp)]
 pub fn cpp_columns_index_time_lookups(
     path: &std::path::Path,
     key_value: i32,
     nqueries: u64,
 ) -> Result<(u64, u64), String> {
+    let _guard = lock_cpp_table_ffi();
     let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut elapsed_ns: u64 = 0;
@@ -2969,6 +3121,7 @@ pub fn cpp_columns_index_time_lookups(
 /// Returns `(write_ns, read_ns, total_elems)`.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_vararray_bench(path: &std::path::Path, nrows: u64) -> Result<(u64, u64, u64), String> {
+    let _guard = lock_cpp_table_ffi();
     let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut write_ns: u64 = 0;
@@ -3028,6 +3181,7 @@ pub fn cpp_set_algebra_bench(
     split_a: u64,
     split_b: u64,
 ) -> Result<SetAlgebraBenchResult, String> {
+    let _guard = lock_cpp_table_ffi();
     let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut union_ns: u64 = 0;
@@ -3091,6 +3245,7 @@ pub fn cpp_set_algebra_bench(
 /// Returns elapsed nanoseconds.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_copy_rows_bench(dir: &std::path::Path, nrows: u64) -> Result<u64, String> {
+    let _guard = lock_cpp_table_ffi();
     let c_dir = std::ffi::CString::new(dir.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut ns: u64 = 0;
@@ -3143,6 +3298,7 @@ pub fn cpp_cell_slice_bench(
     path: &std::path::Path,
     params: &CellSliceBenchParams,
 ) -> Result<CellSliceBenchResult, String> {
+    let _guard = lock_cpp_table_ffi();
     let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut write_ns: u64 = 0;
@@ -3205,6 +3361,7 @@ pub fn cpp_bulk_scalar_io_bench(
     path: &std::path::Path,
     nrows: u64,
 ) -> Result<BulkScalarIoBenchResult, String> {
+    let _guard = lock_cpp_table_ffi();
     let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut write_ns: u64 = 0;
@@ -3248,6 +3405,7 @@ pub fn cpp_deep_copy_bench(
     dir: &std::path::Path,
     nrows: u64,
 ) -> Result<DeepCopyBenchResult, String> {
+    let _guard = lock_cpp_table_ffi();
     let c_dir = std::ffi::CString::new(dir.to_str().ok_or("non-utf8 path")?)
         .map_err(|e| format!("CString: {e}"))?;
     let mut write_ns: u64 = 0;
@@ -3315,11 +3473,8 @@ fn take_cpp_error_message(error: *mut std::ffi::c_char) -> String {
 }
 
 #[cfg(has_casacore_cpp)]
-fn lock_cpp_image_ffi() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("cpp image ffi lock poisoned")
+fn lock_cpp_image_ffi() -> CasacoreGlobalStateGuard {
+    lock_casacore_global_state(CasacoreGlobalStateDomain::Tables)
 }
 
 /// Creates a C++ `PagedImage<Float>` with the given shape, data, and units.
@@ -3900,6 +4055,361 @@ pub fn cpp_read_image_default_mask(
     _path: &std::path::Path,
     _max_size: usize,
 ) -> Result<Vec<bool>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Writes a native WCPolygon saved region using the C++ casacore implementation.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_write_polygon_region(
+    path: &std::path::Path,
+    region_name: &str,
+    x: &[f64],
+    y: &[f64],
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_name = std::ffi::CString::new(region_name).expect("region name must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_polygon_region(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            x.as_ptr(),
+            y.as_ptr(),
+            x.len() as i32,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_write_polygon_region(
+    _path: &std::path::Path,
+    _region_name: &str,
+    _x: &[f64],
+    _y: &[f64],
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Writes a native WCUnion-of-polygons saved region using the C++ casacore implementation.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_write_union_region(
+    path: &std::path::Path,
+    region_name: &str,
+    x1: &[f64],
+    y1: &[f64],
+    x2: &[f64],
+    y2: &[f64],
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_name = std::ffi::CString::new(region_name).expect("region name must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_union_region(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            x1.as_ptr(),
+            y1.as_ptr(),
+            x1.len() as i32,
+            x2.as_ptr(),
+            y2.as_ptr(),
+            x2.len() as i32,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_write_union_region(
+    _path: &std::path::Path,
+    _region_name: &str,
+    _x1: &[f64],
+    _y1: &[f64],
+    _x2: &[f64],
+    _y2: &[f64],
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Writes an unsupported WCBox saved region using the C++ casacore implementation.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_write_box_region(
+    path: &std::path::Path,
+    region_name: &str,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_name = std::ffi::CString::new(region_name).expect("region name must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_box_region(c_path.as_ptr(), c_name.as_ptr(), x0, y0, x1, y1, &mut error)
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_write_box_region(
+    _path: &std::path::Path,
+    _region_name: &str,
+    _x0: f64,
+    _y0: f64,
+    _x1: f64,
+    _y1: f64,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads the native casacore class name for a saved region.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_region_class(path: &std::path::Path, region_name: &str) -> Result<String, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_name = std::ffi::CString::new(region_name).expect("region name must be valid C string");
+    let mut buf = vec![0i8; 256];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_read_region_class(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            256,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(
+            unsafe { CStr::from_ptr(buf.as_ptr() as *const std::ffi::c_char) }
+                .to_string_lossy()
+                .to_string(),
+        )
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_region_class(
+    _path: &std::path::Path,
+    _region_name: &str,
+) -> Result<String, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Reads all saved region names visible to C++ casacore.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_region_names(path: &std::path::Path) -> Result<Vec<String>, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let mut buf = vec![0i8; 4096];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_read_region_names(
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            4096,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        let joined = unsafe { CStr::from_ptr(buf.as_ptr() as *const std::ffi::c_char) }
+            .to_string_lossy()
+            .to_string();
+        if joined.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(joined.split(',').map(|name| name.to_string()).collect())
+        }
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_region_names(_path: &std::path::Path) -> Result<Vec<String>, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CppUnsupportedRegionKind {
+    Ellipsoid,
+    Intersection,
+    Difference,
+    Complement,
+    Concatenation,
+    Extension,
+    LelMask,
+    LcBox,
+}
+
+impl CppUnsupportedRegionKind {
+    fn ffi_code(self) -> i32 {
+        match self {
+            Self::Ellipsoid => 0,
+            Self::Intersection => 1,
+            Self::Difference => 2,
+            Self::Complement => 3,
+            Self::Concatenation => 4,
+            Self::Extension => 5,
+            Self::LelMask => 6,
+            Self::LcBox => 7,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CppRegionStatistics {
+    pub pixel_count: usize,
+    pub sum: f64,
+    pub mean: f64,
+    pub median: f64,
+    pub rms: f64,
+    pub sigma: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
+#[cfg(has_casacore_cpp)]
+pub fn cpp_write_unsupported_region(
+    path: &std::path::Path,
+    region_name: &str,
+    kind: CppUnsupportedRegionKind,
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_name = std::ffi::CString::new(region_name).expect("region name must be valid C string");
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_unsupported_region(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            kind.ffi_code(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_write_unsupported_region(
+    _path: &std::path::Path,
+    _region_name: &str,
+    _kind: CppUnsupportedRegionKind,
+) -> Result<(), String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+#[cfg(has_casacore_cpp)]
+pub fn cpp_read_region_statistics(
+    path: &std::path::Path,
+    region_name: &str,
+) -> Result<CppRegionStatistics, String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_name = std::ffi::CString::new(region_name).expect("region name must be valid C string");
+    let mut stats = [0.0f64; 8];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_read_region_statistics(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            stats.as_mut_ptr(),
+            stats.len() as i32,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(CppRegionStatistics {
+            pixel_count: stats[0] as usize,
+            sum: stats[1],
+            mean: stats[2],
+            median: stats[3],
+            rms: stats[4],
+            sigma: stats[5],
+            min: stats[6],
+            max: stats[7],
+        })
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_read_region_statistics(
+    _path: &std::path::Path,
+    _region_name: &str,
+) -> Result<CppRegionStatistics, String> {
+    Err("C++ casacore backend unavailable".to_string())
+}
+
+/// Writes a named default pixel mask using the C++ casacore implementation.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_write_default_mask(
+    path: &std::path::Path,
+    mask_name: &str,
+    data: &[bool],
+) -> Result<(), String> {
+    let _guard = lock_cpp_image_ffi();
+    let c_path =
+        std::ffi::CString::new(path.to_str().unwrap()).expect("path must be valid C string");
+    let c_name = std::ffi::CString::new(mask_name).expect("mask name must be valid C string");
+    let bytes = data
+        .iter()
+        .map(|value| u8::from(*value))
+        .collect::<Vec<_>>();
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_default_mask(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            bytes.as_ptr(),
+            bytes.len() as i64,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(take_cpp_error_message(error))
+    }
+}
+
+#[cfg(not(has_casacore_cpp))]
+pub fn cpp_write_default_mask(
+    _path: &std::path::Path,
+    _mask_name: &str,
+    _data: &[bool],
+) -> Result<(), String> {
     Err("C++ casacore backend unavailable".to_string())
 }
 
@@ -4664,11 +5174,8 @@ unsafe extern "C" {
 }
 
 #[cfg(has_casacore_cpp)]
-fn lock_cpp_lattice_ffi() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("cpp lattice ffi lock poisoned")
+fn lock_cpp_lattice_ffi() -> CasacoreGlobalStateGuard {
+    lock_casacore_global_state(CasacoreGlobalStateDomain::Tables)
 }
 
 /// Run the C++ forced-I/O paged-lattice statistics benchmark.

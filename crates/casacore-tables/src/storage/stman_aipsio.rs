@@ -904,12 +904,14 @@ fn write_scalar_column(
 ) -> Result<(), StorageError> {
     // Collect all scalar values into a typed vec and write as array
     let pt = col_desc.require_primitive_type()?;
+    let allow_undefined = (col_desc.option & 2) != 0;
     match pt {
         PrimitiveType::Bool => {
             let values: Vec<bool> = rows
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Bool(v))) => Ok(*v),
+                    None if allow_undefined => Ok(false),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Bool for column {col_name}"
                     ))),
@@ -922,6 +924,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Int32(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Int32 for column {col_name}"
                     ))),
@@ -934,6 +937,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Float64(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0.0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Float64 for column {col_name}"
                     ))),
@@ -946,6 +950,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::String(v))) => Ok(v.clone()),
+                    None if allow_undefined => Ok(String::new()),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected String for column {col_name}"
                     ))),
@@ -958,6 +963,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Float32(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0.0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Float32 for column {col_name}"
                     ))),
@@ -970,6 +976,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::UInt8(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected UInt8 for column {col_name}"
                     ))),
@@ -982,6 +989,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Int16(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Int16 for column {col_name}"
                     ))),
@@ -994,6 +1002,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::UInt16(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected UInt16 for column {col_name}"
                     ))),
@@ -1006,6 +1015,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::UInt32(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected UInt32 for column {col_name}"
                     ))),
@@ -1018,6 +1028,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Int64(v))) => Ok(*v),
+                    None if allow_undefined => Ok(0),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Int64 for column {col_name}"
                     ))),
@@ -1030,6 +1041,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Complex32(v))) => Ok(*v),
+                    None if allow_undefined => Ok(casacore_types::Complex32::new(0.0, 0.0)),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Complex32 for column {col_name}"
                     ))),
@@ -1042,6 +1054,7 @@ fn write_scalar_column(
                 .iter()
                 .map(|r| match r.get(col_name) {
                     Some(Value::Scalar(ScalarValue::Complex64(v))) => Ok(*v),
+                    None if allow_undefined => Ok(casacore_types::Complex64::new(0.0, 0.0)),
                     _ => Err(StorageError::FormatMismatch(format!(
                         "expected Complex64 for column {col_name}"
                     ))),
@@ -1051,6 +1064,28 @@ fn write_scalar_column(
         }
     }
     Ok(())
+}
+
+pub(crate) fn scalar_value_is_default(value: &Value, pt: PrimitiveType) -> bool {
+    match (pt, value) {
+        (PrimitiveType::Bool, Value::Scalar(ScalarValue::Bool(v))) => !*v,
+        (PrimitiveType::UInt8, Value::Scalar(ScalarValue::UInt8(v))) => *v == 0,
+        (PrimitiveType::Int16, Value::Scalar(ScalarValue::Int16(v))) => *v == 0,
+        (PrimitiveType::UInt16, Value::Scalar(ScalarValue::UInt16(v))) => *v == 0,
+        (PrimitiveType::Int32, Value::Scalar(ScalarValue::Int32(v))) => *v == 0,
+        (PrimitiveType::UInt32, Value::Scalar(ScalarValue::UInt32(v))) => *v == 0,
+        (PrimitiveType::Float32, Value::Scalar(ScalarValue::Float32(v))) => *v == 0.0,
+        (PrimitiveType::Float64, Value::Scalar(ScalarValue::Float64(v))) => *v == 0.0,
+        (PrimitiveType::Int64, Value::Scalar(ScalarValue::Int64(v))) => *v == 0,
+        (PrimitiveType::Complex32, Value::Scalar(ScalarValue::Complex32(v))) => {
+            v.re == 0.0 && v.im == 0.0
+        }
+        (PrimitiveType::Complex64, Value::Scalar(ScalarValue::Complex64(v))) => {
+            v.re == 0.0 && v.im == 0.0
+        }
+        (PrimitiveType::String, Value::Scalar(ScalarValue::String(v))) => v.is_empty(),
+        _ => false,
+    }
 }
 
 /// Write array column data per-row without count prefix (putNR=false).

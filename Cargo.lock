@@ -560,6 +560,7 @@ dependencies = [
  "casacore-tables",
  "casacore-types",
  "cc",
+ "libc",
  "ndarray",
  "pkg-config",
  "sofars",

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#[path = "ui/browser_manager.rs"]
+mod browser_manager;
+
 use ratatui::Frame;
 use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -17,6 +20,10 @@ use crate::app::{
 use crate::config::ThemeMode;
 use crate::registry::RegistryApp;
 use crate::theme::{Theme, theme};
+pub(crate) use browser_manager::{browser_mode_picker_area, browser_mode_picker_list_area};
+use browser_manager::{
+    browser_mode_selector_rect, draw_browser_mode_picker, visible_browser_manager_hits,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct UiLayout {
@@ -26,6 +33,8 @@ pub(crate) struct UiLayout {
     pub form_block: Rect,
     pub form_inner: Rect,
     pub form_rows: Vec<FormRowHit>,
+    pub browser_manager_rows: Vec<FormRowHit>,
+    pub browser_mode_selector: Option<Rect>,
     pub divider: Rect,
     pub result_block: Rect,
     pub result_status: Rect,
@@ -104,6 +113,7 @@ impl UiLayout {
     pub(crate) fn form_target_at(&self, column: u16, row: u16) -> Option<FormSelection> {
         self.form_rows
             .iter()
+            .chain(self.browser_manager_rows.iter())
             .find(|hit| rect_contains(hit.rect, column, row))
             .map(|hit| hit.target)
     }
@@ -142,6 +152,11 @@ impl UiLayout {
 
     pub(crate) fn in_form_block(&self, column: u16, row: u16) -> bool {
         rect_contains(self.form_block, column, row)
+    }
+
+    pub(crate) fn in_browser_mode_selector(&self, column: u16, row: u16) -> bool {
+        self.browser_mode_selector
+            .is_some_and(|rect| rect_contains(rect, column, row))
     }
 
     pub(crate) fn in_result_block(&self, column: u16, row: u16) -> bool {
@@ -231,6 +246,9 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
     let result_inner = result_block_widget(app, palette).inner(result_block);
 
     let form_rows = visible_form_hits(form_inner, app);
+    let browser_mode_selector = browser_mode_selector_rect(form_inner, form_rows.len(), app);
+    let browser_manager_rows =
+        visible_browser_manager_hits(form_inner, form_rows.len(), browser_mode_selector, app);
 
     let status_height = if result_inner.height >= 5 {
         3
@@ -289,6 +307,8 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
         form_block,
         form_inner,
         form_rows,
+        browser_manager_rows,
+        browser_mode_selector,
         divider,
         result_block,
         result_status,
@@ -338,6 +358,8 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     draw_result(frame, app, layout, palette);
     if app.path_chooser_active() {
         draw_path_chooser(frame, app, layout, palette);
+    } else if app.browser_mode_picker_active() {
+        draw_browser_mode_picker(frame, app, layout, palette);
     }
     if app.help_visible() {
         draw_help_overlay(frame, app, palette);
@@ -523,24 +545,99 @@ fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: 
                 .saturating_sub(form_area.height.saturating_add(gap)),
         };
         if summary_area.height > 0 {
+            if let Some(selector) = layout.browser_mode_selector {
+                let style = if app.browser_mode_picker_active() {
+                    Style::default()
+                        .fg(palette.field_selected_fg)
+                        .bg(palette.field_selected_bg)
+                } else {
+                    Style::default().fg(palette.footer_fg)
+                };
+                frame.render_widget(
+                    Paragraph::new(crate::pane_manager::selector_button_label(
+                        app.browser_mode_picker_selection()
+                            .unwrap_or(app.image_browser_left_pane_mode_for_ui())
+                            .label(),
+                    ))
+                    .style(style),
+                    selector,
+                );
+            }
+            let manager_targets = layout
+                .browser_manager_rows
+                .iter()
+                .filter_map(|row| match row.target {
+                    FormSelection::BrowserPane(target) => Some(target),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let manager_items = app
+                .browser_manager_rows()
+                .into_iter()
+                .filter(|row| manager_targets.contains(&row.target))
+                .map(|row| {
+                    let line = render_manager_row_text(
+                        &row,
+                        app.pane_focus(),
+                        palette,
+                        layout.form_inner.width,
+                    );
+                    let style = match (row.selected, app.pane_focus()) {
+                        (true, PaneFocus::Parameters) => Style::default()
+                            .fg(palette.field_selected_fg)
+                            .bg(palette.field_selected_bg),
+                        (true, PaneFocus::Result) => Style::default()
+                            .fg(palette.inactive_selection_fg)
+                            .bg(palette.inactive_selection_bg),
+                        (false, _) => Style::default(),
+                    };
+                    ListItem::new(Line::from(line)).style(style)
+                })
+                .collect::<Vec<_>>();
+            if !manager_items.is_empty() {
+                let manager_area = Rect {
+                    x: summary_area.x,
+                    y: summary_area.y.saturating_add(2),
+                    width: summary_area.width,
+                    height: layout.browser_manager_rows.len() as u16,
+                };
+                frame.render_widget(List::new(manager_items), manager_area);
+            }
+            let summary_lines = app.browser_parameter_summary_lines();
+            let heading = app.browser_parameter_summary_heading();
             let mut lines = vec![Line::styled(
-                "Live",
+                heading,
                 Style::default()
                     .fg(palette.section_fg)
                     .add_modifier(Modifier::BOLD),
             )];
-            lines.extend(
-                app.browser_inspector_lines()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(Line::from),
-            );
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .style(Style::default().fg(palette.footer_fg))
-                    .wrap(Wrap { trim: false }),
-                summary_area,
-            );
+            lines.extend(summary_lines.into_iter().map(Line::from));
+            let summary_text_area = if layout.browser_mode_selector.is_some() {
+                Rect {
+                    x: summary_area.x,
+                    y: summary_area
+                        .y
+                        .saturating_add(2)
+                        .saturating_add(layout.browser_manager_rows.len() as u16)
+                        .saturating_add(u16::from(!layout.browser_manager_rows.is_empty())),
+                    width: summary_area.width,
+                    height: summary_area
+                        .height
+                        .saturating_sub(2)
+                        .saturating_sub(layout.browser_manager_rows.len() as u16)
+                        .saturating_sub(u16::from(!layout.browser_manager_rows.is_empty())),
+                }
+            } else {
+                summary_area
+            };
+            if summary_text_area.height > 0 {
+                frame.render_widget(
+                    Paragraph::new(lines)
+                        .style(Style::default().fg(palette.footer_fg))
+                        .wrap(Wrap { trim: false }),
+                    summary_text_area,
+                );
+            }
         }
         return;
     }
@@ -1390,6 +1487,34 @@ fn render_form_row_text(
                 )
             }
         }
+    }
+}
+
+fn render_manager_row_text(
+    row: &crate::pane_manager::PaneManagerRowView<crate::app::BrowserPaneSelection>,
+    focus: PaneFocus,
+    palette: Theme,
+    width: u16,
+) -> String {
+    let marker = if row.selected {
+        if focus == PaneFocus::Parameters {
+            palette.selection_glyph
+        } else {
+            palette.inactive_selection_glyph
+        }
+    } else {
+        " "
+    };
+    let prefix = format!("{marker} ");
+    let available = width as usize;
+    if available <= prefix.chars().count() {
+        fit_text(&prefix, available)
+    } else {
+        format!(
+            "{}{}",
+            prefix,
+            fit_text(&row.display_text(), available - prefix.chars().count())
+        )
     }
 }
 

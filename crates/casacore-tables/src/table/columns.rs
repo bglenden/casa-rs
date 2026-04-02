@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::collections::HashSet;
+
 use super::*;
 
 impl Table {
@@ -24,6 +26,11 @@ impl Table {
                 self.inner.set_schema(previous);
                 return Err(err);
             }
+            let undefined =
+                collect_undefined_cells_for_schema(self.rows()?, self.schema().unwrap());
+            self.inner
+                .undefined_cells_mut()?
+                .clone_from_slice(&undefined);
             Ok(())
         })();
         self.finish_write_operation(auto_unlock, result)
@@ -76,10 +83,17 @@ impl Table {
     pub fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
         let auto_unlock = self.begin_write_operation("add_row")?;
         let result = (|| {
+            let mut undefined = None;
             if let Some(schema) = self.schema() {
                 validate_row_against_schema(self.row_count(), &row, schema)?;
+                undefined = Some(undefined_columns_for_row(&row, schema));
             }
             self.inner.add_row(row)?;
+            if let Some(undefined) = undefined {
+                if let Some(set) = self.inner.undefined_for_row_mut(self.row_count() - 1)? {
+                    *set = undefined;
+                }
+            }
             Ok(())
         })();
         self.finish_write_operation(auto_unlock, result)
@@ -609,6 +623,27 @@ pub(super) fn validate_row_against_schema(
         }
     }
     Ok(())
+}
+
+pub(super) fn collect_undefined_cells_for_schema(
+    rows: &[RecordValue],
+    schema: &TableSchema,
+) -> Vec<HashSet<String>> {
+    rows.iter()
+        .map(|row| undefined_columns_for_row(row, schema))
+        .collect()
+}
+
+pub(super) fn undefined_columns_for_row(
+    row: &RecordValue,
+    schema: &TableSchema,
+) -> HashSet<String> {
+    schema
+        .columns()
+        .iter()
+        .filter(|column| column.options().undefined && row.get(column.name()).is_none())
+        .map(|column| column.name().to_string())
+        .collect()
 }
 
 pub(super) fn validate_cell_against_schema_column(

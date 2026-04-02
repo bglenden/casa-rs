@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#[path = "app/browser_manager.rs"]
+mod browser_manager;
+
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fmt;
@@ -54,6 +57,7 @@ use crate::movie_perf::{
     BackendTimingBreakdown, MovieFrameOutcome, MoviePerfContext, MoviePerfTracer,
     MoviePipelineState,
 };
+use crate::pane_manager::PaneManagerRowView;
 use crate::registry::{BrowserAppKind, RegistryApp};
 use crate::ui::UiLayout;
 
@@ -69,7 +73,8 @@ const IMAGE_MOVIE_BITMAP_CACHE_BYTES: usize = 512 * 1024 * 1024;
 const IMAGE_MOVIE_RENDER_POOL_QUEUE_CAPACITY: usize = 12;
 const IMAGE_MOVIE_PROTOCOL_POOL_QUEUE_CAPACITY: usize = 8;
 const IMAGE_MOVIE_PROTOCOL_LOOKAHEAD_OCCURRENCES: usize = 4;
-const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 8] = [
+const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 9] = [
+    "image_path",
     "blc",
     "trc",
     "inc",
@@ -131,6 +136,10 @@ enum BrowserAction {
     ToggleInvert,
     StartRegionShape,
     ClearRegion,
+    SaveRegionDefinition,
+    LoadNextRegionDefinition,
+    RenameRegionDefinition,
+    DeleteRegionDefinition,
     WriteRegionMask,
     PinProbe,
     RemovePinnedProbe,
@@ -186,6 +195,25 @@ enum BrowserRequest {
     UndoImageRegionVertex,
     CancelImageRegionShape,
     ClearImageRegion,
+    SaveImageRegionDefinition,
+    LoadNextImageRegionDefinition,
+    LoadImageRegionDefinition {
+        name: String,
+    },
+    RenameImageRegionDefinition {
+        name: String,
+        new_name: String,
+    },
+    DeleteImageRegionDefinition {
+        name: String,
+    },
+    SetImageDefaultMask {
+        name: String,
+    },
+    UnsetImageDefaultMask,
+    DeleteImageMask {
+        name: String,
+    },
     WriteImageRegionMask,
     SetImagePlaneContentMode {
         mode: ImagePlaneContentMode,
@@ -254,6 +282,14 @@ pub(crate) enum PaneFocus {
 pub(crate) enum FormSelection {
     Section(usize),
     Field(usize),
+    BrowserPane(BrowserPaneSelection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum BrowserPaneSelection {
+    Mode(ImageBrowserLeftPaneMode),
+    SavedRegion(usize),
+    Mask(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -524,6 +560,7 @@ pub(crate) struct AppState {
     running: Option<RunningState>,
     plot_workspace: PlotWorkspaceState,
     path_chooser: Option<PathChooserState>,
+    browser_mode_picker: Option<ImageBrowserLeftPaneMode>,
     browser_session: Option<BrowserSession>,
     spinner_frame: usize,
     dragging_divider: bool,
@@ -538,6 +575,7 @@ pub(crate) struct AppState {
     cached_result_text_area: Option<Rect>,
     cached_left_output_area: Option<Rect>,
     kitty_response_capture: Option<String>,
+    kitty_movie_store_invalidated: bool,
     last_click: Option<ClickState>,
     movie_perf: MoviePerfTracer,
     quit: bool,
@@ -577,6 +615,9 @@ struct ImageBrowserSessionState {
     snapshot: ImageBrowserSnapshot,
     viewport: ImageBrowserViewport,
     hscroll: u16,
+    left_pane_mode: ImageBrowserLeftPaneMode,
+    selected_saved_region_index: usize,
+    selected_mask_index: usize,
     selected_non_display_axis: usize,
     pinned_probes: Vec<ImagePinnedProbe>,
     selected_pinned_probe_id: Option<u64>,
@@ -615,6 +656,37 @@ impl ImagePlaneMode {
         match self {
             Self::Raster => "raster",
             Self::Spreadsheet => "spreadsheet",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ImageBrowserLeftPaneMode {
+    Live,
+    Regions,
+    Masks,
+}
+
+impl ImageBrowserLeftPaneMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Live => "Live",
+            Self::Regions => "Regions",
+            Self::Masks => "Masks",
+        }
+    }
+
+    pub(crate) fn all() -> [Self; 3] {
+        [Self::Live, Self::Regions, Self::Masks]
+    }
+
+    pub(crate) fn cycle(self, forward: bool) -> Self {
+        let all = Self::all();
+        let index = all.iter().position(|mode| *mode == self).unwrap_or(0);
+        if forward {
+            all[(index + 1) % all.len()]
+        } else {
+            all[(index + all.len() - 1) % all.len()]
         }
     }
 }
@@ -1284,6 +1356,50 @@ pub(crate) enum BrowserPaneFocus {
 }
 
 impl ImageBrowserSessionState {
+    fn clamp_left_pane_selection(&mut self) {
+        if let Some(active_name) = self.active_region_definition_name()
+            && let Some(index) = self
+                .snapshot
+                .saved_region_names
+                .iter()
+                .position(|name| name == active_name)
+        {
+            self.selected_saved_region_index = index;
+        } else {
+            self.selected_saved_region_index = self
+                .selected_saved_region_index
+                .min(self.snapshot.saved_region_names.len().saturating_sub(1));
+        }
+
+        if let Some(default_mask_name) = self.snapshot.default_mask_name.as_deref()
+            && let Some(index) = self
+                .snapshot
+                .mask_names
+                .iter()
+                .position(|name| name == default_mask_name)
+        {
+            self.selected_mask_index = index;
+        } else {
+            self.selected_mask_index = self
+                .selected_mask_index
+                .min(self.snapshot.mask_names.len().saturating_sub(1));
+        }
+    }
+
+    fn selected_saved_region_name(&self) -> Option<&str> {
+        self.snapshot
+            .saved_region_names
+            .get(self.selected_saved_region_index)
+            .map(String::as_str)
+    }
+
+    fn selected_mask_name(&self) -> Option<&str> {
+        self.snapshot
+            .mask_names
+            .get(self.selected_mask_index)
+            .map(String::as_str)
+    }
+
     fn raster_plane_active(&self) -> bool {
         self.snapshot.active_view == ImageBrowserView::Plane
             && self.plane_mode == ImagePlaneMode::Raster
@@ -1323,6 +1439,10 @@ impl ImageBrowserSessionState {
             .region
             .as_ref()
             .is_some_and(|region| region.editing)
+    }
+
+    fn active_region_definition_name(&self) -> Option<&str> {
+        self.snapshot.active_region_definition_name.as_deref()
     }
 
     fn selected_non_display_axis_state(
@@ -1743,6 +1863,7 @@ enum EditTarget {
     PlotExportPath,
     PlotExportWidth,
     PlotExportHeight,
+    RenameImageRegionDefinition,
 }
 
 #[derive(Debug)]
@@ -1899,6 +2020,7 @@ impl AppState {
             running: None,
             plot_workspace: PlotWorkspaceState::new(),
             path_chooser: None,
+            browser_mode_picker: None,
             browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
@@ -1913,6 +2035,7 @@ impl AppState {
             cached_result_text_area: None,
             cached_left_output_area: None,
             kitty_response_capture: None,
+            kitty_movie_store_invalidated: false,
             last_click: None,
             movie_perf: MoviePerfTracer::from_env(),
             quit: false,
@@ -1953,6 +2076,7 @@ impl AppState {
             running: None,
             plot_workspace: PlotWorkspaceState::new(),
             path_chooser: None,
+            browser_mode_picker: None,
             browser_session: None,
             spinner_frame: 0,
             dragging_divider: false,
@@ -1967,6 +2091,7 @@ impl AppState {
             cached_result_text_area: None,
             cached_left_output_area: None,
             kitty_response_capture: None,
+            kitty_movie_store_invalidated: false,
             last_click: None,
             movie_perf: MoviePerfTracer::from_env(),
             quit: false,
@@ -2556,6 +2681,37 @@ impl AppState {
             {
                 return Some(AppAction::Browser(BrowserAction::ClearRegion));
             }
+            KeyCode::Char('S')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::SaveRegionDefinition));
+            }
+            KeyCode::Char('O')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::LoadNextRegionDefinition));
+            }
+            KeyCode::Char('E')
+                if (key_event.modifiers.is_empty()
+                    || key_event.modifiers == KeyModifiers::SHIFT)
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::RenameRegionDefinition));
+            }
+            KeyCode::Delete
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && self.image_browser_session_state().is_some() =>
+            {
+                return Some(AppAction::Browser(BrowserAction::DeleteRegionDefinition));
+            }
             KeyCode::Char('M')
                 if (key_event.modifiers.is_empty()
                     || key_event.modifiers == KeyModifiers::SHIFT)
@@ -2687,6 +2843,10 @@ impl AppState {
         if self.consume_kitty_protocol_response_key(key_event) {
             return;
         }
+        if self.browser_mode_picker.is_some() {
+            self.handle_browser_mode_picker_key(key_event);
+            return;
+        }
         let action = self.resolve_key_action(key_event);
         if self.image_movie_active() {
             crate::movie_debug_log(format!(
@@ -2748,6 +2908,10 @@ impl AppState {
         if movie_input_fully_ignored_for_debug() && self.image_movie_active() {
             return;
         }
+        if self.browser_mode_picker.is_some() {
+            self.handle_browser_mode_picker_mouse(mouse_event, layout);
+            return;
+        }
         if self.should_stop_image_movie_for_mouse(mouse_event) {
             crate::movie_debug_log(format!(
                 "stop movie due to mouse event kind={:?} column={} row={} modifiers={:?}",
@@ -2807,6 +2971,17 @@ impl AppState {
             if matches!(key_event.code, KeyCode::Char('\\'))
                 && key_event.modifiers.contains(KeyModifiers::ALT)
             {
+                if let Some((image_id, placement_id)) =
+                    kitty_protocol_response_image_not_found(capture)
+                    && image_id >= crate::KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE
+                {
+                    self.kitty_movie_store_invalidated = true;
+                    crate::movie_debug_log(format!(
+                        "kitty movie cache miss image_id={} placement_id={} -> invalidate local stored-image cache",
+                        image_id,
+                        placement_id.unwrap_or(0)
+                    ));
+                }
                 crate::movie_debug_log(format!("kitty protocol response: {capture}"));
                 self.kitty_response_capture = None;
             }
@@ -2820,6 +2995,15 @@ impl AppState {
             return true;
         }
         false
+    }
+
+    pub(crate) fn take_kitty_movie_store_invalidated(&mut self) -> bool {
+        std::mem::take(&mut self.kitty_movie_store_invalidated)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kitty_movie_store_invalidated_for_test(&self) -> bool {
+        self.kitty_movie_store_invalidated
     }
 
     pub(crate) fn drain_execution_events(&mut self) {
@@ -2873,6 +3057,10 @@ impl AppState {
                 parts.push("c map".to_string());
                 parts.push("i invert".to_string());
                 parts.push("R region".to_string());
+                parts.push("S save".to_string());
+                parts.push("O load".to_string());
+                parts.push("E rename".to_string());
+                parts.push("Del delete".to_string());
                 parts.push("M mask".to_string());
                 parts.push("P pin".to_string());
                 parts.push("n/N probe".to_string());
@@ -3012,12 +3200,6 @@ impl AppState {
                     lines.push("Plane view: +/- zoom  0 reset view".to_string());
                     lines.push("Plane view: H/J/K/L pan view".to_string());
                     lines.push("Plane view: c cycle colormap  i invert".to_string());
-                    lines.push("Regions: R start/add polygon  Enter close polygon".to_string());
-                    lines.push(
-                        "Regions: Backspace undo vertex  Esc cancel open polygon".to_string(),
-                    );
-                    lines.push("Regions: D clear region  M write default mask".to_string());
-                    lines.push("Regions: polygons are stored in world coordinates".to_string());
                     lines.push(
                         "Display params: edit stretch/autoscale/clip_low/clip_high in Parameters"
                             .to_string(),
@@ -3032,6 +3214,24 @@ impl AppState {
                             .to_string(),
                     );
                     lines.push("Movie params: edit fps in Parameters (default 1)".to_string());
+                    lines.push(
+                        "Left pane: choose Live, Regions, or Masks with arrows or the mouse"
+                            .to_string(),
+                    );
+                    lines.push(
+                        "Regions: R start/add polygon  Enter close  Backspace undo  Esc cancel"
+                            .to_string(),
+                    );
+                    lines.push(
+                        "Regions: S save definition  O load next  E rename  Delete remove  M write default mask"
+                            .to_string(),
+                    );
+                    lines.push("Regions: D clear active region".to_string());
+                    lines.push(
+                        "Masks: Enter set selected default mask  Delete remove selected mask"
+                            .to_string(),
+                    );
+                    lines.push("Regions: polygons are stored in world coordinates".to_string());
                     lines.push("Spectrum view: follows the active plane cursor".to_string());
                     lines.push("Probes: P pin current  n/N cycle pinned  u remove".to_string());
                     lines.push(
@@ -3105,9 +3305,13 @@ impl AppState {
             )
         } else if self.browser_session.is_some() {
             if self.browser_uses_parameter_pane() {
+                let mode = self
+                    .image_browser_session_state()
+                    .map(|state| state.left_pane_mode.label().to_ascii_lowercase())
+                    .unwrap_or_else(|| "live".to_string());
                 match self.theme_mode() {
-                    ThemeMode::DenseAnsi => format!("Parameters [live]{focus}"),
-                    ThemeMode::RichPanel => format!("◈ Parameters [live]{focus}"),
+                    ThemeMode::DenseAnsi => format!("Parameters [{mode}]{focus}"),
+                    ThemeMode::RichPanel => format!("◈ Parameters [{mode}]{focus}"),
                 }
             } else {
                 match self.theme_mode() {
@@ -3164,6 +3368,10 @@ impl AppState {
             return self.browser_inspector_rows();
         }
 
+        if self.image_browser_session_state().is_some() {
+            return self.live_parameter_rows();
+        }
+
         let mut rows = Vec::new();
         for (section_index, section) in self.sections.iter().enumerate() {
             let visible_fields = section
@@ -3210,6 +3418,125 @@ impl AppState {
         }
 
         rows
+    }
+
+    fn live_parameter_rows(&self) -> Vec<FormRowView> {
+        let mut rows = Vec::new();
+        for (section_index, section) in self.sections.iter().enumerate() {
+            let visible_fields = section
+                .field_indices
+                .iter()
+                .copied()
+                .filter(|index| self.show_advanced || !self.fields[*index].schema.advanced)
+                .filter(|index| {
+                    let field_id = self.fields[*index].schema.id.as_str();
+                    IMEXPLORE_LIVE_PARAMETER_FIELD_IDS.contains(&field_id)
+                })
+                .collect::<Vec<_>>();
+            if visible_fields.is_empty() {
+                continue;
+            }
+
+            rows.push(FormRowView {
+                target: FormSelection::Section(section_index),
+                text: section.name.clone(),
+                kind: FormRowKind::Section {
+                    collapsed: section.collapsed,
+                },
+                selected: self.selected_form == FormSelection::Section(section_index),
+            });
+
+            if section.collapsed {
+                continue;
+            }
+
+            for field_index in visible_fields {
+                rows.push(FormRowView {
+                    target: FormSelection::Field(field_index),
+                    text: self.fields[field_index]
+                        .render_line(self.edit_state.as_ref(), field_index),
+                    kind: FormRowKind::Field,
+                    selected: self.selected_form == FormSelection::Field(field_index),
+                });
+            }
+        }
+        rows
+    }
+
+    pub(crate) fn browser_parameter_summary_lines(&self) -> Vec<String> {
+        let Some(state) = self.image_browser_session_state() else {
+            return Vec::new();
+        };
+        match state.left_pane_mode {
+            ImageBrowserLeftPaneMode::Live => self.browser_inspector_lines().unwrap_or_default(),
+            ImageBrowserLeftPaneMode::Regions => {
+                let selected = state
+                    .selected_saved_region_name()
+                    .map(|name| format!("Selected: {name}"))
+                    .unwrap_or_else(|| "Selected: none".to_string());
+                let active = state
+                    .active_region_definition_name()
+                    .map(|name| format!("Loaded: {name}"))
+                    .unwrap_or_else(|| "Loaded: none".to_string());
+                let mut lines = vec![selected, active];
+                if let Some(stats) = state
+                    .snapshot
+                    .region
+                    .as_ref()
+                    .and_then(|region| region.stats.as_ref())
+                {
+                    lines.push(format!("Pixels: {}", stats.pixel_count));
+                    lines.push(format!(
+                        "Mean: {}",
+                        format_numeric_value_with_unit(stats.mean, &stats.value_unit)
+                    ));
+                    lines.push(format!(
+                        "Sigma: {}",
+                        format_numeric_value_with_unit(stats.sigma, &stats.value_unit)
+                    ));
+                    lines.push(format!(
+                        "Median: {}",
+                        format_numeric_value_with_unit(stats.median, &stats.value_unit)
+                    ));
+                    lines.push(format!(
+                        "Min / Max: {} / {}",
+                        format_numeric_value_with_unit(stats.min, &stats.value_unit),
+                        format_numeric_value_with_unit(stats.max, &stats.value_unit)
+                    ));
+                }
+                lines.push("Click [ ] to load or clear a saved region".to_string());
+                lines.push("Click the name or press E to rename it".to_string());
+                lines.push("S save active region".to_string());
+                lines.push("Delete remove selected region".to_string());
+                lines.push("O cycle next saved region  M write mask".to_string());
+                lines
+            }
+            ImageBrowserLeftPaneMode::Masks => {
+                let selected = state
+                    .selected_mask_name()
+                    .map(|name| format!("Selected: {name}"))
+                    .unwrap_or_else(|| "Selected: none".to_string());
+                let default = state
+                    .snapshot
+                    .default_mask_name
+                    .as_ref()
+                    .map(|name| format!("Default: {name}"))
+                    .unwrap_or_else(|| "Default: none".to_string());
+                vec![
+                    selected,
+                    default,
+                    "Click [ ] to set or clear the default mask".to_string(),
+                    "Delete remove selected mask".to_string(),
+                    "M writes a new mask from the active region".to_string(),
+                ]
+            }
+        }
+    }
+
+    pub(crate) fn browser_parameter_summary_heading(&self) -> String {
+        self.image_browser_session_state()
+            .map(|state| state.left_pane_mode.label().to_string())
+            .unwrap_or_else(|| "Live".to_string())
     }
 
     pub(crate) fn active_result_tab(&self) -> ResultTab {
@@ -3839,6 +4166,16 @@ impl AppState {
         self.image_browser_session_state()
             .map(|state| state.show_live_reticle)
             .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_plane_cursor_sample_for_test(
+        &self,
+        layout: &UiLayout,
+        font_size: (u16, u16),
+    ) -> Option<(usize, usize)> {
+        self.current_image_plane_render_request(layout, font_size)
+            .and_then(|request| request.input.cursor_sample)
     }
 
     #[cfg(test)]
@@ -5135,6 +5472,25 @@ impl AppState {
             BrowserAction::ToggleInvert => self.toggle_image_plane_invert(),
             BrowserAction::StartRegionShape => self.start_image_region_shape(),
             BrowserAction::ClearRegion => self.clear_image_region(),
+            BrowserAction::SaveRegionDefinition => self.save_image_region_definition(),
+            BrowserAction::LoadNextRegionDefinition => self.load_next_image_region_definition(),
+            BrowserAction::RenameRegionDefinition => {
+                if self
+                    .image_browser_session_state()
+                    .is_some_and(|state| state.left_pane_mode == ImageBrowserLeftPaneMode::Regions)
+                {
+                    self.rename_image_region_definition();
+                }
+            }
+            BrowserAction::DeleteRegionDefinition => match self.image_browser_session_state() {
+                Some(state) if state.left_pane_mode == ImageBrowserLeftPaneMode::Regions => {
+                    self.delete_image_region_definition();
+                }
+                Some(state) if state.left_pane_mode == ImageBrowserLeftPaneMode::Masks => {
+                    self.delete_selected_image_mask();
+                }
+                _ => {}
+            },
             BrowserAction::WriteRegionMask => self.write_image_region_mask(),
             BrowserAction::PinProbe => self.pin_current_image_probe(),
             BrowserAction::RemovePinnedProbe => self.remove_selected_image_probe(),
@@ -5315,6 +5671,35 @@ impl AppState {
             return;
         }
         self.send_browser_command(BrowserRequest::ClearImageRegion);
+    }
+
+    fn save_image_region_definition(&mut self) {
+        let Some(state) = self.image_browser_session_state() else {
+            return;
+        };
+        if !state.region_active() {
+            self.result.status_line = "No active region to save.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        self.send_browser_command(BrowserRequest::SaveImageRegionDefinition);
+    }
+
+    fn load_next_image_region_definition(&mut self) {
+        if self.image_browser_session_state().is_none() {
+            return;
+        }
+        self.send_browser_command(BrowserRequest::LoadNextImageRegionDefinition);
+    }
+
+    fn select_image_browser_left_pane_mode(&mut self, mode: ImageBrowserLeftPaneMode) {
+        let Some(state) = self.image_browser_session_state_mut() else {
+            return;
+        };
+        state.left_pane_mode = mode;
+        state.clamp_left_pane_selection();
+        self.browser_mode_picker = None;
+        self.selected_form = FormSelection::BrowserPane(BrowserPaneSelection::Mode(mode));
     }
 
     fn write_image_region_mask(&mut self) {
@@ -5696,6 +6081,7 @@ impl AppState {
             EditTarget::PlotExportHeight => {
                 self.advance_plot_edit(PlotControlTarget::ExportHeight, forward)
             }
+            EditTarget::RenameImageRegionDefinition => {}
         }
     }
 
@@ -5705,7 +6091,7 @@ impl AppState {
             .into_iter()
             .filter_map(|target| match target {
                 FormSelection::Field(index) => Some(index),
-                FormSelection::Section(_) => None,
+                FormSelection::Section(_) | FormSelection::BrowserPane(_) => None,
             })
             .collect::<Vec<_>>();
         let Some(position) = targets
@@ -6010,6 +6396,16 @@ impl AppState {
             return;
         }
 
+        if layout.in_browser_mode_selector(mouse_event.column, mouse_event.row) {
+            self.pane_focus = PaneFocus::Parameters;
+            self.open_browser_mode_picker();
+            self.last_click = Some(ClickState {
+                target: ClickTarget::Pane(PaneFocus::Parameters),
+                at: Instant::now(),
+            });
+            return;
+        }
+
         if let Some(target) = layout.form_target_at(mouse_event.column, mouse_event.row) {
             if self.browser_uses_parameter_pane() {
                 self.pane_focus = PaneFocus::Parameters;
@@ -6021,6 +6417,7 @@ impl AppState {
             let click_target = match target {
                 FormSelection::Section(index) => ClickTarget::Section(index),
                 FormSelection::Field(index) => ClickTarget::Field(index),
+                FormSelection::BrowserPane(_) => ClickTarget::Pane(PaneFocus::Parameters),
             };
             let double_click = self.last_click.is_some_and(|last| {
                 last.target == click_target && last.at.elapsed() <= DOUBLE_CLICK_WINDOW
@@ -6042,6 +6439,32 @@ impl AppState {
                         self.open_path_chooser(field_index);
                     } else if double_click {
                         self.enter_edit_mode(field_index);
+                    }
+                }
+                FormSelection::BrowserPane(target) => {
+                    self.selected_form = FormSelection::BrowserPane(target);
+                    match target {
+                        BrowserPaneSelection::SavedRegion(index) => {
+                            if self.browser_pane_checkbox_hit(index, mouse_event.column, layout) {
+                                self.activate_browser_pane_selection(target);
+                            } else if let Some(state) = self.image_browser_session_state_mut() {
+                                state.left_pane_mode = ImageBrowserLeftPaneMode::Regions;
+                                state.selected_saved_region_index = index;
+                                self.rename_image_region_definition();
+                            }
+                        }
+                        BrowserPaneSelection::Mask(index) => {
+                            if let Some(state) = self.image_browser_session_state_mut() {
+                                state.left_pane_mode = ImageBrowserLeftPaneMode::Masks;
+                                state.selected_mask_index = index;
+                            }
+                            self.activate_browser_pane_selection(target);
+                        }
+                        BrowserPaneSelection::Mode(mode) => {
+                            self.selected_form =
+                                FormSelection::BrowserPane(BrowserPaneSelection::Mode(mode));
+                            self.open_browser_mode_picker();
+                        }
                     }
                 }
             }
@@ -6278,6 +6701,7 @@ impl AppState {
                     FormValue::Choice { .. } => self.cycle_field_choice(field_index, true),
                 }
             }
+            FormSelection::BrowserPane(target) => self.activate_browser_pane_selection(target),
         }
     }
 
@@ -6317,8 +6741,16 @@ impl AppState {
     }
 
     fn adjust_selected_choice(&mut self, forward: bool) {
-        if let FormSelection::Field(field_index) = self.selected_form {
-            self.cycle_field_choice(field_index, forward);
+        match self.selected_form {
+            FormSelection::Field(field_index) => self.cycle_field_choice(field_index, forward),
+            FormSelection::BrowserPane(BrowserPaneSelection::Mode(_)) => {
+                if self.browser_mode_picker.is_none() {
+                    self.open_browser_mode_picker();
+                } else {
+                    self.cycle_browser_mode_picker(forward);
+                }
+            }
+            FormSelection::Section(_) | FormSelection::BrowserPane(_) => {}
         }
     }
 
@@ -6828,33 +7260,34 @@ impl AppState {
                             };
                             self.edit_state = None;
                             self.pane_focus = PaneFocus::Result;
+                            let mut state = ImageBrowserSessionState {
+                                client,
+                                snapshot,
+                                viewport,
+                                hscroll: 0,
+                                left_pane_mode: ImageBrowserLeftPaneMode::Live,
+                                selected_saved_region_index: 0,
+                                selected_mask_index: 0,
+                                selected_non_display_axis: 0,
+                                pinned_probes: Vec::new(),
+                                selected_pinned_probe_id: None,
+                                next_pinned_probe_id: 1,
+                                restoring_selected_pinned_probe: false,
+                                show_live_reticle: true,
+                                plane_mode: ImagePlaneMode::Raster,
+                                plane_colormap: ImagePlaneColormap::Grayscale,
+                                plane_invert: false,
+                                panel: None,
+                                spectrum_panel: None,
+                                snapshot_generation: 1,
+                                movie: ImageMovieState::with_fps(self.current_image_movie_fps()),
+                                movie_scheduler: None,
+                                movie_frame_seq: None,
+                            };
+                            state.clamp_left_pane_selection();
                             self.browser_session = Some(BrowserSession {
                                 root_path: path,
-                                kind: BrowserSessionKind::Image(Box::new(
-                                    ImageBrowserSessionState {
-                                        client,
-                                        snapshot,
-                                        viewport,
-                                        hscroll: 0,
-                                        selected_non_display_axis: 0,
-                                        pinned_probes: Vec::new(),
-                                        selected_pinned_probe_id: None,
-                                        next_pinned_probe_id: 1,
-                                        restoring_selected_pinned_probe: false,
-                                        show_live_reticle: true,
-                                        plane_mode: ImagePlaneMode::Raster,
-                                        plane_colormap: ImagePlaneColormap::Grayscale,
-                                        plane_invert: false,
-                                        panel: None,
-                                        spectrum_panel: None,
-                                        snapshot_generation: 1,
-                                        movie: ImageMovieState::with_fps(
-                                            self.current_image_movie_fps(),
-                                        ),
-                                        movie_scheduler: None,
-                                        movie_frame_seq: None,
-                                    },
-                                )),
+                                kind: BrowserSessionKind::Image(Box::new(state)),
                             });
                             if let Some(parameters) = self
                                 .browser_session()
@@ -6981,6 +7414,14 @@ impl AppState {
                         | BrowserRequest::UndoImageRegionVertex
                         | BrowserRequest::CancelImageRegionShape
                         | BrowserRequest::ClearImageRegion
+                        | BrowserRequest::SaveImageRegionDefinition
+                        | BrowserRequest::LoadNextImageRegionDefinition
+                        | BrowserRequest::LoadImageRegionDefinition { .. }
+                        | BrowserRequest::RenameImageRegionDefinition { .. }
+                        | BrowserRequest::DeleteImageRegionDefinition { .. }
+                        | BrowserRequest::SetImageDefaultMask { .. }
+                        | BrowserRequest::UnsetImageDefaultMask
+                        | BrowserRequest::DeleteImageMask { .. }
                         | BrowserRequest::WriteImageRegionMask
                         | BrowserRequest::SetImagePlaneContentMode { .. }
                         | BrowserRequest::SetImageViewParameters { .. } => None,
@@ -7152,6 +7593,34 @@ impl AppState {
                             Some(ImageBrowserCommand::CancelRegionShape)
                         }
                         BrowserRequest::ClearImageRegion => Some(ImageBrowserCommand::ClearRegion),
+                        BrowserRequest::SaveImageRegionDefinition => {
+                            Some(ImageBrowserCommand::SaveRegionDefinition)
+                        }
+                        BrowserRequest::LoadNextImageRegionDefinition => {
+                            Some(ImageBrowserCommand::LoadNextRegionDefinition)
+                        }
+                        BrowserRequest::LoadImageRegionDefinition { ref name } => {
+                            Some(ImageBrowserCommand::LoadRegionDefinition { name: name.clone() })
+                        }
+                        BrowserRequest::RenameImageRegionDefinition {
+                            ref name,
+                            ref new_name,
+                        } => Some(ImageBrowserCommand::RenameRegionDefinition {
+                            name: name.clone(),
+                            new_name: new_name.clone(),
+                        }),
+                        BrowserRequest::DeleteImageRegionDefinition { ref name } => {
+                            Some(ImageBrowserCommand::DeleteRegionDefinition { name: name.clone() })
+                        }
+                        BrowserRequest::SetImageDefaultMask { ref name } => {
+                            Some(ImageBrowserCommand::SetDefaultMask { name: name.clone() })
+                        }
+                        BrowserRequest::UnsetImageDefaultMask => {
+                            Some(ImageBrowserCommand::UnsetDefaultMask)
+                        }
+                        BrowserRequest::DeleteImageMask { ref name } => {
+                            Some(ImageBrowserCommand::DeleteMask { name: name.clone() })
+                        }
                         BrowserRequest::WriteImageRegionMask => {
                             Some(ImageBrowserCommand::WriteRegionMask {
                                 name: None,
@@ -7215,6 +7684,7 @@ impl AppState {
                                 state.movie_frame_seq = Some(frame_seq);
                             }
                             state.snapshot = snapshot;
+                            state.clamp_left_pane_selection();
                             state.clamp_selected_non_display_axis();
                             if !state.restoring_selected_pinned_probe {
                                 state.sync_selected_pinned_probe_from_snapshot();
@@ -7702,8 +8172,8 @@ impl AppState {
             return None;
         }
         let raster = snapshot.plane.clone()?;
-        let cursor = options
-            .show_live_reticle
+        let show_live_reticle = options.show_live_reticle && snapshot.region.is_none();
+        let cursor = show_live_reticle
             .then(|| image_plane_sample_cursor(snapshot))
             .flatten();
         let sampled_shape = image_plane_sampled_shape(snapshot);
@@ -7714,7 +8184,7 @@ impl AppState {
             .unwrap_or_default();
         let render_signature = image_plane_render_signature(
             snapshot,
-            options.show_live_reticle,
+            show_live_reticle,
             options.colormap,
             options.invert,
             options.overlay_markers,
@@ -8643,6 +9113,27 @@ impl AppState {
                     self.result.status_kind = StatusKind::Error;
                 }
             },
+            EditTarget::RenameImageRegionDefinition => {
+                let new_name = edit_state.buffer.trim();
+                if new_name.is_empty() {
+                    self.result.status_line = "Saved region name cannot be empty.".to_string();
+                    self.result.status_kind = StatusKind::Error;
+                } else if let Some(name) = self
+                    .image_browser_session_state()
+                    .and_then(|state| state.selected_saved_region_name())
+                    .map(str::to_string)
+                {
+                    self.send_browser_command(BrowserRequest::RenameImageRegionDefinition {
+                        name,
+                        new_name: new_name.to_string(),
+                    });
+                    self.result.status_line = format!("Renaming saved region to {new_name}...");
+                    self.result.status_kind = StatusKind::Info;
+                } else {
+                    self.result.status_line = "No saved region selected.".to_string();
+                    self.result.status_kind = StatusKind::Warning;
+                }
+            }
         }
     }
 
@@ -10087,6 +10578,25 @@ fn kitty_protocol_response_char(key_event: KeyEvent) -> Option<char> {
     }
 }
 
+fn kitty_protocol_response_image_not_found(response: &str) -> Option<(u32, Option<u32>)> {
+    let response = response.strip_suffix('\\').unwrap_or(response);
+    let payload = response.strip_prefix("_G")?;
+    let (fields, status) = payload.split_once(';')?;
+    if !status.starts_with("ENOENT:") {
+        return None;
+    }
+    let mut image_id = None;
+    let mut placement_id = None;
+    for field in fields.split(',') {
+        if let Some(raw) = field.strip_prefix("i=") {
+            image_id = raw.parse::<u32>().ok();
+        } else if let Some(raw) = field.strip_prefix("p=") {
+            placement_id = raw.parse::<u32>().ok();
+        }
+    }
+    image_id.map(|id| (id, placement_id))
+}
+
 fn image_plane_column_count(snapshot: &ImageBrowserSnapshot) -> Option<usize> {
     let header = snapshot.content_lines.first()?;
     let pipe_index = header.find('|')?;
@@ -10399,12 +10909,6 @@ fn image_movie_animation_signature(
     }
     .hash(&mut hasher);
     invert.hash(&mut hasher);
-    if let Some(cursor) = snapshot.plane_cursor.as_ref() {
-        cursor.sampled_x.hash(&mut hasher);
-        cursor.sampled_y.hash(&mut hasher);
-        cursor.pixel_x.hash(&mut hasher);
-        cursor.pixel_y.hash(&mut hasher);
-    }
     for axis in &snapshot.display_axes {
         axis.axis.hash(&mut hasher);
         axis.name.hash(&mut hasher);
@@ -10415,17 +10919,9 @@ fn image_movie_animation_signature(
         axis.sampled_len.hash(&mut hasher);
         axis.world_increment.map(f64::to_bits).hash(&mut hasher);
     }
-    if let Some(region) = snapshot.region.as_ref() {
-        region.label.hash(&mut hasher);
-        region.editing.hash(&mut hasher);
-        for shape in &region.overlay_shapes {
-            shape.closed.hash(&mut hasher);
-            for vertex in &shape.vertices {
-                vertex.sampled_x.to_bits().hash(&mut hasher);
-                vertex.sampled_y.to_bits().hash(&mut hasher);
-            }
-        }
-    }
+    // Keep the direct-movie overlay key stable across ordinary frame stepping. Interactive
+    // cursor and region edits already stop movie playback, so they should not invalidate the
+    // cached terminal overlay while the movie is running.
     hasher.finish()
 }
 
@@ -10970,7 +11466,7 @@ fn format_world_axis_probe_value(axis_name: &str, unit: &str, value: f64) -> Str
 }
 
 fn format_numeric_value_with_unit(value: f64, unit: &str) -> String {
-    format_frequency_quantity_auto(value, unit).unwrap_or_else(|| format!("{value} {unit}"))
+    format_quantity_auto(value, unit, 6).unwrap_or_else(|| format!("{value} {unit}"))
 }
 
 fn format_profile_axis_label(profile: &ImageProfilePayload) -> String {
@@ -11038,27 +11534,18 @@ fn format_profile_selected_label(
     format!("{world} -> {value}")
 }
 
-fn format_frequency_quantity_auto(value: f64, unit: &str) -> Option<String> {
+fn format_quantity_auto(value: f64, unit: &str, decimals: usize) -> Option<String> {
     let quantity = Quantity::new(value, unit).ok()?;
-    let hz = Unit::new("Hz").ok()?;
-    if !quantity.unit().conformant(&hz) {
-        return None;
-    }
-    let abs_hz = quantity.get_value_in(&hz).ok()?.abs();
-    let display_unit = if abs_hz >= 1e9 {
-        "GHz"
-    } else if abs_hz >= 1e6 {
-        "MHz"
-    } else if abs_hz >= 1e3 {
-        "kHz"
+    let scaled = quantity.auto_scaled().ok()?;
+    if scaled.unit().name().is_empty() {
+        Some(trim_float_text(format!("{:.*}", decimals, scaled.value())))
     } else {
-        "Hz"
-    };
-    let converted = quantity.get_value_in(&Unit::new(display_unit).ok()?).ok()?;
-    Some(format!(
-        "{} {display_unit}",
-        trim_float_text(format!("{converted:.6}"))
-    ))
+        Some(format!(
+            "{} {}",
+            trim_float_text(format!("{:.*}", decimals, scaled.value())),
+            scaled.unit().name()
+        ))
+    }
 }
 
 fn trim_float_text(mut text: String) -> String {
@@ -11606,6 +12093,10 @@ mod tests {
             }),
             non_display_axes: Vec::new(),
             region: None,
+            saved_region_names: Vec::new(),
+            active_region_definition_name: None,
+            mask_names: Vec::new(),
+            default_mask_name: None,
             backend_timing: None,
             capabilities: ImageBrowserCapabilities {
                 renderable_plane: true,

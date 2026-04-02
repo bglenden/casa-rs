@@ -5,6 +5,8 @@ use casacore_tables::{EndianFormat, Table, TableError, TableOptions, TableSchema
 use casacore_types::{RecordValue, Value};
 
 use crate::CppTableFixture;
+#[cfg(has_casacore_cpp)]
+use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
 
 /// Which storage manager to use for the fixture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,6 +277,8 @@ fn run_rc_with_endian(
     };
     let dir = tempfile::tempdir().expect("create temp dir");
     let table_path = dir.path().join("rc_endian_table");
+    #[cfg(has_casacore_cpp)]
+    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
 
     let table = match build_table_from_fixture(fixture) {
         Ok(t) => t,
@@ -295,7 +299,17 @@ fn run_rc_with_endian(
         };
     }
 
-    match crate::cpp_table_verify(cpp_fix, &table_path) {
+    let verify_result = {
+        #[cfg(has_casacore_cpp)]
+        {
+            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            crate::cpp_table_verify(cpp_fix, &table_path)
+        }
+    };
+    match verify_result {
         Ok(()) => MatrixCellResult {
             label: leak_label(label),
             passed: true,
@@ -336,8 +350,19 @@ fn run_rr(fixture: &TableFixture, manager: ManagerKind) -> MatrixCellResult {
 fn run_cc(cpp_fix: CppTableFixture) -> MatrixCellResult {
     let dir = tempfile::tempdir().expect("create temp dir for CC");
     let table_path = dir.path().join("cc_table");
+    #[cfg(has_casacore_cpp)]
+    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
 
-    let write_result = crate::cpp_table_write(cpp_fix, &table_path);
+    let write_result = {
+        #[cfg(has_casacore_cpp)]
+        {
+            crate::cpp_table_write_unlocked(cpp_fix, &table_path)
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            crate::cpp_table_write(cpp_fix, &table_path)
+        }
+    };
     if let Err(msg) = write_result {
         return MatrixCellResult {
             label: "CC",
@@ -346,7 +371,17 @@ fn run_cc(cpp_fix: CppTableFixture) -> MatrixCellResult {
         };
     }
 
-    match crate::cpp_table_verify(cpp_fix, &table_path) {
+    let verify_result = {
+        #[cfg(has_casacore_cpp)]
+        {
+            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            crate::cpp_table_verify(cpp_fix, &table_path)
+        }
+    };
+    match verify_result {
         Ok(()) => MatrixCellResult {
             label: "CC",
             passed: true,
@@ -367,8 +402,19 @@ fn run_cr(
 ) -> MatrixCellResult {
     let dir = tempfile::tempdir().expect("create temp dir for CR");
     let table_path = dir.path().join("cr_table");
+    #[cfg(has_casacore_cpp)]
+    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
 
-    let write_result = crate::cpp_table_write(cpp_fix, &table_path);
+    let write_result = {
+        #[cfg(has_casacore_cpp)]
+        {
+            crate::cpp_table_write_unlocked(cpp_fix, &table_path)
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            crate::cpp_table_write(cpp_fix, &table_path)
+        }
+    };
     if let Err(msg) = write_result {
         return MatrixCellResult {
             label: "CR",
@@ -398,6 +444,8 @@ fn run_rc(
 ) -> MatrixCellResult {
     let dir = tempfile::tempdir().expect("create temp dir for RC");
     let table_path = dir.path().join("rc_table");
+    #[cfg(has_casacore_cpp)]
+    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
 
     let table = match build_table_from_fixture(fixture) {
         Ok(t) => t,
@@ -418,7 +466,17 @@ fn run_rc(
         };
     }
 
-    match crate::cpp_table_verify(cpp_fix, &table_path) {
+    let verify_result = {
+        #[cfg(has_casacore_cpp)]
+        {
+            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            crate::cpp_table_verify(cpp_fix, &table_path)
+        }
+    };
+    match verify_result {
         Ok(()) => MatrixCellResult {
             label: "RC",
             passed: true,

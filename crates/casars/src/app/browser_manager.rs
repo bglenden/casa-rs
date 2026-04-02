@@ -1,0 +1,341 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use super::*;
+
+impl AppState {
+    pub(crate) fn browser_mode_picker_active(&self) -> bool {
+        self.browser_mode_picker.is_some()
+    }
+
+    pub(crate) fn browser_mode_picker_selection(&self) -> Option<ImageBrowserLeftPaneMode> {
+        self.browser_mode_picker
+    }
+
+    pub(crate) fn image_browser_left_pane_mode_for_ui(&self) -> ImageBrowserLeftPaneMode {
+        self.image_browser_session_state()
+            .map(|state| state.left_pane_mode)
+            .unwrap_or(ImageBrowserLeftPaneMode::Live)
+    }
+
+    pub(super) fn browser_pane_checkbox_hit(
+        &self,
+        index: usize,
+        column: u16,
+        layout: &UiLayout,
+    ) -> bool {
+        let Some(state) = self.image_browser_session_state() else {
+            return false;
+        };
+        let target = match state.left_pane_mode {
+            ImageBrowserLeftPaneMode::Regions => {
+                FormSelection::BrowserPane(BrowserPaneSelection::SavedRegion(index))
+            }
+            ImageBrowserLeftPaneMode::Masks => {
+                FormSelection::BrowserPane(BrowserPaneSelection::Mask(index))
+            }
+            ImageBrowserLeftPaneMode::Live => return false,
+        };
+        let Some(row) = layout
+            .form_rows
+            .iter()
+            .chain(layout.browser_manager_rows.iter())
+            .find(|row| row.target == target)
+        else {
+            return false;
+        };
+        crate::pane_manager::checkbox_hit(column, row.rect, true)
+    }
+
+    pub(super) fn handle_browser_mode_picker_key(&mut self, key_event: KeyEvent) {
+        if key_event.kind != KeyEventKind::Press {
+            return;
+        }
+        match key_event.code {
+            KeyCode::Esc if key_event.modifiers.is_empty() => self.close_browser_mode_picker(),
+            KeyCode::Enter | KeyCode::Char(' ') if key_event.modifiers.is_empty() => {
+                self.commit_browser_mode_picker();
+            }
+            KeyCode::Up | KeyCode::Char('k')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_browser_mode_picker(false);
+            }
+            KeyCode::Down | KeyCode::Char('j')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_browser_mode_picker(true);
+            }
+            KeyCode::Left | KeyCode::Char('h')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_browser_mode_picker(false);
+            }
+            KeyCode::Right | KeyCode::Char('l')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_browser_mode_picker(true);
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn handle_browser_mode_picker_mouse(
+        &mut self,
+        mouse_event: MouseEvent,
+        layout: &UiLayout,
+    ) {
+        let area =
+            crate::ui::browser_mode_picker_area(layout.browser_mode_selector, layout.form_block);
+        let list_area = crate::ui::browser_mode_picker_list_area(area);
+        if mouse_event.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if !rect_contains(area, mouse_event.column, mouse_event.row) {
+            self.close_browser_mode_picker();
+            return;
+        }
+        if !rect_contains(list_area, mouse_event.column, mouse_event.row) {
+            return;
+        }
+        let Some(row_offset) = crate::pane_manager::popup_index_at(
+            list_area,
+            mouse_event.column,
+            mouse_event.row,
+            ImageBrowserLeftPaneMode::all().len(),
+        ) else {
+            return;
+        };
+        let Some(mode) = ImageBrowserLeftPaneMode::all().get(row_offset).copied() else {
+            return;
+        };
+        self.browser_mode_picker = Some(mode);
+        self.commit_browser_mode_picker();
+    }
+
+    pub(crate) fn browser_manager_rows(&self) -> Vec<PaneManagerRowView<BrowserPaneSelection>> {
+        let Some(state) = self.image_browser_session_state() else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+
+        match state.left_pane_mode {
+            ImageBrowserLeftPaneMode::Live => {}
+            ImageBrowserLeftPaneMode::Regions => {
+                if state.snapshot.saved_region_names.is_empty() {
+                    rows.push(PaneManagerRowView {
+                        target: BrowserPaneSelection::Mode(ImageBrowserLeftPaneMode::Regions),
+                        label: "No saved regions.".to_string(),
+                        checked: None,
+                        selected: false,
+                    });
+                } else {
+                    rows.extend(state.snapshot.saved_region_names.iter().enumerate().map(
+                        |(index, name)| {
+                            let selected = self.selected_form
+                                == FormSelection::BrowserPane(BrowserPaneSelection::SavedRegion(
+                                    index,
+                                ));
+                            let active =
+                                state.active_region_definition_name() == Some(name.as_str());
+                            let row_name = if selected
+                                && self.edit_state.as_ref().is_some_and(|edit| {
+                                    edit.target == EditTarget::RenameImageRegionDefinition
+                                }) {
+                                self.edit_state
+                                    .as_ref()
+                                    .map(|edit| format!("{}|", edit.buffer))
+                                    .unwrap_or_else(|| name.to_string())
+                            } else {
+                                name.to_string()
+                            };
+                            PaneManagerRowView {
+                                target: BrowserPaneSelection::SavedRegion(index),
+                                label: row_name,
+                                checked: Some(active),
+                                selected,
+                            }
+                        },
+                    ));
+                }
+            }
+            ImageBrowserLeftPaneMode::Masks => {
+                if state.snapshot.mask_names.is_empty() {
+                    rows.push(PaneManagerRowView {
+                        target: BrowserPaneSelection::Mode(ImageBrowserLeftPaneMode::Masks),
+                        label: "No masks.".to_string(),
+                        checked: None,
+                        selected: false,
+                    });
+                } else {
+                    rows.extend(state.snapshot.mask_names.iter().enumerate().map(
+                        |(index, name)| {
+                            let selected = self.selected_form
+                                == FormSelection::BrowserPane(BrowserPaneSelection::Mask(index));
+                            let default =
+                                state.snapshot.default_mask_name.as_deref() == Some(name.as_str());
+                            PaneManagerRowView {
+                                target: BrowserPaneSelection::Mask(index),
+                                label: name.clone(),
+                                checked: Some(default),
+                                selected,
+                            }
+                        },
+                    ));
+                }
+            }
+        }
+        rows
+    }
+
+    pub(super) fn open_browser_mode_picker(&mut self) {
+        let Some(mode) = self
+            .image_browser_session_state()
+            .map(|state| state.left_pane_mode)
+        else {
+            return;
+        };
+        self.browser_mode_picker = Some(mode);
+        self.selected_form = FormSelection::BrowserPane(BrowserPaneSelection::Mode(mode));
+    }
+
+    pub(super) fn cycle_browser_mode_picker(&mut self, forward: bool) {
+        let Some(mode) = self.browser_mode_picker else {
+            return;
+        };
+        self.browser_mode_picker = Some(mode.cycle(forward));
+    }
+
+    pub(super) fn commit_browser_mode_picker(&mut self) {
+        let Some(mode) = self.browser_mode_picker else {
+            return;
+        };
+        self.select_image_browser_left_pane_mode(mode);
+    }
+
+    pub(super) fn close_browser_mode_picker(&mut self) {
+        self.browser_mode_picker = None;
+    }
+
+    pub(super) fn load_selected_image_region_definition(&mut self) {
+        let Some(state) = self.image_browser_session_state() else {
+            return;
+        };
+        let Some(name) = state.selected_saved_region_name().map(str::to_string) else {
+            self.result.status_line = "No saved region selected.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.send_browser_command(BrowserRequest::LoadImageRegionDefinition { name: name.clone() });
+        self.result.status_line = format!("Loading saved region {name}...");
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    pub(super) fn rename_image_region_definition(&mut self) {
+        let Some(state) = self.image_browser_session_state() else {
+            return;
+        };
+        let Some(name) = state.selected_saved_region_name() else {
+            self.result.status_line = "Select a saved region before renaming it.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.edit_state = Some(EditState {
+            target: EditTarget::RenameImageRegionDefinition,
+            buffer: name.to_string(),
+        });
+    }
+
+    pub(super) fn delete_image_region_definition(&mut self) {
+        let Some(state) = self.image_browser_session_state() else {
+            return;
+        };
+        let Some(name) = state.selected_saved_region_name().map(str::to_string) else {
+            self.result.status_line = "Select a saved region before deleting it.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.send_browser_command(BrowserRequest::DeleteImageRegionDefinition {
+            name: name.clone(),
+        });
+        self.result.status_line = format!("Deleting saved region {name}...");
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    pub(super) fn set_selected_image_mask_default(&mut self) {
+        let Some(state) = self.image_browser_session_state() else {
+            return;
+        };
+        let Some(name) = state.selected_mask_name().map(str::to_string) else {
+            self.result.status_line = "No mask selected.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.send_browser_command(BrowserRequest::SetImageDefaultMask { name: name.clone() });
+        self.result.status_line = format!("Setting default mask to {name}...");
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    pub(super) fn unset_image_default_mask(&mut self) {
+        self.send_browser_command(BrowserRequest::UnsetImageDefaultMask);
+        self.result.status_line = "Clearing default mask...".into();
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    pub(super) fn delete_selected_image_mask(&mut self) {
+        let Some(state) = self.image_browser_session_state() else {
+            return;
+        };
+        let Some(name) = state.selected_mask_name().map(str::to_string) else {
+            self.result.status_line = "No mask selected.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        self.send_browser_command(BrowserRequest::DeleteImageMask { name: name.clone() });
+        self.result.status_line = format!("Deleting mask {name}...");
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    pub(super) fn activate_browser_pane_selection(&mut self, target: BrowserPaneSelection) {
+        match target {
+            BrowserPaneSelection::Mode(_) => self.open_browser_mode_picker(),
+            BrowserPaneSelection::SavedRegion(index) => {
+                let active = self
+                    .image_browser_session_state()
+                    .and_then(|state| state.snapshot.saved_region_names.get(index))
+                    .is_some_and(|name| {
+                        self.image_browser_session_state()
+                            .and_then(ImageBrowserSessionState::active_region_definition_name)
+                            == Some(name.as_str())
+                    });
+                if let Some(state) = self.image_browser_session_state_mut() {
+                    state.left_pane_mode = ImageBrowserLeftPaneMode::Regions;
+                    state.selected_saved_region_index = index;
+                }
+                if active {
+                    self.clear_image_region();
+                } else {
+                    self.load_selected_image_region_definition();
+                }
+            }
+            BrowserPaneSelection::Mask(index) => {
+                let default = self
+                    .image_browser_session_state()
+                    .and_then(|state| state.snapshot.mask_names.get(index))
+                    .is_some_and(|name| {
+                        self.image_browser_session_state()
+                            .and_then(|state| state.snapshot.default_mask_name.as_deref())
+                            == Some(name.as_str())
+                    });
+                if let Some(state) = self.image_browser_session_state_mut() {
+                    state.left_pane_mode = ImageBrowserLeftPaneMode::Masks;
+                    state.selected_mask_index = index;
+                }
+                if default {
+                    self.unset_image_default_mask();
+                } else {
+                    self.set_selected_image_mask_default();
+                }
+            }
+        }
+    }
+}

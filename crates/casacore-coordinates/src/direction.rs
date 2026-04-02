@@ -20,15 +20,17 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use std::str::FromStr;
 
 use casacore_types::measures::direction::DirectionRef;
-use casacore_types::{RecordValue, ScalarValue, Value};
+use casacore_types::quanta::{Quantity, Unit};
+use casacore_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
+use ndarray::IxDyn;
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
 use crate::projection::{Projection, ProjectionType};
 use crate::record_utils::{
     get_optional_f64, get_optional_i32, get_optional_string, get_optional_vec_f64,
-    get_required_vec_f64,
+    get_optional_vec_string, get_required_vec_f64,
 };
 
 /// A two-axis celestial coordinate with projection.
@@ -248,6 +250,10 @@ impl DirectionCoordinate {
 
     /// Reconstructs a direction coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let casa_style_units = get_optional_vec_string(rec, "units");
+        let is_casa_style = casa_style_units.is_some()
+            || rec.get("conversionSystem").is_some()
+            || rec.get("axes").is_some();
         let direction_ref = if let Some(name) =
             get_optional_string(rec, "direction_ref").or_else(|| get_optional_string(rec, "system"))
         {
@@ -285,12 +291,27 @@ impl DirectionCoordinate {
                 "direction coordinate expects two-valued crval/cdelt/crpix".into(),
             ));
         }
+        let axis_units = casa_style_units.unwrap_or_else(|| vec!["rad".into(), "rad".into()]);
+        if axis_units.len() != 2 {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "direction coordinate units has {} values, expected 2",
+                axis_units.len()
+            )));
+        }
+        let crval = [
+            convert_value_to_unit(crval[0], &axis_units[0], "rad", "crval")?,
+            convert_value_to_unit(crval[1], &axis_units[1], "rad", "crval")?,
+        ];
+        let cdelt = [
+            convert_value_to_unit(cdelt[0], &axis_units[0], "rad", "cdelt")?,
+            convert_value_to_unit(cdelt[1], &axis_units[1], "rad", "cdelt")?,
+        ];
 
         let mut coord = Self::new(
             direction_ref,
             projection,
-            [crval[0], crval[1]],
-            [cdelt[0], cdelt[1]],
+            crval,
+            cdelt,
             [crpix[0], crpix[1]],
         );
 
@@ -307,9 +328,19 @@ impl DirectionCoordinate {
             coord = coord.with_pc_matrix(pc);
         }
         if let Some(longpole) = get_optional_f64(rec, "longpole") {
+            let longpole = if is_casa_style {
+                convert_value_to_unit(longpole, "deg", "rad", "longpole")?
+            } else {
+                longpole
+            };
             coord = coord.with_longpole(longpole);
         }
         if let Some(latpole) = get_optional_f64(rec, "latpole") {
+            let latpole = if is_casa_style {
+                convert_value_to_unit(latpole, "deg", "rad", "latpole")?
+            } else {
+                latpole
+            };
             coord = coord.with_latpole(latpole);
         }
 
@@ -411,6 +442,29 @@ fn normalize_angle(mut a: f64) -> f64 {
         a += two_pi;
     }
     a
+}
+
+fn convert_value_to_unit(
+    value: f64,
+    from_unit: &str,
+    to_unit: &str,
+    field: &str,
+) -> Result<f64, CoordinateError> {
+    let quantity = Quantity::new(value, from_unit).map_err(|error| {
+        CoordinateError::InvalidRecord(format!(
+            "invalid direction coordinate unit for {field}: {from_unit} ({error})"
+        ))
+    })?;
+    let target = Unit::new(to_unit).map_err(|error| {
+        CoordinateError::InvalidRecord(format!(
+            "invalid direction coordinate target unit for {field}: {to_unit} ({error})"
+        ))
+    })?;
+    quantity.get_value_in(&target).map_err(|error| {
+        CoordinateError::InvalidRecord(format!(
+            "cannot convert direction coordinate {field} from {from_unit} to {to_unit}: {error}"
+        ))
+    })
 }
 
 impl Coordinate for DirectionCoordinate {
@@ -545,6 +599,66 @@ impl Coordinate for DirectionCoordinate {
         );
         rec.upsert("latpole", Value::Scalar(ScalarValue::Float64(self.latpole)));
 
+        rec
+    }
+
+    fn to_casa_record(&self) -> RecordValue {
+        let mut rec = RecordValue::default();
+        rec.upsert(
+            "system",
+            Value::Scalar(ScalarValue::String(format!("{:?}", self.direction_ref))),
+        );
+        rec.upsert(
+            "projection",
+            Value::Scalar(ScalarValue::String(self.projection.name().into())),
+        );
+        if !self.projection.parameters().is_empty() {
+            rec.upsert(
+                "projection_parameters",
+                Value::Array(ArrayValue::from_f64_vec(
+                    self.projection.parameters().to_vec(),
+                )),
+            );
+        }
+        rec.upsert(
+            "crval",
+            Value::Array(ArrayValue::from_f64_vec(self.crval.to_vec())),
+        );
+        rec.upsert(
+            "crpix",
+            Value::Array(ArrayValue::from_f64_vec(self.crpix.to_vec())),
+        );
+        rec.upsert(
+            "cdelt",
+            Value::Array(ArrayValue::from_f64_vec(self.cdelt.to_vec())),
+        );
+        rec.upsert(
+            "pc",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]), self.pc.iter().copied().collect())
+                    .expect("2x2 direction pc matrix"),
+            )),
+        );
+        rec.upsert(
+            "axes",
+            Value::Array(ArrayValue::from_string_vec(self.axis_names())),
+        );
+        rec.upsert(
+            "units",
+            Value::Array(ArrayValue::from_string_vec(self.axis_units())),
+        );
+        rec.upsert(
+            "conversionSystem",
+            Value::Scalar(ScalarValue::String(format!("{:?}", self.direction_ref))),
+        );
+        rec.upsert(
+            "longpole",
+            Value::Scalar(ScalarValue::Float64(self.longpole.to_degrees())),
+        );
+        rec.upsert(
+            "latpole",
+            Value::Scalar(ScalarValue::Float64(self.latpole.to_degrees())),
+        );
         rec
     }
 
@@ -725,5 +839,84 @@ mod tests {
         assert_eq!(restored.projection().parameters(), &[0.25, -0.5]);
         assert!((restored.longpole() - 0.25).abs() < TOL);
         assert!((restored.latpole() - 1.2).abs() < TOL);
+    }
+
+    #[test]
+    fn casa_record_units_are_converted_to_radians() {
+        let mut record = RecordValue::default();
+        record.upsert("system", Value::Scalar(ScalarValue::String("J2000".into())));
+        record.upsert(
+            "projection",
+            Value::Scalar(ScalarValue::String("SIN".into())),
+        );
+        record.upsert(
+            "crval",
+            Value::Array(ArrayValue::from_f64_vec(vec![120.0, 45.0])),
+        );
+        record.upsert(
+            "crpix",
+            Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
+        );
+        record.upsert(
+            "cdelt",
+            Value::Array(ArrayValue::from_f64_vec(vec![-1.0, 1.0])),
+        );
+        record.upsert(
+            "units",
+            Value::Array(ArrayValue::from_string_vec(vec![
+                "deg".into(),
+                "deg".into(),
+            ])),
+        );
+        record.upsert(
+            "axes",
+            Value::Array(ArrayValue::from_string_vec(vec![
+                "Right Ascension".into(),
+                "Declination".into(),
+            ])),
+        );
+        record.upsert(
+            "conversionSystem",
+            Value::Scalar(ScalarValue::String("J2000".into())),
+        );
+        record.upsert("longpole", Value::Scalar(ScalarValue::Float64(180.0)));
+        record.upsert("latpole", Value::Scalar(ScalarValue::Float64(90.0)));
+
+        let coord = DirectionCoordinate::from_record(&record).unwrap();
+        assert!((coord.reference_value()[0] - 120f64.to_radians()).abs() < TOL);
+        assert!((coord.reference_value()[1] - 45f64.to_radians()).abs() < TOL);
+        assert!((coord.increment()[0] - (-1f64).to_radians()).abs() < TOL);
+        assert!((coord.increment()[1] - 1f64.to_radians()).abs() < TOL);
+        assert!((coord.longpole() - PI).abs() < TOL);
+        assert!((coord.latpole() - FRAC_PI_2).abs() < TOL);
+    }
+
+    #[test]
+    fn casa_record_serialization_uses_legacy_fields() {
+        let coord = make_sin_coord().with_longpole(PI).with_latpole(FRAC_PI_2);
+        let rec = coord.to_casa_record();
+        assert_eq!(
+            rec.get("system"),
+            Some(&Value::Scalar(ScalarValue::String("J2000".into())))
+        );
+        assert_eq!(
+            rec.get("conversionSystem"),
+            Some(&Value::Scalar(ScalarValue::String("J2000".into())))
+        );
+        assert_eq!(
+            rec.get("units"),
+            Some(&Value::Array(ArrayValue::from_string_vec(vec![
+                "rad".into(),
+                "rad".into()
+            ])))
+        );
+        assert_eq!(
+            rec.get("longpole"),
+            Some(&Value::Scalar(ScalarValue::Float64(180.0)))
+        );
+        assert_eq!(
+            rec.get("latpole"),
+            Some(&Value::Scalar(ScalarValue::Float64(90.0)))
+        );
     }
 }

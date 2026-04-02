@@ -91,6 +91,16 @@ pub trait Coordinate: fmt::Debug + Send + Sync {
     /// Serializes this coordinate to a casacore-compatible record.
     fn to_record(&self) -> RecordValue;
 
+    /// Serializes this coordinate using the legacy casacore
+    /// `Coordinate::save()` field layout.
+    ///
+    /// Most coordinates can reuse [`Coordinate::to_record`]. Coordinate types
+    /// with a materially different legacy layout, such as direction
+    /// coordinates, can override this.
+    fn to_casa_record(&self) -> RecordValue {
+        self.to_record()
+    }
+
     /// Returns a boxed clone of this coordinate.
     ///
     /// This method exists because `Clone` is not object-safe.

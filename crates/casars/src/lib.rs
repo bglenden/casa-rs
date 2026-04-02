@@ -6,6 +6,7 @@ mod config;
 mod execution;
 mod graphics;
 mod movie_perf;
+mod pane_manager;
 mod registry;
 mod startup;
 mod theme;

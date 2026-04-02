@@ -10,6 +10,7 @@ use std::ops;
 use std::str::FromStr;
 
 use crate::quanta::error::UnitError;
+use crate::quanta::registry_data::PREFIXES;
 use crate::quanta::unit::Unit;
 
 /// A value with an associated unit.
@@ -101,6 +102,18 @@ impl Quantity {
     pub fn get_si_value(&self) -> f64 {
         self.value * self.unit.val().factor
     }
+
+    /// Chooses a conformant display quantity using SI prefixes when possible.
+    ///
+    /// This is a presentation helper built on the quanta unit system. It uses
+    /// the shared prefix table plus conformant unit conversion and prefers a
+    /// numeric magnitude in the readable range `[1, 1000)`.
+    pub fn auto_scaled(&self) -> Result<Quantity, UnitError> {
+        let Some(target) = auto_display_unit_for(self) else {
+            return Ok(self.clone());
+        };
+        self.convert(&target)
+    }
 }
 
 impl fmt::Display for Quantity {
@@ -141,6 +154,77 @@ impl FromStr for Quantity {
             Self::new(value, unit_str)
         }
     }
+}
+
+fn auto_display_unit_for(quantity: &Quantity) -> Option<Unit> {
+    let original = quantity.unit();
+    let original_name = original.name();
+    if original_name.is_empty() || !quantity.value.is_finite() || quantity.value == 0.0 {
+        return Some(original.clone());
+    }
+
+    let base_name = strip_leading_si_prefix(original_name).unwrap_or_else(|| original_name.into());
+    let mut candidate_names = Vec::<String>::new();
+    candidate_names.push(original_name.to_string());
+    candidate_names.push(base_name.clone());
+    for &(prefix, factor, _) in PREFIXES {
+        let exponent = factor.abs().log10().round() as i32;
+        if exponent % 3 != 0 {
+            continue;
+        }
+        candidate_names.push(format!("{prefix}{base_name}"));
+    }
+    candidate_names.dedup();
+
+    candidate_names
+        .into_iter()
+        .filter_map(|name| Unit::new(&name).ok())
+        .filter(|unit| unit.conformant(original))
+        .min_by(|left, right| {
+            auto_display_score(quantity, left)
+                .partial_cmp(&auto_display_score(quantity, right))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+fn strip_leading_si_prefix(unit_name: &str) -> Option<String> {
+    let mut prefixes = PREFIXES
+        .iter()
+        .map(|(prefix, _, _)| *prefix)
+        .collect::<Vec<_>>();
+    prefixes.sort_by_key(|prefix| std::cmp::Reverse(prefix.len()));
+    for prefix in prefixes {
+        let Some(rest) = unit_name.strip_prefix(prefix) else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        if let Ok(rest_unit) = Unit::new(rest)
+            && let Ok(full_unit) = Unit::new(unit_name)
+            && rest_unit.conformant(&full_unit)
+        {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+fn auto_display_score(quantity: &Quantity, unit: &Unit) -> f64 {
+    let abs_value = quantity
+        .get_value_in(unit)
+        .ok()
+        .map(f64::abs)
+        .unwrap_or(f64::INFINITY);
+    if !abs_value.is_finite() {
+        return f64::INFINITY;
+    }
+    let preferred_penalty = if (1.0..1000.0).contains(&abs_value) {
+        0.0
+    } else {
+        10.0
+    };
+    preferred_penalty + (abs_value.log10() - 1.0).abs()
 }
 
 // ── Arithmetic with another Quantity ──
@@ -386,5 +470,45 @@ mod tests {
     fn quantity_si_value() {
         let q = Quantity::new(3.0, "km").unwrap();
         assert!(close(q.get_si_value(), 3000.0, 1e-12));
+    }
+
+    #[test]
+    fn quantity_auto_scaled_promotes_small_jansky_values() {
+        let q = Quantity::new(0.005, "Jy/beam")
+            .unwrap()
+            .auto_scaled()
+            .unwrap();
+        assert_eq!(q.unit().name(), "mJy/beam");
+        assert!(close(q.value(), 5.0, 1e-12));
+    }
+
+    #[test]
+    fn quantity_auto_scaled_uses_engineering_prefixes_only() {
+        let q = Quantity::new(0.1, "Jy/beam")
+            .unwrap()
+            .auto_scaled()
+            .unwrap();
+        assert_eq!(q.unit().name(), "mJy/beam");
+        assert!(close(q.value(), 100.0, 1e-12));
+    }
+
+    #[test]
+    fn quantity_auto_scaled_promotes_frequency_values() {
+        let q = Quantity::new(115_000_000_000.0, "Hz")
+            .unwrap()
+            .auto_scaled()
+            .unwrap();
+        assert_eq!(q.unit().name(), "GHz");
+        assert!(close(q.value(), 115.0, 1e-12));
+    }
+
+    #[test]
+    fn quantity_auto_scaled_preserves_zero_unit() {
+        let q = Quantity::new(0.0, "Jy/beam")
+            .unwrap()
+            .auto_scaled()
+            .unwrap();
+        assert_eq!(q.unit().name(), "Jy/beam");
+        assert_eq!(q.value(), 0.0);
     }
 }

@@ -8,6 +8,16 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Instant;
 
+use crate::error::ImageError;
+use crate::image_view::{
+    ImageRegion, ImageRegionOverlayShape, ImageRegionStats, PlaneAutoscaleMode,
+    PlaneRenderTelemetry, PlaneStretchPreset, PlaneStretchSettings, format_numeric_value_with_unit,
+};
+use crate::{
+    ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis, ImageProbe,
+    ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow, OpenedImageView,
+    PlaneRaster,
+};
 use casacore_imagebrowser_protocol::{
     ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserAxisValue,
     ImageBrowserCapabilities, ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters,
@@ -19,18 +29,6 @@ use casacore_imagebrowser_protocol::{
 };
 use casacore_types::measures::direction::{
     format_declination_labeled, format_right_ascension_labeled,
-};
-
-use crate::error::ImageError;
-use crate::image_view::{
-    ImageRegion, ImageRegionOverlayShape, ImageRegionShape, ImageRegionStats, PlaneAutoscaleMode,
-    PlaneRenderTelemetry, PlaneStretchPreset, PlaneStretchSettings, format_numeric_value_with_unit,
-    polygon_self_intersects,
-};
-use crate::{
-    ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis, ImageProbe,
-    ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow, OpenedImageView,
-    PlaneRaster,
 };
 
 /// Long-lived read-only image browser session.
@@ -51,7 +49,8 @@ pub struct ImageBrowserSession {
     plane_content_mode: ImagePlaneContentMode,
     region: Option<ImageRegion>,
     region_revision: u64,
-    next_region_mask_index: usize,
+    active_region_definition_name: Option<String>,
+    saved_region_cycle_index: usize,
     perf_enabled: bool,
     plane_cache: RecentCache<PlaneCacheKey, PlaneRaster>,
     prefetched_plane_keys: HashSet<PlaneCacheKey>,
@@ -186,6 +185,7 @@ struct ProfileCacheKey {
     inc: Vec<usize>,
     normalized_non_display_indices: Vec<usize>,
     profile_axis: usize,
+    region_revision: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -375,6 +375,7 @@ impl ImageBrowserSession {
         viewport: ImageBrowserViewport,
         parameters: Option<&ImageBrowserParameters>,
     ) -> Result<Self, ImageError> {
+        let path = path.as_ref();
         let view = OpenedImageView::open(path)?;
         let non_display_axis_count = session_non_display_axis_count(&view);
         let stretch = parameters
@@ -412,7 +413,8 @@ impl ImageBrowserSession {
             plane_content_mode: default_plane_content_mode(viewport),
             region: None,
             region_revision: 0,
-            next_region_mask_index: 1,
+            active_region_definition_name: None,
+            saved_region_cycle_index: 0,
             perf_enabled,
             plane_cache: RecentCache::new(SESSION_PLANE_CACHE_CAPACITY),
             prefetched_plane_keys: HashSet::new(),
@@ -570,6 +572,38 @@ impl ImageBrowserSession {
                 self.clear_region();
                 self.snapshot()
             }
+            ImageBrowserCommand::SaveRegionDefinition => {
+                self.save_region_definition()?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::LoadNextRegionDefinition => {
+                self.load_next_region_definition()?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::LoadRegionDefinition { name } => {
+                self.load_region_definition(&name)?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::RenameRegionDefinition { name, new_name } => {
+                self.rename_region_definition(&name, &new_name)?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::DeleteRegionDefinition { name } => {
+                self.delete_region_definition(&name)?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::SetDefaultMask { name } => {
+                self.set_default_mask(&name)?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::UnsetDefaultMask => {
+                self.unset_default_mask()?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::DeleteMask { name } => {
+                self.delete_mask(&name)?;
+                self.snapshot()
+            }
             ImageBrowserCommand::WriteRegionMask { name, set_default } => {
                 self.write_region_mask(name.as_deref(), set_default)?;
                 self.snapshot()
@@ -621,11 +655,19 @@ impl ImageBrowserSession {
                 self.active_view,
                 ImageBrowserView::Plane | ImageBrowserView::Spectrum
             ) {
+            let closed_region = self.region.as_ref().and_then(|region| {
+                region
+                    .shapes
+                    .iter()
+                    .any(|shape| shape.closed && shape.vertices.len() >= 3)
+                    .then_some(region.clone())
+            });
             self.selected_profile_axis()
                 .map(|profile_axis| {
                     self.cached_profile(
                         (self.cursor_x, self.cursor_y),
                         profile_axis,
+                        closed_region.as_ref(),
                         backend_timing.as_mut(),
                     )
                 })
@@ -716,6 +758,10 @@ impl ImageBrowserSession {
             plane_cursor: self.current_plane_cursor(),
             non_display_axes,
             region,
+            saved_region_names: self.view.saved_region_names(),
+            active_region_definition_name: self.active_region_definition_name.clone(),
+            mask_names: self.view.mask_names(),
+            default_mask_name: self.view.default_mask_name(),
             backend_timing,
             capabilities: map_capabilities(self.view.capabilities()),
         })
@@ -904,10 +950,30 @@ impl ImageBrowserSession {
                     format_numeric_value_with_unit(stats.mean, &stats.value_unit)
                 ));
                 lines.push(format!(
+                    "Region sigma: {}",
+                    format_numeric_value_with_unit(stats.sigma, &stats.value_unit)
+                ));
+                lines.push(format!(
+                    "Region median: {}",
+                    format_numeric_value_with_unit(stats.median, &stats.value_unit)
+                ));
+                lines.push(format!(
                     "Region RMS: {}",
                     format_numeric_value_with_unit(stats.rms, &stats.value_unit)
                 ));
+                lines.push(format!(
+                    "Region min/max: {} / {}",
+                    format_numeric_value_with_unit(stats.min, &stats.value_unit),
+                    format_numeric_value_with_unit(stats.max, &stats.value_unit)
+                ));
             }
+        }
+        let saved_region_names = self.view.saved_region_names();
+        if !saved_region_names.is_empty() {
+            lines.push(format!("Saved regions: {}", saved_region_names.join(", ")));
+        }
+        if let Some(name) = self.active_region_definition_name.as_deref() {
+            lines.push(format!("Persisted region: {name}"));
         }
         Ok(lines)
     }
@@ -1079,9 +1145,10 @@ impl ImageBrowserSession {
         &mut self,
         pixel_xy: (usize, usize),
         profile_axis: usize,
+        region: Option<&ImageRegion>,
         backend_timing: Option<&mut ImageBackendTimingState>,
     ) -> Result<ImageProfile, ImageError> {
-        let key = self.profile_cache_key(pixel_xy, profile_axis);
+        let key = self.profile_cache_key(pixel_xy, profile_axis, region);
         if let Some(mut profile) = self.profile_cache.get(&key) {
             self.profile_perf.cache_hits = self.profile_perf.cache_hits.saturating_add(1);
             if let Some(timing) = backend_timing {
@@ -1096,12 +1163,30 @@ impl ImageBrowserSession {
         let normalized_non_display_indices =
             self.normalized_profile_non_display_indices(profile_axis);
         let extract_started_at = Instant::now();
-        let mut profile = self.view.profile_with_window_and_axes(
-            pixel_xy,
-            &self.window,
-            &normalized_non_display_indices,
-            profile_axis,
-        )?;
+        let mut profile = if let Some(region) = region {
+            if let Some(profile) = self.view.region_profile_with_window_and_axes(
+                region,
+                &self.window,
+                &normalized_non_display_indices,
+                profile_axis,
+            )? {
+                profile
+            } else {
+                self.view.profile_with_window_and_axes(
+                    pixel_xy,
+                    &self.window,
+                    &normalized_non_display_indices,
+                    profile_axis,
+                )?
+            }
+        } else {
+            self.view.profile_with_window_and_axes(
+                pixel_xy,
+                &self.window,
+                &normalized_non_display_indices,
+                profile_axis,
+            )?
+        };
         self.profile_perf.extract_total_ns = self
             .profile_perf
             .extract_total_ns
@@ -1138,15 +1223,21 @@ impl ImageBrowserSession {
         }
     }
 
-    fn profile_cache_key(&self, pixel_xy: (usize, usize), profile_axis: usize) -> ProfileCacheKey {
+    fn profile_cache_key(
+        &self,
+        pixel_xy: (usize, usize),
+        profile_axis: usize,
+        region: Option<&ImageRegion>,
+    ) -> ProfileCacheKey {
         ProfileCacheKey {
-            pixel_xy,
+            pixel_xy: if region.is_some() { (0, 0) } else { pixel_xy },
             blc: self.window.blc().to_vec(),
             trc: self.window.trc().to_vec(),
             inc: self.window.inc().to_vec(),
             normalized_non_display_indices: self
                 .normalized_profile_non_display_indices(profile_axis),
             profile_axis,
+            region_revision: region.map(|_| self.region_revision),
         }
     }
 
@@ -1395,6 +1486,7 @@ impl ImageBrowserSession {
         }
         if self.region.is_none() {
             self.region = Some(self.view.default_region("Region 1")?);
+            self.active_region_definition_name = None;
         }
         let label = self
             .region
@@ -1407,15 +1499,12 @@ impl ImageBrowserSession {
             .is_some_and(|region| region.display_axes != display_axes)
         {
             self.region = Some(self.view.default_region(label)?);
+            self.active_region_definition_name = None;
         }
         self.region
             .as_mut()
             .expect("region available")
-            .shapes
-            .push(ImageRegionShape {
-                vertices: Vec::new(),
-                closed: false,
-            });
+            .start_shape()?;
         self.region_revision = self.region_revision.saturating_add(1);
         Ok(())
     }
@@ -1432,19 +1521,9 @@ impl ImageBrowserSession {
                 "start a region with R before adding vertices".into(),
             ));
         };
-        let Some(shape) = region.shapes.iter_mut().rev().find(|shape| !shape.closed) else {
-            return Err(ImageError::InvalidMetadata(
-                "start a region with R before adding vertices".into(),
-            ));
-        };
-        if shape
-            .vertices
-            .last()
-            .is_some_and(|last| last.world == vertex.world)
-        {
+        if !region.append_vertex(vertex)? {
             return Ok(());
         }
-        shape.vertices.push(vertex);
         self.region_revision = self.region_revision.saturating_add(1);
         Ok(())
     }
@@ -1453,22 +1532,7 @@ impl ImageBrowserSession {
         let Some(region) = self.region.as_mut() else {
             return Err(ImageError::InvalidMetadata("no active region".into()));
         };
-        let Some(shape) = region.shapes.iter_mut().rev().find(|shape| !shape.closed) else {
-            return Err(ImageError::InvalidMetadata(
-                "no open polygon to close".into(),
-            ));
-        };
-        if shape.vertices.len() < 3 {
-            return Err(ImageError::InvalidMetadata(
-                "polygon regions require at least 3 vertices".into(),
-            ));
-        }
-        if polygon_self_intersects(&shape.vertices) {
-            return Err(ImageError::InvalidMetadata(
-                "self-intersecting polygons are not supported".into(),
-            ));
-        }
-        shape.closed = true;
+        region.close_active_shape()?;
         self.region_revision = self.region_revision.saturating_add(1);
         Ok(())
     }
@@ -1477,18 +1541,9 @@ impl ImageBrowserSession {
         let Some(region) = self.region.as_mut() else {
             return Err(ImageError::InvalidMetadata("no active region".into()));
         };
-        let Some(shape_index) = region.shapes.iter().rposition(|shape| !shape.closed) else {
-            return Err(ImageError::InvalidMetadata(
-                "no open polygon to edit".into(),
-            ));
-        };
-        let shape = &mut region.shapes[shape_index];
-        shape.vertices.pop();
-        if shape.vertices.is_empty() {
-            region.shapes.remove(shape_index);
-        }
-        if region.shapes.is_empty() {
+        if !region.undo_active_vertex()? {
             self.region = None;
+            self.active_region_definition_name = None;
         }
         self.region_revision = self.region_revision.saturating_add(1);
         Ok(())
@@ -1498,20 +1553,114 @@ impl ImageBrowserSession {
         let Some(region) = self.region.as_mut() else {
             return false;
         };
-        let Some(shape_index) = region.shapes.iter().rposition(|shape| !shape.closed) else {
+        if !region.cancel_active_shape() {
             return false;
-        };
-        region.shapes.remove(shape_index);
-        if region.shapes.is_empty() {
+        }
+        if region.is_empty() {
             self.region = None;
+            self.active_region_definition_name = None;
         }
         self.region_revision = self.region_revision.saturating_add(1);
         true
     }
 
     fn clear_region(&mut self) {
+        if let Some(region) = self.region.as_mut() {
+            region.clear();
+        }
         self.region = None;
+        self.active_region_definition_name = None;
         self.region_revision = self.region_revision.saturating_add(1);
+    }
+
+    fn save_region_definition(&mut self) -> Result<(), ImageError> {
+        let Some(region) = self.region.as_ref() else {
+            return Err(ImageError::InvalidMetadata("no active region".into()));
+        };
+        let name = self
+            .view
+            .save_region_definition(region, self.active_region_definition_name.as_deref())?;
+        let mut persisted_region = region.clone();
+        persisted_region.label = name.clone();
+        self.region = Some(persisted_region);
+        self.active_region_definition_name = Some(name);
+        self.saved_region_cycle_index = 0;
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn load_next_region_definition(&mut self) -> Result<(), ImageError> {
+        let names = self.view.saved_region_names();
+        if names.is_empty() {
+            return Err(ImageError::InvalidMetadata(
+                "no saved region definitions for this image".into(),
+            ));
+        }
+        let len = names.len();
+        let mut last_error = None;
+        for offset in 0..len {
+            let index = (self.saved_region_cycle_index + offset) % len;
+            let name = &names[index];
+            self.saved_region_cycle_index = (index + 1) % len;
+            match self.view.load_saved_region(name) {
+                Ok(region) => {
+                    self.region = Some(region);
+                    self.active_region_definition_name = Some(name.clone());
+                    self.region_revision = self.region_revision.saturating_add(1);
+                    return Ok(());
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            ImageError::InvalidMetadata("no saved region definitions for this image".into())
+        }))
+    }
+
+    fn load_region_definition(&mut self, name: &str) -> Result<(), ImageError> {
+        let region = self.view.load_saved_region(name)?;
+        self.region = Some(region);
+        self.active_region_definition_name = Some(name.to_string());
+        self.saved_region_cycle_index = 0;
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn rename_region_definition(&mut self, name: &str, new_name: &str) -> Result<(), ImageError> {
+        let renamed = self.view.rename_saved_region(name, new_name)?;
+        if let Some(region) = self.region.as_mut() {
+            if self.active_region_definition_name.as_deref() == Some(name) {
+                region.label = renamed.clone();
+            }
+        }
+        if self.active_region_definition_name.as_deref() == Some(name) {
+            self.active_region_definition_name = Some(renamed);
+        }
+        self.saved_region_cycle_index = 0;
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn delete_region_definition(&mut self, name: &str) -> Result<(), ImageError> {
+        self.view.remove_saved_region(name)?;
+        if self.active_region_definition_name.as_deref() == Some(name) {
+            self.active_region_definition_name = None;
+        }
+        self.saved_region_cycle_index = 0;
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn set_default_mask(&mut self, name: &str) -> Result<(), ImageError> {
+        self.view.set_default_mask(name)
+    }
+
+    fn unset_default_mask(&mut self) -> Result<(), ImageError> {
+        self.view.unset_default_mask()
+    }
+
+    fn delete_mask(&mut self, name: &str) -> Result<(), ImageError> {
+        self.view.remove_mask(name)
     }
 
     fn write_region_mask(
@@ -1531,11 +1680,7 @@ impl ImageBrowserSession {
             .filter(|value| !value.trim().is_empty())
             .map(str::trim)
             .map(str::to_string)
-            .unwrap_or_else(|| {
-                let generated = format!("region_mask_{}", self.next_region_mask_index);
-                self.next_region_mask_index = self.next_region_mask_index.saturating_add(1);
-                generated
-            });
+            .unwrap_or_else(|| self.view.next_generated_region_mask_name());
         self.view.write_region_mask(region, &name, set_default)?;
         Ok(())
     }
@@ -1919,9 +2064,11 @@ fn map_region_overlay_shape(shape: ImageRegionOverlayShape) -> ImageRegionOverla
 fn map_region_stats(stats: ImageRegionStats) -> ImageRegionStatsState {
     ImageRegionStatsState {
         pixel_count: stats.pixel_count,
+        median: stats.median,
         min: stats.min,
         max: stats.max,
         mean: stats.mean,
+        sigma: stats.sigma,
         rms: stats.rms,
         sum: stats.sum,
         value_unit: stats.value_unit,
@@ -2078,6 +2225,7 @@ mod tests {
 
     use super::*;
     use crate::image::PagedImage;
+    use crate::image_view::ImageRegionShape;
 
     static PERF_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -2537,6 +2685,190 @@ mod tests {
     }
 
     #[test]
+    fn session_region_definitions_persist_and_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-region-definitions.image");
+        let mut image = PagedImage::<f32>::create(vec![5, 5], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[5, 5]),
+                    (0..5)
+                        .flat_map(|x| (0..5).map(move |y| (x * 10 + y) as f32))
+                        .collect(),
+                )
+                .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(64, 24)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::SetCursor { x: 1, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::StartRegionShape)
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 1, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 3, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 2, y: 3 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CloseRegionShape)
+            .unwrap();
+        let first_saved = session
+            .handle_command(ImageBrowserCommand::SaveRegionDefinition)
+            .unwrap();
+        assert_eq!(
+            first_saved.region.expect("first saved region").label,
+            "Region 1"
+        );
+
+        session
+            .handle_command(ImageBrowserCommand::ClearRegion)
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::StartRegionShape)
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 0, y: 0 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 2, y: 0 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 0, y: 2 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CloseRegionShape)
+            .unwrap();
+        let second_saved = session
+            .handle_command(ImageBrowserCommand::SaveRegionDefinition)
+            .unwrap();
+        assert_eq!(
+            second_saved.region.expect("second saved region").label,
+            "Region 2"
+        );
+
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(
+            reopened.region_names(),
+            vec!["Region 1".to_string(), "Region 2".to_string()]
+        );
+        let first_record = reopened.get_region_record("Region 1").unwrap();
+        assert_eq!(
+            first_record.get("name"),
+            Some(&casacore_types::Value::Scalar(
+                casacore_types::ScalarValue::String("WCPolygon".into()),
+            ))
+        );
+
+        session
+            .handle_command(ImageBrowserCommand::ClearRegion)
+            .unwrap();
+        let first_loaded = session
+            .handle_command(ImageBrowserCommand::LoadNextRegionDefinition)
+            .unwrap();
+        assert_eq!(
+            first_loaded.region.expect("first loaded region").label,
+            "Region 1"
+        );
+        let second_loaded = session
+            .handle_command(ImageBrowserCommand::LoadNextRegionDefinition)
+            .unwrap();
+        assert_eq!(
+            second_loaded.region.expect("second loaded region").label,
+            "Region 2"
+        );
+
+        let mut reopened_session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(64, 24)).unwrap();
+        let reopened_loaded = reopened_session
+            .handle_command(ImageBrowserCommand::LoadNextRegionDefinition)
+            .unwrap();
+        assert_eq!(
+            reopened_loaded.region.expect("reopened saved region").label,
+            "Region 1"
+        );
+    }
+
+    #[test]
+    fn session_region_definitions_can_rename_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-region-rename-delete.image");
+        let mut image = PagedImage::<f32>::create(vec![5, 5], direction_coords(), &path).unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(64, 24)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::SetCursor { x: 1, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::StartRegionShape)
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 1, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 3, y: 1 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::AppendRegionVertex { x: 2, y: 3 })
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::CloseRegionShape)
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::SaveRegionDefinition)
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::LoadNextRegionDefinition)
+            .unwrap();
+
+        let renamed = session
+            .handle_command(ImageBrowserCommand::RenameRegionDefinition {
+                name: "Region 1".into(),
+                new_name: "Science Region".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            renamed.active_region_definition_name.as_deref(),
+            Some("Science Region")
+        );
+        assert_eq!(
+            renamed.saved_region_names,
+            vec!["Science Region".to_string()]
+        );
+        assert_eq!(
+            renamed.region.expect("renamed region").label,
+            "Science Region"
+        );
+
+        let deleted = session
+            .handle_command(ImageBrowserCommand::DeleteRegionDefinition {
+                name: "Science Region".into(),
+            })
+            .unwrap();
+        assert!(deleted.saved_region_names.is_empty());
+        assert!(deleted.active_region_definition_name.is_none());
+        assert_eq!(
+            deleted
+                .region
+                .expect("region remains editable after delete")
+                .label,
+            "Science Region"
+        );
+    }
+
+    #[test]
     fn session_open_region_keeps_plane_visible_until_polygon_closes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session-open-region.image");
@@ -2607,6 +2939,58 @@ mod tests {
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.samples[2].pixel_index, 2);
         assert_eq!(profile.samples[2].value, 400.0);
+    }
+
+    #[test]
+    fn session_active_region_switches_profile_to_region_sum() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("linked-region-profile.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    vec![
+                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                    ],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 12)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
+            .unwrap();
+        let window = session.window.clone();
+        let mut region = session.view.default_region("Region 1").unwrap();
+        let vertices = [(0usize, 0usize), (1, 0), (1, 1), (0, 1)]
+            .into_iter()
+            .map(|pixel_xy| {
+                session
+                    .view
+                    .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[1])
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        region.shapes.push(ImageRegionShape {
+            vertices,
+            closed: true,
+        });
+        session.region = Some(region);
+        session.region_revision = session.region_revision.saturating_add(1);
+
+        let snapshot = session.snapshot().unwrap();
+        let profile = snapshot.profile.expect("profile payload");
+        assert_eq!(profile.selected_sample_index, 1);
+        assert_eq!(profile.samples.len(), 3);
+        assert_eq!(profile.samples[0].value, 10.0);
+        assert_eq!(profile.samples[1].value, 100.0);
+        assert_eq!(profile.samples[2].value, 1000.0);
     }
 
     #[test]

@@ -30,6 +30,7 @@ use crate::schema::{SchemaError, TableSchema};
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{read_ism_file, write_ism_file};
 use self::standard_stman::{read_ssm_file, write_ssm_file};
+use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
     StManColumnData, StManColumnInfo, extract_row_value, read_stman_file, write_stman_file,
 };
@@ -1301,6 +1302,13 @@ fn load_stman_aipsio_columns(
             StManColumnData::Flat(raw) => {
                 for (row_idx, row) in rows.iter_mut().enumerate() {
                     let value = extract_row_value(raw, col_desc, row_idx, nrrow)?;
+                    if !col_desc.is_array
+                        && (col_desc.option & 2) != 0
+                        && scalar_value_is_default(&value, col_desc.require_primitive_type()?)
+                    {
+                        undefined_cells[row_idx].insert(col_desc.col_name.clone());
+                        continue;
+                    }
                     if matches!(&value, Value::Array(_)) {
                         undefined_cells[row_idx].insert(col_desc.col_name.clone());
                     }

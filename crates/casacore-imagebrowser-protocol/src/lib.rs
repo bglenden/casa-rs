@@ -137,6 +137,25 @@ pub enum ImageBrowserCommand {
     UndoRegionVertex,
     CancelRegionShape,
     ClearRegion,
+    SaveRegionDefinition,
+    LoadNextRegionDefinition,
+    LoadRegionDefinition {
+        name: String,
+    },
+    RenameRegionDefinition {
+        name: String,
+        new_name: String,
+    },
+    DeleteRegionDefinition {
+        name: String,
+    },
+    SetDefaultMask {
+        name: String,
+    },
+    UnsetDefaultMask,
+    DeleteMask {
+        name: String,
+    },
     WriteRegionMask {
         #[serde(default)]
         name: Option<String>,
@@ -377,9 +396,11 @@ pub struct ImageRegionOverlayShapeState {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ImageRegionStatsState {
     pub pixel_count: usize,
+    pub median: f64,
     pub min: f64,
     pub max: f64,
     pub mean: f64,
+    pub sigma: f64,
     pub rms: f64,
     pub sum: f64,
     pub value_unit: String,
@@ -460,6 +481,14 @@ pub struct ImageBrowserSnapshot {
     pub non_display_axes: Vec<ImageNonDisplayAxisState>,
     #[serde(default)]
     pub region: Option<ImageRegionState>,
+    #[serde(default)]
+    pub saved_region_names: Vec<String>,
+    #[serde(default)]
+    pub active_region_definition_name: Option<String>,
+    #[serde(default)]
+    pub mask_names: Vec<String>,
+    #[serde(default)]
+    pub default_mask_name: Option<String>,
     #[serde(default)]
     pub backend_timing: Option<ImageBackendTimingState>,
     pub capabilities: ImageBrowserCapabilities,
@@ -608,6 +637,10 @@ mod tests {
             }),
             non_display_axes: Vec::new(),
             region: None,
+            saved_region_names: vec!["Region 1".into()],
+            active_region_definition_name: Some("Region 1".into()),
+            mask_names: vec!["roi".into()],
+            default_mask_name: Some("roi".into()),
             backend_timing: Some(ImageBackendTimingState {
                 plane_cache_result: ImageBackendPlaneCacheResult::Miss,
                 cached_plane_lookup_ns: 100,

@@ -8,7 +8,7 @@
 //!
 //! This corresponds to C++ `CoordinateSystem`.
 
-use casacore_types::{RecordValue, ScalarValue, Value};
+use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::direction::DirectionCoordinate;
@@ -169,6 +169,65 @@ impl CoordinateSystem {
         }
 
         rec.upsert("obsinfo", Value::Record(self.obs_info.to_record()));
+
+        rec
+    }
+
+    /// Serializes the coordinate system using the legacy casacore
+    /// `CoordinateSystem::save()` field layout.
+    ///
+    /// This is the form embedded inside native saved-region records such as
+    /// `WCPolygon::toRecord()`: coordinate sub-records are named
+    /// `direction0`, `spectral1`, etc., with accompanying `worldmapN`,
+    /// `worldreplaceN`, `pixelmapN`, and `pixelreplaceN` fields.
+    pub fn to_casa_record(&self) -> RecordValue {
+        let mut rec = self.obs_info.to_record();
+        let mut next_world_axis = 0i32;
+        let mut next_pixel_axis = 0i32;
+
+        for (index, coord) in self.coordinates.iter().enumerate() {
+            let basename = match coord.coordinate_type() {
+                CoordinateType::Linear => "linear",
+                CoordinateType::Direction => "direction",
+                CoordinateType::Spectral => "spectral",
+                CoordinateType::Stokes => "stokes",
+                CoordinateType::Tabular => "tabular",
+            };
+            rec.upsert(
+                format!("{basename}{index}"),
+                Value::Record(coord.to_casa_record()),
+            );
+
+            let n_world = coord.n_world_axes() as i32;
+            let n_pixel = coord.n_pixel_axes() as i32;
+            rec.upsert(
+                format!("worldmap{index}"),
+                Value::Array(ArrayValue::from_i32_vec(
+                    (next_world_axis..next_world_axis + n_world).collect(),
+                )),
+            );
+            rec.upsert(
+                format!("pixelmap{index}"),
+                Value::Array(ArrayValue::from_i32_vec(
+                    (next_pixel_axis..next_pixel_axis + n_pixel).collect(),
+                )),
+            );
+            rec.upsert(
+                format!("pixelreplace{index}"),
+                Value::Array(ArrayValue::from_f64_vec(vec![0.0; n_pixel as usize])),
+            );
+            let zero_pixel = vec![0.0; n_pixel as usize];
+            let world_replace = coord
+                .to_world(&zero_pixel)
+                .unwrap_or_else(|_| vec![0.0; n_world as usize]);
+            rec.upsert(
+                format!("worldreplace{index}"),
+                Value::Array(ArrayValue::from_f64_vec(world_replace)),
+            );
+
+            next_world_axis += n_world;
+            next_pixel_axis += n_pixel;
+        }
 
         rec
     }

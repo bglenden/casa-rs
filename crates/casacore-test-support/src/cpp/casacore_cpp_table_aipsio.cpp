@@ -183,19 +183,24 @@ void verify_keywords_impl(const std::string& path) {
 }
 
 // ===== Undefined scalars: 4 rows, only rows 0 and 2 written =====
-// In C++ StManAipsIO, unwritten scalar cells get default values (0, false, "").
+// The columns are declared with ColumnDesc::Undefined, so rows 1 and 3 remain
+// truly undefined rather than reading back as incidental zero/empty values.
 
 void write_undefined_scalars_impl(const std::string& path) {
     casacore::TableDesc td("", casacore::TableDesc::Scratch);
-    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("col_i32"));
-    td.addColumn(casacore::ScalarColumnDesc<casacore::Double>("col_f64"));
-    td.addColumn(casacore::ScalarColumnDesc<casacore::String>("col_str"));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>(
+        "col_i32", casacore::ColumnDesc::Undefined));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Double>(
+        "col_f64", casacore::ColumnDesc::Undefined));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::String>(
+        "col_str", casacore::ColumnDesc::Undefined));
 
     casacore::SetupNewTable setup(path, td, casacore::Table::New);
     casacore::StManAipsIO stman;
     setup.bindAll(stman);
 
-    casacore::Table table(setup, 4);
+    casacore::Table table(setup);
+    table.addRow(4);
     casacore::ScalarColumn<casacore::Int> colI32(table, "col_i32");
     casacore::ScalarColumn<casacore::Double> colF64(table, "col_f64");
     casacore::ScalarColumn<casacore::String> colStr(table, "col_str");
@@ -226,20 +231,20 @@ void verify_undefined_scalars_impl(const std::string& path) {
     if (colF64(0) != 1.5) throw std::runtime_error("row 0 col_f64 mismatch");
     if (colStr(0) != "written") throw std::runtime_error("row 0 col_str mismatch");
 
-    // Row 1: default values (unwritten)
-    if (colI32(1) != 0) throw std::runtime_error("row 1 col_i32 should be 0");
-    if (colF64(1) != 0.0) throw std::runtime_error("row 1 col_f64 should be 0.0");
-    if (colStr(1) != "") throw std::runtime_error("row 1 col_str should be empty");
+    // Row 1: remains undefined.
+    if (colI32.isDefined(1)) throw std::runtime_error("row 1 col_i32 should be undefined");
+    if (colF64.isDefined(1)) throw std::runtime_error("row 1 col_f64 should be undefined");
+    if (colStr.isDefined(1)) throw std::runtime_error("row 1 col_str should be undefined");
 
     // Row 2: written values
     if (colI32(2) != 200) throw std::runtime_error("row 2 col_i32 mismatch");
     if (colF64(2) != 2.5) throw std::runtime_error("row 2 col_f64 mismatch");
     if (colStr(2) != "also_written") throw std::runtime_error("row 2 col_str mismatch");
 
-    // Row 3: default values (unwritten)
-    if (colI32(3) != 0) throw std::runtime_error("row 3 col_i32 should be 0");
-    if (colF64(3) != 0.0) throw std::runtime_error("row 3 col_f64 should be 0.0");
-    if (colStr(3) != "") throw std::runtime_error("row 3 col_str should be empty");
+    // Row 3: remains undefined.
+    if (colI32.isDefined(3)) throw std::runtime_error("row 3 col_i32 should be undefined");
+    if (colF64.isDefined(3)) throw std::runtime_error("row 3 col_f64 should be undefined");
+    if (colStr.isDefined(3)) throw std::runtime_error("row 3 col_str should be undefined");
 }
 
 // ===== Column keywords: two columns with per-column keywords =====

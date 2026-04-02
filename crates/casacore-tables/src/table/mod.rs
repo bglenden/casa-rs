@@ -14,6 +14,7 @@ use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::virtual_engine::VirtualColumnBinding;
 use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot, TableInfo};
+use crate::table::columns::collect_undefined_cells_for_schema;
 use crate::table_impl::TableImpl;
 
 mod columns;
@@ -1013,10 +1014,11 @@ impl Table {
         rows: Vec<RecordValue>,
         schema: TableSchema,
     ) -> Result<Self, TableError> {
+        let undefined_cells = collect_undefined_cells_for_schema(&rows, &schema);
         let table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 rows,
-                Vec::new(),
+                undefined_cells,
                 RecordValue::default(),
                 std::collections::HashMap::new(),
                 Some(schema),
@@ -1116,10 +1118,11 @@ impl Table {
         rows: Vec<RecordValue>,
         schema: TableSchema,
     ) -> Result<Self, TableError> {
+        let undefined_cells = collect_undefined_cells_for_schema(&rows, &schema);
         let table = Self {
             inner: TableImpl::with_rows_keywords_and_schema(
                 rows,
-                Vec::new(),
+                undefined_cells,
                 RecordValue::default(),
                 std::collections::HashMap::new(),
                 Some(schema),

@@ -44,8 +44,8 @@ pub(crate) fn theme(mode: ThemeMode) -> Theme {
         ThemeMode::DenseAnsi => Theme {
             border_set: border::PLAIN,
             header_fg: Color::Yellow,
-            header_dim_fg: Color::Gray,
-            footer_fg: Color::DarkGray,
+            header_dim_fg: Color::White,
+            footer_fg: Color::Gray,
             footer_key_fg: Color::Cyan,
             pane_border_fg: Color::Gray,
             active_pane_border_fg: Color::Cyan,
@@ -77,8 +77,8 @@ pub(crate) fn theme(mode: ThemeMode) -> Theme {
         ThemeMode::RichPanel => Theme {
             border_set: border::ROUNDED,
             header_fg: Color::Rgb(255, 204, 77),
-            header_dim_fg: Color::Rgb(120, 130, 150),
-            footer_fg: Color::Rgb(153, 166, 184),
+            header_dim_fg: Color::Rgb(180, 190, 208),
+            footer_fg: Color::Rgb(196, 205, 220),
             footer_key_fg: Color::Rgb(94, 234, 212),
             pane_border_fg: Color::Rgb(85, 98, 116),
             active_pane_border_fg: Color::Rgb(88, 196, 221),
