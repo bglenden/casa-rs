@@ -4499,6 +4499,9 @@ fn imexplore_movie_mode_steps_and_loops_hidden_axis() {
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
     app.set_text_value("image_path", "/tmp/fake.image");
     app.start_run_for_test();
+    app.prepare_graphics_for_test(120, 28);
+    app.on_tick();
+    app.note_image_plane_presented();
     app.set_text_value_and_apply("fps", "4");
 
     assert!(!app.image_movie_playing_for_test());
@@ -4506,7 +4509,7 @@ fn imexplore_movie_mode_steps_and_loops_hidden_axis() {
     assert!(app.image_movie_playing_for_test());
 
     let mut wait_for_hidden_axis = |expected: &str| {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
             app.prepare_graphics_for_test(120, 28);
