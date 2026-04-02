@@ -40,6 +40,7 @@ use crate::registry::{RegistryApp, registered_apps, resolve_app};
 use crate::startup::{StartupLaunch, StartupSelection, StartupValue, parse_startup_args};
 
 const KITTY_MOVIE_OVERLAY_ID_BASE: u32 = 1_000_000;
+const KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE: u32 = KITTY_MOVIE_OVERLAY_ID_BASE + 1_000;
 
 fn software_direct_movie_overlay_enabled() -> bool {
     std::env::var_os("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY").is_none()

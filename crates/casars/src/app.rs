@@ -2997,6 +2997,7 @@ impl AppState {
         false
     }
 
+    #[cfg(test)]
     pub(crate) fn take_kitty_movie_store_invalidated(&mut self) -> bool {
         std::mem::take(&mut self.kitty_movie_store_invalidated)
     }
