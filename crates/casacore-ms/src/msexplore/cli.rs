@@ -201,6 +201,22 @@ pub fn run_env(program_name: &str) -> i32 {
     }
 }
 
+/// Parse CLI-style arguments and build a validated [`MsExploreSpec`].
+///
+/// This is intended for schema-driven callers such as `casars` that need to
+/// preview the current form state without spawning the `msexplore` binary.
+pub fn build_explore_spec_from_args(
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<MsExploreSpec, String> {
+    match parse_args(args)? {
+        CliAction::Run(options) => build_explore_spec(&options),
+        CliAction::Help => Err("help actions do not produce an msexplore spec".to_string()),
+        CliAction::UiSchema => {
+            Err("ui-schema actions do not produce an msexplore spec".to_string())
+        }
+    }
+}
+
 /// Build the machine-readable command schema for `msexplore`.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
     UiCommandSchema {

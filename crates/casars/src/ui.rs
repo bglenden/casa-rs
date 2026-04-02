@@ -797,14 +797,14 @@ fn draw_plot_workspace(
         return;
     };
 
-    let selected_plot = app.selected_plot_kind().display_name();
+    let selected_plot = app.selected_plot_label();
     let catalog_title = match app.plot_focus() {
         PlotPaneFocus::Catalog => "Catalog [focus]",
         _ => "Catalog",
     };
     let canvas_title = match app.plot_focus() {
         PlotPaneFocus::Canvas => format!("{selected_plot} [focus]"),
-        _ => selected_plot.to_string(),
+        _ => selected_plot.clone(),
     };
     let controls_title = match app.plot_focus() {
         PlotPaneFocus::Controls => "Controls [focus]",
