@@ -9,10 +9,38 @@ use image::{DynamicImage, Rgb, RgbImage};
 use plotters::backend::BitMapBackend;
 use plotters::drawing::IntoDrawingArea;
 use plotters::prelude::{FontTransform, PathElement, RGBColor, Text};
+#[cfg(not(target_os = "macos"))]
+use plotters::style::FontStyle;
 use plotters::style::IntoFont;
+#[cfg(not(target_os = "macos"))]
+use plotters::style::register_font;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
+#[cfg(not(target_os = "macos"))]
+use std::sync::OnceLock;
 
 use crate::config::ThemeMode;
+
+#[cfg(not(target_os = "macos"))]
+static PLOTTERS_SANS_FONT: OnceLock<Result<(), &'static str>> = OnceLock::new();
+
+fn ensure_plotters_font() -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        PLOTTERS_SANS_FONT
+            .get_or_init(|| {
+                register_font(
+                    "sans-serif",
+                    FontStyle::Normal,
+                    include_bytes!("../../casacore-ms/assets/NotoSans-Regular.ttf"),
+                )
+                .map_err(|_| "failed to register bundled sans-serif font")
+            })
+            .as_ref()
+            .map_err(|message| (*message).to_string())?;
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ListObsPlotRenderInput {
@@ -138,6 +166,7 @@ pub(crate) fn render_image_plane_image(
     height: u32,
     input: &ImagePlaneRenderInput,
 ) -> Result<DynamicImage, String> {
+    ensure_plotters_font()?;
     let width = width.max(1);
     let height = height.max(1);
     let raster_width = input.raster.width.max(1);
@@ -334,6 +363,7 @@ pub(crate) fn render_image_spectrum_image(
     height: u32,
     input: &ImageSpectrumRenderInput,
 ) -> Result<DynamicImage, String> {
+    ensure_plotters_font()?;
     let width = width.max(1);
     let height = height.max(1);
     let mut image = RgbImage::new(width, height);
