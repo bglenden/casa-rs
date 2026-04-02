@@ -2,6 +2,23 @@
 
 use super::*;
 
+#[derive(Debug, Clone)]
+pub(crate) struct BrowserManagerRowView<T> {
+    pub target: T,
+    pub label: String,
+    pub checked: Option<bool>,
+    pub selected: bool,
+}
+
+impl<T> BrowserManagerRowView<T> {
+    pub(crate) fn display_text(&self) -> String {
+        match self.checked {
+            Some(checked) => format!("{} {}", if checked { "[x]" } else { "[ ]" }, self.label),
+            None => self.label.clone(),
+        }
+    }
+}
+
 impl AppState {
     pub(crate) fn browser_mode_picker_active(&self) -> bool {
         self.browser_mode_picker.is_some()
@@ -43,7 +60,7 @@ impl AppState {
         else {
             return false;
         };
-        crate::pane_manager::checkbox_hit(column, row.rect, true)
+        checkbox_hit(column, row.rect, true)
     }
 
     pub(super) fn handle_browser_mode_picker_key(&mut self, key_event: KeyEvent) {
@@ -97,7 +114,7 @@ impl AppState {
         if !rect_contains(list_area, mouse_event.column, mouse_event.row) {
             return;
         }
-        let Some(row_offset) = crate::pane_manager::popup_index_at(
+        let Some(row_offset) = popup_index_at(
             list_area,
             mouse_event.column,
             mouse_event.row,
@@ -112,7 +129,7 @@ impl AppState {
         self.commit_browser_mode_picker();
     }
 
-    pub(crate) fn browser_manager_rows(&self) -> Vec<PaneManagerRowView<BrowserPaneSelection>> {
+    pub(crate) fn browser_manager_rows(&self) -> Vec<BrowserManagerRowView<BrowserPaneSelection>> {
         let Some(state) = self.image_browser_session_state() else {
             return Vec::new();
         };
@@ -122,7 +139,7 @@ impl AppState {
             ImageBrowserLeftPaneMode::Live => {}
             ImageBrowserLeftPaneMode::Regions => {
                 if state.snapshot.saved_region_names.is_empty() {
-                    rows.push(PaneManagerRowView {
+                    rows.push(BrowserManagerRowView {
                         target: BrowserPaneSelection::Mode(ImageBrowserLeftPaneMode::Regions),
                         label: "No saved regions.".to_string(),
                         checked: None,
@@ -148,7 +165,7 @@ impl AppState {
                             } else {
                                 name.to_string()
                             };
-                            PaneManagerRowView {
+                            BrowserManagerRowView {
                                 target: BrowserPaneSelection::SavedRegion(index),
                                 label: row_name,
                                 checked: Some(active),
@@ -160,7 +177,7 @@ impl AppState {
             }
             ImageBrowserLeftPaneMode::Masks => {
                 if state.snapshot.mask_names.is_empty() {
-                    rows.push(PaneManagerRowView {
+                    rows.push(BrowserManagerRowView {
                         target: BrowserPaneSelection::Mode(ImageBrowserLeftPaneMode::Masks),
                         label: "No masks.".to_string(),
                         checked: None,
@@ -173,7 +190,7 @@ impl AppState {
                                 == FormSelection::BrowserPane(BrowserPaneSelection::Mask(index));
                             let default =
                                 state.snapshot.default_mask_name.as_deref() == Some(name.as_str());
-                            PaneManagerRowView {
+                            BrowserManagerRowView {
                                 target: BrowserPaneSelection::Mask(index),
                                 label: name.clone(),
                                 checked: Some(default),
@@ -337,5 +354,41 @@ impl AppState {
                 }
             }
         }
+    }
+}
+
+fn popup_index_at(list_area: Rect, column: u16, row: u16, item_count: usize) -> Option<usize> {
+    if !rect_contains(list_area, column, row) {
+        return None;
+    }
+    let index = row.saturating_sub(list_area.y) as usize;
+    (index < item_count).then_some(index)
+}
+
+fn checkbox_hit(column: u16, row_rect: Rect, enabled: bool) -> bool {
+    enabled && column < row_rect.x.saturating_add(4)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn popup_index_at_only_returns_visible_rows() {
+        let list_area = Rect::new(2, 4, 10, 3);
+        assert_eq!(popup_index_at(list_area, 2, 4, 5), Some(0));
+        assert_eq!(popup_index_at(list_area, 8, 6, 5), Some(2));
+        assert_eq!(popup_index_at(list_area, 8, 7, 5), None);
+        assert_eq!(popup_index_at(list_area, 1, 4, 5), None);
+        assert_eq!(popup_index_at(list_area, 8, 5, 1), None);
+    }
+
+    #[test]
+    fn checkbox_hit_only_uses_checkbox_prefix_when_enabled() {
+        let row_rect = Rect::new(10, 2, 20, 1);
+        assert!(checkbox_hit(10, row_rect, true));
+        assert!(checkbox_hit(13, row_rect, true));
+        assert!(!checkbox_hit(14, row_rect, true));
+        assert!(!checkbox_hit(10, row_rect, false));
     }
 }

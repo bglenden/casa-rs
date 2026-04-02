@@ -22,7 +22,8 @@ use crate::registry::RegistryApp;
 use crate::theme::{Theme, theme};
 pub(crate) use browser_manager::{browser_mode_picker_area, browser_mode_picker_list_area};
 use browser_manager::{
-    browser_mode_selector_rect, draw_browser_mode_picker, visible_browser_manager_hits,
+    browser_mode_selector_rect, draw_browser_mode_picker, selector_button_label,
+    visible_browser_manager_hits,
 };
 
 #[derive(Debug, Clone)]
@@ -554,7 +555,7 @@ fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: 
                     Style::default().fg(palette.footer_fg)
                 };
                 frame.render_widget(
-                    Paragraph::new(crate::pane_manager::selector_button_label(
+                    Paragraph::new(selector_button_label(
                         app.browser_mode_picker_selection()
                             .unwrap_or(app.image_browser_left_pane_mode_for_ui())
                             .label(),
@@ -1491,7 +1492,7 @@ fn render_form_row_text(
 }
 
 fn render_manager_row_text(
-    row: &crate::pane_manager::PaneManagerRowView<crate::app::BrowserPaneSelection>,
+    row: &crate::app::BrowserManagerRowView<crate::app::BrowserPaneSelection>,
     focus: PaneFocus,
     palette: Theme,
     width: u16,

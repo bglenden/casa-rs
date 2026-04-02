@@ -2,6 +2,10 @@
 
 use super::*;
 
+pub(super) fn selector_button_label(current_label: &str) -> String {
+    format!("View [ {current_label} ▼ ]")
+}
+
 pub(super) fn draw_browser_mode_picker(
     frame: &mut Frame<'_>,
     app: &AppState,
@@ -97,7 +101,7 @@ pub(super) fn visible_browser_manager_hits(
 }
 
 pub(crate) fn browser_mode_picker_area(anchor: Option<Rect>, bounds: Rect) -> Rect {
-    crate::pane_manager::selector_popup_area(
+    selector_popup_area(
         anchor,
         bounds,
         crate::app::ImageBrowserLeftPaneMode::all().len(),
@@ -105,7 +109,7 @@ pub(crate) fn browser_mode_picker_area(anchor: Option<Rect>, bounds: Rect) -> Re
 }
 
 pub(crate) fn browser_mode_picker_list_area(area: Rect) -> Rect {
-    crate::pane_manager::selector_popup_list_area(area)
+    selector_popup_list_area(area)
 }
 
 pub(super) fn browser_mode_selector_rect(
@@ -135,4 +139,81 @@ pub(super) fn browser_mode_selector_rect(
         width: summary_area.width,
         height: 1,
     })
+}
+
+fn selector_popup_area(anchor: Option<Rect>, bounds: Rect, item_count: usize) -> Rect {
+    let width = bounds.width.clamp(1, 24);
+    let content_height = item_count.min(8) as u16;
+    let height = content_height
+        .saturating_add(3)
+        .clamp(5, bounds.height.max(1));
+    let Some(anchor) = anchor else {
+        return centered_rect(width, height, bounds);
+    };
+    let mut x = anchor.x;
+    if x.saturating_add(width) > bounds.x.saturating_add(bounds.width) {
+        x = bounds.x.saturating_add(bounds.width.saturating_sub(width));
+    }
+    let below_y = anchor.y.saturating_add(anchor.height);
+    let above_y = anchor.y.saturating_sub(height);
+    let y = if below_y.saturating_add(height) <= bounds.y.saturating_add(bounds.height) {
+        below_y
+    } else if anchor.y >= bounds.y.saturating_add(height) {
+        above_y
+    } else {
+        bounds.y
+    };
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+fn selector_popup_list_area(area: Rect) -> Rect {
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(3),
+    }
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let popup_width = width.min(area.width);
+    let popup_height = height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(popup_width) / 2,
+        y: area.y + area.height.saturating_sub(popup_height) / 2,
+        width: popup_width,
+        height: popup_height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selector_popup_area_anchors_below_when_there_is_room() {
+        let bounds = Rect::new(0, 0, 40, 20);
+        let anchor = Rect::new(5, 3, 12, 1);
+        let area = selector_popup_area(Some(anchor), bounds, 3);
+        assert_eq!(area.x, anchor.x);
+        assert_eq!(area.y, anchor.y + anchor.height);
+        assert_eq!(area.width, 24);
+        assert_eq!(area.height, 6);
+    }
+
+    #[test]
+    fn selector_popup_area_clamps_to_bounds_and_prefers_above_when_needed() {
+        let bounds = Rect::new(0, 0, 10, 6);
+        let anchor = Rect::new(8, 5, 2, 1);
+        let area = selector_popup_area(Some(anchor), bounds, 8);
+        assert_eq!(area.width, 10);
+        assert_eq!(area.height, 6);
+        assert_eq!(area.x, 0);
+        assert_eq!(area.y, 0);
+    }
 }

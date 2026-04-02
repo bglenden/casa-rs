@@ -4266,6 +4266,7 @@ pub enum CppUnsupportedRegionKind {
     LcBox,
 }
 
+#[cfg(has_casacore_cpp)]
 impl CppUnsupportedRegionKind {
     fn ffi_code(self) -> i32 {
         match self {

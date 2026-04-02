@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #[path = "app/browser_manager.rs"]
 mod browser_manager;
+pub(crate) use browser_manager::BrowserManagerRowView;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -57,7 +58,6 @@ use crate::movie_perf::{
     BackendTimingBreakdown, MovieFrameOutcome, MoviePerfContext, MoviePerfTracer,
     MoviePipelineState,
 };
-use crate::pane_manager::PaneManagerRowView;
 use crate::registry::{BrowserAppKind, RegistryApp};
 use crate::ui::UiLayout;
 
