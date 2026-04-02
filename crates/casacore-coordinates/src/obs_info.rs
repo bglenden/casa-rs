@@ -7,9 +7,10 @@
 //!
 //! Corresponds to C++ `ObsInfo`.
 
-use casacore_types::measures::epoch::MEpoch;
+use casacore_types::measures::epoch::{EpochRef, MEpoch};
 use casacore_types::measures::position::MPosition;
-use casacore_types::{RecordValue, ScalarValue, Value};
+use casacore_types::measures::{epoch_from_record, position_from_record};
+use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::CoordinateError;
 
@@ -20,7 +21,7 @@ use crate::error::CoordinateError;
 ///
 /// All fields are optional except `telescope` and `observer`, which default
 /// to empty strings.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ObsInfo {
     /// The telescope name (e.g. "ALMA", "VLA").
     pub telescope: String,
@@ -30,6 +31,26 @@ pub struct ObsInfo {
     pub date: Option<MEpoch>,
     /// The telescope position.
     pub telescope_position: Option<MPosition>,
+    /// The pointing center as `[longitude_rad, latitude_rad]`.
+    ///
+    /// This mirrors C++ `ObsInfo`, which stores a raw `MVDirection` value
+    /// record rather than a full `MDirection` measure record.
+    pub pointing_center_rad: [f64; 2],
+    /// Whether the pointing center still carries its initial placeholder value.
+    pub pointing_center_initial: bool,
+}
+
+impl Default for ObsInfo {
+    fn default() -> Self {
+        Self {
+            telescope: String::new(),
+            observer: String::new(),
+            date: None,
+            telescope_position: None,
+            pointing_center_rad: [0.0, 0.0],
+            pointing_center_initial: true,
+        }
+    }
 }
 
 impl ObsInfo {
@@ -56,6 +77,13 @@ impl ObsInfo {
     /// Sets the telescope position. Returns `self` for chaining.
     pub fn with_telescope_position(mut self, position: MPosition) -> Self {
         self.telescope_position = Some(position);
+        self
+    }
+
+    /// Sets the pointing center in radians. Returns `self` for chaining.
+    pub fn with_pointing_center(mut self, longitude_rad: f64, latitude_rad: f64) -> Self {
+        self.pointing_center_rad = [longitude_rad, latitude_rad];
+        self.pointing_center_initial = false;
         self
     }
 
@@ -93,6 +121,17 @@ impl ObsInfo {
             pos_rec.upsert("m2", Value::Scalar(ScalarValue::Float64(itrf[2])));
             rec.upsert("telescopeposition", Value::Record(pos_rec));
         }
+        let pointing_center_rec = RecordValue::new(vec![
+            RecordField::new(
+                "value",
+                Value::Array(ArrayValue::from_f64_vec(self.pointing_center_rad.to_vec())),
+            ),
+            RecordField::new(
+                "initial",
+                Value::Scalar(ScalarValue::Bool(self.pointing_center_initial)),
+            ),
+        ]);
+        rec.upsert("pointingcenter", Value::Record(pointing_center_rec));
 
         rec
     }
@@ -107,43 +146,86 @@ impl ObsInfo {
             Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
             _ => String::new(),
         };
-        let date = match rec.get("date") {
-            Some(Value::Scalar(ScalarValue::Float64(mjd))) => Some(MEpoch::from_mjd(
-                *mjd,
-                casacore_types::measures::epoch::EpochRef::UTC,
-            )),
-            _ => None,
-        };
-        // Telescope position: simplified deserialization
-        let telescope_position = match rec.get("telescopeposition") {
-            Some(Value::Record(pos_rec)) => {
-                let m0 = match pos_rec.get("m0") {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => {
-                        return Err(CoordinateError::InvalidRecord(
-                            "missing m0 in telescopeposition".into(),
-                        ));
-                    }
-                };
-                let m1 = match pos_rec.get("m1") {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => {
-                        return Err(CoordinateError::InvalidRecord(
-                            "missing m1 in telescopeposition".into(),
-                        ));
-                    }
-                };
-                let m2 = match pos_rec.get("m2") {
-                    Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                    _ => {
-                        return Err(CoordinateError::InvalidRecord(
-                            "missing m2 in telescopeposition".into(),
-                        ));
-                    }
-                };
-                Some(MPosition::new_itrf(m0, m1, m2))
+        let date = match rec.get("date").or_else(|| rec.get("obsdate")) {
+            Some(Value::Scalar(ScalarValue::Float64(mjd))) => {
+                Some(MEpoch::from_mjd(*mjd, EpochRef::UTC))
+            }
+            Some(Value::Record(epoch_rec)) => {
+                Some(epoch_from_record(epoch_rec).map_err(|err| {
+                    CoordinateError::InvalidRecord(format!("invalid observation date: {err}"))
+                })?)
             }
             _ => None,
+        };
+        let telescope_position = match rec.get("telescopeposition") {
+            Some(Value::Record(pos_rec)) => {
+                if pos_rec.get("refer").is_some() {
+                    Some(position_from_record(pos_rec).map_err(|err| {
+                        CoordinateError::InvalidRecord(format!(
+                            "invalid telescopeposition measure: {err}"
+                        ))
+                    })?)
+                } else {
+                    let m0 = match pos_rec.get("m0") {
+                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
+                        _ => {
+                            return Err(CoordinateError::InvalidRecord(
+                                "missing m0 in telescopeposition".into(),
+                            ));
+                        }
+                    };
+                    let m1 = match pos_rec.get("m1") {
+                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
+                        _ => {
+                            return Err(CoordinateError::InvalidRecord(
+                                "missing m1 in telescopeposition".into(),
+                            ));
+                        }
+                    };
+                    let m2 = match pos_rec.get("m2") {
+                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
+                        _ => {
+                            return Err(CoordinateError::InvalidRecord(
+                                "missing m2 in telescopeposition".into(),
+                            ));
+                        }
+                    };
+                    Some(MPosition::new_itrf(m0, m1, m2))
+                }
+            }
+            _ => None,
+        };
+        let (pointing_center_rad, pointing_center_initial) = match rec.get("pointingcenter") {
+            Some(Value::Record(pointing_center_rec)) => {
+                let values = match pointing_center_rec.get("value") {
+                    Some(Value::Array(ArrayValue::Float64(values))) => {
+                        values.iter().copied().collect::<Vec<_>>()
+                    }
+                    Some(Value::Array(ArrayValue::Float32(values))) => {
+                        values.iter().map(|value| f64::from(*value)).collect()
+                    }
+                    _ => {
+                        return Err(CoordinateError::InvalidRecord(
+                            "field pointingcenter does not contain subfield 'value'".into(),
+                        ));
+                    }
+                };
+                if values.len() != 2 {
+                    return Err(CoordinateError::InvalidRecord(
+                        "pointingcenter.value must contain exactly two angles".into(),
+                    ));
+                }
+                let initial = match pointing_center_rec.get("initial") {
+                    Some(Value::Scalar(ScalarValue::Bool(value))) => *value,
+                    _ => {
+                        return Err(CoordinateError::InvalidRecord(
+                            "field pointingcenter does not contain subfield 'initial'".into(),
+                        ));
+                    }
+                };
+                ([values[0], values[1]], initial)
+            }
+            _ => ([0.0, 0.0], true),
         };
 
         Ok(Self {
@@ -151,6 +233,8 @@ impl ObsInfo {
             observer,
             date,
             telescope_position,
+            pointing_center_rad,
+            pointing_center_initial,
         })
     }
 }
@@ -167,16 +251,21 @@ mod tests {
         assert!(info.observer.is_empty());
         assert!(info.date.is_none());
         assert!(info.telescope_position.is_none());
+        assert_eq!(info.pointing_center_rad, [0.0, 0.0]);
+        assert!(info.pointing_center_initial);
     }
 
     #[test]
     fn builder_pattern() {
         let info = ObsInfo::new("ALMA")
             .with_observer("John Doe")
-            .with_date(MEpoch::from_mjd(59000.0, EpochRef::UTC));
+            .with_date(MEpoch::from_mjd(59000.0, EpochRef::UTC))
+            .with_pointing_center(1.0, 0.5);
         assert_eq!(info.telescope, "ALMA");
         assert_eq!(info.observer, "John Doe");
         assert!(info.date.is_some());
+        assert_eq!(info.pointing_center_rad, [1.0, 0.5]);
+        assert!(!info.pointing_center_initial);
     }
 
     #[test]
@@ -210,11 +299,39 @@ mod tests {
     }
 
     #[test]
+    fn record_with_pointing_center_roundtrip() {
+        let info = ObsInfo::new("ALMA").with_pointing_center(4.02298, 0.08843);
+        let rec = info.to_record();
+        let restored = ObsInfo::from_record(&rec).unwrap();
+        assert_eq!(restored.pointing_center_rad, [4.02298, 0.08843]);
+        assert!(!restored.pointing_center_initial);
+    }
+
+    #[test]
+    fn from_record_parses_casa_style_pointing_center() {
+        let mut pointing_center = RecordValue::default();
+        pointing_center.upsert(
+            "value",
+            Value::Array(ArrayValue::from_f64_vec(vec![4.02298, 0.08843])),
+        );
+        pointing_center.upsert("initial", Value::Scalar(ScalarValue::Bool(false)));
+
+        let rec = RecordValue::new(vec![RecordField::new(
+            "pointingcenter",
+            Value::Record(pointing_center),
+        )]);
+        let info = ObsInfo::from_record(&rec).unwrap();
+        assert_eq!(info.pointing_center_rad, [4.02298, 0.08843]);
+        assert!(!info.pointing_center_initial);
+    }
+
+    #[test]
     fn to_record_contains_fields() {
         let info = ObsInfo::new("MeerKAT");
         let rec = info.to_record();
         assert!(rec.get("telescope").is_some());
         assert!(rec.get("observer").is_some());
+        assert!(rec.get("pointingcenter").is_some());
     }
 
     #[test]
@@ -222,5 +339,7 @@ mod tests {
         let rec = RecordValue::default();
         let info = ObsInfo::from_record(&rec).unwrap();
         assert!(info.telescope.is_empty());
+        assert_eq!(info.pointing_center_rad, [0.0, 0.0]);
+        assert!(info.pointing_center_initial);
     }
 }

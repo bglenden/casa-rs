@@ -11,6 +11,7 @@ use casacore_types::{RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
+use crate::record_utils::{get_optional_vec_string, get_required_vec_i32};
 
 /// Stokes parameter types, matching C++ `Stokes::StokesTypes`.
 ///
@@ -65,6 +66,25 @@ impl StokesType {
             10 => Some(Self::XY),
             11 => Some(Self::YX),
             12 => Some(Self::YY),
+            _ => None,
+        }
+    }
+
+    /// Converts a standard Stokes string name to the corresponding type.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_uppercase().as_str() {
+            "I" => Some(Self::I),
+            "Q" => Some(Self::Q),
+            "U" => Some(Self::U),
+            "V" => Some(Self::V),
+            "RR" => Some(Self::RR),
+            "RL" => Some(Self::RL),
+            "LR" => Some(Self::LR),
+            "LL" => Some(Self::LL),
+            "XX" => Some(Self::XX),
+            "XY" => Some(Self::XY),
+            "YX" => Some(Self::YX),
+            "YY" => Some(Self::YY),
             _ => None,
         }
     }
@@ -134,6 +154,33 @@ impl StokesCoordinate {
     /// Returns the Stokes types in order.
     pub fn stokes(&self) -> &[StokesType] {
         &self.stokes
+    }
+
+    /// Reconstructs a Stokes coordinate from a serialized record.
+    pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        if let Ok(codes) = get_required_vec_i32(rec, "stokes") {
+            let stokes = codes
+                .into_iter()
+                .map(|code| {
+                    StokesType::from_code(code).ok_or_else(|| {
+                        CoordinateError::InvalidRecord(format!("invalid stokes code {code}"))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(Self::new(stokes));
+        }
+
+        let names = get_optional_vec_string(rec, "stokes")
+            .ok_or_else(|| CoordinateError::InvalidRecord("missing or invalid stokes".into()))?;
+        let stokes = names
+            .into_iter()
+            .map(|name| {
+                StokesType::from_name(&name).ok_or_else(|| {
+                    CoordinateError::InvalidRecord(format!("invalid stokes name {name}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::new(stokes))
     }
 }
 
@@ -352,5 +399,12 @@ mod tests {
     fn stokes_display() {
         assert_eq!(format!("{}", StokesType::V), "V");
         assert_eq!(format!("{}", StokesType::XX), "XX");
+    }
+
+    #[test]
+    fn record_roundtrip() {
+        let coord = StokesCoordinate::new(vec![StokesType::RR, StokesType::RL, StokesType::LL]);
+        let restored = StokesCoordinate::from_record(&coord.to_record()).unwrap();
+        assert_eq!(restored.stokes(), coord.stokes());
     }
 }

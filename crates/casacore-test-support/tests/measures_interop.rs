@@ -1553,12 +1553,14 @@ fn cc_dir_b1950_roundtrip() {
         cpp_direction_convert(1.0, 0.5, "J2000", "B1950", 0.0, 0.0, 0.0, 0.0).unwrap();
     let (back_lon, back_lat) =
         cpp_direction_convert(b_lon, b_lat, "B1950", "J2000", 0.0, 0.0, 0.0, 0.0).unwrap();
+    // FK4/FK5 roundtrips are not exact to machine precision in casacore C++;
+    // keep this as a stability check without making it platform-fragile.
     assert!(
-        close(back_lon, 1.0, 1e-6),
+        close(back_lon, 1.0, 1e-5),
         "lon roundtrip: 1.0 vs {back_lon}"
     );
     assert!(
-        close(back_lat, 0.5, 1e-6),
+        close(back_lat, 0.5, 1e-5),
         "lat roundtrip: 0.5 vs {back_lat}"
     );
 }

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#[path = "ui/browser_manager.rs"]
+mod browser_manager;
+
 use ratatui::Frame;
 use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -17,6 +20,11 @@ use crate::app::{
 use crate::config::ThemeMode;
 use crate::registry::RegistryApp;
 use crate::theme::{Theme, theme};
+pub(crate) use browser_manager::{browser_mode_picker_area, browser_mode_picker_list_area};
+use browser_manager::{
+    browser_mode_selector_rect, draw_browser_mode_picker, selector_button_label,
+    visible_browser_manager_hits,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct UiLayout {
@@ -26,6 +34,8 @@ pub(crate) struct UiLayout {
     pub form_block: Rect,
     pub form_inner: Rect,
     pub form_rows: Vec<FormRowHit>,
+    pub browser_manager_rows: Vec<FormRowHit>,
+    pub browser_mode_selector: Option<Rect>,
     pub divider: Rect,
     pub result_block: Rect,
     pub result_status: Rect,
@@ -80,6 +90,19 @@ pub(crate) struct PlotControlHit {
     pub rect: Rect,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ImagePlaneCanvasLayout {
+    pub canvas: Rect,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ImagePlaneWorkspaceLayout {
+    pub plane: ImagePlaneCanvasLayout,
+    pub divider: Option<Rect>,
+    pub divider_toggle: Option<Rect>,
+    pub spectrum_canvas: Option<Rect>,
+}
+
 impl UiLayout {
     pub(crate) fn in_divider_toggle(&self, column: u16, row: u16) -> bool {
         let Some(rect) = divider_toggle_rect(self.divider) else {
@@ -91,6 +114,7 @@ impl UiLayout {
     pub(crate) fn form_target_at(&self, column: u16, row: u16) -> Option<FormSelection> {
         self.form_rows
             .iter()
+            .chain(self.browser_manager_rows.iter())
             .find(|hit| rect_contains(hit.rect, column, row))
             .map(|hit| hit.target)
     }
@@ -129,6 +153,11 @@ impl UiLayout {
 
     pub(crate) fn in_form_block(&self, column: u16, row: u16) -> bool {
         rect_contains(self.form_block, column, row)
+    }
+
+    pub(crate) fn in_browser_mode_selector(&self, column: u16, row: u16) -> bool {
+        self.browser_mode_selector
+            .is_some_and(|rect| rect_contains(rect, column, row))
     }
 
     pub(crate) fn in_result_block(&self, column: u16, row: u16) -> bool {
@@ -218,6 +247,9 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
     let result_inner = result_block_widget(app, palette).inner(result_block);
 
     let form_rows = visible_form_hits(form_inner, app);
+    let browser_mode_selector = browser_mode_selector_rect(form_inner, form_rows.len(), app);
+    let browser_manager_rows =
+        visible_browser_manager_hits(form_inner, form_rows.len(), browser_mode_selector, app);
 
     let status_height = if result_inner.height >= 5 {
         3
@@ -276,6 +308,8 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
         form_block,
         form_inner,
         form_rows,
+        browser_manager_rows,
+        browser_mode_selector,
         divider,
         result_block,
         result_status,
@@ -325,6 +359,8 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     draw_result(frame, app, layout, palette);
     if app.path_chooser_active() {
         draw_path_chooser(frame, app, layout, palette);
+    } else if app.browser_mode_picker_active() {
+        draw_browser_mode_picker(frame, app, layout, palette);
     }
     if app.help_visible() {
         draw_help_overlay(frame, app, palette);
@@ -432,7 +468,7 @@ fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: 
     let block = form_block_widget(app, palette);
     frame.render_widget(block, layout.form_block);
 
-    if app.browser_is_active() {
+    if app.browser_is_active() && !app.browser_uses_parameter_pane() {
         if let Some(buffer) = app.visible_text_buffer(OutputPane::LeftOutput, layout) {
             render_visible_text_buffer(
                 frame,
@@ -479,6 +515,133 @@ fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: 
             ListItem::new(Line::from(line)).style(style)
         })
         .collect::<Vec<_>>();
+
+    if app.browser_is_active() && app.browser_uses_parameter_pane() {
+        let rows_height = layout
+            .form_rows
+            .len()
+            .min(layout.form_inner.height as usize) as u16;
+        let form_area = Rect {
+            x: layout.form_inner.x,
+            y: layout.form_inner.y,
+            width: layout.form_inner.width,
+            height: rows_height,
+        };
+        if form_area.height > 0 {
+            frame.render_widget(List::new(items), form_area);
+        }
+
+        let gap = u16::from(form_area.height > 0);
+        let summary_area = Rect {
+            x: layout.form_inner.x,
+            y: layout
+                .form_inner
+                .y
+                .saturating_add(form_area.height)
+                .saturating_add(gap),
+            width: layout.form_inner.width,
+            height: layout
+                .form_inner
+                .height
+                .saturating_sub(form_area.height.saturating_add(gap)),
+        };
+        if summary_area.height > 0 {
+            if let Some(selector) = layout.browser_mode_selector {
+                let style = if app.browser_mode_picker_active() {
+                    Style::default()
+                        .fg(palette.field_selected_fg)
+                        .bg(palette.field_selected_bg)
+                } else {
+                    Style::default().fg(palette.footer_fg)
+                };
+                frame.render_widget(
+                    Paragraph::new(selector_button_label(
+                        app.browser_mode_picker_selection()
+                            .unwrap_or(app.image_browser_left_pane_mode_for_ui())
+                            .label(),
+                    ))
+                    .style(style),
+                    selector,
+                );
+            }
+            let manager_targets = layout
+                .browser_manager_rows
+                .iter()
+                .filter_map(|row| match row.target {
+                    FormSelection::BrowserPane(target) => Some(target),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let manager_items = app
+                .browser_manager_rows()
+                .into_iter()
+                .filter(|row| manager_targets.contains(&row.target))
+                .map(|row| {
+                    let line = render_manager_row_text(
+                        &row,
+                        app.pane_focus(),
+                        palette,
+                        layout.form_inner.width,
+                    );
+                    let style = match (row.selected, app.pane_focus()) {
+                        (true, PaneFocus::Parameters) => Style::default()
+                            .fg(palette.field_selected_fg)
+                            .bg(palette.field_selected_bg),
+                        (true, PaneFocus::Result) => Style::default()
+                            .fg(palette.inactive_selection_fg)
+                            .bg(palette.inactive_selection_bg),
+                        (false, _) => Style::default(),
+                    };
+                    ListItem::new(Line::from(line)).style(style)
+                })
+                .collect::<Vec<_>>();
+            if !manager_items.is_empty() {
+                let manager_area = Rect {
+                    x: summary_area.x,
+                    y: summary_area.y.saturating_add(2),
+                    width: summary_area.width,
+                    height: layout.browser_manager_rows.len() as u16,
+                };
+                frame.render_widget(List::new(manager_items), manager_area);
+            }
+            let summary_lines = app.browser_parameter_summary_lines();
+            let heading = app.browser_parameter_summary_heading();
+            let mut lines = vec![Line::styled(
+                heading,
+                Style::default()
+                    .fg(palette.section_fg)
+                    .add_modifier(Modifier::BOLD),
+            )];
+            lines.extend(summary_lines.into_iter().map(Line::from));
+            let summary_text_area = if layout.browser_mode_selector.is_some() {
+                Rect {
+                    x: summary_area.x,
+                    y: summary_area
+                        .y
+                        .saturating_add(2)
+                        .saturating_add(layout.browser_manager_rows.len() as u16)
+                        .saturating_add(u16::from(!layout.browser_manager_rows.is_empty())),
+                    width: summary_area.width,
+                    height: summary_area
+                        .height
+                        .saturating_sub(2)
+                        .saturating_sub(layout.browser_manager_rows.len() as u16)
+                        .saturating_sub(u16::from(!layout.browser_manager_rows.is_empty())),
+                }
+            } else {
+                summary_area
+            };
+            if summary_text_area.height > 0 {
+                frame.render_widget(
+                    Paragraph::new(lines)
+                        .style(Style::default().fg(palette.footer_fg))
+                        .wrap(Wrap { trim: false }),
+                    summary_text_area,
+                );
+            }
+        }
+        return;
+    }
 
     frame.render_widget(List::new(items), layout.form_inner);
 }
@@ -761,6 +924,11 @@ fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout,
         return;
     }
 
+    if app.image_raster_plane_active() {
+        draw_image_plane_workspace(frame, app, layout, palette);
+        return;
+    }
+
     let vertical_scrollbar = browser_scrollbar_state(app, layout.result_content);
     let horizontal_scrollbar = browser_hscrollbar_state(app, layout.result_content);
     let content_area = content_viewport_area(
@@ -806,6 +974,99 @@ fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout,
             layout.result_hscrollbar.unwrap_or(layout.result_content),
             &mut state,
         );
+    }
+}
+
+fn draw_image_plane_workspace(
+    frame: &mut Frame<'_>,
+    app: &AppState,
+    layout: &UiLayout,
+    palette: Theme,
+) {
+    let workspace = image_plane_workspace_layout(
+        layout.result_content,
+        app.image_plane_has_linked_profile(),
+        app.image_workspace_split_ratio(),
+    );
+
+    if workspace.plane.canvas.is_empty() {
+        return;
+    }
+
+    if app.image_movie_terminal_looping_active() || app.image_movie_direct_overlay_active() {
+        // Leave the canvas untouched while the direct Kitty layer owns this rectangle.
+    } else if let Some(protocol) = app.image_plane_protocol() {
+        frame.render_widget(PanelImage::new(protocol), workspace.plane.canvas);
+    } else {
+        let message = if let Some(error) = app.image_plane_last_error() {
+            format!("Plane rendering failed.\n\n{error}")
+        } else if app.image_plane_pending() {
+            "Rendering plane...".to_string()
+        } else {
+            "Plane raster unavailable.".to_string()
+        };
+        frame.render_widget(
+            Paragraph::new(message)
+                .style(Style::default().fg(palette.footer_fg))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: false }),
+            workspace.plane.canvas,
+        );
+    }
+
+    if let Some(rect) = workspace.divider {
+        let label = app
+            .image_profile_title_line()
+            .unwrap_or_else(|| "Spectrum".to_string());
+        let text_width = usize::from(
+            rect.width
+                .saturating_sub(workspace.divider_toggle.map_or(0, |toggle| toggle.width)),
+        );
+        let label = truncate_to_width(&label, text_width);
+        let label_rect = workspace.divider_toggle.map_or(rect, |toggle| Rect {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width.saturating_sub(toggle.width),
+            height: rect.height,
+        });
+        frame.render_widget(
+            Paragraph::new(label).style(Style::default().fg(palette.divider_fg)),
+            label_rect,
+        );
+        if let Some(toggle_rect) = workspace.divider_toggle {
+            let toggle = if app.image_spectrum_pane_collapsed() {
+                "▸"
+            } else {
+                "▾"
+            };
+            frame.render_widget(
+                Paragraph::new(toggle)
+                    .style(Style::default().fg(palette.divider_fg))
+                    .alignment(Alignment::Center),
+                toggle_rect,
+            );
+        }
+    }
+
+    if let Some(canvas) = workspace.spectrum_canvas {
+        if let Some(protocol) = app.image_spectrum_protocol() {
+            frame.render_widget(PanelImage::new(protocol), canvas);
+        } else {
+            let message = if let Some(error) = app.image_spectrum_last_error() {
+                format!("Spectrum rendering failed.\n\n{error}")
+            } else if app.image_spectrum_pending() {
+                "Rendering spectrum...".to_string()
+            } else {
+                "Spectrum unavailable.".to_string()
+            };
+            frame.render_widget(
+                Paragraph::new(message)
+                    .style(Style::default().fg(palette.footer_fg))
+                    .alignment(Alignment::Center)
+                    .wrap(Wrap { trim: false }),
+                canvas,
+            );
+        }
     }
 }
 
@@ -1230,6 +1491,34 @@ fn render_form_row_text(
     }
 }
 
+fn render_manager_row_text(
+    row: &crate::app::BrowserManagerRowView<crate::app::BrowserPaneSelection>,
+    focus: PaneFocus,
+    palette: Theme,
+    width: u16,
+) -> String {
+    let marker = if row.selected {
+        if focus == PaneFocus::Parameters {
+            palette.selection_glyph
+        } else {
+            palette.inactive_selection_glyph
+        }
+    } else {
+        " "
+    };
+    let prefix = format!("{marker} ");
+    let available = width as usize;
+    if available <= prefix.chars().count() {
+        fit_text(&prefix, available)
+    } else {
+        format!(
+            "{}{}",
+            prefix,
+            fit_text(&row.display_text(), available - prefix.chars().count())
+        )
+    }
+}
+
 fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
     let short = match tab {
         ResultTab::Overview => "Overview",
@@ -1340,6 +1629,25 @@ fn divider_toggle_rect(divider: Rect) -> Option<Rect> {
     })
 }
 
+fn image_workspace_divider_toggle_rect(divider: Rect) -> Option<Rect> {
+    if divider.width < 3 || divider.height == 0 {
+        return None;
+    }
+    Some(Rect {
+        x: divider.x + divider.width.saturating_sub(3),
+        y: divider.y,
+        width: 3,
+        height: 1,
+    })
+}
+
+fn truncate_to_width(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    text.chars().take(width).collect()
+}
+
 fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {
     let short = match tab {
         BrowserTab::Overview => "Overview",
@@ -1347,6 +1655,10 @@ fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {
         BrowserTab::Keywords => "Keys",
         BrowserTab::Cells => "Cells",
         BrowserTab::Subtables => "Links",
+        BrowserTab::Plane => "Plane",
+        BrowserTab::Spectrum => "Spec",
+        BrowserTab::Metadata => "Meta",
+        BrowserTab::Coordinates => "Coords",
     };
     if active {
         format!("◖ {} ◗", tab.label())
@@ -1442,6 +1754,111 @@ fn content_viewport_area(area: Rect, has_vertical: bool, has_horizontal: bool) -
             .height
             .saturating_sub(if has_horizontal { 1 } else { 0 }),
     }
+}
+
+pub(crate) fn image_plane_canvas_layout(area: Rect) -> ImagePlaneCanvasLayout {
+    ImagePlaneCanvasLayout { canvas: area }
+}
+
+#[cfg(test)]
+pub(crate) fn image_plane_canvas_area(layout: &UiLayout) -> Rect {
+    image_plane_canvas_layout(layout.result_content).canvas
+}
+
+pub(crate) fn image_plane_workspace_layout(
+    area: Rect,
+    show_spectrum: bool,
+    split_ratio: f32,
+) -> ImagePlaneWorkspaceLayout {
+    if !show_spectrum || area.height < 4 {
+        return ImagePlaneWorkspaceLayout {
+            plane: image_plane_canvas_layout(area),
+            divider: None,
+            divider_toggle: None,
+            spectrum_canvas: None,
+        };
+    }
+
+    let fixed_rows = 1u16;
+    let available_canvas = area.height.saturating_sub(fixed_rows);
+    if available_canvas < 3 {
+        return ImagePlaneWorkspaceLayout {
+            plane: image_plane_canvas_layout(area),
+            divider: None,
+            divider_toggle: None,
+            spectrum_canvas: None,
+        };
+    }
+
+    let collapsed = split_ratio >= 1.0 || available_canvas < 6;
+    let plane_canvas_height = if collapsed {
+        available_canvas
+    } else {
+        ((available_canvas as f32) * split_ratio)
+            .round()
+            .clamp(3.0, f32::from(available_canvas.saturating_sub(3))) as u16
+    };
+    let spectrum_canvas_height = available_canvas.saturating_sub(plane_canvas_height);
+    let plane = ImagePlaneCanvasLayout {
+        canvas: Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: plane_canvas_height,
+        },
+    };
+    let divider_y = plane.canvas.y + plane.canvas.height;
+    let divider = Rect {
+        x: area.x,
+        y: divider_y,
+        width: area.width,
+        height: 1,
+    };
+    ImagePlaneWorkspaceLayout {
+        plane,
+        divider: Some(divider),
+        divider_toggle: image_workspace_divider_toggle_rect(divider),
+        spectrum_canvas: (!collapsed && spectrum_canvas_height > 0).then_some(Rect {
+            x: area.x,
+            y: divider_y + 1,
+            width: area.width,
+            height: spectrum_canvas_height,
+        }),
+    }
+}
+
+pub(crate) fn image_plane_canvas_area_for_browser(
+    layout: &UiLayout,
+    show_spectrum: bool,
+    split_ratio: f32,
+) -> Rect {
+    image_plane_workspace_layout(layout.result_content, show_spectrum, split_ratio)
+        .plane
+        .canvas
+}
+
+pub(crate) fn image_spectrum_canvas_area(
+    layout: &UiLayout,
+    show_spectrum: bool,
+    split_ratio: f32,
+) -> Option<Rect> {
+    image_plane_workspace_layout(layout.result_content, show_spectrum, split_ratio).spectrum_canvas
+}
+
+pub(crate) fn image_workspace_divider_area(
+    layout: &UiLayout,
+    show_spectrum: bool,
+    split_ratio: f32,
+) -> Option<Rect> {
+    image_plane_workspace_layout(layout.result_content, show_spectrum, split_ratio).divider
+}
+
+pub(crate) fn image_workspace_divider_toggle_area(
+    layout: &UiLayout,
+    show_spectrum: bool,
+    split_ratio: f32,
+) -> Option<Rect> {
+    image_plane_workspace_layout(layout.result_content, show_spectrum, split_ratio).divider_toggle
 }
 
 fn result_scrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {

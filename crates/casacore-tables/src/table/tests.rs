@@ -1450,6 +1450,53 @@ fn add_column_none_default_with_undefined() {
 }
 
 #[test]
+fn from_rows_with_schema_persists_missing_undefined_scalar_cells() {
+    use crate::schema::ColumnOptions;
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("opt", PrimitiveType::Float64)
+            .with_options(ColumnOptions {
+                direct: false,
+                undefined: true,
+            })
+            .expect("undefined scalar"),
+    ])
+    .expect("schema");
+    let rows = vec![
+        RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new("opt", Value::Scalar(ScalarValue::Float64(2.5))),
+        ]),
+        RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(2)),
+        )]),
+    ];
+
+    let table = Table::from_rows_with_schema(rows, schema).expect("table");
+    assert_eq!(table.cell(1, "opt"), Ok(None));
+    assert!(
+        table.undefined_cells().unwrap()[1].contains("opt"),
+        "missing scalar field should be tracked as undefined"
+    );
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("undefined_scalar_rows.tbl");
+    table
+        .save(TableOptions::new(&path).with_data_manager(DataManagerKind::StManAipsIO))
+        .expect("save table");
+
+    let reopened = Table::open(TableOptions::new(&path)).expect("reopen table");
+    assert_eq!(
+        reopened.cell(0, "opt"),
+        Ok(Some(&Value::Scalar(ScalarValue::Float64(2.5))))
+    );
+    assert_eq!(reopened.cell(1, "opt"), Ok(None));
+    assert!(reopened.undefined_cells().unwrap()[1].contains("opt"));
+}
+
+#[test]
 fn add_column_none_default_without_undefined_errors() {
     let mut table = build_mutation_test_table();
     let result = table.add_column(

@@ -3,6 +3,8 @@
 
 #[cfg(any(feature = "panel", feature = "kitty"))]
 use ratatui_image::picker::{Picker, ProtocolType};
+#[cfg(any(feature = "panel", feature = "kitty"))]
+use std::env;
 #[cfg(feature = "terminal-detect")]
 use std::time::Duration;
 #[cfg(feature = "terminal-detect")]
@@ -16,6 +18,8 @@ pub struct TerminalCapabilities {
     pub panel_protocol: ProtocolType,
     /// Whether the library should enable direct Kitty layer placement.
     pub direct_kitty_layers: bool,
+    /// Whether the terminal can drive Kitty animations directly.
+    pub direct_kitty_animations: bool,
 }
 
 #[cfg(any(feature = "panel", feature = "kitty"))]
@@ -24,11 +28,20 @@ impl TerminalCapabilities {
     pub fn from_picker(picker: &Picker) -> Self {
         let panel_protocol = picker.protocol_type();
         let direct_kitty_layers = matches!(panel_protocol, ProtocolType::Kitty);
+        let direct_kitty_animations = direct_kitty_layers && !is_ghostty_terminal();
         Self {
             panel_protocol,
             direct_kitty_layers,
+            direct_kitty_animations,
         }
     }
+}
+
+#[cfg(any(feature = "panel", feature = "kitty"))]
+fn is_ghostty_terminal() -> bool {
+    matches!(env::var("TERM_PROGRAM").as_deref(), Ok("ghostty"))
+        || env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
+        || env::var_os("GHOSTTY_BIN_DIR").is_some()
 }
 
 /// Errors returned by terminal background probing.

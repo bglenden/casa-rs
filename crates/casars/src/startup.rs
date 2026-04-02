@@ -250,7 +250,7 @@ fn render_casars_help() -> String {
         ));
     }
     out.push_str(
-        "\nExamples:\n  casars\n  casars tablebrowser /path/to/table\n  casars --app listobs /path/to.ms --field 3C286\n",
+        "\nExamples:\n  casars\n  casars tablebrowser /path/to/table\n  casars imexplore /path/to/image\n  casars --app listobs /path/to.ms --field 3C286\n",
     );
     out
 }
@@ -333,6 +333,49 @@ mod tests {
     }
 
     #[test]
+    fn schema_prefill_parses_imexplore_positional_argument() {
+        let schema = serde_json::from_value(json!({
+            "schema_version": 1,
+            "command_id": "imexplore",
+            "invocation_name": "imexplore",
+            "display_name": "ImExplore",
+            "category": "Images",
+            "summary": "browse persistent casacore images",
+            "usage": "imexplore <image-path>",
+            "arguments": [
+                {
+                    "id": "image_path",
+                    "label": "Image Path",
+                    "order": 0,
+                    "parser": { "kind": "positional", "metavar": "image-path" },
+                    "value_kind": "path",
+                    "required": true,
+                    "default": null,
+                    "help": "Path to the casacore image root directory",
+                    "group": "Input",
+                    "advanced": false,
+                    "hidden_in_tui": false
+                }
+            ],
+            "managed_output": null
+        }))
+        .expect("imexplore schema");
+
+        let result = parse_schema_prefill_args(&schema, vec![OsString::from("/tmp/example.image")])
+            .expect("parse imexplore startup args");
+        let super::SchemaPrefillParse::Prefill { values, auto_run } = result else {
+            panic!("expected prefill");
+        };
+        assert!(auto_run);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].id, "image_path");
+        assert_eq!(
+            values[0].value,
+            StartupValue::Text("/tmp/example.image".to_string())
+        );
+    }
+
+    #[test]
     fn schema_prefill_parses_listobs_options_and_toggles() {
         let schema = command_schema("listobs");
         let result = parse_schema_prefill_args(
@@ -395,6 +438,7 @@ mod tests {
         };
         assert!(text.contains("Usage:"));
         assert!(text.contains("tablebrowser"));
+        assert!(text.contains("imexplore"));
         assert!(text.contains("listobs"));
     }
 

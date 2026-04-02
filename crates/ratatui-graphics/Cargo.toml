@@ -5,6 +5,8 @@ edition = "2024"
 readme = "README.md"
 
 [dependencies]
+base64-simd = { version = "0.8.0", optional = true }
+flate2 = { version = "1.1", optional = true }
 image = { version = "0.25.8", default-features = false, features = ["png"] }
 thiserror = "2.0.17"
 kittage = { version = "0.3.4", features = ["image-crate"], optional = true }
@@ -18,7 +20,7 @@ anyhow = "1.0.100"
 [features]
 default = ["panel", "kitty", "plotters", "terminal-detect"]
 panel = ["dep:ratatui", "dep:ratatui-image"]
-kitty = ["dep:kittage", "dep:ratatui", "dep:ratatui-image"]
+kitty = ["dep:base64-simd", "dep:flate2", "dep:kittage", "dep:ratatui", "dep:ratatui-image"]
 plotters = ["dep:plotters"]
 terminal-detect = ["dep:termbg"]
 

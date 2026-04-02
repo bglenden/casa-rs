@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Pixel mask support for images.
 //!
-//! Masks are boolean arrays stored as keywords in the image table. Each
-//! mask has a name; one may be designated the "default" mask.
-//!
-//! In C++ casacore, masks are stored as sub-tables (using `LCPagedMask`).
-//! This Rust implementation stores masks as boolean array values in
-//! keyword records for simplicity and portability. The on-disk format
-//! is a sub-record under the `"masks"` table keyword.
+//! This module contains small helpers for reading mask-related keyword metadata.
+//! Persistent mask storage itself is implemented in the image types using native
+//! casacore-compatible mask tables and keyword records.
 
 use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;

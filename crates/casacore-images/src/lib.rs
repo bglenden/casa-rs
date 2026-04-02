@@ -65,6 +65,8 @@ pub mod expr_parser;
 pub mod image;
 pub mod image_expr;
 pub mod image_info;
+pub mod image_view;
+pub mod imagebrowser_session;
 pub mod iterator;
 pub mod subimage;
 pub mod temp_image;
@@ -83,6 +85,12 @@ pub use image_expr::{
     ImageExprUnaryOp, MaskExpr, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
+pub use image_view::{
+    ImageAxisModel, ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis,
+    ImageProbe, ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow,
+    OpenedImageView, PlaneRaster,
+};
+pub use imagebrowser_session::ImageBrowserSession;
 pub use iterator::{ImageChunk, ImageIter, ImageIterMut};
 pub use subimage::{SubImage, SubImageMut};
 pub use temp_image::TempImage;

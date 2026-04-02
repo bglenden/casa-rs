@@ -440,14 +440,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "casacore-imagebrowser-protocol"
+version = "0.8.4"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "casacore-images"
 version = "0.8.4"
 dependencies = [
  "casacore-coordinates",
+ "casacore-imagebrowser-protocol",
  "casacore-lattices",
  "casacore-tables",
+ "casacore-test-support",
  "casacore-types",
  "ndarray",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
@@ -548,6 +560,7 @@ dependencies = [
  "casacore-tables",
  "casacore-types",
  "cc",
+ "libc",
  "ndarray",
  "pkg-config",
  "sofars",
@@ -571,6 +584,8 @@ name = "casars"
 version = "0.8.4"
 dependencies = [
  "arboard",
+ "casacore-imagebrowser-protocol",
+ "casacore-images",
  "casacore-ms",
  "casacore-tablebrowser-protocol",
  "casacore-tables",
@@ -3066,6 +3081,8 @@ name = "ratatui-graphics"
 version = "0.8.4"
 dependencies = [
  "anyhow",
+ "base64-simd",
+ "flate2",
  "image",
  "kittage",
  "plotters",

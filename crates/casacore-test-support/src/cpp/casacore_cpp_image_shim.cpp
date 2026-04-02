@@ -2,12 +2,32 @@
 // Typed PagedImage interop shim for cross-language verification.
 #include "casacore_cpp_common.h"
 #include <chrono>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
 #include <casacore/images/Images/TempImage.h>
 #include <casacore/images/Images/PagedImage.h>
+#include <casacore/images/Images/SubImage.h>
 #include <casacore/images/Images/ImageInfo.h>
 #include <casacore/images/Images/ImageExprParse.h>
 #include <casacore/images/Images/ImageExpr.h>
 #include <casacore/images/Images/ImageOpener.h>
+#include <casacore/images/Regions/RegionManager.h>
+#include <casacore/images/Regions/WCBox.h>
+#include <casacore/images/Regions/WCComplement.h>
+#include <casacore/images/Regions/WCConcatenation.h>
+#include <casacore/images/Regions/WCDifference.h>
+#include <casacore/images/Regions/WCEllipsoid.h>
+#include <casacore/images/Regions/WCExtension.h>
+#include <casacore/images/Regions/WCIntersection.h>
+#include <casacore/images/Regions/WCLELMask.h>
+#include <casacore/images/Regions/WCPolygon.h>
+#include <casacore/images/Regions/WCUnion.h>
+#include <casacore/images/Regions/ImageRegion.h>
+#include <casacore/lattices/LRegions/RegionType.h>
+#include <casacore/lattices/LRegions/LCBox.h>
+#include <casacore/lattices/LRegions/LCSlicer.h>
 #include <casacore/coordinates/Coordinates/CoordinateUtil.h>
 #include <casacore/lattices/Lattices.h>
 #include <casacore/lattices/LEL/LatticeExpr.h>
@@ -610,6 +630,376 @@ void eval_pagedimage_float_closeout_expr_slice_impl(
     copy_numeric_array_to_output(arr, data_out, max_size, nread_out);
 }
 
+casacore::Quantum<casacore::Vector<casacore::Double>> make_vector_quantum(
+    const double* values,
+    int32_t nvalues,
+    const casacore::String& unit
+) {
+    casacore::Vector<casacore::Double> vector_values(nvalues);
+    for (int32_t i = 0; i < nvalues; ++i) {
+        vector_values[i] = values[i];
+    }
+    return casacore::Quantum<casacore::Vector<casacore::Double>>(vector_values, unit);
+}
+
+casacore::ImageRegion make_polygon_region(
+    const casacore::CoordinateSystem& coords,
+    const casacore::Vector<casacore::String>& units,
+    double x0,
+    double y0,
+    double x1,
+    double y1,
+    double x2,
+    double y2
+) {
+    const double x_values[] = {x0, x1, x2};
+    const double y_values[] = {y0, y1, y2};
+    const casacore::IPosition pixel_axes(2, 0, 1);
+    return casacore::ImageRegion(casacore::WCPolygon(
+        make_vector_quantum(x_values, 3, units[0]),
+        make_vector_quantum(y_values, 3, units[1]),
+        pixel_axes,
+        coords,
+        casacore::RegionType::Abs
+    ));
+}
+
+casacore::WCBox make_extension_box(
+    const casacore::CoordinateSystem& coords,
+    const casacore::Vector<casacore::String>& units
+) {
+    if (coords.nWorldAxes() < 3 || units.size() < 3) {
+        throw std::runtime_error("extension-style region requires an image with at least 3 axes");
+    }
+    casacore::Vector<casacore::Quantum<casacore::Double>> blc(1);
+    casacore::Vector<casacore::Quantum<casacore::Double>> trc(1);
+    blc[0] = casacore::Quantum<casacore::Double>(0.0, units[2]);
+    trc[0] = casacore::Quantum<casacore::Double>(1.0, units[2]);
+    casacore::Vector<casacore::Int> abs_rel(1);
+    abs_rel = casacore::RegionType::Abs;
+    return casacore::WCBox(blc, trc, casacore::IPosition(1, 2), coords, abs_rel);
+}
+
+void write_polygon_region_impl(
+    const std::string& path,
+    const std::string& region_name,
+    const double* x,
+    const double* y,
+    int32_t nvertices
+) {
+    casacore::PagedImage<casacore::Float> image(path);
+    const auto coords = image.coordinates();
+    const auto units = coords.worldAxisUnits();
+    const casacore::IPosition pixel_axes(2, 0, 1);
+    const auto xq = make_vector_quantum(x, nvertices, units[0]);
+    const auto yq = make_vector_quantum(y, nvertices, units[1]);
+    const casacore::WCPolygon polygon(
+        xq, yq, pixel_axes, coords, casacore::RegionType::Abs
+    );
+    image.defineRegion(
+        region_name, casacore::ImageRegion(polygon), casacore::RegionHandler::Regions
+    );
+}
+
+void write_union_region_impl(
+    const std::string& path,
+    const std::string& region_name,
+    const double* x1,
+    const double* y1,
+    int32_t nvertices1,
+    const double* x2,
+    const double* y2,
+    int32_t nvertices2
+) {
+    casacore::PagedImage<casacore::Float> image(path);
+    const auto coords = image.coordinates();
+    const auto units = coords.worldAxisUnits();
+    const casacore::IPosition pixel_axes(2, 0, 1);
+    const casacore::ImageRegion region1(casacore::WCPolygon(
+        make_vector_quantum(x1, nvertices1, units[0]),
+        make_vector_quantum(y1, nvertices1, units[1]),
+        pixel_axes,
+        coords,
+        casacore::RegionType::Abs
+    ));
+    const casacore::ImageRegion region2(casacore::WCPolygon(
+        make_vector_quantum(x2, nvertices2, units[0]),
+        make_vector_quantum(y2, nvertices2, units[1]),
+        pixel_axes,
+        coords,
+        casacore::RegionType::Abs
+    ));
+    casacore::WCUnion region_union(region1, region2);
+    image.defineRegion(
+        region_name, casacore::ImageRegion(region_union), casacore::RegionHandler::Regions
+    );
+}
+
+void write_box_region_impl(
+    const std::string& path,
+    const std::string& region_name,
+    double x0,
+    double y0,
+    double x1,
+    double y1
+) {
+    casacore::PagedImage<casacore::Float> image(path);
+    const auto coords = image.coordinates();
+    const auto units = coords.worldAxisUnits();
+    casacore::Vector<casacore::Quantum<casacore::Double>> blc(2);
+    casacore::Vector<casacore::Quantum<casacore::Double>> trc(2);
+    blc[0] = casacore::Quantum<casacore::Double>(x0, units[0]);
+    blc[1] = casacore::Quantum<casacore::Double>(y0, units[1]);
+    trc[0] = casacore::Quantum<casacore::Double>(x1, units[0]);
+    trc[1] = casacore::Quantum<casacore::Double>(y1, units[1]);
+    casacore::Vector<casacore::Int> abs_rel(2);
+    abs_rel = casacore::RegionType::Abs;
+    const casacore::WCBox box(blc, trc, coords, abs_rel);
+    image.defineRegion(
+        region_name, casacore::ImageRegion(box), casacore::RegionHandler::Regions
+    );
+}
+
+void write_unsupported_region_impl(
+    const std::string& path,
+    const std::string& region_name,
+    int32_t kind
+) {
+    casacore::PagedImage<casacore::Float> image(path);
+    const auto coords = image.coordinates();
+    const auto units = coords.worldAxisUnits();
+    const auto region_a = make_polygon_region(
+        coords, units, 0.0, 0.0, 1e-6, 0.0, 0.0, 1e-6
+    );
+    const auto region_b = make_polygon_region(
+        coords, units, 2e-6, 2e-6, 3e-6, 2e-6, 2e-6, 3e-6
+    );
+
+    switch (kind) {
+    case 0: {
+        const casacore::WCEllipsoid ellipsoid(
+            casacore::Quantum<casacore::Double>(0.0, units[0]),
+            casacore::Quantum<casacore::Double>(0.0, units[1]),
+            casacore::Quantum<casacore::Double>(2e-6, units[0]),
+            casacore::Quantum<casacore::Double>(1e-6, units[1]),
+            casacore::Quantity(0.0, "rad"),
+            0,
+            1,
+            coords,
+            casacore::RegionType::Abs
+        );
+        image.defineRegion(
+            region_name, casacore::ImageRegion(ellipsoid), casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    case 1: {
+        const casacore::WCIntersection intersection(region_a, region_b);
+        image.defineRegion(
+            region_name,
+            casacore::ImageRegion(intersection),
+            casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    case 2: {
+        const casacore::WCDifference difference(region_a, region_b);
+        image.defineRegion(
+            region_name,
+            casacore::ImageRegion(difference),
+            casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    case 3: {
+        const casacore::WCComplement complement(region_a);
+        image.defineRegion(
+            region_name,
+            casacore::ImageRegion(complement),
+            casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    case 4: {
+        const auto extend_box = make_extension_box(coords, units);
+        casacore::PtrBlock<const casacore::ImageRegion*> regions(2);
+        regions[0] = &region_a;
+        regions[1] = &region_b;
+        const casacore::WCConcatenation concatenation(regions, extend_box);
+        image.defineRegion(
+            region_name,
+            casacore::ImageRegion(concatenation),
+            casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    case 5: {
+        const auto extend_box = make_extension_box(coords, units);
+        const casacore::WCExtension extension(region_a, extend_box);
+        image.defineRegion(
+            region_name,
+            casacore::ImageRegion(extension),
+            casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    case 6: {
+        const casacore::WCLELMask lel_mask("index0 in [0:1]");
+        image.defineRegion(
+            region_name,
+            casacore::ImageRegion(lel_mask),
+            casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    case 7: {
+        const int ndim = static_cast<int>(image.shape().nelements());
+        casacore::IPosition blc(ndim, 0);
+        casacore::IPosition trc(image.shape() - 1);
+        if (trc[0] > 1) {
+            trc[0] = 1;
+        }
+        if (ndim > 1) {
+            if (trc[1] > 2) {
+                trc[1] = 2;
+            }
+        }
+        const casacore::LCBox box(blc, trc, image.shape());
+        image.defineRegion(
+            region_name,
+            casacore::ImageRegion(box),
+            casacore::RegionHandler::Regions
+        );
+        return;
+    }
+    default:
+        throw std::runtime_error("unsupported unsupported-region test kind");
+    }
+}
+
+void read_region_class_impl(
+    const std::string& path,
+    const std::string& region_name,
+    char* buf,
+    int32_t bufsize
+) {
+    casacore::PagedImage<casacore::Float> image(path);
+    casacore::ImageRegion region = image.getRegion(region_name, casacore::RegionHandler::Any);
+    casacore::Record record = region.toRecord(casacore::String(""));
+    const std::string class_name = record.asString("name");
+    const int32_t n = std::min(static_cast<int32_t>(class_name.size()), bufsize - 1);
+    std::memcpy(buf, class_name.c_str(), n);
+    buf[n] = '\0';
+}
+
+void read_region_names_impl(const std::string& path, char* buf, int32_t bufsize) {
+    casacore::PagedImage<casacore::Float> image(path);
+    const casacore::Vector<casacore::String> names =
+        image.regionNames(casacore::RegionHandler::Regions);
+    std::string joined;
+    for (casacore::uInt i = 0; i < names.size(); ++i) {
+        if (i > 0) {
+            joined += ",";
+        }
+        joined += names[i];
+    }
+    const int32_t n = std::min(static_cast<int32_t>(joined.size()), bufsize - 1);
+    std::memcpy(buf, joined.c_str(), n);
+    buf[n] = '\0';
+}
+
+void read_region_statistics_impl(
+    const std::string& path,
+    const std::string& region_name,
+    double* stats_out,
+    int32_t nstats
+) {
+    if (nstats < 8) {
+        throw std::runtime_error("stats_out must have room for 8 values");
+    }
+    casacore::PagedImage<casacore::Float> image(path);
+    const casacore::ImageRegion region =
+        image.getRegion(region_name, casacore::RegionHandler::Any);
+    const casacore::SubImage<casacore::Float> sub(image, region);
+    casacore::Array<casacore::Float> values = sub.get();
+    casacore::Array<casacore::Bool> mask = sub.getMask();
+    casacore::Bool values_delete = false;
+    casacore::Bool mask_delete = false;
+    const casacore::Float* values_ptr = values.getStorage(values_delete);
+    const casacore::Bool* mask_ptr = mask.getStorage(mask_delete);
+    const auto nelements = static_cast<size_t>(values.nelements());
+
+    std::vector<double> finite_values;
+    finite_values.reserve(nelements);
+    double sum = 0.0;
+    double sum_sq = 0.0;
+    double min_value = std::numeric_limits<double>::infinity();
+    double max_value = -std::numeric_limits<double>::infinity();
+
+    for (size_t i = 0; i < nelements; ++i) {
+        const double value = values_ptr[i];
+        if (!mask_ptr[i] || !std::isfinite(value)) {
+            continue;
+        }
+        finite_values.push_back(value);
+        sum += value;
+        sum_sq += value * value;
+        min_value = std::min(min_value, value);
+        max_value = std::max(max_value, value);
+    }
+    values.freeStorage(values_ptr, values_delete);
+    mask.freeStorage(mask_ptr, mask_delete);
+
+    if (finite_values.empty()) {
+        throw std::runtime_error("saved region has no finite masked-on samples");
+    }
+
+    std::sort(finite_values.begin(), finite_values.end());
+    const double count = static_cast<double>(finite_values.size());
+    const double mean = sum / count;
+    double variance = 0.0;
+    for (const double value : finite_values) {
+        const double delta = value - mean;
+        variance += delta * delta;
+    }
+    variance /= count;
+    const double sigma = std::sqrt(variance);
+    const double rms = std::sqrt(sum_sq / count);
+    const size_t middle = finite_values.size() / 2;
+    const double median = finite_values.size() % 2 == 0
+        ? 0.5 * (finite_values[middle - 1] + finite_values[middle])
+        : finite_values[middle];
+
+    stats_out[0] = count;
+    stats_out[1] = sum;
+    stats_out[2] = mean;
+    stats_out[3] = median;
+    stats_out[4] = rms;
+    stats_out[5] = sigma;
+    stats_out[6] = min_value;
+    stats_out[7] = max_value;
+}
+
+void write_default_mask_impl(
+    const std::string& path,
+    const std::string& mask_name,
+    const uint8_t* data,
+    int64_t ndata
+) {
+    casacore::PagedImage<casacore::Float> image(path);
+    image.makeMask(mask_name, true, true);
+    casacore::Array<casacore::Bool> mask(image.shape());
+    const int64_t n = std::min(ndata, static_cast<int64_t>(mask.nelements()));
+    casacore::Bool deleteIt;
+    casacore::Bool* storage = mask.getStorage(deleteIt);
+    for (int64_t i = 0; i < n; ++i) {
+        storage[i] = data[i] != 0;
+    }
+    mask.putStorage(storage, deleteIt);
+    image.pixelMask().put(mask);
+    image.flush();
+}
+
 // Bypass PagedImage::setMaximumCacheSize (which has a units bug: it converts
 // pixels→bytes then passes to TiledStMan which interprets the value as MiB).
 // Instead, use ROTiledStManAccessor directly with the correct MiB value.
@@ -935,6 +1325,173 @@ int32_t cpp_read_pagedimage_default_mask(
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in read_pagedimage_default_mask");
+        return -1;
+    }
+}
+
+int32_t cpp_write_polygon_region(
+    const char* path,
+    const char* region_name,
+    const double* x,
+    const double* y,
+    int32_t nvertices,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        write_polygon_region_impl(path, region_name, x, y, nvertices);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_polygon_region");
+        return -1;
+    }
+}
+
+int32_t cpp_write_union_region(
+    const char* path,
+    const char* region_name,
+    const double* x1,
+    const double* y1,
+    int32_t nvertices1,
+    const double* x2,
+    const double* y2,
+    int32_t nvertices2,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        write_union_region_impl(
+            path, region_name, x1, y1, nvertices1, x2, y2, nvertices2
+        );
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_union_region");
+        return -1;
+    }
+}
+
+int32_t cpp_write_box_region(
+    const char* path,
+    const char* region_name,
+    double x0,
+    double y0,
+    double x1,
+    double y1,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        write_box_region_impl(path, region_name, x0, y0, x1, y1);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_box_region");
+        return -1;
+    }
+}
+
+int32_t cpp_read_region_class(
+    const char* path,
+    const char* region_name,
+    char* buf,
+    int32_t bufsize,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        read_region_class_impl(path, region_name, buf, bufsize);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in read_region_class");
+        return -1;
+    }
+}
+
+int32_t cpp_read_region_names(
+    const char* path,
+    char* buf,
+    int32_t bufsize,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        read_region_names_impl(path, buf, bufsize);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in read_region_names");
+        return -1;
+    }
+}
+
+int32_t cpp_write_unsupported_region(
+    const char* path,
+    const char* region_name,
+    int32_t kind,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        write_unsupported_region_impl(path, region_name, kind);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_unsupported_region");
+        return -1;
+    }
+}
+
+int32_t cpp_read_region_statistics(
+    const char* path,
+    const char* region_name,
+    double* stats_out,
+    int32_t nstats,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        read_region_statistics_impl(path, region_name, stats_out, nstats);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in read_region_statistics");
+        return -1;
+    }
+}
+
+int32_t cpp_write_default_mask(
+    const char* path,
+    const char* mask_name,
+    const uint8_t* data,
+    int64_t ndata,
+    char** out_error
+) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        write_default_mask_impl(path, mask_name, data, ndata);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in write_default_mask");
         return -1;
     }
 }

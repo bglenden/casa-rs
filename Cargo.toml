@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/casars",
+    "crates/casacore-imagebrowser-protocol",
     "crates/casacore-tablebrowser-protocol",
     "crates/casacore-types",
     "crates/casacore-aipsio",
@@ -27,7 +28,7 @@ repository = "https://github.com/bglenden/casa-rs"
 [workspace.dependencies]
 ndarray = "0.17"
 num-complex = "0.4"
-ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false, features = ["panel", "plotters"] }
+ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false, features = ["panel", "plotters", "kitty"] }
 sofars = "0.6"
 thiserror = "2.0"
 

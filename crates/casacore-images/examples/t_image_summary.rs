@@ -80,9 +80,18 @@ fn main() {
     // Beam.
     if let Some(beam) = img_info.beam_set.single_beam() {
         println!("  Beam:");
-        println!("    Major axis:      {:.6e} rad", beam.major);
-        println!("    Minor axis:      {:.6e} rad", beam.minor);
-        println!("    Position angle:  {:.4} rad", beam.position_angle);
+        println!(
+            "    Major axis:      {:.6} arcsec",
+            beam.major_in("arcsec").expect("beam major in arcsec")
+        );
+        println!(
+            "    Minor axis:      {:.6} arcsec",
+            beam.minor_in("arcsec").expect("beam minor in arcsec")
+        );
+        println!(
+            "    Position angle:  {:.4} deg",
+            beam.position_angle_in("deg").expect("beam PA in deg")
+        );
         println!("    Area:            {:.6e} sr", beam.area());
         assert!((beam.major - 1e-4).abs() < 1e-10);
         assert!((beam.minor - 5e-5).abs() < 1e-10);

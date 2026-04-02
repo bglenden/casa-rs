@@ -19,6 +19,7 @@ casacore-lattices = { path = "../casacore-lattices" }
 casacore-measures-data = { path = "../casacore-measures-data" }
 casacore-tables = { path = "../casacore-tables" }
 casacore-types = { path = "../casacore-types" }
+libc = "0.2"
 ndarray.workspace = true
 sofars.workspace = true
 tempfile = "3"

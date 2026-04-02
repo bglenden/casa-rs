@@ -25,9 +25,15 @@ enum RegistryAppKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AppInteraction {
+pub(crate) enum AppInteraction {
     OneShot,
-    BrowserSession,
+    BrowserSession(BrowserAppKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BrowserAppKind {
+    Table,
+    Image,
 }
 
 #[derive(Debug, Clone)]
@@ -124,16 +130,36 @@ impl RegistryApp {
         matches!(
             self.kind,
             RegistryAppKind::Subprocess {
-                interaction: AppInteraction::BrowserSession,
+                interaction: AppInteraction::BrowserSession(_),
                 ..
             }
         )
     }
 
+    pub(crate) fn browser_kind(&self) -> Option<BrowserAppKind> {
+        match self.kind {
+            RegistryAppKind::Subprocess {
+                interaction: AppInteraction::BrowserSession(kind),
+                ..
+            } => Some(kind),
+            RegistryAppKind::Subprocess {
+                interaction: AppInteraction::OneShot,
+                ..
+            } => None,
+        }
+    }
+
+    pub(crate) fn browser_path_field_id(&self) -> Option<&'static str> {
+        match self.browser_kind()? {
+            BrowserAppKind::Table => Some("table_path"),
+            BrowserAppKind::Image => Some("image_path"),
+        }
+    }
+
     pub(crate) fn ready_status_line(&self) -> &'static str {
         match self.kind {
             RegistryAppKind::Subprocess {
-                interaction: AppInteraction::BrowserSession,
+                interaction: AppInteraction::BrowserSession(_),
                 ..
             } => "Ready. Press r to open the browser session.",
             RegistryAppKind::Subprocess {
@@ -148,14 +174,15 @@ pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
     match id.unwrap_or("listobs") {
         "listobs" => Ok(listobs_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
+        "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: listobs, tablebrowser"
+            "unknown casars app {other:?}; expected one of: listobs, tablebrowser, imexplore"
         )),
     }
 }
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
-    vec![listobs_app(), tablebrowser_app()]
+    vec![listobs_app(), tablebrowser_app(), imexplore_app()]
 }
 
 pub(crate) fn listobs_app() -> RegistryApp {
@@ -181,7 +208,21 @@ pub(crate) fn tablebrowser_app() -> RegistryApp {
             binary_name: "tablebrowser",
             cargo_package: "casacore-tables",
             override_env: "CASARS_TABLEBROWSER_BIN",
-            interaction: AppInteraction::BrowserSession,
+            interaction: AppInteraction::BrowserSession(BrowserAppKind::Table),
+        },
+    }
+}
+
+pub(crate) fn imexplore_app() -> RegistryApp {
+    RegistryApp {
+        id: "imexplore",
+        category: "Images",
+        display_name: "ImExplore",
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "imexplore",
+            cargo_package: "casacore-images",
+            override_env: "CASARS_IMEXPLORE_BIN",
+            interaction: AppInteraction::BrowserSession(BrowserAppKind::Image),
         },
     }
 }
@@ -205,6 +246,7 @@ mod tests {
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
         );
+        assert_eq!(resolve_app(Some("imexplore")).unwrap().id, "imexplore");
         assert!(
             resolve_app(Some("bogus"))
                 .unwrap_err()
@@ -223,10 +265,17 @@ mod tests {
 
         let tablebrowser = tablebrowser_app();
         assert!(tablebrowser.is_browser_session());
+        assert_eq!(tablebrowser.browser_kind(), Some(BrowserAppKind::Table));
+        assert_eq!(tablebrowser.browser_path_field_id(), Some("table_path"));
         assert_eq!(
             tablebrowser.ready_status_line(),
             "Ready. Press r to open the browser session."
         );
+
+        let imexplore = imexplore_app();
+        assert!(imexplore.is_browser_session());
+        assert_eq!(imexplore.browser_kind(), Some(BrowserAppKind::Image));
+        assert_eq!(imexplore.browser_path_field_id(), Some("image_path"));
     }
 
     #[test]

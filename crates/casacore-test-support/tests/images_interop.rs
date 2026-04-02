@@ -4,8 +4,8 @@
 //! Verifies that Rust `Image` and C++ `PagedImage<Float>` produce identical
 //! on-disk formats and can read each other's images.
 
-use casacore_images::{Image, PagedImage};
-use casacore_test_support::cpp_backend_available;
+use casacore_images::{Image, OpenedImageView, PagedImage};
+use casacore_test_support::{CppUnsupportedRegionKind, cpp_backend_available};
 use casacore_types::{Complex32, Complex64};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
@@ -388,4 +388,387 @@ fn cr_cpp_write_rust_read_complex64() {
     let img = PagedImage::<Complex64>::open(&path).unwrap();
     let got: Vec<Complex64> = img.get().unwrap().as_slice_memory_order().unwrap().to_vec();
     assert_eq!(got, data);
+}
+
+#[test]
+fn cr_cpp_write_rust_load_saved_polygon_region() {
+    if !cpp_backend_available() {
+        eprintln!(
+            "skipping cr_cpp_write_rust_load_saved_polygon_region: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cpp_polygon_region.image");
+    casacore_test_support::cpp_create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
+
+    let opened = OpenedImageView::open(&path).unwrap();
+    let window = opened.default_window();
+    let pixels = [(1usize, 1usize), (3, 1), (2, 3)];
+    let vertices = pixels
+        .into_iter()
+        .map(|pixel_xy| {
+            opened
+                .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let x = vertices
+        .iter()
+        .map(|vertex| vertex.world[0])
+        .collect::<Vec<_>>();
+    let y = vertices
+        .iter()
+        .map(|vertex| vertex.world[1])
+        .collect::<Vec<_>>();
+    casacore_test_support::cpp_write_polygon_region(&path, "cpp_poly", &x, &y).unwrap();
+
+    let loaded = opened.load_saved_region("cpp_poly").unwrap();
+    assert_eq!(loaded.label, "cpp_poly");
+    assert_eq!(loaded.shapes.len(), 1);
+    assert_eq!(loaded.shapes[0].vertices.len(), 3);
+    let overlay = opened
+        .region_overlay_with_window_and_axes(&loaded, &window, &[])
+        .unwrap();
+    assert_eq!(overlay.shapes.len(), 1);
+    assert_eq!(overlay.shapes[0].vertices.len(), 3);
+    assert!(overlay.shapes[0].closed);
+}
+
+#[test]
+fn cr_cpp_write_rust_load_saved_union_region() {
+    if !cpp_backend_available() {
+        eprintln!("skipping cr_cpp_write_rust_load_saved_union_region: C++ casacore not available");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cpp_union_region.image");
+    casacore_test_support::cpp_create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
+
+    let opened = OpenedImageView::open(&path).unwrap();
+    let window = opened.default_window();
+    let tri1 = [(1usize, 1usize), (2, 1), (1, 2)]
+        .into_iter()
+        .map(|pixel_xy| {
+            opened
+                .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let tri2 = [(4usize, 4usize), (5, 4), (4, 5)]
+        .into_iter()
+        .map(|pixel_xy| {
+            opened
+                .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let x1 = tri1
+        .iter()
+        .map(|vertex| vertex.world[0])
+        .collect::<Vec<_>>();
+    let y1 = tri1
+        .iter()
+        .map(|vertex| vertex.world[1])
+        .collect::<Vec<_>>();
+    let x2 = tri2
+        .iter()
+        .map(|vertex| vertex.world[0])
+        .collect::<Vec<_>>();
+    let y2 = tri2
+        .iter()
+        .map(|vertex| vertex.world[1])
+        .collect::<Vec<_>>();
+    casacore_test_support::cpp_write_union_region(&path, "cpp_union", &x1, &y1, &x2, &y2).unwrap();
+
+    let loaded = opened.load_saved_region("cpp_union").unwrap();
+    assert_eq!(loaded.shapes.len(), 2);
+    assert!(loaded.shapes.iter().all(|shape| shape.closed));
+}
+
+#[test]
+fn rc_rust_write_cpp_reads_saved_region_classes() {
+    if !cpp_backend_available() {
+        eprintln!(
+            "skipping rc_rust_write_cpp_reads_saved_region_classes: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rust_region_class.image");
+    casacore_test_support::cpp_create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
+
+    let opened = OpenedImageView::open(&path).unwrap();
+    let window = opened.default_window();
+    let mut region = opened.default_region("Region 1").unwrap();
+    region.start_shape().unwrap();
+    for pixel_xy in [(1usize, 1usize), (2, 1), (1, 2)] {
+        let vertex = opened
+            .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+            .unwrap();
+        region.append_vertex(vertex).unwrap();
+    }
+    region.close_active_shape().unwrap();
+    let polygon_name = opened.save_region_definition(&region, None).unwrap();
+    assert_eq!(
+        casacore_test_support::cpp_read_region_class(&path, &polygon_name).unwrap(),
+        "WCPolygon"
+    );
+
+    region.start_shape().unwrap();
+    for pixel_xy in [(4usize, 4usize), (5, 4), (4, 5)] {
+        let vertex = opened
+            .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+            .unwrap();
+        region.append_vertex(vertex).unwrap();
+    }
+    region.close_active_shape().unwrap();
+    let union_name = opened.save_region_definition(&region, None).unwrap();
+    assert_eq!(
+        casacore_test_support::cpp_read_region_class(&path, &union_name).unwrap(),
+        "WCUnion"
+    );
+    assert_eq!(
+        casacore_test_support::cpp_read_region_names(&path).unwrap(),
+        vec![polygon_name, union_name]
+    );
+}
+
+#[test]
+fn cr_cpp_write_unsupported_region_reports_useful_error() {
+    if !cpp_backend_available() {
+        eprintln!(
+            "skipping cr_cpp_write_unsupported_region_reports_useful_error: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cpp_box_region.image");
+    casacore_test_support::cpp_create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
+
+    casacore_test_support::cpp_write_box_region(&path, "cpp_box", 0.0, 0.0, 1.0, 1.0).unwrap();
+    let opened = OpenedImageView::open(&path).unwrap();
+    let error = opened.load_saved_region("cpp_box").unwrap_err();
+    assert!(error.to_string().contains("saved region 'cpp_box'"));
+    assert!(error.to_string().contains("WCBox"));
+}
+
+#[test]
+fn cr_cpp_write_unsupported_region_matrix_reports_class_names() {
+    if !cpp_backend_available() {
+        eprintln!(
+            "skipping cr_cpp_write_unsupported_region_matrix_reports_class_names: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cpp_unsupported_regions.image");
+    casacore_test_support::cpp_create_image(&path, &[6, 6, 4], &[0.0; 144], "").unwrap();
+    let opened = OpenedImageView::open(&path).unwrap();
+
+    let cases = [
+        (
+            "cpp_ellipsoid",
+            CppUnsupportedRegionKind::Ellipsoid,
+            "WCEllipsoid",
+        ),
+        (
+            "cpp_intersection",
+            CppUnsupportedRegionKind::Intersection,
+            "WCIntersection",
+        ),
+        (
+            "cpp_difference",
+            CppUnsupportedRegionKind::Difference,
+            "WCDifference",
+        ),
+        (
+            "cpp_complement",
+            CppUnsupportedRegionKind::Complement,
+            "WCComplement",
+        ),
+        (
+            "cpp_concatenation",
+            CppUnsupportedRegionKind::Concatenation,
+            "WCConcatenation",
+        ),
+        (
+            "cpp_extension",
+            CppUnsupportedRegionKind::Extension,
+            "WCExtension",
+        ),
+        (
+            "cpp_lelmask",
+            CppUnsupportedRegionKind::LelMask,
+            "WCLELMask",
+        ),
+        ("cpp_lcbox", CppUnsupportedRegionKind::LcBox, "LCBox"),
+    ];
+
+    for (name, kind, class_name) in cases {
+        casacore_test_support::cpp_write_unsupported_region(&path, name, kind).unwrap();
+        let error = opened.load_saved_region(name).unwrap_err();
+        let error_text = error.to_string();
+        assert!(error_text.contains(name), "{name}: {error_text}");
+        assert!(error_text.contains(class_name), "{name}: {error_text}");
+    }
+}
+
+fn region_vertex_worlds(
+    opened: &OpenedImageView,
+    window: &casacore_images::ImageViewWindow,
+    pixels: &[(usize, usize)],
+) -> Vec<casacore_images::image_view::ImageRegionVertex> {
+    pixels
+        .iter()
+        .map(|pixel_xy| {
+            opened
+                .region_vertex_for_pixel_with_window_and_axes(*pixel_xy, window, &[])
+                .unwrap()
+        })
+        .collect()
+}
+
+fn assert_region_stats_close(
+    rust: &casacore_images::image_view::ImageRegionStats,
+    cpp: &casacore_test_support::CppRegionStatistics,
+) {
+    assert_eq!(rust.pixel_count, cpp.pixel_count);
+    for (label, left, right) in [
+        ("sum", rust.sum, cpp.sum),
+        ("mean", rust.mean, cpp.mean),
+        ("median", rust.median, cpp.median),
+        ("rms", rust.rms, cpp.rms),
+        ("sigma", rust.sigma, cpp.sigma),
+        ("min", rust.min, cpp.min),
+        ("max", rust.max, cpp.max),
+    ] {
+        let tolerance = 1e-9_f64.max(left.abs() * 1e-9).max(right.abs() * 1e-9);
+        assert!(
+            (left - right).abs() <= tolerance,
+            "{label} mismatch: rust={left} cpp={right} tol={tolerance}"
+        );
+    }
+}
+
+#[test]
+fn rc_rust_region_statistics_match_cpp_for_polygon_and_union() {
+    if !cpp_backend_available() {
+        eprintln!(
+            "skipping rc_rust_region_statistics_match_cpp_for_polygon_and_union: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rust_region_stats.image");
+    let shape = vec![6usize, 6usize];
+    casacore_test_support::cpp_create_image(
+        &path,
+        &[shape[0] as i32, shape[1] as i32],
+        &vec![0.0; shape.iter().product()],
+        "Jy/beam",
+    )
+    .unwrap();
+    let mut image = Image::open(&path).unwrap();
+    let mut data = ramp_array(&shape);
+    data[[2, 2]] = f32::NAN;
+    data[[4, 1]] = f32::INFINITY;
+    image.put_slice(&data, &[0, 0]).unwrap();
+    let mut mask = ArrayD::from_elem(IxDyn(&shape).f(), true);
+    mask[[1, 1]] = false;
+    mask[[4, 4]] = false;
+    image.put_mask("quality", &mask).unwrap();
+    image.set_default_mask("quality").unwrap();
+    image.save().unwrap();
+
+    let opened = OpenedImageView::open(&path).unwrap();
+    let window = opened.default_window();
+
+    let mut polygon = opened.default_region("Region 1").unwrap();
+    polygon.start_shape().unwrap();
+    for vertex in region_vertex_worlds(&opened, &window, &[(1, 1), (4, 1), (2, 4)]) {
+        polygon.append_vertex(vertex).unwrap();
+    }
+    polygon.close_active_shape().unwrap();
+    let polygon_name = opened.save_region_definition(&polygon, None).unwrap();
+    let rust_polygon = opened
+        .region_stats_with_window_and_axes(&polygon, &window, &[])
+        .unwrap()
+        .unwrap();
+    let cpp_polygon =
+        casacore_test_support::cpp_read_region_statistics(&path, &polygon_name).unwrap();
+    assert_region_stats_close(&rust_polygon, &cpp_polygon);
+
+    polygon.start_shape().unwrap();
+    for vertex in region_vertex_worlds(&opened, &window, &[(4, 2), (5, 2), (4, 5)]) {
+        polygon.append_vertex(vertex).unwrap();
+    }
+    polygon.close_active_shape().unwrap();
+    let union_name = opened.save_region_definition(&polygon, None).unwrap();
+    let rust_union = opened
+        .region_stats_with_window_and_axes(&polygon, &window, &[])
+        .unwrap()
+        .unwrap();
+    let cpp_union = casacore_test_support::cpp_read_region_statistics(&path, &union_name).unwrap();
+    assert_region_stats_close(&rust_union, &cpp_union);
+}
+
+#[test]
+fn rc_rust_write_cpp_reads_default_mask() {
+    if !cpp_backend_available() {
+        eprintln!("skipping rc_rust_write_cpp_reads_default_mask: C++ casacore not available");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rust_mask.image");
+    casacore_test_support::cpp_create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
+
+    let opened = OpenedImageView::open(&path).unwrap();
+    let window = opened.default_window();
+    let mut region = opened.default_region("Region 1").unwrap();
+    region.start_shape().unwrap();
+    for pixel_xy in [(1usize, 1usize), (3, 1), (3, 3), (1, 3)] {
+        let vertex = opened
+            .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
+            .unwrap();
+        region.append_vertex(vertex).unwrap();
+    }
+    region.close_active_shape().unwrap();
+    opened.write_region_mask(&region, "roi", true).unwrap();
+
+    assert_eq!(
+        casacore_test_support::cpp_read_image_default_mask_name(&path).unwrap(),
+        "roi"
+    );
+    let mask = casacore_test_support::cpp_read_image_default_mask(&path, 25).unwrap();
+    assert_eq!(mask.len(), 25);
+    assert!(mask.iter().any(|value| *value));
+}
+
+#[test]
+fn cr_cpp_write_default_mask_rust_reads_it() {
+    if !cpp_backend_available() {
+        eprintln!("skipping cr_cpp_write_default_mask_rust_reads_it: C++ casacore not available");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cpp_mask.image");
+    casacore_test_support::cpp_create_image(&path, &[4, 4], &[0.0; 16], "").unwrap();
+
+    let mask = (0..16).map(|index| index % 2 == 0).collect::<Vec<_>>();
+    casacore_test_support::cpp_write_default_mask(&path, "cppmask", &mask).unwrap();
+
+    let reopened = Image::open(&path).unwrap();
+    assert_eq!(reopened.default_mask_name().as_deref(), Some("cppmask"));
+    let rust_mask = reopened.get_named_mask("cppmask").unwrap();
+    let rust_flat = rust_mask.as_slice_memory_order().unwrap().to_vec();
+    assert_eq!(rust_flat, mask);
 }

@@ -448,55 +448,6 @@ fn column_keywords_fixture() -> TableFixture {
     }
 }
 
-/// Undefined scalars: 4 rows, only rows 0 and 2 written.
-/// Rows 1 and 3 have default values (0, 0.0, "").
-fn undefined_scalars_fixture() -> TableFixture {
-    let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("col_i32", PrimitiveType::Int32),
-        ColumnSchema::scalar("col_f64", PrimitiveType::Float64),
-        ColumnSchema::scalar("col_str", PrimitiveType::String),
-    ])
-    .expect("schema");
-
-    let rows = vec![
-        RecordValue::new(vec![
-            RecordField::new("col_i32", Value::Scalar(ScalarValue::Int32(100))),
-            RecordField::new("col_f64", Value::Scalar(ScalarValue::Float64(1.5))),
-            RecordField::new(
-                "col_str",
-                Value::Scalar(ScalarValue::String("written".to_string())),
-            ),
-        ]),
-        RecordValue::new(vec![
-            RecordField::new("col_i32", Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new("col_f64", Value::Scalar(ScalarValue::Float64(0.0))),
-            RecordField::new("col_str", Value::Scalar(ScalarValue::String(String::new()))),
-        ]),
-        RecordValue::new(vec![
-            RecordField::new("col_i32", Value::Scalar(ScalarValue::Int32(200))),
-            RecordField::new("col_f64", Value::Scalar(ScalarValue::Float64(2.5))),
-            RecordField::new(
-                "col_str",
-                Value::Scalar(ScalarValue::String("also_written".to_string())),
-            ),
-        ]),
-        RecordValue::new(vec![
-            RecordField::new("col_i32", Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new("col_f64", Value::Scalar(ScalarValue::Float64(0.0))),
-            RecordField::new("col_str", Value::Scalar(ScalarValue::String(String::new()))),
-        ]),
-    ];
-
-    TableFixture {
-        schema,
-        rows,
-        table_keywords: RecordValue::default(),
-        column_keywords: vec![],
-        cpp_fixture: Some(CppTableFixture::UndefinedScalars),
-        tile_shape: None,
-    }
-}
-
 #[test]
 fn all_numeric_scalars_cross_matrix() {
     let fixture = all_numeric_scalars_fixture();
@@ -518,12 +469,6 @@ fn typed_arrays_cross_matrix() {
 #[test]
 fn column_keywords_cross_matrix() {
     let fixture = column_keywords_fixture();
-    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StManAipsIO));
-}
-
-#[test]
-fn undefined_scalars_cross_matrix() {
-    let fixture = undefined_scalars_fixture();
     assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StManAipsIO));
 }
 

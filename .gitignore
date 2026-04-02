@@ -4,3 +4,5 @@ target-clippy/
 crates/casacore-test-support/tAipsIO_tmp.*
 tarpaulin-ci/
 crates/casacore-ms/casa-*.log
+__pycache__/
+*.py[cod]

@@ -14,11 +14,12 @@
 //!
 //! This corresponds to C++ `LinearCoordinate`.
 
-use casacore_types::{RecordValue, ScalarValue, Value};
+use casacore_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
+use crate::record_utils::{get_optional_vec_f64, get_optional_vec_string, get_required_vec_f64};
 
 /// An N-axis linear coordinate with an affine pixel-to-world mapping.
 ///
@@ -128,6 +129,44 @@ impl LinearCoordinate {
     /// Returns a reference to the PC rotation/coupling matrix.
     pub fn pc_matrix(&self) -> &Array2<f64> {
         &self.pc
+    }
+
+    /// Reconstructs a linear coordinate from a serialized record.
+    pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let crval = get_required_vec_f64(rec, "crval")?;
+        let cdelt = get_required_vec_f64(rec, "cdelt")?;
+        let crpix = get_required_vec_f64(rec, "crpix")?;
+        let naxes = crval.len();
+
+        if naxes == 0 || cdelt.len() != naxes || crpix.len() != naxes {
+            return Err(CoordinateError::InvalidRecord(
+                "linear coordinate axis vectors must have matching non-zero lengths".into(),
+            ));
+        }
+
+        let names = get_optional_vec_string(rec, "axes").unwrap_or_default();
+        let units = get_optional_vec_string(rec, "units").unwrap_or_default();
+
+        let mut coord = Self::new(naxes, names, units)
+            .with_reference_value(crval)
+            .with_increment(cdelt)
+            .with_reference_pixel(crpix);
+
+        if let Some(pc_flat) = get_optional_vec_f64(rec, "pc") {
+            if pc_flat.len() != naxes * naxes {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "linear pc matrix has {} elements, expected {}",
+                    pc_flat.len(),
+                    naxes * naxes
+                )));
+            }
+            let pc = Array2::from_shape_vec((naxes, naxes), pc_flat).map_err(|err| {
+                CoordinateError::InvalidRecord(format!("invalid linear pc matrix: {err}"))
+            })?;
+            coord = coord.with_pc_matrix(pc);
+        }
+
+        Ok(coord)
     }
 }
 
@@ -249,11 +288,15 @@ impl Coordinate for LinearCoordinate {
             "crpix",
             Value::Array(casacore_types::ArrayValue::from_f64_vec(self.crpix.clone())),
         );
-        // PC matrix as flattened row-major array
-        let pc_flat: Vec<f64> = self.pc.iter().copied().collect();
         rec.upsert(
             "pc",
-            Value::Array(casacore_types::ArrayValue::from_f64_vec(pc_flat)),
+            Value::Array(ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[n, n]),
+                    self.pc.iter().copied().collect(),
+                )
+                .expect("linear pc matrix shape should match axis count"),
+            )),
         );
         rec.upsert(
             "axes",
@@ -461,6 +504,50 @@ mod tests {
         let boxed: Box<dyn Coordinate> = Box::new(coord);
         let cloned = boxed.clone_box();
         assert_eq!(cloned.coordinate_type(), CoordinateType::Linear);
+    }
+
+    #[test]
+    fn record_roundtrip() {
+        let pc = Array2::from_shape_vec((2, 2), vec![1.0, 0.1, -0.2, 0.9]).unwrap();
+        let coord = LinearCoordinate::new(
+            2,
+            vec!["X".into(), "Y".into()],
+            vec!["m".into(), "m".into()],
+        )
+        .with_reference_value(vec![10.0, 20.0])
+        .with_reference_pixel(vec![5.0, 6.0])
+        .with_increment(vec![0.5, 1.5])
+        .with_pc_matrix(pc.clone());
+
+        let restored = LinearCoordinate::from_record(&coord.to_record()).unwrap();
+
+        assert_eq!(restored.reference_value(), vec![10.0, 20.0]);
+        assert_eq!(restored.reference_pixel(), vec![5.0, 6.0]);
+        assert_eq!(restored.increment(), vec![0.5, 1.5]);
+        assert_eq!(restored.axis_names(), vec!["X", "Y"]);
+        assert_eq!(restored.axis_units(), vec!["m", "m"]);
+        assert_eq!(restored.pc_matrix(), &pc);
+    }
+
+    #[test]
+    fn to_record_writes_pc_as_matrix() {
+        let pc = Array2::from_shape_vec((2, 2), vec![1.0, 0.25, -0.5, 2.0]).unwrap();
+        let coord = LinearCoordinate::new(
+            2,
+            vec!["X".into(), "Y".into()],
+            vec!["m".into(), "m".into()],
+        )
+        .with_pc_matrix(pc);
+
+        let record = coord.to_record();
+        let Some(Value::Array(ArrayValue::Float64(pc_record))) = record.get("pc") else {
+            panic!("linear record should contain a float64 pc array");
+        };
+        assert_eq!(pc_record.shape(), &[2, 2]);
+        assert_eq!(
+            pc_record.iter().copied().collect::<Vec<_>>(),
+            vec![1.0, 0.25, -0.5, 2.0]
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ThemeMode {
     DenseAnsi,
@@ -27,6 +27,10 @@ pub(crate) struct UiConfig {
     pub pane_split_ratio: f32,
     #[serde(default = "default_pane_restore_ratio")]
     pub pane_restore_ratio: f32,
+    #[serde(default = "default_image_workspace_split_ratio")]
+    pub image_workspace_split_ratio: f32,
+    #[serde(default = "default_image_workspace_restore_ratio")]
+    pub image_workspace_restore_ratio: f32,
 }
 
 impl Default for UiConfig {
@@ -35,6 +39,8 @@ impl Default for UiConfig {
             theme_mode: ThemeMode::DenseAnsi,
             pane_split_ratio: 0.42,
             pane_restore_ratio: default_pane_restore_ratio(),
+            image_workspace_split_ratio: default_image_workspace_split_ratio(),
+            image_workspace_restore_ratio: default_image_workspace_restore_ratio(),
         }
     }
 }
@@ -76,6 +82,14 @@ impl ConfigStore {
         self.config.pane_restore_ratio
     }
 
+    pub(crate) fn image_workspace_split_ratio(&self) -> f32 {
+        self.config.image_workspace_split_ratio
+    }
+
+    pub(crate) fn image_workspace_restore_ratio(&self) -> f32 {
+        self.config.image_workspace_restore_ratio
+    }
+
     pub(crate) fn set_theme_mode(&mut self, theme_mode: ThemeMode) {
         self.config.theme_mode = theme_mode;
         let _ = self.save();
@@ -86,6 +100,15 @@ impl ConfigStore {
         self.config.pane_split_ratio = normalized;
         if normalized > 0.0 {
             self.config.pane_restore_ratio = normalized;
+        }
+        let _ = self.save();
+    }
+
+    pub(crate) fn set_image_workspace_split_ratio(&mut self, image_workspace_split_ratio: f32) {
+        let normalized = normalize_image_workspace_split_ratio(image_workspace_split_ratio);
+        self.config.image_workspace_split_ratio = normalized;
+        if normalized > 0.0 && normalized < 1.0 {
+            self.config.image_workspace_restore_ratio = normalized;
         }
         let _ = self.save();
     }
@@ -122,6 +145,13 @@ fn normalize_config(mut config: UiConfig) -> UiConfig {
     if config.pane_split_ratio > 0.0 {
         config.pane_restore_ratio = config.pane_split_ratio;
     }
+    config.image_workspace_split_ratio =
+        normalize_image_workspace_split_ratio(config.image_workspace_split_ratio);
+    config.image_workspace_restore_ratio =
+        normalize_image_workspace_restore_ratio(config.image_workspace_restore_ratio);
+    if config.image_workspace_split_ratio > 0.0 && config.image_workspace_split_ratio < 1.0 {
+        config.image_workspace_restore_ratio = config.image_workspace_split_ratio;
+    }
     config
 }
 
@@ -142,6 +172,30 @@ fn normalize_restore_ratio(pane_restore_ratio: f32) -> f32 {
         default_pane_restore_ratio()
     } else {
         pane_restore_ratio.clamp(0.25, 0.75)
+    }
+}
+
+fn default_image_workspace_split_ratio() -> f32 {
+    0.7
+}
+
+fn default_image_workspace_restore_ratio() -> f32 {
+    default_image_workspace_split_ratio()
+}
+
+fn normalize_image_workspace_split_ratio(image_workspace_split_ratio: f32) -> f32 {
+    if image_workspace_split_ratio >= 1.0 {
+        1.0
+    } else {
+        image_workspace_split_ratio.clamp(0.35, 0.85)
+    }
+}
+
+fn normalize_image_workspace_restore_ratio(image_workspace_restore_ratio: f32) -> f32 {
+    if image_workspace_restore_ratio <= 0.0 || image_workspace_restore_ratio >= 1.0 {
+        default_image_workspace_restore_ratio()
+    } else {
+        image_workspace_restore_ratio.clamp(0.35, 0.85)
     }
 }
 
@@ -166,6 +220,8 @@ mod tests {
 theme_mode = "rich_panel"
 pane_split_ratio = 0.9
 pane_restore_ratio = -1.0
+image_workspace_split_ratio = 1.0
+image_workspace_restore_ratio = -1.0
 "#,
         )
         .expect("write config");
@@ -174,6 +230,8 @@ pane_restore_ratio = -1.0
         assert_eq!(store.theme_mode(), ThemeMode::RichPanel);
         assert_eq!(store.pane_split_ratio(), 0.75);
         assert_eq!(store.pane_restore_ratio(), 0.75);
+        assert_eq!(store.image_workspace_split_ratio(), 1.0);
+        assert_eq!(store.image_workspace_restore_ratio(), 0.7);
     }
 
     #[test]
@@ -193,5 +251,26 @@ pane_restore_ratio = -1.0
         let saved = fs::read_to_string(path).expect("read saved config");
         assert!(saved.contains("pane_split_ratio = 0.0"));
         assert!(saved.contains("pane_restore_ratio = 0.25"));
+    }
+
+    #[test]
+    fn set_image_workspace_split_ratio_clamps_and_persists_restore_ratio() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("nested").join("casars.toml");
+        let mut store = ConfigStore::load_for_tests(path.clone());
+
+        store.set_image_workspace_split_ratio(0.2);
+        assert_eq!(store.image_workspace_split_ratio(), 0.35);
+        assert_eq!(store.image_workspace_restore_ratio(), 0.35);
+
+        store.set_image_workspace_split_ratio(1.0);
+        assert_eq!(store.image_workspace_split_ratio(), 1.0);
+        assert_eq!(store.image_workspace_restore_ratio(), 0.35);
+
+        let saved = fs::read_to_string(path).expect("read saved config");
+        assert!(saved.contains("image_workspace_split_ratio = 1.0"));
+        let saved_config: UiConfig = toml::from_str(&saved).expect("parse saved config");
+        assert_eq!(saved_config.image_workspace_split_ratio, 1.0);
+        assert!((saved_config.image_workspace_restore_ratio - 0.35).abs() < 1.0e-6);
     }
 }

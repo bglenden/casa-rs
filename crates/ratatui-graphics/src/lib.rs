@@ -18,12 +18,17 @@ pub use image_ops::{
 };
 #[cfg(feature = "kitty")]
 pub use kitty::{
-    KittyLayerError, KittyLayerHandle, KittyLayerManager, KittyPlacement, KittyPlacementError,
+    KittyAnimationControl, KittyAnimationGap, KittyAnimationPlaybackState, KittyLayerError,
+    KittyLayerHandle, KittyLayerManager, KittyPaneSlotId, KittyPlacement, KittyPlacementError,
+    KittyStoredImageId, KittyStoredImageInfo, KittyStoredImageStore,
 };
 #[cfg(feature = "panel")]
 pub use panel::{
-    PanelInitError, PanelRenderError, PanelRenderJob, PanelRenderer, PanelSubmitError,
-    PanelWorkerError, PreparedPanelProtocol, render_panel_protocol,
+    PanelInitError, PanelRenderError, PanelRenderJob, PanelRenderPool, PanelRenderPoolDrain,
+    PanelRenderPoolError, PanelRenderPoolJob, PanelRenderPoolSubmitError, PanelRenderer,
+    PanelSubmitError, PanelWorkerError, PreparedPanelProtocol, PreparedPanelProtocolOnly,
+    PreparedPanelRender, build_panel_protocol_from_rgba, build_panel_protocol_from_rgba_owned,
+    render_panel_protocol,
 };
 #[cfg(any(feature = "panel", feature = "kitty"))]
 pub use ratatui_image::picker::{Picker, ProtocolType};

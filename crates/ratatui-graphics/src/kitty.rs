@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Direct Kitty graphics layer helpers.
 
-use std::{io::Write, num::NonZeroU32};
+use std::{collections::HashMap, io::Write, num::NonZeroU32, time::Duration};
 
-use image::{DynamicImage, RgbaImage};
+use base64_simd::STANDARD;
+use flate2::{Compression, write::ZlibEncoder};
+use image::RgbaImage;
 use kittage::{
-    NumberOrId, Verbosity,
+    Verbosity,
     action::Action,
     delete::{ClearOrDelete, DeleteConfig, WhichToDelete},
-    display::{CursorMovementPolicy, DisplayConfig, DisplayLocation},
-    image::Image as KittyImage,
 };
 use ratatui::{
     crossterm::{
@@ -27,7 +27,48 @@ pub struct KittyLayerHandle {
     placement_id: NonZeroU32,
 }
 
+/// Stable id for a terminal-resident Kitty image stored in [`KittyStoredImageStore`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KittyStoredImageId(NonZeroU32);
+
+impl KittyStoredImageId {
+    /// Return the underlying Kitty image id.
+    pub fn raw(self) -> NonZeroU32 {
+        self.0
+    }
+}
+
+/// Stable id for a ratatui-defined pane slot in [`KittyStoredImageStore`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KittyPaneSlotId(NonZeroU32);
+
+impl KittyPaneSlotId {
+    /// Return the underlying Kitty placement id.
+    pub fn raw(self) -> NonZeroU32 {
+        self.0
+    }
+}
+
+/// Metadata about a terminal-resident stored image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KittyStoredImageInfo {
+    /// Width of the uploaded bitmap in pixels.
+    pub pixel_width: u32,
+    /// Height of the uploaded bitmap in pixels.
+    pub pixel_height: u32,
+    /// Raw RGBA byte size uploaded for the bitmap.
+    pub bytes: usize,
+}
+
 impl KittyLayerHandle {
+    /// Construct a handle from explicit Kitty image and placement ids.
+    pub const fn new(image_id: NonZeroU32, placement_id: NonZeroU32) -> Self {
+        Self {
+            image_id,
+            placement_id,
+        }
+    }
+
     /// Return the image id used for Kitty image uploads.
     pub fn image_id(self) -> NonZeroU32 {
         self.image_id
@@ -36,6 +77,14 @@ impl KittyLayerHandle {
     /// Return the placement id used for Kitty image display operations.
     pub fn placement_id(self) -> NonZeroU32 {
         self.placement_id
+    }
+
+    /// Return a copy of this handle with a different placement id.
+    pub const fn with_placement_id(self, placement_id: NonZeroU32) -> Self {
+        Self {
+            image_id: self.image_id,
+            placement_id,
+        }
     }
 }
 
@@ -64,12 +113,21 @@ pub enum KittyLayerError {
     /// The manager ran out of image or placement ids.
     #[error("kitty layer id space is exhausted")]
     IdExhausted,
+    /// Animation gaps must fit in Kitty's signed 32-bit control range.
+    #[error("kitty animation gap exceeds the supported control range")]
+    AnimationGapOverflow,
     /// The placement was invalid.
     #[error(transparent)]
     InvalidPlacement(#[from] KittyPlacementError),
     /// Writing Kitty escape sequences failed.
     #[error("failed to write Kitty graphics sequence")]
     Io(#[from] std::io::Error),
+    /// The requested pane slot is unknown.
+    #[error("unknown kitty pane slot {0}")]
+    UnknownSlot(NonZeroU32),
+    /// The requested stored image is unknown.
+    #[error("unknown stored kitty image {0}")]
+    UnknownImage(NonZeroU32),
 }
 
 /// Allocates typed handles for direct Kitty graphics layers.
@@ -79,33 +137,126 @@ pub struct KittyLayerManager {
     next_placement_id: u32,
 }
 
+/// A small typed store for terminal-resident Kitty images and pane slots.
+///
+/// This keeps uploaded images alive in terminal memory and re-places them into
+/// ratatui-defined pane rectangles without re-uploading the pixel buffer on
+/// every frame.
+#[derive(Debug)]
+pub struct KittyStoredImageStore {
+    manager: KittyLayerManager,
+    slots: HashMap<KittyPaneSlotId, Option<KittyStoredImageId>>,
+    images: HashMap<KittyStoredImageId, KittyStoredImageInfo>,
+    total_bytes: usize,
+}
+
+/// Terminal-driven animation state for a Kitty image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KittyAnimationPlaybackState {
+    /// Stop playback and leave the current frame visible.
+    Stopped,
+    /// Play while waiting for more frames at the end of the sequence.
+    Loading,
+    /// Play and loop over the uploaded frame sequence.
+    Looping,
+}
+
+impl KittyAnimationPlaybackState {
+    fn protocol_value(self) -> u8 {
+        match self {
+            Self::Stopped => 1,
+            Self::Loading => 2,
+            Self::Looping => 3,
+        }
+    }
+}
+
+/// A typed animation frame gap for Kitty playback controls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KittyAnimationGap {
+    /// Display the frame for the specified amount of time.
+    Timed(Duration),
+    /// Store the frame without showing it to the user.
+    Gapless,
+}
+
+impl KittyAnimationGap {
+    fn protocol_value(self) -> Result<i32, KittyLayerError> {
+        match self {
+            Self::Timed(duration) => {
+                let millis = duration.as_millis();
+                if millis > i32::MAX as u128 {
+                    return Err(KittyLayerError::AnimationGapOverflow);
+                }
+                Ok(millis as i32)
+            }
+            Self::Gapless => Ok(-1),
+        }
+    }
+}
+
+/// Control parameters for a Kitty animation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KittyAnimationControl {
+    /// Optional playback state transition.
+    pub state: Option<KittyAnimationPlaybackState>,
+    /// Optional current frame to display, using Kitty's 1-based frame numbering.
+    pub current_frame: Option<NonZeroU32>,
+    /// Optional frame targeted by `gap`.
+    pub frame_number: Option<NonZeroU32>,
+    /// Optional gap update.
+    pub gap: Option<KittyAnimationGap>,
+    /// Optional loop count. `1` means loop forever in Kitty semantics.
+    pub loops: Option<NonZeroU32>,
+}
+
 impl KittyLayerManager {
     /// Create a new layer manager with monotonic id allocation.
     pub fn new() -> Self {
-        Self {
-            next_image_id: 1,
-            next_placement_id: 1,
-        }
+        Self::with_starting_ids(1, 1).expect("default Kitty layer ids are valid")
     }
 
-    /// Allocate a fresh image/placement handle pair.
-    pub fn allocate(&mut self) -> Result<KittyLayerHandle, KittyLayerError> {
+    /// Create a new layer manager with explicit starting ids.
+    pub fn with_starting_ids(
+        image_id_start: u32,
+        placement_id_start: u32,
+    ) -> Result<Self, KittyLayerError> {
+        if image_id_start == 0 || placement_id_start == 0 {
+            return Err(KittyLayerError::IdExhausted);
+        }
+        Ok(Self {
+            next_image_id: image_id_start,
+            next_placement_id: placement_id_start,
+        })
+    }
+
+    /// Allocate a fresh Kitty image id.
+    pub fn allocate_image_id(&mut self) -> Result<NonZeroU32, KittyLayerError> {
         let image_id = NonZeroU32::new(self.next_image_id).ok_or(KittyLayerError::IdExhausted)?;
-        let placement_id =
-            NonZeroU32::new(self.next_placement_id).ok_or(KittyLayerError::IdExhausted)?;
         self.next_image_id = self
             .next_image_id
             .checked_add(1)
             .ok_or(KittyLayerError::IdExhausted)?;
+        Ok(image_id)
+    }
+
+    /// Allocate a fresh Kitty placement id.
+    pub fn allocate_placement_id(&mut self) -> Result<NonZeroU32, KittyLayerError> {
+        let placement_id =
+            NonZeroU32::new(self.next_placement_id).ok_or(KittyLayerError::IdExhausted)?;
         self.next_placement_id = self
             .next_placement_id
             .checked_add(1)
             .ok_or(KittyLayerError::IdExhausted)?;
+        Ok(placement_id)
+    }
 
-        Ok(KittyLayerHandle {
-            image_id,
-            placement_id,
-        })
+    /// Allocate a fresh image/placement handle pair.
+    pub fn allocate(&mut self) -> Result<KittyLayerHandle, KittyLayerError> {
+        Ok(KittyLayerHandle::new(
+            self.allocate_image_id()?,
+            self.allocate_placement_id()?,
+        ))
     }
 
     /// Upload RGBA image data to the terminal using the supplied handle.
@@ -115,9 +266,23 @@ impl KittyLayerManager {
         handle: KittyLayerHandle,
         image: &RgbaImage,
     ) -> Result<(), KittyLayerError> {
-        let mut kitty_image: KittyImage<'static> = DynamicImage::ImageRgba8(image.clone()).into();
-        kitty_image.num_or_id = NumberOrId::Id(handle.image_id);
-        Action::Transmit(kitty_image).write_transmit_to(out, Verbosity::Silent)?;
+        self.upload_rgba_with_compression(out, handle.image_id(), image, false)
+    }
+
+    fn upload_rgba_with_compression<W: Write>(
+        &self,
+        out: &mut W,
+        image_id: NonZeroU32,
+        image: &RgbaImage,
+        compressed: bool,
+    ) -> Result<(), KittyLayerError> {
+        let intro = format!(
+            "\x1b_Ga=t,q=1,f=32,s={},v={},i={}",
+            image.width(),
+            image.height(),
+            image_id
+        );
+        write_direct_data_chunks(out, &intro, image.as_raw(), compressed)?;
         Ok(())
     }
 
@@ -130,21 +295,6 @@ impl KittyLayerManager {
     ) -> Result<(), KittyLayerError> {
         validate_placement(placement)?;
 
-        let config = DisplayConfig {
-            location: DisplayLocation {
-                columns: placement.rect.width,
-                rows: placement.rect.height,
-                z_index: placement.z_index,
-                ..DisplayLocation::default()
-            },
-            cursor_movement: if placement.preserve_cursor {
-                CursorMovementPolicy::DontMove
-            } else {
-                CursorMovementPolicy::MoveToAfterImage
-            },
-            ..DisplayConfig::default()
-        };
-
         if placement.preserve_cursor {
             execute!(
                 out,
@@ -155,16 +305,27 @@ impl KittyLayerManager {
             execute!(out, MoveTo(placement.rect.x, placement.rect.y))?;
         }
 
-        Action::Display {
-            image_id: handle.image_id,
-            placement_id: handle.placement_id,
-            config,
+        write!(
+            out,
+            "\x1b_Ga=p,q=1,i={},p={},c={},r={}",
+            handle.image_id(),
+            handle.placement_id(),
+            placement.rect.width,
+            placement.rect.height
+        )?;
+        if placement.preserve_cursor {
+            write!(out, ",C=1")?;
         }
-        .write_transmit_to(&mut *out, Verbosity::Silent)?;
+        if placement.z_index != 0 {
+            write!(out, ",z={}", placement.z_index)?;
+        }
+        write!(out, "\x1b\\")?;
 
         if placement.preserve_cursor {
             execute!(out, RestorePosition)?;
         }
+
+        out.flush()?;
 
         Ok(())
     }
@@ -181,17 +342,72 @@ impl KittyLayerManager {
         self.place(out, handle, placement)
     }
 
+    /// Append a full RGBA animation frame to an existing Kitty image.
+    ///
+    /// The image itself must already have been created with [`Self::upload_rgba`] or
+    /// [`Self::upload_and_place_rgba`]. The appended frame uses Kitty's `a=f` animation-frame
+    /// transfer mode and is associated with `handle.image_id()`.
+    pub fn append_animation_frame_rgba<W: Write>(
+        &self,
+        out: &mut W,
+        handle: KittyLayerHandle,
+        image: &RgbaImage,
+        gap: Option<KittyAnimationGap>,
+    ) -> Result<(), KittyLayerError> {
+        let mut intro = format!(
+            "\x1b_Ga=f,i={},q=2,f=32,s={},v={}",
+            handle.image_id(),
+            image.width(),
+            image.height()
+        );
+        if let Some(gap) = gap {
+            intro.push_str(&format!(",z={}", gap.protocol_value()?));
+        }
+        write_direct_data_chunks(out, &intro, image.as_raw(), false)?;
+        Ok(())
+    }
+
+    /// Send a typed animation control command for an existing Kitty image.
+    pub fn control_animation<W: Write>(
+        &self,
+        out: &mut W,
+        handle: KittyLayerHandle,
+        control: KittyAnimationControl,
+    ) -> Result<(), KittyLayerError> {
+        write!(out, "\x1b_Ga=a,i={},q=2", handle.image_id())?;
+        if let Some(current_frame) = control.current_frame {
+            write!(out, ",c={}", current_frame.get())?;
+        }
+        if let Some(frame_number) = control.frame_number {
+            write!(out, ",r={}", frame_number.get())?;
+        }
+        if let Some(gap) = control.gap {
+            write!(out, ",z={}", gap.protocol_value()?)?;
+        }
+        if let Some(state) = control.state {
+            write!(out, ",s={}", state.protocol_value())?;
+        }
+        if let Some(loops) = control.loops {
+            write!(out, ",v={}", loops.get())?;
+        }
+        write!(out, "\x1b\\")?;
+        out.flush()?;
+        Ok(())
+    }
+
     /// Clear the current placement while keeping the uploaded image available in terminal memory.
     pub fn clear_placement<W: Write>(
         &self,
         out: &mut W,
         handle: KittyLayerHandle,
     ) -> Result<(), KittyLayerError> {
-        let delete = Action::Delete(DeleteConfig {
-            effect: ClearOrDelete::Clear,
-            which: WhichToDelete::ImageId(handle.image_id, Some(handle.placement_id)),
-        });
-        delete.write_transmit_to(out, Verbosity::Silent)?;
+        write!(
+            out,
+            "\x1b_Ga=d,q=1,d=i,i={},p={}\x1b\\",
+            handle.image_id(),
+            handle.placement_id()
+        )?;
+        out.flush()?;
         Ok(())
     }
 
@@ -201,11 +417,24 @@ impl KittyLayerManager {
         out: &mut W,
         handle: KittyLayerHandle,
     ) -> Result<(), KittyLayerError> {
+        write!(out, "\x1b_Ga=d,q=1,d=I,i={}\x1b\\", handle.image_id())?;
+        out.flush()?;
+        Ok(())
+    }
+
+    /// Delete a contiguous range of uploaded images and their placements from terminal memory.
+    pub fn delete_image_range<W: Write>(
+        &self,
+        out: &mut W,
+        start: NonZeroU32,
+        end: NonZeroU32,
+    ) -> Result<(), KittyLayerError> {
         let delete = Action::Delete(DeleteConfig {
             effect: ClearOrDelete::Delete,
-            which: WhichToDelete::ImageId(handle.image_id, None),
+            which: WhichToDelete::IdRange(start..=end),
         });
-        delete.write_transmit_to(out, Verbosity::Silent)?;
+        delete.write_transmit_to(&mut *out, Verbosity::Silent)?;
+        out.flush()?;
         Ok(())
     }
 
@@ -219,6 +448,170 @@ impl KittyLayerManager {
     }
 }
 
+impl KittyStoredImageStore {
+    /// Create a new stored-image store with monotonic id allocation.
+    pub fn new() -> Self {
+        Self::with_starting_ids(1, 1).expect("default Kitty store ids are valid")
+    }
+
+    /// Create a new stored-image store with explicit starting ids.
+    pub fn with_starting_ids(
+        image_id_start: u32,
+        placement_id_start: u32,
+    ) -> Result<Self, KittyLayerError> {
+        Ok(Self {
+            manager: KittyLayerManager::with_starting_ids(image_id_start, placement_id_start)?,
+            slots: HashMap::new(),
+            images: HashMap::new(),
+            total_bytes: 0,
+        })
+    }
+
+    /// Allocate a stable pane slot id.
+    pub fn allocate_slot(&mut self) -> Result<KittyPaneSlotId, KittyLayerError> {
+        let slot = KittyPaneSlotId(self.manager.allocate_placement_id()?);
+        self.slots.insert(slot, None);
+        Ok(slot)
+    }
+
+    /// Upload an RGBA bitmap into terminal memory and return its stored id.
+    pub fn store_rgba<W: Write>(
+        &mut self,
+        out: &mut W,
+        image: &RgbaImage,
+    ) -> Result<(KittyStoredImageId, KittyStoredImageInfo), KittyLayerError> {
+        let image_id = KittyStoredImageId(self.manager.allocate_image_id()?);
+        let info = KittyStoredImageInfo {
+            pixel_width: image.width(),
+            pixel_height: image.height(),
+            bytes: image.as_raw().len(),
+        };
+        self.manager
+            .upload_rgba_with_compression(out, image_id.0, image, true)?;
+        self.total_bytes = self.total_bytes.saturating_add(info.bytes);
+        self.images.insert(image_id, info);
+        Ok((image_id, info))
+    }
+
+    /// Place a stored image into a stable pane slot.
+    pub fn place_in_slot<W: Write>(
+        &mut self,
+        out: &mut W,
+        slot: KittyPaneSlotId,
+        image: KittyStoredImageId,
+        placement: KittyPlacement,
+    ) -> Result<(), KittyLayerError> {
+        if !self.images.contains_key(&image) {
+            return Err(KittyLayerError::UnknownImage(image.0));
+        }
+        let Some(current) = self.slots.get_mut(&slot) else {
+            return Err(KittyLayerError::UnknownSlot(slot.0));
+        };
+        self.manager
+            .place(out, KittyLayerHandle::new(image.0, slot.0), placement)?;
+        *current = Some(image);
+        Ok(())
+    }
+
+    /// Show a stored image in a pane slot using delete-before-place semantics when switching images.
+    pub fn show_in_slot<W: Write>(
+        &mut self,
+        out: &mut W,
+        slot: KittyPaneSlotId,
+        image: KittyStoredImageId,
+        placement: KittyPlacement,
+    ) -> Result<(), KittyLayerError> {
+        if !self.images.contains_key(&image) {
+            return Err(KittyLayerError::UnknownImage(image.0));
+        }
+        let Some(current) = self.slots.get(&slot).copied().flatten() else {
+            if self.slots.contains_key(&slot) {
+                return self.place_in_slot(out, slot, image, placement);
+            }
+            return Err(KittyLayerError::UnknownSlot(slot.0));
+        };
+        if current != image {
+            self.manager
+                .clear_placement(out, KittyLayerHandle::new(current.0, slot.0))?;
+        }
+        self.place_in_slot(out, slot, image, placement)
+    }
+
+    /// Clear the current placement for a pane slot while leaving stored images resident.
+    pub fn clear_slot<W: Write>(
+        &mut self,
+        out: &mut W,
+        slot: KittyPaneSlotId,
+    ) -> Result<(), KittyLayerError> {
+        let Some(current) = self.slots.get_mut(&slot) else {
+            return Err(KittyLayerError::UnknownSlot(slot.0));
+        };
+        if let Some(image) = *current {
+            self.manager
+                .clear_placement(out, KittyLayerHandle::new(image.0, slot.0))?;
+            *current = None;
+        }
+        Ok(())
+    }
+
+    /// Delete a stored image and clear any pane slots that currently show it.
+    pub fn delete_image<W: Write>(
+        &mut self,
+        out: &mut W,
+        image: KittyStoredImageId,
+    ) -> Result<(), KittyLayerError> {
+        let Some(info) = self.images.remove(&image) else {
+            return Err(KittyLayerError::UnknownImage(image.0));
+        };
+        for (slot, current) in &mut self.slots {
+            if *current == Some(image) {
+                self.manager
+                    .clear_placement(out, KittyLayerHandle::new(image.0, slot.0))?;
+                *current = None;
+            }
+        }
+        self.manager
+            .delete_image(out, KittyLayerHandle::new(image.0, image.0))?;
+        self.total_bytes = self.total_bytes.saturating_sub(info.bytes);
+        Ok(())
+    }
+
+    /// Return the currently placed image in a pane slot, if any.
+    pub fn slot_image(&self, slot: KittyPaneSlotId) -> Option<KittyStoredImageId> {
+        self.slots.get(&slot).copied().flatten()
+    }
+
+    /// Return metadata for a stored image, if present.
+    pub fn image_info(&self, image: KittyStoredImageId) -> Option<KittyStoredImageInfo> {
+        self.images.get(&image).copied()
+    }
+
+    /// Forget all tracked terminal-resident images locally without emitting delete commands.
+    pub fn forget_all_images(&mut self) {
+        self.images.clear();
+        self.total_bytes = 0;
+        for current in self.slots.values_mut() {
+            *current = None;
+        }
+    }
+
+    /// Total raw RGBA bytes currently kept in terminal-resident images.
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+
+    /// Number of stored terminal images currently tracked.
+    pub fn image_count(&self) -> usize {
+        self.images.len()
+    }
+}
+
+impl Default for KittyStoredImageStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn validate_placement(placement: KittyPlacement) -> Result<(), KittyPlacementError> {
     if placement.rect.is_empty() {
         return Err(KittyPlacementError::EmptyRect {
@@ -229,12 +622,56 @@ fn validate_placement(placement: KittyPlacement) -> Result<(), KittyPlacementErr
     Ok(())
 }
 
+fn write_direct_data_chunks<W: Write>(
+    out: &mut W,
+    intro: &str,
+    data: &[u8],
+    compressed: bool,
+) -> Result<(), std::io::Error> {
+    const ENCODED_CHUNK_BYTES: usize = 4096;
+    let compressed_data;
+    let payload = if compressed {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(data)?;
+        compressed_data = encoder.finish()?;
+        compressed_data.as_slice()
+    } else {
+        data
+    };
+    let encoded = STANDARD.encode_to_string(payload);
+    if encoded.is_empty() {
+        return Ok(());
+    }
+    let total_chunks = encoded.len().div_ceil(ENCODED_CHUNK_BYTES);
+    for (index, chunk) in encoded.as_bytes().chunks(ENCODED_CHUNK_BYTES).enumerate() {
+        let more = u8::from(index + 1 < total_chunks);
+        if index == 0 {
+            write!(out, "{intro}")?;
+            if compressed {
+                write!(out, ",o=z")?;
+            }
+            write!(out, ",m={more};")?;
+        } else {
+            write!(out, "\x1b_Gm={more};")?;
+        }
+        out.write_all(chunk)?;
+        write!(out, "\x1b\\")?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{num::NonZeroU32, time::Duration};
+
     use image::{Rgba, RgbaImage};
     use ratatui::layout::Rect;
 
-    use super::{KittyLayerManager, KittyPlacement, KittyPlacementError};
+    use super::{
+        KittyAnimationControl, KittyAnimationGap, KittyAnimationPlaybackState, KittyLayerManager,
+        KittyPlacement, KittyPlacementError, KittyStoredImageStore,
+    };
 
     #[test]
     fn allocate_returns_unique_handles() {
@@ -334,5 +771,202 @@ mod tests {
         let delete = String::from_utf8(delete).unwrap();
         assert!(delete.contains("\u{1b}_Ga=d"));
         assert!(delete.contains(",d=I"));
+    }
+
+    #[test]
+    fn delete_image_range_writes_range_delete_sequence() {
+        let manager = KittyLayerManager::new();
+        let mut out = Vec::new();
+        manager
+            .delete_image_range(
+                &mut out,
+                NonZeroU32::new(100).unwrap(),
+                NonZeroU32::new(125).unwrap(),
+            )
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\u{1b}_Ga=d"));
+        assert!(text.contains(",d=R"));
+        assert!(text.contains(",x=100"));
+        assert!(text.contains(",y=125"));
+    }
+
+    #[test]
+    fn append_animation_frame_uses_frame_action_and_gap() {
+        let mut manager = KittyLayerManager::new();
+        let handle = manager.allocate().unwrap();
+        let image = RgbaImage::from_pixel(2, 1, Rgba([1, 2, 3, 255]));
+        let mut out = Vec::new();
+
+        manager
+            .append_animation_frame_rgba(
+                &mut out,
+                handle,
+                &image,
+                Some(KittyAnimationGap::Timed(Duration::from_millis(48))),
+            )
+            .unwrap();
+
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\u{1b}_Ga=f,i=1,q=2,f=32,s=2,v=1,z=48,m=0;"));
+    }
+
+    #[test]
+    fn control_animation_writes_state_gap_and_current_frame() {
+        let mut manager = KittyLayerManager::new();
+        let handle = manager.allocate().unwrap();
+        let mut out = Vec::new();
+
+        manager
+            .control_animation(
+                &mut out,
+                handle,
+                KittyAnimationControl {
+                    state: Some(KittyAnimationPlaybackState::Looping),
+                    current_frame: Some(NonZeroU32::new(7).unwrap()),
+                    frame_number: Some(NonZeroU32::new(1).unwrap()),
+                    gap: Some(KittyAnimationGap::Timed(Duration::from_millis(33))),
+                    loops: Some(NonZeroU32::new(1).unwrap()),
+                },
+            )
+            .unwrap();
+
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text, "\u{1b}_Ga=a,i=1,q=2,c=7,r=1,z=33,s=3,v=1\u{1b}\\");
+    }
+
+    #[test]
+    fn stored_image_store_places_and_tracks_images_by_slot() {
+        let mut store = KittyStoredImageStore::new();
+        let slot = store.allocate_slot().unwrap();
+        let image_a = RgbaImage::from_pixel(2, 1, Rgba([1, 2, 3, 255]));
+        let image_b = RgbaImage::from_pixel(2, 1, Rgba([4, 5, 6, 255]));
+        let placement = KittyPlacement {
+            rect: Rect::new(0, 0, 2, 1),
+            z_index: 9,
+            preserve_cursor: true,
+        };
+
+        let mut out = Vec::new();
+        let (stored_a, info_a) = store.store_rgba(&mut out, &image_a).unwrap();
+        let (stored_b, info_b) = store.store_rgba(&mut out, &image_b).unwrap();
+        assert_eq!(info_a.bytes, image_a.as_raw().len());
+        assert_eq!(info_b.bytes, image_b.as_raw().len());
+        assert_eq!(store.total_bytes(), info_a.bytes + info_b.bytes);
+
+        store
+            .place_in_slot(&mut out, slot, stored_a, placement)
+            .unwrap();
+        assert_eq!(store.slot_image(slot), Some(stored_a));
+
+        store
+            .place_in_slot(&mut out, slot, stored_b, placement)
+            .unwrap();
+        assert_eq!(store.slot_image(slot), Some(stored_b));
+        assert_eq!(store.image_count(), 2);
+    }
+
+    #[test]
+    fn show_in_slot_deletes_previous_image_before_placing_new_image() {
+        let mut store = KittyStoredImageStore::new();
+        let slot = store.allocate_slot().unwrap();
+        let image_a = RgbaImage::from_pixel(2, 1, Rgba([1, 2, 3, 255]));
+        let image_b = RgbaImage::from_pixel(2, 1, Rgba([4, 5, 6, 255]));
+        let placement = KittyPlacement {
+            rect: Rect::new(0, 0, 2, 1),
+            z_index: 9,
+            preserve_cursor: true,
+        };
+        let mut out = Vec::new();
+        let (stored_a, _) = store.store_rgba(&mut out, &image_a).unwrap();
+        let (stored_b, _) = store.store_rgba(&mut out, &image_b).unwrap();
+        store
+            .show_in_slot(&mut out, slot, stored_a, placement)
+            .unwrap();
+        store
+            .show_in_slot(&mut out, slot, stored_b, placement)
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let first_place = text.find("\u{1b}_Ga=p").unwrap();
+        let clear = text[first_place + 1..]
+            .find("\u{1b}_Ga=d")
+            .map(|idx| idx + first_place + 1)
+            .unwrap();
+        let second_place = text[clear + 1..]
+            .find("\u{1b}_Ga=p")
+            .map(|idx| idx + clear + 1)
+            .unwrap();
+        assert!(first_place < clear);
+        assert!(clear < second_place);
+        assert_eq!(store.slot_image(slot), Some(stored_b));
+    }
+
+    #[test]
+    fn forget_all_images_clears_tracked_images_and_slots() {
+        let mut store = KittyStoredImageStore::with_starting_ids(90, 190).unwrap();
+        let slot = store.allocate_slot().unwrap();
+        let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
+        let (stored, info) = store.store_rgba(&mut Vec::new(), &image).unwrap();
+        store
+            .show_in_slot(
+                &mut Vec::new(),
+                slot,
+                stored,
+                KittyPlacement {
+                    rect: Rect::new(0, 0, 2, 2),
+                    z_index: 1,
+                    preserve_cursor: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(store.image_count(), 1);
+        assert_eq!(store.total_bytes(), info.bytes);
+        assert_eq!(store.slot_image(slot), Some(stored));
+        store.forget_all_images();
+        assert_eq!(store.image_count(), 0);
+        assert_eq!(store.total_bytes(), 0);
+        assert_eq!(store.slot_image(slot), None);
+        assert!(store.image_info(stored).is_none());
+    }
+
+    #[test]
+    fn store_rgba_compresses_payloads_for_terminal_resident_images() {
+        let mut store = KittyStoredImageStore::new();
+        let image = RgbaImage::from_pixel(8, 4, Rgba([1, 2, 3, 255]));
+        let mut out = Vec::new();
+        let _ = store.store_rgba(&mut out, &image).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\u{1b}_Ga=t"));
+        assert!(text.contains(",o=z,m="));
+    }
+
+    #[test]
+    fn deleting_stored_image_clears_slot_association() {
+        let mut store = KittyStoredImageStore::new();
+        let slot = store.allocate_slot().unwrap();
+        let image = RgbaImage::from_pixel(1, 1, Rgba([7, 8, 9, 255]));
+        let placement = KittyPlacement {
+            rect: Rect::new(0, 0, 1, 1),
+            z_index: 1,
+            preserve_cursor: true,
+        };
+        let mut out = Vec::new();
+
+        let (stored, info) = store.store_rgba(&mut out, &image).unwrap();
+        store
+            .place_in_slot(&mut out, slot, stored, placement)
+            .unwrap();
+        assert_eq!(store.slot_image(slot), Some(stored));
+
+        store.delete_image(&mut out, stored).unwrap();
+        assert_eq!(store.slot_image(slot), None);
+        assert_eq!(store.total_bytes(), 0);
+        assert_eq!(store.image_count(), 0);
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\u{1b}_Ga=t"));
+        assert!(text.contains("\u{1b}_Ga=p"));
+        assert!(text.contains("\u{1b}_Ga=d"));
+        assert!(!text.is_empty());
+        assert_eq!(info.bytes, image.as_raw().len());
     }
 }

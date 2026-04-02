@@ -36,6 +36,7 @@ use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
 
 const MAP_COLUMN: &str = "map";
+pub(crate) const REGIONS_KEYWORD: &str = "regions";
 const MASKS_KEYWORD: &str = "masks";
 const DEFAULT_MASK_KEYWORD: &str = "Image_defaultmask";
 const LOGTABLE_KEYWORD: &str = "logtable";
@@ -128,6 +129,86 @@ impl AnyPagedImage {
             Self::Float64(image) => image.shape(),
             Self::Complex32(image) => image.shape(),
             Self::Complex64(image) => image.shape(),
+        }
+    }
+
+    /// Returns the names of all stored image-attached regions.
+    pub fn region_names(&self) -> Vec<String> {
+        match self {
+            Self::Float32(image) => image.region_names(),
+            Self::Float64(image) => image.region_names(),
+            Self::Complex32(image) => image.region_names(),
+            Self::Complex64(image) => image.region_names(),
+        }
+    }
+
+    /// Returns a named stored image-attached region record.
+    pub fn get_region_record(&self, name: &str) -> Result<RecordValue, ImageError> {
+        match self {
+            Self::Float32(image) => image.get_region_record(name),
+            Self::Float64(image) => image.get_region_record(name),
+            Self::Complex32(image) => image.get_region_record(name),
+            Self::Complex64(image) => image.get_region_record(name),
+        }
+    }
+
+    /// Returns the configured default mask name, if any.
+    pub fn default_mask_name(&self) -> Option<String> {
+        match self {
+            Self::Float32(image) => image.default_mask_name(),
+            Self::Float64(image) => image.default_mask_name(),
+            Self::Complex32(image) => image.default_mask_name(),
+            Self::Complex64(image) => image.default_mask_name(),
+        }
+    }
+
+    /// Returns the names of all stored masks.
+    pub fn mask_names(&self) -> Vec<String> {
+        match self {
+            Self::Float32(image) => image.mask_names(),
+            Self::Float64(image) => image.mask_names(),
+            Self::Complex32(image) => image.mask_names(),
+            Self::Complex64(image) => image.mask_names(),
+        }
+    }
+
+    /// Sets the named default mask.
+    pub fn set_default_mask(&mut self, name: &str) -> Result<(), ImageError> {
+        match self {
+            Self::Float32(image) => image.set_default_mask(name),
+            Self::Float64(image) => image.set_default_mask(name),
+            Self::Complex32(image) => image.set_default_mask(name),
+            Self::Complex64(image) => image.set_default_mask(name),
+        }
+    }
+
+    /// Unsets the configured default mask.
+    pub fn unset_default_mask(&mut self) -> Result<(), ImageError> {
+        match self {
+            Self::Float32(image) => image.unset_default_mask(),
+            Self::Float64(image) => image.unset_default_mask(),
+            Self::Complex32(image) => image.unset_default_mask(),
+            Self::Complex64(image) => image.unset_default_mask(),
+        }
+    }
+
+    /// Removes a named mask.
+    pub fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
+        match self {
+            Self::Float32(image) => image.remove_mask(name),
+            Self::Float64(image) => image.remove_mask(name),
+            Self::Complex32(image) => image.remove_mask(name),
+            Self::Complex64(image) => image.remove_mask(name),
+        }
+    }
+
+    /// Flushes the image metadata and payload to disk.
+    pub fn save(&mut self) -> Result<(), ImageError> {
+        match self {
+            Self::Float32(image) => image.save(),
+            Self::Float64(image) => image.save(),
+            Self::Complex32(image) => image.save(),
+            Self::Complex64(image) => image.save(),
         }
     }
 }
@@ -769,8 +850,16 @@ impl<T: ImagePixel> PagedImage<T> {
             Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)?,
+            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
             _ => CoordinateSystem::new(),
+        };
+        let units = match table.keywords().get("units") {
+            Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
+            _ => String::new(),
+        };
+        let misc_info = match table.keywords().get("miscinfo") {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => RecordValue::default(),
         };
         let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
         if map_primitive != T::PRIMITIVE_TYPE {
@@ -794,8 +883,8 @@ impl<T: ImagePixel> PagedImage<T> {
             tile_shape,
             coords,
             path: Some(path),
-            units: String::new(),
-            misc_info: RecordValue::default(),
+            units,
+            misc_info,
             temp_masks: BTreeMap::new(),
             temp_history: Vec::new(),
             tiled_io,
@@ -851,7 +940,7 @@ impl<T: ImagePixel> PagedImage<T> {
             Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)?,
+            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
             _ => CoordinateSystem::new(),
         };
         let units = match table.keywords().get("units") {
@@ -1020,7 +1109,7 @@ impl<T: ImagePixel> PagedImage<T> {
     pub fn set_coordinates(&mut self, coords: CoordinateSystem) -> Result<(), ImageError> {
         self.table
             .keywords_mut()
-            .upsert("coords", Value::Record(coords.to_record()));
+            .upsert("coords", Value::Record(coords.to_casa_record()));
         self.coords = coords;
         Ok(())
     }
@@ -1223,6 +1312,77 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Returns the names of all stored image-attached regions.
+    pub fn region_names(&self) -> Vec<String> {
+        match self.table.keywords().get(REGIONS_KEYWORD) {
+            Some(Value::Record(rec)) => rec.fields().iter().map(|f| f.name.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Returns a named stored image-attached region record.
+    pub fn get_region_record(&self, name: &str) -> Result<RecordValue, ImageError> {
+        let regions = match self.table.keywords().get(REGIONS_KEYWORD) {
+            Some(Value::Record(rec)) => rec,
+            _ => {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "saved region not found: {name}"
+                )));
+            }
+        };
+        match regions.get(name) {
+            Some(Value::Record(rec)) => Ok(rec.clone()),
+            Some(_) => Err(ImageError::InvalidMetadata(format!(
+                "saved region '{name}' is not a record"
+            ))),
+            None => Err(ImageError::InvalidMetadata(format!(
+                "saved region not found: {name}"
+            ))),
+        }
+    }
+
+    /// Replaces a named stored image-attached region record.
+    pub fn put_region_record(
+        &mut self,
+        name: &str,
+        record: &RecordValue,
+    ) -> Result<(), ImageError> {
+        let mut regions = match self.table.keywords().get(REGIONS_KEYWORD) {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => RecordValue::default(),
+        };
+        regions.upsert(name, Value::Record(record.clone()));
+        self.table
+            .keywords_mut()
+            .upsert(REGIONS_KEYWORD, Value::Record(regions));
+        Ok(())
+    }
+
+    /// Removes a named stored image-attached region record.
+    pub fn remove_region(&mut self, name: &str) -> Result<(), ImageError> {
+        let mut regions = match self.table.keywords().get(REGIONS_KEYWORD) {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "saved region not found: {name}"
+                )));
+            }
+        };
+        if regions.remove(name).is_none() {
+            return Err(ImageError::InvalidMetadata(format!(
+                "saved region not found: {name}"
+            )));
+        }
+        if regions.is_empty() {
+            self.table.keywords_mut().remove(REGIONS_KEYWORD);
+        } else {
+            self.table
+                .keywords_mut()
+                .upsert(REGIONS_KEYWORD, Value::Record(regions));
+        }
+        Ok(())
+    }
+
     /// Creates a full-image mask with the given name.
     pub fn make_mask(
         &mut self,
@@ -1402,7 +1562,7 @@ impl<T: ImagePixel> PagedImage<T> {
     fn initialize_keywords(table: &mut Table, coords: &CoordinateSystem) {
         table
             .keywords_mut()
-            .upsert("coords", Value::Record(coords.to_record()));
+            .upsert("coords", Value::Record(coords.to_casa_record()));
         table
             .keywords_mut()
             .upsert("units", Value::Scalar(ScalarValue::String(String::new())));
@@ -2613,6 +2773,12 @@ mod tests {
         );
         assert_eq!(image.tile_shape(), &[2, 2]);
         assert_eq!(image.cache_bytes(), 4096);
+        image.set_units("Jy/beam").unwrap();
+        let misc = RecordValue::new(vec![RecordField::new(
+            "observer",
+            Value::Scalar(ScalarValue::String("cache-test".into())),
+        )]);
+        image.set_misc_info(misc.clone()).unwrap();
 
         image
             .put_slice(
@@ -2627,6 +2793,8 @@ mod tests {
         assert_eq!(reopened.cache_bytes(), 2048);
         assert_eq!(reopened.shape(), &[4, 3]);
         assert_eq!(reopened.table().row_count(), 0);
+        assert_eq!(reopened.units(), "Jy/beam");
+        assert_eq!(reopened.misc_info(), misc);
     }
 
     #[test]

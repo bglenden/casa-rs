@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use super::columns::{validate_cell_against_schema_column, validate_row_against_schema};
+use super::columns::{
+    undefined_columns_for_row, validate_cell_against_schema_column, validate_row_against_schema,
+};
 use super::*;
 
 impl Table {
@@ -294,10 +296,17 @@ impl Table {
                     row_count,
                 });
             }
+            let mut undefined = None;
             if let Some(schema) = self.inner.schema() {
                 validate_row_against_schema(index, &row, schema)?;
+                undefined = Some(undefined_columns_for_row(&row, schema));
             }
             self.inner.insert_row(index, row)?;
+            if let Some(undefined) = undefined {
+                if let Some(set) = self.inner.undefined_for_row_mut(index)? {
+                    *set = undefined;
+                }
+            }
             Ok(())
         })();
         self.finish_write_operation(auto_unlock, result)
