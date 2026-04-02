@@ -8,9 +8,10 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use super::{
-    MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsIterationAxis,
-    MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset, MsPlotSpec,
-    MsPlotStyleSpec, MsSelectionSpec, build_msexplore_payload, export_msexplore_plot,
+    MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction, MsFlagEditSpec,
+    MsFlagRegion, MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
+    MsPlotPreset, MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec, apply_msexplore_flag_edit,
+    build_msexplore_payload, export_msexplore_plot,
 };
 use crate::MeasurementSet;
 use crate::listobs::cli::{
@@ -66,6 +67,16 @@ struct CliOptions {
     showmajorgrid: bool,
     showminorgrid: bool,
     headeritems: Option<String>,
+    flag_action: Option<MsFlagAction>,
+    flag_xmin: Option<f64>,
+    flag_xmax: Option<f64>,
+    flag_ymin: Option<f64>,
+    flag_ymax: Option<f64>,
+    flag_panel: Option<String>,
+    flag_extcorr: bool,
+    flag_extchannel: bool,
+    flag_apply: bool,
+    flag_output: Option<PathBuf>,
     plot_output: Option<PathBuf>,
     plot_format: MsExportFormat,
     plot_width: u32,
@@ -866,8 +877,142 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
-            action_argument(46, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(47, "help", &["-h", "--help"], UiActionKind::Help),
+            option_argument(
+                "flag_action",
+                "Flag Action",
+                46,
+                &["--flag-action"],
+                "ACTION",
+                UiValueKind::Choice,
+                None,
+                &["flag", "unflag"],
+                "Stage a rectangular flag or unflag edit against the plotted scatter points",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            option_argument(
+                "flag_xmin",
+                "Flag X Min",
+                47,
+                &["--flag-xmin"],
+                "VALUE",
+                UiValueKind::Float,
+                None,
+                &[],
+                "Inclusive minimum X value for the staged edit region",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            option_argument(
+                "flag_xmax",
+                "Flag X Max",
+                48,
+                &["--flag-xmax"],
+                "VALUE",
+                UiValueKind::Float,
+                None,
+                &[],
+                "Inclusive maximum X value for the staged edit region",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            option_argument(
+                "flag_ymin",
+                "Flag Y Min",
+                49,
+                &["--flag-ymin"],
+                "VALUE",
+                UiValueKind::Float,
+                None,
+                &[],
+                "Inclusive minimum Y value for the staged edit region",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            option_argument(
+                "flag_ymax",
+                "Flag Y Max",
+                50,
+                &["--flag-ymax"],
+                "VALUE",
+                UiValueKind::Float,
+                None,
+                &[],
+                "Inclusive maximum Y value for the staged edit region",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            option_argument(
+                "flag_panel",
+                "Flag Panel",
+                51,
+                &["--flag-panel"],
+                "KEY",
+                UiValueKind::String,
+                None,
+                &[],
+                "Iterated panel key to target for staged edits, for example scan-1",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            toggle_argument(
+                "flag_extcorr",
+                "Extend Correlation",
+                52,
+                &["--flag-extcorr"],
+                &[],
+                false,
+                "Extend staged edits across all correlations on matching channels",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            toggle_argument(
+                "flag_extchannel",
+                "Extend Channel",
+                53,
+                &["--flag-extchannel"],
+                &[],
+                false,
+                "Extend staged edits across all channels on matching correlations",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            toggle_argument(
+                "flag_apply",
+                "Apply Flag Edit",
+                54,
+                &["--flag-apply"],
+                &[],
+                false,
+                "Apply the staged flag edit to MAIN FLAG / FLAG_ROW; omit for preview-only",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            option_argument(
+                "flag_output",
+                "Flag Preview Output",
+                55,
+                &["--flag-output"],
+                "PATH",
+                UiValueKind::Path,
+                None,
+                &[],
+                "Write the staged flag-edit preview JSON to PATH",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            action_argument(56, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(57, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "listobs-summary-v1".to_string(),
@@ -883,7 +1028,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
 }
 
 fn run(options: CliOptions) -> Result<(), String> {
-    let ms = MeasurementSet::open(&options.ms_path).map_err(|error| {
+    let mut ms = MeasurementSet::open(&options.ms_path).map_err(|error| {
         if options.ms_path.is_dir() {
             format!(
                 "msexplore currently supports MeasurementSets only; failed to open {} as an MS: {error}",
@@ -906,8 +1051,50 @@ fn run(options: CliOptions) -> Result<(), String> {
         &summary_text,
     )?;
 
+    let explore_spec = if options.plot_output.is_some() || options.flag_action.is_some() {
+        Some(build_explore_spec(&options)?)
+    } else {
+        None
+    };
+
+    if let Some(explore_spec) = &explore_spec {
+        if let Some(flag_action) = options.flag_action {
+            let plot_spec = explore_spec
+                .plots
+                .first()
+                .ok_or_else(|| {
+                    "msexplore flag editing requires one plot specification".to_string()
+                })?
+                .clone();
+            let preview = if options.flag_apply {
+                let preview =
+                    apply_msexplore_flag_edit(&mut ms, &explore_spec.selection, &plot_spec)?;
+                ms.save().map_err(|error| error.to_string())?;
+                preview
+            } else {
+                let _ = flag_action;
+                super::preview_msexplore_flag_edit(&ms, &explore_spec.selection, &plot_spec)?
+            };
+            if let Some(path) = options.flag_output.as_deref() {
+                let json = serde_json::to_string_pretty(&preview)
+                    .map_err(|error| format!("serialize flag preview: {error}"))?;
+                write_output(Some(path), options.overwrite, &json)?;
+            } else {
+                eprintln!(
+                    "Flag edit preview: matched_points={} affected_rows={} affected_samples={} apply={}",
+                    preview.matched_points,
+                    preview.affected_rows,
+                    preview.affected_samples,
+                    options.flag_apply
+                );
+            }
+        }
+    }
+
     if let Some(plot_output) = &options.plot_output {
-        let explore_spec = build_explore_spec(&options)?;
+        let explore_spec = explore_spec
+            .as_ref()
+            .ok_or_else(|| "msexplore plot export lost its prepared explore spec".to_string())?;
         let payload = build_msexplore_payload(&ms, &explore_spec)?;
         export_msexplore_plot(
             &payload,
@@ -994,7 +1181,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
 }
 
 fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
-    let spec = build_plot_spec_from_values(
+    let mut spec = build_plot_spec_from_values(
         options.preset,
         options.x_axis,
         options.y_axis,
@@ -1024,6 +1211,32 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
         options.showmajorgrid,
         options.showminorgrid,
     )?;
+    if let Some(action) = options.flag_action {
+        let x_min = options
+            .flag_xmin
+            .ok_or_else(|| "--flag-action requires --flag-xmin".to_string())?;
+        let x_max = options
+            .flag_xmax
+            .ok_or_else(|| "--flag-action requires --flag-xmax".to_string())?;
+        let y_min = options
+            .flag_ymin
+            .ok_or_else(|| "--flag-action requires --flag-ymin".to_string())?;
+        let y_max = options
+            .flag_ymax
+            .ok_or_else(|| "--flag-action requires --flag-ymax".to_string())?;
+        spec.flag_edit = Some(MsFlagEditSpec {
+            action,
+            region: MsFlagRegion {
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+            },
+            panel_key: options.flag_panel.clone(),
+            extcorr: options.flag_extcorr,
+            extchannel: options.flag_extchannel,
+        });
+    }
     spec.validate()?;
     Ok(spec)
 }
@@ -1217,6 +1430,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut showmajorgrid = false;
     let mut showminorgrid = false;
     let mut headeritems = None;
+    let mut flag_action = None;
+    let mut flag_xmin = None;
+    let mut flag_xmax = None;
+    let mut flag_ymin = None;
+    let mut flag_ymax = None;
+    let mut flag_panel = None;
+    let mut flag_extcorr = false;
+    let mut flag_extchannel = false;
+    let mut flag_apply = false;
+    let mut flag_output = None;
     let mut plot_output = None;
     let mut plot_format = MsExportFormat::Png;
     let mut plot_width = 1600u32;
@@ -1383,6 +1606,78 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 showminorgrid = true
             }
             "--headeritems" => headeritems = Some(take_value(&mut index, &args, "--headeritems")?),
+            "--flag-action" => {
+                plot_control_used = true;
+                flag_action = Some(
+                    match take_value(&mut index, &args, "--flag-action")?
+                        .to_ascii_lowercase()
+                        .as_str()
+                    {
+                        "flag" => MsFlagAction::Flag,
+                        "unflag" => MsFlagAction::Unflag,
+                        other => {
+                            return Err(format!(
+                                "unsupported value for --flag-action {other:?}; expected flag or unflag"
+                            ));
+                        }
+                    },
+                )
+            }
+            "--flag-xmin" => {
+                plot_control_used = true;
+                flag_xmin = Some(
+                    take_value(&mut index, &args, "--flag-xmin")?
+                        .parse::<f64>()
+                        .map_err(|_| "invalid floating-point value for --flag-xmin".to_string())?,
+                )
+            }
+            "--flag-xmax" => {
+                plot_control_used = true;
+                flag_xmax = Some(
+                    take_value(&mut index, &args, "--flag-xmax")?
+                        .parse::<f64>()
+                        .map_err(|_| "invalid floating-point value for --flag-xmax".to_string())?,
+                )
+            }
+            "--flag-ymin" => {
+                plot_control_used = true;
+                flag_ymin = Some(
+                    take_value(&mut index, &args, "--flag-ymin")?
+                        .parse::<f64>()
+                        .map_err(|_| "invalid floating-point value for --flag-ymin".to_string())?,
+                )
+            }
+            "--flag-ymax" => {
+                plot_control_used = true;
+                flag_ymax = Some(
+                    take_value(&mut index, &args, "--flag-ymax")?
+                        .parse::<f64>()
+                        .map_err(|_| "invalid floating-point value for --flag-ymax".to_string())?,
+                )
+            }
+            "--flag-panel" => {
+                plot_control_used = true;
+                flag_panel = Some(take_value(&mut index, &args, "--flag-panel")?)
+            }
+            "--flag-extcorr" => {
+                plot_control_used = true;
+                flag_extcorr = true
+            }
+            "--flag-extchannel" => {
+                plot_control_used = true;
+                flag_extchannel = true
+            }
+            "--flag-apply" => {
+                plot_control_used = true;
+                flag_apply = true
+            }
+            "--flag-output" => {
+                flag_output = Some(PathBuf::from(take_value(
+                    &mut index,
+                    &args,
+                    "--flag-output",
+                )?))
+            }
             "--plot-output" => {
                 plot_output = Some(PathBuf::from(take_value(
                     &mut index,
@@ -1439,6 +1734,32 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             "--plot-output requires either --preset or both --xaxis and --yaxis".to_string(),
         );
     }
+    if flag_action.is_some() && page_spec.is_some() {
+        return Err(
+            "msexplore staged flag editing currently does not support --page-spec".to_string(),
+        );
+    }
+    if flag_action.is_some() && preset.is_none() && (x_axis.is_none() || y_axis.is_none()) {
+        return Err(
+            "--flag-action requires either --preset or both --xaxis and --yaxis".to_string(),
+        );
+    }
+    if flag_action.is_none()
+        && (flag_xmin.is_some()
+            || flag_xmax.is_some()
+            || flag_ymin.is_some()
+            || flag_ymax.is_some()
+            || flag_panel.is_some()
+            || flag_extcorr
+            || flag_extchannel
+            || flag_apply
+            || flag_output.is_some())
+    {
+        return Err(
+            "msexplore flag-edit region, extension, apply, and output flags require --flag-action"
+                .to_string(),
+        );
+    }
     Ok(CliAction::Run(CliOptions {
         ms_path,
         summary_format,
@@ -1472,6 +1793,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         showmajorgrid,
         showminorgrid,
         headeritems,
+        flag_action,
+        flag_xmin,
+        flag_xmax,
+        flag_ymin,
+        flag_ymax,
+        flag_panel,
+        flag_extcorr,
+        flag_extchannel,
+        flag_apply,
+        flag_output,
         plot_output,
         plot_format,
         plot_width: plot_width.max(1),

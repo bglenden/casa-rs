@@ -70,12 +70,14 @@ pub use listobs::{
 pub use ms::MeasurementSet;
 pub use msexplore::{
     MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,
-    MsFlagEditSpec, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition,
-    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
+    MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
+    MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition, MsPageExportRange,
+    MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
     MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
-    MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec, MsTransformSpec,
-    build_msexplore_payload, build_msexplore_payload_from_spec, build_msexplore_plot_payload,
-    build_msexplore_plot_payload_from_path, export_msexplore_plot, render_msexplore_plot_image,
+    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelectionSpec, MsTransformSpec,
+    apply_msexplore_flag_edit, build_msexplore_payload, build_msexplore_payload_from_spec,
+    build_msexplore_plot_payload, build_msexplore_plot_payload_from_path, export_msexplore_plot,
+    preview_msexplore_flag_edit, render_msexplore_plot_image,
 };
 pub use plot::{
     ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,

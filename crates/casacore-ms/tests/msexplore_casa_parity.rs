@@ -7,10 +7,13 @@ use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
 use casacore_ms::{
-    MeasurementSet, MsAxis, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
-    build_msexplore_plot_payload,
+    MeasurementSet, MsAxis, MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis,
+    MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec, apply_msexplore_flag_edit,
+    build_msexplore_plot_payload, preview_msexplore_flag_edit,
 };
+use casacore_types::ArrayValue;
 use image::{GenericImageView, ImageReader};
+use ndarray::Ix2;
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -1228,6 +1231,267 @@ fn azimuth_vs_elevation_txt_manifest_tracks_casa_plotms_xy_values() {
     assert_points_match(&rust_xy_points(&rust), &casa_xy_points(&casa));
 }
 
+#[test]
+fn flag_edit_single_sample_matches_casa_table_writeback_and_post_edit_plot() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let source = ngc5921_ms_path().expect("shared ngc5921.ms");
+    let temp = tempdir().expect("tempdir");
+    let rust_copy = temp.path().join("rust-edit.ms");
+    let casa_copy = temp.path().join("casa-edit.ms");
+    copy_measurement_set(&source, &rust_copy).expect("copy rust ms");
+    copy_measurement_set(&source, &casa_copy).expect("copy casa ms");
+
+    let selection = MsSelectionSpec {
+        field: Some("0".to_string()),
+        spw: Some("0".to_string()),
+        scan: Some("1".to_string()),
+        ..Default::default()
+    };
+    let region = first_point_region(&source, &selection, MsPlotPreset::AmplitudeVsTime)
+        .expect("first point region");
+    let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    spec.flag_edit = Some(MsFlagEditSpec {
+        action: MsFlagAction::Flag,
+        region,
+        panel_key: None,
+        extcorr: false,
+        extchannel: false,
+    });
+
+    let preview = preview_msexplore_flag_edit(
+        &MeasurementSet::open(&source).expect("open shared ms"),
+        &selection,
+        &spec,
+    )
+    .expect("preview");
+    assert_eq!(preview.affected_samples, 1);
+
+    let mut rust_ms = MeasurementSet::open(&rust_copy).expect("open rust copy");
+    apply_msexplore_flag_edit(&mut rust_ms, &selection, &spec).expect("apply rust edit");
+    rust_ms.save().expect("save rust copy");
+
+    apply_casa_flag_preview(&casa_copy, &preview).expect("apply casa edit");
+
+    assert_main_flag_state_equal(&rust_copy, &casa_copy);
+
+    let rust_manifest = run_rust_msexplore_on(
+        &rust_copy,
+        &[
+            "--preset",
+            "amplitude_vs_time",
+            "--field",
+            "0",
+            "--spw",
+            "0",
+            "--scan",
+            "1",
+        ],
+    )
+    .expect("run rust post-edit manifest");
+    let casa_manifest = String::from_utf8(
+        run_casa_plotms_export_on(
+            &casa_copy,
+            &[
+                ("xaxis", "time"),
+                ("yaxis", "amp"),
+                ("field", "0"),
+                ("spw", "0"),
+                ("scan", "1"),
+            ],
+            "txt",
+        )
+        .expect("run casa post-edit manifest")
+        .body,
+    )
+    .expect("decode casa txt");
+    assert_points_match(
+        &rust_xy_points(&rust_manifest),
+        &casa_xy_points(&casa_manifest),
+    );
+}
+
+#[test]
+fn flag_edit_extcorr_extchannel_matches_casa_table_writeback_and_post_edit_plot() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let source = ngc5921_ms_path().expect("shared ngc5921.ms");
+    let temp = tempdir().expect("tempdir");
+    let rust_copy = temp.path().join("rust-edit-all.ms");
+    let casa_copy = temp.path().join("casa-edit-all.ms");
+    copy_measurement_set(&source, &rust_copy).expect("copy rust ms");
+    copy_measurement_set(&source, &casa_copy).expect("copy casa ms");
+
+    let selection = MsSelectionSpec {
+        field: Some("0".to_string()),
+        spw: Some("0".to_string()),
+        scan: Some("1".to_string()),
+        ..Default::default()
+    };
+    let region = first_point_region(&source, &selection, MsPlotPreset::AmplitudeVsTime)
+        .expect("first point region");
+    let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    spec.flag_edit = Some(MsFlagEditSpec {
+        action: MsFlagAction::Flag,
+        region,
+        panel_key: None,
+        extcorr: true,
+        extchannel: true,
+    });
+
+    let preview = preview_msexplore_flag_edit(
+        &MeasurementSet::open(&source).expect("open shared ms"),
+        &selection,
+        &spec,
+    )
+    .expect("preview");
+    assert!(preview.affected_samples > 1);
+    assert_eq!(preview.affected_rows, 1);
+    assert!(preview.row_edits[0].new_flag_row);
+
+    let mut rust_ms = MeasurementSet::open(&rust_copy).expect("open rust copy");
+    apply_msexplore_flag_edit(&mut rust_ms, &selection, &spec).expect("apply rust edit");
+    rust_ms.save().expect("save rust copy");
+
+    apply_casa_flag_preview(&casa_copy, &preview).expect("apply casa edit");
+
+    assert_main_flag_state_equal(&rust_copy, &casa_copy);
+
+    let rust_manifest = run_rust_msexplore_on(
+        &rust_copy,
+        &[
+            "--preset",
+            "amplitude_vs_time",
+            "--field",
+            "0",
+            "--spw",
+            "0",
+            "--scan",
+            "1",
+        ],
+    )
+    .expect("run rust post-edit manifest");
+    let casa_manifest = String::from_utf8(
+        run_casa_plotms_export_on(
+            &casa_copy,
+            &[
+                ("xaxis", "time"),
+                ("yaxis", "amp"),
+                ("field", "0"),
+                ("spw", "0"),
+                ("scan", "1"),
+            ],
+            "txt",
+        )
+        .expect("run casa post-edit manifest")
+        .body,
+    )
+    .expect("decode casa txt");
+    assert_points_match(
+        &rust_xy_points(&rust_manifest),
+        &casa_xy_points(&casa_manifest),
+    );
+}
+
+#[test]
+fn flag_edit_iterated_scan_panel_matches_casa_table_writeback_and_post_edit_plot() {
+    if !plotms_shared_dataset_available() {
+        eprintln!("{}", skip_reason(true));
+        return;
+    }
+
+    let source = ngc5921_ms_path().expect("shared ngc5921.ms");
+    let temp = tempdir().expect("tempdir");
+    let rust_copy = temp.path().join("rust-edit-iterated.ms");
+    let casa_copy = temp.path().join("casa-edit-iterated.ms");
+    copy_measurement_set(&source, &rust_copy).expect("copy rust ms");
+    copy_measurement_set(&source, &casa_copy).expect("copy casa ms");
+
+    let selection = MsSelectionSpec {
+        field: Some("0".to_string()),
+        spw: Some("0".to_string()),
+        ..Default::default()
+    };
+    let region = first_iterated_panel_point_region(
+        &source,
+        &selection,
+        MsPlotPreset::AmplitudeVsTime,
+        MsIterationAxis::Scan,
+        "scan-1",
+    )
+    .expect("first iterated point region");
+    let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    spec.iteration.iteraxis = Some(MsIterationAxis::Scan);
+    spec.flag_edit = Some(MsFlagEditSpec {
+        action: MsFlagAction::Flag,
+        region,
+        panel_key: Some("scan-1".to_string()),
+        extcorr: false,
+        extchannel: false,
+    });
+
+    let preview = preview_msexplore_flag_edit(
+        &MeasurementSet::open(&source).expect("open shared ms"),
+        &selection,
+        &spec,
+    )
+    .expect("preview");
+    assert_eq!(preview.panel_key.as_deref(), Some("scan-1"));
+    assert_eq!(preview.affected_samples, 1);
+    assert_eq!(preview.affected_rows, 1);
+
+    let mut rust_ms = MeasurementSet::open(&rust_copy).expect("open rust copy");
+    apply_msexplore_flag_edit(&mut rust_ms, &selection, &spec).expect("apply rust edit");
+    rust_ms.save().expect("save rust copy");
+
+    apply_casa_flag_preview(&casa_copy, &preview).expect("apply casa edit");
+
+    assert_main_flag_state_equal(&rust_copy, &casa_copy);
+
+    let rust_manifest = run_rust_msexplore_on(
+        &rust_copy,
+        &[
+            "--preset",
+            "amplitude_vs_time",
+            "--field",
+            "0",
+            "--spw",
+            "0",
+            "--iteraxis",
+            "scan",
+        ],
+    )
+    .expect("run rust post-edit iterated manifest");
+    let rust_panels = rust_iterated_xy_points(&rust_manifest);
+    let casa_scan1 = String::from_utf8(
+        run_casa_plotms_export_on(
+            &casa_copy,
+            &[
+                ("xaxis", "time"),
+                ("yaxis", "amp"),
+                ("field", "0"),
+                ("spw", "0"),
+                ("scan", "1"),
+            ],
+            "txt",
+        )
+        .expect("run casa scan 1 post-edit manifest")
+        .body,
+    )
+    .expect("decode casa scan 1 txt");
+
+    assert_points_match(
+        rust_panels.get("scan-1").expect("rust scan-1 panel"),
+        &casa_xy_points(&casa_scan1),
+    );
+}
+
 fn plotms_available() -> bool {
     discover_casa_python().is_some_and(|python| python.plotms_available)
 }
@@ -1503,6 +1767,185 @@ kwargs = {
     let body = fs::read(&output).map_err(|error| format!("read casa export: {error}"))?;
     let log = read_casa_log(temp.path())?;
     Ok(CasaPlotmsExport { body, log })
+}
+
+fn copy_measurement_set(source: &Path, destination: &Path) -> Result<(), String> {
+    if source.is_dir() {
+        fs::create_dir_all(destination).map_err(|error| {
+            format!(
+                "create destination directory {}: {error}",
+                destination.display()
+            )
+        })?;
+        for entry in fs::read_dir(source).map_err(|error| {
+            format!(
+                "read MeasurementSet directory {}: {error}",
+                source.display()
+            )
+        })? {
+            let entry = entry.map_err(|error| format!("read directory entry: {error}"))?;
+            let child_source = entry.path();
+            let child_destination = destination.join(entry.file_name());
+            copy_measurement_set(&child_source, &child_destination)?;
+        }
+        return Ok(());
+    }
+    fs::copy(source, destination).map_err(|error| {
+        format!(
+            "copy MeasurementSet file {} -> {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn first_point_region(
+    ms_path: &Path,
+    selection: &MsSelectionSpec,
+    preset: MsPlotPreset,
+) -> Result<MsFlagRegion, String> {
+    let ms = MeasurementSet::open(ms_path).map_err(|error| format!("open source ms: {error}"))?;
+    let spec = MsPlotSpec::from_preset(preset);
+    let payload = build_msexplore_plot_payload(&ms, selection, &spec)?;
+    let MsPlotPayload::Scatter(payload) = payload else {
+        return Err("expected single scatter payload for flag-edit region selection".to_string());
+    };
+    let point = payload
+        .series
+        .iter()
+        .flat_map(|series| series.points.iter().copied())
+        .next()
+        .ok_or_else(|| "scatter payload produced no points".to_string())?;
+    Ok(MsFlagRegion {
+        x_min: point.0 - 1e-6,
+        x_max: point.0 + 1e-6,
+        y_min: point.1 - 1e-6,
+        y_max: point.1 + 1e-6,
+    })
+}
+
+fn first_iterated_panel_point_region(
+    ms_path: &Path,
+    selection: &MsSelectionSpec,
+    preset: MsPlotPreset,
+    iteraxis: MsIterationAxis,
+    panel_key: &str,
+) -> Result<MsFlagRegion, String> {
+    let ms = MeasurementSet::open(ms_path).map_err(|error| format!("open source ms: {error}"))?;
+    let mut spec = MsPlotSpec::from_preset(preset);
+    spec.iteration.iteraxis = Some(iteraxis);
+    let payload = build_msexplore_plot_payload(&ms, selection, &spec)?;
+    let MsPlotPayload::ScatterGrid(payload) = payload else {
+        return Err("expected iterated scatter payload for flag-edit region selection".to_string());
+    };
+    let panel = payload
+        .panels
+        .iter()
+        .find(|panel| panel.key == panel_key)
+        .ok_or_else(|| {
+            format!(
+                "iterated payload did not contain panel_key {:?}; available panels: {}",
+                panel_key,
+                payload
+                    .panels
+                    .iter()
+                    .map(|panel| panel.key.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+    let point = panel
+        .series
+        .iter()
+        .flat_map(|series| series.points.iter().copied())
+        .next()
+        .ok_or_else(|| format!("iterated panel {:?} produced no points", panel_key))?;
+    Ok(MsFlagRegion {
+        x_min: point.0 - 1e-6,
+        x_max: point.0 + 1e-6,
+        y_min: point.1 - 1e-6,
+        y_max: point.1 + 1e-6,
+    })
+}
+
+fn apply_casa_flag_preview(
+    ms_path: &Path,
+    preview: &casacore_ms::MsFlagEditPreview,
+) -> Result<(), String> {
+    let casa = discover_casa_python().ok_or_else(|| skip_reason(false))?;
+    let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
+    let preview_path = temp.path().join("flag-preview.json");
+    fs::write(
+        &preview_path,
+        serde_json::to_string(preview).map_err(|error| format!("serialize preview: {error}"))?,
+    )
+    .map_err(|error| format!("write preview json: {error}"))?;
+    let script = r#"
+import json
+import os
+from casatools import table
+
+with open(os.environ["CASA_FLAG_PREVIEW"], "r", encoding="utf-8") as handle:
+    preview = json.load(handle)
+
+row_edits = {entry["row"]: entry for entry in preview["row_edits"]}
+sample_edits = {}
+for entry in preview["sample_edits"]:
+    sample_edits.setdefault(entry["row"], []).append(entry)
+
+tb = table()
+tb.open(os.environ["CASA_VIS"], nomodify=False)
+try:
+    for row, row_edit in row_edits.items():
+        cell = tb.getcell("FLAG", row)
+        for sample in sample_edits.get(row, []):
+            cell[sample["corr"], sample["chan"]] = bool(sample["new_flag"])
+        tb.putcell("FLAG", row, cell)
+        tb.putcell("FLAG_ROW", row, bool(row_edit["new_flag_row"]))
+    tb.flush()
+finally:
+    tb.close()
+"#;
+    let result = Command::new(&casa.program)
+        .current_dir(temp.path())
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_FLAG_PREVIEW", &preview_path)
+        .output()
+        .map_err(|error| format!("spawn casa flag preview apply: {error}"))?;
+    if !result.status.success() {
+        return Err(String::from_utf8_lossy(&result.stderr).to_string());
+    }
+    Ok(())
+}
+
+fn assert_main_flag_state_equal(left_path: &Path, right_path: &Path) {
+    let left = MeasurementSet::open(left_path).expect("open left MeasurementSet");
+    let right = MeasurementSet::open(right_path).expect("open right MeasurementSet");
+    assert_eq!(left.row_count(), right.row_count(), "row-count mismatch");
+    for row in 0..left.row_count() {
+        assert_eq!(
+            left.flag_row_column().get(row).expect("left flag_row"),
+            right.flag_row_column().get(row).expect("right flag_row"),
+            "FLAG_ROW mismatch on row {row}"
+        );
+        let left_flags = flag_matrix_for_row(&left, row);
+        let right_flags = flag_matrix_for_row(&right, row);
+        assert_eq!(left_flags, right_flags, "FLAG mismatch on row {row}");
+    }
+}
+
+fn flag_matrix_for_row(ms: &MeasurementSet, row: usize) -> ndarray::Array2<bool> {
+    match ms.flag_column().get(row).expect("flag cell") {
+        ArrayValue::Bool(values) => values
+            .view()
+            .into_dimensionality::<Ix2>()
+            .expect("2d flag cell")
+            .to_owned(),
+        other => panic!("unexpected FLAG cell type {:?}", other.primitive_type()),
+    }
 }
 
 fn count_rust_points(text: &str) -> usize {

@@ -33,7 +33,7 @@ use casacore_types::measures::doppler::{DopplerRef, MDoppler};
 use casacore_types::measures::frame::MeasFrame;
 use casacore_types::measures::frequency::{FrequencyRef, MFrequency};
 use casacore_types::quanta::{MvAngle, MvTime, Quantity, Unit};
-use casacore_types::{ArrayValue, Complex64};
+use casacore_types::{ArrayValue, Complex64, ScalarValue, Value};
 use image::{DynamicImage, ImageFormat, RgbImage};
 use ndarray::{Ix1, Ix2};
 use plotters::prelude::*;
@@ -1129,14 +1129,31 @@ impl Default for MsPlotStyleSpec {
 }
 
 /// One staged flag-edit request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MsFlagEditSpec {
     /// Whether the region should be flagged or unflagged.
     pub action: MsFlagAction,
+    /// Inclusive numeric plot region that selects staged points.
+    pub region: MsFlagRegion,
+    /// Optional iterated-panel key to target within a scatter grid.
+    pub panel_key: Option<String>,
     /// Extend across correlations.
     pub extcorr: bool,
     /// Extend across channels.
     pub extchannel: bool,
+}
+
+/// Inclusive rectangular region used for staged flag editing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MsFlagRegion {
+    /// Inclusive minimum X value.
+    pub x_min: f64,
+    /// Inclusive maximum X value.
+    pub x_max: f64,
+    /// Inclusive minimum Y value.
+    pub y_min: f64,
+    /// Inclusive maximum Y value.
+    pub y_max: f64,
 }
 
 /// Supported flag-edit actions.
@@ -1147,6 +1164,67 @@ pub enum MsFlagAction {
     Flag,
     /// Clear flags from matching samples.
     Unflag,
+}
+
+/// One plotted visibility sample selected by a staged flag edit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MsFlagSampleEdit {
+    /// MAIN row index.
+    pub row: usize,
+    /// Correlation slot within the FLAG cell.
+    pub corr: usize,
+    /// Channel slot within the FLAG cell.
+    pub chan: usize,
+    /// Flag value before applying the staged edit.
+    pub old_flag: bool,
+    /// Flag value after applying the staged edit.
+    pub new_flag: bool,
+}
+
+/// One MAIN-row FLAG_ROW transition produced by a staged edit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MsFlagRowEdit {
+    /// MAIN row index.
+    pub row: usize,
+    /// FLAG_ROW value before applying the staged edit.
+    pub old_flag_row: bool,
+    /// FLAG_ROW value after applying the staged edit.
+    pub new_flag_row: bool,
+    /// Number of per-sample flag transitions on this row.
+    pub changed_samples: usize,
+}
+
+/// Preview of a staged `msexplore` flag edit before optional writeback.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MsFlagEditPreview {
+    /// Plot title associated with the staged edit.
+    pub plot_title: String,
+    /// Optional iterated-panel key targeted by this preview.
+    pub panel_key: Option<String>,
+    /// Optional human-readable panel label targeted by this preview.
+    pub panel_label: Option<String>,
+    /// X axis used for region matching.
+    pub x_axis: MsAxis,
+    /// Y axis used for region matching.
+    pub y_axis: MsAxis,
+    /// Inclusive numeric region used to select plotted samples.
+    pub region: MsFlagRegion,
+    /// Whether the edit flags or unflags the selected samples.
+    pub action: MsFlagAction,
+    /// Extend the edit across all correlations on matching rows/channels.
+    pub extcorr: bool,
+    /// Extend the edit across all channels on matching rows/correlations.
+    pub extchannel: bool,
+    /// Number of plotted points that intersect the staged region.
+    pub matched_points: usize,
+    /// Number of MAIN rows affected by the staged edit.
+    pub affected_rows: usize,
+    /// Number of unique `(row, corr, chan)` samples affected by the staged edit.
+    pub affected_samples: usize,
+    /// Exact per-sample flag transitions.
+    pub sample_edits: Vec<MsFlagSampleEdit>,
+    /// Exact per-row FLAG_ROW transitions.
+    pub row_edits: Vec<MsFlagRowEdit>,
 }
 
 /// One plot request on a page.
@@ -1505,6 +1583,12 @@ impl MsPlotSpec {
 
     fn validate_for_page_child(&self) -> Result<(), String> {
         self.validate_common()?;
+        if self.flag_edit.is_some() {
+            return Err(
+                "msexplore staged flag editing currently supports standalone scatter plots only"
+                    .to_string(),
+            );
+        }
         if self.iteration.iteraxis.is_some() {
             return Err(
                 "msexplore multi-plot pages do not yet support nested iteraxis child plots"
@@ -1552,10 +1636,51 @@ impl MsPlotSpec {
                 "msexplore y-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
             );
         }
-        if self.flag_edit.is_some() {
-            return Err(
-                "msexplore staged flag editing is modeled but not yet implemented".to_string(),
-            );
+        if let Some(flag_edit) = &self.flag_edit {
+            if self.y_axes.len() > 1 {
+                return Err(
+                    "msexplore staged flag editing currently supports single-y scatter plots only"
+                        .to_string(),
+                );
+            }
+            if self.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
+                return Err(
+                    "msexplore staged flag editing currently does not support stacked page presets"
+                        .to_string(),
+                );
+            }
+            if self.averaging.avgchannel.is_some() {
+                return Err(
+                    "msexplore staged flag editing currently requires unbinned channel samples"
+                        .to_string(),
+                );
+            }
+            if self.x_axis.uses_derived_geometry()
+                || self
+                    .y_axes
+                    .iter()
+                    .copied()
+                    .any(MsAxis::uses_derived_geometry)
+            {
+                return Err(
+                    "msexplore staged flag editing currently requires direct sample-resolved axes rather than deduplicated geometry axes".to_string(),
+                );
+            }
+            if !flag_edit.region.x_min.is_finite()
+                || !flag_edit.region.x_max.is_finite()
+                || !flag_edit.region.y_min.is_finite()
+                || !flag_edit.region.y_max.is_finite()
+            {
+                return Err(
+                    "msexplore staged flag editing requires finite region bounds".to_string(),
+                );
+            }
+            if self.iteration.iteraxis.is_none() && flag_edit.panel_key.is_some() {
+                return Err(
+                    "msexplore staged flag editing only accepts panel_key for iterated plots"
+                        .to_string(),
+                );
+            }
         }
         if self.averaging.avgtime.is_some()
             || self.averaging.avgscan
@@ -1816,6 +1941,21 @@ pub struct MsScatterSeries {
     pub y_axis: MsAxis,
     /// Plot points as `(x, y)`.
     pub points: Vec<(f64, f64)>,
+    /// Provenance for each plotted point in `points`.
+    pub provenance: Vec<MsScatterPointRef>,
+}
+
+/// One plotted point's originating visibility sample range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MsScatterPointRef {
+    /// MAIN row index.
+    pub row: usize,
+    /// Correlation slot within the row FLAG/DATA cell.
+    pub corr: usize,
+    /// Inclusive channel start for this plotted point.
+    pub chan_start: usize,
+    /// Exclusive channel end for this plotted point.
+    pub chan_end: usize,
 }
 
 /// One iterated scatter panel within a multi-panel page.
@@ -2034,6 +2174,120 @@ pub fn build_msexplore_payload_from_spec(spec: &MsExploreSpec) -> Result<MsPlotP
     build_msexplore_payload(&ms, spec)
 }
 
+/// Preview a staged flag edit against one standalone `msexplore` scatter plot.
+///
+/// The returned preview resolves the plot region to exact `(row, corr, chan)`
+/// samples before any writeback occurs.
+pub fn preview_msexplore_flag_edit(
+    ms: &MeasurementSet,
+    selection: &MsSelectionSpec,
+    spec: &MsPlotSpec,
+) -> Result<MsFlagEditPreview, String> {
+    spec.validate()?;
+    let flag_edit = spec
+        .flag_edit
+        .as_ref()
+        .ok_or_else(|| "msexplore flag-edit preview requires MsPlotSpec.flag_edit".to_string())?;
+    let payload = build_msexplore_plot_payload_validated(ms, selection, spec)?;
+    match payload {
+        MsPlotPayload::Scatter(payload) => build_flag_edit_preview_from_series(
+            ms,
+            &payload.title,
+            None,
+            None,
+            payload.x_axis,
+            payload.y_axis,
+            &payload.series,
+            flag_edit,
+        ),
+        MsPlotPayload::ListObs(_) => Err(
+            "msexplore staged flag editing currently supports raw-visibility scatter plots only"
+                .to_string(),
+        ),
+        MsPlotPayload::ScatterGrid(payload) => {
+            let panel = match flag_edit.panel_key.as_deref() {
+                Some(key) => payload
+                    .panels
+                    .iter()
+                    .find(|panel| panel.key == key)
+                    .ok_or_else(|| {
+                        format!(
+                            "msexplore flag-edit panel_key {:?} was not found in iterated payload; available panels: {}",
+                            key,
+                            payload
+                                .panels
+                                .iter()
+                                .map(|panel| panel.key.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })?,
+                None if payload.panels.len() == 1 => &payload.panels[0],
+                None => {
+                    return Err(format!(
+                        "msexplore staged flag editing requires panel_key for iterated plots with multiple panels; available panels: {}",
+                        payload
+                            .panels
+                            .iter()
+                            .map(|panel| panel.key.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            };
+            build_flag_edit_preview_from_series(
+                ms,
+                &payload.title,
+                Some(panel.key.clone()),
+                Some(panel.label.clone()),
+                payload.x_axis,
+                payload.y_axis,
+                &panel.series,
+                flag_edit,
+            )
+        }
+        MsPlotPayload::ScatterPage(_) => Err(
+            "msexplore staged flag editing currently does not support multi-plot pages".to_string(),
+        ),
+    }
+}
+
+/// Apply a staged flag edit to MAIN `FLAG` / `FLAG_ROW` and return the exact
+/// preview that was committed.
+pub fn apply_msexplore_flag_edit(
+    ms: &mut MeasurementSet,
+    selection: &MsSelectionSpec,
+    spec: &MsPlotSpec,
+) -> Result<MsFlagEditPreview, String> {
+    let preview = preview_msexplore_flag_edit(ms, selection, spec)?;
+    let mut row_updates = std::collections::BTreeMap::<usize, (ndarray::Array2<bool>, bool)>::new();
+    for row_edit in &preview.row_edits {
+        row_updates.insert(
+            row_edit.row,
+            (clone_flag_matrix(ms, row_edit.row)?, row_edit.new_flag_row),
+        );
+    }
+    for sample in &preview.sample_edits {
+        let (matrix, _) = row_updates
+            .get_mut(&sample.row)
+            .ok_or_else(|| format!("flag edit lost planned row {}", sample.row))?;
+        matrix[(sample.corr, sample.chan)] = sample.new_flag;
+    }
+    for (row, (matrix, flag_row)) in row_updates {
+        ms.main_table_mut()
+            .set_cell(
+                row,
+                "FLAG",
+                Value::Array(ArrayValue::Bool(matrix.into_dyn())),
+            )
+            .map_err(|error| error.to_string())?;
+        ms.main_table_mut()
+            .set_cell(row, "FLAG_ROW", Value::Scalar(ScalarValue::Bool(flag_row)))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(preview)
+}
+
 fn apply_page_header_lines(payload: &mut MsPlotPayload, header_lines: Vec<String>) {
     if header_lines.is_empty() {
         return;
@@ -2043,6 +2297,155 @@ fn apply_page_header_lines(payload: &mut MsPlotPayload, header_lines: Vec<String
         MsPlotPayload::ScatterGrid(payload) => payload.header_lines = header_lines,
         MsPlotPayload::ScatterPage(payload) => payload.header_lines = header_lines,
         MsPlotPayload::ListObs(_) => {}
+    }
+}
+
+fn build_flag_edit_preview_from_series(
+    ms: &MeasurementSet,
+    plot_title: &str,
+    panel_key: Option<String>,
+    panel_label: Option<String>,
+    x_axis: MsAxis,
+    y_axis: MsAxis,
+    series: &[MsScatterSeries],
+    flag_edit: &MsFlagEditSpec,
+) -> Result<MsFlagEditPreview, String> {
+    let mut matched_points = 0usize;
+    let mut selected_samples = std::collections::BTreeSet::<(usize, usize, usize)>::new();
+    let mut row_shapes = std::collections::BTreeMap::<usize, (usize, usize)>::new();
+    let region = normalized_flag_region(&flag_edit.region);
+
+    for series in series {
+        if series.points.len() != series.provenance.len() {
+            return Err(format!(
+                "msexplore scatter series {:?} has {} points but {} provenance entries",
+                series.label,
+                series.points.len(),
+                series.provenance.len()
+            ));
+        }
+        for ((x, y), point_ref) in series.points.iter().zip(series.provenance.iter()) {
+            if !flag_region_contains(&region, *x, *y) {
+                continue;
+            }
+            matched_points += 1;
+            let (corr_count, chan_count) = *row_shapes
+                .entry(point_ref.row)
+                .or_insert(clone_flag_matrix(ms, point_ref.row)?.dim());
+            let corr_start = if flag_edit.extcorr { 0 } else { point_ref.corr };
+            let corr_end = if flag_edit.extcorr {
+                corr_count
+            } else {
+                point_ref.corr + 1
+            };
+            let chan_start = if flag_edit.extchannel {
+                0
+            } else {
+                point_ref.chan_start
+            };
+            let chan_end = if flag_edit.extchannel {
+                chan_count
+            } else {
+                point_ref.chan_end
+            };
+            for corr in corr_start..corr_end {
+                for chan in chan_start..chan_end {
+                    selected_samples.insert((point_ref.row, corr, chan));
+                }
+            }
+        }
+    }
+
+    let mut sample_edits = Vec::<MsFlagSampleEdit>::new();
+    let mut row_edits = Vec::<MsFlagRowEdit>::new();
+    let mut samples_by_row = std::collections::BTreeMap::<usize, Vec<(usize, usize)>>::new();
+    for (row, corr, chan) in selected_samples {
+        samples_by_row.entry(row).or_default().push((corr, chan));
+    }
+
+    let flag_row = ms.flag_row_column();
+    for (row, samples) in samples_by_row {
+        let old_flag_row = flag_row.get(row).map_err(|error| error.to_string())?;
+        let old_matrix = clone_flag_matrix(ms, row)?;
+        let mut new_matrix = old_matrix.clone();
+        let mut changed_samples = 0usize;
+        for (corr, chan) in samples {
+            let old_flag = old_matrix[(corr, chan)];
+            let new_flag = match flag_edit.action {
+                MsFlagAction::Flag => true,
+                MsFlagAction::Unflag => false,
+            };
+            if old_flag != new_flag {
+                new_matrix[(corr, chan)] = new_flag;
+                sample_edits.push(MsFlagSampleEdit {
+                    row,
+                    corr,
+                    chan,
+                    old_flag,
+                    new_flag,
+                });
+                changed_samples += 1;
+            }
+        }
+        let new_flag_row = new_matrix.iter().all(|value| *value);
+        if changed_samples > 0 || old_flag_row != new_flag_row {
+            row_edits.push(MsFlagRowEdit {
+                row,
+                old_flag_row,
+                new_flag_row,
+                changed_samples,
+            });
+        }
+    }
+
+    Ok(MsFlagEditPreview {
+        plot_title: plot_title.to_string(),
+        panel_key,
+        panel_label,
+        x_axis,
+        y_axis,
+        region,
+        action: flag_edit.action,
+        extcorr: flag_edit.extcorr,
+        extchannel: flag_edit.extchannel,
+        matched_points,
+        affected_rows: row_edits.len(),
+        affected_samples: sample_edits.len(),
+        sample_edits,
+        row_edits,
+    })
+}
+
+fn normalized_flag_region(region: &MsFlagRegion) -> MsFlagRegion {
+    MsFlagRegion {
+        x_min: region.x_min.min(region.x_max),
+        x_max: region.x_min.max(region.x_max),
+        y_min: region.y_min.min(region.y_max),
+        y_max: region.y_min.max(region.y_max),
+    }
+}
+
+fn flag_region_contains(region: &MsFlagRegion, x: f64, y: f64) -> bool {
+    x >= region.x_min && x <= region.x_max && y >= region.y_min && y <= region.y_max
+}
+
+fn clone_flag_matrix(ms: &MeasurementSet, row: usize) -> Result<ndarray::Array2<bool>, String> {
+    match ms
+        .flag_column()
+        .get(row)
+        .map_err(|error| error.to_string())?
+    {
+        ArrayValue::Bool(values) => values
+            .view()
+            .into_dimensionality::<Ix2>()
+            .map(|matrix| matrix.to_owned())
+            .map_err(|_| {
+                "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
+            }),
+        other => Err(format!(
+            "msexplore requires BOOL flag cells, found {:?}",
+            other.primitive_type()
+        )),
     }
 }
 
@@ -2851,17 +3254,24 @@ fn build_generic_visibility_scatter(
                     {
                         continue;
                     }
-                    panel
-                        .series
-                        .entry(series_key)
-                        .or_insert_with(|| MsScatterSeries {
-                            label: series_label,
-                            color_group,
-                            y_axis,
-                            points: Vec::new(),
-                        })
-                        .points
-                        .push((x_value, y_value));
+                    let series =
+                        panel
+                            .series
+                            .entry(series_key)
+                            .or_insert_with(|| MsScatterSeries {
+                                label: series_label,
+                                color_group,
+                                y_axis,
+                                points: Vec::new(),
+                                provenance: Vec::new(),
+                            });
+                    series.points.push((x_value, y_value));
+                    series.provenance.push(MsScatterPointRef {
+                        row,
+                        corr: *corr_index,
+                        chan_start: bin.start,
+                        chan_end: bin.end,
+                    });
                     panel.contributing_points += 1;
                     contributing_points += 1;
                     row_contributed = true;
@@ -4619,6 +5029,7 @@ fn resolve_scatter_page_cells(
                     color_group,
                     y_axis: child_series.y_axis,
                     points: child_series.points.clone(),
+                    provenance: child_series.provenance.clone(),
                 });
             }
         }
@@ -5292,12 +5703,24 @@ mod tests {
             color_group: "all".to_string(),
             y_axis: MsAxis::Amplitude,
             points: vec![(0.0, 1.0)],
+            provenance: vec![MsScatterPointRef {
+                row: 0,
+                corr: 0,
+                chan_start: 0,
+                chan_end: 1,
+            }],
         };
         let secondary = MsScatterSeries {
             label: "Phase".to_string(),
             color_group: "all".to_string(),
             y_axis: MsAxis::Phase,
             points: vec![(0.0, 2.0)],
+            provenance: vec![MsScatterPointRef {
+                row: 0,
+                corr: 0,
+                chan_start: 0,
+                chan_end: 1,
+            }],
         };
 
         let primary_style =
