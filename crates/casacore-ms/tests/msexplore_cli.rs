@@ -24,8 +24,9 @@ use casacore_types::measures::doppler::{DopplerRef, MDoppler};
 use casacore_types::measures::frame::MeasFrame;
 use casacore_types::measures::frequency::FrequencyRef;
 use common::{
-    TIME_BASE_SECONDS, create_msexplore_fixture_ms, create_msexplore_fixture_ms_with_flags,
-    create_msexplore_geometry_fixture_ms, create_msexplore_spectrum_fixture_ms,
+    TIME_BASE_SECONDS, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_ms,
+    create_msexplore_fixture_ms_with_flags, create_msexplore_geometry_fixture_ms,
+    create_msexplore_spectrum_fixture_ms,
 };
 use ndarray::Ix2;
 use tempfile::tempdir;
@@ -47,6 +48,12 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--data-column <COLUMN>"));
     assert!(stdout.contains("--color-by <AXIS>"));
     assert!(stdout.contains("--avgchannel <N>"));
+    assert!(stdout.contains("--avgtime <SECONDS>"));
+    assert!(stdout.contains("--avgscan"));
+    assert!(stdout.contains("--avgfield"));
+    assert!(stdout.contains("--avgbaseline"));
+    assert!(stdout.contains("--avgantenna"));
+    assert!(stdout.contains("--avgspw"));
     assert!(stdout.contains("--freqframe <FRAME>"));
     assert!(stdout.contains("--restfreq <FREQ>"));
     assert!(stdout.contains("--veldef <DEF>"));
@@ -274,6 +281,155 @@ fn msexplore_avgchannel_bins_channel_plot_manifest() {
         })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(x_values, [0, 1, 2, 3].into_iter().collect());
+}
+
+#[test]
+fn msexplore_avgscan_requires_avgtime() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_averaging_fixture_ms(temp.path());
+    let plot_path = temp.path().join("avgscan-requires-avgtime.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--preset",
+            "amplitude_vs_time",
+            "--avgscan",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("avgscan"));
+    assert!(stderr.contains("avgtime"));
+}
+
+#[test]
+fn msexplore_rejects_mutually_exclusive_baseline_and_antenna_averaging() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_averaging_fixture_ms(temp.path());
+    let plot_path = temp.path().join("avgbaseline-avgantenna-invalid.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--preset",
+            "amplitude_vs_time",
+            "--avgbaseline",
+            "--avgantenna",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("avgbaseline"));
+    assert!(stderr.contains("avgantenna"));
+}
+
+#[test]
+fn msexplore_avgtime_manifest_collapses_rows_within_time_bins() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_averaging_fixture_ms(temp.path());
+    let plot_path = temp.path().join("avgtime.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--preset",
+            "amplitude_vs_time",
+            "--avgtime",
+            "60",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(output.status.success(), "{output:?}");
+
+    let rows = manifest_rows(&plot_path);
+    assert_eq!(rows.len(), 384);
+}
+
+#[test]
+fn msexplore_avgtime_with_scan_and_field_averaging_collapses_boundaries() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_averaging_fixture_ms(temp.path());
+    let plot_path = temp.path().join("avgtime-scan-field.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--preset",
+            "amplitude_vs_time",
+            "--color-by",
+            "none",
+            "--avgtime",
+            "60",
+            "--avgscan",
+            "--avgfield",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(output.status.success(), "{output:?}");
+
+    let rows = manifest_rows(&plot_path);
+    assert_eq!(rows.len(), 256);
+}
+
+#[test]
+fn msexplore_baseline_antenna_and_spw_averaging_reduce_point_counts() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_averaging_fixture_ms(temp.path());
+
+    let run_manifest_count = |args: &[&str], output_name: &str| -> usize {
+        let plot_path = temp.path().join(output_name);
+        let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+            .args(args)
+            .arg(&plot_path)
+            .args(["--plot-format", "txt"])
+            .arg(&ms_path)
+            .output()
+            .expect("run msexplore");
+        assert!(output.status.success(), "{output:?}");
+        manifest_rows(&plot_path).len()
+    };
+
+    let avgbaseline = run_manifest_count(
+        &[
+            "--preset",
+            "amplitude_vs_time",
+            "--avgbaseline",
+            "--plot-output",
+        ],
+        "avgbaseline.txt",
+    );
+    let avgantenna = run_manifest_count(
+        &[
+            "--preset",
+            "amplitude_vs_time",
+            "--avgantenna",
+            "--plot-output",
+        ],
+        "avgantenna.txt",
+    );
+    let avgspw = run_manifest_count(
+        &["--preset", "amplitude_vs_time", "--avgspw", "--plot-output"],
+        "avgspw.txt",
+    );
+
+    assert_eq!(avgbaseline, 384);
+    assert_eq!(avgantenna, 896);
+    assert_eq!(avgspw, 320);
 }
 
 #[test]

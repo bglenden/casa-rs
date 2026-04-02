@@ -49,6 +49,12 @@ struct CliOptions {
     data_column: MsDataColumn,
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
+    avgtime: Option<f64>,
+    avgscan: bool,
+    avgfield: bool,
+    avgbaseline: bool,
+    avgantenna: bool,
+    avgspw: bool,
     scalar: bool,
     freqframe: Option<String>,
     restfreq: Option<String>,
@@ -116,6 +122,18 @@ struct CliPagePlotSpec {
     color_by: Option<MsColorAxis>,
     #[serde(default)]
     avgchannel: Option<usize>,
+    #[serde(default)]
+    avgtime: Option<f64>,
+    #[serde(default)]
+    avgscan: bool,
+    #[serde(default)]
+    avgfield: bool,
+    #[serde(default)]
+    avgbaseline: bool,
+    #[serde(default)]
+    avgantenna: bool,
+    #[serde(default)]
+    avgspw: bool,
     #[serde(default)]
     scalar: bool,
     #[serde(default)]
@@ -562,10 +580,84 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false,
                 false,
             ),
+            option_argument(
+                "avgtime",
+                "Average Time",
+                24,
+                &["--avgtime"],
+                "SECONDS",
+                UiValueKind::Float,
+                None,
+                &[],
+                "Time averaging window in seconds",
+                "Averaging",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "avgscan",
+                "Average Scans",
+                25,
+                &["--avgscan"],
+                &[],
+                false,
+                "Permit time averaging across scan boundaries",
+                "Averaging",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "avgfield",
+                "Average Fields",
+                26,
+                &["--avgfield"],
+                &[],
+                false,
+                "Permit time averaging across field boundaries",
+                "Averaging",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "avgbaseline",
+                "Average Baselines",
+                27,
+                &["--avgbaseline"],
+                &[],
+                false,
+                "Average across selected baselines",
+                "Averaging",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "avgantenna",
+                "Average Antennas",
+                28,
+                &["--avgantenna"],
+                &[],
+                false,
+                "Form per-antenna averages across contributing baselines",
+                "Averaging",
+                false,
+                false,
+            ),
+            toggle_argument(
+                "avgspw",
+                "Average SPWs",
+                29,
+                &["--avgspw"],
+                &[],
+                false,
+                "Average across selected spectral windows",
+                "Averaging",
+                false,
+                false,
+            ),
             toggle_argument(
                 "scalar",
                 "Scalar Average",
-                24,
+                30,
                 &["--scalar"],
                 &[],
                 false,
@@ -577,7 +669,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "freqframe",
                 "Frequency Frame",
-                24,
+                31,
                 &["--freqframe"],
                 "FRAME",
                 UiValueKind::Choice,
@@ -593,7 +685,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "restfreq",
                 "Rest Frequency",
-                25,
+                32,
                 &["--restfreq"],
                 "FREQ",
                 UiValueKind::String,
@@ -607,7 +699,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "veldef",
                 "Velocity Definition",
-                26,
+                33,
                 &["--veldef"],
                 "DEF",
                 UiValueKind::Choice,
@@ -621,7 +713,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "iteraxis",
                 "Iterate By",
-                27,
+                34,
                 &["--iteraxis"],
                 "AXIS",
                 UiValueKind::Choice,
@@ -635,7 +727,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "gridrows",
                 "Grid Rows",
-                28,
+                35,
                 &["--gridrows"],
                 "N",
                 UiValueKind::Float,
@@ -649,7 +741,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "gridcols",
                 "Grid Columns",
-                29,
+                36,
                 &["--gridcols"],
                 "N",
                 UiValueKind::Float,
@@ -663,7 +755,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "xselfscale",
                 "X Self Scale",
-                30,
+                37,
                 &["--xselfscale"],
                 &[],
                 false,
@@ -675,7 +767,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "yselfscale",
                 "Y Self Scale",
-                31,
+                38,
                 &["--yselfscale"],
                 &[],
                 false,
@@ -687,7 +779,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "xsharedaxis",
                 "Share X Axis",
-                32,
+                39,
                 &["--xsharedaxis"],
                 &[],
                 false,
@@ -699,7 +791,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "ysharedaxis",
                 "Share Y Axis",
-                33,
+                40,
                 &["--ysharedaxis"],
                 &[],
                 false,
@@ -711,7 +803,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "title",
                 "Title",
-                34,
+                41,
                 &["--title"],
                 "TEXT",
                 UiValueKind::String,
@@ -725,7 +817,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "xlabel",
                 "X Label",
-                35,
+                42,
                 &["--xlabel"],
                 "TEXT",
                 UiValueKind::String,
@@ -739,7 +831,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "ylabel",
                 "Y Label",
-                36,
+                43,
                 &["--ylabel"],
                 "TEXT",
                 UiValueKind::String,
@@ -753,7 +845,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showlegend",
                 "Show Legend",
-                37,
+                44,
                 &["--showlegend"],
                 &[],
                 false,
@@ -765,7 +857,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "legendposition",
                 "Legend Position",
-                38,
+                45,
                 &["--legendposition"],
                 "POSITION",
                 UiValueKind::Choice,
@@ -788,7 +880,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showmajorgrid",
                 "Major Grid",
-                39,
+                46,
                 &["--showmajorgrid"],
                 &[],
                 false,
@@ -800,7 +892,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showminorgrid",
                 "Minor Grid",
-                40,
+                47,
                 &["--showminorgrid"],
                 &[],
                 false,
@@ -812,7 +904,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "headeritems",
                 "Header Items",
-                41,
+                48,
                 &["--headeritems"],
                 "ITEMS",
                 UiValueKind::String,
@@ -826,7 +918,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_output",
                 "Plot Output",
-                42,
+                49,
                 &["--plot-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -840,7 +932,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_format",
                 "Plot Format",
-                43,
+                50,
                 &["--plot-format"],
                 "FORMAT",
                 UiValueKind::Choice,
@@ -854,7 +946,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_width",
                 "Plot Width",
-                44,
+                51,
                 &["--plot-width"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -868,7 +960,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_height",
                 "Plot Height",
-                45,
+                52,
                 &["--plot-height"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -1138,6 +1230,12 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
                     plot.data_column.unwrap_or(MsDataColumn::Data),
                     plot.color_by.unwrap_or(MsColorAxis::Field),
                     plot.avgchannel,
+                    plot.avgtime,
+                    plot.avgscan,
+                    plot.avgfield,
+                    plot.avgbaseline,
+                    plot.avgantenna,
+                    plot.avgspw,
                     plot.scalar,
                     plot.freqframe,
                     plot.restfreq,
@@ -1198,6 +1296,12 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
         options.data_column,
         options.color_by,
         options.avgchannel,
+        options.avgtime,
+        options.avgscan,
+        options.avgfield,
+        options.avgbaseline,
+        options.avgantenna,
+        options.avgspw,
         options.scalar,
         options.freqframe.clone(),
         options.restfreq.clone(),
@@ -1264,6 +1368,12 @@ fn build_plot_spec_from_values(
     data_column: MsDataColumn,
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
+    avgtime: Option<f64>,
+    avgscan: bool,
+    avgfield: bool,
+    avgbaseline: bool,
+    avgantenna: bool,
+    avgspw: bool,
     scalar: bool,
     freqframe: Option<String>,
     restfreq: Option<String>,
@@ -1328,6 +1438,12 @@ fn build_plot_spec_from_values(
         spec.y_axes.truncate(1);
     }
     spec.averaging.avgchannel = avgchannel;
+    spec.averaging.avgtime = avgtime;
+    spec.averaging.avgscan = avgscan;
+    spec.averaging.avgfield = avgfield;
+    spec.averaging.avgbaseline = avgbaseline;
+    spec.averaging.avgantenna = avgantenna;
+    spec.averaging.avgspw = avgspw;
     spec.averaging.scalar = scalar;
     spec.transforms.freqframe = freqframe;
     spec.transforms.restfreq = restfreq;
@@ -1425,6 +1541,12 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut data_column = MsDataColumn::Data;
     let mut color_by = MsColorAxis::Field;
     let mut avgchannel = None;
+    let mut avgtime = None;
+    let mut avgscan = false;
+    let mut avgfield = false;
+    let mut avgbaseline = false;
+    let mut avgantenna = false;
+    let mut avgspw = false;
     let mut scalar = false;
     let mut freqframe = None;
     let mut restfreq = None;
@@ -1532,6 +1654,34 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                         .parse::<usize>()
                         .map_err(|_| "invalid integer value for --avgchannel".to_string())?,
                 )
+            }
+            "--avgtime" => {
+                plot_control_used = true;
+                avgtime = Some(
+                    take_value(&mut index, &args, "--avgtime")?
+                        .parse::<f64>()
+                        .map_err(|_| "invalid floating-point value for --avgtime".to_string())?,
+                )
+            }
+            "--avgscan" => {
+                plot_control_used = true;
+                avgscan = true
+            }
+            "--avgfield" => {
+                plot_control_used = true;
+                avgfield = true
+            }
+            "--avgbaseline" => {
+                plot_control_used = true;
+                avgbaseline = true
+            }
+            "--avgantenna" => {
+                plot_control_used = true;
+                avgantenna = true
+            }
+            "--avgspw" => {
+                plot_control_used = true;
+                avgspw = true
             }
             "--scalar" => {
                 plot_control_used = true;
@@ -1784,6 +1934,12 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         data_column,
         color_by,
         avgchannel,
+        avgtime,
+        avgscan,
+        avgfield,
+        avgbaseline,
+        avgantenna,
+        avgspw,
         scalar,
         freqframe,
         restfreq,

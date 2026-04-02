@@ -43,6 +43,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::MeasurementSet;
 use crate::columns::{
+    exposure_interval::IntervalColumn,
     frequency_columns::ChanFreqColumn,
     main_ids,
     time_columns::TimeColumn,
@@ -61,6 +62,7 @@ use crate::subtables::SubTable;
 
 const EXPORT_DPI: f32 = 72.0;
 const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
+const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
 type BitmapArea<'a> = DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>;
 
 /// Stable preset identifiers for common MeasurementSet plots.
@@ -1659,6 +1661,18 @@ impl MsPlotSpec {
                         .to_string(),
                 );
             }
+            if self.averaging.avgtime.is_some()
+                || self.averaging.avgscan
+                || self.averaging.avgfield
+                || self.averaging.avgbaseline
+                || self.averaging.avgantenna
+                || self.averaging.avgspw
+            {
+                return Err(
+                    "msexplore staged flag editing currently requires direct sample-resolved averaging controls"
+                        .to_string(),
+                );
+            }
             if self.x_axis.uses_derived_geometry()
                 || self
                     .y_axes
@@ -1694,15 +1708,52 @@ impl MsPlotSpec {
                 );
             }
         }
-        if self.averaging.avgtime.is_some()
-            || self.averaging.avgscan
-            || self.averaging.avgfield
-            || self.averaging.avgbaseline
-            || self.averaging.avgantenna
-            || self.averaging.avgspw
+        if self.averaging.avgscan && self.averaging.avgtime.is_none() {
+            return Err("msexplore avgscan requires avgtime to be set".to_string());
+        }
+        if self.averaging.avgfield && self.averaging.avgtime.is_none() {
+            return Err("msexplore avgfield requires avgtime to be set".to_string());
+        }
+        if self.averaging.avgbaseline && self.averaging.avgantenna {
+            return Err("msexplore avgbaseline and avgantenna are mutually exclusive".to_string());
+        }
+        if self.averaging.avgscan && self.iteration.iteraxis == Some(MsIterationAxis::Scan) {
+            return Err(
+                "msexplore cannot iterate by scan while averaging across scans".to_string(),
+            );
+        }
+        if self.averaging.avgfield && self.iteration.iteraxis == Some(MsIterationAxis::Field) {
+            return Err(
+                "msexplore cannot iterate by field while averaging across fields".to_string(),
+            );
+        }
+        if self.averaging.avgspw && self.iteration.iteraxis == Some(MsIterationAxis::SpectralWindow)
         {
             return Err(
-                "msexplore currently supports avgchannel and scalar/vector averaging; other averaging controls are reserved for future waves".to_string(),
+                "msexplore cannot iterate by spectral window while averaging across spectral windows"
+                    .to_string(),
+            );
+        }
+        if self.averaging.avgscan && self.color_by == MsColorAxis::Scan {
+            return Err("msexplore cannot color by scan while averaging across scans".to_string());
+        }
+        if self.averaging.avgfield && self.color_by == MsColorAxis::Field {
+            return Err(
+                "msexplore cannot color by field while averaging across fields".to_string(),
+            );
+        }
+        if self.averaging.avgspw && self.color_by == MsColorAxis::SpectralWindow {
+            return Err(
+                "msexplore cannot color by spectral window while averaging across spectral windows"
+                    .to_string(),
+            );
+        }
+        if (self.averaging.avgbaseline || self.averaging.avgantenna)
+            && self.color_by == MsColorAxis::Baseline
+        {
+            return Err(
+                "msexplore cannot color by baseline while averaging across baselines or antennas"
+                    .to_string(),
             );
         }
         if self.transforms.phasecenter.is_some()
@@ -3035,11 +3086,95 @@ struct ScatterPanelAccumulator {
     contributing_points: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum AveragingBaselineToken {
+    Baseline(i32, i32),
+    Antenna(i32),
+    Averaged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct TimeAverageScopeKey {
+    field_id: Option<i32>,
+    scan_number: Option<i32>,
+    spw_id: Option<i32>,
+    baseline: AveragingBaselineToken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct SharedTimeAverageScopeKey {
+    field_id: Option<i32>,
+    scan_number: Option<i32>,
+    spw_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum AveragingTimeKey {
+    Exact(u64),
+    Bucket(i64),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct AveragingPointKey {
+    time_key: AveragingTimeKey,
+    field_id: Option<i32>,
+    scan_number: Option<i32>,
+    spw_id: Option<i32>,
+    baseline: AveragingBaselineToken,
+    corr_index: usize,
+    chan_start: usize,
+    chan_end: usize,
+    chan_ordinal: usize,
+}
+
+#[derive(Debug, Default)]
+struct AveragedPointAccumulator {
+    visibility_samples: Vec<Complex64>,
+    visibility_sample_weights: Vec<f64>,
+    numeric_axis_samples: Vec<(MsAxis, Vec<f64>)>,
+    time_interval_samples: Vec<f64>,
+    has_flag_samples: bool,
+    any_flag_sample: bool,
+    has_flag_row_samples: bool,
+    any_flag_row: bool,
+    representative: Option<MsScatterPointRef>,
+}
+
+#[derive(Debug)]
+struct AveragedSeriesAccumulator {
+    label: String,
+    color_group: String,
+    y_axis: MsAxis,
+    points: std::collections::BTreeMap<AveragingPointKey, AveragedPointAccumulator>,
+}
+
+impl Default for AveragedSeriesAccumulator {
+    fn default() -> Self {
+        Self {
+            label: String::new(),
+            color_group: String::new(),
+            y_axis: MsAxis::Amplitude,
+            points: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AveragedPanelAccumulator {
+    label: String,
+    series: std::collections::BTreeMap<String, AveragedSeriesAccumulator>,
+    contributing_rows: std::collections::BTreeSet<usize>,
+}
+
 fn build_generic_visibility_scatter(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
 ) -> Result<MsPlotPayload, String> {
+    if uses_extended_averaging(spec) {
+        return build_generic_visibility_scatter_with_averaging(ms, selection, spec);
+    }
+
     let listobs_options = selection.to_listobs_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
 
@@ -3556,6 +3691,891 @@ fn build_generic_visibility_scatter(
                 .map(MsPlotPreset::display_name)
                 .unwrap_or("MeasurementSet plot"),
             contributing_rows,
+            contributing_points,
+            spec.data_column
+        ),
+        series: panel.series,
+    }))
+}
+
+fn uses_extended_averaging(spec: &MsPlotSpec) -> bool {
+    spec.averaging.avgtime.is_some()
+        || spec.averaging.avgscan
+        || spec.averaging.avgfield
+        || spec.averaging.avgbaseline
+        || spec.averaging.avgantenna
+        || spec.averaging.avgspw
+}
+
+fn averaging_baseline_tokens(
+    antenna1: i32,
+    antenna2: i32,
+    spec: &MsPlotSpec,
+) -> Vec<AveragingBaselineToken> {
+    if spec.averaging.avgantenna {
+        vec![
+            AveragingBaselineToken::Antenna(antenna1),
+            AveragingBaselineToken::Antenna(antenna2),
+        ]
+    } else if spec.averaging.avgbaseline {
+        vec![AveragingBaselineToken::Averaged]
+    } else {
+        vec![AveragingBaselineToken::Baseline(antenna1, antenna2)]
+    }
+}
+
+fn build_time_average_scope_key(
+    field_id: i32,
+    scan_number: i32,
+    spw_id: i32,
+    baseline: AveragingBaselineToken,
+    spec: &MsPlotSpec,
+) -> TimeAverageScopeKey {
+    TimeAverageScopeKey {
+        field_id: (!spec.averaging.avgfield).then_some(field_id),
+        scan_number: (!spec.averaging.avgscan).then_some(scan_number),
+        spw_id: (!spec.averaging.avgspw).then_some(spw_id),
+        baseline,
+    }
+}
+
+fn build_shared_time_average_scope_key(
+    field_id: i32,
+    scan_number: i32,
+    spw_id: i32,
+    spec: &MsPlotSpec,
+) -> SharedTimeAverageScopeKey {
+    SharedTimeAverageScopeKey {
+        field_id: (!spec.averaging.avgfield).then_some(field_id),
+        scan_number: (!spec.averaging.avgscan).then_some(scan_number),
+        spw_id: (!spec.averaging.avgspw).then_some(spw_id),
+    }
+}
+
+fn build_averaging_point_key(
+    field_id: i32,
+    scan_number: i32,
+    spw_id: i32,
+    baseline: AveragingBaselineToken,
+    corr_index: usize,
+    row_time_value: f64,
+    bin: &ChannelBin,
+    spec: &MsPlotSpec,
+    time_scope_origins: &std::collections::BTreeMap<TimeAverageScopeKey, f64>,
+) -> AveragingPointKey {
+    let time_key = if let Some(avgtime) = spec.averaging.avgtime {
+        let scope =
+            build_time_average_scope_key(field_id, scan_number, spw_id, baseline.clone(), spec);
+        let origin = time_scope_origins
+            .get(&scope)
+            .copied()
+            .unwrap_or(row_time_value);
+        let bucket =
+            ((row_time_value - origin + AVG_TIME_BUCKET_EPSILON_SECONDS) / avgtime).floor() as i64;
+        AveragingTimeKey::Bucket(bucket)
+    } else {
+        AveragingTimeKey::Exact(row_time_value.to_bits())
+    };
+    AveragingPointKey {
+        time_key,
+        field_id: (!spec.averaging.avgfield).then_some(field_id),
+        scan_number: (!spec.averaging.avgscan).then_some(scan_number),
+        spw_id: (!spec.averaging.avgspw).then_some(spw_id),
+        baseline,
+        corr_index,
+        chan_start: bin.start,
+        chan_end: bin.end,
+        chan_ordinal: bin.ordinal,
+    }
+}
+
+fn push_numeric_axis_sample(accumulator: &mut AveragedPointAccumulator, axis: MsAxis, value: f64) {
+    if let Some((_, samples)) = accumulator
+        .numeric_axis_samples
+        .iter_mut()
+        .find(|(candidate, _)| *candidate == axis)
+    {
+        samples.push(value);
+    } else {
+        accumulator.numeric_axis_samples.push((axis, vec![value]));
+    }
+}
+
+fn push_time_interval_sample(accumulator: &mut AveragedPointAccumulator, interval_seconds: f64) {
+    accumulator.time_interval_samples.push(interval_seconds);
+}
+
+fn transform_visibility_samples_for_baseline_token(
+    samples: &[Complex64],
+    baseline_token: &AveragingBaselineToken,
+    antenna1: i32,
+    antenna2: i32,
+) -> Vec<Complex64> {
+    match baseline_token {
+        AveragingBaselineToken::Antenna(target) if antenna1 != antenna2 && *target == antenna2 => {
+            samples.iter().map(|value| value.conj()).collect()
+        }
+        _ => samples.to_vec(),
+    }
+}
+
+fn finalize_averaged_axis_value(
+    axis: MsAxis,
+    accumulator: &AveragedPointAccumulator,
+    scalar_average: bool,
+    avgtime_enabled: bool,
+) -> Option<f64> {
+    if axis.is_visibility_math() {
+        return compute_weighted_visibility_math(
+            axis,
+            &accumulator.visibility_samples,
+            &accumulator.visibility_sample_weights,
+            scalar_average,
+        );
+    }
+    match axis {
+        MsAxis::Time => {
+            let samples = accumulator
+                .numeric_axis_samples
+                .iter()
+                .find(|(candidate, _)| *candidate == axis)
+                .map(|(_, samples)| samples)?;
+            if avgtime_enabled {
+                if samples.len() == 1 {
+                    return Some(
+                        samples[0]
+                            - average_float_samples(&accumulator.time_interval_samples)? / 2.0,
+                    );
+                }
+                let min_time = samples.iter().copied().min_by(f64::total_cmp)?;
+                let max_time = samples.iter().copied().max_by(f64::total_cmp)?;
+                return Some(min_time + (max_time - min_time) / 2.0);
+            }
+            average_float_samples(samples)
+        }
+        MsAxis::Flag => accumulator
+            .has_flag_samples
+            .then_some(if accumulator.any_flag_sample {
+                1.0
+            } else {
+                0.0
+            }),
+        MsAxis::FlagRow => accumulator
+            .has_flag_row_samples
+            .then_some(if accumulator.any_flag_row { 1.0 } else { 0.0 }),
+        _ => accumulator
+            .numeric_axis_samples
+            .iter()
+            .find(|(candidate, _)| *candidate == axis)
+            .and_then(|(_, samples)| average_float_samples(samples)),
+    }
+}
+
+fn build_generic_visibility_scatter_with_averaging(
+    ms: &MeasurementSet,
+    selection: &MsSelectionSpec,
+    spec: &MsPlotSpec,
+) -> Result<MsPlotPayload, String> {
+    let listobs_options = selection.to_listobs_options();
+    let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
+
+    let needs_visibility_grid = spec.x_axis.is_visibility_math()
+        || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
+    let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_spectral_coordinates);
+    let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
+    let data_source = if needs_visibility_grid {
+        Some(PreparedDataSource::new(ms, spec.data_column)?)
+    } else {
+        None
+    };
+    let flag = ms.flag_column();
+    let flag_row = ms.flag_row_column();
+    let weight = ms.weight_column();
+    let sigma = ms.sigma_column();
+    let interval = IntervalColumn::new(ms.main_table());
+    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).ok();
+    let sigma_spectrum = SigmaSpectrumColumn::new(ms.main_table()).ok();
+    let time = TimeColumn::new(ms.main_table());
+    let uvw = UvwColumn::new(ms.main_table());
+    let derived_engine = if spec.x_axis.uses_derived_geometry()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_derived_geometry)
+        || (needs_spectral_coordinates && requested_freqframe.is_some())
+    {
+        Some(MsCalEngine::new(ms).map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+    let field_id = main_ids::field_id(ms.main_table());
+    let scan_number = main_ids::scan_number(ms.main_table());
+    let data_desc_id = main_ids::data_desc_id(ms.main_table());
+    let antenna1 = main_ids::antenna1(ms.main_table());
+    let antenna2 = main_ids::antenna2(ms.main_table());
+
+    let field = ms.field().map_err(|error| error.to_string())?;
+    let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
+    let polarization = ms.polarization().map_err(|error| error.to_string())?;
+    let data_description = ms.data_description().map_err(|error| error.to_string())?;
+    let chan_freq = if needs_spectral_coordinates {
+        Some(ChanFreqColumn::new(spectral_window.table()))
+    } else {
+        None
+    };
+
+    let requested_corr_codes = selection
+        .correlation
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(listobs::parse_correlation_selector)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+
+    let iteraxis = spec.iteration.iteraxis;
+    let include_row_flagged_points =
+        spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
+    let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::WeightSpectrum));
+    let needs_sigma_spectrum = matches!(spec.x_axis, MsAxis::SigmaSpectrum)
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
+    let use_shared_time_scope_midpoint = spec.averaging.avgtime.is_some()
+        && (spec.averaging.avgfield || spec.averaging.avgscan || spec.averaging.avgspw);
+
+    let mut time_scope_origins = std::collections::BTreeMap::<TimeAverageScopeKey, f64>::new();
+    let mut shared_time_scope_bounds =
+        std::collections::BTreeMap::<SharedTimeAverageScopeKey, (f64, f64)>::new();
+    if spec.averaging.avgtime.is_some() {
+        for &row in &row_numbers {
+            let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
+            if flag_row_value && !include_row_flagged_points {
+                continue;
+            }
+            let ddid = data_desc_id.get(row).map_err(|error| error.to_string())?;
+            if ddid < 0 || (ddid as usize) >= data_description.row_count() {
+                continue;
+            }
+            let ddid = ddid as usize;
+            let spw_id = data_description
+                .spectral_window_id(ddid)
+                .map_err(|error| error.to_string())?;
+            let field_id_value = field_id.get(row).map_err(|error| error.to_string())?;
+            let scan_number_value = scan_number.get(row).map_err(|error| error.to_string())?;
+            let antenna1_value = antenna1.get(row).map_err(|error| error.to_string())?;
+            let antenna2_value = antenna2.get(row).map_err(|error| error.to_string())?;
+            let row_time_value = time
+                .get_mjd_seconds(row)
+                .map_err(|error| error.to_string())?;
+            if use_shared_time_scope_midpoint {
+                let shared_scope = build_shared_time_average_scope_key(
+                    field_id_value,
+                    scan_number_value,
+                    spw_id,
+                    spec,
+                );
+                shared_time_scope_bounds
+                    .entry(shared_scope)
+                    .and_modify(|(min_time, max_time)| {
+                        *min_time = min_time.min(row_time_value);
+                        *max_time = max_time.max(row_time_value);
+                    })
+                    .or_insert((row_time_value, row_time_value));
+            }
+            for baseline_token in averaging_baseline_tokens(antenna1_value, antenna2_value, spec) {
+                let scope = build_time_average_scope_key(
+                    field_id_value,
+                    scan_number_value,
+                    spw_id,
+                    baseline_token,
+                    spec,
+                );
+                time_scope_origins
+                    .entry(scope)
+                    .and_modify(|origin| {
+                        if row_time_value < *origin {
+                            *origin = row_time_value;
+                        }
+                    })
+                    .or_insert(row_time_value);
+            }
+        }
+    }
+
+    let mut panel_order = Vec::<String>::new();
+    let mut panels = std::collections::BTreeMap::<String, AveragedPanelAccumulator>::new();
+    let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
+
+    for row in row_numbers {
+        let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
+        if flag_row_value && !include_row_flagged_points {
+            continue;
+        }
+
+        let ddid = data_desc_id.get(row).map_err(|error| error.to_string())?;
+        if ddid < 0 || (ddid as usize) >= data_description.row_count() {
+            continue;
+        }
+        let ddid = ddid as usize;
+        let spw_id = data_description
+            .spectral_window_id(ddid)
+            .map_err(|error| error.to_string())?;
+        let pol_id = data_description
+            .polarization_id(ddid)
+            .map_err(|error| error.to_string())?;
+        let corr_types = if pol_id >= 0 && (pol_id as usize) < polarization.row_count() {
+            polarization
+                .corr_type(pol_id as usize)
+                .map_err(|error| error.to_string())?
+        } else {
+            Vec::new()
+        };
+
+        let flags = match flag.get(row).map_err(|error| error.to_string())? {
+            ArrayValue::Bool(values) => {
+                values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                    "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
+                })?
+            }
+            other => {
+                return Err(format!(
+                    "msexplore requires BOOL flag cells, found {:?}",
+                    other.primitive_type()
+                ));
+            }
+        };
+        let grid = data_source
+            .as_ref()
+            .map(|source| source.row(row))
+            .transpose()?;
+        let (corr_count, chan_count) = grid
+            .as_ref()
+            .map(|grid| (grid.corr_count, grid.chan_count))
+            .unwrap_or((flags.nrows(), flags.ncols()));
+        if flags.shape() != [corr_count, chan_count] {
+            return Err(format!(
+                "visibility flag shape {:?} does not match data shape [{}, {}]",
+                flags.shape(),
+                corr_count,
+                chan_count
+            ));
+        }
+        let weight_values = float_axis_values(
+            weight.get(row).map_err(|error| error.to_string())?,
+            corr_count,
+            "WEIGHT",
+        )?;
+        let sigma_values = float_axis_values(
+            sigma.get(row).map_err(|error| error.to_string())?,
+            corr_count,
+            "SIGMA",
+        )?;
+        let weight_spectrum_grid = if needs_weight_spectrum {
+            Some(
+                weight_spectrum
+                    .as_ref()
+                    .map(|column| {
+                        float_grid_from_array(
+                            column.get(row).map_err(|error| error.to_string())?,
+                            "WEIGHT_SPECTRUM",
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
+            )
+        } else {
+            None
+        };
+        let sigma_spectrum_grid = if needs_sigma_spectrum {
+            Some(
+                sigma_spectrum
+                    .as_ref()
+                    .map(|column| {
+                        float_grid_from_array(
+                            column.get(row).map_err(|error| error.to_string())?,
+                            "SIGMA_SPECTRUM",
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
+            )
+        } else {
+            None
+        };
+        for (column_name, grid) in [
+            ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
+            ("SIGMA_SPECTRUM", sigma_spectrum_grid.as_ref()),
+        ] {
+            if let Some(grid) = grid
+                && (grid.corr_count != corr_count || grid.chan_count != chan_count)
+            {
+                return Err(format!(
+                    "{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]",
+                    grid.corr_count, grid.chan_count
+                ));
+            }
+        }
+
+        let selected_correlations =
+            select_correlation_slots(corr_count, &corr_types, requested_corr_codes.as_deref());
+        if selected_correlations.is_empty() {
+            continue;
+        }
+        let correlation_required = spec.x_axis.uses_correlation_slots()
+            || spec
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::uses_correlation_slots)
+            || matches!(spec.color_by, MsColorAxis::Correlation)
+            || matches!(iteraxis, Some(MsIterationAxis::Correlation));
+        let selected_correlations = if correlation_required {
+            selected_correlations
+        } else {
+            vec![selected_correlations[0].clone()]
+        };
+
+        let channel_bins = plot_channel_bins(chan_count, spec)?;
+
+        let field_id_value = field_id.get(row).map_err(|error| error.to_string())?;
+        let scan_number_value = scan_number.get(row).map_err(|error| error.to_string())?;
+        let antenna1_value = antenna1.get(row).map_err(|error| error.to_string())?;
+        let antenna2_value = antenna2.get(row).map_err(|error| error.to_string())?;
+        let row_time_value = time
+            .get_mjd_seconds(row)
+            .map_err(|error| error.to_string())?;
+        let row_interval_value = interval.get(row).map_err(|error| error.to_string())?;
+        let shared_time_scope_value = if use_shared_time_scope_midpoint {
+            let shared_scope = build_shared_time_average_scope_key(
+                field_id_value,
+                scan_number_value,
+                spw_id,
+                spec,
+            );
+            shared_time_scope_bounds
+                .get(&shared_scope)
+                .map(|(min_time, max_time)| min_time + (max_time - min_time) / 2.0)
+        } else {
+            None
+        };
+        let spectral_context = resolve_spectral_context(
+            spec,
+            spw_id,
+            chan_count,
+            field_id_value,
+            row_time_value,
+            chan_freq.as_ref(),
+            &spectral_window,
+            derived_engine.as_ref(),
+        )?;
+
+        let baseline_tokens = averaging_baseline_tokens(antenna1_value, antenna2_value, spec);
+        let mut row_panels = std::collections::BTreeSet::<String>::new();
+        for (corr_index, corr_label) in &selected_correlations {
+            let row_weight = weight_values[*corr_index];
+            let row_sigma = sigma_values[*corr_index];
+            for baseline_token in &baseline_tokens {
+                for bin in &channel_bins {
+                    let samples = grid
+                        .as_ref()
+                        .map(|grid| {
+                            collect_bin_samples(grid, &flags, &[*corr_index], bin.start, bin.end)
+                        })
+                        .unwrap_or_default();
+                    let flag_samples = collect_bin_flags(&flags, *corr_index, bin.start, bin.end);
+                    let visibility_weight_samples = vec![row_weight; samples.len()];
+                    let weight_spectrum_samples = weight_spectrum_grid
+                        .as_ref()
+                        .map(|grid| {
+                            collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
+                        })
+                        .unwrap_or_default();
+                    let sigma_spectrum_samples = sigma_spectrum_grid
+                        .as_ref()
+                        .map(|grid| {
+                            collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
+                        })
+                        .unwrap_or_default();
+                    let (group_key, group_label) = visibility_group(
+                        spec.color_by,
+                        field_id_value,
+                        &field,
+                        spw_id,
+                        &spectral_window,
+                        scan_number_value,
+                        antenna1_value,
+                        antenna2_value,
+                        Some(corr_label),
+                    );
+                    let (panel_key, panel_label) = iteration_group(
+                        iteraxis,
+                        field_id_value,
+                        &field,
+                        spw_id,
+                        &spectral_window,
+                        scan_number_value,
+                        Some(corr_label),
+                    );
+                    if !panels.contains_key(&panel_key) {
+                        panel_order.push(panel_key.clone());
+                        panels.insert(
+                            panel_key.clone(),
+                            AveragedPanelAccumulator {
+                                label: panel_label.clone(),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    let point_key = build_averaging_point_key(
+                        field_id_value,
+                        scan_number_value,
+                        spw_id,
+                        baseline_token.clone(),
+                        *corr_index,
+                        row_time_value,
+                        bin,
+                        spec,
+                        &time_scope_origins,
+                    );
+                    let panel = panels
+                        .get_mut(&panel_key)
+                        .expect("panel inserted before mutation");
+                    let mut panel_used = false;
+                    for y_axis in spec.y_axes.iter().copied() {
+                        let (series_key, series_label, color_group) = scatter_series_identity(
+                            y_axis,
+                            spec.y_axes.len() > 1,
+                            &group_key,
+                            &group_label,
+                        );
+                        let series = panel.series.entry(series_key).or_insert_with(|| {
+                            AveragedSeriesAccumulator {
+                                label: series_label,
+                                color_group,
+                                y_axis,
+                                ..Default::default()
+                            }
+                        });
+                        let accumulator = series.points.entry(point_key.clone()).or_default();
+                        if accumulator.representative.is_none() {
+                            accumulator.representative = Some(MsScatterPointRef {
+                                row,
+                                corr: *corr_index,
+                                chan_start: bin.start,
+                                chan_end: bin.end,
+                            });
+                        }
+
+                        let mut series_used = false;
+                        if spec.x_axis.is_visibility_math() || y_axis.is_visibility_math() {
+                            if !samples.is_empty() {
+                                let transformed_samples =
+                                    transform_visibility_samples_for_baseline_token(
+                                        &samples,
+                                        baseline_token,
+                                        antenna1_value,
+                                        antenna2_value,
+                                    );
+                                accumulator
+                                    .visibility_sample_weights
+                                    .extend(visibility_weight_samples.iter().copied());
+                                accumulator.visibility_samples.extend(transformed_samples);
+                                series_used = true;
+                            }
+                        }
+                        match spec.x_axis {
+                            MsAxis::Flag => {
+                                accumulator.has_flag_samples = true;
+                                accumulator.any_flag_sample |=
+                                    flag_samples.iter().any(|flag| *flag);
+                                series_used = true;
+                            }
+                            MsAxis::FlagRow => {
+                                accumulator.has_flag_row_samples = true;
+                                accumulator.any_flag_row |= flag_row_value;
+                                series_used = true;
+                            }
+                            axis if !axis.is_visibility_math() => {
+                                if let Some(value) = compute_axis_value(
+                                    axis,
+                                    row,
+                                    &samples,
+                                    &flag_samples,
+                                    &weight_spectrum_samples,
+                                    &sigma_spectrum_samples,
+                                    flag_row_value,
+                                    row_weight,
+                                    row_sigma,
+                                    field_id_value,
+                                    antenna1_value,
+                                    spec.averaging.scalar,
+                                    bin,
+                                    spectral_context.as_ref(),
+                                    &time,
+                                    &uvw,
+                                    derived_engine.as_ref(),
+                                )? {
+                                    let value = if axis == MsAxis::Time {
+                                        shared_time_scope_value.unwrap_or(value)
+                                    } else {
+                                        value
+                                    };
+                                    push_numeric_axis_sample(accumulator, axis, value);
+                                    if axis == MsAxis::Time {
+                                        push_time_interval_sample(accumulator, row_interval_value);
+                                    }
+                                    series_used = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                        match y_axis {
+                            MsAxis::Flag => {
+                                accumulator.has_flag_samples = true;
+                                accumulator.any_flag_sample |=
+                                    flag_samples.iter().any(|flag| *flag);
+                                series_used = true;
+                            }
+                            MsAxis::FlagRow => {
+                                accumulator.has_flag_row_samples = true;
+                                accumulator.any_flag_row |= flag_row_value;
+                                series_used = true;
+                            }
+                            axis if !axis.is_visibility_math() => {
+                                if let Some(value) = compute_axis_value(
+                                    axis,
+                                    row,
+                                    &samples,
+                                    &flag_samples,
+                                    &weight_spectrum_samples,
+                                    &sigma_spectrum_samples,
+                                    flag_row_value,
+                                    row_weight,
+                                    row_sigma,
+                                    field_id_value,
+                                    antenna1_value,
+                                    spec.averaging.scalar,
+                                    bin,
+                                    spectral_context.as_ref(),
+                                    &time,
+                                    &uvw,
+                                    derived_engine.as_ref(),
+                                )? {
+                                    let value = if axis == MsAxis::Time {
+                                        shared_time_scope_value.unwrap_or(value)
+                                    } else {
+                                        value
+                                    };
+                                    push_numeric_axis_sample(accumulator, axis, value);
+                                    if axis == MsAxis::Time {
+                                        push_time_interval_sample(accumulator, row_interval_value);
+                                    }
+                                    series_used = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                        if series_used {
+                            panel_used = true;
+                        }
+                    }
+                    if panel_used {
+                        row_panels.insert(panel_key.clone());
+                    }
+                }
+            }
+        }
+
+        for panel_key in row_panels {
+            if let Some(panel) = panels.get_mut(&panel_key) {
+                panel.contributing_rows.insert(row);
+            }
+            contributing_rows.insert(row);
+        }
+    }
+
+    let title = spec
+        .style
+        .title
+        .clone()
+        .or_else(|| spec.preset.map(|preset| preset.display_name().to_string()))
+        .unwrap_or_else(|| {
+            format!(
+                "{} vs {}",
+                spec.y_axis().display_name(),
+                spec.x_axis.display_name()
+            )
+        });
+    let x_label = spec
+        .style
+        .xlabel
+        .clone()
+        .unwrap_or_else(|| axis_label(spec.x_axis));
+    let y_label = spec
+        .style
+        .ylabel
+        .clone()
+        .unwrap_or_else(|| axis_label(spec.y_axis()));
+    let secondary_y_label = spec.secondary_y_axis().map(axis_label);
+    let fixed_x_bounds = fixed_bounds(spec.x_axis);
+    let fixed_y_bounds = fixed_bounds(spec.y_axis());
+    let secondary_fixed_y_bounds = spec.secondary_y_axis().and_then(fixed_bounds);
+
+    let mut contributing_points = 0usize;
+    let mut finalized_panels = panel_order
+        .into_iter()
+        .filter_map(|panel_key| {
+            let panel = panels.remove(&panel_key)?;
+            let mut series = panel
+                .series
+                .into_values()
+                .filter_map(|series| {
+                    let mut output = MsScatterSeries {
+                        label: series.label,
+                        color_group: series.color_group,
+                        y_axis: series.y_axis,
+                        points: Vec::new(),
+                        provenance: Vec::new(),
+                    };
+                    for accumulator in series.points.into_values() {
+                        let Some(representative) = accumulator.representative.clone() else {
+                            continue;
+                        };
+                        let Some(x_value) = finalize_averaged_axis_value(
+                            spec.x_axis,
+                            &accumulator,
+                            spec.averaging.scalar,
+                            spec.averaging.avgtime.is_some(),
+                        ) else {
+                            continue;
+                        };
+                        let Some(y_value) = finalize_averaged_axis_value(
+                            series.y_axis,
+                            &accumulator,
+                            spec.averaging.scalar,
+                            spec.averaging.avgtime.is_some(),
+                        ) else {
+                            continue;
+                        };
+                        output.points.push((x_value, y_value));
+                        output.provenance.push(representative);
+                    }
+                    output
+                        .points
+                        .sort_by(|left, right| left.0.total_cmp(&right.0));
+                    (!output.points.is_empty()).then_some(output)
+                })
+                .collect::<Vec<_>>();
+            series.retain(|entry| !entry.points.is_empty());
+            if series.is_empty() {
+                return None;
+            }
+            let panel_point_count = series.iter().map(|entry| entry.points.len()).sum::<usize>();
+            contributing_points += panel_point_count;
+            Some(MsScatterPanelPayload {
+                key: panel_key,
+                summary: format!(
+                    "{}. Rows={} Points={} Data column={}",
+                    panel.label,
+                    panel.contributing_rows.len(),
+                    panel_point_count,
+                    spec.data_column
+                ),
+                label: panel.label,
+                series,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if contributing_points == 0 {
+        return Err(format!(
+            "{} produced no unflagged visibility points for the current selection",
+            spec.preset
+                .map(MsPlotPreset::display_name)
+                .unwrap_or("Requested plot")
+        ));
+    }
+
+    if let Some(iteraxis) = iteraxis {
+        let (gridrows, gridcols) = resolve_iterated_grid(
+            finalized_panels.len(),
+            spec.layout.gridrows,
+            spec.layout.gridcols,
+        )?;
+        let share_x_bounds =
+            share_axis_bounds(spec.iteration.xselfscale, spec.iteration.xsharedaxis);
+        let share_y_bounds =
+            share_axis_bounds(spec.iteration.yselfscale, spec.iteration.ysharedaxis);
+        return Ok(MsPlotPayload::ScatterGrid(MsScatterGridPayload {
+            title,
+            x_axis: spec.x_axis,
+            y_axis: spec.y_axis(),
+            x_label,
+            y_label,
+            fixed_x_bounds,
+            fixed_y_bounds,
+            showlegend: spec.style.showlegend,
+            legend_position: spec.style.legendposition,
+            showmajorgrid: spec.style.showmajorgrid,
+            showminorgrid: spec.style.showminorgrid,
+            iteraxis,
+            gridrows,
+            gridcols,
+            share_x_bounds,
+            share_y_bounds,
+            header_lines: Vec::new(),
+            summary: format!(
+                "{}. Panels={} Rows={} Points={} Data column={}",
+                spec.preset
+                    .map(MsPlotPreset::display_name)
+                    .unwrap_or("MeasurementSet iterated plot"),
+                finalized_panels.len(),
+                contributing_rows.len(),
+                contributing_points,
+                spec.data_column
+            ),
+            panels: finalized_panels,
+        }));
+    }
+
+    let panel = finalized_panels
+        .pop()
+        .ok_or_else(|| "msexplore scatter payload lost its only panel".to_string())?;
+    Ok(MsPlotPayload::Scatter(MsScatterPlotPayload {
+        title,
+        x_axis: spec.x_axis,
+        y_axis: spec.y_axis(),
+        secondary_y_axis: spec.secondary_y_axis(),
+        x_label,
+        y_label,
+        secondary_y_label,
+        fixed_x_bounds,
+        fixed_y_bounds,
+        secondary_fixed_y_bounds,
+        showlegend: spec.style.showlegend,
+        legend_position: spec.style.legendposition,
+        showmajorgrid: spec.style.showmajorgrid,
+        showminorgrid: spec.style.showminorgrid,
+        header_lines: Vec::new(),
+        summary: format!(
+            "{}. Rows={} Points={} Data column={}",
+            spec.preset
+                .map(MsPlotPreset::display_name)
+                .unwrap_or("MeasurementSet plot"),
+            contributing_rows.len(),
             contributing_points,
             spec.data_column
         ),
@@ -4172,6 +5192,80 @@ fn compute_visibility_math(
         }
     } else {
         let average = samples.iter().copied().sum::<Complex64>() / samples.len() as f64;
+        match axis {
+            MsAxis::Amplitude => Some(average.norm()),
+            MsAxis::Phase => Some(average.arg().to_degrees()),
+            MsAxis::Real => Some(average.re),
+            MsAxis::Imaginary => Some(average.im),
+            _ => None,
+        }
+    }
+}
+
+fn compute_weighted_visibility_math(
+    axis: MsAxis,
+    samples: &[Complex64],
+    weights: &[f64],
+    scalar_average: bool,
+) -> Option<f64> {
+    if samples.is_empty() {
+        return None;
+    }
+    if weights.len() != samples.len() || weights.is_empty() {
+        return compute_visibility_math(axis, samples, scalar_average);
+    }
+    let weight_sum = weights.iter().sum::<f64>();
+    if weight_sum <= 0.0 {
+        return compute_visibility_math(axis, samples, scalar_average);
+    }
+    if scalar_average {
+        match axis {
+            MsAxis::Amplitude => Some(
+                samples
+                    .iter()
+                    .zip(weights.iter())
+                    .map(|(value, weight)| value.norm() * *weight)
+                    .sum::<f64>()
+                    / weight_sum,
+            ),
+            MsAxis::Phase => {
+                let (sin_sum, cos_sum) = samples.iter().zip(weights.iter()).fold(
+                    (0.0, 0.0),
+                    |(sin_sum, cos_sum), (value, weight)| {
+                        let angle = value.arg();
+                        (
+                            sin_sum + angle.sin() * *weight,
+                            cos_sum + angle.cos() * *weight,
+                        )
+                    },
+                );
+                Some(sin_sum.atan2(cos_sum).to_degrees())
+            }
+            MsAxis::Real => Some(
+                samples
+                    .iter()
+                    .zip(weights.iter())
+                    .map(|(value, weight)| value.re * *weight)
+                    .sum::<f64>()
+                    / weight_sum,
+            ),
+            MsAxis::Imaginary => Some(
+                samples
+                    .iter()
+                    .zip(weights.iter())
+                    .map(|(value, weight)| value.im * *weight)
+                    .sum::<f64>()
+                    / weight_sum,
+            ),
+            _ => None,
+        }
+    } else {
+        let average = samples
+            .iter()
+            .zip(weights.iter())
+            .map(|(value, weight)| *value * *weight)
+            .sum::<Complex64>()
+            / weight_sum;
         match axis {
             MsAxis::Amplitude => Some(average.norm()),
             MsAxis::Phase => Some(average.arg().to_degrees()),
