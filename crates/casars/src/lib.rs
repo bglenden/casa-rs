@@ -91,7 +91,7 @@ struct KittyMovieOverlay {
     software_store: Option<KittyStoredImageStore>,
     software_slot: Option<KittyPaneSlotId>,
     handle: Option<KittyLayerHandle>,
-    software_current_image: Option<KittyStoredImageId>,
+    software_images: Vec<Option<KittyStoredImageId>>,
     active_movie_key: Option<u64>,
     active_axis: Option<usize>,
     active_axis_index: Option<usize>,
@@ -128,7 +128,7 @@ impl KittyMovieOverlay {
             }
             KittyMovieOverlayMode::SoftwareDirect => {
                 let mut store = KittyStoredImageStore::with_starting_ids(
-                    KITTY_MOVIE_OVERLAY_ID_BASE,
+                    KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE,
                     KITTY_MOVIE_OVERLAY_ID_BASE,
                 )
                 .map_err(map_kitty_error)?;
@@ -143,7 +143,7 @@ impl KittyMovieOverlay {
             software_store,
             software_slot,
             handle,
-            software_current_image: None,
+            software_images: Vec::new(),
             active_movie_key: None,
             active_axis: None,
             active_axis_index: None,
@@ -225,7 +225,7 @@ impl KittyMovieOverlay {
             if let Some(slot) = self.software_slot {
                 store.clear_slot(out, slot).map_err(map_kitty_error)?;
             }
-            if let Some(image) = self.software_current_image.take() {
+            for image in self.software_images.drain(..).flatten() {
                 store.delete_image(out, image).map_err(map_kitty_error)?;
             }
         }
@@ -465,20 +465,40 @@ impl KittyMovieOverlay {
         let Some(slot) = self.software_slot else {
             return Ok(());
         };
-        let (image, info) = store
-            .store_rgba(out, &frame.rendered_image)
-            .map_err(map_kitty_error)?;
-        store
-            .place_in_slot(out, slot, image, placement)
-            .map_err(map_kitty_error)?;
-        if let Some(previous) = self.software_current_image.replace(image) {
-            store.delete_image(out, previous).map_err(map_kitty_error)?;
+        if app.take_kitty_movie_store_invalidated() {
+            store.forget_all_images();
+            self.software_images.clear();
+            movie_debug_log(
+                "reset local stored-image cache after Kitty ENOENT response; future frames will re-upload on demand",
+            );
         }
+        if self.software_images.len() != frame.axis_length {
+            self.software_images.resize(frame.axis_length, None);
+        }
+        let (image, uploaded_bytes) = if let Some(image) = self
+            .software_images
+            .get(frame.axis_index)
+            .copied()
+            .flatten()
+        {
+            (image, None)
+        } else {
+            let (image, info) = store
+                .store_rgba(out, &frame.rendered_image)
+                .map_err(map_kitty_error)?;
+            if let Some(entry) = self.software_images.get_mut(frame.axis_index) {
+                *entry = Some(image);
+            }
+            (image, Some(info.bytes))
+        };
+        store
+            .show_in_slot(out, slot, image, placement)
+            .map_err(map_kitty_error)?;
         movie_debug_log(format!(
-            "software upload axis_index={} image={} bytes={} total_store_bytes={}",
+            "software show axis_index={} image={} uploaded_bytes={} total_store_bytes={}",
             frame.axis_index,
             image.raw(),
-            info.bytes,
+            uploaded_bytes.unwrap_or(0),
             store.total_bytes()
         ));
         app.note_image_plane_direct_presented(frame.render_request_key_hash);
@@ -557,7 +577,7 @@ impl KittyMovieOverlay {
         self.active_axis = None;
         self.active_axis_index = None;
         self.active_canvas = None;
-        self.software_current_image = None;
+        self.software_images.clear();
         self.uploaded_axis_indices.clear();
         self.seen_axis_indices.clear();
         self.active_fps = 0.0;

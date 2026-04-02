@@ -3,14 +3,13 @@
 
 use std::{collections::HashMap, io::Write, num::NonZeroU32, time::Duration};
 
-use base64_simd::{Base64, Out};
-use image::{DynamicImage, RgbaImage};
+use base64_simd::STANDARD;
+use flate2::{Compression, write::ZlibEncoder};
+use image::RgbaImage;
 use kittage::{
-    NumberOrId, Verbosity,
     action::Action,
     delete::{ClearOrDelete, DeleteConfig, WhichToDelete},
-    display::{CursorMovementPolicy, DisplayConfig, DisplayLocation},
-    image::Image as KittyImage,
+    Verbosity,
 };
 use ratatui::{
     crossterm::{
@@ -267,10 +266,23 @@ impl KittyLayerManager {
         handle: KittyLayerHandle,
         image: &RgbaImage,
     ) -> Result<(), KittyLayerError> {
-        let mut kitty_image: KittyImage<'static> = DynamicImage::ImageRgba8(image.clone()).into();
-        kitty_image.num_or_id = NumberOrId::Id(handle.image_id);
-        Action::Transmit(kitty_image).write_transmit_to(&mut *out, Verbosity::Silent)?;
-        out.flush()?;
+        self.upload_rgba_with_compression(out, handle.image_id(), image, false)
+    }
+
+    fn upload_rgba_with_compression<W: Write>(
+        &self,
+        out: &mut W,
+        image_id: NonZeroU32,
+        image: &RgbaImage,
+        compressed: bool,
+    ) -> Result<(), KittyLayerError> {
+        let intro = format!(
+            "\x1b_Ga=t,q=1,f=32,s={},v={},i={}",
+            image.width(),
+            image.height(),
+            image_id
+        );
+        write_direct_data_chunks(out, &intro, image.as_raw(), compressed)?;
         Ok(())
     }
 
@@ -283,21 +295,6 @@ impl KittyLayerManager {
     ) -> Result<(), KittyLayerError> {
         validate_placement(placement)?;
 
-        let config = DisplayConfig {
-            location: DisplayLocation {
-                columns: placement.rect.width,
-                rows: placement.rect.height,
-                z_index: placement.z_index,
-                ..DisplayLocation::default()
-            },
-            cursor_movement: if placement.preserve_cursor {
-                CursorMovementPolicy::DontMove
-            } else {
-                CursorMovementPolicy::MoveToAfterImage
-            },
-            ..DisplayConfig::default()
-        };
-
         if placement.preserve_cursor {
             execute!(
                 out,
@@ -308,12 +305,21 @@ impl KittyLayerManager {
             execute!(out, MoveTo(placement.rect.x, placement.rect.y))?;
         }
 
-        Action::Display {
-            image_id: handle.image_id,
-            placement_id: handle.placement_id,
-            config,
+        write!(
+            out,
+            "\x1b_Ga=p,q=1,i={},p={},c={},r={}",
+            handle.image_id(),
+            handle.placement_id(),
+            placement.rect.width,
+            placement.rect.height
+        )?;
+        if placement.preserve_cursor {
+            write!(out, ",C=1")?;
         }
-        .write_transmit_to(&mut *out, Verbosity::Silent)?;
+        if placement.z_index != 0 {
+            write!(out, ",z={}", placement.z_index)?;
+        }
+        write!(out, "\x1b\\")?;
 
         if placement.preserve_cursor {
             execute!(out, RestorePosition)?;
@@ -357,7 +363,7 @@ impl KittyLayerManager {
         if let Some(gap) = gap {
             intro.push_str(&format!(",z={}", gap.protocol_value()?));
         }
-        write_direct_data_chunks(out, &intro, image.as_raw())?;
+        write_direct_data_chunks(out, &intro, image.as_raw(), false)?;
         Ok(())
     }
 
@@ -395,11 +401,12 @@ impl KittyLayerManager {
         out: &mut W,
         handle: KittyLayerHandle,
     ) -> Result<(), KittyLayerError> {
-        let delete = Action::Delete(DeleteConfig {
-            effect: ClearOrDelete::Clear,
-            which: WhichToDelete::ImageId(handle.image_id, Some(handle.placement_id)),
-        });
-        delete.write_transmit_to(&mut *out, Verbosity::Silent)?;
+        write!(
+            out,
+            "\x1b_Ga=d,q=1,d=i,i={},p={}\x1b\\",
+            handle.image_id(),
+            handle.placement_id()
+        )?;
         out.flush()?;
         Ok(())
     }
@@ -410,11 +417,7 @@ impl KittyLayerManager {
         out: &mut W,
         handle: KittyLayerHandle,
     ) -> Result<(), KittyLayerError> {
-        let delete = Action::Delete(DeleteConfig {
-            effect: ClearOrDelete::Delete,
-            which: WhichToDelete::ImageId(handle.image_id, None),
-        });
-        delete.write_transmit_to(&mut *out, Verbosity::Silent)?;
+        write!(out, "\x1b_Ga=d,q=1,d=I,i={}\x1b\\", handle.image_id())?;
         out.flush()?;
         Ok(())
     }
@@ -484,7 +487,7 @@ impl KittyStoredImageStore {
             bytes: image.as_raw().len(),
         };
         self.manager
-            .upload_rgba(out, KittyLayerHandle::new(image_id.0, image_id.0), image)?;
+            .upload_rgba_with_compression(out, image_id.0, image, true)?;
         self.total_bytes = self.total_bytes.saturating_add(info.bytes);
         self.images.insert(image_id, info);
         Ok((image_id, info))
@@ -508,6 +511,30 @@ impl KittyStoredImageStore {
             .place(out, KittyLayerHandle::new(image.0, slot.0), placement)?;
         *current = Some(image);
         Ok(())
+    }
+
+    /// Show a stored image in a pane slot using delete-before-place semantics when switching images.
+    pub fn show_in_slot<W: Write>(
+        &mut self,
+        out: &mut W,
+        slot: KittyPaneSlotId,
+        image: KittyStoredImageId,
+        placement: KittyPlacement,
+    ) -> Result<(), KittyLayerError> {
+        if !self.images.contains_key(&image) {
+            return Err(KittyLayerError::UnknownImage(image.0));
+        }
+        let Some(current) = self.slots.get(&slot).copied().flatten() else {
+            if self.slots.contains_key(&slot) {
+                return self.place_in_slot(out, slot, image, placement);
+            }
+            return Err(KittyLayerError::UnknownSlot(slot.0));
+        };
+        if current != image {
+            self.manager
+                .clear_placement(out, KittyLayerHandle::new(current.0, slot.0))?;
+        }
+        self.place_in_slot(out, slot, image, placement)
     }
 
     /// Clear the current placement for a pane slot while leaving stored images resident.
@@ -559,6 +586,15 @@ impl KittyStoredImageStore {
         self.images.get(&image).copied()
     }
 
+    /// Forget all tracked terminal-resident images locally without emitting delete commands.
+    pub fn forget_all_images(&mut self) {
+        self.images.clear();
+        self.total_bytes = 0;
+        for current in self.slots.values_mut() {
+            *current = None;
+        }
+    }
+
     /// Total raw RGBA bytes currently kept in terminal-resident images.
     pub fn total_bytes(&self) -> usize {
         self.total_bytes
@@ -590,36 +626,38 @@ fn write_direct_data_chunks<W: Write>(
     out: &mut W,
     intro: &str,
     data: &[u8],
+    compressed: bool,
 ) -> Result<(), std::io::Error> {
-    const BASE64_CHUNK_BYTES: usize = 4096;
-    let pre_encoded_bytes_per_chunk = (BASE64_CHUNK_BYTES / 4) * 3;
-    let total_chunks = data.len().div_ceil(pre_encoded_bytes_per_chunk).max(1);
-    let mut chunks = data.chunks(pre_encoded_bytes_per_chunk);
-
-    if let Some(first) = chunks.next() {
-        write!(out, "{intro},t=d,m={};", u8::from(total_chunks > 1))?;
-        write_base64(out, first)?;
+    const ENCODED_CHUNK_BYTES: usize = 4096;
+    let compressed_data;
+    let payload = if compressed {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(data)?;
+        compressed_data = encoder.finish()?;
+        compressed_data.as_slice()
+    } else {
+        data
+    };
+    let encoded = STANDARD.encode_to_string(payload);
+    if encoded.is_empty() {
+        return Ok(());
+    }
+    let total_chunks = encoded.len().div_ceil(ENCODED_CHUNK_BYTES);
+    for (index, chunk) in encoded.as_bytes().chunks(ENCODED_CHUNK_BYTES).enumerate() {
+        let more = u8::from(index + 1 < total_chunks);
+        if index == 0 {
+            write!(out, "{intro}")?;
+            if compressed {
+                write!(out, ",o=z")?;
+            }
+            write!(out, ",m={more};")?;
+        } else {
+            write!(out, "\x1b_Gm={more};")?;
+        }
+        out.write_all(chunk)?;
         write!(out, "\x1b\\")?;
     }
-
-    for (index, chunk) in chunks.enumerate() {
-        write!(out, "\x1b_Gm={};", u8::from(index + 2 < total_chunks))?;
-        write_base64(out, chunk)?;
-        write!(out, "\x1b\\")?;
-    }
-
     out.flush()?;
-    Ok(())
-}
-
-fn write_base64<W: Write>(out: &mut W, data: &[u8]) -> Result<(), std::io::Error> {
-    const ENCODER: Base64 = base64_simd::STANDARD_NO_PAD;
-    const ENCODED_BUF_SIZE: usize = 1024;
-    let mut buf = [0u8; ENCODED_BUF_SIZE];
-    for chunk in data.chunks(ENCODER.estimated_decoded_length(ENCODED_BUF_SIZE)) {
-        let encoded = ENCODER.encode(chunk, Out::from_slice(buf.as_mut_slice()));
-        out.write_all(encoded)?;
-    }
     Ok(())
 }
 
@@ -770,7 +808,7 @@ mod tests {
             .unwrap();
 
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("\u{1b}_Ga=f,i=1,q=2,f=32,s=2,v=1,z=48,t=d,m=0;"));
+        assert!(text.contains("\u{1b}_Ga=f,i=1,q=2,f=32,s=2,v=1,z=48,m=0;"));
     }
 
     #[test]
@@ -826,6 +864,80 @@ mod tests {
             .unwrap();
         assert_eq!(store.slot_image(slot), Some(stored_b));
         assert_eq!(store.image_count(), 2);
+    }
+
+    #[test]
+    fn show_in_slot_deletes_previous_image_before_placing_new_image() {
+        let mut store = KittyStoredImageStore::new();
+        let slot = store.allocate_slot().unwrap();
+        let image_a = RgbaImage::from_pixel(2, 1, Rgba([1, 2, 3, 255]));
+        let image_b = RgbaImage::from_pixel(2, 1, Rgba([4, 5, 6, 255]));
+        let placement = KittyPlacement {
+            rect: Rect::new(0, 0, 2, 1),
+            z_index: 9,
+            preserve_cursor: true,
+        };
+        let mut out = Vec::new();
+        let (stored_a, _) = store.store_rgba(&mut out, &image_a).unwrap();
+        let (stored_b, _) = store.store_rgba(&mut out, &image_b).unwrap();
+        store
+            .show_in_slot(&mut out, slot, stored_a, placement)
+            .unwrap();
+        store
+            .show_in_slot(&mut out, slot, stored_b, placement)
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let first_place = text.find("\u{1b}_Ga=p").unwrap();
+        let clear = text[first_place + 1..]
+            .find("\u{1b}_Ga=d")
+            .map(|idx| idx + first_place + 1)
+            .unwrap();
+        let second_place = text[clear + 1..]
+            .find("\u{1b}_Ga=p")
+            .map(|idx| idx + clear + 1)
+            .unwrap();
+        assert!(first_place < clear);
+        assert!(clear < second_place);
+        assert_eq!(store.slot_image(slot), Some(stored_b));
+    }
+
+    #[test]
+    fn forget_all_images_clears_tracked_images_and_slots() {
+        let mut store = KittyStoredImageStore::with_starting_ids(90, 190).unwrap();
+        let slot = store.allocate_slot().unwrap();
+        let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
+        let (stored, info) = store.store_rgba(&mut Vec::new(), &image).unwrap();
+        store
+            .show_in_slot(
+                &mut Vec::new(),
+                slot,
+                stored,
+                KittyPlacement {
+                    rect: Rect::new(0, 0, 2, 2),
+                    z_index: 1,
+                    preserve_cursor: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(store.image_count(), 1);
+        assert_eq!(store.total_bytes(), info.bytes);
+        assert_eq!(store.slot_image(slot), Some(stored));
+        store.forget_all_images();
+        assert_eq!(store.image_count(), 0);
+        assert_eq!(store.total_bytes(), 0);
+        assert_eq!(store.slot_image(slot), None);
+        assert!(store.image_info(stored).is_none());
+    }
+
+    #[test]
+    fn store_rgba_compresses_payloads_for_terminal_resident_images() {
+        let mut store = KittyStoredImageStore::new();
+        let image = RgbaImage::from_pixel(8, 4, Rgba([1, 2, 3, 255]));
+        let mut out = Vec::new();
+        let _ = store.store_rgba(&mut out, &image).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\u{1b}_Ga=t"));
+        assert!(text.contains(",o=z,m="));
     }
 
     #[test]
