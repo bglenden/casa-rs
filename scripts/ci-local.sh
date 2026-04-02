@@ -90,7 +90,7 @@ case "$command" in
     ;;
   coverage)
     run_in_container '
-      ./scripts/run-coverage.sh
+      ./scripts/run-coverage.sh --ci-like
     '
     ;;
   all)
@@ -101,7 +101,7 @@ case "$command" in
       cargo test --workspace &&
       cargo run -p casacore-aipsio --example t_aipsio &&
       cargo run -p casacore-tables --example t_table &&
-      ./scripts/run-coverage.sh
+      ./scripts/run-coverage.sh --ci-like
     '
     ;;
   shell)

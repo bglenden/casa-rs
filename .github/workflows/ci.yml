@@ -49,4 +49,4 @@ jobs:
         uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Run coverage (line)
-        run: scripts/run-coverage.sh
+        run: scripts/run-coverage.sh --ci-like

@@ -53,9 +53,12 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
-- `scripts/run-coverage.sh`
+- `scripts/run-coverage.sh --ci-like`
+- Evaluate coverage with `scripts/run-coverage.sh --ci-like`, because plain
+  local coverage can drift from what GitHub Actions measures.
 - Coverage changes should maintain a safety margin of at least 3 percentage
-  points above the enforced CI threshold; do not aim only to barely pass.
+  points above the enforced CI threshold; with the current 75% requirement,
+  target at least 78% rather than barely passing.
 - Small performance guards stay in the default `cargo test --workspace` path.
 - Long coverage/perf work should run less often, usually via CI or explicit full runs.
 - To reproduce the GitHub Actions environment locally, use
@@ -70,7 +73,7 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   `scripts/release.sh --patch` and `scripts/release.sh --minor`.
 - The default release script runs the fast local gates:
   `fmt`, `clippy`, and `cargo test --workspace`.
-- Use `scripts/release.sh <version> --full` to also run local coverage.
+- Use `scripts/release.sh <version> --full` to also run CI-like coverage.
 - Use `scripts/release.sh <version> --push` to push the release commit and tag.
 - When asking for a release, say something like `use the release script to cut
   and push release 0.3.1` or `use the release script to cut the next patch
@@ -79,7 +82,7 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   `cargo fmt --all -- --check`
   `cargo clippy --workspace --all-targets -- -D warnings`
   `cargo test --workspace`
-  `scripts/run-coverage.sh`
+  `scripts/run-coverage.sh --ci-like`
   `cargo run -p casacore-aipsio --example t_aipsio`
   `cargo run -p casacore-tables --example t_table`
 
