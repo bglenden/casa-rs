@@ -15,8 +15,9 @@ use casacore_ms::{
     ListObsOutputFormat, MeasurementSet, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
     MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLayoutSpec, MsLegendPosition,
     MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
-    apply_msexplore_flag_edit, build_msexplore_payload, build_msexplore_plot_payload,
-    preview_msexplore_flag_edit, render_msexplore_plot_image,
+    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+    build_msexplore_plot_payload, preview_msexplore_flag_edit,
+    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
 };
 use casacore_types::ArrayValue;
 use casacore_types::measures::doppler::{DopplerRef, MDoppler};
@@ -60,6 +61,7 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--flag-xmax <VALUE>"));
     assert!(stdout.contains("--flag-ymin <VALUE>"));
     assert!(stdout.contains("--flag-ymax <VALUE>"));
+    assert!(stdout.contains("--flag-plotindex <INDEX>"));
     assert!(stdout.contains("--flag-panel <KEY>"));
     assert!(stdout.contains("--flag-extcorr"));
     assert!(stdout.contains("--flag-extchannel"));
@@ -116,6 +118,10 @@ fn msexplore_ui_schema_describes_launcher_contract() {
         .argument("flag_action")
         .expect("flag_action argument");
     assert_eq!(flag_action.value_kind, UiValueKind::Choice);
+    let flag_plotindex = schema
+        .argument("flag_plotindex")
+        .expect("flag_plotindex argument");
+    assert_eq!(flag_plotindex.value_kind, UiValueKind::String);
     let flag_panel = schema.argument("flag_panel").expect("flag_panel argument");
     assert_eq!(flag_panel.value_kind, UiValueKind::String);
     let flag_xmin = schema.argument("flag_xmin").expect("flag_xmin argument");
@@ -1418,6 +1424,7 @@ fn preview_flag_edit_selects_one_unique_sample() {
             y_min: -0.1,
             y_max: 0.1,
         },
+        plot_index: None,
         panel_key: None,
         extcorr: false,
         extchannel: false,
@@ -1453,6 +1460,7 @@ fn preview_flag_edit_expands_across_correlation_and_channel() {
             y_min: -0.1,
             y_max: 0.1,
         },
+        plot_index: None,
         panel_key: None,
         extcorr: true,
         extchannel: true,
@@ -1483,6 +1491,7 @@ fn apply_flag_edit_updates_flag_cells_and_flag_row() {
             y_min: -0.1,
             y_max: 0.1,
         },
+        plot_index: None,
         panel_key: None,
         extcorr: true,
         extchannel: true,
@@ -1582,6 +1591,7 @@ fn preview_flag_edit_on_iterated_scan_grid_requires_panel_key() {
             y_min: -0.1,
             y_max: 0.1,
         },
+        plot_index: None,
         panel_key: None,
         extcorr: false,
         extchannel: false,
@@ -1609,6 +1619,7 @@ fn preview_flag_edit_on_iterated_scan_panel_reports_panel_metadata() {
             y_min: -0.1,
             y_max: 0.1,
         },
+        plot_index: None,
         panel_key: Some("scan-1".to_string()),
         extcorr: false,
         extchannel: false,
@@ -1639,6 +1650,7 @@ fn apply_flag_edit_on_iterated_scan_panel_updates_only_target_panel_rows() {
             y_min: -0.1,
             y_max: 0.1,
         },
+        plot_index: None,
         panel_key: Some("scan-1".to_string()),
         extcorr: false,
         extchannel: false,
@@ -1738,6 +1750,208 @@ fn cli_flag_preview_on_iterated_scan_panel_includes_panel_key_and_apply_is_selec
             "unexpected persisted flag change on row {row}"
         );
     }
+}
+
+#[test]
+fn preview_flag_edit_on_stacked_page_requires_plot_index() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+    let explore = MsExploreSpec {
+        ms_path: ms_path.clone(),
+        summary_format: ListObsOutputFormat::Text,
+        selection: MsSelectionSpec::default(),
+        header_items: Vec::new(),
+        page_title: None,
+        exprange: MsPageExportRange::Current,
+        plots: vec![MsPlotSpec::from_preset(
+            MsPlotPreset::AmplitudePhaseVsTimeStacked,
+        )],
+    };
+    let flag_edit = MsFlagEditSpec {
+        action: MsFlagAction::Flag,
+        region: MsFlagRegion {
+            x_min: TIME_BASE_SECONDS - 0.1,
+            x_max: TIME_BASE_SECONDS + 0.1,
+            y_min: -0.1,
+            y_max: 0.1,
+        },
+        plot_index: None,
+        panel_key: None,
+        extcorr: false,
+        extchannel: false,
+    };
+
+    let error =
+        preview_msexplore_flag_edit_for_request(&ms, &explore, &flag_edit).expect_err("error");
+    assert!(error.contains("requires plot_index"));
+    assert!(error.contains("0"));
+    assert!(error.contains("1"));
+}
+
+#[test]
+fn preview_flag_edit_on_stacked_page_targets_selected_plot_index() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+    let explore = MsExploreSpec {
+        ms_path: ms_path.clone(),
+        summary_format: ListObsOutputFormat::Text,
+        selection: MsSelectionSpec::default(),
+        header_items: Vec::new(),
+        page_title: None,
+        exprange: MsPageExportRange::Current,
+        plots: vec![MsPlotSpec::from_preset(
+            MsPlotPreset::AmplitudePhaseVsTimeStacked,
+        )],
+    };
+    let flag_edit = MsFlagEditSpec {
+        action: MsFlagAction::Flag,
+        region: MsFlagRegion {
+            x_min: TIME_BASE_SECONDS - 0.1,
+            x_max: TIME_BASE_SECONDS + 0.1,
+            y_min: -0.1,
+            y_max: 0.1,
+        },
+        plot_index: Some(0),
+        panel_key: None,
+        extcorr: false,
+        extchannel: false,
+    };
+
+    let preview =
+        preview_msexplore_flag_edit_for_request(&ms, &explore, &flag_edit).expect("preview");
+    assert_eq!(preview.plot_index, Some(0));
+    assert_eq!(preview.plot_title, "Amplitude vs Time");
+    assert_eq!(preview.matched_points, 1);
+    assert_eq!(preview.affected_rows, 1);
+    assert_eq!(preview.affected_samples, 1);
+}
+
+#[test]
+fn apply_flag_edit_on_stacked_page_updates_selected_plot_samples() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let mut ms = MeasurementSet::open(&ms_path).expect("open fixture");
+    let explore = MsExploreSpec {
+        ms_path: ms_path.clone(),
+        summary_format: ListObsOutputFormat::Text,
+        selection: MsSelectionSpec::default(),
+        header_items: Vec::new(),
+        page_title: None,
+        exprange: MsPageExportRange::Current,
+        plots: vec![MsPlotSpec::from_preset(
+            MsPlotPreset::AmplitudePhaseVsTimeStacked,
+        )],
+    };
+    let flag_edit = MsFlagEditSpec {
+        action: MsFlagAction::Flag,
+        region: MsFlagRegion {
+            x_min: TIME_BASE_SECONDS - 0.1,
+            x_max: TIME_BASE_SECONDS + 0.1,
+            y_min: -0.1,
+            y_max: 0.1,
+        },
+        plot_index: Some(0),
+        panel_key: None,
+        extcorr: false,
+        extchannel: false,
+    };
+
+    let preview =
+        apply_msexplore_flag_edit_for_request(&mut ms, &explore, &flag_edit).expect("apply");
+    assert_eq!(preview.plot_index, Some(0));
+    assert!(row_flag_matrix(&ms, 0)[(0, 0)]);
+}
+
+#[test]
+fn cli_flag_preview_on_page_spec_includes_plot_index_and_apply_persists_changes() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let page_spec_path = temp.path().join("flag-page-spec.json");
+    std::fs::write(
+        &page_spec_path,
+        serde_json::json!({
+            "gridrows": 1,
+            "gridcols": 2,
+            "plots": [
+                {
+                    "plotindex": 0,
+                    "rowindex": 0,
+                    "colindex": 0,
+                    "preset": "amplitude_vs_time"
+                },
+                {
+                    "plotindex": 1,
+                    "rowindex": 0,
+                    "colindex": 1,
+                    "preset": "phase_vs_time"
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write page spec");
+    let preview_path = temp.path().join("page-flag-preview.json");
+
+    let preview_output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--format", "json", "--page-spec"])
+        .arg(&page_spec_path)
+        .args([
+            "--flag-action",
+            "flag",
+            "--flag-xmin",
+            &format!("{}", TIME_BASE_SECONDS - 0.1),
+            "--flag-xmax",
+            &format!("{}", TIME_BASE_SECONDS + 0.1),
+            "--flag-ymin",
+            "-0.1",
+            "--flag-ymax",
+            "0.1",
+            "--flag-plotindex",
+            "0",
+            "--flag-output",
+        ])
+        .arg(&preview_path)
+        .arg(&ms_path)
+        .output()
+        .expect("run page preview");
+    assert!(preview_output.status.success(), "{preview_output:?}");
+
+    let preview_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&preview_path).expect("read preview json"))
+            .expect("parse preview json");
+    assert_eq!(preview_json["plot_index"], 0);
+    assert_eq!(preview_json["matched_points"], 1);
+    assert_eq!(preview_json["affected_samples"], 1);
+
+    let apply_output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--format", "json", "--overwrite", "--page-spec"])
+        .arg(&page_spec_path)
+        .args([
+            "--flag-action",
+            "flag",
+            "--flag-xmin",
+            &format!("{}", TIME_BASE_SECONDS - 0.1),
+            "--flag-xmax",
+            &format!("{}", TIME_BASE_SECONDS + 0.1),
+            "--flag-ymin",
+            "-0.1",
+            "--flag-ymax",
+            "0.1",
+            "--flag-plotindex",
+            "0",
+            "--flag-apply",
+            "--flag-output",
+        ])
+        .arg(&preview_path)
+        .arg(&ms_path)
+        .output()
+        .expect("run page apply");
+    assert!(apply_output.status.success(), "{apply_output:?}");
+
+    let ms_after_apply = MeasurementSet::open(&ms_path).expect("reopen after apply");
+    assert!(row_flag_matrix(&ms_after_apply, 0)[(0, 0)]);
 }
 
 fn row_flag_matrix(ms: &MeasurementSet, row: usize) -> ndarray::Array2<bool> {

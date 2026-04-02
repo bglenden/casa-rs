@@ -10,8 +10,9 @@ use serde::Deserialize;
 use super::{
     MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction, MsFlagEditSpec,
     MsFlagRegion, MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
-    MsPlotPreset, MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec, apply_msexplore_flag_edit,
-    build_msexplore_payload, export_msexplore_plot,
+    MsPlotPreset, MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec,
+    apply_msexplore_flag_edit_for_request, build_msexplore_payload, export_msexplore_plot,
+    preview_msexplore_flag_edit_for_request,
 };
 use crate::MeasurementSet;
 use crate::listobs::cli::{
@@ -72,6 +73,7 @@ struct CliOptions {
     flag_xmax: Option<f64>,
     flag_ymin: Option<f64>,
     flag_ymax: Option<f64>,
+    flag_plotindex: Option<usize>,
     flag_panel: Option<String>,
     flag_extcorr: bool,
     flag_extchannel: bool,
@@ -948,9 +950,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false,
             ),
             option_argument(
+                "flag_plotindex",
+                "Flag Plot Index",
+                51,
+                &["--flag-plotindex"],
+                "INDEX",
+                UiValueKind::String,
+                None,
+                &[],
+                "Multi-plot page child plot index to target for staged edits",
+                "Flag Editing",
+                true,
+                false,
+            ),
+            option_argument(
                 "flag_panel",
                 "Flag Panel",
-                51,
+                52,
                 &["--flag-panel"],
                 "KEY",
                 UiValueKind::String,
@@ -964,7 +980,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_extcorr",
                 "Extend Correlation",
-                52,
+                53,
                 &["--flag-extcorr"],
                 &[],
                 false,
@@ -976,7 +992,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_extchannel",
                 "Extend Channel",
-                53,
+                54,
                 &["--flag-extchannel"],
                 &[],
                 false,
@@ -988,7 +1004,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_apply",
                 "Apply Flag Edit",
-                54,
+                55,
                 &["--flag-apply"],
                 &[],
                 false,
@@ -1000,7 +1016,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_output",
                 "Flag Preview Output",
-                55,
+                56,
                 &["--flag-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -1011,8 +1027,8 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
-            action_argument(56, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(57, "help", &["-h", "--help"], UiActionKind::Help),
+            action_argument(57, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(58, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "listobs-summary-v1".to_string(),
@@ -1051,29 +1067,22 @@ fn run(options: CliOptions) -> Result<(), String> {
         &summary_text,
     )?;
 
-    let explore_spec = if options.plot_output.is_some() || options.flag_action.is_some() {
+    let flag_edit = build_flag_edit_spec(&options)?;
+    let explore_spec = if options.plot_output.is_some() || flag_edit.is_some() {
         Some(build_explore_spec(&options)?)
     } else {
         None
     };
 
     if let Some(explore_spec) = &explore_spec {
-        if let Some(flag_action) = options.flag_action {
-            let plot_spec = explore_spec
-                .plots
-                .first()
-                .ok_or_else(|| {
-                    "msexplore flag editing requires one plot specification".to_string()
-                })?
-                .clone();
+        if let Some(flag_edit) = &flag_edit {
             let preview = if options.flag_apply {
                 let preview =
-                    apply_msexplore_flag_edit(&mut ms, &explore_spec.selection, &plot_spec)?;
+                    apply_msexplore_flag_edit_for_request(&mut ms, explore_spec, flag_edit)?;
                 ms.save().map_err(|error| error.to_string())?;
                 preview
             } else {
-                let _ = flag_action;
-                super::preview_msexplore_flag_edit(&ms, &explore_spec.selection, &plot_spec)?
+                preview_msexplore_flag_edit_for_request(&ms, explore_spec, flag_edit)?
             };
             if let Some(path) = options.flag_output.as_deref() {
                 let json = serde_json::to_string_pretty(&preview)
@@ -1181,7 +1190,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
 }
 
 fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
-    let mut spec = build_plot_spec_from_values(
+    let spec = build_plot_spec_from_values(
         options.preset,
         options.x_axis,
         options.y_axis,
@@ -1211,34 +1220,39 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
         options.showmajorgrid,
         options.showminorgrid,
     )?;
-    if let Some(action) = options.flag_action {
-        let x_min = options
-            .flag_xmin
-            .ok_or_else(|| "--flag-action requires --flag-xmin".to_string())?;
-        let x_max = options
-            .flag_xmax
-            .ok_or_else(|| "--flag-action requires --flag-xmax".to_string())?;
-        let y_min = options
-            .flag_ymin
-            .ok_or_else(|| "--flag-action requires --flag-ymin".to_string())?;
-        let y_max = options
-            .flag_ymax
-            .ok_or_else(|| "--flag-action requires --flag-ymax".to_string())?;
-        spec.flag_edit = Some(MsFlagEditSpec {
-            action,
-            region: MsFlagRegion {
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-            },
-            panel_key: options.flag_panel.clone(),
-            extcorr: options.flag_extcorr,
-            extchannel: options.flag_extchannel,
-        });
-    }
     spec.validate()?;
     Ok(spec)
+}
+
+fn build_flag_edit_spec(options: &CliOptions) -> Result<Option<MsFlagEditSpec>, String> {
+    let Some(action) = options.flag_action else {
+        return Ok(None);
+    };
+    let x_min = options
+        .flag_xmin
+        .ok_or_else(|| "--flag-action requires --flag-xmin".to_string())?;
+    let x_max = options
+        .flag_xmax
+        .ok_or_else(|| "--flag-action requires --flag-xmax".to_string())?;
+    let y_min = options
+        .flag_ymin
+        .ok_or_else(|| "--flag-action requires --flag-ymin".to_string())?;
+    let y_max = options
+        .flag_ymax
+        .ok_or_else(|| "--flag-action requires --flag-ymax".to_string())?;
+    Ok(Some(MsFlagEditSpec {
+        action,
+        region: MsFlagRegion {
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        },
+        plot_index: options.flag_plotindex,
+        panel_key: options.flag_panel.clone(),
+        extcorr: options.flag_extcorr,
+        extchannel: options.flag_extchannel,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1435,6 +1449,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut flag_xmax = None;
     let mut flag_ymin = None;
     let mut flag_ymax = None;
+    let mut flag_plotindex = None;
     let mut flag_panel = None;
     let mut flag_extcorr = false;
     let mut flag_extchannel = false;
@@ -1607,7 +1622,6 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             }
             "--headeritems" => headeritems = Some(take_value(&mut index, &args, "--headeritems")?),
             "--flag-action" => {
-                plot_control_used = true;
                 flag_action = Some(
                     match take_value(&mut index, &args, "--flag-action")?
                         .to_ascii_lowercase()
@@ -1624,7 +1638,6 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 )
             }
             "--flag-xmin" => {
-                plot_control_used = true;
                 flag_xmin = Some(
                     take_value(&mut index, &args, "--flag-xmin")?
                         .parse::<f64>()
@@ -1632,7 +1645,6 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 )
             }
             "--flag-xmax" => {
-                plot_control_used = true;
                 flag_xmax = Some(
                     take_value(&mut index, &args, "--flag-xmax")?
                         .parse::<f64>()
@@ -1640,7 +1652,6 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 )
             }
             "--flag-ymin" => {
-                plot_control_used = true;
                 flag_ymin = Some(
                     take_value(&mut index, &args, "--flag-ymin")?
                         .parse::<f64>()
@@ -1648,29 +1659,23 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 )
             }
             "--flag-ymax" => {
-                plot_control_used = true;
                 flag_ymax = Some(
                     take_value(&mut index, &args, "--flag-ymax")?
                         .parse::<f64>()
                         .map_err(|_| "invalid floating-point value for --flag-ymax".to_string())?,
                 )
             }
-            "--flag-panel" => {
-                plot_control_used = true;
-                flag_panel = Some(take_value(&mut index, &args, "--flag-panel")?)
+            "--flag-plotindex" => {
+                flag_plotindex = Some(
+                    take_value(&mut index, &args, "--flag-plotindex")?
+                        .parse::<usize>()
+                        .map_err(|_| "invalid integer value for --flag-plotindex".to_string())?,
+                )
             }
-            "--flag-extcorr" => {
-                plot_control_used = true;
-                flag_extcorr = true
-            }
-            "--flag-extchannel" => {
-                plot_control_used = true;
-                flag_extchannel = true
-            }
-            "--flag-apply" => {
-                plot_control_used = true;
-                flag_apply = true
-            }
+            "--flag-panel" => flag_panel = Some(take_value(&mut index, &args, "--flag-panel")?),
+            "--flag-extcorr" => flag_extcorr = true,
+            "--flag-extchannel" => flag_extchannel = true,
+            "--flag-apply" => flag_apply = true,
             "--flag-output" => {
                 flag_output = Some(PathBuf::from(take_value(
                     &mut index,
@@ -1734,14 +1739,18 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             "--plot-output requires either --preset or both --xaxis and --yaxis".to_string(),
         );
     }
-    if flag_action.is_some() && page_spec.is_some() {
-        return Err(
-            "msexplore staged flag editing currently does not support --page-spec".to_string(),
-        );
-    }
-    if flag_action.is_some() && preset.is_none() && (x_axis.is_none() || y_axis.is_none()) {
+    if flag_action.is_some()
+        && page_spec.is_none()
+        && preset.is_none()
+        && (x_axis.is_none() || y_axis.is_none())
+    {
         return Err(
             "--flag-action requires either --preset or both --xaxis and --yaxis".to_string(),
+        );
+    }
+    if flag_plotindex.is_some() && flag_panel.is_some() {
+        return Err(
+            "msexplore staged flag editing accepts either --flag-plotindex or --flag-panel, not both".to_string(),
         );
     }
     if flag_action.is_none()
@@ -1749,6 +1758,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             || flag_xmax.is_some()
             || flag_ymin.is_some()
             || flag_ymax.is_some()
+            || flag_plotindex.is_some()
             || flag_panel.is_some()
             || flag_extcorr
             || flag_extchannel
@@ -1798,6 +1808,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         flag_xmax,
         flag_ymin,
         flag_ymax,
+        flag_plotindex,
         flag_panel,
         flag_extcorr,
         flag_extchannel,

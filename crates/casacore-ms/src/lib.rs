@@ -75,9 +75,10 @@ pub use msexplore::{
     MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
     MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
     MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelectionSpec, MsTransformSpec,
-    apply_msexplore_flag_edit, build_msexplore_payload, build_msexplore_payload_from_spec,
-    build_msexplore_plot_payload, build_msexplore_plot_payload_from_path, export_msexplore_plot,
-    preview_msexplore_flag_edit, render_msexplore_plot_image,
+    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+    build_msexplore_payload_from_spec, build_msexplore_plot_payload,
+    build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
+    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
 };
 pub use plot::{
     ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,

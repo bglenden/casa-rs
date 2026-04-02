@@ -1135,6 +1135,8 @@ pub struct MsFlagEditSpec {
     pub action: MsFlagAction,
     /// Inclusive numeric plot region that selects staged points.
     pub region: MsFlagRegion,
+    /// Optional multi-plot page child plot index to target.
+    pub plot_index: Option<usize>,
     /// Optional iterated-panel key to target within a scatter grid.
     pub panel_key: Option<String>,
     /// Extend across correlations.
@@ -1199,6 +1201,8 @@ pub struct MsFlagRowEdit {
 pub struct MsFlagEditPreview {
     /// Plot title associated with the staged edit.
     pub plot_title: String,
+    /// Optional child plot index targeted within a multi-plot page.
+    pub plot_index: Option<usize>,
     /// Optional iterated-panel key targeted by this preview.
     pub panel_key: Option<String>,
     /// Optional human-readable panel label targeted by this preview.
@@ -1678,6 +1682,14 @@ impl MsPlotSpec {
             if self.iteration.iteraxis.is_none() && flag_edit.panel_key.is_some() {
                 return Err(
                     "msexplore staged flag editing only accepts panel_key for iterated plots"
+                        .to_string(),
+                );
+            }
+            if self.preset != Some(MsPlotPreset::AmplitudePhaseVsTimeStacked)
+                && flag_edit.plot_index.is_some()
+            {
+                return Err(
+                    "msexplore staged flag editing only accepts plot_index for page payloads"
                         .to_string(),
                 );
             }
@@ -2189,22 +2201,75 @@ pub fn preview_msexplore_flag_edit(
         .as_ref()
         .ok_or_else(|| "msexplore flag-edit preview requires MsPlotSpec.flag_edit".to_string())?;
     let payload = build_msexplore_plot_payload_validated(ms, selection, spec)?;
+    preview_msexplore_flag_edit_from_payload(ms, payload, flag_edit)
+}
+
+/// Preview a staged flag edit against a full `msexplore` request, including
+/// stacked presets and generic multi-plot page payloads.
+pub fn preview_msexplore_flag_edit_for_request(
+    ms: &MeasurementSet,
+    spec: &MsExploreSpec,
+    flag_edit: &MsFlagEditSpec,
+) -> Result<MsFlagEditPreview, String> {
+    spec.validate()?;
+    validate_flag_edit_request(flag_edit)?;
+    let payload = build_msexplore_payload(ms, spec)?;
+    preview_msexplore_flag_edit_from_payload(ms, payload, flag_edit)
+}
+
+/// Apply a staged flag edit resolved from a full `msexplore` request and return
+/// the exact preview that was committed.
+pub fn apply_msexplore_flag_edit_for_request(
+    ms: &mut MeasurementSet,
+    spec: &MsExploreSpec,
+    flag_edit: &MsFlagEditSpec,
+) -> Result<MsFlagEditPreview, String> {
+    let preview = preview_msexplore_flag_edit_for_request(ms, spec, flag_edit)?;
+    apply_msexplore_flag_edit_preview(ms, preview)
+}
+
+fn preview_msexplore_flag_edit_from_payload(
+    ms: &MeasurementSet,
+    payload: MsPlotPayload,
+    flag_edit: &MsFlagEditSpec,
+) -> Result<MsFlagEditPreview, String> {
     match payload {
-        MsPlotPayload::Scatter(payload) => build_flag_edit_preview_from_series(
-            ms,
-            &payload.title,
-            None,
-            None,
-            payload.x_axis,
-            payload.y_axis,
-            &payload.series,
-            flag_edit,
-        ),
+        MsPlotPayload::Scatter(payload) => {
+            if flag_edit.panel_key.is_some() {
+                return Err(
+                    "msexplore staged flag editing only accepts panel_key for iterated scatter grids"
+                        .to_string(),
+                );
+            }
+            if flag_edit.plot_index.is_some() {
+                return Err(
+                    "msexplore staged flag editing only accepts plot_index for multi-plot page payloads"
+                        .to_string(),
+                );
+            }
+            build_flag_edit_preview_from_series(
+                ms,
+                &payload.title,
+                None,
+                None,
+                None,
+                payload.x_axis,
+                payload.y_axis,
+                &payload.series,
+                flag_edit,
+            )
+        }
         MsPlotPayload::ListObs(_) => Err(
             "msexplore staged flag editing currently supports raw-visibility scatter plots only"
                 .to_string(),
         ),
         MsPlotPayload::ScatterGrid(payload) => {
+            if flag_edit.plot_index.is_some() {
+                return Err(
+                    "msexplore staged flag editing only accepts plot_index for multi-plot page payloads"
+                        .to_string(),
+                );
+            }
             let panel = match flag_edit.panel_key.as_deref() {
                 Some(key) => payload
                     .panels
@@ -2238,6 +2303,7 @@ pub fn preview_msexplore_flag_edit(
             build_flag_edit_preview_from_series(
                 ms,
                 &payload.title,
+                None,
                 Some(panel.key.clone()),
                 Some(panel.label.clone()),
                 payload.x_axis,
@@ -2246,10 +2312,79 @@ pub fn preview_msexplore_flag_edit(
                 flag_edit,
             )
         }
-        MsPlotPayload::ScatterPage(_) => Err(
-            "msexplore staged flag editing currently does not support multi-plot pages".to_string(),
-        ),
+        MsPlotPayload::ScatterPage(payload) => {
+            if flag_edit.panel_key.is_some() {
+                return Err(
+                    "msexplore staged flag editing only accepts panel_key for iterated scatter grids"
+                        .to_string(),
+                );
+            }
+            let item = match flag_edit.plot_index {
+                Some(plot_index) => payload
+                    .items
+                    .iter()
+                    .find(|item| item.plotindex == plot_index)
+                    .ok_or_else(|| {
+                        format!(
+                            "msexplore flag-edit plot_index {} was not found in page payload; available plot indices: {}",
+                            plot_index,
+                            payload
+                                .items
+                                .iter()
+                                .map(|item| item.plotindex.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })?,
+                None if payload.items.len() == 1 => &payload.items[0],
+                None => {
+                    return Err(format!(
+                        "msexplore staged flag editing requires plot_index for page payloads with multiple plots; available plot indices: {}",
+                        payload
+                            .items
+                            .iter()
+                            .map(|item| item.plotindex.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            };
+            if item.plot.secondary_y_axis.is_some() {
+                return Err(
+                    "msexplore staged flag editing currently supports single-y child plots only"
+                        .to_string(),
+                );
+            }
+            build_flag_edit_preview_from_series(
+                ms,
+                &item.plot.title,
+                Some(item.plotindex),
+                None,
+                None,
+                item.plot.x_axis,
+                item.plot.y_axis,
+                &item.plot.series,
+                flag_edit,
+            )
+        }
     }
+}
+
+fn validate_flag_edit_request(flag_edit: &MsFlagEditSpec) -> Result<(), String> {
+    if !flag_edit.region.x_min.is_finite()
+        || !flag_edit.region.x_max.is_finite()
+        || !flag_edit.region.y_min.is_finite()
+        || !flag_edit.region.y_max.is_finite()
+    {
+        return Err("msexplore staged flag editing requires finite region bounds".to_string());
+    }
+    if flag_edit.plot_index.is_some() && flag_edit.panel_key.is_some() {
+        return Err(
+            "msexplore staged flag editing accepts either plot_index or panel_key, not both"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Apply a staged flag edit to MAIN `FLAG` / `FLAG_ROW` and return the exact
@@ -2260,6 +2395,13 @@ pub fn apply_msexplore_flag_edit(
     spec: &MsPlotSpec,
 ) -> Result<MsFlagEditPreview, String> {
     let preview = preview_msexplore_flag_edit(ms, selection, spec)?;
+    apply_msexplore_flag_edit_preview(ms, preview)
+}
+
+fn apply_msexplore_flag_edit_preview(
+    ms: &mut MeasurementSet,
+    preview: MsFlagEditPreview,
+) -> Result<MsFlagEditPreview, String> {
     let mut row_updates = std::collections::BTreeMap::<usize, (ndarray::Array2<bool>, bool)>::new();
     for row_edit in &preview.row_edits {
         row_updates.insert(
@@ -2303,6 +2445,7 @@ fn apply_page_header_lines(payload: &mut MsPlotPayload, header_lines: Vec<String
 fn build_flag_edit_preview_from_series(
     ms: &MeasurementSet,
     plot_title: &str,
+    plot_index: Option<usize>,
     panel_key: Option<String>,
     panel_label: Option<String>,
     x_axis: MsAxis,
@@ -2400,6 +2543,7 @@ fn build_flag_edit_preview_from_series(
 
     Ok(MsFlagEditPreview {
         plot_title: plot_title.to_string(),
+        plot_index,
         panel_key,
         panel_label,
         x_axis,
