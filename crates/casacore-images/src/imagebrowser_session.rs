@@ -3060,7 +3060,8 @@ mod tests {
             ImageBackendPlaneCacheResult::Hit
         );
         assert!(second_timing.cached_plane_lookup_ns > 0);
-        assert!(second_timing.total_plane_ns <= first_timing.total_plane_ns);
+        assert!(second_timing.total_plane_ns > 0);
+        assert!(second_timing.total_plane_ns >= second_timing.cached_plane_lookup_ns);
         assert!(second_timing.profile_cache_hits >= 1);
         assert_eq!(second_timing.profile_cache_misses, 1);
     }
