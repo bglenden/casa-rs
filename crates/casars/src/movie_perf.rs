@@ -1121,6 +1121,50 @@ fn average_ns(values: impl Iterator<Item = u64>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::sync::atomic::Ordering;
+    use tempfile::tempdir;
+
+    fn sample_context() -> MoviePerfContext {
+        MoviePerfContext {
+            axis: Some(1),
+            axis_index: Some(2),
+            axis_length: Some(8),
+            render_request_key_hash: Some(99),
+            canvas_cell_size: Some((80, 24)),
+            canvas_pixel_size: Some((1600, 720)),
+            raster_mode: true,
+            direct_overlay: true,
+            terminal_looping: false,
+            requested_fps_milli: Some(12_500),
+        }
+    }
+
+    fn sample_backend() -> BackendTimingBreakdown {
+        BackendTimingBreakdown {
+            cached_plane_lookup_ns: 1,
+            plane_extract_ns: 2,
+            stat_collection_ns: 3,
+            histogram_ns: 4,
+            rasterize_ns: 5,
+            total_plane_ns: 6,
+            profile_cache_hits: 7,
+            profile_cache_misses: 8,
+            profile_extract_total_ns: 9,
+        }
+    }
+
+    fn sample_pipeline() -> MoviePipelineState {
+        MoviePipelineState {
+            render_queue_depth: 2,
+            render_active_jobs: 1,
+            protocol_queue_depth: 3,
+            protocol_active_jobs: 2,
+            ready_bundle_count: 4,
+            ready_presentation_count: 1,
+            bitmap_cache_bytes: 1024,
+        }
+    }
 
     #[test]
     fn movie_perf_event_serializes_to_jsonl_shape() {
@@ -1144,26 +1188,8 @@ mod tests {
             queue_depth: Some(1),
             panel_pending: Some(true),
             outcome: Some(MovieFrameOutcome::CacheMiss),
-            backend: Some(BackendTimingBreakdown {
-                cached_plane_lookup_ns: 1,
-                plane_extract_ns: 2,
-                stat_collection_ns: 3,
-                histogram_ns: 4,
-                rasterize_ns: 5,
-                total_plane_ns: 6,
-                profile_cache_hits: 7,
-                profile_cache_misses: 8,
-                profile_extract_total_ns: 9,
-            }),
-            pipeline: Some(MoviePipelineState {
-                render_queue_depth: 2,
-                render_active_jobs: 1,
-                protocol_queue_depth: 3,
-                protocol_active_jobs: 2,
-                ready_bundle_count: 4,
-                ready_presentation_count: 1,
-                bitmap_cache_bytes: 1024,
-            }),
+            backend: Some(sample_backend()),
+            pipeline: Some(sample_pipeline()),
             note: Some("hello".into()),
         };
         let encoded = serde_json::to_string(&event).expect("encode");
@@ -1199,23 +1225,214 @@ mod tests {
             render_latency_ns: 6_000_000,
             present_latency_ns: 2_000_000,
         });
-        let summary = tracer.summary(
-            30.0,
-            Some(MoviePipelineState {
-                render_queue_depth: 2,
-                render_active_jobs: 1,
-                protocol_queue_depth: 3,
-                protocol_active_jobs: 2,
-                ready_bundle_count: 4,
-                ready_presentation_count: 1,
-                bitmap_cache_bytes: 1024,
-            }),
-        );
+        let summary = tracer.summary(30.0, Some(sample_pipeline()));
         assert!(summary.achieved_fps > 0.0);
         assert_eq!(summary.dropped_frames, 2);
         assert_eq!(summary.stale_frames, 1);
         assert!(summary.cache_hit_rate > 0.0);
         assert!(summary.p95_frame_latency_ms >= summary.p50_frame_latency_ms);
         assert_eq!(summary.pipeline.unwrap().render_active_jobs, 1);
+    }
+
+    #[test]
+    fn tracer_from_env_writes_jsonl_and_summary_log() {
+        let _guard = crate::test_env_lock();
+        let temp = tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var(PERF_ENV, "1");
+            std::env::set_var(PERF_DIR_ENV, temp.path());
+        }
+        FORCE_SUMMARY_FLUSH.store(false, Ordering::SeqCst);
+
+        let mut tracer = MoviePerfTracer::from_env();
+        assert!(tracer.enabled);
+        let json_path = tracer.json_path().expect("json path").to_path_buf();
+        let log_path = tracer.log_path().expect("log path").to_path_buf();
+        let context = sample_context();
+
+        tracer.movie_started(context);
+        tracer.fps_changed(context);
+        tracer.direct_overlay_changed(context, true);
+        tracer.generation_invalidated(context, "stale generation", Some(sample_pipeline()));
+        tracer.deadline_missed(context, "pending frame", 3, Some(sample_pipeline()));
+        FORCE_SUMMARY_FLUSH.store(true, Ordering::SeqCst);
+        tracer.maybe_emit_summary(false, 12.5, Some(sample_pipeline()));
+        tracer.movie_stopped(context, "done");
+        drop(tracer);
+
+        unsafe {
+            std::env::remove_var(PERF_ENV);
+            std::env::remove_var(PERF_DIR_ENV);
+        }
+
+        let json = fs::read_to_string(json_path).expect("json trace");
+        assert!(json.contains("\"kind\":\"movie_started\""));
+        assert!(json.contains("\"kind\":\"fps_changed\""));
+        assert!(json.contains("\"kind\":\"direct_overlay_changed\""));
+        assert!(json.contains("\"kind\":\"generation_invalidated\""));
+        assert!(json.contains("\"kind\":\"deadline_missed\""));
+        assert!(json.contains("\"kind\":\"summary\""));
+        assert!(json.contains("\"kind\":\"movie_stopped\""));
+        assert!(json.contains("stale generation"));
+        assert!(json.contains("pending frame"));
+
+        let log = fs::read_to_string(log_path).expect("summary log");
+        assert!(log.contains("summary achieved_fps"));
+        assert!(log.contains("render_q=2"));
+    }
+
+    #[test]
+    fn tracer_records_bundle_and_plane_presentations() {
+        let mut tracer = MoviePerfTracer {
+            enabled: true,
+            started_at: Some(Instant::now() - Duration::from_secs(1)),
+            ..MoviePerfTracer::default()
+        };
+        let context = sample_context();
+        let backend = sample_backend();
+        let pipeline = sample_pipeline();
+
+        let frame_seq = tracer.begin_frame(context).expect("frame seq");
+        tracer.preview_requested(frame_seq, context, 2, Some(pipeline));
+        tracer.preview_received(frame_seq, context, Some(backend), Some(pipeline));
+        tracer.bundle_render_requested(
+            frame_seq,
+            0xabc,
+            context,
+            1,
+            MovieFrameOutcome::CacheHitBackendPlane,
+            Some(pipeline),
+        );
+        tracer.bundle_ready(0xabc, 0, Some(pipeline));
+        tracer.bundle_presented(0xabc, Some(pipeline));
+
+        let frame_seq = tracer.begin_frame(context).expect("second frame seq");
+        tracer.browser_command_sent(frame_seq);
+        tracer.browser_snapshot_received(frame_seq, context, Some(backend));
+        tracer.plane_render_requested(
+            frame_seq,
+            0xdef,
+            context,
+            2,
+            true,
+            MovieFrameOutcome::CacheHitRenderedImage,
+        );
+        tracer.plane_render_completed(0xdef, 0, false);
+        tracer.plane_presented(0xdef);
+
+        assert!(tracer.active_frames.is_empty());
+        assert!(tracer.present_waiting_frames.is_empty());
+        assert_eq!(tracer.total_backend_cache_hits, 1);
+        assert_eq!(tracer.total_rendered_cache_hits, 1);
+        assert_eq!(tracer.recent_frames.len(), 2);
+
+        let summary = tracer.summary(12.5, Some(pipeline));
+        assert_eq!(summary.recent_frame_count, 2);
+        assert!(summary.achieved_fps > 0.0);
+        assert!(summary.backend_avg_ms >= 0.0);
+        assert!(summary.render_avg_ms >= 0.0);
+        assert!(summary.present_avg_ms >= 0.0);
+    }
+
+    #[test]
+    fn tracer_accounts_for_drops_helpers_and_noop_paths() {
+        let mut tracer = MoviePerfTracer {
+            enabled: true,
+            started_at: Some(Instant::now() - Duration::from_secs(6)),
+            ..MoviePerfTracer::default()
+        };
+        let context = sample_context();
+
+        let frame_seq = tracer.begin_frame(context).expect("frame seq");
+        tracer.preview_requested(frame_seq, context, 0, None);
+        tracer.preview_received(frame_seq, context, None, None);
+        tracer.plane_render_requested(
+            frame_seq,
+            0x123,
+            context,
+            0,
+            false,
+            MovieFrameOutcome::CacheMiss,
+        );
+        tracer.frame_dropped(
+            Some(frame_seq),
+            context,
+            MovieFrameOutcome::StaleRenderDiscarded,
+            "stale",
+        );
+        tracer.frame_dropped(
+            None,
+            context,
+            MovieFrameOutcome::SkippedDueToPending,
+            "pending",
+        );
+
+        tracer.bundle_ready(0x999, 0, None);
+        tracer.bundle_presented(0x999, None);
+        tracer.plane_render_completed(0x999, 0, false);
+        tracer.plane_presented(0x999);
+
+        tracer.push_completed_frame(CompletedFrameSample {
+            presented_at_ns: tracer
+                .monotonic_ns()
+                .saturating_sub(duration_ns(SUMMARY_INTERVAL)),
+            total_latency_ns: 5_000_000,
+            backend_latency_ns: 2_000_000,
+            render_latency_ns: 2_000_000,
+            present_latency_ns: 1_000_000,
+        });
+        tracer.push_completed_frame(CompletedFrameSample {
+            presented_at_ns: tracer.monotonic_ns(),
+            total_latency_ns: 9_000_000,
+            backend_latency_ns: 4_000_000,
+            render_latency_ns: 3_000_000,
+            present_latency_ns: 2_000_000,
+        });
+
+        assert_eq!(tracer.total_cache_misses, 1);
+        assert_eq!(tracer.total_dropped_frames, 2);
+        assert_eq!(tracer.total_stale_frames, 1);
+        assert_eq!(tracer.total_skipped_pending, 1);
+        assert_eq!(percentile_u64(&[], 0.5), 0);
+        assert_eq!(percentile_u64(&[1, 5, 9], 2.0), 9);
+        assert_eq!(average_ns(std::iter::empty()), 0.0);
+        assert!(average_ns([1_000_000, 3_000_000].into_iter()) > 0.0);
+        assert_eq!(duration_ns(Duration::from_secs(u64::MAX)), u64::MAX);
+
+        let temp = tempdir().expect("tempdir");
+        assert!(open_append_file(&temp.path().join("trace.jsonl")).is_some());
+
+        let mut disabled = MoviePerfTracer::default();
+        assert_eq!(disabled.begin_frame(context), None);
+
+        let mut trace = MovieFrameTrace {
+            frame_seq: 7,
+            context,
+            frame_requested_at: Instant::now(),
+            browser_command_sent_at: None,
+            browser_snapshot_received_at: None,
+            plane_render_requested_at: None,
+            plane_render_completed_at: None,
+            plane_presented_at: None,
+            outcome: Some(MovieFrameOutcome::CacheMiss),
+            backend: Some(sample_backend()),
+        };
+        let event = frame_event_from_trace(
+            11,
+            &trace,
+            MoviePerfEventKind::BrowserSnapshotReceived,
+            Some(22),
+            Some(3),
+            Some(false),
+            Some(sample_pipeline()),
+        );
+        assert_eq!(event.monotonic_ns, 11);
+        assert_eq!(event.frame_seq, Some(7));
+        assert_eq!(event.duration_ns, Some(22));
+        assert_eq!(event.queue_depth, Some(3));
+        assert_eq!(event.outcome, Some(MovieFrameOutcome::CacheMiss));
+        trace.context.raster_mode = false;
+        let base = tracer.base_event(trace.context, MoviePerfEventKind::Summary, None);
+        assert_eq!(base.plane_mode, "spreadsheet");
     }
 }

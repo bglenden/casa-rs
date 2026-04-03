@@ -301,6 +301,7 @@ mod tests {
     use super::*;
     use casacore_ms::MsPlotPreset;
     use casacore_ms::msexplore::cli::UiArgumentParser;
+    use std::fs;
     use std::time::Duration;
 
     #[test]
@@ -323,6 +324,8 @@ mod tests {
     fn app_metadata_matches_interaction_kind() {
         let msexplore = msexplore_app();
         assert!(!msexplore.is_browser_session());
+        assert_eq!(msexplore.browser_kind(), None);
+        assert_eq!(msexplore.browser_path_field_id(), None);
         assert_eq!(
             msexplore.ready_status_line(),
             "Ready. Press r to run the selected command."
@@ -397,6 +400,25 @@ mod tests {
     }
 
     #[test]
+    fn resolve_command_prefers_cargo_bin_environment_before_sibling_or_cargo() {
+        let _guard = crate::test_env_lock();
+        let app = msexplore_app();
+        unsafe {
+            env::remove_var("CASARS_MSEXPLORE_BIN");
+            env::set_var("CARGO_BIN_EXE_msexplore", "/tmp/cargo-bin-msexplore");
+        }
+
+        let resolved = app.resolve_command().expect("resolve cargo bin env");
+        let command = resolved.command();
+        assert_eq!(command.get_program(), "/tmp/cargo-bin-msexplore");
+        assert_eq!(command.get_args().count(), 0);
+
+        unsafe {
+            env::remove_var("CARGO_BIN_EXE_msexplore");
+        }
+    }
+
+    #[test]
     fn msexplore_load_schema_includes_every_shipped_preset() {
         let schema = msexplore_app()
             .load_schema()
@@ -417,6 +439,49 @@ mod tests {
     }
 
     #[test]
+    fn load_schema_surfaces_subprocess_failures_for_overridden_binaries() {
+        let _guard = crate::test_env_lock();
+        unsafe {
+            env::set_var("CASARS_IMEXPLORE_BIN", "/definitely/missing/imexplore");
+        }
+
+        let error = imexplore_app()
+            .load_schema()
+            .expect_err("missing override binary should fail");
+        assert!(error.contains("spawn imexplore --ui-schema"));
+
+        unsafe {
+            env::remove_var("CASARS_IMEXPLORE_BIN");
+        }
+    }
+
+    #[test]
+    fn load_schema_reports_nonzero_exit_status_and_parse_errors_from_overrides() {
+        let _guard = crate::test_env_lock();
+
+        unsafe {
+            env::set_var("CASARS_IMEXPLORE_BIN", "/bin/sh");
+        }
+        let error = imexplore_app()
+            .load_schema()
+            .expect_err("shell should reject --ui-schema");
+        assert!(error.contains("imexplore --ui-schema exited with"));
+        assert!(error.contains("--ui-schema"));
+
+        unsafe {
+            env::set_var("CASARS_IMEXPLORE_BIN", "/bin/echo");
+        }
+        let error = imexplore_app()
+            .load_schema()
+            .expect_err("echo output should not parse as JSON");
+        assert!(error.contains("parse imexplore --ui-schema output"));
+
+        unsafe {
+            env::remove_var("CASARS_IMEXPLORE_BIN");
+        }
+    }
+
+    #[test]
     fn stale_binary_detection_requires_binary_older_than_reference() {
         let older = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
         let newer = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
@@ -432,5 +497,44 @@ mod tests {
         assert!(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+    }
+
+    #[test]
+    fn resolve_command_uses_existing_sibling_binary_for_non_workspace_apps() {
+        let _guard = crate::test_env_lock();
+        let app = tablebrowser_app();
+        let mut sibling_path = env::current_exe().expect("current exe");
+        sibling_path.pop();
+        sibling_path.push("tablebrowser");
+        sibling_path.set_extension(env::consts::EXE_EXTENSION);
+        let _ = fs::remove_file(&sibling_path);
+        fs::write(&sibling_path, b"#!/bin/sh\n").expect("create sibling binary placeholder");
+        unsafe {
+            env::remove_var("CASARS_TABLEBROWSER_BIN");
+            env::remove_var("CARGO_BIN_EXE_tablebrowser");
+            env::remove_var("CARGO");
+        }
+
+        let resolved = app.resolve_command().expect("resolve sibling binary");
+        let command = resolved.command();
+        assert_eq!(command.get_program(), sibling_path.as_os_str());
+        assert_eq!(command.get_args().count(), 0);
+        assert!(!sibling_binary_is_stale_for_current_process(
+            std::path::Path::new("/definitely/missing")
+        ));
+
+        fs::remove_file(&sibling_path).expect("remove sibling binary placeholder");
+    }
+
+    #[test]
+    fn resolved_command_direct_and_manifest_helpers_cover_simple_paths() {
+        let direct = ResolvedCommand::direct("demo-tool");
+        let command = direct.command();
+        assert_eq!(command.get_program(), "demo-tool");
+        assert_eq!(command.get_args().count(), 0);
+
+        let manifest_path = workspace_manifest_path();
+        assert!(manifest_path.ends_with("Cargo.toml"));
+        assert!(file_modified_time(std::path::Path::new("/definitely/missing")).is_none());
     }
 }

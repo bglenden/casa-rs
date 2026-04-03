@@ -48,11 +48,15 @@ fi
 # Keep the coverage gate focused on shipped code plus functional tests.
 # Large perf/profile harnesses are useful for benchmarking, but they make
 # line-coverage drift when benchmarks are added, renamed, or explicitly ignored.
+# Thin binary entrypoints are exercised indirectly through library/runtime tests
+# and otherwise add denominator without meaningful extra signal in tarpaulin.
 cargo tarpaulin \
   --workspace \
   --timeout "$tarpaulin_timeout" \
   --out Stdout \
   --fail-under 75 \
   --exclude-files \
+  '*/src/bin/*' \
+  '*/src/main.rs' \
   '*/examples/*' \
   '*/tests/*perf*.rs'

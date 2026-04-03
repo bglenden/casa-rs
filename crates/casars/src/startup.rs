@@ -257,11 +257,16 @@ fn render_casars_help() -> String {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     use casacore_ms::msexplore::cli::command_schema;
     use serde_json::json;
 
-    use super::{StartupSelection, StartupValue, parse_schema_prefill_args, parse_startup_args};
+    use super::{
+        StartupPrefill, StartupSelection, StartupValue, decode_arg, find_flag_argument,
+        parse_schema_prefill_args, parse_startup_args, upsert_value,
+    };
 
     #[test]
     fn empty_startup_args_open_launcher() {
@@ -404,6 +409,43 @@ mod tests {
     }
 
     #[test]
+    fn startup_parser_supports_prefill_launches_and_schema_dump_actions() {
+        match parse_startup_args(vec![
+            OsString::from("msexplore"),
+            OsString::from("/tmp/example.ms"),
+            OsString::from("--showlegend"),
+        ])
+        .expect("msexplore startup args")
+        {
+            StartupSelection::App(selection) => {
+                assert_eq!(selection.app.id, "msexplore");
+                assert!(selection.auto_run);
+                assert!(selection.prefill.iter().any(|entry| {
+                    entry.id == "ms_path"
+                        && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
+                }));
+                assert!(selection.prefill.iter().any(|entry| {
+                    entry.id == "showlegend" && entry.value == StartupValue::Toggle(true)
+                }));
+            }
+            other => panic!("expected startup app selection, got {other:?}"),
+        }
+
+        match parse_startup_args(vec![
+            OsString::from("msexplore"),
+            OsString::from("--ui-schema"),
+        ])
+        .expect("ui schema action")
+        {
+            StartupSelection::PrintText(text) => {
+                assert!(text.contains("\"command_id\": \"msexplore\""));
+                assert!(text.contains("\"schema_version\": 1"));
+            }
+            other => panic!("expected ui schema text, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn schema_prefill_rejects_hidden_arguments() {
         let schema = command_schema("msexplore");
         let error = parse_schema_prefill_args(
@@ -412,6 +454,18 @@ mod tests {
         )
         .expect_err("hidden startup arg should fail");
         assert!(error.contains("managed internally"));
+    }
+
+    #[test]
+    fn schema_prefill_reports_unknown_flags_and_missing_option_values() {
+        let schema = command_schema("msexplore");
+        let error = parse_schema_prefill_args(&schema, vec![OsString::from("--bogus")])
+            .expect_err("unknown flag should fail");
+        assert!(error.contains("unknown msexplore argument"));
+
+        let error = parse_schema_prefill_args(&schema, vec![OsString::from("--field")])
+            .expect_err("missing option value should fail");
+        assert!(error.contains("missing value for --field"));
     }
 
     #[test]
@@ -556,5 +610,47 @@ mod tests {
             values[0].value,
             StartupValue::Text("--literal.ms".to_string())
         );
+    }
+
+    #[test]
+    fn helper_functions_cover_non_utf8_and_toggle_updates() {
+        let schema = command_schema("msexplore");
+        let argument = find_flag_argument(&schema, "--showlegend").expect("toggle flag");
+        assert_eq!(argument.id, "showlegend");
+        let argument = find_flag_argument(&schema, "--no-selectdata").expect("false toggle flag");
+        assert_eq!(argument.id, "selectdata");
+        assert!(find_flag_argument(&schema, "--definitely-missing").is_none());
+
+        let mut values = vec![StartupPrefill {
+            id: "showlegend".to_string(),
+            value: StartupValue::Toggle(true),
+        }];
+        upsert_value(
+            &mut values,
+            "showlegend".to_string(),
+            StartupValue::Toggle(false),
+        );
+        upsert_value(
+            &mut values,
+            "field".to_string(),
+            StartupValue::Text("3C286".to_string()),
+        );
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0].value, StartupValue::Toggle(false));
+
+        let error = decode_arg(
+            OsString::from_vec(vec![0xf0, 0x28, 0x8c, 0xbc]),
+            "startup arg",
+        )
+        .expect_err("non-utf8 should fail");
+        assert!(error.contains("startup arg must be valid UTF-8"));
+
+        let error = parse_startup_args(vec![
+            OsString::from("--app"),
+            OsString::from("msexplore"),
+            OsString::from_vec(vec![0xff]),
+        ])
+        .expect_err("non-utf8 startup arg should fail");
+        assert!(error.contains("msexplore must be valid UTF-8"));
     }
 }

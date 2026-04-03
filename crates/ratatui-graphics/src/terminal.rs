@@ -77,7 +77,21 @@ fn term_channel_to_u8(value: u16) -> u8 {
 
 #[cfg(all(test, feature = "terminal-detect"))]
 mod tests {
+    #[cfg(any(feature = "panel", feature = "kitty"))]
+    use super::{TerminalCapabilities, is_ghostty_terminal};
     use super::{term_bg_rgb8, term_channel_to_u8};
+    #[cfg(any(feature = "panel", feature = "kitty"))]
+    use ratatui_image::picker::{Picker, ProtocolType};
+    #[cfg(any(feature = "panel", feature = "kitty"))]
+    use std::env;
+    #[cfg(any(feature = "panel", feature = "kitty"))]
+    use std::sync::{Mutex, OnceLock};
+
+    #[cfg(any(feature = "panel", feature = "kitty"))]
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn term_channel_conversion_covers_bounds() {
@@ -94,5 +108,52 @@ mod tests {
             b: u16::MAX,
         });
         assert_eq!(converted, [0, 128, 255]);
+    }
+
+    #[cfg(any(feature = "panel", feature = "kitty"))]
+    #[test]
+    fn terminal_capabilities_follow_picker_protocol_and_ghostty_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        let old_term_program = env::var_os("TERM_PROGRAM");
+        let old_resources_dir = env::var_os("GHOSTTY_RESOURCES_DIR");
+        let old_bin_dir = env::var_os("GHOSTTY_BIN_DIR");
+        unsafe {
+            env::remove_var("TERM_PROGRAM");
+            env::remove_var("GHOSTTY_RESOURCES_DIR");
+            env::remove_var("GHOSTTY_BIN_DIR");
+        }
+
+        let mut picker = Picker::halfblocks();
+        let caps = TerminalCapabilities::from_picker(&picker);
+        assert_eq!(caps.panel_protocol, ProtocolType::Halfblocks);
+        assert!(!caps.direct_kitty_layers);
+        assert!(!caps.direct_kitty_animations);
+        assert!(!is_ghostty_terminal());
+
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let caps = TerminalCapabilities::from_picker(&picker);
+        assert!(caps.direct_kitty_layers);
+        assert!(caps.direct_kitty_animations);
+
+        unsafe {
+            env::set_var("TERM_PROGRAM", "ghostty");
+        }
+        assert!(is_ghostty_terminal());
+        let caps = TerminalCapabilities::from_picker(&picker);
+        assert!(caps.direct_kitty_layers);
+        assert!(!caps.direct_kitty_animations);
+
+        match old_term_program {
+            Some(value) => unsafe { env::set_var("TERM_PROGRAM", value) },
+            None => unsafe { env::remove_var("TERM_PROGRAM") },
+        }
+        match old_resources_dir {
+            Some(value) => unsafe { env::set_var("GHOSTTY_RESOURCES_DIR", value) },
+            None => unsafe { env::remove_var("GHOSTTY_RESOURCES_DIR") },
+        }
+        match old_bin_dir {
+            Some(value) => unsafe { env::set_var("GHOSTTY_BIN_DIR", value) },
+            None => unsafe { env::remove_var("GHOSTTY_BIN_DIR") },
+        }
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::fs;
 use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::time::{Duration, Instant};
@@ -33,8 +34,11 @@ use casacore_types::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use flate2::read::GzDecoder;
 use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui_graphics::{ProtocolType, TerminalCapabilities};
+use ratatui::backend::{CrosstermBackend, TestBackend};
+use ratatui::layout::Rect;
+use ratatui_graphics::{
+    KittyAnimationControl, KittyAnimationGap, ProtocolType, TerminalCapabilities,
+};
 use tar::Archive;
 use tempfile::tempdir;
 
@@ -47,7 +51,11 @@ use crate::is_suspend_key;
 use crate::registry::{imexplore_app, msexplore_app, registered_apps, tablebrowser_app};
 use crate::theme::theme;
 use crate::ui;
-use crate::{KittyMovieOverlayMode, kitty_movie_overlay_mode, test_env_lock};
+use crate::{
+    KittyMovieOverlay, KittyMovieOverlayMode, first_movie_frame, kitty_movie_overlay_mode,
+    loop_forever, movie_debug_log, movie_frame_number, movie_gap, run_with_app, run_with_cli_args,
+    test_env_lock,
+};
 
 #[test]
 fn launcher_lists_registered_apps_in_expected_order() {
@@ -162,6 +170,163 @@ fn kitty_overlay_env_flags_select_disabled_or_animation_modes() {
         std::env::remove_var("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY");
         std::env::remove_var("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY");
     }
+}
+
+#[test]
+fn movie_overlay_helpers_cover_frame_numbering_and_reset_state() {
+    match movie_gap(0.0) {
+        KittyAnimationGap::Timed(duration) => assert_eq!(duration, Duration::from_secs(1000)),
+        other => panic!("expected timed gap, got {other:?}"),
+    }
+    assert_eq!(loop_forever().get(), 1);
+    assert_eq!(first_movie_frame().get(), 1);
+    assert_eq!(movie_frame_number(0), None);
+    assert_eq!(movie_frame_number(5).expect("frame number").get(), 5);
+
+    let now = Instant::now();
+    let mut overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::Disabled,
+        manager: None,
+        software_store: None,
+        software_slot: None,
+        handle: None,
+        software_images: vec![None],
+        active_movie_key: Some(7),
+        active_axis: Some(1),
+        active_axis_index: Some(2),
+        active_canvas: Some(Rect::new(1, 2, 3, 4)),
+        uploaded_axis_indices: vec![2, 4, 6],
+        seen_axis_indices: vec![true, false, true],
+        active_fps: 2.0,
+        seeding_started_at: Some(now),
+        looping_started_at: Some(now - Duration::from_millis(1100)),
+        looping: true,
+    };
+
+    assert_eq!(overlay.estimated_current_axis_index(now), Some(6));
+    assert_eq!(
+        overlay.estimated_current_axis_index(now + Duration::from_millis(1100)),
+        Some(4)
+    );
+
+    overlay.reset_state();
+    assert_eq!(overlay.active_movie_key, None);
+    assert_eq!(overlay.active_axis, None);
+    assert_eq!(overlay.active_axis_index, None);
+    assert_eq!(overlay.active_canvas, None);
+    assert!(overlay.software_images.is_empty());
+    assert!(overlay.uploaded_axis_indices.is_empty());
+    assert!(overlay.seen_axis_indices.is_empty());
+    assert_eq!(overlay.active_fps, 0.0);
+    assert_eq!(overlay.seeding_started_at, None);
+    assert_eq!(overlay.looping_started_at, None);
+    assert!(!overlay.looping);
+}
+
+#[test]
+fn abandon_for_terminal_reset_clears_overlay_flags() {
+    let (_temp, mut app) = test_app();
+    app.set_image_movie_direct_overlay(true);
+    app.set_image_movie_terminal_looping(true);
+
+    let mut overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::Disabled,
+        manager: None,
+        software_store: None,
+        software_slot: None,
+        handle: None,
+        software_images: vec![None],
+        active_movie_key: Some(11),
+        active_axis: Some(0),
+        active_axis_index: Some(1),
+        active_canvas: Some(Rect::new(0, 0, 10, 4)),
+        uploaded_axis_indices: vec![1, 2],
+        seen_axis_indices: vec![true, true],
+        active_fps: 3.0,
+        seeding_started_at: Some(Instant::now()),
+        looping_started_at: Some(Instant::now()),
+        looping: true,
+    };
+
+    overlay.abandon_for_terminal_reset(&mut app);
+
+    assert!(!app.image_movie_direct_overlay_active());
+    assert!(!app.image_movie_terminal_looping_active());
+    assert_eq!(overlay.active_movie_key, None);
+    assert!(!overlay.looping);
+}
+
+#[test]
+fn movie_debug_log_writes_when_enabled() {
+    let _guard = test_env_lock();
+    let log_path = Path::new("/tmp/casars-imexplore-movie.log");
+    let _ = fs::remove_file(log_path);
+    let unique = format!("movie-debug-{}", std::process::id());
+
+    unsafe {
+        std::env::set_var("CASARS_MOVIE_DEBUG", "1");
+    }
+    movie_debug_log(&unique);
+    unsafe {
+        std::env::remove_var("CASARS_MOVIE_DEBUG");
+    }
+
+    let log = fs::read_to_string(log_path).expect("movie debug log");
+    assert!(log.contains(&unique));
+}
+
+#[test]
+fn disabled_overlay_runtime_helpers_are_safe_noops() {
+    let (_temp, mut app) = test_app();
+    let mut overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::Disabled,
+        manager: None,
+        software_store: None,
+        software_slot: None,
+        handle: None,
+        software_images: vec![None],
+        active_movie_key: Some(5),
+        active_axis: Some(0),
+        active_axis_index: Some(1),
+        active_canvas: Some(Rect::new(0, 0, 10, 4)),
+        uploaded_axis_indices: vec![1, 2],
+        seen_axis_indices: vec![true, true],
+        active_fps: 2.0,
+        seeding_started_at: Some(Instant::now()),
+        looping_started_at: Some(Instant::now()),
+        looping: true,
+    };
+    let mut backend = CrosstermBackend::new(io::stdout());
+
+    overlay
+        .clear(&mut backend, &mut app, true)
+        .expect("clear overlay");
+    assert_eq!(overlay.active_movie_key, None);
+
+    overlay.active_movie_key = Some(7);
+    overlay.active_axis = Some(1);
+    overlay.active_axis_index = Some(2);
+    overlay.active_canvas = Some(Rect::new(1, 1, 10, 4));
+    overlay.looping = true;
+    overlay
+        .hide_visible(&mut backend, &mut app)
+        .expect("hide overlay");
+    assert_eq!(overlay.active_movie_key, None);
+    assert!(!overlay.looping);
+
+    overlay
+        .control_animation_with(&mut backend, KittyAnimationControl::default())
+        .expect("noop animation control");
+}
+
+#[test]
+fn launcher_entrypoints_reject_invalid_requests_before_terminal_setup() {
+    let error = run_with_app(Some("missing-app")).expect_err("missing app should fail");
+    assert!(format!("{error}").contains("unknown casars app"));
+
+    let error = run_with_cli_args([std::ffi::OsString::from("--bogus")])
+        .expect_err("bad cli option should fail");
+    assert!(format!("{error}").contains("unknown casars option"));
 }
 
 #[test]

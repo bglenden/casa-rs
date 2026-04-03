@@ -372,6 +372,8 @@ fn checkbox_hit(column: u16, row_rect: Rect, enabled: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::msexplore_app;
+    use casacore_ms::msexplore::cli::command_schema;
 
     #[test]
     fn popup_index_at_only_returns_visible_rows() {
@@ -390,5 +392,60 @@ mod tests {
         assert!(checkbox_hit(13, row_rect, true));
         assert!(!checkbox_hit(14, row_rect, true));
         assert!(!checkbox_hit(10, row_rect, false));
+    }
+
+    #[test]
+    fn row_view_display_text_covers_checked_and_plain_labels() {
+        let plain = BrowserManagerRowView {
+            target: 1usize,
+            label: "plain".to_string(),
+            checked: None,
+            selected: false,
+        };
+        let enabled = BrowserManagerRowView {
+            target: 2usize,
+            label: "enabled".to_string(),
+            checked: Some(true),
+            selected: true,
+        };
+        let disabled = BrowserManagerRowView {
+            target: 3usize,
+            label: "disabled".to_string(),
+            checked: Some(false),
+            selected: false,
+        };
+
+        assert_eq!(plain.display_text(), "plain");
+        assert_eq!(enabled.display_text(), "[x] enabled");
+        assert_eq!(disabled.display_text(), "[ ] disabled");
+    }
+
+    #[test]
+    fn browser_manager_helpers_noop_cleanly_without_image_session() {
+        let mut app = AppState::from_schema(msexplore_app(), command_schema("msexplore"));
+        let layout = crate::ui::compute_layout(Rect::new(0, 0, 120, 30), &app);
+
+        assert!(!app.browser_mode_picker_active());
+        assert_eq!(app.browser_mode_picker_selection(), None);
+        assert_eq!(
+            app.image_browser_left_pane_mode_for_ui(),
+            ImageBrowserLeftPaneMode::Live
+        );
+        assert!(!app.browser_pane_checkbox_hit(0, 0, &layout));
+        assert!(app.browser_manager_rows().is_empty());
+
+        app.open_browser_mode_picker();
+        assert!(!app.browser_mode_picker_active());
+        app.cycle_browser_mode_picker(true);
+        app.commit_browser_mode_picker();
+        app.close_browser_mode_picker();
+        assert_eq!(app.browser_mode_picker_selection(), None);
+
+        app.load_selected_image_region_definition();
+        app.rename_image_region_definition();
+        app.delete_image_region_definition();
+        app.set_selected_image_mask_default();
+        app.delete_selected_image_mask();
+        assert_eq!(app.result_status_kind(), "info");
     }
 }
