@@ -7177,51 +7177,955 @@
 <a href=#7177 id=7177 data-nosnippet>7177</a>    <span class="kw">use </span>plotters::style::Color;
 <a href=#7178 id=7178 data-nosnippet>7178</a>
 <a href=#7179 id=7179 data-nosnippet>7179</a>    <span class="attr">#[test]
-<a href=#7180 id=7180 data-nosnippet>7180</a>    </span><span class="kw">fn </span>dual_axis_series_styles_use_distinct_markers_and_colors() {
-<a href=#7181 id=7181 data-nosnippet>7181</a>        <span class="kw">let </span>theme = ListObsPlotTheme::light();
-<a href=#7182 id=7182 data-nosnippet>7182</a>        <span class="kw">let </span>primary = MsScatterSeries {
-<a href=#7183 id=7183 data-nosnippet>7183</a>            label: <span class="string">"Amplitude"</span>.to_string(),
-<a href=#7184 id=7184 data-nosnippet>7184</a>            color_group: <span class="string">"all"</span>.to_string(),
-<a href=#7185 id=7185 data-nosnippet>7185</a>            y_axis: MsAxis::Amplitude,
-<a href=#7186 id=7186 data-nosnippet>7186</a>            points: <span class="macro">vec!</span>[(<span class="number">0.0</span>, <span class="number">1.0</span>)],
-<a href=#7187 id=7187 data-nosnippet>7187</a>            provenance: <span class="macro">vec!</span>[MsScatterPointRef {
-<a href=#7188 id=7188 data-nosnippet>7188</a>                row: <span class="number">0</span>,
-<a href=#7189 id=7189 data-nosnippet>7189</a>                corr: <span class="number">0</span>,
-<a href=#7190 id=7190 data-nosnippet>7190</a>                chan_start: <span class="number">0</span>,
-<a href=#7191 id=7191 data-nosnippet>7191</a>                chan_end: <span class="number">1</span>,
-<a href=#7192 id=7192 data-nosnippet>7192</a>            }],
-<a href=#7193 id=7193 data-nosnippet>7193</a>        };
-<a href=#7194 id=7194 data-nosnippet>7194</a>        <span class="kw">let </span>secondary = MsScatterSeries {
-<a href=#7195 id=7195 data-nosnippet>7195</a>            label: <span class="string">"Phase"</span>.to_string(),
-<a href=#7196 id=7196 data-nosnippet>7196</a>            color_group: <span class="string">"all"</span>.to_string(),
-<a href=#7197 id=7197 data-nosnippet>7197</a>            y_axis: MsAxis::Phase,
-<a href=#7198 id=7198 data-nosnippet>7198</a>            points: <span class="macro">vec!</span>[(<span class="number">0.0</span>, <span class="number">2.0</span>)],
-<a href=#7199 id=7199 data-nosnippet>7199</a>            provenance: <span class="macro">vec!</span>[MsScatterPointRef {
-<a href=#7200 id=7200 data-nosnippet>7200</a>                row: <span class="number">0</span>,
-<a href=#7201 id=7201 data-nosnippet>7201</a>                corr: <span class="number">0</span>,
-<a href=#7202 id=7202 data-nosnippet>7202</a>                chan_start: <span class="number">0</span>,
-<a href=#7203 id=7203 data-nosnippet>7203</a>                chan_end: <span class="number">1</span>,
-<a href=#7204 id=7204 data-nosnippet>7204</a>            }],
-<a href=#7205 id=7205 data-nosnippet>7205</a>        };
-<a href=#7206 id=7206 data-nosnippet>7206</a>
-<a href=#7207 id=7207 data-nosnippet>7207</a>        <span class="kw">let </span>primary_style =
-<a href=#7208 id=7208 data-nosnippet>7208</a>            scatter_series_style(<span class="kw-2">&amp;</span>primary, MsAxis::Amplitude, <span class="prelude-val">Some</span>(MsAxis::Phase), theme);
-<a href=#7209 id=7209 data-nosnippet>7209</a>        <span class="kw">let </span>secondary_style =
-<a href=#7210 id=7210 data-nosnippet>7210</a>            scatter_series_style(<span class="kw-2">&amp;</span>secondary, MsAxis::Amplitude, <span class="prelude-val">Some</span>(MsAxis::Phase), theme);
-<a href=#7211 id=7211 data-nosnippet>7211</a>
-<a href=#7212 id=7212 data-nosnippet>7212</a>        <span class="macro">assert_eq!</span>(primary_style.marker, ScatterMarker::FilledCircle);
-<a href=#7213 id=7213 data-nosnippet>7213</a>        <span class="macro">assert_eq!</span>(secondary_style.marker, ScatterMarker::HollowSquare);
-<a href=#7214 id=7214 data-nosnippet>7214</a>        <span class="macro">assert_ne!</span>(primary_style.color, secondary_style.color);
-<a href=#7215 id=7215 data-nosnippet>7215</a>    }
-<a href=#7216 id=7216 data-nosnippet>7216</a>
-<a href=#7217 id=7217 data-nosnippet>7217</a>    <span class="attr">#[test]
-<a href=#7218 id=7218 data-nosnippet>7218</a>    </span><span class="kw">fn </span>internal_legend_text_style_uses_theme_axis_color() {
-<a href=#7219 id=7219 data-nosnippet>7219</a>        <span class="kw">let </span>theme = ListObsPlotTheme::dark();
-<a href=#7220 id=7220 data-nosnippet>7220</a>        <span class="kw">let </span>style = ListObsPlotRenderStyle::for_bitmap_size(<span class="number">1200</span>, <span class="number">800</span>);
-<a href=#7221 id=7221 data-nosnippet>7221</a>
-<a href=#7222 id=7222 data-nosnippet>7222</a>        <span class="kw">let </span>text_style = internal_scatter_legend_text_style(theme, style);
-<a href=#7223 id=7223 data-nosnippet>7223</a>
-<a href=#7224 id=7224 data-nosnippet>7224</a>        <span class="macro">assert_eq!</span>(text_style.color.rgb, rgb(theme.axis).to_backend_color().rgb);
-<a href=#7225 id=7225 data-nosnippet>7225</a>    }
-<a href=#7226 id=7226 data-nosnippet>7226</a>}
+<a href=#7180 id=7180 data-nosnippet>7180</a>    </span><span class="kw">fn </span>preset_enum_surfaces_round_trip_and_cover_aliases() {
+<a href=#7181 id=7181 data-nosnippet>7181</a>        <span class="kw">for </span>preset <span class="kw">in </span>MsPlotPreset::ALL {
+<a href=#7182 id=7182 data-nosnippet>7182</a>            <span class="macro">assert_eq!</span>(MsPlotPreset::parse(preset.as_str()).unwrap(), preset);
+<a href=#7183 id=7183 data-nosnippet>7183</a>            <span class="macro">assert_eq!</span>(preset.to_string(), preset.as_str());
+<a href=#7184 id=7184 data-nosnippet>7184</a>            <span class="macro">assert!</span>(!preset.display_name().is_empty());
+<a href=#7185 id=7185 data-nosnippet>7185</a>        }
+<a href=#7186 id=7186 data-nosnippet>7186</a>
+<a href=#7187 id=7187 data-nosnippet>7187</a>        <span class="kw">let </span>alias_cases = [
+<a href=#7188 id=7188 data-nosnippet>7188</a>            (<span class="string">"uv"</span>, MsPlotPreset::UvCoverage),
+<a href=#7189 id=7189 data-nosnippet>7189</a>            (<span class="string">"antennas"</span>, MsPlotPreset::AntennaLayout),
+<a href=#7190 id=7190 data-nosnippet>7190</a>            (<span class="string">"scans"</span>, MsPlotPreset::ScanTimeline),
+<a href=#7191 id=7191 data-nosnippet>7191</a>            (<span class="string">"spw_coverage"</span>, MsPlotPreset::SpectralWindowCoverage),
+<a href=#7192 id=7192 data-nosnippet>7192</a>            (<span class="string">"spws"</span>, MsPlotPreset::SpectralWindowCoverage),
+<a href=#7193 id=7193 data-nosnippet>7193</a>            (<span class="string">"amp_time"</span>, MsPlotPreset::AmplitudeVsTime),
+<a href=#7194 id=7194 data-nosnippet>7194</a>            (<span class="string">"phase_time"</span>, MsPlotPreset::PhaseVsTime),
+<a href=#7195 id=7195 data-nosnippet>7195</a>            (
+<a href=#7196 id=7196 data-nosnippet>7196</a>                <span class="string">"amp_phase_time_stacked"</span>,
+<a href=#7197 id=7197 data-nosnippet>7197</a>                MsPlotPreset::AmplitudePhaseVsTimeStacked,
+<a href=#7198 id=7198 data-nosnippet>7198</a>            ),
+<a href=#7199 id=7199 data-nosnippet>7199</a>            (<span class="string">"amplitude_vs_uvdist"</span>, MsPlotPreset::AmplitudeVsUvDistance),
+<a href=#7200 id=7200 data-nosnippet>7200</a>            (<span class="string">"amp_uvdist"</span>, MsPlotPreset::AmplitudeVsUvDistance),
+<a href=#7201 id=7201 data-nosnippet>7201</a>            (<span class="string">"wt_time"</span>, MsPlotPreset::WeightVsTime),
+<a href=#7202 id=7202 data-nosnippet>7202</a>            (<span class="string">"sigma_time"</span>, MsPlotPreset::SigmaVsTime),
+<a href=#7203 id=7203 data-nosnippet>7203</a>            (<span class="string">"flag_time"</span>, MsPlotPreset::FlagVsTime),
+<a href=#7204 id=7204 data-nosnippet>7204</a>            (<span class="string">"wtsp_time"</span>, MsPlotPreset::WeightSpectrumVsTime),
+<a href=#7205 id=7205 data-nosnippet>7205</a>            (<span class="string">"sigmasp_time"</span>, MsPlotPreset::SigmaSpectrumVsTime),
+<a href=#7206 id=7206 data-nosnippet>7206</a>            (<span class="string">"flagrow_time"</span>, MsPlotPreset::FlagRowVsTime),
+<a href=#7207 id=7207 data-nosnippet>7207</a>            (<span class="string">"elevation_time"</span>, MsPlotPreset::ElevationVsTime),
+<a href=#7208 id=7208 data-nosnippet>7208</a>            (<span class="string">"azimuth_time"</span>, MsPlotPreset::AzimuthVsTime),
+<a href=#7209 id=7209 data-nosnippet>7209</a>            (<span class="string">"hourang_vs_time"</span>, MsPlotPreset::HourAngleVsTime),
+<a href=#7210 id=7210 data-nosnippet>7210</a>            (<span class="string">"hourang_time"</span>, MsPlotPreset::HourAngleVsTime),
+<a href=#7211 id=7211 data-nosnippet>7211</a>            (<span class="string">"parang_vs_time"</span>, MsPlotPreset::ParallacticAngleVsTime),
+<a href=#7212 id=7212 data-nosnippet>7212</a>            (<span class="string">"parang_time"</span>, MsPlotPreset::ParallacticAngleVsTime),
+<a href=#7213 id=7213 data-nosnippet>7213</a>            (<span class="string">"azimuth_elevation"</span>, MsPlotPreset::AzimuthVsElevation),
+<a href=#7214 id=7214 data-nosnippet>7214</a>            (<span class="string">"amp_channel"</span>, MsPlotPreset::AmplitudeVsChannel),
+<a href=#7215 id=7215 data-nosnippet>7215</a>            (<span class="string">"phase_channel"</span>, MsPlotPreset::PhaseVsChannel),
+<a href=#7216 id=7216 data-nosnippet>7216</a>            (<span class="string">"amp_frequency"</span>, MsPlotPreset::AmplitudeVsFrequency),
+<a href=#7217 id=7217 data-nosnippet>7217</a>            (<span class="string">"phase_frequency"</span>, MsPlotPreset::PhaseVsFrequency),
+<a href=#7218 id=7218 data-nosnippet>7218</a>            (<span class="string">"amp_velocity"</span>, MsPlotPreset::AmplitudeVsVelocity),
+<a href=#7219 id=7219 data-nosnippet>7219</a>            (<span class="string">"phase_velocity"</span>, MsPlotPreset::PhaseVsVelocity),
+<a href=#7220 id=7220 data-nosnippet>7220</a>            (<span class="string">"real_vs_imag"</span>, MsPlotPreset::RealVsImaginary),
+<a href=#7221 id=7221 data-nosnippet>7221</a>        ];
+<a href=#7222 id=7222 data-nosnippet>7222</a>        <span class="kw">for </span>(alias, expected) <span class="kw">in </span>alias_cases {
+<a href=#7223 id=7223 data-nosnippet>7223</a>            <span class="macro">assert_eq!</span>(MsPlotPreset::parse(alias).unwrap(), expected);
+<a href=#7224 id=7224 data-nosnippet>7224</a>        }
+<a href=#7225 id=7225 data-nosnippet>7225</a>        <span class="macro">assert!</span>(
+<a href=#7226 id=7226 data-nosnippet>7226</a>            MsPlotPreset::parse(<span class="string">"nope"</span>)
+<a href=#7227 id=7227 data-nosnippet>7227</a>                .unwrap_err()
+<a href=#7228 id=7228 data-nosnippet>7228</a>                .contains(<span class="string">"unsupported"</span>)
+<a href=#7229 id=7229 data-nosnippet>7229</a>        );
+<a href=#7230 id=7230 data-nosnippet>7230</a>
+<a href=#7231 id=7231 data-nosnippet>7231</a>        <span class="kw">let </span>metadata_pairs = [
+<a href=#7232 id=7232 data-nosnippet>7232</a>            (ListObsPlotKind::UvCoverage, MsPlotPreset::UvCoverage),
+<a href=#7233 id=7233 data-nosnippet>7233</a>            (ListObsPlotKind::AntennaLayout, MsPlotPreset::AntennaLayout),
+<a href=#7234 id=7234 data-nosnippet>7234</a>            (ListObsPlotKind::ScanTimeline, MsPlotPreset::ScanTimeline),
+<a href=#7235 id=7235 data-nosnippet>7235</a>            (
+<a href=#7236 id=7236 data-nosnippet>7236</a>                ListObsPlotKind::SpectralWindowCoverage,
+<a href=#7237 id=7237 data-nosnippet>7237</a>                MsPlotPreset::SpectralWindowCoverage,
+<a href=#7238 id=7238 data-nosnippet>7238</a>            ),
+<a href=#7239 id=7239 data-nosnippet>7239</a>            (
+<a href=#7240 id=7240 data-nosnippet>7240</a>                ListObsPlotKind::AmplitudeVsTime,
+<a href=#7241 id=7241 data-nosnippet>7241</a>                MsPlotPreset::AmplitudeVsTime,
+<a href=#7242 id=7242 data-nosnippet>7242</a>            ),
+<a href=#7243 id=7243 data-nosnippet>7243</a>            (ListObsPlotKind::PhaseVsTime, MsPlotPreset::PhaseVsTime),
+<a href=#7244 id=7244 data-nosnippet>7244</a>            (
+<a href=#7245 id=7245 data-nosnippet>7245</a>                ListObsPlotKind::AmplitudeVsUvDistance,
+<a href=#7246 id=7246 data-nosnippet>7246</a>                MsPlotPreset::AmplitudeVsUvDistance,
+<a href=#7247 id=7247 data-nosnippet>7247</a>            ),
+<a href=#7248 id=7248 data-nosnippet>7248</a>        ];
+<a href=#7249 id=7249 data-nosnippet>7249</a>        <span class="kw">for </span>(kind, preset) <span class="kw">in </span>metadata_pairs {
+<a href=#7250 id=7250 data-nosnippet>7250</a>            <span class="macro">assert_eq!</span>(MsPlotPreset::from_listobs_kind(kind), preset);
+<a href=#7251 id=7251 data-nosnippet>7251</a>        }
+<a href=#7252 id=7252 data-nosnippet>7252</a>        <span class="macro">assert_eq!</span>(
+<a href=#7253 id=7253 data-nosnippet>7253</a>            MsPlotPreset::UvCoverage.lowers_to_listobs_metadata(),
+<a href=#7254 id=7254 data-nosnippet>7254</a>            <span class="prelude-val">Some</span>(ListObsPlotKind::UvCoverage)
+<a href=#7255 id=7255 data-nosnippet>7255</a>        );
+<a href=#7256 id=7256 data-nosnippet>7256</a>        <span class="macro">assert_eq!</span>(
+<a href=#7257 id=7257 data-nosnippet>7257</a>            MsPlotPreset::AmplitudeVsFrequency.lowers_to_listobs_metadata(),
+<a href=#7258 id=7258 data-nosnippet>7258</a>            <span class="prelude-val">None
+<a href=#7259 id=7259 data-nosnippet>7259</a>        </span>);
+<a href=#7260 id=7260 data-nosnippet>7260</a>    }
+<a href=#7261 id=7261 data-nosnippet>7261</a>
+<a href=#7262 id=7262 data-nosnippet>7262</a>    <span class="attr">#[test]
+<a href=#7263 id=7263 data-nosnippet>7263</a>    </span><span class="kw">fn </span>axis_and_related_enums_cover_aliases_and_helper_flags() {
+<a href=#7264 id=7264 data-nosnippet>7264</a>        <span class="kw">let </span>axis_cases = [
+<a href=#7265 id=7265 data-nosnippet>7265</a>            (
+<a href=#7266 id=7266 data-nosnippet>7266</a>                MsAxis::Amplitude,
+<a href=#7267 id=7267 data-nosnippet>7267</a>                <span class="kw-2">&amp;</span>[<span class="string">"amp"</span>, <span class="string">"amplitude"</span>][..],
+<a href=#7268 id=7268 data-nosnippet>7268</a>                <span class="string">"Amplitude"</span>,
+<a href=#7269 id=7269 data-nosnippet>7269</a>                <span class="bool-val">true</span>,
+<a href=#7270 id=7270 data-nosnippet>7270</a>                <span class="bool-val">false</span>,
+<a href=#7271 id=7271 data-nosnippet>7271</a>                <span class="bool-val">true</span>,
+<a href=#7272 id=7272 data-nosnippet>7272</a>                <span class="bool-val">false</span>,
+<a href=#7273 id=7273 data-nosnippet>7273</a>                <span class="bool-val">true</span>,
+<a href=#7274 id=7274 data-nosnippet>7274</a>                <span class="bool-val">false</span>,
+<a href=#7275 id=7275 data-nosnippet>7275</a>            ),
+<a href=#7276 id=7276 data-nosnippet>7276</a>            (
+<a href=#7277 id=7277 data-nosnippet>7277</a>                MsAxis::Phase,
+<a href=#7278 id=7278 data-nosnippet>7278</a>                <span class="kw-2">&amp;</span>[<span class="string">"phase"</span>][..],
+<a href=#7279 id=7279 data-nosnippet>7279</a>                <span class="string">"Phase"</span>,
+<a href=#7280 id=7280 data-nosnippet>7280</a>                <span class="bool-val">true</span>,
+<a href=#7281 id=7281 data-nosnippet>7281</a>                <span class="bool-val">false</span>,
+<a href=#7282 id=7282 data-nosnippet>7282</a>                <span class="bool-val">true</span>,
+<a href=#7283 id=7283 data-nosnippet>7283</a>                <span class="bool-val">false</span>,
+<a href=#7284 id=7284 data-nosnippet>7284</a>                <span class="bool-val">true</span>,
+<a href=#7285 id=7285 data-nosnippet>7285</a>                <span class="bool-val">false</span>,
+<a href=#7286 id=7286 data-nosnippet>7286</a>            ),
+<a href=#7287 id=7287 data-nosnippet>7287</a>            (
+<a href=#7288 id=7288 data-nosnippet>7288</a>                MsAxis::Real,
+<a href=#7289 id=7289 data-nosnippet>7289</a>                <span class="kw-2">&amp;</span>[<span class="string">"real"</span>][..],
+<a href=#7290 id=7290 data-nosnippet>7290</a>                <span class="string">"Real"</span>,
+<a href=#7291 id=7291 data-nosnippet>7291</a>                <span class="bool-val">true</span>,
+<a href=#7292 id=7292 data-nosnippet>7292</a>                <span class="bool-val">false</span>,
+<a href=#7293 id=7293 data-nosnippet>7293</a>                <span class="bool-val">true</span>,
+<a href=#7294 id=7294 data-nosnippet>7294</a>                <span class="bool-val">false</span>,
+<a href=#7295 id=7295 data-nosnippet>7295</a>                <span class="bool-val">true</span>,
+<a href=#7296 id=7296 data-nosnippet>7296</a>                <span class="bool-val">false</span>,
+<a href=#7297 id=7297 data-nosnippet>7297</a>            ),
+<a href=#7298 id=7298 data-nosnippet>7298</a>            (
+<a href=#7299 id=7299 data-nosnippet>7299</a>                MsAxis::Imaginary,
+<a href=#7300 id=7300 data-nosnippet>7300</a>                <span class="kw-2">&amp;</span>[<span class="string">"imag"</span>, <span class="string">"imaginary"</span>][..],
+<a href=#7301 id=7301 data-nosnippet>7301</a>                <span class="string">"Imaginary"</span>,
+<a href=#7302 id=7302 data-nosnippet>7302</a>                <span class="bool-val">true</span>,
+<a href=#7303 id=7303 data-nosnippet>7303</a>                <span class="bool-val">false</span>,
+<a href=#7304 id=7304 data-nosnippet>7304</a>                <span class="bool-val">true</span>,
+<a href=#7305 id=7305 data-nosnippet>7305</a>                <span class="bool-val">false</span>,
+<a href=#7306 id=7306 data-nosnippet>7306</a>                <span class="bool-val">true</span>,
+<a href=#7307 id=7307 data-nosnippet>7307</a>                <span class="bool-val">false</span>,
+<a href=#7308 id=7308 data-nosnippet>7308</a>            ),
+<a href=#7309 id=7309 data-nosnippet>7309</a>            (
+<a href=#7310 id=7310 data-nosnippet>7310</a>                MsAxis::Time,
+<a href=#7311 id=7311 data-nosnippet>7311</a>                <span class="kw-2">&amp;</span>[<span class="string">"time"</span>][..],
+<a href=#7312 id=7312 data-nosnippet>7312</a>                <span class="string">"Time"</span>,
+<a href=#7313 id=7313 data-nosnippet>7313</a>                <span class="bool-val">false</span>,
+<a href=#7314 id=7314 data-nosnippet>7314</a>                <span class="bool-val">false</span>,
+<a href=#7315 id=7315 data-nosnippet>7315</a>                <span class="bool-val">false</span>,
+<a href=#7316 id=7316 data-nosnippet>7316</a>                <span class="bool-val">false</span>,
+<a href=#7317 id=7317 data-nosnippet>7317</a>                <span class="bool-val">false</span>,
+<a href=#7318 id=7318 data-nosnippet>7318</a>                <span class="bool-val">false</span>,
+<a href=#7319 id=7319 data-nosnippet>7319</a>            ),
+<a href=#7320 id=7320 data-nosnippet>7320</a>            (
+<a href=#7321 id=7321 data-nosnippet>7321</a>                MsAxis::Channel,
+<a href=#7322 id=7322 data-nosnippet>7322</a>                <span class="kw-2">&amp;</span>[<span class="string">"chan"</span>, <span class="string">"channel"</span>][..],
+<a href=#7323 id=7323 data-nosnippet>7323</a>                <span class="string">"Channel"</span>,
+<a href=#7324 id=7324 data-nosnippet>7324</a>                <span class="bool-val">false</span>,
+<a href=#7325 id=7325 data-nosnippet>7325</a>                <span class="bool-val">false</span>,
+<a href=#7326 id=7326 data-nosnippet>7326</a>                <span class="bool-val">true</span>,
+<a href=#7327 id=7327 data-nosnippet>7327</a>                <span class="bool-val">false</span>,
+<a href=#7328 id=7328 data-nosnippet>7328</a>                <span class="bool-val">false</span>,
+<a href=#7329 id=7329 data-nosnippet>7329</a>                <span class="bool-val">false</span>,
+<a href=#7330 id=7330 data-nosnippet>7330</a>            ),
+<a href=#7331 id=7331 data-nosnippet>7331</a>            (
+<a href=#7332 id=7332 data-nosnippet>7332</a>                MsAxis::Frequency,
+<a href=#7333 id=7333 data-nosnippet>7333</a>                <span class="kw-2">&amp;</span>[<span class="string">"freq"</span>, <span class="string">"frequency"</span>][..],
+<a href=#7334 id=7334 data-nosnippet>7334</a>                <span class="string">"Frequency"</span>,
+<a href=#7335 id=7335 data-nosnippet>7335</a>                <span class="bool-val">false</span>,
+<a href=#7336 id=7336 data-nosnippet>7336</a>                <span class="bool-val">false</span>,
+<a href=#7337 id=7337 data-nosnippet>7337</a>                <span class="bool-val">true</span>,
+<a href=#7338 id=7338 data-nosnippet>7338</a>                <span class="bool-val">false</span>,
+<a href=#7339 id=7339 data-nosnippet>7339</a>                <span class="bool-val">false</span>,
+<a href=#7340 id=7340 data-nosnippet>7340</a>                <span class="bool-val">true</span>,
+<a href=#7341 id=7341 data-nosnippet>7341</a>            ),
+<a href=#7342 id=7342 data-nosnippet>7342</a>            (
+<a href=#7343 id=7343 data-nosnippet>7343</a>                MsAxis::Velocity,
+<a href=#7344 id=7344 data-nosnippet>7344</a>                <span class="kw-2">&amp;</span>[<span class="string">"velocity"</span>, <span class="string">"vel"</span>][..],
+<a href=#7345 id=7345 data-nosnippet>7345</a>                <span class="string">"Velocity"</span>,
+<a href=#7346 id=7346 data-nosnippet>7346</a>                <span class="bool-val">false</span>,
+<a href=#7347 id=7347 data-nosnippet>7347</a>                <span class="bool-val">false</span>,
+<a href=#7348 id=7348 data-nosnippet>7348</a>                <span class="bool-val">true</span>,
+<a href=#7349 id=7349 data-nosnippet>7349</a>                <span class="bool-val">false</span>,
+<a href=#7350 id=7350 data-nosnippet>7350</a>                <span class="bool-val">false</span>,
+<a href=#7351 id=7351 data-nosnippet>7351</a>                <span class="bool-val">true</span>,
+<a href=#7352 id=7352 data-nosnippet>7352</a>            ),
+<a href=#7353 id=7353 data-nosnippet>7353</a>            (
+<a href=#7354 id=7354 data-nosnippet>7354</a>                MsAxis::UvDistance,
+<a href=#7355 id=7355 data-nosnippet>7355</a>                <span class="kw-2">&amp;</span>[<span class="string">"uvdist"</span>, <span class="string">"uv_distance"</span>, <span class="string">"uv-distance"</span>][..],
+<a href=#7356 id=7356 data-nosnippet>7356</a>                <span class="string">"UV Distance"</span>,
+<a href=#7357 id=7357 data-nosnippet>7357</a>                <span class="bool-val">false</span>,
+<a href=#7358 id=7358 data-nosnippet>7358</a>                <span class="bool-val">false</span>,
+<a href=#7359 id=7359 data-nosnippet>7359</a>                <span class="bool-val">false</span>,
+<a href=#7360 id=7360 data-nosnippet>7360</a>                <span class="bool-val">false</span>,
+<a href=#7361 id=7361 data-nosnippet>7361</a>                <span class="bool-val">false</span>,
+<a href=#7362 id=7362 data-nosnippet>7362</a>                <span class="bool-val">false</span>,
+<a href=#7363 id=7363 data-nosnippet>7363</a>            ),
+<a href=#7364 id=7364 data-nosnippet>7364</a>            (
+<a href=#7365 id=7365 data-nosnippet>7365</a>                MsAxis::U,
+<a href=#7366 id=7366 data-nosnippet>7366</a>                <span class="kw-2">&amp;</span>[<span class="string">"u"</span>][..],
+<a href=#7367 id=7367 data-nosnippet>7367</a>                <span class="string">"U"</span>,
+<a href=#7368 id=7368 data-nosnippet>7368</a>                <span class="bool-val">false</span>,
+<a href=#7369 id=7369 data-nosnippet>7369</a>                <span class="bool-val">false</span>,
+<a href=#7370 id=7370 data-nosnippet>7370</a>                <span class="bool-val">false</span>,
+<a href=#7371 id=7371 data-nosnippet>7371</a>                <span class="bool-val">false</span>,
+<a href=#7372 id=7372 data-nosnippet>7372</a>                <span class="bool-val">false</span>,
+<a href=#7373 id=7373 data-nosnippet>7373</a>                <span class="bool-val">false</span>,
+<a href=#7374 id=7374 data-nosnippet>7374</a>            ),
+<a href=#7375 id=7375 data-nosnippet>7375</a>            (
+<a href=#7376 id=7376 data-nosnippet>7376</a>                MsAxis::V,
+<a href=#7377 id=7377 data-nosnippet>7377</a>                <span class="kw-2">&amp;</span>[<span class="string">"v"</span>][..],
+<a href=#7378 id=7378 data-nosnippet>7378</a>                <span class="string">"V"</span>,
+<a href=#7379 id=7379 data-nosnippet>7379</a>                <span class="bool-val">false</span>,
+<a href=#7380 id=7380 data-nosnippet>7380</a>                <span class="bool-val">false</span>,
+<a href=#7381 id=7381 data-nosnippet>7381</a>                <span class="bool-val">false</span>,
+<a href=#7382 id=7382 data-nosnippet>7382</a>                <span class="bool-val">false</span>,
+<a href=#7383 id=7383 data-nosnippet>7383</a>                <span class="bool-val">false</span>,
+<a href=#7384 id=7384 data-nosnippet>7384</a>                <span class="bool-val">false</span>,
+<a href=#7385 id=7385 data-nosnippet>7385</a>            ),
+<a href=#7386 id=7386 data-nosnippet>7386</a>            (
+<a href=#7387 id=7387 data-nosnippet>7387</a>                MsAxis::W,
+<a href=#7388 id=7388 data-nosnippet>7388</a>                <span class="kw-2">&amp;</span>[<span class="string">"w"</span>][..],
+<a href=#7389 id=7389 data-nosnippet>7389</a>                <span class="string">"W"</span>,
+<a href=#7390 id=7390 data-nosnippet>7390</a>                <span class="bool-val">false</span>,
+<a href=#7391 id=7391 data-nosnippet>7391</a>                <span class="bool-val">false</span>,
+<a href=#7392 id=7392 data-nosnippet>7392</a>                <span class="bool-val">false</span>,
+<a href=#7393 id=7393 data-nosnippet>7393</a>                <span class="bool-val">false</span>,
+<a href=#7394 id=7394 data-nosnippet>7394</a>                <span class="bool-val">false</span>,
+<a href=#7395 id=7395 data-nosnippet>7395</a>                <span class="bool-val">false</span>,
+<a href=#7396 id=7396 data-nosnippet>7396</a>            ),
+<a href=#7397 id=7397 data-nosnippet>7397</a>            (
+<a href=#7398 id=7398 data-nosnippet>7398</a>                MsAxis::Scan,
+<a href=#7399 id=7399 data-nosnippet>7399</a>                <span class="kw-2">&amp;</span>[<span class="string">"scan"</span>][..],
+<a href=#7400 id=7400 data-nosnippet>7400</a>                <span class="string">"Scan"</span>,
+<a href=#7401 id=7401 data-nosnippet>7401</a>                <span class="bool-val">false</span>,
+<a href=#7402 id=7402 data-nosnippet>7402</a>                <span class="bool-val">false</span>,
+<a href=#7403 id=7403 data-nosnippet>7403</a>                <span class="bool-val">false</span>,
+<a href=#7404 id=7404 data-nosnippet>7404</a>                <span class="bool-val">false</span>,
+<a href=#7405 id=7405 data-nosnippet>7405</a>                <span class="bool-val">false</span>,
+<a href=#7406 id=7406 data-nosnippet>7406</a>                <span class="bool-val">false</span>,
+<a href=#7407 id=7407 data-nosnippet>7407</a>            ),
+<a href=#7408 id=7408 data-nosnippet>7408</a>            (
+<a href=#7409 id=7409 data-nosnippet>7409</a>                MsAxis::Field,
+<a href=#7410 id=7410 data-nosnippet>7410</a>                <span class="kw-2">&amp;</span>[<span class="string">"field"</span>][..],
+<a href=#7411 id=7411 data-nosnippet>7411</a>                <span class="string">"Field"</span>,
+<a href=#7412 id=7412 data-nosnippet>7412</a>                <span class="bool-val">false</span>,
+<a href=#7413 id=7413 data-nosnippet>7413</a>                <span class="bool-val">false</span>,
+<a href=#7414 id=7414 data-nosnippet>7414</a>                <span class="bool-val">false</span>,
+<a href=#7415 id=7415 data-nosnippet>7415</a>                <span class="bool-val">false</span>,
+<a href=#7416 id=7416 data-nosnippet>7416</a>                <span class="bool-val">false</span>,
+<a href=#7417 id=7417 data-nosnippet>7417</a>                <span class="bool-val">false</span>,
+<a href=#7418 id=7418 data-nosnippet>7418</a>            ),
+<a href=#7419 id=7419 data-nosnippet>7419</a>            (
+<a href=#7420 id=7420 data-nosnippet>7420</a>                MsAxis::SpectralWindow,
+<a href=#7421 id=7421 data-nosnippet>7421</a>                <span class="kw-2">&amp;</span>[<span class="string">"spw"</span>, <span class="string">"spectral_window"</span>, <span class="string">"spectral-window"</span>][..],
+<a href=#7422 id=7422 data-nosnippet>7422</a>                <span class="string">"Spectral Window"</span>,
+<a href=#7423 id=7423 data-nosnippet>7423</a>                <span class="bool-val">false</span>,
+<a href=#7424 id=7424 data-nosnippet>7424</a>                <span class="bool-val">false</span>,
+<a href=#7425 id=7425 data-nosnippet>7425</a>                <span class="bool-val">false</span>,
+<a href=#7426 id=7426 data-nosnippet>7426</a>                <span class="bool-val">false</span>,
+<a href=#7427 id=7427 data-nosnippet>7427</a>                <span class="bool-val">false</span>,
+<a href=#7428 id=7428 data-nosnippet>7428</a>                <span class="bool-val">false</span>,
+<a href=#7429 id=7429 data-nosnippet>7429</a>            ),
+<a href=#7430 id=7430 data-nosnippet>7430</a>            (
+<a href=#7431 id=7431 data-nosnippet>7431</a>                MsAxis::Correlation,
+<a href=#7432 id=7432 data-nosnippet>7432</a>                <span class="kw-2">&amp;</span>[<span class="string">"corr"</span>, <span class="string">"correlation"</span>][..],
+<a href=#7433 id=7433 data-nosnippet>7433</a>                <span class="string">"Correlation"</span>,
+<a href=#7434 id=7434 data-nosnippet>7434</a>                <span class="bool-val">false</span>,
+<a href=#7435 id=7435 data-nosnippet>7435</a>                <span class="bool-val">false</span>,
+<a href=#7436 id=7436 data-nosnippet>7436</a>                <span class="bool-val">false</span>,
+<a href=#7437 id=7437 data-nosnippet>7437</a>                <span class="bool-val">false</span>,
+<a href=#7438 id=7438 data-nosnippet>7438</a>                <span class="bool-val">false</span>,
+<a href=#7439 id=7439 data-nosnippet>7439</a>                <span class="bool-val">false</span>,
+<a href=#7440 id=7440 data-nosnippet>7440</a>            ),
+<a href=#7441 id=7441 data-nosnippet>7441</a>            (
+<a href=#7442 id=7442 data-nosnippet>7442</a>                MsAxis::Baseline,
+<a href=#7443 id=7443 data-nosnippet>7443</a>                <span class="kw-2">&amp;</span>[<span class="string">"baseline"</span>][..],
+<a href=#7444 id=7444 data-nosnippet>7444</a>                <span class="string">"Baseline"</span>,
+<a href=#7445 id=7445 data-nosnippet>7445</a>                <span class="bool-val">false</span>,
+<a href=#7446 id=7446 data-nosnippet>7446</a>                <span class="bool-val">false</span>,
+<a href=#7447 id=7447 data-nosnippet>7447</a>                <span class="bool-val">false</span>,
+<a href=#7448 id=7448 data-nosnippet>7448</a>                <span class="bool-val">false</span>,
+<a href=#7449 id=7449 data-nosnippet>7449</a>                <span class="bool-val">false</span>,
+<a href=#7450 id=7450 data-nosnippet>7450</a>                <span class="bool-val">false</span>,
+<a href=#7451 id=7451 data-nosnippet>7451</a>            ),
+<a href=#7452 id=7452 data-nosnippet>7452</a>            (
+<a href=#7453 id=7453 data-nosnippet>7453</a>                MsAxis::Antenna,
+<a href=#7454 id=7454 data-nosnippet>7454</a>                <span class="kw-2">&amp;</span>[<span class="string">"antenna"</span>][..],
+<a href=#7455 id=7455 data-nosnippet>7455</a>                <span class="string">"Antenna"</span>,
+<a href=#7456 id=7456 data-nosnippet>7456</a>                <span class="bool-val">false</span>,
+<a href=#7457 id=7457 data-nosnippet>7457</a>                <span class="bool-val">false</span>,
+<a href=#7458 id=7458 data-nosnippet>7458</a>                <span class="bool-val">false</span>,
+<a href=#7459 id=7459 data-nosnippet>7459</a>                <span class="bool-val">false</span>,
+<a href=#7460 id=7460 data-nosnippet>7460</a>                <span class="bool-val">false</span>,
+<a href=#7461 id=7461 data-nosnippet>7461</a>                <span class="bool-val">false</span>,
+<a href=#7462 id=7462 data-nosnippet>7462</a>            ),
+<a href=#7463 id=7463 data-nosnippet>7463</a>            (
+<a href=#7464 id=7464 data-nosnippet>7464</a>                MsAxis::Azimuth,
+<a href=#7465 id=7465 data-nosnippet>7465</a>                <span class="kw-2">&amp;</span>[<span class="string">"azimuth"</span>][..],
+<a href=#7466 id=7466 data-nosnippet>7466</a>                <span class="string">"Azimuth"</span>,
+<a href=#7467 id=7467 data-nosnippet>7467</a>                <span class="bool-val">false</span>,
+<a href=#7468 id=7468 data-nosnippet>7468</a>                <span class="bool-val">true</span>,
+<a href=#7469 id=7469 data-nosnippet>7469</a>                <span class="bool-val">false</span>,
+<a href=#7470 id=7470 data-nosnippet>7470</a>                <span class="bool-val">false</span>,
+<a href=#7471 id=7471 data-nosnippet>7471</a>                <span class="bool-val">false</span>,
+<a href=#7472 id=7472 data-nosnippet>7472</a>                <span class="bool-val">false</span>,
+<a href=#7473 id=7473 data-nosnippet>7473</a>            ),
+<a href=#7474 id=7474 data-nosnippet>7474</a>            (
+<a href=#7475 id=7475 data-nosnippet>7475</a>                MsAxis::Elevation,
+<a href=#7476 id=7476 data-nosnippet>7476</a>                <span class="kw-2">&amp;</span>[<span class="string">"elevation"</span>][..],
+<a href=#7477 id=7477 data-nosnippet>7477</a>                <span class="string">"Elevation"</span>,
+<a href=#7478 id=7478 data-nosnippet>7478</a>                <span class="bool-val">false</span>,
+<a href=#7479 id=7479 data-nosnippet>7479</a>                <span class="bool-val">true</span>,
+<a href=#7480 id=7480 data-nosnippet>7480</a>                <span class="bool-val">false</span>,
+<a href=#7481 id=7481 data-nosnippet>7481</a>                <span class="bool-val">false</span>,
+<a href=#7482 id=7482 data-nosnippet>7482</a>                <span class="bool-val">false</span>,
+<a href=#7483 id=7483 data-nosnippet>7483</a>                <span class="bool-val">false</span>,
+<a href=#7484 id=7484 data-nosnippet>7484</a>            ),
+<a href=#7485 id=7485 data-nosnippet>7485</a>            (
+<a href=#7486 id=7486 data-nosnippet>7486</a>                MsAxis::HourAngle,
+<a href=#7487 id=7487 data-nosnippet>7487</a>                <span class="kw-2">&amp;</span>[<span class="string">"hourang"</span>, <span class="string">"hourangle"</span>, <span class="string">"hour_angle"</span>, <span class="string">"hour-angle"</span>][..],
+<a href=#7488 id=7488 data-nosnippet>7488</a>                <span class="string">"Hour Angle"</span>,
+<a href=#7489 id=7489 data-nosnippet>7489</a>                <span class="bool-val">false</span>,
+<a href=#7490 id=7490 data-nosnippet>7490</a>                <span class="bool-val">true</span>,
+<a href=#7491 id=7491 data-nosnippet>7491</a>                <span class="bool-val">false</span>,
+<a href=#7492 id=7492 data-nosnippet>7492</a>                <span class="bool-val">false</span>,
+<a href=#7493 id=7493 data-nosnippet>7493</a>                <span class="bool-val">false</span>,
+<a href=#7494 id=7494 data-nosnippet>7494</a>                <span class="bool-val">false</span>,
+<a href=#7495 id=7495 data-nosnippet>7495</a>            ),
+<a href=#7496 id=7496 data-nosnippet>7496</a>            (
+<a href=#7497 id=7497 data-nosnippet>7497</a>                MsAxis::ParallacticAngle,
+<a href=#7498 id=7498 data-nosnippet>7498</a>                <span class="kw-2">&amp;</span>[<span class="string">"parang"</span>, <span class="string">"parallactic_angle"</span>, <span class="string">"parallactic-angle"</span>][..],
+<a href=#7499 id=7499 data-nosnippet>7499</a>                <span class="string">"Parallactic Angle"</span>,
+<a href=#7500 id=7500 data-nosnippet>7500</a>                <span class="bool-val">false</span>,
+<a href=#7501 id=7501 data-nosnippet>7501</a>                <span class="bool-val">true</span>,
+<a href=#7502 id=7502 data-nosnippet>7502</a>                <span class="bool-val">false</span>,
+<a href=#7503 id=7503 data-nosnippet>7503</a>                <span class="bool-val">false</span>,
+<a href=#7504 id=7504 data-nosnippet>7504</a>                <span class="bool-val">false</span>,
+<a href=#7505 id=7505 data-nosnippet>7505</a>                <span class="bool-val">false</span>,
+<a href=#7506 id=7506 data-nosnippet>7506</a>            ),
+<a href=#7507 id=7507 data-nosnippet>7507</a>            (
+<a href=#7508 id=7508 data-nosnippet>7508</a>                MsAxis::Weight,
+<a href=#7509 id=7509 data-nosnippet>7509</a>                <span class="kw-2">&amp;</span>[<span class="string">"weight"</span>][..],
+<a href=#7510 id=7510 data-nosnippet>7510</a>                <span class="string">"Weight"</span>,
+<a href=#7511 id=7511 data-nosnippet>7511</a>                <span class="bool-val">false</span>,
+<a href=#7512 id=7512 data-nosnippet>7512</a>                <span class="bool-val">false</span>,
+<a href=#7513 id=7513 data-nosnippet>7513</a>                <span class="bool-val">false</span>,
+<a href=#7514 id=7514 data-nosnippet>7514</a>                <span class="bool-val">false</span>,
+<a href=#7515 id=7515 data-nosnippet>7515</a>                <span class="bool-val">true</span>,
+<a href=#7516 id=7516 data-nosnippet>7516</a>                <span class="bool-val">false</span>,
+<a href=#7517 id=7517 data-nosnippet>7517</a>            ),
+<a href=#7518 id=7518 data-nosnippet>7518</a>            (
+<a href=#7519 id=7519 data-nosnippet>7519</a>                MsAxis::Sigma,
+<a href=#7520 id=7520 data-nosnippet>7520</a>                <span class="kw-2">&amp;</span>[<span class="string">"sigma"</span>][..],
+<a href=#7521 id=7521 data-nosnippet>7521</a>                <span class="string">"Sigma"</span>,
+<a href=#7522 id=7522 data-nosnippet>7522</a>                <span class="bool-val">false</span>,
+<a href=#7523 id=7523 data-nosnippet>7523</a>                <span class="bool-val">false</span>,
+<a href=#7524 id=7524 data-nosnippet>7524</a>                <span class="bool-val">false</span>,
+<a href=#7525 id=7525 data-nosnippet>7525</a>                <span class="bool-val">false</span>,
+<a href=#7526 id=7526 data-nosnippet>7526</a>                <span class="bool-val">true</span>,
+<a href=#7527 id=7527 data-nosnippet>7527</a>                <span class="bool-val">false</span>,
+<a href=#7528 id=7528 data-nosnippet>7528</a>            ),
+<a href=#7529 id=7529 data-nosnippet>7529</a>            (
+<a href=#7530 id=7530 data-nosnippet>7530</a>                MsAxis::WeightSpectrum,
+<a href=#7531 id=7531 data-nosnippet>7531</a>                <span class="kw-2">&amp;</span>[
+<a href=#7532 id=7532 data-nosnippet>7532</a>                    <span class="string">"wtsp"</span>,
+<a href=#7533 id=7533 data-nosnippet>7533</a>                    <span class="string">"weightspectrum"</span>,
+<a href=#7534 id=7534 data-nosnippet>7534</a>                    <span class="string">"weight_spectrum"</span>,
+<a href=#7535 id=7535 data-nosnippet>7535</a>                    <span class="string">"weight-spectrum"</span>,
+<a href=#7536 id=7536 data-nosnippet>7536</a>                ][..],
+<a href=#7537 id=7537 data-nosnippet>7537</a>                <span class="string">"Weight Spectrum"</span>,
+<a href=#7538 id=7538 data-nosnippet>7538</a>                <span class="bool-val">false</span>,
+<a href=#7539 id=7539 data-nosnippet>7539</a>                <span class="bool-val">false</span>,
+<a href=#7540 id=7540 data-nosnippet>7540</a>                <span class="bool-val">true</span>,
+<a href=#7541 id=7541 data-nosnippet>7541</a>                <span class="bool-val">false</span>,
+<a href=#7542 id=7542 data-nosnippet>7542</a>                <span class="bool-val">true</span>,
+<a href=#7543 id=7543 data-nosnippet>7543</a>                <span class="bool-val">false</span>,
+<a href=#7544 id=7544 data-nosnippet>7544</a>            ),
+<a href=#7545 id=7545 data-nosnippet>7545</a>            (
+<a href=#7546 id=7546 data-nosnippet>7546</a>                MsAxis::SigmaSpectrum,
+<a href=#7547 id=7547 data-nosnippet>7547</a>                <span class="kw-2">&amp;</span>[
+<a href=#7548 id=7548 data-nosnippet>7548</a>                    <span class="string">"sigmasp"</span>,
+<a href=#7549 id=7549 data-nosnippet>7549</a>                    <span class="string">"sigmaspectrum"</span>,
+<a href=#7550 id=7550 data-nosnippet>7550</a>                    <span class="string">"sigma_spectrum"</span>,
+<a href=#7551 id=7551 data-nosnippet>7551</a>                    <span class="string">"sigma-spectrum"</span>,
+<a href=#7552 id=7552 data-nosnippet>7552</a>                ][..],
+<a href=#7553 id=7553 data-nosnippet>7553</a>                <span class="string">"Sigma Spectrum"</span>,
+<a href=#7554 id=7554 data-nosnippet>7554</a>                <span class="bool-val">false</span>,
+<a href=#7555 id=7555 data-nosnippet>7555</a>                <span class="bool-val">false</span>,
+<a href=#7556 id=7556 data-nosnippet>7556</a>                <span class="bool-val">true</span>,
+<a href=#7557 id=7557 data-nosnippet>7557</a>                <span class="bool-val">false</span>,
+<a href=#7558 id=7558 data-nosnippet>7558</a>                <span class="bool-val">true</span>,
+<a href=#7559 id=7559 data-nosnippet>7559</a>                <span class="bool-val">false</span>,
+<a href=#7560 id=7560 data-nosnippet>7560</a>            ),
+<a href=#7561 id=7561 data-nosnippet>7561</a>            (
+<a href=#7562 id=7562 data-nosnippet>7562</a>                MsAxis::Flag,
+<a href=#7563 id=7563 data-nosnippet>7563</a>                <span class="kw-2">&amp;</span>[<span class="string">"flag"</span>][..],
+<a href=#7564 id=7564 data-nosnippet>7564</a>                <span class="string">"Flag"</span>,
+<a href=#7565 id=7565 data-nosnippet>7565</a>                <span class="bool-val">false</span>,
+<a href=#7566 id=7566 data-nosnippet>7566</a>                <span class="bool-val">false</span>,
+<a href=#7567 id=7567 data-nosnippet>7567</a>                <span class="bool-val">true</span>,
+<a href=#7568 id=7568 data-nosnippet>7568</a>                <span class="bool-val">true</span>,
+<a href=#7569 id=7569 data-nosnippet>7569</a>                <span class="bool-val">true</span>,
+<a href=#7570 id=7570 data-nosnippet>7570</a>                <span class="bool-val">false</span>,
+<a href=#7571 id=7571 data-nosnippet>7571</a>            ),
+<a href=#7572 id=7572 data-nosnippet>7572</a>            (
+<a href=#7573 id=7573 data-nosnippet>7573</a>                MsAxis::FlagRow,
+<a href=#7574 id=7574 data-nosnippet>7574</a>                <span class="kw-2">&amp;</span>[<span class="string">"flagrow"</span>, <span class="string">"flag_row"</span>, <span class="string">"flag-row"</span>][..],
+<a href=#7575 id=7575 data-nosnippet>7575</a>                <span class="string">"Flag Row"</span>,
+<a href=#7576 id=7576 data-nosnippet>7576</a>                <span class="bool-val">false</span>,
+<a href=#7577 id=7577 data-nosnippet>7577</a>                <span class="bool-val">false</span>,
+<a href=#7578 id=7578 data-nosnippet>7578</a>                <span class="bool-val">false</span>,
+<a href=#7579 id=7579 data-nosnippet>7579</a>                <span class="bool-val">true</span>,
+<a href=#7580 id=7580 data-nosnippet>7580</a>                <span class="bool-val">false</span>,
+<a href=#7581 id=7581 data-nosnippet>7581</a>                <span class="bool-val">false</span>,
+<a href=#7582 id=7582 data-nosnippet>7582</a>            ),
+<a href=#7583 id=7583 data-nosnippet>7583</a>            (
+<a href=#7584 id=7584 data-nosnippet>7584</a>                MsAxis::AntRa,
+<a href=#7585 id=7585 data-nosnippet>7585</a>                <span class="kw-2">&amp;</span>[<span class="string">"ant-ra"</span>, <span class="string">"ant_ra"</span>][..],
+<a href=#7586 id=7586 data-nosnippet>7586</a>                <span class="string">"Antenna RA"</span>,
+<a href=#7587 id=7587 data-nosnippet>7587</a>                <span class="bool-val">false</span>,
+<a href=#7588 id=7588 data-nosnippet>7588</a>                <span class="bool-val">false</span>,
+<a href=#7589 id=7589 data-nosnippet>7589</a>                <span class="bool-val">false</span>,
+<a href=#7590 id=7590 data-nosnippet>7590</a>                <span class="bool-val">false</span>,
+<a href=#7591 id=7591 data-nosnippet>7591</a>                <span class="bool-val">false</span>,
+<a href=#7592 id=7592 data-nosnippet>7592</a>                <span class="bool-val">false</span>,
+<a href=#7593 id=7593 data-nosnippet>7593</a>            ),
+<a href=#7594 id=7594 data-nosnippet>7594</a>            (
+<a href=#7595 id=7595 data-nosnippet>7595</a>                MsAxis::AntDec,
+<a href=#7596 id=7596 data-nosnippet>7596</a>                <span class="kw-2">&amp;</span>[<span class="string">"ant-dec"</span>, <span class="string">"ant_dec"</span>][..],
+<a href=#7597 id=7597 data-nosnippet>7597</a>                <span class="string">"Antenna Dec"</span>,
+<a href=#7598 id=7598 data-nosnippet>7598</a>                <span class="bool-val">false</span>,
+<a href=#7599 id=7599 data-nosnippet>7599</a>                <span class="bool-val">false</span>,
+<a href=#7600 id=7600 data-nosnippet>7600</a>                <span class="bool-val">false</span>,
+<a href=#7601 id=7601 data-nosnippet>7601</a>                <span class="bool-val">false</span>,
+<a href=#7602 id=7602 data-nosnippet>7602</a>                <span class="bool-val">false</span>,
+<a href=#7603 id=7603 data-nosnippet>7603</a>                <span class="bool-val">false</span>,
+<a href=#7604 id=7604 data-nosnippet>7604</a>            ),
+<a href=#7605 id=7605 data-nosnippet>7605</a>        ];
+<a href=#7606 id=7606 data-nosnippet>7606</a>        <span class="kw">for </span>(
+<a href=#7607 id=7607 data-nosnippet>7607</a>            axis,
+<a href=#7608 id=7608 data-nosnippet>7608</a>            aliases,
+<a href=#7609 id=7609 data-nosnippet>7609</a>            display_name,
+<a href=#7610 id=7610 data-nosnippet>7610</a>            visibility_math,
+<a href=#7611 id=7611 data-nosnippet>7611</a>            derived_geometry,
+<a href=#7612 id=7612 data-nosnippet>7612</a>            channel_bins,
+<a href=#7613 id=7613 data-nosnippet>7613</a>            flag_rows,
+<a href=#7614 id=7614 data-nosnippet>7614</a>            correlation_slots,
+<a href=#7615 id=7615 data-nosnippet>7615</a>            spectral_coordinates,
+<a href=#7616 id=7616 data-nosnippet>7616</a>        ) <span class="kw">in </span>axis_cases
+<a href=#7617 id=7617 data-nosnippet>7617</a>        {
+<a href=#7618 id=7618 data-nosnippet>7618</a>            <span class="macro">assert_eq!</span>(axis.to_string(), axis.as_str());
+<a href=#7619 id=7619 data-nosnippet>7619</a>            <span class="macro">assert_eq!</span>(axis.display_name(), display_name);
+<a href=#7620 id=7620 data-nosnippet>7620</a>            <span class="macro">assert_eq!</span>(axis.is_visibility_math(), visibility_math);
+<a href=#7621 id=7621 data-nosnippet>7621</a>            <span class="macro">assert_eq!</span>(axis.uses_derived_geometry(), derived_geometry);
+<a href=#7622 id=7622 data-nosnippet>7622</a>            <span class="macro">assert_eq!</span>(axis.uses_channel_bins(), channel_bins);
+<a href=#7623 id=7623 data-nosnippet>7623</a>            <span class="macro">assert_eq!</span>(axis.uses_flag_rows(), flag_rows);
+<a href=#7624 id=7624 data-nosnippet>7624</a>            <span class="macro">assert_eq!</span>(axis.uses_correlation_slots(), correlation_slots);
+<a href=#7625 id=7625 data-nosnippet>7625</a>            <span class="macro">assert_eq!</span>(axis.uses_spectral_coordinates(), spectral_coordinates);
+<a href=#7626 id=7626 data-nosnippet>7626</a>            <span class="kw">for </span>alias <span class="kw">in </span>aliases {
+<a href=#7627 id=7627 data-nosnippet>7627</a>                <span class="macro">assert_eq!</span>(MsAxis::parse(alias).unwrap(), axis);
+<a href=#7628 id=7628 data-nosnippet>7628</a>            }
+<a href=#7629 id=7629 data-nosnippet>7629</a>        }
+<a href=#7630 id=7630 data-nosnippet>7630</a>        <span class="macro">assert!</span>(MsAxis::parse(<span class="string">"bogus"</span>).unwrap_err().contains(<span class="string">"unsupported"</span>));
+<a href=#7631 id=7631 data-nosnippet>7631</a>
+<a href=#7632 id=7632 data-nosnippet>7632</a>        <span class="kw">let </span>data_columns = [
+<a href=#7633 id=7633 data-nosnippet>7633</a>            (MsDataColumn::Data, <span class="kw-2">&amp;</span>[<span class="string">"data"</span>][..]),
+<a href=#7634 id=7634 data-nosnippet>7634</a>            (
+<a href=#7635 id=7635 data-nosnippet>7635</a>                MsDataColumn::Corrected,
+<a href=#7636 id=7636 data-nosnippet>7636</a>                <span class="kw-2">&amp;</span>[<span class="string">"corrected"</span>, <span class="string">"corrected_data"</span>][..],
+<a href=#7637 id=7637 data-nosnippet>7637</a>            ),
+<a href=#7638 id=7638 data-nosnippet>7638</a>            (MsDataColumn::Model, <span class="kw-2">&amp;</span>[<span class="string">"model"</span>, <span class="string">"model_data"</span>][..]),
+<a href=#7639 id=7639 data-nosnippet>7639</a>            (
+<a href=#7640 id=7640 data-nosnippet>7640</a>                MsDataColumn::CorrectedMinusModel,
+<a href=#7641 id=7641 data-nosnippet>7641</a>                <span class="kw-2">&amp;</span>[<span class="string">"corrected-model"</span>, <span class="string">"corrected_minus_model"</span>][..],
+<a href=#7642 id=7642 data-nosnippet>7642</a>            ),
+<a href=#7643 id=7643 data-nosnippet>7643</a>            (
+<a href=#7644 id=7644 data-nosnippet>7644</a>                MsDataColumn::CorrectedMinusModelScalar,
+<a href=#7645 id=7645 data-nosnippet>7645</a>                <span class="kw-2">&amp;</span>[<span class="string">"corrected-model_scalar"</span>, <span class="string">"corrected_minus_model_scalar"</span>][..],
+<a href=#7646 id=7646 data-nosnippet>7646</a>            ),
+<a href=#7647 id=7647 data-nosnippet>7647</a>            (
+<a href=#7648 id=7648 data-nosnippet>7648</a>                MsDataColumn::DataMinusModel,
+<a href=#7649 id=7649 data-nosnippet>7649</a>                <span class="kw-2">&amp;</span>[<span class="string">"data-model"</span>, <span class="string">"data_minus_model"</span>][..],
+<a href=#7650 id=7650 data-nosnippet>7650</a>            ),
+<a href=#7651 id=7651 data-nosnippet>7651</a>            (
+<a href=#7652 id=7652 data-nosnippet>7652</a>                MsDataColumn::DataMinusModelScalar,
+<a href=#7653 id=7653 data-nosnippet>7653</a>                <span class="kw-2">&amp;</span>[<span class="string">"data-model_scalar"</span>, <span class="string">"data_minus_model_scalar"</span>][..],
+<a href=#7654 id=7654 data-nosnippet>7654</a>            ),
+<a href=#7655 id=7655 data-nosnippet>7655</a>            (
+<a href=#7656 id=7656 data-nosnippet>7656</a>                MsDataColumn::CorrectedDivModel,
+<a href=#7657 id=7657 data-nosnippet>7657</a>                <span class="kw-2">&amp;</span>[<span class="string">"corrected/model"</span>, <span class="string">"corrected_div_model"</span>][..],
+<a href=#7658 id=7658 data-nosnippet>7658</a>            ),
+<a href=#7659 id=7659 data-nosnippet>7659</a>            (
+<a href=#7660 id=7660 data-nosnippet>7660</a>                MsDataColumn::CorrectedDivModelScalar,
+<a href=#7661 id=7661 data-nosnippet>7661</a>                <span class="kw-2">&amp;</span>[<span class="string">"corrected/model_scalar"</span>, <span class="string">"corrected_div_model_scalar"</span>][..],
+<a href=#7662 id=7662 data-nosnippet>7662</a>            ),
+<a href=#7663 id=7663 data-nosnippet>7663</a>            (
+<a href=#7664 id=7664 data-nosnippet>7664</a>                MsDataColumn::DataDivModel,
+<a href=#7665 id=7665 data-nosnippet>7665</a>                <span class="kw-2">&amp;</span>[<span class="string">"data/model"</span>, <span class="string">"data_div_model"</span>][..],
+<a href=#7666 id=7666 data-nosnippet>7666</a>            ),
+<a href=#7667 id=7667 data-nosnippet>7667</a>            (
+<a href=#7668 id=7668 data-nosnippet>7668</a>                MsDataColumn::DataDivModelScalar,
+<a href=#7669 id=7669 data-nosnippet>7669</a>                <span class="kw-2">&amp;</span>[<span class="string">"data/model_scalar"</span>, <span class="string">"data_div_model_scalar"</span>][..],
+<a href=#7670 id=7670 data-nosnippet>7670</a>            ),
+<a href=#7671 id=7671 data-nosnippet>7671</a>        ];
+<a href=#7672 id=7672 data-nosnippet>7672</a>        <span class="kw">for </span>(column, aliases) <span class="kw">in </span>data_columns {
+<a href=#7673 id=7673 data-nosnippet>7673</a>            <span class="macro">assert_eq!</span>(column.to_string(), column.as_str());
+<a href=#7674 id=7674 data-nosnippet>7674</a>            <span class="kw">for </span>alias <span class="kw">in </span>aliases {
+<a href=#7675 id=7675 data-nosnippet>7675</a>                <span class="macro">assert_eq!</span>(MsDataColumn::parse(alias).unwrap(), column);
+<a href=#7676 id=7676 data-nosnippet>7676</a>            }
+<a href=#7677 id=7677 data-nosnippet>7677</a>        }
+<a href=#7678 id=7678 data-nosnippet>7678</a>        <span class="macro">assert!</span>(
+<a href=#7679 id=7679 data-nosnippet>7679</a>            MsDataColumn::parse(<span class="string">"bad"</span>)
+<a href=#7680 id=7680 data-nosnippet>7680</a>                .unwrap_err()
+<a href=#7681 id=7681 data-nosnippet>7681</a>                .contains(<span class="string">"unsupported"</span>)
+<a href=#7682 id=7682 data-nosnippet>7682</a>        );
+<a href=#7683 id=7683 data-nosnippet>7683</a>
+<a href=#7684 id=7684 data-nosnippet>7684</a>        <span class="kw">let </span>color_axes = [
+<a href=#7685 id=7685 data-nosnippet>7685</a>            (MsColorAxis::None, <span class="kw-2">&amp;</span>[<span class="string">"none"</span>][..]),
+<a href=#7686 id=7686 data-nosnippet>7686</a>            (MsColorAxis::Field, <span class="kw-2">&amp;</span>[<span class="string">"field"</span>][..]),
+<a href=#7687 id=7687 data-nosnippet>7687</a>            (MsColorAxis::Scan, <span class="kw-2">&amp;</span>[<span class="string">"scan"</span>][..]),
+<a href=#7688 id=7688 data-nosnippet>7688</a>            (
+<a href=#7689 id=7689 data-nosnippet>7689</a>                MsColorAxis::SpectralWindow,
+<a href=#7690 id=7690 data-nosnippet>7690</a>                <span class="kw-2">&amp;</span>[<span class="string">"spw"</span>, <span class="string">"spectral_window"</span>, <span class="string">"spectral-window"</span>][..],
+<a href=#7691 id=7691 data-nosnippet>7691</a>            ),
+<a href=#7692 id=7692 data-nosnippet>7692</a>            (MsColorAxis::Baseline, <span class="kw-2">&amp;</span>[<span class="string">"baseline"</span>][..]),
+<a href=#7693 id=7693 data-nosnippet>7693</a>            (MsColorAxis::Correlation, <span class="kw-2">&amp;</span>[<span class="string">"correlation"</span>, <span class="string">"corr"</span>][..]),
+<a href=#7694 id=7694 data-nosnippet>7694</a>        ];
+<a href=#7695 id=7695 data-nosnippet>7695</a>        <span class="kw">for </span>(axis, aliases) <span class="kw">in </span>color_axes {
+<a href=#7696 id=7696 data-nosnippet>7696</a>            <span class="macro">assert_eq!</span>(axis.to_string(), axis.as_str());
+<a href=#7697 id=7697 data-nosnippet>7697</a>            <span class="kw">for </span>alias <span class="kw">in </span>aliases {
+<a href=#7698 id=7698 data-nosnippet>7698</a>                <span class="macro">assert_eq!</span>(MsColorAxis::parse(alias).unwrap(), axis);
+<a href=#7699 id=7699 data-nosnippet>7699</a>            }
+<a href=#7700 id=7700 data-nosnippet>7700</a>        }
+<a href=#7701 id=7701 data-nosnippet>7701</a>        <span class="macro">assert!</span>(
+<a href=#7702 id=7702 data-nosnippet>7702</a>            MsColorAxis::parse(<span class="string">"bad"</span>)
+<a href=#7703 id=7703 data-nosnippet>7703</a>                .unwrap_err()
+<a href=#7704 id=7704 data-nosnippet>7704</a>                .contains(<span class="string">"unsupported"</span>)
+<a href=#7705 id=7705 data-nosnippet>7705</a>        );
+<a href=#7706 id=7706 data-nosnippet>7706</a>
+<a href=#7707 id=7707 data-nosnippet>7707</a>        <span class="kw">for </span>(format, raw, extension) <span class="kw">in </span>[
+<a href=#7708 id=7708 data-nosnippet>7708</a>            (MsExportFormat::Png, <span class="string">"png"</span>, <span class="string">"png"</span>),
+<a href=#7709 id=7709 data-nosnippet>7709</a>            (MsExportFormat::Pdf, <span class="string">"pdf"</span>, <span class="string">"pdf"</span>),
+<a href=#7710 id=7710 data-nosnippet>7710</a>            (MsExportFormat::Txt, <span class="string">"txt"</span>, <span class="string">"txt"</span>),
+<a href=#7711 id=7711 data-nosnippet>7711</a>        ] {
+<a href=#7712 id=7712 data-nosnippet>7712</a>            <span class="macro">assert_eq!</span>(MsExportFormat::parse(raw).unwrap(), format);
+<a href=#7713 id=7713 data-nosnippet>7713</a>            <span class="macro">assert_eq!</span>(format.extension(), extension);
+<a href=#7714 id=7714 data-nosnippet>7714</a>        }
+<a href=#7715 id=7715 data-nosnippet>7715</a>        <span class="macro">assert!</span>(
+<a href=#7716 id=7716 data-nosnippet>7716</a>            MsExportFormat::parse(<span class="string">"jpg"</span>)
+<a href=#7717 id=7717 data-nosnippet>7717</a>                .unwrap_err()
+<a href=#7718 id=7718 data-nosnippet>7718</a>                .contains(<span class="string">"unsupported"</span>)
+<a href=#7719 id=7719 data-nosnippet>7719</a>        );
+<a href=#7720 id=7720 data-nosnippet>7720</a>    }
+<a href=#7721 id=7721 data-nosnippet>7721</a>
+<a href=#7722 id=7722 data-nosnippet>7722</a>    <span class="attr">#[test]
+<a href=#7723 id=7723 data-nosnippet>7723</a>    </span><span class="kw">fn </span>selection_and_page_enums_preserve_stable_strings() {
+<a href=#7724 id=7724 data-nosnippet>7724</a>        <span class="kw">let </span>selection = MsSelectionSpec {
+<a href=#7725 id=7725 data-nosnippet>7725</a>            selectdata: <span class="bool-val">false</span>,
+<a href=#7726 id=7726 data-nosnippet>7726</a>            field: <span class="prelude-val">Some</span>(<span class="string">"0"</span>.to_string()),
+<a href=#7727 id=7727 data-nosnippet>7727</a>            spw: <span class="prelude-val">Some</span>(<span class="string">"1"</span>.to_string()),
+<a href=#7728 id=7728 data-nosnippet>7728</a>            antenna: <span class="prelude-val">Some</span>(<span class="string">"ea01"</span>.to_string()),
+<a href=#7729 id=7729 data-nosnippet>7729</a>            scan: <span class="prelude-val">Some</span>(<span class="string">"5"</span>.to_string()),
+<a href=#7730 id=7730 data-nosnippet>7730</a>            observation: <span class="prelude-val">Some</span>(<span class="string">"2"</span>.to_string()),
+<a href=#7731 id=7731 data-nosnippet>7731</a>            array: <span class="prelude-val">Some</span>(<span class="string">"1"</span>.to_string()),
+<a href=#7732 id=7732 data-nosnippet>7732</a>            timerange: <span class="prelude-val">Some</span>(<span class="string">"09:00:00~10:00:00"</span>.to_string()),
+<a href=#7733 id=7733 data-nosnippet>7733</a>            uvrange: <span class="prelude-val">Some</span>(<span class="string">"&gt;100m"</span>.to_string()),
+<a href=#7734 id=7734 data-nosnippet>7734</a>            correlation: <span class="prelude-val">Some</span>(<span class="string">"RR"</span>.to_string()),
+<a href=#7735 id=7735 data-nosnippet>7735</a>            intent: <span class="prelude-val">Some</span>(<span class="string">"CALIBRATE"</span>.to_string()),
+<a href=#7736 id=7736 data-nosnippet>7736</a>            msselect: <span class="prelude-val">Some</span>(<span class="string">"DATA_DESC_ID==0"</span>.to_string()),
+<a href=#7737 id=7737 data-nosnippet>7737</a>            feed: <span class="prelude-val">Some</span>(<span class="string">"0"</span>.to_string()),
+<a href=#7738 id=7738 data-nosnippet>7738</a>        };
+<a href=#7739 id=7739 data-nosnippet>7739</a>        <span class="kw">let </span>summary = selection.to_summary_options();
+<a href=#7740 id=7740 data-nosnippet>7740</a>        <span class="macro">assert!</span>(!summary.selectdata);
+<a href=#7741 id=7741 data-nosnippet>7741</a>        <span class="macro">assert_eq!</span>(summary.field.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"0"</span>));
+<a href=#7742 id=7742 data-nosnippet>7742</a>        <span class="macro">assert_eq!</span>(summary.spw.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"1"</span>));
+<a href=#7743 id=7743 data-nosnippet>7743</a>        <span class="macro">assert_eq!</span>(summary.antenna.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"ea01"</span>));
+<a href=#7744 id=7744 data-nosnippet>7744</a>        <span class="macro">assert_eq!</span>(summary.scan.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"5"</span>));
+<a href=#7745 id=7745 data-nosnippet>7745</a>        <span class="macro">assert_eq!</span>(summary.observation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"2"</span>));
+<a href=#7746 id=7746 data-nosnippet>7746</a>        <span class="macro">assert_eq!</span>(summary.array.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"1"</span>));
+<a href=#7747 id=7747 data-nosnippet>7747</a>        <span class="macro">assert_eq!</span>(summary.timerange.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"09:00:00~10:00:00"</span>));
+<a href=#7748 id=7748 data-nosnippet>7748</a>        <span class="macro">assert_eq!</span>(summary.uvrange.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"&gt;100m"</span>));
+<a href=#7749 id=7749 data-nosnippet>7749</a>        <span class="macro">assert_eq!</span>(summary.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"RR"</span>));
+<a href=#7750 id=7750 data-nosnippet>7750</a>        <span class="macro">assert_eq!</span>(summary.intent.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"CALIBRATE"</span>));
+<a href=#7751 id=7751 data-nosnippet>7751</a>        <span class="macro">assert_eq!</span>(summary.msselect.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"DATA_DESC_ID==0"</span>));
+<a href=#7752 id=7752 data-nosnippet>7752</a>        <span class="macro">assert_eq!</span>(summary.feed.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"0"</span>));
+<a href=#7753 id=7753 data-nosnippet>7753</a>        <span class="macro">assert!</span>(!summary.listunfl);
+<a href=#7754 id=7754 data-nosnippet>7754</a>        <span class="macro">assert_eq!</span>(summary.cachesize_mb, <span class="prelude-val">None</span>);
+<a href=#7755 id=7755 data-nosnippet>7755</a>
+<a href=#7756 id=7756 data-nosnippet>7756</a>        <span class="kw">for </span>(range, raw) <span class="kw">in </span>[
+<a href=#7757 id=7757 data-nosnippet>7757</a>            (MsPageExportRange::Current, <span class="string">"current"</span>),
+<a href=#7758 id=7758 data-nosnippet>7758</a>            (MsPageExportRange::All, <span class="string">"all"</span>),
+<a href=#7759 id=7759 data-nosnippet>7759</a>        ] {
+<a href=#7760 id=7760 data-nosnippet>7760</a>            <span class="macro">assert_eq!</span>(range.as_str(), raw);
+<a href=#7761 id=7761 data-nosnippet>7761</a>            <span class="macro">assert_eq!</span>(range.to_string(), raw);
+<a href=#7762 id=7762 data-nosnippet>7762</a>        }
+<a href=#7763 id=7763 data-nosnippet>7763</a>
+<a href=#7764 id=7764 data-nosnippet>7764</a>        <span class="kw">for </span>(position, is_exterior) <span class="kw">in </span>[
+<a href=#7765 id=7765 data-nosnippet>7765</a>            (MsLegendPosition::UpperRight, <span class="bool-val">false</span>),
+<a href=#7766 id=7766 data-nosnippet>7766</a>            (MsLegendPosition::UpperLeft, <span class="bool-val">false</span>),
+<a href=#7767 id=7767 data-nosnippet>7767</a>            (MsLegendPosition::LowerRight, <span class="bool-val">false</span>),
+<a href=#7768 id=7768 data-nosnippet>7768</a>            (MsLegendPosition::LowerLeft, <span class="bool-val">false</span>),
+<a href=#7769 id=7769 data-nosnippet>7769</a>            (MsLegendPosition::ExteriorRight, <span class="bool-val">true</span>),
+<a href=#7770 id=7770 data-nosnippet>7770</a>            (MsLegendPosition::ExteriorLeft, <span class="bool-val">true</span>),
+<a href=#7771 id=7771 data-nosnippet>7771</a>            (MsLegendPosition::ExteriorTop, <span class="bool-val">true</span>),
+<a href=#7772 id=7772 data-nosnippet>7772</a>            (MsLegendPosition::ExteriorBottom, <span class="bool-val">true</span>),
+<a href=#7773 id=7773 data-nosnippet>7773</a>        ] {
+<a href=#7774 id=7774 data-nosnippet>7774</a>            <span class="macro">assert_eq!</span>(position.is_exterior(), is_exterior);
+<a href=#7775 id=7775 data-nosnippet>7775</a>            <span class="macro">assert_eq!</span>(
+<a href=#7776 id=7776 data-nosnippet>7776</a>                serde_json::from_str::&lt;MsLegendPosition&gt;(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"\"{}\""</span>, position.as_str()))
+<a href=#7777 id=7777 data-nosnippet>7777</a>                    .unwrap(),
+<a href=#7778 id=7778 data-nosnippet>7778</a>                position
+<a href=#7779 id=7779 data-nosnippet>7779</a>            );
+<a href=#7780 id=7780 data-nosnippet>7780</a>            <span class="macro">assert_eq!</span>(position.to_string(), position.as_str());
+<a href=#7781 id=7781 data-nosnippet>7781</a>        }
+<a href=#7782 id=7782 data-nosnippet>7782</a>
+<a href=#7783 id=7783 data-nosnippet>7783</a>        <span class="kw">for </span>item <span class="kw">in </span>[
+<a href=#7784 id=7784 data-nosnippet>7784</a>            MsPageHeaderItem::Filename,
+<a href=#7785 id=7785 data-nosnippet>7785</a>            MsPageHeaderItem::YColumn,
+<a href=#7786 id=7786 data-nosnippet>7786</a>            MsPageHeaderItem::ObsDate,
+<a href=#7787 id=7787 data-nosnippet>7787</a>            MsPageHeaderItem::ObsTime,
+<a href=#7788 id=7788 data-nosnippet>7788</a>            MsPageHeaderItem::Observer,
+<a href=#7789 id=7789 data-nosnippet>7789</a>            MsPageHeaderItem::ProjId,
+<a href=#7790 id=7790 data-nosnippet>7790</a>            MsPageHeaderItem::Telescope,
+<a href=#7791 id=7791 data-nosnippet>7791</a>            MsPageHeaderItem::TargName,
+<a href=#7792 id=7792 data-nosnippet>7792</a>            MsPageHeaderItem::TargDir,
+<a href=#7793 id=7793 data-nosnippet>7793</a>        ] {
+<a href=#7794 id=7794 data-nosnippet>7794</a>            <span class="macro">assert_eq!</span>(item.to_string(), item.as_str());
+<a href=#7795 id=7795 data-nosnippet>7795</a>        }
+<a href=#7796 id=7796 data-nosnippet>7796</a>
+<a href=#7797 id=7797 data-nosnippet>7797</a>        <span class="kw">for </span>axis <span class="kw">in </span>MsIterationAxis::ALL {
+<a href=#7798 id=7798 data-nosnippet>7798</a>            <span class="macro">assert_eq!</span>(MsIterationAxis::parse(axis.as_str()).unwrap(), axis);
+<a href=#7799 id=7799 data-nosnippet>7799</a>            <span class="macro">assert_eq!</span>(axis.to_string(), axis.as_str());
+<a href=#7800 id=7800 data-nosnippet>7800</a>            <span class="macro">assert!</span>(!axis.display_name().is_empty());
+<a href=#7801 id=7801 data-nosnippet>7801</a>        }
+<a href=#7802 id=7802 data-nosnippet>7802</a>        <span class="macro">assert_eq!</span>(
+<a href=#7803 id=7803 data-nosnippet>7803</a>            MsIterationAxis::parse(<span class="string">"spectralwindow"</span>).unwrap(),
+<a href=#7804 id=7804 data-nosnippet>7804</a>            MsIterationAxis::SpectralWindow
+<a href=#7805 id=7805 data-nosnippet>7805</a>        );
+<a href=#7806 id=7806 data-nosnippet>7806</a>        <span class="macro">assert_eq!</span>(
+<a href=#7807 id=7807 data-nosnippet>7807</a>            MsIterationAxis::parse(<span class="string">"corr"</span>).unwrap(),
+<a href=#7808 id=7808 data-nosnippet>7808</a>            MsIterationAxis::Correlation
+<a href=#7809 id=7809 data-nosnippet>7809</a>        );
+<a href=#7810 id=7810 data-nosnippet>7810</a>        <span class="macro">assert!</span>(
+<a href=#7811 id=7811 data-nosnippet>7811</a>            MsIterationAxis::parse(<span class="string">"bad"</span>)
+<a href=#7812 id=7812 data-nosnippet>7812</a>                .unwrap_err()
+<a href=#7813 id=7813 data-nosnippet>7813</a>                .contains(<span class="string">"unsupported"</span>)
+<a href=#7814 id=7814 data-nosnippet>7814</a>        );
+<a href=#7815 id=7815 data-nosnippet>7815</a>    }
+<a href=#7816 id=7816 data-nosnippet>7816</a>
+<a href=#7817 id=7817 data-nosnippet>7817</a>    <span class="attr">#[test]
+<a href=#7818 id=7818 data-nosnippet>7818</a>    </span><span class="kw">fn </span>from_preset_and_validation_cover_supported_and_rejected_shapes() {
+<a href=#7819 id=7819 data-nosnippet>7819</a>        <span class="kw">for </span>preset <span class="kw">in </span>MsPlotPreset::ALL {
+<a href=#7820 id=7820 data-nosnippet>7820</a>            <span class="kw">let </span>spec = MsPlotSpec::from_preset(preset);
+<a href=#7821 id=7821 data-nosnippet>7821</a>            <span class="macro">assert_eq!</span>(spec.preset, <span class="prelude-val">Some</span>(preset));
+<a href=#7822 id=7822 data-nosnippet>7822</a>            <span class="macro">assert_eq!</span>(spec.layout, MsLayoutSpec::default());
+<a href=#7823 id=7823 data-nosnippet>7823</a>            <span class="macro">assert_eq!</span>(spec.iteration, MsIterationSpec::default());
+<a href=#7824 id=7824 data-nosnippet>7824</a>            <span class="macro">assert_eq!</span>(spec.style, MsPlotStyleSpec::default());
+<a href=#7825 id=7825 data-nosnippet>7825</a>            <span class="macro">assert!</span>(spec.flag_edit.is_none());
+<a href=#7826 id=7826 data-nosnippet>7826</a>        }
+<a href=#7827 id=7827 data-nosnippet>7827</a>
+<a href=#7828 id=7828 data-nosnippet>7828</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7829 id=7829 data-nosnippet>7829</a>        spec.y_axes.clear();
+<a href=#7830 id=7830 data-nosnippet>7830</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"at least one y axis"</span>));
+<a href=#7831 id=7831 data-nosnippet>7831</a>
+<a href=#7832 id=7832 data-nosnippet>7832</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7833 id=7833 data-nosnippet>7833</a>        spec.y_axes = <span class="macro">vec!</span>[MsAxis::Amplitude, MsAxis::Phase, MsAxis::Weight];
+<a href=#7834 id=7834 data-nosnippet>7834</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"at most two y axes"</span>));
+<a href=#7835 id=7835 data-nosnippet>7835</a>
+<a href=#7836 id=7836 data-nosnippet>7836</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7837 id=7837 data-nosnippet>7837</a>        spec.y_axes = <span class="macro">vec!</span>[MsAxis::Amplitude, MsAxis::Amplitude];
+<a href=#7838 id=7838 data-nosnippet>7838</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"duplicate y axes"</span>));
+<a href=#7839 id=7839 data-nosnippet>7839</a>
+<a href=#7840 id=7840 data-nosnippet>7840</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7841 id=7841 data-nosnippet>7841</a>        spec.layout.gridrows = <span class="number">0</span>;
+<a href=#7842 id=7842 data-nosnippet>7842</a>        <span class="macro">assert!</span>(
+<a href=#7843 id=7843 data-nosnippet>7843</a>            spec.validate()
+<a href=#7844 id=7844 data-nosnippet>7844</a>                .unwrap_err()
+<a href=#7845 id=7845 data-nosnippet>7845</a>                .contains(<span class="string">"must be positive integers"</span>)
+<a href=#7846 id=7846 data-nosnippet>7846</a>        );
+<a href=#7847 id=7847 data-nosnippet>7847</a>
+<a href=#7848 id=7848 data-nosnippet>7848</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7849 id=7849 data-nosnippet>7849</a>        spec.iteration.iteraxis = <span class="prelude-val">Some</span>(MsIterationAxis::Field);
+<a href=#7850 id=7850 data-nosnippet>7850</a>        spec.y_axes.push(MsAxis::Phase);
+<a href=#7851 id=7851 data-nosnippet>7851</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"multi-y plots"</span>));
+<a href=#7852 id=7852 data-nosnippet>7852</a>
+<a href=#7853 id=7853 data-nosnippet>7853</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7854 id=7854 data-nosnippet>7854</a>        spec.iteration.xselfscale = <span class="bool-val">true</span>;
+<a href=#7855 id=7855 data-nosnippet>7855</a>        spec.iteration.xsharedaxis = <span class="bool-val">true</span>;
+<a href=#7856 id=7856 data-nosnippet>7856</a>        <span class="macro">assert!</span>(
+<a href=#7857 id=7857 data-nosnippet>7857</a>            spec.validate()
+<a href=#7858 id=7858 data-nosnippet>7858</a>                .unwrap_err()
+<a href=#7859 id=7859 data-nosnippet>7859</a>                .contains(<span class="string">"x-axis iteration scaling"</span>)
+<a href=#7860 id=7860 data-nosnippet>7860</a>        );
+<a href=#7861 id=7861 data-nosnippet>7861</a>
+<a href=#7862 id=7862 data-nosnippet>7862</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7863 id=7863 data-nosnippet>7863</a>        spec.iteration.yselfscale = <span class="bool-val">true</span>;
+<a href=#7864 id=7864 data-nosnippet>7864</a>        spec.iteration.ysharedaxis = <span class="bool-val">true</span>;
+<a href=#7865 id=7865 data-nosnippet>7865</a>        <span class="macro">assert!</span>(
+<a href=#7866 id=7866 data-nosnippet>7866</a>            spec.validate()
+<a href=#7867 id=7867 data-nosnippet>7867</a>                .unwrap_err()
+<a href=#7868 id=7868 data-nosnippet>7868</a>                .contains(<span class="string">"y-axis iteration scaling"</span>)
+<a href=#7869 id=7869 data-nosnippet>7869</a>        );
+<a href=#7870 id=7870 data-nosnippet>7870</a>
+<a href=#7871 id=7871 data-nosnippet>7871</a>        <span class="kw">let </span>finite_flag_edit = MsFlagEditSpec {
+<a href=#7872 id=7872 data-nosnippet>7872</a>            action: MsFlagAction::Flag,
+<a href=#7873 id=7873 data-nosnippet>7873</a>            region: MsFlagRegion {
+<a href=#7874 id=7874 data-nosnippet>7874</a>                x_min: <span class="number">0.0</span>,
+<a href=#7875 id=7875 data-nosnippet>7875</a>                x_max: <span class="number">1.0</span>,
+<a href=#7876 id=7876 data-nosnippet>7876</a>                y_min: <span class="number">0.0</span>,
+<a href=#7877 id=7877 data-nosnippet>7877</a>                y_max: <span class="number">1.0</span>,
+<a href=#7878 id=7878 data-nosnippet>7878</a>            },
+<a href=#7879 id=7879 data-nosnippet>7879</a>            plot_index: <span class="prelude-val">None</span>,
+<a href=#7880 id=7880 data-nosnippet>7880</a>            panel_key: <span class="prelude-val">None</span>,
+<a href=#7881 id=7881 data-nosnippet>7881</a>            extcorr: <span class="bool-val">false</span>,
+<a href=#7882 id=7882 data-nosnippet>7882</a>            extchannel: <span class="bool-val">false</span>,
+<a href=#7883 id=7883 data-nosnippet>7883</a>        };
+<a href=#7884 id=7884 data-nosnippet>7884</a>
+<a href=#7885 id=7885 data-nosnippet>7885</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7886 id=7886 data-nosnippet>7886</a>        spec.flag_edit = <span class="prelude-val">Some</span>(MsFlagEditSpec {
+<a href=#7887 id=7887 data-nosnippet>7887</a>            region: MsFlagRegion {
+<a href=#7888 id=7888 data-nosnippet>7888</a>                x_min: f64::NAN,
+<a href=#7889 id=7889 data-nosnippet>7889</a>                ..finite_flag_edit.region.clone()
+<a href=#7890 id=7890 data-nosnippet>7890</a>            },
+<a href=#7891 id=7891 data-nosnippet>7891</a>            ..finite_flag_edit.clone()
+<a href=#7892 id=7892 data-nosnippet>7892</a>        });
+<a href=#7893 id=7893 data-nosnippet>7893</a>        <span class="macro">assert!</span>(
+<a href=#7894 id=7894 data-nosnippet>7894</a>            spec.validate()
+<a href=#7895 id=7895 data-nosnippet>7895</a>                .unwrap_err()
+<a href=#7896 id=7896 data-nosnippet>7896</a>                .contains(<span class="string">"finite region bounds"</span>)
+<a href=#7897 id=7897 data-nosnippet>7897</a>        );
+<a href=#7898 id=7898 data-nosnippet>7898</a>
+<a href=#7899 id=7899 data-nosnippet>7899</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7900 id=7900 data-nosnippet>7900</a>        spec.flag_edit = <span class="prelude-val">Some</span>(MsFlagEditSpec {
+<a href=#7901 id=7901 data-nosnippet>7901</a>            panel_key: <span class="prelude-val">Some</span>(<span class="string">"field=0"</span>.to_string()),
+<a href=#7902 id=7902 data-nosnippet>7902</a>            ..finite_flag_edit.clone()
+<a href=#7903 id=7903 data-nosnippet>7903</a>        });
+<a href=#7904 id=7904 data-nosnippet>7904</a>        <span class="macro">assert!</span>(
+<a href=#7905 id=7905 data-nosnippet>7905</a>            spec.validate()
+<a href=#7906 id=7906 data-nosnippet>7906</a>                .unwrap_err()
+<a href=#7907 id=7907 data-nosnippet>7907</a>                .contains(<span class="string">"only accepts panel_key"</span>)
+<a href=#7908 id=7908 data-nosnippet>7908</a>        );
+<a href=#7909 id=7909 data-nosnippet>7909</a>
+<a href=#7910 id=7910 data-nosnippet>7910</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7911 id=7911 data-nosnippet>7911</a>        spec.flag_edit = <span class="prelude-val">Some</span>(MsFlagEditSpec {
+<a href=#7912 id=7912 data-nosnippet>7912</a>            plot_index: <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#7913 id=7913 data-nosnippet>7913</a>            ..finite_flag_edit.clone()
+<a href=#7914 id=7914 data-nosnippet>7914</a>        });
+<a href=#7915 id=7915 data-nosnippet>7915</a>        <span class="macro">assert!</span>(
+<a href=#7916 id=7916 data-nosnippet>7916</a>            spec.validate()
+<a href=#7917 id=7917 data-nosnippet>7917</a>                .unwrap_err()
+<a href=#7918 id=7918 data-nosnippet>7918</a>                .contains(<span class="string">"only accepts plot_index"</span>)
+<a href=#7919 id=7919 data-nosnippet>7919</a>        );
+<a href=#7920 id=7920 data-nosnippet>7920</a>
+<a href=#7921 id=7921 data-nosnippet>7921</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7922 id=7922 data-nosnippet>7922</a>        spec.averaging.avgscan = <span class="bool-val">true</span>;
+<a href=#7923 id=7923 data-nosnippet>7923</a>        <span class="macro">assert!</span>(
+<a href=#7924 id=7924 data-nosnippet>7924</a>            spec.validate()
+<a href=#7925 id=7925 data-nosnippet>7925</a>                .unwrap_err()
+<a href=#7926 id=7926 data-nosnippet>7926</a>                .contains(<span class="string">"avgscan requires avgtime"</span>)
+<a href=#7927 id=7927 data-nosnippet>7927</a>        );
+<a href=#7928 id=7928 data-nosnippet>7928</a>
+<a href=#7929 id=7929 data-nosnippet>7929</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7930 id=7930 data-nosnippet>7930</a>        spec.averaging.avgfield = <span class="bool-val">true</span>;
+<a href=#7931 id=7931 data-nosnippet>7931</a>        <span class="macro">assert!</span>(
+<a href=#7932 id=7932 data-nosnippet>7932</a>            spec.validate()
+<a href=#7933 id=7933 data-nosnippet>7933</a>                .unwrap_err()
+<a href=#7934 id=7934 data-nosnippet>7934</a>                .contains(<span class="string">"avgfield requires avgtime"</span>)
+<a href=#7935 id=7935 data-nosnippet>7935</a>        );
+<a href=#7936 id=7936 data-nosnippet>7936</a>
+<a href=#7937 id=7937 data-nosnippet>7937</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7938 id=7938 data-nosnippet>7938</a>        spec.averaging.avgbaseline = <span class="bool-val">true</span>;
+<a href=#7939 id=7939 data-nosnippet>7939</a>        spec.averaging.avgantenna = <span class="bool-val">true</span>;
+<a href=#7940 id=7940 data-nosnippet>7940</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"mutually exclusive"</span>));
+<a href=#7941 id=7941 data-nosnippet>7941</a>
+<a href=#7942 id=7942 data-nosnippet>7942</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7943 id=7943 data-nosnippet>7943</a>        spec.averaging.avgtime = <span class="prelude-val">Some</span>(<span class="number">30.0</span>);
+<a href=#7944 id=7944 data-nosnippet>7944</a>        spec.averaging.avgscan = <span class="bool-val">true</span>;
+<a href=#7945 id=7945 data-nosnippet>7945</a>        spec.iteration.iteraxis = <span class="prelude-val">Some</span>(MsIterationAxis::Scan);
+<a href=#7946 id=7946 data-nosnippet>7946</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"iterate by scan"</span>));
+<a href=#7947 id=7947 data-nosnippet>7947</a>
+<a href=#7948 id=7948 data-nosnippet>7948</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7949 id=7949 data-nosnippet>7949</a>        spec.averaging.avgtime = <span class="prelude-val">Some</span>(<span class="number">30.0</span>);
+<a href=#7950 id=7950 data-nosnippet>7950</a>        spec.averaging.avgfield = <span class="bool-val">true</span>;
+<a href=#7951 id=7951 data-nosnippet>7951</a>        spec.color_by = MsColorAxis::Field;
+<a href=#7952 id=7952 data-nosnippet>7952</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"color by field"</span>));
+<a href=#7953 id=7953 data-nosnippet>7953</a>
+<a href=#7954 id=7954 data-nosnippet>7954</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsChannel);
+<a href=#7955 id=7955 data-nosnippet>7955</a>        spec.averaging.avgspw = <span class="bool-val">true</span>;
+<a href=#7956 id=7956 data-nosnippet>7956</a>        spec.color_by = MsColorAxis::SpectralWindow;
+<a href=#7957 id=7957 data-nosnippet>7957</a>        <span class="macro">assert!</span>(
+<a href=#7958 id=7958 data-nosnippet>7958</a>            spec.validate()
+<a href=#7959 id=7959 data-nosnippet>7959</a>                .unwrap_err()
+<a href=#7960 id=7960 data-nosnippet>7960</a>                .contains(<span class="string">"color by spectral window"</span>)
+<a href=#7961 id=7961 data-nosnippet>7961</a>        );
+<a href=#7962 id=7962 data-nosnippet>7962</a>
+<a href=#7963 id=7963 data-nosnippet>7963</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7964 id=7964 data-nosnippet>7964</a>        spec.transforms.phasecenter = <span class="prelude-val">Some</span>(<span class="string">"J2000 1rad 2rad"</span>.to_string());
+<a href=#7965 id=7965 data-nosnippet>7965</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"not yet implemented"</span>));
+<a href=#7966 id=7966 data-nosnippet>7966</a>
+<a href=#7967 id=7967 data-nosnippet>7967</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7968 id=7968 data-nosnippet>7968</a>        spec.x_axis = MsAxis::Field;
+<a href=#7969 id=7969 data-nosnippet>7969</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"x axis field"</span>));
+<a href=#7970 id=7970 data-nosnippet>7970</a>
+<a href=#7971 id=7971 data-nosnippet>7971</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7972 id=7972 data-nosnippet>7972</a>        spec.y_axes = <span class="macro">vec!</span>[MsAxis::Channel];
+<a href=#7973 id=7973 data-nosnippet>7973</a>        <span class="macro">assert!</span>(spec.validate().unwrap_err().contains(<span class="string">"y axis channel"</span>));
+<a href=#7974 id=7974 data-nosnippet>7974</a>
+<a href=#7975 id=7975 data-nosnippet>7975</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7976 id=7976 data-nosnippet>7976</a>        spec.averaging.avgchannel = <span class="prelude-val">Some</span>(<span class="number">8</span>);
+<a href=#7977 id=7977 data-nosnippet>7977</a>        <span class="macro">assert!</span>(
+<a href=#7978 id=7978 data-nosnippet>7978</a>            spec.validate()
+<a href=#7979 id=7979 data-nosnippet>7979</a>                .unwrap_err()
+<a href=#7980 id=7980 data-nosnippet>7980</a>                .contains(<span class="string">"avgchannel currently requires"</span>)
+<a href=#7981 id=7981 data-nosnippet>7981</a>        );
+<a href=#7982 id=7982 data-nosnippet>7982</a>
+<a href=#7983 id=7983 data-nosnippet>7983</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::FlagVsTime);
+<a href=#7984 id=7984 data-nosnippet>7984</a>        spec.x_axis = MsAxis::Channel;
+<a href=#7985 id=7985 data-nosnippet>7985</a>        spec.averaging.avgchannel = <span class="prelude-val">Some</span>(<span class="number">8</span>);
+<a href=#7986 id=7986 data-nosnippet>7986</a>        <span class="macro">assert!</span>(
+<a href=#7987 id=7987 data-nosnippet>7987</a>            spec.validate()
+<a href=#7988 id=7988 data-nosnippet>7988</a>                .unwrap_err()
+<a href=#7989 id=7989 data-nosnippet>7989</a>                .contains(<span class="string">"flag plots do not yet support avgchannel"</span>)
+<a href=#7990 id=7990 data-nosnippet>7990</a>        );
+<a href=#7991 id=7991 data-nosnippet>7991</a>
+<a href=#7992 id=7992 data-nosnippet>7992</a>        <span class="kw">let </span><span class="kw-2">mut </span>spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+<a href=#7993 id=7993 data-nosnippet>7993</a>        spec.layout.rowindex = <span class="number">1</span>;
+<a href=#7994 id=7994 data-nosnippet>7994</a>        <span class="macro">assert!</span>(
+<a href=#7995 id=7995 data-nosnippet>7995</a>            spec.validate()
+<a href=#7996 id=7996 data-nosnippet>7996</a>                .unwrap_err()
+<a href=#7997 id=7997 data-nosnippet>7997</a>                .contains(<span class="string">"reserved for multi-plot page composition"</span>)
+<a href=#7998 id=7998 data-nosnippet>7998</a>        );
+<a href=#7999 id=7999 data-nosnippet>7999</a>
+<a href=#8000 id=8000 data-nosnippet>8000</a>        <span class="kw">let </span>request = MsExploreSpec {
+<a href=#8001 id=8001 data-nosnippet>8001</a>            ms_path: PathBuf::from(<span class="string">"demo.ms"</span>),
+<a href=#8002 id=8002 data-nosnippet>8002</a>            summary_format: MeasurementSetSummaryOutputFormat::Text,
+<a href=#8003 id=8003 data-nosnippet>8003</a>            selection: MsSelectionSpec::default(),
+<a href=#8004 id=8004 data-nosnippet>8004</a>            header_items: Vec::new(),
+<a href=#8005 id=8005 data-nosnippet>8005</a>            page_title: <span class="prelude-val">None</span>,
+<a href=#8006 id=8006 data-nosnippet>8006</a>            exprange: MsPageExportRange::Current,
+<a href=#8007 id=8007 data-nosnippet>8007</a>            max_plot_points: <span class="number">10</span>,
+<a href=#8008 id=8008 data-nosnippet>8008</a>            plots: Vec::new(),
+<a href=#8009 id=8009 data-nosnippet>8009</a>        };
+<a href=#8010 id=8010 data-nosnippet>8010</a>        <span class="macro">assert!</span>(
+<a href=#8011 id=8011 data-nosnippet>8011</a>            request
+<a href=#8012 id=8012 data-nosnippet>8012</a>                .validate()
+<a href=#8013 id=8013 data-nosnippet>8013</a>                .unwrap_err()
+<a href=#8014 id=8014 data-nosnippet>8014</a>                .contains(<span class="string">"at least one plot"</span>)
+<a href=#8015 id=8015 data-nosnippet>8015</a>        );
+<a href=#8016 id=8016 data-nosnippet>8016</a>
+<a href=#8017 id=8017 data-nosnippet>8017</a>        <span class="kw">let </span>request = MsExploreSpec {
+<a href=#8018 id=8018 data-nosnippet>8018</a>            max_plot_points: <span class="number">0</span>,
+<a href=#8019 id=8019 data-nosnippet>8019</a>            plots: <span class="macro">vec!</span>[MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime)],
+<a href=#8020 id=8020 data-nosnippet>8020</a>            ..request
+<a href=#8021 id=8021 data-nosnippet>8021</a>        };
+<a href=#8022 id=8022 data-nosnippet>8022</a>        <span class="macro">assert!</span>(request.validate().unwrap_err().contains(<span class="string">"positive integer"</span>));
+<a href=#8023 id=8023 data-nosnippet>8023</a>
+<a href=#8024 id=8024 data-nosnippet>8024</a>        <span class="kw">let </span><span class="kw-2">mut </span>first = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsFrequency);
+<a href=#8025 id=8025 data-nosnippet>8025</a>        first.layout.gridrows = <span class="number">1</span>;
+<a href=#8026 id=8026 data-nosnippet>8026</a>        first.layout.gridcols = <span class="number">2</span>;
+<a href=#8027 id=8027 data-nosnippet>8027</a>        first.layout.rowindex = <span class="number">0</span>;
+<a href=#8028 id=8028 data-nosnippet>8028</a>        first.layout.colindex = <span class="number">0</span>;
+<a href=#8029 id=8029 data-nosnippet>8029</a>        first.layout.plotindex = <span class="number">0</span>;
+<a href=#8030 id=8030 data-nosnippet>8030</a>        <span class="kw">let </span><span class="kw-2">mut </span>second = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsFrequency);
+<a href=#8031 id=8031 data-nosnippet>8031</a>        second.layout.gridrows = <span class="number">2</span>;
+<a href=#8032 id=8032 data-nosnippet>8032</a>        second.layout.gridcols = <span class="number">2</span>;
+<a href=#8033 id=8033 data-nosnippet>8033</a>        second.layout.rowindex = <span class="number">0</span>;
+<a href=#8034 id=8034 data-nosnippet>8034</a>        second.layout.colindex = <span class="number">1</span>;
+<a href=#8035 id=8035 data-nosnippet>8035</a>        second.layout.plotindex = <span class="number">1</span>;
+<a href=#8036 id=8036 data-nosnippet>8036</a>        <span class="kw">let </span>request = MsExploreSpec {
+<a href=#8037 id=8037 data-nosnippet>8037</a>            ms_path: PathBuf::from(<span class="string">"demo.ms"</span>),
+<a href=#8038 id=8038 data-nosnippet>8038</a>            summary_format: MeasurementSetSummaryOutputFormat::Text,
+<a href=#8039 id=8039 data-nosnippet>8039</a>            selection: MsSelectionSpec::default(),
+<a href=#8040 id=8040 data-nosnippet>8040</a>            header_items: Vec::new(),
+<a href=#8041 id=8041 data-nosnippet>8041</a>            page_title: <span class="prelude-val">None</span>,
+<a href=#8042 id=8042 data-nosnippet>8042</a>            exprange: MsPageExportRange::Current,
+<a href=#8043 id=8043 data-nosnippet>8043</a>            max_plot_points: <span class="number">10</span>,
+<a href=#8044 id=8044 data-nosnippet>8044</a>            plots: <span class="macro">vec!</span>[first, second],
+<a href=#8045 id=8045 data-nosnippet>8045</a>        };
+<a href=#8046 id=8046 data-nosnippet>8046</a>        <span class="macro">assert!</span>(
+<a href=#8047 id=8047 data-nosnippet>8047</a>            request
+<a href=#8048 id=8048 data-nosnippet>8048</a>                .validate()
+<a href=#8049 id=8049 data-nosnippet>8049</a>                .unwrap_err()
+<a href=#8050 id=8050 data-nosnippet>8050</a>                .contains(<span class="string">"agree on gridrows/gridcols"</span>)
+<a href=#8051 id=8051 data-nosnippet>8051</a>        );
+<a href=#8052 id=8052 data-nosnippet>8052</a>
+<a href=#8053 id=8053 data-nosnippet>8053</a>        <span class="kw">let </span><span class="kw-2">mut </span>first = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsFrequency);
+<a href=#8054 id=8054 data-nosnippet>8054</a>        first.layout.gridrows = <span class="number">1</span>;
+<a href=#8055 id=8055 data-nosnippet>8055</a>        first.layout.gridcols = <span class="number">2</span>;
+<a href=#8056 id=8056 data-nosnippet>8056</a>        first.layout.rowindex = <span class="number">0</span>;
+<a href=#8057 id=8057 data-nosnippet>8057</a>        first.layout.colindex = <span class="number">0</span>;
+<a href=#8058 id=8058 data-nosnippet>8058</a>        first.layout.plotindex = <span class="number">0</span>;
+<a href=#8059 id=8059 data-nosnippet>8059</a>        <span class="kw">let </span><span class="kw-2">mut </span>second = MsPlotSpec::from_preset(MsPlotPreset::PhaseVsFrequency);
+<a href=#8060 id=8060 data-nosnippet>8060</a>        second.layout.gridrows = <span class="number">1</span>;
+<a href=#8061 id=8061 data-nosnippet>8061</a>        second.layout.gridcols = <span class="number">2</span>;
+<a href=#8062 id=8062 data-nosnippet>8062</a>        second.layout.rowindex = <span class="number">0</span>;
+<a href=#8063 id=8063 data-nosnippet>8063</a>        second.layout.colindex = <span class="number">1</span>;
+<a href=#8064 id=8064 data-nosnippet>8064</a>        second.layout.plotindex = <span class="number">1</span>;
+<a href=#8065 id=8065 data-nosnippet>8065</a>        <span class="kw">let </span>request = MsExploreSpec {
+<a href=#8066 id=8066 data-nosnippet>8066</a>            ms_path: PathBuf::from(<span class="string">"demo.ms"</span>),
+<a href=#8067 id=8067 data-nosnippet>8067</a>            summary_format: MeasurementSetSummaryOutputFormat::Text,
+<a href=#8068 id=8068 data-nosnippet>8068</a>            selection: MsSelectionSpec::default(),
+<a href=#8069 id=8069 data-nosnippet>8069</a>            header_items: Vec::new(),
+<a href=#8070 id=8070 data-nosnippet>8070</a>            page_title: <span class="prelude-val">None</span>,
+<a href=#8071 id=8071 data-nosnippet>8071</a>            exprange: MsPageExportRange::All,
+<a href=#8072 id=8072 data-nosnippet>8072</a>            max_plot_points: <span class="number">10</span>,
+<a href=#8073 id=8073 data-nosnippet>8073</a>            plots: <span class="macro">vec!</span>[first, second],
+<a href=#8074 id=8074 data-nosnippet>8074</a>        };
+<a href=#8075 id=8075 data-nosnippet>8075</a>        <span class="macro">assert!</span>(
+<a href=#8076 id=8076 data-nosnippet>8076</a>            request
+<a href=#8077 id=8077 data-nosnippet>8077</a>                .validate()
+<a href=#8078 id=8078 data-nosnippet>8078</a>                .unwrap_err()
+<a href=#8079 id=8079 data-nosnippet>8079</a>                .contains(<span class="string">"share the same x/y axis configuration"</span>)
+<a href=#8080 id=8080 data-nosnippet>8080</a>        );
+<a href=#8081 id=8081 data-nosnippet>8081</a>    }
+<a href=#8082 id=8082 data-nosnippet>8082</a>
+<a href=#8083 id=8083 data-nosnippet>8083</a>    <span class="attr">#[test]
+<a href=#8084 id=8084 data-nosnippet>8084</a>    </span><span class="kw">fn </span>dual_axis_series_styles_use_distinct_markers_and_colors() {
+<a href=#8085 id=8085 data-nosnippet>8085</a>        <span class="kw">let </span>theme = ListObsPlotTheme::light();
+<a href=#8086 id=8086 data-nosnippet>8086</a>        <span class="kw">let </span>primary = MsScatterSeries {
+<a href=#8087 id=8087 data-nosnippet>8087</a>            label: <span class="string">"Amplitude"</span>.to_string(),
+<a href=#8088 id=8088 data-nosnippet>8088</a>            color_group: <span class="string">"all"</span>.to_string(),
+<a href=#8089 id=8089 data-nosnippet>8089</a>            y_axis: MsAxis::Amplitude,
+<a href=#8090 id=8090 data-nosnippet>8090</a>            points: <span class="macro">vec!</span>[(<span class="number">0.0</span>, <span class="number">1.0</span>)],
+<a href=#8091 id=8091 data-nosnippet>8091</a>            provenance: <span class="macro">vec!</span>[MsScatterPointRef {
+<a href=#8092 id=8092 data-nosnippet>8092</a>                row: <span class="number">0</span>,
+<a href=#8093 id=8093 data-nosnippet>8093</a>                corr: <span class="number">0</span>,
+<a href=#8094 id=8094 data-nosnippet>8094</a>                chan_start: <span class="number">0</span>,
+<a href=#8095 id=8095 data-nosnippet>8095</a>                chan_end: <span class="number">1</span>,
+<a href=#8096 id=8096 data-nosnippet>8096</a>            }],
+<a href=#8097 id=8097 data-nosnippet>8097</a>        };
+<a href=#8098 id=8098 data-nosnippet>8098</a>        <span class="kw">let </span>secondary = MsScatterSeries {
+<a href=#8099 id=8099 data-nosnippet>8099</a>            label: <span class="string">"Phase"</span>.to_string(),
+<a href=#8100 id=8100 data-nosnippet>8100</a>            color_group: <span class="string">"all"</span>.to_string(),
+<a href=#8101 id=8101 data-nosnippet>8101</a>            y_axis: MsAxis::Phase,
+<a href=#8102 id=8102 data-nosnippet>8102</a>            points: <span class="macro">vec!</span>[(<span class="number">0.0</span>, <span class="number">2.0</span>)],
+<a href=#8103 id=8103 data-nosnippet>8103</a>            provenance: <span class="macro">vec!</span>[MsScatterPointRef {
+<a href=#8104 id=8104 data-nosnippet>8104</a>                row: <span class="number">0</span>,
+<a href=#8105 id=8105 data-nosnippet>8105</a>                corr: <span class="number">0</span>,
+<a href=#8106 id=8106 data-nosnippet>8106</a>                chan_start: <span class="number">0</span>,
+<a href=#8107 id=8107 data-nosnippet>8107</a>                chan_end: <span class="number">1</span>,
+<a href=#8108 id=8108 data-nosnippet>8108</a>            }],
+<a href=#8109 id=8109 data-nosnippet>8109</a>        };
+<a href=#8110 id=8110 data-nosnippet>8110</a>
+<a href=#8111 id=8111 data-nosnippet>8111</a>        <span class="kw">let </span>primary_style =
+<a href=#8112 id=8112 data-nosnippet>8112</a>            scatter_series_style(<span class="kw-2">&amp;</span>primary, MsAxis::Amplitude, <span class="prelude-val">Some</span>(MsAxis::Phase), theme);
+<a href=#8113 id=8113 data-nosnippet>8113</a>        <span class="kw">let </span>secondary_style =
+<a href=#8114 id=8114 data-nosnippet>8114</a>            scatter_series_style(<span class="kw-2">&amp;</span>secondary, MsAxis::Amplitude, <span class="prelude-val">Some</span>(MsAxis::Phase), theme);
+<a href=#8115 id=8115 data-nosnippet>8115</a>
+<a href=#8116 id=8116 data-nosnippet>8116</a>        <span class="macro">assert_eq!</span>(primary_style.marker, ScatterMarker::FilledCircle);
+<a href=#8117 id=8117 data-nosnippet>8117</a>        <span class="macro">assert_eq!</span>(secondary_style.marker, ScatterMarker::HollowSquare);
+<a href=#8118 id=8118 data-nosnippet>8118</a>        <span class="macro">assert_ne!</span>(primary_style.color, secondary_style.color);
+<a href=#8119 id=8119 data-nosnippet>8119</a>    }
+<a href=#8120 id=8120 data-nosnippet>8120</a>
+<a href=#8121 id=8121 data-nosnippet>8121</a>    <span class="attr">#[test]
+<a href=#8122 id=8122 data-nosnippet>8122</a>    </span><span class="kw">fn </span>internal_legend_text_style_uses_theme_axis_color() {
+<a href=#8123 id=8123 data-nosnippet>8123</a>        <span class="kw">let </span>theme = ListObsPlotTheme::dark();
+<a href=#8124 id=8124 data-nosnippet>8124</a>        <span class="kw">let </span>style = ListObsPlotRenderStyle::for_bitmap_size(<span class="number">1200</span>, <span class="number">800</span>);
+<a href=#8125 id=8125 data-nosnippet>8125</a>
+<a href=#8126 id=8126 data-nosnippet>8126</a>        <span class="kw">let </span>text_style = internal_scatter_legend_text_style(theme, style);
+<a href=#8127 id=8127 data-nosnippet>8127</a>
+<a href=#8128 id=8128 data-nosnippet>8128</a>        <span class="macro">assert_eq!</span>(text_style.color.rgb, rgb(theme.axis).to_backend_color().rgb);
+<a href=#8129 id=8129 data-nosnippet>8129</a>    }
+<a href=#8130 id=8130 data-nosnippet>8130</a>}
 </code></pre></div></section></main></body></html>
