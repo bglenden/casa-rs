@@ -3992,7 +3992,7 @@ impl AppState {
     #[cfg(test)]
     fn test_idle_timeout(timeout: Duration, under_tarpaulin: bool) -> Duration {
         if under_tarpaulin {
-            timeout.saturating_mul(3)
+            timeout.saturating_mul(5)
         } else {
             timeout
         }
@@ -12029,7 +12029,7 @@ mod tests {
         let timeout = Duration::from_secs(60);
         assert_eq!(
             AppState::test_idle_timeout(timeout, true),
-            Duration::from_secs(180)
+            Duration::from_secs(300)
         );
     }
 
