@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
 
-use casacore_ms::listobs::cli::{UiCommandSchema, command_schema as listobs_command_schema};
+#[cfg(test)]
+use casacore_ms::listobs::cli::command_schema as listobs_command_schema;
+use casacore_ms::listobs::cli::UiCommandSchema;
 use casacore_ms::msexplore::cli::command_schema as msexplore_command_schema;
 
 #[derive(Debug, Clone)]
@@ -65,8 +67,9 @@ impl RegistryApp {
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
         if !self.has_explicit_binary_override() {
             match self.id {
-                "listobs" => return Ok(listobs_command_schema("listobs")),
                 "msexplore" => return Ok(msexplore_command_schema("msexplore")),
+                #[cfg(test)]
+                "listobs" => return Ok(listobs_command_schema("listobs")),
                 _ => {}
             }
         }
@@ -203,12 +206,11 @@ impl RegistryApp {
 
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
     match id.unwrap_or("msexplore") {
-        "listobs" => Ok(listobs_app()),
         "msexplore" => Ok(msexplore_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: msexplore, tablebrowser, imexplore, listobs"
+            "unknown casars app {other:?}; expected one of: msexplore, tablebrowser, imexplore"
         )),
     }
 }
@@ -217,6 +219,7 @@ pub(crate) fn registered_apps() -> Vec<RegistryApp> {
     vec![msexplore_app(), tablebrowser_app(), imexplore_app()]
 }
 
+#[cfg(test)]
 pub(crate) fn listobs_app() -> RegistryApp {
     RegistryApp {
         id: "listobs",
@@ -327,7 +330,6 @@ mod tests {
     fn resolve_app_defaults_and_rejects_unknown_ids() {
         assert_eq!(resolve_app(None).unwrap().id, "msexplore");
         assert_eq!(resolve_app(Some("msexplore")).unwrap().id, "msexplore");
-        assert_eq!(resolve_app(Some("listobs")).unwrap().id, "listobs");
         assert_eq!(
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
@@ -342,13 +344,6 @@ mod tests {
 
     #[test]
     fn app_metadata_matches_interaction_kind() {
-        let listobs = listobs_app();
-        assert!(!listobs.is_browser_session());
-        assert_eq!(
-            listobs.ready_status_line(),
-            "Ready. Press r to run the selected command."
-        );
-
         let msexplore = msexplore_app();
         assert!(!msexplore.is_browser_session());
         assert_eq!(
@@ -374,18 +369,18 @@ mod tests {
     #[test]
     fn resolve_command_prefers_override_environment() {
         let _guard = crate::test_env_lock();
-        let app = listobs_app();
+        let app = msexplore_app();
         unsafe {
-            env::set_var("CASARS_LISTOBS_BIN", "/tmp/custom-listobs");
+            env::set_var("CASARS_MSEXPLORE_BIN", "/tmp/custom-msexplore");
         }
 
         let resolved = app.resolve_command().expect("resolve override");
         let command = resolved.command();
-        assert_eq!(command.get_program(), "/tmp/custom-listobs");
+        assert_eq!(command.get_program(), "/tmp/custom-msexplore");
         assert_eq!(command.get_args().count(), 0);
 
         unsafe {
-            env::remove_var("CASARS_LISTOBS_BIN");
+            env::remove_var("CASARS_MSEXPLORE_BIN");
         }
     }
 
@@ -457,7 +452,6 @@ mod tests {
 
     #[test]
     fn workspace_ms_apps_prefer_cargo_fallback_for_stale_siblings() {
-        assert!(listobs_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());

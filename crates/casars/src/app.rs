@@ -4069,7 +4069,7 @@ impl AppState {
         if self.plot_workspace.snapshot.is_some() {
             return "Select a plot from the catalog to render it.".to_string();
         }
-        "Run listobs to populate the plot workspace.".to_string()
+        "Populate the plot workspace to preview plots.".to_string()
     }
 
     #[cfg(test)]
@@ -8137,7 +8137,7 @@ impl AppState {
         }
         let snapshot = self.plot_workspace.snapshot.as_ref()?;
         let dirty_suffix = if snapshot.dirty {
-            " Pending form edits will not affect plots until you rerun listobs."
+            " Pending form edits will not affect plots until you refresh the plot workspace."
         } else {
             ""
         };
@@ -8311,7 +8311,7 @@ impl AppState {
                 .map(CurrentPlotPayload::MsExplore);
         }
         let Some(snapshot) = self.plot_workspace.snapshot.clone() else {
-            return Err("Run listobs to populate the plot workspace.".to_string());
+            return Err("Populate the plot workspace before previewing plots.".to_string());
         };
         match self.plot_workspace.selected_plot {
             ListObsPlotKind::UvCoverage => {
@@ -9635,7 +9635,7 @@ impl AppState {
             return;
         }
         let Some(snapshot) = self.plot_workspace.snapshot.as_ref() else {
-            self.result.status_line = "Run listobs before copying a plot CLI.".to_string();
+            self.result.status_line = "Populate the plot workspace before copying a plot CLI.".to_string();
             self.result.status_kind = StatusKind::Warning;
             return;
         };

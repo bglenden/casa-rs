@@ -172,7 +172,7 @@ fn renders_idle_layout_with_ready_status() {
     let (_temp, app) = test_app();
     let rendered = render_app(&app, 100, 30);
     assert!(rendered.contains("casars"));
-    assert!(rendered.contains("MeasurementSet / ListObs"));
+    assert!(rendered.contains("MeasurementSet / MSExplore"));
     assert!(rendered.contains("MeasurementSet Path"));
     assert!(rendered.contains("Ready. Press r to run the selected command."));
     assert!(rendered.contains("Overview"));
@@ -195,9 +195,9 @@ fn theme_mode_persists_across_app_instances() {
     let temp = tempdir().expect("tempdir");
     let config_path = temp.path().join("casars.toml");
 
-    let schema = listobs_command_schema("listobs");
+    let schema = msexplore_command_schema("msexplore");
     let mut first = AppState::from_schema_with_config(
-        listobs_app(),
+        msexplore_app(),
         schema.clone(),
         ConfigStore::load_for_tests(config_path.clone()),
     );
@@ -206,7 +206,7 @@ fn theme_mode_persists_across_app_instances() {
     assert_eq!(first.theme_mode_for_test(), ThemeMode::RichPanel);
 
     let second = AppState::from_schema_with_config(
-        listobs_app(),
+        msexplore_app(),
         schema,
         ConfigStore::load_for_tests(config_path),
     );
@@ -218,8 +218,8 @@ fn pane_split_ratio_persists_after_drag() {
     let temp = tempdir().expect("tempdir");
     let config_path = temp.path().join("casars.toml");
     let mut app = AppState::from_schema_with_config(
-        listobs_app(),
-        listobs_command_schema("listobs"),
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
         ConfigStore::load_for_tests(config_path.clone()),
     );
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
@@ -251,8 +251,8 @@ fn pane_split_ratio_persists_after_drag() {
     assert!(app.pane_split_ratio_for_test() > 0.55);
 
     let reloaded = AppState::from_schema_with_config(
-        listobs_app(),
-        listobs_command_schema("listobs"),
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
         ConfigStore::load_for_tests(config_path),
     );
     assert!(reloaded.pane_split_ratio_for_test() > 0.55);
@@ -263,8 +263,8 @@ fn divider_drag_starts_from_adjacent_border_column() {
     let temp = tempdir().expect("tempdir");
     let config_path = temp.path().join("casars.toml");
     let mut app = AppState::from_schema_with_config(
-        listobs_app(),
-        listobs_command_schema("listobs"),
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
         ConfigStore::load_for_tests(config_path),
     );
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
@@ -7323,8 +7323,11 @@ fn create_fixture_table(root: &Path) -> PathBuf {
 fn test_app() -> (tempfile::TempDir, AppState) {
     let temp = tempdir().expect("tempdir");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let app =
-        AppState::from_schema_with_config(listobs_app(), listobs_command_schema("listobs"), config);
+    let app = AppState::from_schema_with_config(
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
+        config,
+    );
     (temp, app)
 }
 
