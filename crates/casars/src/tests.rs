@@ -14,9 +14,7 @@ use casacore_imagebrowser_protocol::{
     ImageRegionOverlayVertex, ImageRegionState, ImageRegionStatsState,
 };
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
-use casacore_ms::msexplore::cli::{
-    UiCommandSchema, command_schema as msexplore_command_schema,
-};
+use casacore_ms::msexplore::cli::{UiCommandSchema, command_schema as msexplore_command_schema};
 use casacore_ms::schema;
 use casacore_ms::{
     MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
