@@ -6342,6 +6342,68 @@ fn msexplore_clicking_catalog_preset_updates_preview_cli() {
 }
 
 #[test]
+fn msexplore_selecting_preset_immediately_invalidates_existing_preview() {
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("preset", "amplitude_vs_time");
+    app.set_active_result_tab(ResultTab::Plots);
+
+    app.prepare_graphics_for_test(160, 40);
+    assert!(wait_for_plot_render(
+        &mut app,
+        160,
+        40,
+        Duration::from_secs(5)
+    ));
+    assert!(
+        app.plot_protocol().is_some(),
+        "{}",
+        app.status_line_for_test()
+    );
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
+    let target =
+        PlotCatalogTarget::MsExplorePreset(casacore_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked);
+    let hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .iter()
+        .find(|hit| hit.tab.target == target)
+        .expect("stacked preset hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            hit.rect.x + 1,
+            hit.rect.y,
+        ),
+        &layout,
+    );
+
+    assert_eq!(
+        app.field_text_for_test("preset").as_deref(),
+        Some("amplitude_phase_vs_time_stacked")
+    );
+    assert!(app.plot_protocol().is_none());
+    assert!(app.plot_pending());
+    assert!(
+        app.status_line_for_test()
+            .contains("Selected Amplitude / Phase vs Time (Stacked). Rendering preview"),
+        "{}",
+        app.status_line_for_test()
+    );
+
+    let rendered = render_app(&app, 160, 40);
+    assert!(rendered.contains("Amplitude / Phase vs Time (Stacked)"));
+    assert!(rendered.contains("Rendering plot..."));
+}
+
+#[test]
 fn msexplore_catalog_scroll_selects_velocity_preset_with_down_arrow() {
     let temp = tempdir().expect("tempdir");
     let schema = msexplore_command_schema("msexplore");

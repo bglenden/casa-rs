@@ -1883,7 +1883,6 @@ enum EditTarget {
     RenameImageRegionDefinition,
 }
 
-#[derive(Debug)]
 struct PlotWorkspaceState {
     focus: PlotPaneFocus,
     selected_plot: ListObsPlotKind,
@@ -1899,6 +1898,8 @@ struct PlotWorkspaceState {
     next_generation: u64,
     cached_uv_coverage: Option<(u64, ListObsUvCoverage)>,
     uv_error: Option<String>,
+    preview_invalidated: bool,
+    placeholder_protocol: Option<PanelProtocol>,
     panel: Option<PlotPanelState>,
     export_path: String,
     export_width: u32,
@@ -1925,11 +1926,36 @@ impl PlotWorkspaceState {
             next_generation: 1,
             cached_uv_coverage: None,
             uv_error: None,
+            preview_invalidated: false,
+            placeholder_protocol: None,
             panel: None,
             export_path: default_plot_export_path(selected_plot, ListObsPlotExportFormat::Png),
             export_width: 1600,
             export_height: 900,
         }
+    }
+}
+
+impl fmt::Debug for PlotWorkspaceState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PlotWorkspaceState")
+            .field("focus", &self.focus)
+            .field("selected_plot", &self.selected_plot)
+            .field("selected_control", &self.selected_control)
+            .field("snapshot", &self.snapshot)
+            .field("next_generation", &self.next_generation)
+            .field("cached_uv_coverage", &self.cached_uv_coverage)
+            .field("uv_error", &self.uv_error)
+            .field("preview_invalidated", &self.preview_invalidated)
+            .field(
+                "has_placeholder_protocol",
+                &self.placeholder_protocol.is_some(),
+            )
+            .field("panel", &self.panel)
+            .field("export_path", &self.export_path)
+            .field("export_width", &self.export_width)
+            .field("export_height", &self.export_height)
+            .finish()
     }
 }
 
@@ -7950,7 +7976,9 @@ impl AppState {
     }
 
     fn clear_plot_render_cache(&mut self) {
+        self.plot_workspace.placeholder_protocol = self.build_blank_plot_protocol();
         self.plot_workspace.panel = None;
+        self.plot_workspace.preview_invalidated = true;
     }
 
     pub(crate) fn is_msexplore_app(&self) -> bool {
@@ -8168,14 +8196,44 @@ impl AppState {
             Ok(changed) => {
                 if changed {
                     panel.image_size = panel.renderer.image_size();
+                    self.plot_workspace.preview_invalidated = false;
+                    self.plot_workspace.placeholder_protocol = None;
                 }
             }
             Err(error) => {
                 panel.last_error = Some(error.to_string());
+                self.plot_workspace.preview_invalidated = false;
+                self.plot_workspace.placeholder_protocol = None;
                 self.result.status_line = "Plot rendering failed.".to_string();
                 self.result.status_kind = StatusKind::Warning;
             }
         }
+    }
+
+    fn build_blank_plot_protocol(&self) -> Option<PanelProtocol> {
+        let panel = self.plot_workspace.panel.as_ref()?;
+        let area = panel.request_key.as_ref()?.area;
+        if area.is_empty() {
+            return None;
+        }
+        let pixel_width = panel
+            .image_size
+            .map(|(width, _)| width)
+            .unwrap_or_else(|| u32::from(area.width.max(1)) * u32::from(panel.font_size.0.max(1)));
+        let pixel_height = panel
+            .image_size
+            .map(|(_, height)| height)
+            .unwrap_or_else(|| u32::from(area.height.max(1)) * u32::from(panel.font_size.1.max(1)));
+        let background = plot_theme(self.theme_mode()).background;
+        let image = RgbaImage::from_pixel(
+            pixel_width.max(1),
+            pixel_height.max(1),
+            image::Rgba([background[0], background[1], background[2], 255]),
+        );
+        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        build_panel_protocol_from_rgba_owned(&picker, Resize::Fit(None), area, image)
+            .ok()
+            .map(|prepared| prepared.protocol)
     }
 
     fn pump_image_plane_panel(&mut self) {
@@ -8718,6 +8776,7 @@ impl AppState {
                     .collect::<Vec<_>>()
                     .join("\u{1f}"),
                 Err(error) => {
+                    self.plot_workspace.preview_invalidated = false;
                     self.result.status_line = "Plot payload unavailable.".to_string();
                     self.result.status_kind = StatusKind::Warning;
                     self.result.stderr = format!("{error}\n");
@@ -8754,6 +8813,7 @@ impl AppState {
         let payload = match self.current_plot_payload() {
             Ok(payload) => payload,
             Err(error) => {
+                self.plot_workspace.preview_invalidated = false;
                 self.result.status_line = "Plot payload unavailable.".to_string();
                 self.result.status_kind = StatusKind::Warning;
                 self.result.stderr = format!("{error}\n");
@@ -8804,6 +8864,7 @@ impl AppState {
             },
         ) {
             panel.last_error = Some(error.to_string());
+            self.plot_workspace.preview_invalidated = false;
             self.result.status_line = "Failed to queue plot render.".to_string();
             self.result.status_kind = StatusKind::Warning;
             return;
@@ -8818,11 +8879,18 @@ impl AppState {
             .and_then(|panel| panel.renderer.protocol())
     }
 
+    pub(crate) fn plot_display_protocol(&self) -> Option<&PanelProtocol> {
+        self.plot_protocol()
+            .or(self.plot_workspace.placeholder_protocol.as_ref())
+    }
+
     pub(crate) fn plot_pending(&self) -> bool {
-        self.plot_workspace
-            .panel
-            .as_ref()
-            .is_some_and(|panel| panel.renderer.is_pending())
+        self.plot_workspace.preview_invalidated
+            || self
+                .plot_workspace
+                .panel
+                .as_ref()
+                .is_some_and(|panel| panel.renderer.is_pending())
     }
 
     pub(crate) fn plot_last_error(&self) -> Option<&str> {
@@ -9649,6 +9717,9 @@ impl AppState {
         self.plot_workspace.selected_control = 0;
         self.clear_plot_render_cache();
         self.sync_plot_export_path_for_selected_plot();
+        self.result.status_line =
+            format!("Selected {}. Rendering preview...", preset.display_name());
+        self.result.status_kind = StatusKind::Info;
     }
 
     fn build_execution_plan(&self) -> Result<ExecutionPlan, String> {

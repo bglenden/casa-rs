@@ -774,9 +774,10 @@ fn draw_graphic_result(
         return;
     }
 
-    if let Some(protocol) = app.plot_protocol() {
+    if let Some(protocol) = app.plot_display_protocol() {
         frame.render_widget(PanelImage::new(protocol), content_area);
-    } else {
+    }
+    if app.plot_protocol().is_none() {
         let message = if let Some(error) = app.plot_last_error() {
             format!("{summary}\n\n{error}")
         } else if app.plot_pending() {
@@ -896,9 +897,10 @@ fn draw_plot_workspace(
             workspace.catalog_inner,
         );
 
-        if let Some(protocol) = app.plot_protocol() {
+        if let Some(protocol) = app.plot_display_protocol() {
             frame.render_widget(PanelImage::new(protocol), workspace.canvas_inner);
-        } else {
+        }
+        if app.plot_protocol().is_none() {
             let message = if let Some(error) = app.plot_last_error() {
                 format!("{summary}\n\n{error}")
             } else if app.plot_pending() {
@@ -969,9 +971,10 @@ fn draw_plot_workspace(
         .collect::<Vec<_>>();
     frame.render_widget(List::new(catalog_items), workspace.catalog_inner);
 
-    if let Some(protocol) = app.plot_protocol() {
+    if let Some(protocol) = app.plot_display_protocol() {
         frame.render_widget(PanelImage::new(protocol), workspace.canvas_inner);
-    } else {
+    }
+    if app.plot_protocol().is_none() {
         let message = if let Some(error) = app.plot_last_error() {
             format!("{summary}\n\n{error}")
         } else if app.plot_pending() {
