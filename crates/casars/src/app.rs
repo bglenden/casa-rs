@@ -3999,8 +3999,13 @@ impl AppState {
     }
 
     #[cfg(test)]
+    fn under_tarpaulin_for_test() -> bool {
+        std::env::var_os("TARPAULIN").is_some() || std::env::var_os("LLVM_PROFILE_FILE").is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn wait_for_idle_for_test(&mut self, timeout: Duration) -> bool {
-        let timeout = Self::test_idle_timeout(timeout, std::env::var_os("TARPAULIN").is_some());
+        let timeout = Self::test_idle_timeout(timeout, Self::under_tarpaulin_for_test());
         let start = Instant::now();
         while self.running.is_some() && start.elapsed() < timeout {
             self.drain_execution_events();
@@ -12031,6 +12036,35 @@ mod tests {
             AppState::test_idle_timeout(timeout, true),
             Duration::from_secs(300)
         );
+    }
+
+    #[test]
+    fn llvm_profile_file_marks_tarpaulin_context_for_waits() {
+        let _guard = crate::test_env_lock();
+        let original_tarpaulin = std::env::var_os("TARPAULIN");
+        let original_llvm_profile = std::env::var_os("LLVM_PROFILE_FILE");
+
+        unsafe {
+            std::env::remove_var("TARPAULIN");
+            std::env::remove_var("LLVM_PROFILE_FILE");
+        }
+        assert!(!AppState::under_tarpaulin_for_test());
+
+        unsafe {
+            std::env::set_var("LLVM_PROFILE_FILE", "target/tarpaulin/%p.profraw");
+        }
+        assert!(AppState::under_tarpaulin_for_test());
+
+        unsafe {
+            match original_tarpaulin {
+                Some(value) => std::env::set_var("TARPAULIN", value),
+                None => std::env::remove_var("TARPAULIN"),
+            }
+            match original_llvm_profile {
+                Some(value) => std::env::set_var("LLVM_PROFILE_FILE", value),
+                None => std::env::remove_var("LLVM_PROFILE_FILE"),
+            }
+        }
     }
 
     fn plane_snapshot() -> ImageBrowserSnapshot {
