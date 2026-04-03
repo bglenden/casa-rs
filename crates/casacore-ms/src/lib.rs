@@ -69,10 +69,10 @@ pub use listobs::{
 };
 pub use ms::MeasurementSet;
 pub use msexplore::{
-    MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,
-    MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
-    MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition, MsPageExportRange,
-    MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
+    DEFAULT_MAX_PLOT_POINTS, MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
+    MsExportFormat, MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit,
+    MsFlagSampleEdit, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition,
+    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
     MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
     MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelectionSpec, MsTransformSpec,
     apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,

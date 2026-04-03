@@ -7,10 +7,11 @@ use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
 use casacore_ms::{
-    MeasurementSet, MsAxis, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion,
-    MsIterationAxis, MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
-    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_plot_payload,
-    preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
+    DEFAULT_MAX_PLOT_POINTS, MeasurementSet, MsAxis, MsExploreSpec, MsFlagAction, MsFlagEditSpec,
+    MsFlagRegion, MsIterationAxis, MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec,
+    MsSelectionSpec, apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request,
+    build_msexplore_plot_payload, preview_msexplore_flag_edit,
+    preview_msexplore_flag_edit_for_request,
 };
 use casacore_test_support::casatestdata_path;
 use casacore_types::ArrayValue;
@@ -1766,6 +1767,7 @@ fn flag_edit_stacked_page_plot_index_matches_casa_table_writeback_and_post_edit_
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,
+        max_plot_points: DEFAULT_MAX_PLOT_POINTS,
         plots: vec![MsPlotSpec::from_preset(
             MsPlotPreset::AmplitudePhaseVsTimeStacked,
         )],

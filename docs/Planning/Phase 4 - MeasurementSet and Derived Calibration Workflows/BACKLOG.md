@@ -168,3 +168,19 @@ state and post-edit plotted data, not synthetic GUI clicks. Keep at least one
 manual GUI spot check per edit behavior family (`flag`, `unflag`, `extcorr`,
 `extchannel`) as a secondary confidence measure, but not as the main acceptance
 path.
+
+---
+
+### 11.9 Dense-Plot Performance Beyond the Hard Point Cap
+
+**Status:** DEFER
+
+**Reason:** `msexplore` now enforces a hard request-level point cap so very
+dense plots fail fast instead of trying to render arbitrarily many markers, but
+that is only a safety rail. Follow-on performance work should replace the blunt
+cap with smarter handling for dense plots:
+
+- density-aware raster rendering for very large scatter clouds
+- optional decimation or binning strategies that preserve obvious structure
+- panel-parallel render/build execution for iterated and multi-plot pages
+- lower-allocation grouping keys in the scatter builder hot path

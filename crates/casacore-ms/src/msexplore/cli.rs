@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use super::{
-    MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction, MsFlagEditSpec,
-    MsFlagRegion, MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
-    MsPlotPreset, MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec,
-    apply_msexplore_flag_edit_for_request, build_msexplore_payload, export_msexplore_plot,
-    preview_msexplore_flag_edit_for_request,
+    DEFAULT_MAX_PLOT_POINTS, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat,
+    MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLegendPosition,
+    MsPageExportRange, MsPageHeaderItem, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
+    MsSelectionSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
 use crate::MeasurementSet;
 use crate::listobs::cli::{
@@ -74,6 +74,7 @@ struct CliOptions {
     showmajorgrid: bool,
     showminorgrid: bool,
     headeritems: Option<String>,
+    max_points: usize,
     flag_action: Option<MsFlagAction>,
     flag_xmin: Option<f64>,
     flag_xmax: Option<f64>,
@@ -932,9 +933,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 false,
             ),
             option_argument(
+                "max_points",
+                "Max Plot Points",
+                49,
+                &["--max-points"],
+                "N",
+                UiValueKind::Float,
+                Some("10000000"),
+                &[],
+                "Hard cap on the total plotted points rendered by one request",
+                "Export",
+                true,
+                false,
+            ),
+            option_argument(
                 "plot_output",
                 "Plot Output",
-                49,
+                50,
                 &["--plot-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -948,7 +963,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_format",
                 "Plot Format",
-                50,
+                51,
                 &["--plot-format"],
                 "FORMAT",
                 UiValueKind::Choice,
@@ -962,7 +977,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_width",
                 "Plot Width",
-                51,
+                52,
                 &["--plot-width"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -976,7 +991,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_height",
                 "Plot Height",
-                52,
+                53,
                 &["--plot-height"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -990,7 +1005,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_action",
                 "Flag Action",
-                46,
+                54,
                 &["--flag-action"],
                 "ACTION",
                 UiValueKind::Choice,
@@ -1004,7 +1019,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_xmin",
                 "Flag X Min",
-                47,
+                55,
                 &["--flag-xmin"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1018,7 +1033,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_xmax",
                 "Flag X Max",
-                48,
+                56,
                 &["--flag-xmax"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1032,7 +1047,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_ymin",
                 "Flag Y Min",
-                49,
+                57,
                 &["--flag-ymin"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1046,7 +1061,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_ymax",
                 "Flag Y Max",
-                50,
+                58,
                 &["--flag-ymax"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1060,7 +1075,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_plotindex",
                 "Flag Plot Index",
-                51,
+                59,
                 &["--flag-plotindex"],
                 "INDEX",
                 UiValueKind::String,
@@ -1074,7 +1089,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_panel",
                 "Flag Panel",
-                52,
+                60,
                 &["--flag-panel"],
                 "KEY",
                 UiValueKind::String,
@@ -1088,7 +1103,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_extcorr",
                 "Extend Correlation",
-                53,
+                61,
                 &["--flag-extcorr"],
                 &[],
                 false,
@@ -1100,7 +1115,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_extchannel",
                 "Extend Channel",
-                54,
+                62,
                 &["--flag-extchannel"],
                 &[],
                 false,
@@ -1112,7 +1127,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_apply",
                 "Apply Flag Edit",
-                55,
+                63,
                 &["--flag-apply"],
                 &[],
                 false,
@@ -1124,7 +1139,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_output",
                 "Flag Preview Output",
-                56,
+                64,
                 &["--flag-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -1135,8 +1150,8 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
-            action_argument(57, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(58, "help", &["-h", "--help"], UiActionKind::Help),
+            action_argument(65, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(66, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "listobs-summary-v1".to_string(),
@@ -1283,6 +1298,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
             header_items,
             page_title: page_spec.page_title,
             exprange: page_spec.exprange,
+            max_plot_points: options.max_points,
             plots,
         };
         spec.validate()?;
@@ -1297,6 +1313,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
         header_items: parse_header_items(options.headeritems.as_deref())?,
         page_title: None,
         exprange: MsPageExportRange::Current,
+        max_plot_points: options.max_points,
         plots: vec![plot_spec],
     };
     spec.validate()?;
@@ -1582,6 +1599,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut showmajorgrid = false;
     let mut showminorgrid = false;
     let mut headeritems = None;
+    let mut max_points = DEFAULT_MAX_PLOT_POINTS;
     let mut flag_action = None;
     let mut flag_xmin = None;
     let mut flag_xmax = None;
@@ -1787,6 +1805,12 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 showminorgrid = true
             }
             "--headeritems" => headeritems = Some(take_value(&mut index, &args, "--headeritems")?),
+            "--max-points" => {
+                plot_control_used = true;
+                max_points = take_value(&mut index, &args, "--max-points")?
+                    .parse::<usize>()
+                    .map_err(|_| "invalid integer value for --max-points".to_string())?
+            }
             "--flag-action" => {
                 flag_action = Some(
                     match take_value(&mut index, &args, "--flag-action")?
@@ -1975,6 +1999,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         showmajorgrid,
         showminorgrid,
         headeritems,
+        max_points,
         flag_action,
         flag_xmin,
         flag_xmax,

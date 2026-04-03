@@ -12,12 +12,13 @@ use casacore_ms::listobs::cli::{UiArgumentParser, UiValueKind};
 use casacore_ms::msexplore::cli::command_schema;
 use casacore_ms::subtables::SubTable;
 use casacore_ms::{
-    ListObsOutputFormat, MeasurementSet, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
-    MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLayoutSpec, MsLegendPosition,
-    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
-    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-    build_msexplore_plot_payload, preview_msexplore_flag_edit,
-    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
+    DEFAULT_MAX_PLOT_POINTS, ListObsOutputFormat, MeasurementSet, MsAxis, MsColorAxis,
+    MsDataColumn, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis,
+    MsLayoutSpec, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPayload,
+    MsPlotPreset, MsPlotSpec, MsSelectionSpec, apply_msexplore_flag_edit,
+    apply_msexplore_flag_edit_for_request, build_msexplore_payload, build_msexplore_plot_payload,
+    preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
+    render_msexplore_plot_image,
 };
 use casacore_types::ArrayValue;
 use casacore_types::measures::doppler::{DopplerRef, MDoppler};
@@ -63,6 +64,7 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--showlegend"));
     assert!(stdout.contains("--legendposition <POSITION>"));
     assert!(stdout.contains("--headeritems <ITEMS>"));
+    assert!(stdout.contains("--max-points <N>"));
     assert!(stdout.contains("--flag-action <ACTION>"));
     assert!(stdout.contains("--flag-xmin <VALUE>"));
     assert!(stdout.contains("--flag-xmax <VALUE>"));
@@ -133,6 +135,8 @@ fn msexplore_ui_schema_describes_launcher_contract() {
     assert_eq!(flag_panel.value_kind, UiValueKind::String);
     let flag_xmin = schema.argument("flag_xmin").expect("flag_xmin argument");
     assert_eq!(flag_xmin.value_kind, UiValueKind::Float);
+    let max_points = schema.argument("max_points").expect("max_points argument");
+    assert_eq!(max_points.value_kind, UiValueKind::Float);
 
     let managed_output = schema.managed_output.expect("managed output");
     assert_eq!(managed_output.renderer, "listobs-summary-v1");
@@ -281,6 +285,31 @@ fn msexplore_avgchannel_bins_channel_plot_manifest() {
         })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(x_values, [0, 1, 2, 3].into_iter().collect());
+}
+
+#[test]
+fn msexplore_rejects_exports_that_exceed_max_points() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let plot_path = temp.path().join("too-many-points.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--preset",
+            "amplitude_vs_time",
+            "--max-points",
+            "10",
+            "--plot-output",
+        ])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("more than 10 points"), "{stderr}");
+    assert!(stderr.contains("--max-points"), "{stderr}");
 }
 
 #[test]
@@ -761,6 +790,7 @@ fn msexplore_payload_resolves_page_header_items() {
             header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
             page_title: Some("Amplitude".to_string()),
             exprange: MsPageExportRange::Current,
+            max_plot_points: DEFAULT_MAX_PLOT_POINTS,
             plots: vec![MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime)],
         },
     )
@@ -892,6 +922,7 @@ fn msexplore_generic_page_spec_builds_side_by_side_page_payload() {
             header_items: Vec::new(),
             page_title: Some("Amplitude and Phase Side by Side".to_string()),
             exprange: MsPageExportRange::Current,
+            max_plot_points: DEFAULT_MAX_PLOT_POINTS,
             plots: vec![amplitude, phase],
         },
     )
@@ -1032,6 +1063,7 @@ fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
             header_items: Vec::new(),
             page_title: Some("Amplitude Overplot".to_string()),
             exprange: MsPageExportRange::Current,
+            max_plot_points: DEFAULT_MAX_PLOT_POINTS,
             plots: vec![left, right],
         },
     )
@@ -1920,6 +1952,7 @@ fn preview_flag_edit_on_stacked_page_requires_plot_index() {
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,
+        max_plot_points: DEFAULT_MAX_PLOT_POINTS,
         plots: vec![MsPlotSpec::from_preset(
             MsPlotPreset::AmplitudePhaseVsTimeStacked,
         )],
@@ -1957,6 +1990,7 @@ fn preview_flag_edit_on_stacked_page_targets_selected_plot_index() {
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,
+        max_plot_points: DEFAULT_MAX_PLOT_POINTS,
         plots: vec![MsPlotSpec::from_preset(
             MsPlotPreset::AmplitudePhaseVsTimeStacked,
         )],
@@ -1996,6 +2030,7 @@ fn apply_flag_edit_on_stacked_page_updates_selected_plot_samples() {
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,
+        max_plot_points: DEFAULT_MAX_PLOT_POINTS,
         plots: vec![MsPlotSpec::from_preset(
             MsPlotPreset::AmplitudePhaseVsTimeStacked,
         )],

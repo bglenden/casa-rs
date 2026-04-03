@@ -1869,6 +1869,9 @@ pub struct MsExploreSpec {
     pub page_title: Option<String>,
     /// Range behavior when exporting multi-plot pages.
     pub exprange: MsPageExportRange,
+    /// Hard limit on the total number of plotted points rendered by this request.
+    #[serde(default = "default_max_plot_points")]
+    pub max_plot_points: usize,
     /// Plot definitions on the page.
     pub plots: Vec<MsPlotSpec>,
 }
@@ -1878,6 +1881,9 @@ impl MsExploreSpec {
     pub fn validate(&self) -> Result<(), String> {
         if self.plots.is_empty() {
             return Err("msexplore requires at least one plot per invocation".to_string());
+        }
+        if self.max_plot_points == 0 {
+            return Err("msexplore max_plot_points must be a positive integer".to_string());
         }
         if self.plots.len() == 1 {
             self.plots[0].validate()?;
@@ -1937,6 +1943,13 @@ impl MsExploreSpec {
         }
         Ok(())
     }
+}
+
+/// Default hard cap on rendered points per `msexplore` request.
+pub const DEFAULT_MAX_PLOT_POINTS: usize = 10_000_000;
+
+fn default_max_plot_points() -> usize {
+    DEFAULT_MAX_PLOT_POINTS
 }
 
 /// Typed plot payload prepared for one render/export step.
@@ -2109,13 +2122,52 @@ pub struct MsScatterPagePayload {
     pub summary: String,
 }
 
+#[derive(Debug, Clone)]
+struct PointBudget {
+    max_plot_points: Option<usize>,
+    rendered_points: usize,
+}
+
+impl PointBudget {
+    fn unlimited() -> Self {
+        Self {
+            max_plot_points: None,
+            rendered_points: 0,
+        }
+    }
+
+    fn limited(max_plot_points: usize) -> Self {
+        Self {
+            max_plot_points: Some(max_plot_points),
+            rendered_points: 0,
+        }
+    }
+
+    fn record_points(&mut self, additional_points: usize, context: &str) -> Result<(), String> {
+        let next_points = self
+            .rendered_points
+            .checked_add(additional_points)
+            .ok_or_else(|| format!("{context} exceeded the supported plotted-point range"))?;
+        if let Some(max_plot_points) = self.max_plot_points
+            && next_points > max_plot_points
+        {
+            return Err(format!(
+                "{context} would render more than {max_plot_points} points; narrow the selection, add averaging, or raise --max-points"
+            ));
+        }
+        self.rendered_points = next_points;
+        Ok(())
+    }
+}
+
 fn build_msexplore_plot_payload_validated(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
+    point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
     if spec.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
-        return build_stacked_amplitude_phase_time_page(ms, selection, spec);
+        return build_stacked_amplitude_phase_time_page(ms, selection, spec, point_budget);
     }
     if let Some(listobs_kind) = spec
         .preset
@@ -2141,7 +2193,7 @@ fn build_msexplore_plot_payload_validated(
         };
     }
 
-    build_generic_visibility_scatter(ms, selection, spec)
+    build_generic_visibility_scatter(ms, selection, spec, point_budget)
 }
 
 /// Build a plot payload from a full `msexplore` request.
@@ -2150,10 +2202,15 @@ pub fn build_msexplore_payload(
     spec: &MsExploreSpec,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
+    let mut point_budget = PointBudget::limited(spec.max_plot_points);
     let header_lines = resolve_page_header_lines(ms, spec)?;
     if spec.plots.len() == 1 {
-        let mut payload =
-            build_msexplore_plot_payload_validated(ms, &spec.selection, &spec.plots[0])?;
+        let mut payload = build_msexplore_plot_payload_validated(
+            ms,
+            &spec.selection,
+            &spec.plots[0],
+            &mut point_budget,
+        )?;
         apply_page_header_lines(&mut payload, header_lines);
         return Ok(payload);
     }
@@ -2164,7 +2221,8 @@ pub fn build_msexplore_payload(
     };
     let mut items = Vec::with_capacity(spec.plots.len());
     for plot in &spec.plots {
-        let payload = build_msexplore_plot_payload_validated(ms, &spec.selection, plot)?;
+        let payload =
+            build_msexplore_plot_payload_validated(ms, &spec.selection, plot, &mut point_budget)?;
         let scatter = match payload {
             MsPlotPayload::Scatter(payload) => payload,
             MsPlotPayload::ListObs(_) => {
@@ -2251,7 +2309,8 @@ pub fn preview_msexplore_flag_edit(
         .flag_edit
         .as_ref()
         .ok_or_else(|| "msexplore flag-edit preview requires MsPlotSpec.flag_edit".to_string())?;
-    let payload = build_msexplore_plot_payload_validated(ms, selection, spec)?;
+    let mut point_budget = PointBudget::unlimited();
+    let payload = build_msexplore_plot_payload_validated(ms, selection, spec, &mut point_budget)?;
     preview_msexplore_flag_edit_from_payload(ms, payload, flag_edit)
 }
 
@@ -2793,7 +2852,8 @@ pub fn build_msexplore_plot_payload(
     spec: &MsPlotSpec,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
-    build_msexplore_plot_payload_validated(ms, selection, spec)
+    let mut point_budget = PointBudget::unlimited();
+    build_msexplore_plot_payload_validated(ms, selection, spec, &mut point_budget)
 }
 
 /// Open a MeasurementSet path and build the requested plot payload.
@@ -3170,9 +3230,10 @@ fn build_generic_visibility_scatter(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
+    point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
     if uses_extended_averaging(spec) {
-        return build_generic_visibility_scatter_with_averaging(ms, selection, spec);
+        return build_generic_visibility_scatter_with_averaging(ms, selection, spec, point_budget);
     }
 
     let listobs_options = selection.to_listobs_options();
@@ -3581,6 +3642,12 @@ fn build_generic_visibility_scatter(
                         chan_start: bin.start,
                         chan_end: bin.end,
                     });
+                    point_budget.record_points(
+                        1,
+                        spec.preset
+                            .map(MsPlotPreset::display_name)
+                            .unwrap_or("Requested plot"),
+                    )?;
                     panel.contributing_points += 1;
                     contributing_points += 1;
                     row_contributed = true;
@@ -3905,6 +3972,7 @@ fn build_generic_visibility_scatter_with_averaging(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
+    point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
     let listobs_options = selection.to_listobs_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
@@ -4495,70 +4563,77 @@ fn build_generic_visibility_scatter_with_averaging(
     let secondary_fixed_y_bounds = spec.secondary_y_axis().and_then(fixed_bounds);
 
     let mut contributing_points = 0usize;
-    let mut finalized_panels = panel_order
-        .into_iter()
-        .filter_map(|panel_key| {
-            let panel = panels.remove(&panel_key)?;
-            let mut series = panel
-                .series
-                .into_values()
-                .filter_map(|series| {
-                    let mut output = MsScatterSeries {
-                        label: series.label,
-                        color_group: series.color_group,
-                        y_axis: series.y_axis,
-                        points: Vec::new(),
-                        provenance: Vec::new(),
-                    };
-                    for accumulator in series.points.into_values() {
-                        let Some(representative) = accumulator.representative.clone() else {
-                            continue;
-                        };
-                        let Some(x_value) = finalize_averaged_axis_value(
-                            spec.x_axis,
-                            &accumulator,
-                            spec.averaging.scalar,
-                            spec.averaging.avgtime.is_some(),
-                        ) else {
-                            continue;
-                        };
-                        let Some(y_value) = finalize_averaged_axis_value(
-                            series.y_axis,
-                            &accumulator,
-                            spec.averaging.scalar,
-                            spec.averaging.avgtime.is_some(),
-                        ) else {
-                            continue;
-                        };
-                        output.points.push((x_value, y_value));
-                        output.provenance.push(representative);
-                    }
-                    output
-                        .points
-                        .sort_by(|left, right| left.0.total_cmp(&right.0));
-                    (!output.points.is_empty()).then_some(output)
-                })
-                .collect::<Vec<_>>();
-            series.retain(|entry| !entry.points.is_empty());
-            if series.is_empty() {
-                return None;
+    let mut finalized_panels = Vec::new();
+    for panel_key in panel_order {
+        let Some(panel) = panels.remove(&panel_key) else {
+            continue;
+        };
+        let mut series_entries = Vec::new();
+        for series in panel.series.into_values() {
+            let mut output = MsScatterSeries {
+                label: series.label,
+                color_group: series.color_group,
+                y_axis: series.y_axis,
+                points: Vec::new(),
+                provenance: Vec::new(),
+            };
+            for accumulator in series.points.into_values() {
+                let Some(representative) = accumulator.representative.clone() else {
+                    continue;
+                };
+                let Some(x_value) = finalize_averaged_axis_value(
+                    spec.x_axis,
+                    &accumulator,
+                    spec.averaging.scalar,
+                    spec.averaging.avgtime.is_some(),
+                ) else {
+                    continue;
+                };
+                let Some(y_value) = finalize_averaged_axis_value(
+                    series.y_axis,
+                    &accumulator,
+                    spec.averaging.scalar,
+                    spec.averaging.avgtime.is_some(),
+                ) else {
+                    continue;
+                };
+                output.points.push((x_value, y_value));
+                output.provenance.push(representative);
+                point_budget.record_points(
+                    1,
+                    spec.preset
+                        .map(MsPlotPreset::display_name)
+                        .unwrap_or("Requested plot"),
+                )?;
             }
-            let panel_point_count = series.iter().map(|entry| entry.points.len()).sum::<usize>();
-            contributing_points += panel_point_count;
-            Some(MsScatterPanelPayload {
-                key: panel_key,
-                summary: format!(
-                    "{}. Rows={} Points={} Data column={}",
-                    panel.label,
-                    panel.contributing_rows.len(),
-                    panel_point_count,
-                    spec.data_column
-                ),
-                label: panel.label,
-                series,
-            })
-        })
-        .collect::<Vec<_>>();
+            output
+                .points
+                .sort_by(|left, right| left.0.total_cmp(&right.0));
+            if !output.points.is_empty() {
+                series_entries.push(output);
+            }
+        }
+        if series_entries.is_empty() {
+            continue;
+        }
+        let panel_point_count = series_entries
+            .iter()
+            .map(|entry| entry.points.len())
+            .sum::<usize>();
+        contributing_points += panel_point_count;
+        finalized_panels.push(MsScatterPanelPayload {
+            key: panel_key,
+            summary: format!(
+                "{}. Rows={} Points={} Data column={}",
+                panel.label,
+                panel.contributing_rows.len(),
+                panel_point_count,
+                spec.data_column
+            ),
+            label: panel.label,
+            series: series_entries,
+        });
+    }
 
     if contributing_points == 0 {
         return Err(format!(
@@ -4647,6 +4722,7 @@ fn build_stacked_amplitude_phase_time_page(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
+    point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
     if spec.iteration.iteraxis.is_some() {
         return Err(
@@ -4682,6 +4758,7 @@ fn build_stacked_amplitude_phase_time_page(
         MsPlotPreset::AmplitudeVsTime,
         MsAxis::Amplitude,
         "Amplitude vs Time",
+        point_budget,
     )?;
     let phase = build_stacked_page_child(
         ms,
@@ -4690,6 +4767,7 @@ fn build_stacked_amplitude_phase_time_page(
         MsPlotPreset::PhaseVsTime,
         MsAxis::Phase,
         "Phase vs Time",
+        point_budget,
     )?;
 
     Ok(MsPlotPayload::ScatterPage(MsScatterPagePayload {
@@ -4727,6 +4805,7 @@ fn build_stacked_page_child(
     preset: MsPlotPreset,
     y_axis: MsAxis,
     title: &str,
+    point_budget: &mut PointBudget,
 ) -> Result<MsScatterPlotPayload, String> {
     let mut child = MsPlotSpec::from_preset(preset);
     child.data_column = spec.data_column;
@@ -4737,7 +4816,7 @@ fn build_stacked_page_child(
     child.style.title = Some(title.to_string());
     child.style.ylabel = None;
     child.y_axes = vec![y_axis];
-    match build_generic_visibility_scatter(ms, selection, &child)? {
+    match build_generic_visibility_scatter(ms, selection, &child, point_budget)? {
         MsPlotPayload::Scatter(payload) => Ok(payload),
         _ => Err("internal error: stacked subplot lowered to a non-scatter payload".to_string()),
     }
