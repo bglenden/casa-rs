@@ -40,8 +40,8 @@ use tar::Archive;
 use tempfile::tempdir;
 
 use crate::app::{
-    AppState, BrowserPaneFocus, ImageBrowserLeftPaneMode, OutputPane, PaneFocus, PlotControlTarget,
-    PlotPaneFocus, ResultTab, image_plane_draw_rect,
+    AppState, BrowserPaneFocus, ImageBrowserLeftPaneMode, OutputPane, PaneFocus, PlotCatalogTarget,
+    PlotControlTarget, PlotPaneFocus, ResultTab, image_plane_draw_rect,
 };
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
@@ -6144,8 +6144,11 @@ fn msexplore_plots_tab_previews_current_form_without_run() {
         other => panic!("expected graphic result, got {other:?}"),
     }
     let rendered = render_app(&app, 140, 32);
-    assert!(rendered.contains("Amplitude Vs Time"));
+    assert!(rendered.contains("Amplitude vs Time"));
+    assert!(rendered.contains("Presets"));
+    assert!(rendered.contains("Actions"));
     assert!(rendered.contains("Refresh Preview"));
+    assert!(!rendered.contains("Controls"));
     assert!(!rendered.contains("Run listobs"));
 }
 
@@ -6204,6 +6207,8 @@ fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     });
     assert!(clipboard.contains("msexplore"));
     assert!(clipboard.contains("--preset amplitude_vs_time"));
+    assert!(clipboard.contains("--showlegend"));
+    assert!(clipboard.contains("--legendposition exteriorRight"));
     assert!(clipboard.contains(ms_path.to_string_lossy().as_ref()));
     assert!(clipboard.contains(export_path.to_string_lossy().as_ref()));
     assert!(!clipboard.contains("--flag-action"));
@@ -6213,6 +6218,103 @@ fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     assert!(export_path.is_file());
     let png = std::fs::read(&export_path).expect("png bytes");
     assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    clear_test_clipboard_file();
+}
+
+#[test]
+fn msexplore_plots_sidebar_lists_standard_presets() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+
+    let rows = app.plot_catalog_rows();
+    assert_eq!(rows.len(), 26);
+    let labels = rows.into_iter().map(|row| row.label).collect::<Vec<_>>();
+    assert!(labels.contains(&"Amplitude vs Time".to_string()));
+    assert!(labels.contains(&"Phase vs Time".to_string()));
+    assert!(labels.contains(&"Amplitude / Phase vs Time (Stacked)".to_string()));
+    assert!(labels.contains(&"Amplitude vs Velocity".to_string()));
+    assert!(labels.contains(&"Real vs Imaginary".to_string()));
+    assert_eq!(
+        app.field_text_for_test("legendposition").as_deref(),
+        Some("exteriorRight")
+    );
+}
+
+#[test]
+fn msexplore_clicking_catalog_preset_updates_preview_cli() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
+    let phase_hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .iter()
+        .find(|hit| {
+            hit.tab.target
+                == PlotCatalogTarget::MsExplorePreset(casacore_ms::MsPlotPreset::PhaseVsTime)
+        })
+        .expect("phase preset hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            phase_hit.rect.x + 1,
+            phase_hit.rect.y,
+        ),
+        &layout,
+    );
+
+    assert_eq!(
+        app.field_text_for_test("preset").as_deref(),
+        Some("phase_vs_time")
+    );
+
+    app.prepare_graphics_for_test(160, 40);
+    assert!(wait_for_plot_render(
+        &mut app,
+        160,
+        40,
+        Duration::from_secs(5)
+    ));
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
+    let first_control = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .control_hits
+        .first()
+        .expect("plot control");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            first_control.rect.x + 1,
+            first_control.rect.y,
+        ),
+        &layout,
+    );
+
+    move_plot_control_selection_to(&mut app, PlotControlTarget::CopyCli);
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert!(clipboard.contains("--preset phase_vs_time"));
+    assert!(clipboard.contains("--showlegend"));
+    assert!(clipboard.contains("--legendposition exteriorRight"));
     clear_test_clipboard_file();
 }
 
@@ -6342,7 +6444,7 @@ fn plot_workspace_mouse_selection_and_export_pdf_work() {
         .expect("plot workspace")
         .catalog_hits
         .iter()
-        .find(|hit| hit.tab.kind == ListObsPlotKind::AntennaLayout)
+        .find(|hit| hit.tab.target == PlotCatalogTarget::ListObs(ListObsPlotKind::AntennaLayout))
         .expect("antenna hit");
     app.handle_mouse_event(
         mouse(

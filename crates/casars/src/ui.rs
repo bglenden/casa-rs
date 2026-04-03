@@ -798,6 +798,109 @@ fn draw_plot_workspace(
     };
 
     let selected_plot = app.selected_plot_label();
+    if app.is_msexplore_app() {
+        let sidebar_title = match app.plot_focus() {
+            PlotPaneFocus::Catalog | PlotPaneFocus::Controls => "Plots [focus]",
+            PlotPaneFocus::Canvas => "Plots",
+        };
+        let canvas_title = match app.plot_focus() {
+            PlotPaneFocus::Canvas => format!("{selected_plot} [focus]"),
+            _ => selected_plot.clone(),
+        };
+
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(sidebar_title)
+                .border_style(Style::default().fg(palette.divider_fg)),
+            workspace.catalog_block,
+        );
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(canvas_title)
+                .border_style(Style::default().fg(palette.divider_fg)),
+            workspace.canvas_block,
+        );
+
+        let mut sidebar_lines = Vec::<Line<'static>>::new();
+        sidebar_lines.push(Line::from(Span::styled(
+            "Presets",
+            Style::default()
+                .fg(palette.section_fg)
+                .add_modifier(Modifier::BOLD),
+        )));
+        sidebar_lines.extend(
+            visible_plot_catalog_rows(
+                app.plot_catalog_rows(),
+                available_msexplore_catalog_height(workspace.catalog_inner.height, app),
+            )
+            .into_iter()
+            .map(|row| {
+                let style = if row.selected {
+                    Style::default()
+                        .fg(palette.active_tab_fg)
+                        .bg(palette.active_tab_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(palette.footer_fg)
+                };
+                Line::from(Span::styled(row.label, style))
+            }),
+        );
+        sidebar_lines.push(Line::from(""));
+        if let Some(banner) = app.plot_dirty_banner() {
+            sidebar_lines.push(Line::from(Span::styled(
+                banner.to_string(),
+                Style::default()
+                    .fg(palette.banner_fg)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            sidebar_lines.push(Line::from(""));
+        }
+        sidebar_lines.push(Line::from(Span::styled(
+            "Actions",
+            Style::default()
+                .fg(palette.section_fg)
+                .add_modifier(Modifier::BOLD),
+        )));
+        sidebar_lines.extend(app.plot_control_rows().into_iter().map(|row| {
+            let style = if row.selected {
+                Style::default()
+                    .fg(palette.active_tab_fg)
+                    .bg(palette.active_tab_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.footer_fg)
+            };
+            Line::from(Span::styled(row.text, style))
+        }));
+        frame.render_widget(
+            Paragraph::new(sidebar_lines).wrap(Wrap { trim: false }),
+            workspace.catalog_inner,
+        );
+
+        if let Some(protocol) = app.plot_protocol() {
+            frame.render_widget(PanelImage::new(protocol), workspace.canvas_inner);
+        } else {
+            let message = if let Some(error) = app.plot_last_error() {
+                format!("{summary}\n\n{error}")
+            } else if app.plot_pending() {
+                format!("{summary}\n\nRendering plot...")
+            } else {
+                summary.to_string()
+            };
+            frame.render_widget(
+                Paragraph::new(message)
+                    .style(Style::default().fg(palette.footer_fg))
+                    .alignment(Alignment::Center)
+                    .wrap(Wrap { trim: false }),
+                workspace.canvas_inner,
+            );
+        }
+        return;
+    }
+
     let catalog_title = match app.plot_focus() {
         PlotPaneFocus::Catalog => "Catalog [focus]",
         _ => "Catalog",
@@ -1542,6 +1645,69 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
 }
 
 fn build_plot_workspace_layout(area: Rect, app: &AppState) -> PlotWorkspaceLayout {
+    if app.is_msexplore_app() {
+        let horizontal = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(42), Constraint::Min(30)])
+            .split(area);
+
+        let catalog_block = horizontal[0];
+        let canvas_block = horizontal[1];
+        let controls_block = Rect::new(0, 0, 0, 0);
+        let catalog_inner = Block::default().borders(Borders::ALL).inner(catalog_block);
+        let canvas_inner = Block::default().borders(Borders::ALL).inner(canvas_block);
+        let controls_inner = Rect::new(0, 0, 0, 0);
+
+        let visible_catalog = visible_plot_catalog_rows(
+            app.plot_catalog_rows(),
+            available_msexplore_catalog_height(catalog_inner.height, app),
+        );
+        let catalog_hits = visible_catalog
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| PlotCatalogHit {
+                tab: row,
+                rect: Rect {
+                    x: catalog_inner.x,
+                    y: catalog_inner.y + 1 + index as u16,
+                    width: catalog_inner.width,
+                    height: 1,
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let action_rows_start =
+            msexplore_action_row_start(catalog_inner.y, catalog_hits.len(), app);
+        let control_hits = app
+            .plot_control_rows()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, row)| {
+                let y = action_rows_start + index as u16;
+                ((y - catalog_inner.y) < catalog_inner.height).then_some(PlotControlHit {
+                    target: row.target,
+                    rect: Rect {
+                        x: catalog_inner.x,
+                        y,
+                        width: catalog_inner.width,
+                        height: 1,
+                    },
+                })
+            })
+            .collect::<Vec<_>>();
+
+        return PlotWorkspaceLayout {
+            catalog_block,
+            catalog_inner,
+            catalog_hits,
+            canvas_block,
+            canvas_inner,
+            controls_block,
+            controls_inner,
+            control_hits,
+        };
+    }
+
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(28), Constraint::Min(30)])
@@ -1615,6 +1781,43 @@ pub(crate) fn plot_canvas_area(layout: &UiLayout) -> Option<Rect> {
         .plot_workspace
         .as_ref()
         .map(|workspace| workspace.canvas_inner)
+}
+
+fn visible_plot_catalog_rows(
+    rows: Vec<crate::app::PlotCatalogRowView>,
+    available_height: usize,
+) -> Vec<crate::app::PlotCatalogRowView> {
+    if available_height == 0 || rows.is_empty() {
+        return Vec::new();
+    }
+    if rows.len() <= available_height {
+        return rows;
+    }
+    let selected_index = rows.iter().position(|row| row.selected).unwrap_or(0);
+    let half_window = available_height / 2;
+    let max_start = rows.len().saturating_sub(available_height);
+    let start = selected_index.saturating_sub(half_window).min(max_start);
+    rows.into_iter()
+        .skip(start)
+        .take(available_height)
+        .collect()
+}
+
+fn available_msexplore_catalog_height(sidebar_height: u16, app: &AppState) -> usize {
+    let reserved_lines = 1usize
+        + 1usize
+        + usize::from(app.plot_dirty_banner().is_some()) * 2usize
+        + 1usize
+        + app.plot_control_rows().len();
+    usize::from(sidebar_height).saturating_sub(reserved_lines)
+}
+
+fn msexplore_action_row_start(catalog_y: u16, catalog_row_count: usize, app: &AppState) -> u16 {
+    let mut y = catalog_y + 1 + catalog_row_count as u16 + 1;
+    if app.plot_dirty_banner().is_some() {
+        y += 2;
+    }
+    y + 1
 }
 
 fn divider_toggle_rect(divider: Rect) -> Option<Rect> {

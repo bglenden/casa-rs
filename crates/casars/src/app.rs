@@ -23,7 +23,7 @@ use casacore_ms::listobs::cli::{
 use casacore_ms::msexplore::cli::build_explore_spec_from_args;
 use casacore_ms::{
     ListObsOptions, ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
-    ListObsSummary, ListObsUvCoverage, MeasurementSet, MsExportFormat, MsPlotPayload,
+    ListObsSummary, ListObsUvCoverage, MeasurementSet, MsExportFormat, MsPlotPayload, MsPlotPreset,
     build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload,
     build_listobs_visibility_plot_payload, build_msexplore_payload_from_spec, export_listobs_plot,
     export_msexplore_plot,
@@ -411,9 +411,17 @@ enum FocusTarget {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PlotCatalogRowView {
-    pub kind: ListObsPlotKind,
+    pub target: PlotCatalogTarget,
     pub label: String,
     pub selected: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlotCatalogTarget {
+    ListObs(ListObsPlotKind),
+    MsExplorePreset(MsPlotPreset),
+    MsExploreCustomPlot,
+    MsExplorePageSpec,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1983,7 +1991,7 @@ enum ClickTarget {
     Section(usize),
     Field(usize),
     Tab(ResultTab),
-    PlotCatalog(ListObsPlotKind),
+    PlotCatalog(PlotCatalogTarget),
     PlotControl(PlotControlTarget),
     PlotCanvas,
     BrowserTab(BrowserTab),
@@ -2007,11 +2015,12 @@ impl AppState {
         config_store: ConfigStore,
     ) -> Self {
         let ready_status_line = app.ready_status_line().to_string();
-        let fields = schema
+        let mut fields = schema
             .arguments
             .iter()
             .filter_map(FormField::from_schema)
             .collect::<Vec<_>>();
+        seed_app_field_defaults(app.id, &mut fields);
         let sections = build_sections(&fields);
         let selected_form = initial_form_selection(&sections, &fields, false);
 
@@ -6279,9 +6288,9 @@ impl AppState {
                 self.pane_focus = PaneFocus::Result;
                 self.clear_output_selection_for_target(OutputPane::Result);
                 self.plot_workspace.focus = PlotPaneFocus::Catalog;
-                self.set_selected_plot(row.kind);
+                self.apply_plot_catalog_target(row.target);
                 self.last_click = Some(ClickState {
-                    target: ClickTarget::PlotCatalog(row.kind),
+                    target: ClickTarget::PlotCatalog(row.target),
                     at: Instant::now(),
                 });
                 return;
@@ -7944,7 +7953,7 @@ impl AppState {
         self.plot_workspace.panel = None;
     }
 
-    fn is_msexplore_app(&self) -> bool {
+    pub(crate) fn is_msexplore_app(&self) -> bool {
         self.app.id == "msexplore"
     }
 
@@ -7978,17 +7987,23 @@ impl AppState {
             .field_text("preset")
             .filter(|value| !value.trim().is_empty())
         {
-            return preset
-                .split('_')
-                .map(|token| {
-                    let mut chars = token.chars();
-                    match chars.next() {
-                        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
-                        None => String::new(),
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
+            return MsPlotPreset::parse(&preset)
+                .map(|preset| preset.display_name().to_string())
+                .unwrap_or_else(|_| {
+                    preset
+                        .split('_')
+                        .map(|token| {
+                            let mut chars = token.chars();
+                            match chars.next() {
+                                Some(first) => {
+                                    first.to_ascii_uppercase().to_string() + chars.as_str()
+                                }
+                                None => String::new(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                });
         }
         if let (Some(y_axis), Some(x_axis)) = (
             self.field_text("yaxis")
@@ -9082,16 +9097,36 @@ impl AppState {
 
     pub(crate) fn plot_catalog_rows(&self) -> Vec<PlotCatalogRowView> {
         if self.is_msexplore_app() {
-            return vec![PlotCatalogRowView {
-                kind: self.plot_workspace.selected_plot,
-                label: self.selected_plot_label(),
-                selected: true,
-            }];
+            let selected = self.current_plot_catalog_target();
+            let mut rows = Vec::new();
+            match selected {
+                Some(PlotCatalogTarget::MsExplorePageSpec) => rows.push(PlotCatalogRowView {
+                    target: PlotCatalogTarget::MsExplorePageSpec,
+                    label: self.selected_plot_label(),
+                    selected: true,
+                }),
+                Some(PlotCatalogTarget::MsExploreCustomPlot) => rows.push(PlotCatalogRowView {
+                    target: PlotCatalogTarget::MsExploreCustomPlot,
+                    label: self.selected_plot_label(),
+                    selected: true,
+                }),
+                _ => {}
+            }
+            rows.extend(
+                MsPlotPreset::ALL
+                    .into_iter()
+                    .map(|preset| PlotCatalogRowView {
+                        target: PlotCatalogTarget::MsExplorePreset(preset),
+                        label: preset.display_name().to_string(),
+                        selected: selected == Some(PlotCatalogTarget::MsExplorePreset(preset)),
+                    }),
+            );
+            return rows;
         }
         ListObsPlotKind::ALL
             .into_iter()
             .map(|kind| PlotCatalogRowView {
-                kind,
+                target: PlotCatalogTarget::ListObs(kind),
                 label: kind.display_name().to_string(),
                 selected: kind == self.plot_workspace.selected_plot,
             })
@@ -9185,16 +9220,13 @@ impl AppState {
     fn scroll_active_plot_workspace(&mut self, delta: i16) {
         match self.plot_workspace.focus {
             PlotPaneFocus::Catalog => {
-                if self.is_msexplore_app() {
+                let rows = self.plot_catalog_rows();
+                if rows.is_empty() {
                     return;
                 }
-                let all = ListObsPlotKind::ALL;
-                let current = all
-                    .iter()
-                    .position(|kind| *kind == self.plot_workspace.selected_plot)
-                    .unwrap_or(0) as i16;
-                let next = (current + delta).clamp(0, all.len() as i16 - 1) as usize;
-                self.set_selected_plot(all[next]);
+                let current = rows.iter().position(|row| row.selected).unwrap_or(0) as i16;
+                let next = (current + delta).clamp(0, rows.len() as i16 - 1) as usize;
+                self.apply_plot_catalog_target(rows[next].target);
             }
             PlotPaneFocus::Controls => {
                 let row_count = self.plot_control_rows().len() as i16;
@@ -9557,6 +9589,64 @@ impl AppState {
         self.plot_workspace.selected_plot = kind;
         self.plot_workspace.selected_control = 0;
         self.plot_workspace.focus = PlotPaneFocus::Catalog;
+        self.clear_plot_render_cache();
+        self.sync_plot_export_path_for_selected_plot();
+    }
+
+    fn current_plot_catalog_target(&self) -> Option<PlotCatalogTarget> {
+        if !self.is_msexplore_app() {
+            return Some(PlotCatalogTarget::ListObs(
+                self.plot_workspace.selected_plot,
+            ));
+        }
+        if self
+            .field_text("page_spec")
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Some(PlotCatalogTarget::MsExplorePageSpec);
+        }
+        if let Some(preset) = self
+            .field_text("preset")
+            .filter(|value| !value.trim().is_empty())
+            .and_then(|value| MsPlotPreset::parse(&value).ok())
+        {
+            return Some(PlotCatalogTarget::MsExplorePreset(preset));
+        }
+        if self
+            .field_text("xaxis")
+            .is_some_and(|value| !value.trim().is_empty())
+            && self
+                .field_text("yaxis")
+                .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Some(PlotCatalogTarget::MsExploreCustomPlot);
+        }
+        None
+    }
+
+    fn apply_plot_catalog_target(&mut self, target: PlotCatalogTarget) {
+        match target {
+            PlotCatalogTarget::ListObs(kind) => self.set_selected_plot(kind),
+            PlotCatalogTarget::MsExplorePreset(preset) => self.apply_msexplore_preset(preset),
+            PlotCatalogTarget::MsExploreCustomPlot | PlotCatalogTarget::MsExplorePageSpec => {}
+        }
+    }
+
+    fn apply_msexplore_preset(&mut self, preset: MsPlotPreset) {
+        if !self.is_msexplore_app() {
+            return;
+        }
+        for (id, value) in [
+            ("page_spec", ""),
+            ("preset", preset.as_str()),
+            ("xaxis", ""),
+            ("yaxis", ""),
+            ("yaxis2", ""),
+        ] {
+            let _ = self.apply_startup_text_value(id, value.to_string());
+        }
+        self.plot_workspace.focus = PlotPaneFocus::Catalog;
+        self.plot_workspace.selected_control = 0;
         self.clear_plot_render_cache();
         self.sync_plot_export_path_for_selected_plot();
     }
@@ -9972,6 +10062,24 @@ fn spinner_frames(theme_mode: ThemeMode) -> &'static [&'static str] {
     match theme_mode {
         ThemeMode::DenseAnsi => DENSE_SPINNER_FRAMES,
         ThemeMode::RichPanel => RICH_SPINNER_FRAMES,
+    }
+}
+
+fn seed_app_field_defaults(app_id: &str, fields: &mut [FormField]) {
+    if app_id != "msexplore" {
+        return;
+    }
+    if let Some(field) = fields
+        .iter_mut()
+        .find(|field| field.schema.id == "showlegend")
+    {
+        let _ = field.apply_toggle_value(true);
+    }
+    if let Some(field) = fields
+        .iter_mut()
+        .find(|field| field.schema.id == "legendposition")
+    {
+        let _ = field.apply_text_value("exteriorRight".to_string());
     }
 }
 
