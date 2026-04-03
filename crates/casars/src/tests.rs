@@ -2301,9 +2301,10 @@ fn drag_selection_copies_visible_plain_text_on_mouse_up() {
 #[cfg(unix)]
 #[test]
 fn output_selection_copy_works_for_structured_table_rows() {
+    let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let clipboard_path = temp.path().join("clipboard.txt");
-    with_test_env_lock(|| set_test_clipboard_file(&clipboard_path));
+    set_test_clipboard_file(&clipboard_path);
 
     let ms_path = create_fixture_ms(temp.path());
     let mut app = new_msexplore_summary_app(temp.path(), &ms_path);
@@ -2315,7 +2316,7 @@ fn output_selection_copy_works_for_structured_table_rows() {
 
     let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
     assert_eq!(clipboard, "3C286");
-    with_test_env_lock(clear_test_clipboard_file);
+    clear_test_clipboard_file();
 }
 
 #[cfg(unix)]
@@ -7178,7 +7179,11 @@ fn load_fake_msexplore_schema(path: &Path) -> UiCommandSchema {
 
 fn start_run_with_default_msexplore_launcher(app: &mut AppState) {
     with_test_env_lock(|| {
-        clear_launcher_bin();
+        if let Some(path) = test_workspace_binary("msexplore") {
+            set_launcher_bin(&path);
+        } else {
+            clear_launcher_bin();
+        }
         app.start_run_for_test();
         clear_launcher_bin();
     });
@@ -7259,6 +7264,17 @@ fn set_imexplore_launcher_bin(path: &Path) {
     unsafe {
         std::env::set_var("CASARS_IMEXPLORE_BIN", path);
     }
+}
+
+fn test_workspace_binary(binary_name: &str) -> Option<PathBuf> {
+    let mut path = std::env::current_exe().ok()?;
+    path.pop();
+    if path.file_name().is_some_and(|name| name == "deps") {
+        path.pop();
+    }
+    path.push(binary_name);
+    path.set_extension(std::env::consts::EXE_EXTENSION);
+    path.exists().then_some(path)
 }
 
 fn read_perf_events(path: &Path) -> Vec<serde_json::Value> {
