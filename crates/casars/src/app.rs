@@ -4013,6 +4013,19 @@ impl AppState {
     }
 
     pub(crate) fn start_run_on_launch(&mut self) {
+        if self.is_msexplore_app() {
+            self.clear_output_selection();
+            self.activate_result_tab(ResultTab::Plots);
+            self.pane_focus = PaneFocus::Result;
+            self.plot_workspace.preview_invalidated = true;
+            self.result.status_line = if self.msexplore_form_has_plot_spec() {
+                "Opening interactive msexplore preview.".to_string()
+            } else {
+                "Set a preset or axes to render an interactive preview.".to_string()
+            };
+            self.result.status_kind = StatusKind::Info;
+            return;
+        }
         self.start_run();
     }
 

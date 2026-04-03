@@ -6153,6 +6153,43 @@ fn msexplore_plots_tab_previews_current_form_without_run() {
 }
 
 #[test]
+fn msexplore_start_run_on_launch_opens_plots_preview_instead_of_spawning_process() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("preset", "amplitude_vs_time");
+
+    app.start_run_on_launch();
+
+    assert!(!app.is_running_for_test());
+    assert_eq!(app.active_result_tab(), ResultTab::Plots);
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert!(
+        app.status_line_for_test()
+            .contains("Opening interactive msexplore preview"),
+        "status={}",
+        app.status_line_for_test()
+    );
+
+    app.prepare_graphics_for_test(140, 32);
+    assert!(
+        wait_for_plot_render(&mut app, 140, 32, Duration::from_secs(5)),
+        "status={} pending={} last_error={:?} stderr={}",
+        app.status_line_for_test(),
+        app.plot_pending(),
+        app.plot_last_error(),
+        app.stderr_for_test()
+    );
+    assert!(app.plot_protocol().is_some() || app.plot_pending());
+}
+
+#[test]
 fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
