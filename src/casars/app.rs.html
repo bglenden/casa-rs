@@ -3992,7 +3992,7 @@
 <a href=#3992 id=3992 data-nosnippet>3992</a>    <span class="attr">#[cfg(test)]
 <a href=#3993 id=3993 data-nosnippet>3993</a>    </span><span class="kw">fn </span>test_idle_timeout(timeout: Duration, under_tarpaulin: bool) -&gt; Duration {
 <a href=#3994 id=3994 data-nosnippet>3994</a>        <span class="kw">if </span>under_tarpaulin {
-<a href=#3995 id=3995 data-nosnippet>3995</a>            timeout.saturating_mul(<span class="number">3</span>)
+<a href=#3995 id=3995 data-nosnippet>3995</a>            timeout.saturating_mul(<span class="number">5</span>)
 <a href=#3996 id=3996 data-nosnippet>3996</a>        } <span class="kw">else </span>{
 <a href=#3997 id=3997 data-nosnippet>3997</a>            timeout
 <a href=#3998 id=3998 data-nosnippet>3998</a>        }
@@ -12029,7 +12029,7 @@
 <a href=#12029 id=12029 data-nosnippet>12029</a>        <span class="kw">let </span>timeout = Duration::from_secs(<span class="number">60</span>);
 <a href=#12030 id=12030 data-nosnippet>12030</a>        <span class="macro">assert_eq!</span>(
 <a href=#12031 id=12031 data-nosnippet>12031</a>            AppState::test_idle_timeout(timeout, <span class="bool-val">true</span>),
-<a href=#12032 id=12032 data-nosnippet>12032</a>            Duration::from_secs(<span class="number">180</span>)
+<a href=#12032 id=12032 data-nosnippet>12032</a>            Duration::from_secs(<span class="number">300</span>)
 <a href=#12033 id=12033 data-nosnippet>12033</a>        );
 <a href=#12034 id=12034 data-nosnippet>12034</a>    }
 <a href=#12035 id=12035 data-nosnippet>12035</a>
