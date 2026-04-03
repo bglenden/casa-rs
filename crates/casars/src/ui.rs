@@ -849,6 +849,11 @@ fn draw_plot_workspace(
             )));
         }
         sidebar_lines.extend(visible_catalog.rows.into_iter().map(|row| {
+            let label = if row.selected {
+                format!("▶ {}", row.label)
+            } else {
+                format!("  {}", row.label)
+            };
             let style = if row.selected {
                 Style::default()
                     .fg(palette.active_tab_fg)
@@ -857,7 +862,7 @@ fn draw_plot_workspace(
             } else {
                 Style::default().fg(palette.footer_fg)
             };
-            Line::from(Span::styled(row.label, style))
+            Line::from(Span::styled(label, style))
         }));
         if visible_catalog.hidden_below > 0 {
             sidebar_lines.push(Line::from(Span::styled(
@@ -958,6 +963,11 @@ fn draw_plot_workspace(
         .plot_catalog_rows()
         .into_iter()
         .map(|row| {
+            let label = if row.selected {
+                format!("▶ {}", row.label)
+            } else {
+                format!("  {}", row.label)
+            };
             let style = if row.selected {
                 Style::default()
                     .fg(palette.active_tab_fg)
@@ -966,7 +976,7 @@ fn draw_plot_workspace(
             } else {
                 Style::default().fg(palette.footer_fg)
             };
-            ListItem::new(Line::from(Span::styled(row.label, style)))
+            ListItem::new(Line::from(Span::styled(label, style)))
         })
         .collect::<Vec<_>>();
     frame.render_widget(List::new(catalog_items), workspace.catalog_inner);
