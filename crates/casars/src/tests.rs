@@ -14,7 +14,9 @@ use casacore_imagebrowser_protocol::{
     ImageRegionOverlayVertex, ImageRegionState, ImageRegionStatsState,
 };
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
-use casacore_ms::msexplore::cli::command_schema as msexplore_command_schema;
+use casacore_ms::msexplore::cli::{
+    UiCommandSchema, command_schema as msexplore_command_schema,
+};
 use casacore_ms::schema;
 use casacore_ms::{
     MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
@@ -2301,19 +2303,16 @@ fn drag_selection_copies_visible_plain_text_on_mouse_up() {
 #[cfg(unix)]
 #[test]
 fn output_selection_copy_works_for_structured_table_rows() {
-    let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let clipboard_path = temp.path().join("clipboard.txt");
-    set_test_clipboard_file(&clipboard_path);
+    with_test_env_lock(|| set_test_clipboard_file(&clipboard_path));
 
     let ms_path = create_fixture_ms(temp.path());
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     app.set_active_result_tab(ResultTab::Fields);
 
@@ -2322,7 +2321,7 @@ fn output_selection_copy_works_for_structured_table_rows() {
 
     let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
     assert_eq!(clipboard, "3C286");
-    clear_test_clipboard_file();
+    with_test_env_lock(clear_test_clipboard_file);
 }
 
 #[cfg(unix)]
@@ -6001,19 +6000,14 @@ fn selected_section_keeps_its_disclosure_glyph() {
 
 #[test]
 fn msexplore_run_parses_structured_output_into_tabs() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(
         app.status_line_for_test()
@@ -6676,19 +6670,14 @@ fn verbose_on_exposes_scans_and_sources_tabs() {
 
 #[test]
 fn spw_table_shows_channel_and_total_bandwidth() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
     app.set_active_result_tab(ResultTab::Spws);
@@ -6703,19 +6692,14 @@ fn spw_table_shows_channel_and_total_bandwidth() {
 
 #[test]
 fn fields_table_shows_sky_position_columns() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
     app.set_active_result_tab(ResultTab::Fields);
@@ -6728,19 +6712,14 @@ fn fields_table_shows_sky_position_columns() {
 
 #[test]
 fn observations_table_shows_formatted_timestamps() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
     app.set_active_result_tab(ResultTab::Observations);
@@ -6754,19 +6733,14 @@ fn observations_table_shows_formatted_timestamps() {
 
 #[test]
 fn sources_table_shows_rest_frequency_and_velocity() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
     app.set_active_result_tab(ResultTab::Sources);
@@ -6777,19 +6751,14 @@ fn sources_table_shows_rest_frequency_and_velocity() {
 
 #[test]
 fn antenna_verbose_table_shows_geodetic_and_itrf_columns() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
     app.set_active_result_tab(ResultTab::Antennas);
@@ -6818,19 +6787,14 @@ fn antenna_verbose_table_shows_geodetic_and_itrf_columns() {
 
 #[test]
 fn scans_table_shows_scan_metadata_columns() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
 
     app.set_active_result_tab(ResultTab::Scans);
@@ -6867,19 +6831,14 @@ fn keyboard_horizontal_scroll_changes_result_offset() {
 
 #[test]
 fn dragging_horizontal_scrollbar_changes_result_offset() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     app.set_active_result_tab(ResultTab::Antennas);
 
@@ -6901,19 +6860,14 @@ fn dragging_horizontal_scrollbar_changes_result_offset() {
 
 #[test]
 fn horizontal_scroll_offset_persists_across_tab_switches() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     app.set_active_result_tab(ResultTab::Antennas);
 
@@ -6937,21 +6891,16 @@ fn horizontal_scroll_offset_persists_across_tab_switches() {
 
 #[test]
 fn start_run_commits_active_text_edit_before_spawning() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
 
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.handle_paste(ms_path.to_string_lossy().into_owned());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
 
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(
@@ -6966,21 +6915,16 @@ fn start_run_commits_active_text_edit_before_spawning() {
 
 #[test]
 fn records_output_file_path_for_advanced_output_mode() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
     let output_path = temp.path().join("summary.json");
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.set_text_value("output", output_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(output_path.is_file());
     assert_eq!(
@@ -6991,21 +6935,16 @@ fn records_output_file_path_for_advanced_output_mode() {
 
 #[test]
 fn selection_inputs_force_selectdata_on_run() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = msexplore_app()
-        .load_schema()
-        .expect("load schema from msexplore");
+    let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.set_toggle_value("selectdata", false);
     app.set_text_value("field", "3C286");
-    app.start_run_for_test();
+    start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(
         app.status_line_for_test()
@@ -7016,7 +6955,6 @@ fn selection_inputs_force_selectdata_on_run() {
 #[cfg(unix)]
 #[test]
 fn falls_back_to_raw_stderr_when_subprocess_fails() {
-    let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let script = write_fake_msexplore_script(
         temp.path(),
@@ -7024,13 +6962,11 @@ fn falls_back_to_raw_stderr_when_subprocess_fails() {
 exit 1
 "#,
     );
-    set_launcher_bin(&script);
-
-    let schema = msexplore_app().load_schema().expect("load fake schema");
+    let schema = load_fake_msexplore_schema(&script);
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", "/tmp/fake.ms");
-    app.start_run_for_test();
+    start_run_with_msexplore_launcher_bin(&mut app, &script);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(10)));
     assert!(app.status_line_for_test().contains("Execution failed"));
     assert!(!app.stderr_for_test().trim().is_empty());
@@ -7040,7 +6976,6 @@ exit 1
 #[cfg(unix)]
 #[test]
 fn can_cancel_a_running_subprocess() {
-    let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let script = write_fake_msexplore_script(
         temp.path(),
@@ -7049,13 +6984,11 @@ echo "completed unexpectedly"
 exit 0
 "#,
     );
-    set_launcher_bin(&script);
-
-    let schema = msexplore_app().load_schema().expect("load fake schema");
+    let schema = load_fake_msexplore_schema(&script);
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", "/tmp/fake.ms");
-    app.start_run_for_test();
+    start_run_with_msexplore_launcher_bin(&mut app, &script);
     assert!(app.is_running_for_test());
     std::thread::sleep(Duration::from_millis(100));
     app.cancel_for_test();
@@ -7261,17 +7194,51 @@ fn launcher_env_lock() -> MutexGuard<'static, ()> {
     crate::test_env_lock()
 }
 
+fn with_test_env_lock<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = launcher_env_lock();
+    f()
+}
+
+fn load_default_msexplore_schema() -> UiCommandSchema {
+    msexplore_command_schema("msexplore")
+}
+
+fn load_fake_msexplore_schema(path: &Path) -> UiCommandSchema {
+    with_test_env_lock(|| {
+        set_launcher_bin(path);
+        let schema = msexplore_app().load_schema().expect("load fake schema");
+        clear_launcher_bin();
+        schema
+    })
+}
+
+fn start_run_with_default_msexplore_launcher(app: &mut AppState) {
+    with_test_env_lock(|| {
+        clear_launcher_bin();
+        app.start_run_for_test();
+        clear_launcher_bin();
+    });
+}
+
+fn start_run_with_msexplore_launcher_bin(app: &mut AppState, path: &Path) {
+    with_test_env_lock(|| {
+        set_launcher_bin(path);
+        app.start_run_for_test();
+        clear_launcher_bin();
+    });
+}
+
 fn clear_launcher_bin() {
     // Tests hold a process-global mutex before mutating the environment.
     unsafe {
-        std::env::remove_var("CASARS_LISTOBS_BIN");
+        std::env::remove_var("CASARS_MSEXPLORE_BIN");
     }
 }
 
 fn set_launcher_bin(path: &Path) {
     // Tests hold a process-global mutex before mutating the environment.
     unsafe {
-        std::env::set_var("CASARS_LISTOBS_BIN", path);
+        std::env::set_var("CASARS_MSEXPLORE_BIN", path);
     }
 }
 
