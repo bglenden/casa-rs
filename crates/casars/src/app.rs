@@ -9768,14 +9768,30 @@ impl AppState {
             return;
         }
         self.log_msexplore_debug(format!("apply_msexplore_preset start preset={preset:?}"));
+        if let Err(error) = self.apply_startup_text_value("preset", preset.as_str().to_string()) {
+            self.result.status_line =
+                format!("Could not select {}: {error}", preset.display_name());
+            self.result.status_kind = StatusKind::Error;
+            self.log_msexplore_debug(format!("apply_msexplore_preset failed: {error}"));
+            return;
+        }
         for (id, value) in [
             ("page_spec", ""),
-            ("preset", preset.as_str()),
             ("x_axis", ""),
             ("y_axis", ""),
             ("y_axis2", ""),
         ] {
-            let _ = self.apply_startup_text_value(id, value.to_string());
+            if let Err(error) = self.apply_startup_text_value(id, value.to_string()) {
+                self.result.status_line = format!(
+                    "Selected {}, but could not reset {id}: {error}",
+                    preset.display_name()
+                );
+                self.result.status_kind = StatusKind::Error;
+                self.log_msexplore_debug(format!(
+                    "apply_msexplore_preset failed resetting {id}: {error}"
+                ));
+                return;
+            }
         }
         self.plot_workspace.focus = PlotPaneFocus::Catalog;
         self.plot_workspace.selected_control = 0;

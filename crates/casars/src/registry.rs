@@ -4,7 +4,8 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;
 
-use casacore_ms::listobs::cli::UiCommandSchema;
+use casacore_ms::listobs::cli::{UiCommandSchema, command_schema as listobs_command_schema};
+use casacore_ms::msexplore::cli::command_schema as msexplore_command_schema;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
@@ -60,6 +61,13 @@ impl ResolvedCommand {
 
 impl RegistryApp {
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
+        if !self.has_explicit_binary_override() {
+            match self.id {
+                "listobs" => return Ok(listobs_command_schema("listobs")),
+                "msexplore" => return Ok(msexplore_command_schema("msexplore")),
+                _ => {}
+            }
+        }
         match &self.kind {
             RegistryAppKind::Subprocess { binary_name, .. } => {
                 let resolved = self.resolve_command()?;
@@ -80,6 +88,16 @@ impl RegistryApp {
                     .map_err(|error| format!("parse {binary_name} --ui-schema output: {error}"))
             }
         }
+    }
+
+    fn has_explicit_binary_override(&self) -> bool {
+        let RegistryAppKind::Subprocess {
+            binary_name,
+            override_env,
+            ..
+        } = &self.kind;
+        env::var_os(override_env).is_some()
+            || env::var_os(format!("CARGO_BIN_EXE_{binary_name}")).is_some()
     }
 
     pub(crate) fn resolve_command(&self) -> Result<ResolvedCommand, String> {
@@ -258,6 +276,8 @@ fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casacore_ms::MsPlotPreset;
+    use casacore_ms::listobs::cli::UiArgumentParser;
 
     #[test]
     fn resolve_app_defaults_and_rejects_unknown_ids() {
@@ -355,5 +375,25 @@ mod tests {
         unsafe {
             env::remove_var("CARGO");
         }
+    }
+
+    #[test]
+    fn msexplore_load_schema_includes_every_shipped_preset() {
+        let schema = msexplore_app()
+            .load_schema()
+            .expect("load msexplore schema");
+        let preset = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "preset")
+            .expect("preset argument");
+        let UiArgumentParser::Option { choices, .. } = &preset.parser else {
+            panic!("preset should be an option parser");
+        };
+        let expected = MsPlotPreset::ALL
+            .iter()
+            .map(|preset| preset.as_str().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(choices, &expected);
     }
 }

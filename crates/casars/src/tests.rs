@@ -6458,7 +6458,9 @@ fn msexplore_catalog_scroll_selects_velocity_preset_with_down_arrow() {
 #[test]
 fn msexplore_problem_presets_can_be_clicked_when_visible() {
     let temp = tempdir().expect("tempdir");
-    let schema = msexplore_command_schema("msexplore");
+    let schema = msexplore_app()
+        .load_schema()
+        .expect("load live msexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_active_result_tab(ResultTab::Plots);
@@ -6503,7 +6505,9 @@ fn msexplore_problem_presets_can_be_clicked_when_visible() {
 #[test]
 fn msexplore_problem_presets_show_explicit_selected_marker() {
     let temp = tempdir().expect("tempdir");
-    let schema = msexplore_command_schema("msexplore");
+    let schema = msexplore_app()
+        .load_schema()
+        .expect("load live msexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_active_result_tab(ResultTab::Plots);
