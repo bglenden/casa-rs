@@ -6394,6 +6394,51 @@ fn msexplore_catalog_scroll_selects_velocity_preset_with_down_arrow() {
 }
 
 #[test]
+fn msexplore_problem_presets_can_be_clicked_when_visible() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 52), &app);
+    let workspace = layout.plot_workspace.as_ref().expect("plot workspace");
+    let targets = [
+        (
+            PlotCatalogTarget::MsExplorePreset(
+                casacore_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked,
+            ),
+            "amplitude_phase_vs_time_stacked",
+        ),
+        (
+            PlotCatalogTarget::MsExplorePreset(casacore_ms::MsPlotPreset::AmplitudeVsVelocity),
+            "amplitude_vs_velocity",
+        ),
+        (
+            PlotCatalogTarget::MsExplorePreset(casacore_ms::MsPlotPreset::PhaseVsVelocity),
+            "phase_vs_velocity",
+        ),
+    ];
+
+    for (target, expected) in targets {
+        let hit = workspace
+            .catalog_hits
+            .iter()
+            .find(|hit| hit.tab.target == target)
+            .expect("preset hit");
+        app.handle_mouse_event(
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                hit.rect.x + 1,
+                hit.rect.y,
+            ),
+            &layout,
+        );
+        assert_eq!(app.field_text_for_test("preset").as_deref(), Some(expected));
+    }
+}
+
+#[test]
 fn divider_chevron_can_collapse_parameters_sidebar_from_plots() {
     let (_temp, mut app) = test_app();
     app.set_active_result_tab(ResultTab::Plots);

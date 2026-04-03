@@ -7964,10 +7964,10 @@ impl AppState {
                 .field_text("preset")
                 .is_some_and(|value| !value.trim().is_empty())
             || (self
-                .field_text("xaxis")
+                .field_text("x_axis")
                 .is_some_and(|value| !value.trim().is_empty())
                 && self
-                    .field_text("yaxis")
+                    .field_text("y_axis")
                     .is_some_and(|value| !value.trim().is_empty()))
     }
 
@@ -8006,9 +8006,9 @@ impl AppState {
                 });
         }
         if let (Some(y_axis), Some(x_axis)) = (
-            self.field_text("yaxis")
+            self.field_text("y_axis")
                 .filter(|value| !value.trim().is_empty()),
-            self.field_text("xaxis")
+            self.field_text("x_axis")
                 .filter(|value| !value.trim().is_empty()),
         ) {
             return format!("{y_axis} vs {x_axis}");
@@ -9613,10 +9613,10 @@ impl AppState {
             return Some(PlotCatalogTarget::MsExplorePreset(preset));
         }
         if self
-            .field_text("xaxis")
+            .field_text("x_axis")
             .is_some_and(|value| !value.trim().is_empty())
             && self
-                .field_text("yaxis")
+                .field_text("y_axis")
                 .is_some_and(|value| !value.trim().is_empty())
         {
             return Some(PlotCatalogTarget::MsExploreCustomPlot);
@@ -9639,9 +9639,9 @@ impl AppState {
         for (id, value) in [
             ("page_spec", ""),
             ("preset", preset.as_str()),
-            ("xaxis", ""),
-            ("yaxis", ""),
-            ("yaxis2", ""),
+            ("x_axis", ""),
+            ("y_axis", ""),
+            ("y_axis2", ""),
         ] {
             let _ = self.apply_startup_text_value(id, value.to_string());
         }
