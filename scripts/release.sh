@@ -39,6 +39,25 @@ die() {
   exit 1
 }
 
+format_elapsed() {
+  local total_seconds="$1"
+  local minutes=$(( total_seconds / 60 ))
+  local seconds=$(( total_seconds % 60 ))
+  printf '%dm%02ds' "$minutes" "$seconds"
+}
+
+run_timed_step() {
+  local label="$1"
+  shift
+  local started_at
+  local finished_at
+  started_at="$(date +%s)"
+  echo "==> $label"
+  "$@"
+  finished_at="$(date +%s)"
+  echo "==> $label completed in $(format_elapsed $(( finished_at - started_at )))"
+}
+
 if [[ $# -lt 1 || $# -gt 3 ]]; then
   usage
   exit 1
@@ -105,16 +124,16 @@ esac
 tag="v$version"
 git rev-parse --verify "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
 
+release_started_at="$(date +%s)"
+
 echo "==> Running default local release gates"
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+run_timed_step "cargo fmt" cargo fmt --all -- --check
+run_timed_step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
+run_timed_step "cargo test" cargo test --workspace
 
 if [[ "$run_full" == "true" ]]; then
-  echo "==> Running slow parity gate"
-  scripts/test-slow.sh
-  echo "==> Running full coverage gate (CI-like)"
-  scripts/run-coverage.sh --ci-like
+  run_timed_step "slow parity gate" scripts/test-slow.sh
+  run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
 fi
 
 for cargo_toml in crates/*/Cargo.toml; do
@@ -130,17 +149,16 @@ if git diff --quiet -- Cargo.toml; then
   die "version update did not modify Cargo.toml"
 fi
 
-echo "==> Refreshing Cargo.lock"
-cargo metadata --format-version=1 >/dev/null
+run_timed_step "refreshing Cargo.lock metadata" cargo metadata --format-version=1 >/dev/null
 
 git add Cargo.toml Cargo.lock
 git commit -m "Release $version"
 git tag "$tag"
 
 if [[ "$push_release" == "true" ]]; then
-  echo "==> Pushing commit and tag"
-  git push origin HEAD
-  git push origin "$tag"
+  run_timed_step "pushing release commit" git push origin HEAD
+  run_timed_step "pushing release tag" git push origin "$tag"
 fi
 
-echo "Release $version created successfully"
+release_finished_at="$(date +%s)"
+echo "Release $version created successfully in $(format_elapsed $(( release_finished_at - release_started_at )))"
