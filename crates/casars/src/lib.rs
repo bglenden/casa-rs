@@ -14,7 +14,6 @@ mod ui;
 use std::fs::OpenOptions;
 use std::io::{self, Stdout, Write as _};
 use std::num::NonZeroU32;
-use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -629,25 +628,6 @@ pub(crate) fn movie_debug_log(message: impl AsRef<str>) {
     );
 }
 
-pub(crate) fn msexplore_debug_log(message: impl AsRef<str>) {
-    if std::env::var_os("CASARS_MSEXPLORE_DEBUG").is_none() {
-        return;
-    }
-    static STARTED_AT: OnceLock<Instant> = OnceLock::new();
-    let started_at = STARTED_AT.get_or_init(Instant::now);
-    let path: PathBuf = std::env::var_os("CASARS_MSEXPLORE_DEBUG_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp/casars-msexplore.log"));
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
-        return;
-    };
-    let _ = writeln!(
-        file,
-        "[+{:>7} ms] {}",
-        started_at.elapsed().as_millis(),
-        message.as_ref()
-    );
-}
 
 /// Errors surfaced by the `casars` launcher.
 #[derive(Debug, Error)]

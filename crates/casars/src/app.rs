@@ -2151,27 +2151,6 @@ impl AppState {
         }
     }
 
-    fn log_msexplore_debug(&self, event: impl AsRef<str>) {
-        if !self.is_msexplore_app() {
-            return;
-        }
-        crate::msexplore_debug_log(format!(
-            "{} | pane_focus={:?} plot_focus={:?} current_target={:?} preset={:?} page_spec={:?} x_axis={:?} y_axis={:?} y_axis2={:?} pending={} protocol={} last_error={:?}",
-            event.as_ref(),
-            self.pane_focus,
-            self.plot_workspace.focus,
-            self.current_plot_catalog_target(),
-            self.field_text("preset"),
-            self.field_text("page_spec"),
-            self.field_text("x_axis"),
-            self.field_text("y_axis"),
-            self.field_text("y_axis2"),
-            self.plot_pending(),
-            self.plot_protocol().is_some(),
-            self.plot_last_error(),
-        ));
-    }
-
     pub(crate) fn should_quit(&self) -> bool {
         self.quit
     }
@@ -2922,10 +2901,6 @@ impl AppState {
             return;
         }
         let action = self.resolve_key_action(key_event);
-        self.log_msexplore_debug(format!(
-            "key_event code={:?} modifiers={:?} kind={:?} resolved_action={:?}",
-            key_event.code, key_event.modifiers, key_event.kind, action
-        ));
         if self.image_movie_active() {
             crate::movie_debug_log(format!(
                 "key event code={:?} modifiers={:?} kind={:?} action={:?}",
@@ -2950,7 +2925,6 @@ impl AppState {
         }
         if let Some(action) = action {
             self.apply_action(action);
-            self.log_msexplore_debug("key_event applied");
         }
     }
 
@@ -2978,10 +2952,6 @@ impl AppState {
 
     pub(crate) fn handle_mouse_event(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
         self.cache_output_layout(layout);
-        self.log_msexplore_debug(format!(
-            "mouse_event kind={:?} column={} row={} modifiers={:?}",
-            mouse_event.kind, mouse_event.column, mouse_event.row, mouse_event.modifiers
-        ));
         if self.image_movie_active() {
             crate::movie_debug_log(format!(
                 "mouse event kind={:?} column={} row={} modifiers={:?}",
@@ -3976,7 +3946,6 @@ impl AppState {
         id: &str,
         value: String,
     ) -> Result<(), String> {
-        let old_value = self.field_text(id);
         let field = self
             .fields
             .iter_mut()
@@ -3985,13 +3954,6 @@ impl AppState {
         let result = field.apply_text_value(value);
         if result.is_ok() {
             self.mark_plot_snapshot_dirty();
-        }
-        if matches!(id, "preset" | "page_spec" | "x_axis" | "y_axis" | "y_axis2") {
-            self.log_msexplore_debug(format!(
-                "apply_startup_text_value id={id:?} old={old_value:?} new={:?} result={:?}",
-                self.field_text(id),
-                result
-            ));
         }
         result
     }
@@ -8954,28 +8916,18 @@ impl AppState {
             plot_kind: self.plot_workspace.selected_plot,
             spec_key,
         };
-        self.log_msexplore_debug(format!(
-            "ensure_plot_requested area={}x{} snapshot_generation={} spec_key_len={}",
-            request_key.area.width,
-            request_key.area.height,
-            request_key.snapshot_generation,
-            request_key.spec_key.len()
-        ));
-
         if self
             .plot_workspace
             .panel
             .as_ref()
             .is_some_and(|panel| panel.request_key == Some(request_key.clone()))
         {
-            self.log_msexplore_debug("ensure_plot_requested skipped existing request");
             return;
         }
 
         let payload = match self.current_plot_payload() {
             Ok(payload) => payload,
             Err(error) => {
-                self.log_msexplore_debug(format!("ensure_plot_requested payload_error={error:?}"));
                 self.plot_workspace.preview_invalidated = false;
                 self.result.status_line = "Plot payload unavailable.".to_string();
                 self.result.status_kind = StatusKind::Warning;
@@ -9000,7 +8952,6 @@ impl AppState {
             }
         });
         if panel.request_key == Some(request_key.clone()) {
-            self.log_msexplore_debug("ensure_plot_requested skipped panel request key match");
             return;
         }
 
@@ -9028,14 +8979,12 @@ impl AppState {
             },
         ) {
             panel.last_error = Some(error.to_string());
-            self.log_msexplore_debug(format!("ensure_plot_requested queue_error={error:?}"));
             self.plot_workspace.preview_invalidated = false;
             self.result.status_line = "Failed to queue plot render.".to_string();
             self.result.status_kind = StatusKind::Warning;
             return;
         }
         panel.request_key = Some(request_key);
-        self.log_msexplore_debug("ensure_plot_requested queued");
     }
 
     pub(crate) fn plot_protocol(&self) -> Option<&PanelProtocol> {
@@ -9460,13 +9409,6 @@ impl AppState {
                 }
                 let current = rows.iter().position(|row| row.selected).unwrap_or(0) as i16;
                 let next = (current + delta).clamp(0, rows.len() as i16 - 1) as usize;
-                self.log_msexplore_debug(format!(
-                    "scroll_active_plot_workspace catalog delta={} current_index={} next_index={} next_target={:?}",
-                    delta,
-                    current,
-                    next,
-                    rows[next].target
-                ));
                 self.apply_plot_catalog_target(rows[next].target);
             }
             PlotPaneFocus::Controls => {
@@ -9474,10 +9416,6 @@ impl AppState {
                 let next = (self.plot_workspace.selected_control as i16 + delta)
                     .clamp(0, row_count.saturating_sub(1));
                 self.plot_workspace.selected_control = next as usize;
-                self.log_msexplore_debug(format!(
-                    "scroll_active_plot_workspace controls delta={} selected_control={}",
-                    delta, self.plot_workspace.selected_control
-                ));
             }
             PlotPaneFocus::Canvas => {}
         }
@@ -9870,25 +9808,21 @@ impl AppState {
     }
 
     fn apply_plot_catalog_target(&mut self, target: PlotCatalogTarget) {
-        self.log_msexplore_debug(format!("apply_plot_catalog_target target={target:?}"));
         match target {
             PlotCatalogTarget::ListObs(kind) => self.set_selected_plot(kind),
             PlotCatalogTarget::MsExplorePreset(preset) => self.apply_msexplore_preset(preset),
             PlotCatalogTarget::MsExploreCustomPlot | PlotCatalogTarget::MsExplorePageSpec => {}
         }
-        self.log_msexplore_debug("apply_plot_catalog_target complete");
     }
 
     fn apply_msexplore_preset(&mut self, preset: MsPlotPreset) {
         if !self.is_msexplore_app() {
             return;
         }
-        self.log_msexplore_debug(format!("apply_msexplore_preset start preset={preset:?}"));
         if let Err(error) = self.apply_startup_text_value("preset", preset.as_str().to_string()) {
             self.result.status_line =
                 format!("Could not select {}: {error}", preset.display_name());
             self.result.status_kind = StatusKind::Error;
-            self.log_msexplore_debug(format!("apply_msexplore_preset failed: {error}"));
             return;
         }
         for (id, value) in [
@@ -9903,9 +9837,6 @@ impl AppState {
                     preset.display_name()
                 );
                 self.result.status_kind = StatusKind::Error;
-                self.log_msexplore_debug(format!(
-                    "apply_msexplore_preset failed resetting {id}: {error}"
-                ));
                 return;
             }
         }
@@ -9916,7 +9847,6 @@ impl AppState {
         self.result.status_line =
             format!("Selected {}. Rendering preview...", preset.display_name());
         self.result.status_kind = StatusKind::Info;
-        self.log_msexplore_debug("apply_msexplore_preset complete");
     }
 
     fn build_execution_plan(&self) -> Result<ExecutionPlan, String> {
