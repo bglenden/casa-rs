@@ -3418,26 +3418,92 @@ fn build_generic_visibility_scatter(
         for (corr_index, corr_label) in &selected_correlations {
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
+            let (group_key, group_label) = visibility_group(
+                spec.color_by,
+                field_id_value,
+                &field,
+                spw_id,
+                &spectral_window,
+                scan_number_value,
+                antenna1_value,
+                antenna2_value,
+                Some(corr_label),
+            );
+            let (panel_key, panel_label) = iteration_group(
+                iteraxis,
+                field_id_value,
+                &field,
+                spw_id,
+                &spectral_window,
+                scan_number_value,
+                Some(corr_label),
+            );
+            if !panels.contains_key(&panel_key) {
+                panel_order.push(panel_key.clone());
+                panels.insert(
+                    panel_key.clone(),
+                    ScatterPanelAccumulator {
+                        label: panel_label.clone(),
+                        ..Default::default()
+                    },
+                );
+            }
+            let series_identity = spec
+                .y_axes
+                .iter()
+                .copied()
+                .map(|y_axis| {
+                    let (series_key, series_label, color_group) = scatter_series_identity(
+                        y_axis,
+                        spec.y_axes.len() > 1,
+                        &group_key,
+                        &group_label,
+                    );
+                    (y_axis, series_key, series_label, color_group)
+                })
+                .collect::<Vec<_>>();
+            let mut samples = Vec::<Complex64>::new();
+            let mut flag_samples = Vec::<bool>::new();
+            let mut weight_spectrum_samples = Vec::<f64>::new();
+            let mut sigma_spectrum_samples = Vec::<f64>::new();
             for bin in &channel_bins {
-                let samples = grid
-                    .as_ref()
-                    .map(|grid| {
-                        collect_bin_samples(grid, &flags, &[*corr_index], bin.start, bin.end)
-                    })
-                    .unwrap_or_default();
-                let flag_samples = collect_bin_flags(&flags, *corr_index, bin.start, bin.end);
-                let weight_spectrum_samples = weight_spectrum_grid
-                    .as_ref()
-                    .map(|grid| {
-                        collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
-                    })
-                    .unwrap_or_default();
-                let sigma_spectrum_samples = sigma_spectrum_grid
-                    .as_ref()
-                    .map(|grid| {
-                        collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
-                    })
-                    .unwrap_or_default();
+                if let Some(grid) = grid.as_ref() {
+                    collect_bin_samples_into(
+                        grid,
+                        &flags,
+                        &[*corr_index],
+                        bin.start,
+                        bin.end,
+                        &mut samples,
+                    );
+                } else {
+                    samples.clear();
+                }
+                collect_bin_flags_into(&flags, *corr_index, bin.start, bin.end, &mut flag_samples);
+                if let Some(grid) = weight_spectrum_grid.as_ref() {
+                    collect_bin_float_samples_into(
+                        grid,
+                        &flags,
+                        *corr_index,
+                        bin.start,
+                        bin.end,
+                        &mut weight_spectrum_samples,
+                    );
+                } else {
+                    weight_spectrum_samples.clear();
+                }
+                if let Some(grid) = sigma_spectrum_grid.as_ref() {
+                    collect_bin_float_samples_into(
+                        grid,
+                        &flags,
+                        *corr_index,
+                        bin.start,
+                        bin.end,
+                        &mut sigma_spectrum_samples,
+                    );
+                } else {
+                    sigma_spectrum_samples.clear();
+                }
                 let Some(x_value) = compute_axis_value(
                     spec.x_axis,
                     row,
@@ -3460,42 +3526,12 @@ fn build_generic_visibility_scatter(
                 else {
                     continue;
                 };
-                let (group_key, group_label) = visibility_group(
-                    spec.color_by,
-                    field_id_value,
-                    &field,
-                    spw_id,
-                    &spectral_window,
-                    scan_number_value,
-                    antenna1_value,
-                    antenna2_value,
-                    Some(corr_label),
-                );
-                let (panel_key, panel_label) = iteration_group(
-                    iteraxis,
-                    field_id_value,
-                    &field,
-                    spw_id,
-                    &spectral_window,
-                    scan_number_value,
-                    Some(corr_label),
-                );
-                if !panels.contains_key(&panel_key) {
-                    panel_order.push(panel_key.clone());
-                    panels.insert(
-                        panel_key.clone(),
-                        ScatterPanelAccumulator {
-                            label: panel_label.clone(),
-                            ..Default::default()
-                        },
-                    );
-                }
                 let panel = panels
                     .get_mut(&panel_key)
                     .expect("panel inserted before mutation");
-                for y_axis in spec.y_axes.iter().copied() {
+                for (y_axis, series_key, series_label, color_group) in &series_identity {
                     let Some(y_value) = compute_axis_value(
-                        y_axis,
+                        *y_axis,
                         row,
                         &samples,
                         &flag_samples,
@@ -3516,12 +3552,6 @@ fn build_generic_visibility_scatter(
                     else {
                         continue;
                     };
-                    let (series_key, series_label, color_group) = scatter_series_identity(
-                        y_axis,
-                        spec.y_axes.len() > 1,
-                        &group_key,
-                        &group_label,
-                    );
                     if geometry_dedup_required
                         && !geometry_samples_seen.insert((
                             panel_key.clone(),
@@ -3536,11 +3566,11 @@ fn build_generic_visibility_scatter(
                     let series =
                         panel
                             .series
-                            .entry(series_key)
+                            .entry(series_key.clone())
                             .or_insert_with(|| MsScatterSeries {
-                                label: series_label,
-                                color_group,
-                                y_axis,
+                                label: series_label.clone(),
+                                color_group: color_group.clone(),
+                                y_axis: *y_axis,
                                 points: Vec::new(),
                                 provenance: Vec::new(),
                             });
@@ -4187,28 +4217,58 @@ fn build_generic_visibility_scatter_with_averaging(
         for (corr_index, corr_label) in &selected_correlations {
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
+            let mut samples = Vec::<Complex64>::new();
+            let mut flag_samples = Vec::<bool>::new();
+            let mut visibility_weight_samples = Vec::<f64>::new();
+            let mut weight_spectrum_samples = Vec::<f64>::new();
+            let mut sigma_spectrum_samples = Vec::<f64>::new();
             for baseline_token in &baseline_tokens {
                 for bin in &channel_bins {
-                    let samples = grid
-                        .as_ref()
-                        .map(|grid| {
-                            collect_bin_samples(grid, &flags, &[*corr_index], bin.start, bin.end)
-                        })
-                        .unwrap_or_default();
-                    let flag_samples = collect_bin_flags(&flags, *corr_index, bin.start, bin.end);
-                    let visibility_weight_samples = vec![row_weight; samples.len()];
-                    let weight_spectrum_samples = weight_spectrum_grid
-                        .as_ref()
-                        .map(|grid| {
-                            collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
-                        })
-                        .unwrap_or_default();
-                    let sigma_spectrum_samples = sigma_spectrum_grid
-                        .as_ref()
-                        .map(|grid| {
-                            collect_bin_float_samples(grid, &flags, *corr_index, bin.start, bin.end)
-                        })
-                        .unwrap_or_default();
+                    if let Some(grid) = grid.as_ref() {
+                        collect_bin_samples_into(
+                            grid,
+                            &flags,
+                            &[*corr_index],
+                            bin.start,
+                            bin.end,
+                            &mut samples,
+                        );
+                    } else {
+                        samples.clear();
+                    }
+                    collect_bin_flags_into(
+                        &flags,
+                        *corr_index,
+                        bin.start,
+                        bin.end,
+                        &mut flag_samples,
+                    );
+                    visibility_weight_samples.clear();
+                    visibility_weight_samples.resize(samples.len(), row_weight);
+                    if let Some(grid) = weight_spectrum_grid.as_ref() {
+                        collect_bin_float_samples_into(
+                            grid,
+                            &flags,
+                            *corr_index,
+                            bin.start,
+                            bin.end,
+                            &mut weight_spectrum_samples,
+                        );
+                    } else {
+                        weight_spectrum_samples.clear();
+                    }
+                    if let Some(grid) = sigma_spectrum_grid.as_ref() {
+                        collect_bin_float_samples_into(
+                            grid,
+                            &flags,
+                            *corr_index,
+                            bin.start,
+                            bin.end,
+                            &mut sigma_spectrum_samples,
+                        );
+                    } else {
+                        sigma_spectrum_samples.clear();
+                    }
                     let (group_key, group_label) = visibility_group(
                         spec.color_by,
                         field_id_value,
@@ -5276,14 +5336,15 @@ fn compute_weighted_visibility_math(
     }
 }
 
-fn collect_bin_samples(
+fn collect_bin_samples_into(
     grid: &ComplexGrid,
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_indices: &[usize],
     chan_start: usize,
     chan_end: usize,
-) -> Vec<Complex64> {
-    let mut samples = Vec::new();
+    samples: &mut Vec<Complex64>,
+) {
+    samples.clear();
     for &corr_index in corr_indices {
         if corr_index >= grid.corr_count {
             continue;
@@ -5298,35 +5359,38 @@ fn collect_bin_samples(
             }
         }
     }
-    samples
 }
 
-fn collect_bin_flags(
+fn collect_bin_flags_into(
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
     chan_start: usize,
     chan_end: usize,
-) -> Vec<bool> {
+    out: &mut Vec<bool>,
+) {
+    out.clear();
     if corr_index >= flags.nrows() {
-        return Vec::new();
+        return;
     }
-    (chan_start..chan_end)
-        .filter(|chan_index| *chan_index < flags.ncols())
-        .map(|chan_index| flags[(corr_index, chan_index)])
-        .collect()
+    for chan_index in chan_start..chan_end {
+        if chan_index < flags.ncols() {
+            out.push(flags[(corr_index, chan_index)]);
+        }
+    }
 }
 
-fn collect_bin_float_samples(
+fn collect_bin_float_samples_into(
     grid: &FloatGrid,
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
     chan_start: usize,
     chan_end: usize,
-) -> Vec<f64> {
+    samples: &mut Vec<f64>,
+) {
+    samples.clear();
     if corr_index >= grid.corr_count {
-        return Vec::new();
+        return;
     }
-    let mut samples = Vec::new();
     for chan_index in chan_start..chan_end {
         if chan_index >= grid.chan_count
             || chan_index >= flags.ncols()
@@ -5339,7 +5403,6 @@ fn collect_bin_float_samples(
             samples.push(value);
         }
     }
-    samples
 }
 
 fn select_correlation_slots(
@@ -6566,11 +6629,7 @@ fn render_scatter_panel(
             let render_style = scatter_series_style(series, y_axis, Some(secondary_y_axis), theme);
             let drawn = chart
                 .draw_secondary_series(PointSeries::of_element(
-                    series
-                        .points
-                        .iter()
-                        .map(|(x, y)| (*x - x_offset, *y))
-                        .collect::<Vec<_>>(),
+                    series.points.iter().map(|(x, y)| (*x - x_offset, *y)),
                     point_radius,
                     render_style.shape_style(),
                     &|coord, size, draw_style| {
@@ -6596,11 +6655,7 @@ fn render_scatter_panel(
             let render_style = scatter_series_style(series, y_axis, Some(secondary_y_axis), theme);
             let drawn = chart
                 .draw_series(PointSeries::of_element(
-                    series
-                        .points
-                        .iter()
-                        .map(|(x, y)| (*x - x_offset, *y))
-                        .collect::<Vec<_>>(),
+                    series.points.iter().map(|(x, y)| (*x - x_offset, *y)),
                     point_radius,
                     render_style.shape_style(),
                     &|coord, size, draw_style| {
@@ -6711,11 +6766,7 @@ fn render_scatter_panel(
         let render_style = scatter_series_style(series, y_axis, None, theme);
         let drawn = chart
             .draw_series(PointSeries::of_element(
-                series
-                    .points
-                    .iter()
-                    .map(|(x, y)| (*x - x_offset, *y))
-                    .collect::<Vec<_>>(),
+                series.points.iter().map(|(x, y)| (*x - x_offset, *y)),
                 point_radius,
                 render_style.shape_style(),
                 &|coord, size, draw_style| {

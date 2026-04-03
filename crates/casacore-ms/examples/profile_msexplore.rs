@@ -302,6 +302,7 @@ fn payload_kind(payload: &MsPlotPayload) -> &'static str {
         MsPlotPayload::ListObs(_) => "listobs",
         MsPlotPayload::Scatter(_) => "scatter",
         MsPlotPayload::ScatterGrid(_) => "scatter_grid",
+        MsPlotPayload::ScatterPage(_) => "scatter_page",
     }
 }
 
@@ -309,6 +310,7 @@ fn payload_panel_count(payload: &MsPlotPayload) -> usize {
     match payload {
         MsPlotPayload::ListObs(_) | MsPlotPayload::Scatter(_) => 1,
         MsPlotPayload::ScatterGrid(payload) => payload.panels.len(),
+        MsPlotPayload::ScatterPage(payload) => payload.items.len(),
     }
 }
 
@@ -326,6 +328,12 @@ fn payload_point_count(payload: &MsPlotPayload) -> usize {
             .flat_map(|panel| panel.series.iter())
             .map(|series| series.points.len())
             .sum(),
+        MsPlotPayload::ScatterPage(payload) => payload
+            .items
+            .iter()
+            .flat_map(|item| item.plot.series.iter())
+            .map(|series| series.points.len())
+            .sum(),
     }
 }
 
@@ -333,6 +341,7 @@ fn payload_grid(payload: &MsPlotPayload) -> String {
     match payload {
         MsPlotPayload::ListObs(_) | MsPlotPayload::Scatter(_) => "1x1".to_string(),
         MsPlotPayload::ScatterGrid(payload) => format!("{}x{}", payload.gridrows, payload.gridcols),
+        MsPlotPayload::ScatterPage(payload) => format!("{}x{}", payload.gridrows, payload.gridcols),
     }
 }
 
