@@ -9990,7 +9990,7 @@ impl FormField {
                     FormValue::Text(schema.default.clone().unwrap_or_default())
                 } else {
                     FormValue::Choice {
-                        value: schema.default.clone().unwrap_or_else(|| choices[0].clone()),
+                        value: schema.default.clone().unwrap_or_default(),
                         choices: choices.clone(),
                     }
                 }
@@ -10024,6 +10024,14 @@ impl FormField {
                     "[ ]".to_string()
                 }
             }
+            (FormValue::Choice { value, .. }, _)
+                if value.trim().is_empty() && self.schema.required =>
+            {
+                "<required>".to_string()
+            }
+            (FormValue::Choice { value, .. }, _) if value.trim().is_empty() => {
+                "<empty>".to_string()
+            }
             (FormValue::Choice { value, .. }, _) => value.clone(),
         };
         let mut rendered = format!("{:<18} {}", self.schema.label, value);
@@ -10054,8 +10062,13 @@ impl FormField {
                 }
             }
             (UiArgumentParser::Option { flags, .. }, FormValue::Choice { value, .. }) => {
-                arguments.push(OsString::from(&flags[0]));
-                arguments.push(OsString::from(value));
+                if self.schema.required && value.trim().is_empty() {
+                    return Err(format!("{} is required.", self.schema.label));
+                }
+                if !value.trim().is_empty() {
+                    arguments.push(OsString::from(&flags[0]));
+                    arguments.push(OsString::from(value));
+                }
             }
             (
                 UiArgumentParser::Toggle {
@@ -10078,6 +10091,14 @@ impl FormField {
             return;
         };
         if choices.is_empty() {
+            return;
+        }
+        if value.trim().is_empty() {
+            *value = if forward {
+                choices[0].clone()
+            } else {
+                choices[choices.len() - 1].clone()
+            };
             return;
         }
         let position = choices
@@ -10114,6 +10135,10 @@ impl FormField {
                 value: current,
                 choices,
             } => {
+                if value.trim().is_empty() && !self.schema.required {
+                    *current = String::new();
+                    return Ok(());
+                }
                 if !choices.is_empty() && !choices.iter().any(|choice| choice == &value) {
                     return Err(format!(
                         "{} expects one of: {}",

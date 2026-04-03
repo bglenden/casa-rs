@@ -6206,6 +6206,7 @@ fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     assert!(clipboard.contains("--preset amplitude_vs_time"));
     assert!(clipboard.contains(ms_path.to_string_lossy().as_ref()));
     assert!(clipboard.contains(export_path.to_string_lossy().as_ref()));
+    assert!(!clipboard.contains("--flag-action"));
 
     move_plot_control_selection_to(&mut app, PlotControlTarget::ExportPng);
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
