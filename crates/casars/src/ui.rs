@@ -90,6 +90,13 @@ pub(crate) struct PlotControlHit {
     pub rect: Rect,
 }
 
+#[derive(Debug, Clone)]
+struct VisiblePlotCatalog {
+    rows: Vec<crate::app::PlotCatalogRowView>,
+    hidden_above: usize,
+    hidden_below: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ImagePlaneCanvasLayout {
     pub canvas: Rect,
@@ -830,24 +837,33 @@ fn draw_plot_workspace(
                 .fg(palette.section_fg)
                 .add_modifier(Modifier::BOLD),
         )));
-        sidebar_lines.extend(
-            visible_plot_catalog_rows(
-                app.plot_catalog_rows(),
-                available_msexplore_catalog_height(workspace.catalog_inner.height, app),
-            )
-            .into_iter()
-            .map(|row| {
-                let style = if row.selected {
-                    Style::default()
-                        .fg(palette.active_tab_fg)
-                        .bg(palette.active_tab_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(palette.footer_fg)
-                };
-                Line::from(Span::styled(row.label, style))
-            }),
+        let visible_catalog = visible_plot_catalog_rows(
+            app.plot_catalog_rows(),
+            available_msexplore_catalog_height(workspace.catalog_inner.height, app),
         );
+        if visible_catalog.hidden_above > 0 {
+            sidebar_lines.push(Line::from(Span::styled(
+                format!("↑ {} more", visible_catalog.hidden_above),
+                Style::default().fg(palette.footer_fg),
+            )));
+        }
+        sidebar_lines.extend(visible_catalog.rows.into_iter().map(|row| {
+            let style = if row.selected {
+                Style::default()
+                    .fg(palette.active_tab_fg)
+                    .bg(palette.active_tab_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.footer_fg)
+            };
+            Line::from(Span::styled(row.label, style))
+        }));
+        if visible_catalog.hidden_below > 0 {
+            sidebar_lines.push(Line::from(Span::styled(
+                format!("↓ {} more", visible_catalog.hidden_below),
+                Style::default().fg(palette.footer_fg),
+            )));
+        }
         sidebar_lines.push(Line::from(""));
         if let Some(banner) = app.plot_dirty_banner() {
             sidebar_lines.push(Line::from(Span::styled(
@@ -1663,21 +1679,30 @@ fn build_plot_workspace_layout(area: Rect, app: &AppState) -> PlotWorkspaceLayou
             available_msexplore_catalog_height(catalog_inner.height, app),
         );
         let catalog_hits = visible_catalog
+            .rows
             .into_iter()
             .enumerate()
             .map(|(index, row)| PlotCatalogHit {
                 tab: row,
                 rect: Rect {
                     x: catalog_inner.x,
-                    y: catalog_inner.y + 1 + index as u16,
+                    y: catalog_inner.y
+                        + 1
+                        + u16::from(visible_catalog.hidden_above > 0)
+                        + index as u16,
                     width: catalog_inner.width,
                     height: 1,
                 },
             })
             .collect::<Vec<_>>();
 
-        let action_rows_start =
-            msexplore_action_row_start(catalog_inner.y, catalog_hits.len(), app);
+        let action_rows_start = msexplore_action_row_start(
+            catalog_inner.y,
+            catalog_hits.len(),
+            visible_catalog.hidden_above > 0,
+            visible_catalog.hidden_below > 0,
+            app,
+        );
         let control_hits = app
             .plot_control_rows()
             .into_iter()
@@ -1786,21 +1811,36 @@ pub(crate) fn plot_canvas_area(layout: &UiLayout) -> Option<Rect> {
 fn visible_plot_catalog_rows(
     rows: Vec<crate::app::PlotCatalogRowView>,
     available_height: usize,
-) -> Vec<crate::app::PlotCatalogRowView> {
+) -> VisiblePlotCatalog {
     if available_height == 0 || rows.is_empty() {
-        return Vec::new();
+        return VisiblePlotCatalog {
+            rows: Vec::new(),
+            hidden_above: 0,
+            hidden_below: 0,
+        };
     }
     if rows.len() <= available_height {
-        return rows;
+        return VisiblePlotCatalog {
+            rows,
+            hidden_above: 0,
+            hidden_below: 0,
+        };
     }
     let selected_index = rows.iter().position(|row| row.selected).unwrap_or(0);
     let half_window = available_height / 2;
-    let max_start = rows.len().saturating_sub(available_height);
+    let total_rows = rows.len();
+    let max_start = total_rows.saturating_sub(available_height);
     let start = selected_index.saturating_sub(half_window).min(max_start);
-    rows.into_iter()
-        .skip(start)
-        .take(available_height)
-        .collect()
+    let end = start + available_height;
+    VisiblePlotCatalog {
+        rows: rows
+            .into_iter()
+            .skip(start)
+            .take(available_height)
+            .collect(),
+        hidden_above: start,
+        hidden_below: total_rows.saturating_sub(end),
+    }
 }
 
 fn available_msexplore_catalog_height(sidebar_height: u16, app: &AppState) -> usize {
@@ -1812,8 +1852,18 @@ fn available_msexplore_catalog_height(sidebar_height: u16, app: &AppState) -> us
     usize::from(sidebar_height).saturating_sub(reserved_lines)
 }
 
-fn msexplore_action_row_start(catalog_y: u16, catalog_row_count: usize, app: &AppState) -> u16 {
-    let mut y = catalog_y + 1 + catalog_row_count as u16 + 1;
+fn msexplore_action_row_start(
+    catalog_y: u16,
+    catalog_row_count: usize,
+    has_hidden_above: bool,
+    has_hidden_below: bool,
+    app: &AppState,
+) -> u16 {
+    let mut y = catalog_y + 1 + u16::from(has_hidden_above) + catalog_row_count as u16;
+    if has_hidden_below {
+        y += 1;
+    }
+    y += 1;
     if app.plot_dirty_banner().is_some() {
         y += 2;
     }

@@ -6243,6 +6243,29 @@ fn msexplore_plots_sidebar_lists_standard_presets() {
 }
 
 #[test]
+fn msexplore_plots_sidebar_shows_overflow_indicator_for_hidden_presets() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 32), &app);
+    let visible_rows = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .len();
+    let total_rows = app.plot_catalog_rows().len();
+    assert!(visible_rows < total_rows);
+
+    let rendered = render_app(&app, 140, 32);
+    assert!(rendered.contains("more"));
+    assert!(!rendered.contains("Amplitude vs Velocity"));
+}
+
+#[test]
 fn msexplore_clicking_catalog_preset_updates_preview_cli() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
@@ -6316,6 +6339,58 @@ fn msexplore_clicking_catalog_preset_updates_preview_cli() {
     assert!(clipboard.contains("--showlegend"));
     assert!(clipboard.contains("--legendposition exteriorRight"));
     clear_test_clipboard_file();
+}
+
+#[test]
+fn msexplore_catalog_scroll_selects_velocity_preset_with_down_arrow() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let all_rows = app.plot_catalog_rows();
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 32), &app);
+    let last_visible_hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .last()
+        .expect("last visible preset");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            last_visible_hit.rect.x + 1,
+            last_visible_hit.rect.y,
+        ),
+        &layout,
+    );
+    let current_index = all_rows
+        .iter()
+        .position(|row| row.target == last_visible_hit.tab.target)
+        .expect("visible row index");
+    let velocity_index = all_rows
+        .iter()
+        .position(|row| {
+            row.target
+                == PlotCatalogTarget::MsExplorePreset(
+                    casacore_ms::MsPlotPreset::AmplitudeVsVelocity,
+                )
+        })
+        .expect("velocity preset index");
+    assert!(velocity_index > current_index);
+
+    for _ in current_index..velocity_index {
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+    assert_eq!(
+        app.field_text_for_test("preset").as_deref(),
+        Some("amplitude_vs_velocity")
+    );
+
+    let rendered = render_app(&app, 140, 32);
+    assert!(rendered.contains("Amplitude vs Velocity"));
 }
 
 #[test]
