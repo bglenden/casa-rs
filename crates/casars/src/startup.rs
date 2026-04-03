@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
 
-use casacore_ms::listobs::cli::{UiActionKind, UiArgumentParser, UiCommandSchema};
+use casacore_ms::msexplore::cli::{
+    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema,
+};
 
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
 
@@ -200,10 +202,7 @@ fn parse_schema_prefill_args(
     })
 }
 
-fn find_flag_argument<'a>(
-    schema: &'a UiCommandSchema,
-    raw: &str,
-) -> Option<&'a casacore_ms::listobs::cli::UiArgumentSchema> {
+fn find_flag_argument<'a>(schema: &'a UiCommandSchema, raw: &str) -> Option<&'a UiArgumentSchema> {
     schema
         .arguments
         .iter()
@@ -250,7 +249,7 @@ fn render_casars_help() -> String {
         ));
     }
     out.push_str(
-        "\nExamples:\n  casars\n  casars tablebrowser /path/to/table\n  casars imexplore /path/to/image\n  casars --app listobs /path/to.ms --field 3C286\n",
+        "\nExamples:\n  casars\n  casars tablebrowser /path/to/table\n  casars imexplore /path/to/image\n  casars --app msexplore /path/to.ms --preset amplitude_vs_time --plot-output amp-time.png\n",
     );
     out
 }
@@ -259,7 +258,7 @@ fn render_casars_help() -> String {
 mod tests {
     use std::ffi::OsString;
 
-    use casacore_ms::listobs::cli::command_schema;
+    use casacore_ms::msexplore::cli::command_schema;
     use serde_json::json;
 
     use super::{StartupSelection, StartupValue, parse_schema_prefill_args, parse_startup_args};
@@ -376,18 +375,18 @@ mod tests {
     }
 
     #[test]
-    fn schema_prefill_parses_listobs_options_and_toggles() {
-        let schema = command_schema("listobs");
+    fn schema_prefill_parses_msexplore_options_and_toggles() {
+        let schema = command_schema("msexplore");
         let result = parse_schema_prefill_args(
             &schema,
             vec![
                 OsString::from("/tmp/example.ms"),
                 OsString::from("--field"),
                 OsString::from("3C286"),
-                OsString::from("--no-verbose"),
+                OsString::from("--showlegend"),
             ],
         )
-        .expect("parse listobs startup args");
+        .expect("parse msexplore startup args");
         let super::SchemaPrefillParse::Prefill { values, auto_run } = result else {
             panic!("expected prefill");
         };
@@ -399,16 +398,14 @@ mod tests {
         assert!(values.iter().any(|entry| {
             entry.id == "field" && entry.value == StartupValue::Text("3C286".to_string())
         }));
-        assert!(
-            values.iter().any(|entry| {
-                entry.id == "verbose" && entry.value == StartupValue::Toggle(false)
-            })
-        );
+        assert!(values.iter().any(|entry| {
+            entry.id == "showlegend" && entry.value == StartupValue::Toggle(true)
+        }));
     }
 
     #[test]
     fn schema_prefill_rejects_hidden_arguments() {
-        let schema = command_schema("listobs");
+        let schema = command_schema("msexplore");
         let error = parse_schema_prefill_args(
             &schema,
             vec![OsString::from("--format"), OsString::from("json")],
@@ -419,14 +416,14 @@ mod tests {
 
     #[test]
     fn schema_prefill_renders_help_actions() {
-        let schema = command_schema("listobs");
+        let schema = command_schema("msexplore");
         let result = parse_schema_prefill_args(&schema, vec![OsString::from("--help")])
             .expect("help action should parse");
         let super::SchemaPrefillParse::PrintText(text) = result else {
             panic!("expected help text");
         };
         assert!(text.contains("Usage:"));
-        assert!(text.contains("listobs"));
+        assert!(text.contains("msexplore"));
     }
 
     #[test]
@@ -439,7 +436,7 @@ mod tests {
         assert!(text.contains("Usage:"));
         assert!(text.contains("tablebrowser"));
         assert!(text.contains("imexplore"));
-        assert!(text.contains("listobs"));
+        assert!(text.contains("msexplore"));
     }
 
     #[test]
@@ -536,7 +533,7 @@ mod tests {
 
     #[test]
     fn schema_prefill_rejects_combined_action_flags_and_supports_end_of_options() {
-        let schema = command_schema("listobs");
+        let schema = command_schema("msexplore");
         let error = parse_schema_prefill_args(
             &schema,
             vec![OsString::from("--help"), OsString::from("/tmp/example.ms")],

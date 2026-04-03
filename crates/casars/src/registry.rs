@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::SystemTime;
 
-use casacore_ms::listobs::cli::UiCommandSchema;
+use casacore_ms::msexplore::cli::{UiCommandSchema, command_schema as msexplore_command_schema};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
@@ -60,6 +62,9 @@ impl ResolvedCommand {
 
 impl RegistryApp {
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
+        if !self.has_explicit_binary_override() && self.id == "msexplore" {
+            return Ok(msexplore_command_schema("msexplore"));
+        }
         match &self.kind {
             RegistryAppKind::Subprocess { binary_name, .. } => {
                 let resolved = self.resolve_command()?;
@@ -80,6 +85,16 @@ impl RegistryApp {
                     .map_err(|error| format!("parse {binary_name} --ui-schema output: {error}"))
             }
         }
+    }
+
+    fn has_explicit_binary_override(&self) -> bool {
+        let RegistryAppKind::Subprocess {
+            binary_name,
+            override_env,
+            ..
+        } = &self.kind;
+        env::var_os(override_env).is_some()
+            || env::var_os(format!("CARGO_BIN_EXE_{binary_name}")).is_some()
     }
 
     pub(crate) fn resolve_command(&self) -> Result<ResolvedCommand, String> {
@@ -105,17 +120,24 @@ impl RegistryApp {
         }
 
         if let Some(path) = sibling_binary(binary_name) {
-            return Ok(ResolvedCommand {
-                program: path.into_os_string(),
-                prefix_args: Vec::new(),
-            });
+            if !self.prefers_cargo_workspace_fallback_for_stale_sibling()
+                || !sibling_binary_is_stale_for_current_process(&path)
+            {
+                return Ok(ResolvedCommand {
+                    program: path.into_os_string(),
+                    prefix_args: Vec::new(),
+                });
+            }
         }
 
         let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+        let manifest_path = workspace_manifest_path();
         Ok(ResolvedCommand {
             program: cargo,
             prefix_args: vec![
                 OsString::from("run"),
+                OsString::from("--manifest-path"),
+                manifest_path.into_os_string(),
                 OsString::from("-q"),
                 OsString::from("-p"),
                 OsString::from(cargo_package),
@@ -124,6 +146,10 @@ impl RegistryApp {
                 OsString::from("--"),
             ],
         })
+    }
+
+    fn prefers_cargo_workspace_fallback_for_stale_sibling(&self) -> bool {
+        self.id == "msexplore"
     }
 
     pub(crate) fn is_browser_session(&self) -> bool {
@@ -171,32 +197,18 @@ impl RegistryApp {
 }
 
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
-    match id.unwrap_or("listobs") {
-        "listobs" => Ok(listobs_app()),
+    match id.unwrap_or("msexplore") {
+        "msexplore" => Ok(msexplore_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: listobs, tablebrowser, imexplore"
+            "unknown casars app {other:?}; expected one of: msexplore, tablebrowser, imexplore"
         )),
     }
 }
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
-    vec![listobs_app(), tablebrowser_app(), imexplore_app()]
-}
-
-pub(crate) fn listobs_app() -> RegistryApp {
-    RegistryApp {
-        id: "listobs",
-        category: "MeasurementSet",
-        display_name: "ListObs",
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "listobs",
-            cargo_package: "casacore-ms",
-            override_env: "CASARS_LISTOBS_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    vec![msexplore_app(), tablebrowser_app(), imexplore_app()]
 }
 
 pub(crate) fn tablebrowser_app() -> RegistryApp {
@@ -227,6 +239,20 @@ pub(crate) fn imexplore_app() -> RegistryApp {
     }
 }
 
+pub(crate) fn msexplore_app() -> RegistryApp {
+    RegistryApp {
+        id: "msexplore",
+        category: "MeasurementSet",
+        display_name: "MSExplore",
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "msexplore",
+            cargo_package: "casacore-ms",
+            override_env: "CASARS_MSEXPLORE_BIN",
+            interaction: AppInteraction::OneShot,
+        },
+    }
+}
+
 fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
     let mut path = env::current_exe().ok()?;
     path.pop();
@@ -235,13 +261,52 @@ fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
+fn workspace_manifest_path() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(|path| path.parent())
+        .unwrap_or_else(|| {
+            panic!("casars manifest dir should live under <workspace>/crates/casars")
+        })
+        .join("Cargo.toml")
+}
+
+fn sibling_binary_is_stale_for_current_process(sibling_path: &std::path::Path) -> bool {
+    let current_exe = match env::current_exe() {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let current_modified = file_modified_time(&current_exe);
+    let sibling_modified = file_modified_time(sibling_path);
+    is_binary_stale(sibling_modified, current_modified)
+}
+
+fn file_modified_time(path: &std::path::Path) -> Option<SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
+}
+
+fn is_binary_stale(
+    binary_modified: Option<SystemTime>,
+    reference_modified: Option<SystemTime>,
+) -> bool {
+    match (binary_modified, reference_modified) {
+        (Some(binary_modified), Some(reference_modified)) => binary_modified < reference_modified,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casacore_ms::MsPlotPreset;
+    use casacore_ms::msexplore::cli::UiArgumentParser;
+    use std::time::Duration;
 
     #[test]
     fn resolve_app_defaults_and_rejects_unknown_ids() {
-        assert_eq!(resolve_app(None).unwrap().id, "listobs");
+        assert_eq!(resolve_app(None).unwrap().id, "msexplore");
+        assert_eq!(resolve_app(Some("msexplore")).unwrap().id, "msexplore");
         assert_eq!(
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
@@ -256,10 +321,10 @@ mod tests {
 
     #[test]
     fn app_metadata_matches_interaction_kind() {
-        let listobs = listobs_app();
-        assert!(!listobs.is_browser_session());
+        let msexplore = msexplore_app();
+        assert!(!msexplore.is_browser_session());
         assert_eq!(
-            listobs.ready_status_line(),
+            msexplore.ready_status_line(),
             "Ready. Press r to run the selected command."
         );
 
@@ -281,18 +346,18 @@ mod tests {
     #[test]
     fn resolve_command_prefers_override_environment() {
         let _guard = crate::test_env_lock();
-        let app = listobs_app();
+        let app = msexplore_app();
         unsafe {
-            env::set_var("CASARS_LISTOBS_BIN", "/tmp/custom-listobs");
+            env::set_var("CASARS_MSEXPLORE_BIN", "/tmp/custom-msexplore");
         }
 
         let resolved = app.resolve_command().expect("resolve override");
         let command = resolved.command();
-        assert_eq!(command.get_program(), "/tmp/custom-listobs");
+        assert_eq!(command.get_program(), "/tmp/custom-msexplore");
         assert_eq!(command.get_args().count(), 0);
 
         unsafe {
-            env::remove_var("CASARS_LISTOBS_BIN");
+            env::remove_var("CASARS_MSEXPLORE_BIN");
         }
     }
 
@@ -316,6 +381,8 @@ mod tests {
             args,
             vec![
                 "run",
+                "--manifest-path",
+                workspace_manifest_path().to_string_lossy().as_ref(),
                 "-q",
                 "-p",
                 "casacore-tables",
@@ -327,5 +394,43 @@ mod tests {
         unsafe {
             env::remove_var("CARGO");
         }
+    }
+
+    #[test]
+    fn msexplore_load_schema_includes_every_shipped_preset() {
+        let schema = msexplore_app()
+            .load_schema()
+            .expect("load msexplore schema");
+        let preset = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "preset")
+            .expect("preset argument");
+        let UiArgumentParser::Option { choices, .. } = &preset.parser else {
+            panic!("preset should be an option parser");
+        };
+        let expected = MsPlotPreset::ALL
+            .iter()
+            .map(|preset| preset.as_str().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(choices, &expected);
+    }
+
+    #[test]
+    fn stale_binary_detection_requires_binary_older_than_reference() {
+        let older = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        let newer = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+        assert!(is_binary_stale(Some(older), Some(newer)));
+        assert!(!is_binary_stale(Some(newer), Some(older)));
+        assert!(!is_binary_stale(Some(newer), Some(newer)));
+        assert!(!is_binary_stale(None, Some(newer)));
+        assert!(!is_binary_stale(Some(older), None));
+    }
+
+    #[test]
+    fn workspace_ms_apps_prefer_cargo_fallback_for_stale_siblings() {
+        assert!(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+        assert!(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+        assert!(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
     }
 }

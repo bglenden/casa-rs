@@ -17,13 +17,14 @@ use casacore_imagebrowser_protocol::{
     ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImagePlaneContentMode,
     ImageProfilePayload,
 };
-use casacore_ms::listobs::cli::{
+use casacore_ms::msexplore::cli::{
     UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
+    build_explore_spec_from_args,
 };
 use casacore_ms::{
-    ListObsOptions, ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
-    ListObsSummary, ListObsUvCoverage, build_listobs_plot_payload_from_summary,
-    build_listobs_uv_plot_payload, export_listobs_plot,
+    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
+    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
+    export_msexplore_plot,
 };
 use casacore_tablebrowser_protocol::{
     BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
@@ -51,8 +52,9 @@ use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
 use crate::graphics::{
     ImagePlaneColormap, ImagePlaneOverlayMarker, ImagePlaneRenderInput, ImageSpectrumOverlaySeries,
-    ImageSpectrumRenderInput, ListObsPlotRenderInput, image_plane_layout, image_spectrum_layout,
-    plot_theme, render_image_plane_image, render_image_spectrum_image, render_plot_image,
+    ImageSpectrumRenderInput, MsExplorePlotRenderInput, PlotRenderInput, image_plane_layout,
+    image_spectrum_layout, plot_theme, render_image_plane_image, render_image_spectrum_image,
+    render_plot_image,
 };
 use crate::movie_perf::{
     BackendTimingBreakdown, MovieFrameOutcome, MoviePerfContext, MoviePerfTracer,
@@ -407,19 +409,21 @@ enum FocusTarget {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PlotCatalogRowView {
-    pub kind: ListObsPlotKind,
+    pub target: PlotCatalogTarget,
     pub label: String,
     pub selected: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlotCatalogTarget {
+    Preset(MsPlotPreset),
+    CustomPlot,
+    PageSpec,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlotControlTarget {
-    Option(&'static str),
-    ExportPath,
-    ExportWidth,
-    ExportHeight,
     Refresh,
-    ResetControls,
     CopyCli,
     ExportPng,
     ExportPdf,
@@ -1814,7 +1818,7 @@ impl BrowserSession {
 }
 
 struct PlotPanelState {
-    renderer: PanelRenderer<ListObsPlotRenderInput, String>,
+    renderer: PanelRenderer<PlotRenderInput, String>,
     font_size: (u16, u16),
     request_key: Option<PlotRequestKey>,
     last_error: Option<String>,
@@ -1833,9 +1837,8 @@ struct PlotRequestKey {
     area: Rect,
     theme_mode: ThemeMode,
     snapshot_generation: u64,
-    plot_kind: ListObsPlotKind,
+    plot_signature: String,
     spec_key: String,
-    uv_sample_count: usize,
 }
 
 impl fmt::Debug for PlotPanelState {
@@ -1849,62 +1852,63 @@ impl fmt::Debug for PlotPanelState {
 }
 
 #[derive(Debug, Clone)]
-struct ListObsRunSnapshot {
+struct MeasurementSetRunSnapshot {
     generation: u64,
-    summary: ListObsSummary,
+    summary: MeasurementSetSummary,
     path: Option<PathBuf>,
-    options: ListObsOptions,
+    options: MeasurementSetSummaryOptions,
     dirty: bool,
+}
+
+#[derive(Debug, Clone)]
+enum CurrentPlotPayload {
+    MsExplore(MsPlotPayload),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditTarget {
     FormField(usize),
-    PlotExportPath,
-    PlotExportWidth,
-    PlotExportHeight,
     RenameImageRegionDefinition,
 }
 
-#[derive(Debug)]
 struct PlotWorkspaceState {
     focus: PlotPaneFocus,
-    selected_plot: ListObsPlotKind,
     selected_control: usize,
-    uv_spec: ListObsPlotSpec,
-    antenna_spec: ListObsPlotSpec,
-    scan_spec: ListObsPlotSpec,
-    spw_spec: ListObsPlotSpec,
-    snapshot: Option<ListObsRunSnapshot>,
+    snapshot: Option<MeasurementSetRunSnapshot>,
     next_generation: u64,
-    cached_uv_coverage: Option<(u64, ListObsUvCoverage)>,
-    uv_error: Option<String>,
+    preview_invalidated: bool,
+    placeholder_protocol: Option<PanelProtocol>,
     panel: Option<PlotPanelState>,
-    export_path: String,
-    export_width: u32,
-    export_height: u32,
 }
 
 impl PlotWorkspaceState {
     fn new() -> Self {
-        let selected_plot = ListObsPlotKind::UvCoverage;
         Self {
             focus: PlotPaneFocus::Catalog,
-            selected_plot,
             selected_control: 0,
-            uv_spec: ListObsPlotSpec::new(ListObsPlotKind::UvCoverage),
-            antenna_spec: ListObsPlotSpec::new(ListObsPlotKind::AntennaLayout),
-            scan_spec: ListObsPlotSpec::new(ListObsPlotKind::ScanTimeline),
-            spw_spec: ListObsPlotSpec::new(ListObsPlotKind::SpectralWindowCoverage),
             snapshot: None,
             next_generation: 1,
-            cached_uv_coverage: None,
-            uv_error: None,
+            preview_invalidated: false,
+            placeholder_protocol: None,
             panel: None,
-            export_path: default_plot_export_path(selected_plot, ListObsPlotExportFormat::Png),
-            export_width: 1600,
-            export_height: 900,
         }
+    }
+}
+
+impl fmt::Debug for PlotWorkspaceState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PlotWorkspaceState")
+            .field("focus", &self.focus)
+            .field("selected_control", &self.selected_control)
+            .field("snapshot", &self.snapshot)
+            .field("next_generation", &self.next_generation)
+            .field("preview_invalidated", &self.preview_invalidated)
+            .field(
+                "has_placeholder_protocol",
+                &self.placeholder_protocol.is_some(),
+            )
+            .field("panel", &self.panel)
+            .finish()
     }
 }
 
@@ -1914,7 +1918,7 @@ struct ResultState {
     status_kind: StatusKind,
     stdout: String,
     stderr: String,
-    structured: Option<ListObsSummary>,
+    structured: Option<MeasurementSetSummary>,
     structured_error: Option<String>,
     file_output_path: Option<String>,
     exit_code: Option<i32>,
@@ -1966,7 +1970,7 @@ enum ClickTarget {
     Section(usize),
     Field(usize),
     Tab(ResultTab),
-    PlotCatalog(ListObsPlotKind),
+    PlotCatalog(PlotCatalogTarget),
     PlotControl(PlotControlTarget),
     PlotCanvas,
     BrowserTab(BrowserTab),
@@ -1990,11 +1994,12 @@ impl AppState {
         config_store: ConfigStore,
     ) -> Self {
         let ready_status_line = app.ready_status_line().to_string();
-        let fields = schema
+        let mut fields = schema
             .arguments
             .iter()
             .filter_map(FormField::from_schema)
             .collect::<Vec<_>>();
+        seed_app_field_defaults(app.id, &mut fields);
         let sections = build_sections(&fields);
         let selected_form = initial_form_selection(&sections, &fields, false);
 
@@ -2298,6 +2303,7 @@ impl AppState {
 
     pub(crate) fn on_tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % spinner_frames(self.theme_mode()).len();
+        self.ensure_current_summary_snapshot_if_needed();
         self.pump_plot_panel();
         if self.image_movie_scheduler_enabled() {
             self.maybe_emit_movie_perf_summary();
@@ -3824,35 +3830,35 @@ impl AppState {
     pub(crate) fn active_result_content(&self) -> ResultContent {
         match self.active_result_tab {
             ResultTab::Overview => ResultContent::Lines(self.overview_lines()),
-            ResultTab::Observations => match self.result.structured.as_ref() {
+            ResultTab::Observations => match self.current_structured_summary() {
                 Some(summary) => ResultContent::Table(build_observations_table(summary)),
                 None => {
                     ResultContent::Lines(vec!["No observation table available yet.".to_string()])
                 }
             },
-            ResultTab::Scans => match self.result.structured.as_ref() {
+            ResultTab::Scans => match self.current_structured_summary() {
                 Some(summary) => {
                     ResultContent::Table(build_scans_table(summary, self.listunfl_enabled()))
                 }
                 None => ResultContent::Lines(vec!["No scan table available yet.".to_string()]),
             },
-            ResultTab::Fields => match self.result.structured.as_ref() {
+            ResultTab::Fields => match self.current_structured_summary() {
                 Some(summary) => {
                     ResultContent::Table(build_fields_table(summary, self.listunfl_enabled()))
                 }
                 None => ResultContent::Lines(vec!["No field table available yet.".to_string()]),
             },
-            ResultTab::Spws => match self.result.structured.as_ref() {
+            ResultTab::Spws => match self.current_structured_summary() {
                 Some(summary) => ResultContent::Table(build_spws_table(summary)),
                 None => ResultContent::Lines(vec![
                     "No spectral-window table available yet.".to_string(),
                 ]),
             },
-            ResultTab::Sources => match self.result.structured.as_ref() {
+            ResultTab::Sources => match self.current_structured_summary() {
                 Some(summary) => ResultContent::Table(build_sources_table(summary)),
                 None => ResultContent::Lines(vec!["No source table available yet.".to_string()]),
             },
-            ResultTab::Antennas => match self.result.structured.as_ref() {
+            ResultTab::Antennas => match self.current_structured_summary() {
                 Some(summary) if self.verbose_enabled() => {
                     ResultContent::Table(build_antennas_table(summary))
                 }
@@ -3923,6 +3929,19 @@ impl AppState {
     }
 
     pub(crate) fn start_run_on_launch(&mut self) {
+        if self.is_msexplore_app() {
+            self.clear_output_selection();
+            self.activate_result_tab(ResultTab::Plots);
+            self.pane_focus = PaneFocus::Result;
+            self.plot_workspace.preview_invalidated = true;
+            self.result.status_line = if self.msexplore_form_has_plot_spec() {
+                "Opening interactive msexplore preview.".to_string()
+            } else {
+                "Set a preset or axes to render an interactive preview.".to_string()
+            };
+            self.result.status_kind = StatusKind::Info;
+            return;
+        }
         self.start_run();
     }
 
@@ -3934,9 +3953,7 @@ impl AppState {
     fn activate_result_tab(&mut self, tab: ResultTab) {
         self.clear_output_selection();
         self.active_result_tab = tab;
-        if self.active_result_tab == ResultTab::Plots {
-            self.sync_plot_export_path_for_selected_plot();
-        }
+        self.ensure_current_summary_snapshot_if_needed();
     }
 
     #[cfg(test)]
@@ -3953,16 +3970,13 @@ impl AppState {
     }
 
     fn plots_tab_summary(&self) -> String {
-        if let Some(error) = self.plot_workspace.uv_error.as_deref() {
-            return format!("Plots unavailable. {error}");
-        }
         if let Some(summary) = self.current_plot_summary() {
             return summary.to_string();
         }
         if self.plot_workspace.snapshot.is_some() {
             return "Select a plot from the catalog to render it.".to_string();
         }
-        "Run listobs to populate the plot workspace.".to_string()
+        "Populate the plot workspace to preview plots.".to_string()
     }
 
     #[cfg(test)]
@@ -3973,14 +3987,6 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn cancel_for_test(&mut self) {
         self.cancel_current();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn plot_snapshot_dirty_for_test(&self) -> bool {
-        self.plot_workspace
-            .snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.dirty)
     }
 
     #[cfg(test)]
@@ -4020,16 +4026,8 @@ impl AppState {
     }
 
     #[cfg(test)]
-    pub(crate) fn structured_for_test(&self) -> Option<&ListObsSummary> {
-        self.result.structured.as_ref()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn uv_coverage_for_test(&self) -> Option<&ListObsUvCoverage> {
-        self.plot_workspace
-            .cached_uv_coverage
-            .as_ref()
-            .map(|(_, coverage)| coverage)
+    pub(crate) fn structured_for_test(&self) -> Option<&MeasurementSetSummary> {
+        self.current_structured_summary()
     }
 
     #[cfg(test)]
@@ -5421,25 +5419,13 @@ impl AppState {
         if self.active_result_tab == ResultTab::Plots {
             match action {
                 ResultAction::PreviousTab => {
-                    if self.plot_workspace.focus == PlotPaneFocus::Controls {
-                        self.adjust_selected_plot_control(false);
-                    } else {
-                        self.cycle_visible_result_tab(false);
-                    }
+                    self.cycle_visible_result_tab(false);
                 }
                 ResultAction::NextTab => {
-                    if self.plot_workspace.focus == PlotPaneFocus::Controls {
-                        self.adjust_selected_plot_control(true);
-                    } else {
-                        self.cycle_visible_result_tab(true);
-                    }
+                    self.cycle_visible_result_tab(true);
                 }
                 ResultAction::Scroll(delta) => self.scroll_active_plot_workspace(delta),
-                ResultAction::ScrollHorizontal(delta) => {
-                    if self.plot_workspace.focus == PlotPaneFocus::Controls {
-                        self.adjust_selected_plot_control(delta >= 0);
-                    }
-                }
+                ResultAction::ScrollHorizontal(_) => {}
                 ResultAction::Activate => self.activate_plot_workspace_selection(),
             }
             return;
@@ -6072,15 +6058,6 @@ impl AppState {
     fn advance_after_edit(&mut self, target: EditTarget, forward: bool) {
         match target {
             EditTarget::FormField(field_index) => self.advance_form_edit(field_index, forward),
-            EditTarget::PlotExportPath => {
-                self.advance_plot_edit(PlotControlTarget::ExportPath, forward)
-            }
-            EditTarget::PlotExportWidth => {
-                self.advance_plot_edit(PlotControlTarget::ExportWidth, forward)
-            }
-            EditTarget::PlotExportHeight => {
-                self.advance_plot_edit(PlotControlTarget::ExportHeight, forward)
-            }
             EditTarget::RenameImageRegionDefinition => {}
         }
     }
@@ -6116,38 +6093,6 @@ impl AppState {
             .is_some_and(|field| matches!(field.value, FormValue::Text(_)))
         {
             self.enter_edit_mode(next_field);
-        }
-    }
-
-    fn advance_plot_edit(&mut self, current: PlotControlTarget, forward: bool) {
-        const EDITABLE_TARGETS: [PlotControlTarget; 3] = [
-            PlotControlTarget::ExportPath,
-            PlotControlTarget::ExportWidth,
-            PlotControlTarget::ExportHeight,
-        ];
-        let Some(position) = EDITABLE_TARGETS
-            .iter()
-            .position(|target| *target == current)
-        else {
-            return;
-        };
-        let next = if forward {
-            (position + 1) % EDITABLE_TARGETS.len()
-        } else if position == 0 {
-            EDITABLE_TARGETS.len() - 1
-        } else {
-            position - 1
-        };
-        let next_target = EDITABLE_TARGETS[next];
-        if let Some(index) = self
-            .plot_control_rows()
-            .iter()
-            .position(|row| row.target == next_target)
-        {
-            self.plot_workspace.selected_control = index;
-            self.pane_focus = PaneFocus::Result;
-            self.plot_workspace.focus = PlotPaneFocus::Controls;
-            self.activate_plot_workspace_selection();
         }
     }
 
@@ -6260,9 +6205,9 @@ impl AppState {
                 self.pane_focus = PaneFocus::Result;
                 self.clear_output_selection_for_target(OutputPane::Result);
                 self.plot_workspace.focus = PlotPaneFocus::Catalog;
-                self.set_selected_plot(row.kind);
+                self.apply_plot_catalog_target(row.target);
                 self.last_click = Some(ClickState {
-                    target: ClickTarget::PlotCatalog(row.kind),
+                    target: ClickTarget::PlotCatalog(row.target),
                     at: Instant::now(),
                 });
                 return;
@@ -6285,14 +6230,9 @@ impl AppState {
                 });
                 match target {
                     PlotControlTarget::Refresh
-                    | PlotControlTarget::ResetControls
                     | PlotControlTarget::CopyCli
                     | PlotControlTarget::ExportPng
                     | PlotControlTarget::ExportPdf => self.activate_plot_workspace_selection(),
-                    PlotControlTarget::Option(_)
-                    | PlotControlTarget::ExportPath
-                    | PlotControlTarget::ExportWidth
-                    | PlotControlTarget::ExportHeight => {}
                 }
                 return;
             }
@@ -6614,7 +6554,6 @@ impl AppState {
                 self.clear_output_selection_for_target(OutputPane::Result);
                 self.pane_focus = PaneFocus::Result;
                 self.plot_workspace.focus = PlotPaneFocus::Controls;
-                self.adjust_selected_plot_control(delta >= 0);
                 return;
             }
             if layout
@@ -7809,27 +7748,27 @@ impl AppState {
         }
     }
 
-    fn record_plot_snapshot(&mut self, summary: ListObsSummary) {
+    fn store_plot_snapshot(&mut self, summary: MeasurementSetSummary, reset_plot_cache: bool) {
         let generation = self.plot_workspace.next_generation;
         self.plot_workspace.next_generation += 1;
-        self.plot_workspace.snapshot = Some(ListObsRunSnapshot {
+        self.plot_workspace.snapshot = Some(MeasurementSetRunSnapshot {
             generation,
             path: summary.measurement_set.path.as_ref().map(PathBuf::from),
             options: summary.options.clone(),
             summary,
             dirty: false,
         });
-        self.plot_workspace.cached_uv_coverage = None;
-        self.plot_workspace.uv_error = None;
-        self.plot_workspace.panel = None;
-        self.sync_plot_export_path_for_selected_plot();
+        if reset_plot_cache {
+            self.plot_workspace.panel = None;
+        }
     }
 
-    fn sync_plot_export_path_for_selected_plot(&mut self) {
-        self.plot_workspace.export_path = default_plot_export_path(
-            self.plot_workspace.selected_plot,
-            ListObsPlotExportFormat::Png,
-        );
+    fn record_plot_snapshot(&mut self, summary: MeasurementSetSummary) {
+        self.store_plot_snapshot(summary, true);
+    }
+
+    fn record_msexplore_summary_snapshot(&mut self, summary: MeasurementSetSummary) {
+        self.store_plot_snapshot(summary, false);
     }
 
     fn zoom_image_view(&mut self, zoom_in: bool) {
@@ -7918,86 +7857,197 @@ impl AppState {
     }
 
     fn clear_plot_render_cache(&mut self) {
+        self.plot_workspace.placeholder_protocol = self.build_blank_plot_protocol();
         self.plot_workspace.panel = None;
+        self.plot_workspace.preview_invalidated = true;
+    }
+
+    pub(crate) fn is_msexplore_app(&self) -> bool {
+        self.app.id == "msexplore"
+    }
+
+    fn msexplore_form_has_plot_spec(&self) -> bool {
+        self.field_text("page_spec")
+            .is_some_and(|value| !value.trim().is_empty())
+            || self
+                .field_text("preset")
+                .is_some_and(|value| !value.trim().is_empty())
+            || (self
+                .field_text("x_axis")
+                .is_some_and(|value| !value.trim().is_empty())
+                && self
+                    .field_text("y_axis")
+                    .is_some_and(|value| !value.trim().is_empty()))
+    }
+
+    fn msexplore_plot_label(&self) -> String {
+        if let Some(path) = self
+            .field_text("page_spec")
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+        {
+            return path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| format!("Current Page ({value})"))
+                .unwrap_or_else(|| "Current Page".to_string());
+        }
+        if let Some(preset) = self
+            .field_text("preset")
+            .filter(|value| !value.trim().is_empty())
+        {
+            return MsPlotPreset::parse(&preset)
+                .map(|preset| preset.display_name().to_string())
+                .unwrap_or_else(|_| {
+                    preset
+                        .split('_')
+                        .map(|token| {
+                            let mut chars = token.chars();
+                            match chars.next() {
+                                Some(first) => {
+                                    first.to_ascii_uppercase().to_string() + chars.as_str()
+                                }
+                                None => String::new(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                });
+        }
+        if let (Some(y_axis), Some(x_axis)) = (
+            self.field_text("y_axis")
+                .filter(|value| !value.trim().is_empty()),
+            self.field_text("x_axis")
+                .filter(|value| !value.trim().is_empty()),
+        ) {
+            return format!("{y_axis} vs {x_axis}");
+        }
+        "Current Plot".to_string()
+    }
+
+    pub(crate) fn selected_plot_label(&self) -> String {
+        self.msexplore_plot_label()
     }
 
     fn current_plot_summary(&self) -> Option<String> {
-        let snapshot = self.plot_workspace.snapshot.as_ref()?;
-        let dirty_suffix = if snapshot.dirty {
-            " Pending form edits will not affect plots until you rerun listobs."
-        } else {
-            ""
-        };
-        Some(format!(
-            "{} from run {}.{}",
-            self.plot_workspace.selected_plot.display_name(),
-            snapshot.generation,
-            dirty_suffix
-        ))
-    }
-
-    fn selected_plot_spec(&self) -> &ListObsPlotSpec {
-        match self.plot_workspace.selected_plot {
-            ListObsPlotKind::UvCoverage => &self.plot_workspace.uv_spec,
-            ListObsPlotKind::AntennaLayout => &self.plot_workspace.antenna_spec,
-            ListObsPlotKind::ScanTimeline => &self.plot_workspace.scan_spec,
-            ListObsPlotKind::SpectralWindowCoverage => &self.plot_workspace.spw_spec,
-        }
-    }
-
-    fn selected_plot_spec_mut(&mut self) -> &mut ListObsPlotSpec {
-        match self.plot_workspace.selected_plot {
-            ListObsPlotKind::UvCoverage => &mut self.plot_workspace.uv_spec,
-            ListObsPlotKind::AntennaLayout => &mut self.plot_workspace.antenna_spec,
-            ListObsPlotKind::ScanTimeline => &mut self.plot_workspace.scan_spec,
-            ListObsPlotKind::SpectralWindowCoverage => &mut self.plot_workspace.spw_spec,
-        }
-    }
-
-    fn current_uv_coverage(
-        &mut self,
-        snapshot: &ListObsRunSnapshot,
-    ) -> Result<ListObsUvCoverage, String> {
-        if let Some((generation, coverage)) = self.plot_workspace.cached_uv_coverage.as_ref()
-            && *generation == snapshot.generation
-        {
-            return Ok(coverage.clone());
-        }
-        let Some(path) = snapshot.path.as_ref() else {
-            return Err(
-                "UV coverage requires a disk-backed MeasurementSet from the last successful run."
-                    .to_string(),
+        let ms_path = self.field_text("ms_path").unwrap_or_default();
+        if ms_path.trim().is_empty() {
+            return Some(
+                "Enter a MeasurementSet path to preview the current msexplore form.".to_string(),
             );
+        }
+        if self.msexplore_form_has_plot_spec() {
+            return Some(format!(
+                "{} from the current msexplore form.",
+                self.selected_plot_label()
+            ));
+        }
+        Some(
+            "Choose a preset, a page spec, or both x/y axes to preview the current msexplore form."
+                .to_string(),
+        )
+    }
+
+    fn current_structured_summary(&self) -> Option<&MeasurementSetSummary> {
+        if self.is_msexplore_app() {
+            return self
+                .plot_workspace
+                .snapshot
+                .as_ref()
+                .map(|snapshot| &snapshot.summary);
+        }
+        self.result.structured.as_ref()
+    }
+
+    fn is_summary_tab(tab: ResultTab) -> bool {
+        matches!(
+            tab,
+            ResultTab::Overview
+                | ResultTab::Observations
+                | ResultTab::Scans
+                | ResultTab::Fields
+                | ResultTab::Spws
+                | ResultTab::Sources
+                | ResultTab::Antennas
+        )
+    }
+
+    fn current_msexplore_summary_request(
+        &self,
+    ) -> Result<(PathBuf, MeasurementSetSummaryOptions), String> {
+        let ms_path = self
+            .field_text("ms_path")
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                "Enter a MeasurementSet path to populate the summary tabs.".to_string()
+            })?;
+        let selection_value =
+            |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
+        let selection = MsSelectionSpec {
+            selectdata: self.bool_field_value("selectdata").unwrap_or(false),
+            field: selection_value("field"),
+            spw: selection_value("spw"),
+            timerange: selection_value("timerange"),
+            uvrange: selection_value("uvrange"),
+            antenna: selection_value("antenna"),
+            scan: selection_value("scan"),
+            correlation: selection_value("correlation"),
+            observation: selection_value("observation"),
+            array: selection_value("array"),
+            intent: selection_value("intent"),
+            feed: selection_value("feed"),
+            msselect: selection_value("msselect"),
         };
-        match ListObsUvCoverage::from_path_with_options(path, &snapshot.options) {
-            Ok(coverage) => {
-                self.plot_workspace.cached_uv_coverage =
-                    Some((snapshot.generation, coverage.clone()));
-                self.plot_workspace.uv_error = None;
-                Ok(coverage)
+        Ok((ms_path, selection.to_summary_options()))
+    }
+
+    fn ensure_current_summary_snapshot_if_needed(&mut self) {
+        if !self.is_msexplore_app() || !Self::is_summary_tab(self.active_result_tab) {
+            return;
+        }
+        let (path, options) = match self.current_msexplore_summary_request() {
+            Ok(request) => request,
+            Err(error) => {
+                self.plot_workspace.snapshot = None;
+                self.result.structured_error = Some(error);
+                return;
+            }
+        };
+        if let Some(snapshot) = self.plot_workspace.snapshot.as_mut()
+            && snapshot.path.as_ref() == Some(&path)
+            && snapshot.options == options
+        {
+            snapshot.dirty = false;
+            self.result.structured_error = None;
+            return;
+        }
+        match MeasurementSet::open(&path)
+            .map_err(|error| format!("open MeasurementSet {}: {error}", path.display()))
+            .and_then(|ms| {
+                MeasurementSetSummary::from_ms_with_options(&ms, &options)
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(summary) => {
+                self.record_msexplore_summary_snapshot(summary);
+                self.result.structured_error = None;
             }
             Err(error) => {
-                let error = error.to_string();
-                self.plot_workspace.uv_error = Some(error.clone());
-                Err(error)
+                self.plot_workspace.snapshot = None;
+                self.result.structured_error = Some(error);
             }
         }
     }
 
-    fn current_plot_payload(&mut self) -> Result<ListObsPlotPayload, String> {
-        let Some(snapshot) = self.plot_workspace.snapshot.clone() else {
-            return Err("Run listobs to populate the plot workspace.".to_string());
-        };
-        match self.plot_workspace.selected_plot {
-            ListObsPlotKind::UvCoverage => {
-                let coverage = self.current_uv_coverage(&snapshot)?;
-                build_listobs_uv_plot_payload(&coverage, self.selected_plot_spec())
-            }
-            _ => build_listobs_plot_payload_from_summary(
-                &snapshot.summary,
-                self.selected_plot_spec(),
-            ),
-        }
+    fn current_msexplore_plot_payload(&self) -> Result<MsPlotPayload, String> {
+        let plan = self.build_execution_plan()?;
+        let spec = build_explore_spec_from_args(plan.arguments)?;
+        build_msexplore_payload_from_spec(&spec)
+    }
+
+    fn current_plot_payload(&self) -> Result<CurrentPlotPayload, String> {
+        self.current_msexplore_plot_payload()
+            .map(CurrentPlotPayload::MsExplore)
     }
 
     fn pump_plot_panel(&mut self) {
@@ -8008,14 +8058,44 @@ impl AppState {
             Ok(changed) => {
                 if changed {
                     panel.image_size = panel.renderer.image_size();
+                    self.plot_workspace.preview_invalidated = false;
+                    self.plot_workspace.placeholder_protocol = None;
                 }
             }
             Err(error) => {
                 panel.last_error = Some(error.to_string());
+                self.plot_workspace.preview_invalidated = false;
+                self.plot_workspace.placeholder_protocol = None;
                 self.result.status_line = "Plot rendering failed.".to_string();
                 self.result.status_kind = StatusKind::Warning;
             }
         }
+    }
+
+    fn build_blank_plot_protocol(&self) -> Option<PanelProtocol> {
+        let panel = self.plot_workspace.panel.as_ref()?;
+        let area = panel.request_key.as_ref()?.area;
+        if area.is_empty() {
+            return None;
+        }
+        let pixel_width = panel
+            .image_size
+            .map(|(width, _)| width)
+            .unwrap_or_else(|| u32::from(area.width.max(1)) * u32::from(panel.font_size.0.max(1)));
+        let pixel_height = panel
+            .image_size
+            .map(|(_, height)| height)
+            .unwrap_or_else(|| u32::from(area.height.max(1)) * u32::from(panel.font_size.1.max(1)));
+        let background = plot_theme(self.theme_mode()).background;
+        let image = RgbaImage::from_pixel(
+            pixel_width.max(1),
+            pixel_height.max(1),
+            image::Rgba([background[0], background[1], background[2], 255]),
+        );
+        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        build_panel_protocol_from_rgba_owned(&picker, Resize::Fit(None), area, image)
+            .ok()
+            .map(|prepared| prepared.protocol)
     }
 
     fn pump_image_plane_panel(&mut self) {
@@ -8549,29 +8629,54 @@ impl AppState {
         if area.is_empty() {
             return;
         }
-        let payload = match self.current_plot_payload() {
-            Ok(payload) => payload,
+        let spec_key = match self.build_execution_plan() {
+            Ok(plan) => plan
+                .arguments
+                .iter()
+                .map(|value| value.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("\u{1f}"),
             Err(error) => {
+                self.plot_workspace.preview_invalidated = false;
                 self.result.status_line = "Plot payload unavailable.".to_string();
                 self.result.status_kind = StatusKind::Warning;
                 self.result.stderr = format!("{error}\n");
                 return;
             }
         };
-        let spec_key = self.selected_plot_spec().cli_assignments().join(";");
         let snapshot_generation = self
             .plot_workspace
             .snapshot
             .as_ref()
             .map(|snapshot| snapshot.generation)
             .unwrap_or_default();
-        let uv_sample_count = self
-            .plot_workspace
-            .cached_uv_coverage
-            .as_ref()
-            .map(|(_, coverage)| coverage.sample_count)
-            .unwrap_or(0);
         let theme_mode = self.theme_mode();
+        let request_key = PlotRequestKey {
+            area,
+            theme_mode,
+            snapshot_generation,
+            plot_signature: self.selected_plot_label(),
+            spec_key,
+        };
+        if self
+            .plot_workspace
+            .panel
+            .as_ref()
+            .is_some_and(|panel| panel.request_key == Some(request_key.clone()))
+        {
+            return;
+        }
+
+        let payload = match self.current_plot_payload() {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.plot_workspace.preview_invalidated = false;
+                self.result.status_line = "Plot payload unavailable.".to_string();
+                self.result.status_kind = StatusKind::Warning;
+                self.result.stderr = format!("{error}\n");
+                return;
+            }
+        };
 
         let panel = self.plot_workspace.panel.get_or_insert_with(|| {
             let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
@@ -8588,15 +8693,6 @@ impl AppState {
                 image_size: None,
             }
         });
-
-        let request_key = PlotRequestKey {
-            area,
-            theme_mode,
-            snapshot_generation,
-            plot_kind: self.plot_workspace.selected_plot,
-            spec_key,
-            uv_sample_count,
-        };
         if panel.request_key == Some(request_key.clone()) {
             return;
         }
@@ -8607,13 +8703,18 @@ impl AppState {
             area,
             pixel_width.max(1),
             pixel_height.max(1),
-            ListObsPlotRenderInput {
-                payload,
-                theme_mode,
-                terminal_cell_px: panel.font_size,
+            match payload {
+                CurrentPlotPayload::MsExplore(payload) => {
+                    PlotRenderInput::MsExplore(MsExplorePlotRenderInput {
+                        payload,
+                        theme_mode,
+                        terminal_cell_px: panel.font_size,
+                    })
+                }
             },
         ) {
             panel.last_error = Some(error.to_string());
+            self.plot_workspace.preview_invalidated = false;
             self.result.status_line = "Failed to queue plot render.".to_string();
             self.result.status_kind = StatusKind::Warning;
             return;
@@ -8628,11 +8729,18 @@ impl AppState {
             .and_then(|panel| panel.renderer.protocol())
     }
 
+    pub(crate) fn plot_display_protocol(&self) -> Option<&PanelProtocol> {
+        self.plot_protocol()
+            .or(self.plot_workspace.placeholder_protocol.as_ref())
+    }
+
     pub(crate) fn plot_pending(&self) -> bool {
-        self.plot_workspace
-            .panel
-            .as_ref()
-            .is_some_and(|panel| panel.renderer.is_pending())
+        self.plot_workspace.preview_invalidated
+            || self
+                .plot_workspace
+                .panel
+                .as_ref()
+                .is_some_and(|panel| panel.renderer.is_pending())
     }
 
     pub(crate) fn plot_last_error(&self) -> Option<&str> {
@@ -8900,59 +9008,38 @@ impl AppState {
         self.plot_workspace.focus
     }
 
-    pub(crate) fn selected_plot_kind(&self) -> ListObsPlotKind {
-        self.plot_workspace.selected_plot
-    }
-
     pub(crate) fn plot_catalog_rows(&self) -> Vec<PlotCatalogRowView> {
-        ListObsPlotKind::ALL
-            .into_iter()
-            .map(|kind| PlotCatalogRowView {
-                kind,
-                label: kind.display_name().to_string(),
-                selected: kind == self.plot_workspace.selected_plot,
-            })
-            .collect()
+        let selected = self.current_plot_catalog_target();
+        let mut rows = Vec::new();
+        match selected {
+            Some(PlotCatalogTarget::PageSpec) => rows.push(PlotCatalogRowView {
+                target: PlotCatalogTarget::PageSpec,
+                label: self.selected_plot_label(),
+                selected: true,
+            }),
+            Some(PlotCatalogTarget::CustomPlot) => rows.push(PlotCatalogRowView {
+                target: PlotCatalogTarget::CustomPlot,
+                label: self.selected_plot_label(),
+                selected: true,
+            }),
+            _ => {}
+        }
+        rows.extend(
+            MsPlotPreset::ALL
+                .into_iter()
+                .map(|preset| PlotCatalogRowView {
+                    target: PlotCatalogTarget::Preset(preset),
+                    label: preset.display_name().to_string(),
+                    selected: selected == Some(PlotCatalogTarget::Preset(preset)),
+                }),
+        );
+        rows
     }
 
     pub(crate) fn plot_control_rows(&self) -> Vec<PlotControlRowView> {
-        let spec = self.selected_plot_spec();
-        let mut rows = plot_choice_descriptors(self.plot_workspace.selected_plot)
-            .iter()
-            .map(|descriptor| PlotControlRowView {
-                target: PlotControlTarget::Option(descriptor.key),
-                text: format!(
-                    "{:<16} {}",
-                    descriptor.label,
-                    spec.option(descriptor.key).unwrap_or("<unset>")
-                ),
-                selected: false,
-            })
-            .collect::<Vec<_>>();
-        rows.push(PlotControlRowView {
-            target: PlotControlTarget::ExportPath,
-            text: format!("{:<16} {}", "Export path", self.plot_workspace.export_path),
-            selected: false,
-        });
-        rows.push(PlotControlRowView {
-            target: PlotControlTarget::ExportWidth,
-            text: format!(
-                "{:<16} {}",
-                "Export width", self.plot_workspace.export_width
-            ),
-            selected: false,
-        });
-        rows.push(PlotControlRowView {
-            target: PlotControlTarget::ExportHeight,
-            text: format!(
-                "{:<16} {}",
-                "Export height", self.plot_workspace.export_height
-            ),
-            selected: false,
-        });
+        let mut rows = Vec::new();
         for (target, label) in [
-            (PlotControlTarget::Refresh, "Refresh"),
-            (PlotControlTarget::ResetControls, "Reset Controls"),
+            (PlotControlTarget::Refresh, "Refresh Preview"),
             (PlotControlTarget::CopyCli, "Copy CLI"),
             (PlotControlTarget::ExportPng, "Export PNG"),
             (PlotControlTarget::ExportPdf, "Export PDF"),
@@ -8970,23 +9057,19 @@ impl AppState {
     }
 
     pub(crate) fn plot_dirty_banner(&self) -> Option<&'static str> {
-        self.plot_workspace.snapshot.as_ref().and_then(|snapshot| {
-            snapshot
-                .dirty
-                .then_some("Plots reflect the last successful run. Re-run to apply form changes.")
-        })
+        None
     }
 
     fn scroll_active_plot_workspace(&mut self, delta: i16) {
         match self.plot_workspace.focus {
             PlotPaneFocus::Catalog => {
-                let all = ListObsPlotKind::ALL;
-                let current = all
-                    .iter()
-                    .position(|kind| *kind == self.plot_workspace.selected_plot)
-                    .unwrap_or(0) as i16;
-                let next = (current + delta).clamp(0, all.len() as i16 - 1) as usize;
-                self.set_selected_plot(all[next]);
+                let rows = self.plot_catalog_rows();
+                if rows.is_empty() {
+                    return;
+                }
+                let current = rows.iter().position(|row| row.selected).unwrap_or(0) as i16;
+                let next = (current + delta).clamp(0, rows.len() as i16 - 1) as usize;
+                self.apply_plot_catalog_target(rows[next].target);
             }
             PlotPaneFocus::Controls => {
                 let row_count = self.plot_control_rows().len() as i16;
@@ -8995,41 +9078,6 @@ impl AppState {
                 self.plot_workspace.selected_control = next as usize;
             }
             PlotPaneFocus::Canvas => {}
-        }
-    }
-
-    fn adjust_selected_plot_control(&mut self, forward: bool) {
-        let Some(target) = self
-            .plot_control_rows()
-            .get(self.plot_workspace.selected_control)
-            .map(|row| row.target)
-        else {
-            return;
-        };
-        if let PlotControlTarget::Option(key) = target {
-            let Some(descriptor) = plot_choice_descriptors(self.plot_workspace.selected_plot)
-                .iter()
-                .find(|descriptor| descriptor.key == key)
-            else {
-                return;
-            };
-            let spec = self.selected_plot_spec_mut();
-            let current = spec.option(key).unwrap_or(descriptor.choices[0]);
-            let position = descriptor
-                .choices
-                .iter()
-                .position(|choice| *choice == current)
-                .unwrap_or(0);
-            let next = if forward {
-                (position + 1) % descriptor.choices.len()
-            } else if position == 0 {
-                descriptor.choices.len() - 1
-            } else {
-                position - 1
-            };
-            if spec.set_option(key, descriptor.choices[next]).is_ok() {
-                self.clear_plot_render_cache();
-            }
         }
     }
 
@@ -9046,42 +9094,10 @@ impl AppState {
                     return;
                 };
                 match target {
-                    PlotControlTarget::Option(_) => self.adjust_selected_plot_control(true),
-                    PlotControlTarget::ExportPath => {
-                        self.edit_state = Some(EditState {
-                            target: EditTarget::PlotExportPath,
-                            buffer: self.plot_workspace.export_path.clone(),
-                        });
-                    }
-                    PlotControlTarget::ExportWidth => {
-                        self.edit_state = Some(EditState {
-                            target: EditTarget::PlotExportWidth,
-                            buffer: self.plot_workspace.export_width.to_string(),
-                        });
-                    }
-                    PlotControlTarget::ExportHeight => {
-                        self.edit_state = Some(EditState {
-                            target: EditTarget::PlotExportHeight,
-                            buffer: self.plot_workspace.export_height.to_string(),
-                        });
-                    }
-                    PlotControlTarget::Refresh => {
-                        self.plot_workspace.cached_uv_coverage = None;
-                        self.plot_workspace.uv_error = None;
-                        self.clear_plot_render_cache();
-                    }
-                    PlotControlTarget::ResetControls => {
-                        let selected_plot = self.plot_workspace.selected_plot;
-                        *self.selected_plot_spec_mut() = ListObsPlotSpec::new(selected_plot);
-                        self.clear_plot_render_cache();
-                    }
+                    PlotControlTarget::Refresh => self.clear_plot_render_cache(),
                     PlotControlTarget::CopyCli => self.copy_current_plot_cli(),
-                    PlotControlTarget::ExportPng => {
-                        self.export_current_plot(ListObsPlotExportFormat::Png)
-                    }
-                    PlotControlTarget::ExportPdf => {
-                        self.export_current_plot(ListObsPlotExportFormat::Pdf)
-                    }
+                    PlotControlTarget::ExportPng => self.export_current_plot(MsExportFormat::Png),
+                    PlotControlTarget::ExportPdf => self.export_current_plot(MsExportFormat::Pdf),
                 }
             }
         }
@@ -9096,23 +9112,6 @@ impl AppState {
                 }
                 self.apply_live_image_view_parameters_if_needed(field_index);
             }
-            EditTarget::PlotExportPath => {
-                self.plot_workspace.export_path = edit_state.buffer.trim().to_string();
-            }
-            EditTarget::PlotExportWidth => match edit_state.buffer.trim().parse::<u32>() {
-                Ok(value) if value > 0 => self.plot_workspace.export_width = value,
-                _ => {
-                    self.result.status_line = "Plot width must be a positive integer.".to_string();
-                    self.result.status_kind = StatusKind::Error;
-                }
-            },
-            EditTarget::PlotExportHeight => match edit_state.buffer.trim().parse::<u32>() {
-                Ok(value) if value > 0 => self.plot_workspace.export_height = value,
-                _ => {
-                    self.result.status_line = "Plot height must be a positive integer.".to_string();
-                    self.result.status_kind = StatusKind::Error;
-                }
-            },
             EditTarget::RenameImageRegionDefinition => {
                 let new_name = edit_state.buffer.trim();
                 if new_name.is_empty() {
@@ -9138,22 +9137,17 @@ impl AppState {
     }
 
     fn copy_current_plot_cli(&mut self) {
-        let Some(snapshot) = self.plot_workspace.snapshot.as_ref() else {
-            self.result.status_line = "Run listobs before copying a plot CLI.".to_string();
-            self.result.status_kind = StatusKind::Warning;
-            return;
-        };
-        let Some(path) = snapshot.path.as_ref() else {
-            self.result.status_line =
-                "The current plot is not backed by a disk MeasurementSet.".to_string();
-            self.result.status_kind = StatusKind::Warning;
-            return;
-        };
-        let cli = self.build_current_plot_cli(path, ListObsPlotExportFormat::Png);
-        self.copy_text_to_clipboard(cli, "plot CLI");
+        match self.build_current_msexplore_plot_cli(MsExportFormat::Png) {
+            Ok(cli) => self.copy_text_to_clipboard(cli, "plot CLI"),
+            Err(error) => {
+                self.result.status_line = "Copy plot CLI failed.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = format!("{error}\n");
+            }
+        }
     }
 
-    fn export_current_plot(&mut self, format: ListObsPlotExportFormat) {
+    fn export_current_plot(&mut self, format: MsExportFormat) {
         let payload = match self.current_plot_payload() {
             Ok(payload) => payload,
             Err(error) => {
@@ -9163,23 +9157,23 @@ impl AppState {
                 return;
             }
         };
-        let output_path = current_plot_output_path(
-            &self.plot_workspace.export_path,
-            self.plot_workspace.selected_plot,
-            format,
-        );
-        match export_listobs_plot(
-            &payload,
-            plot_theme(self.theme_mode()),
-            &output_path,
-            format,
-            self.plot_workspace.export_width,
-            self.plot_workspace.export_height,
-        ) {
+        let output_path = self.current_msexplore_output_path(format);
+        let width = self.current_msexplore_export_width();
+        let height = self.current_msexplore_export_height();
+        let export_result = match payload {
+            CurrentPlotPayload::MsExplore(payload) => export_msexplore_plot(
+                &payload,
+                plot_theme(self.theme_mode()),
+                &output_path,
+                format,
+                width,
+                height,
+            ),
+        };
+        match export_result {
             Ok(()) => {
                 self.result.status_line = format!("Saved {}.", output_path.display());
                 self.result.status_kind = StatusKind::Ok;
-                self.plot_workspace.export_path = output_path.display().to_string();
             }
             Err(error) => {
                 self.result.status_line = "Plot export failed.".to_string();
@@ -9189,80 +9183,114 @@ impl AppState {
         }
     }
 
-    fn build_current_plot_cli(&self, path: &Path, format: ListObsPlotExportFormat) -> String {
-        let mut args = Vec::<String>::new();
-        let options = self
-            .plot_workspace
-            .snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.options.clone())
-            .unwrap_or_default();
-        if !options.verbose {
-            args.push("--no-verbose".to_string());
-        }
-        if !options.selectdata {
-            args.push("--no-selectdata".to_string());
-        }
-        for (flag, value) in [
-            ("--field", options.field.as_deref()),
-            ("--spw", options.spw.as_deref()),
-            ("--antenna", options.antenna.as_deref()),
-            ("--scan", options.scan.as_deref()),
-            ("--observation", options.observation.as_deref()),
-            ("--array", options.array.as_deref()),
-            ("--timerange", options.timerange.as_deref()),
-            ("--uvrange", options.uvrange.as_deref()),
-            ("--correlation", options.correlation.as_deref()),
-            ("--intent", options.intent.as_deref()),
-            ("--feed", options.feed.as_deref()),
-        ] {
-            if let Some(value) = value {
-                args.push(flag.to_string());
-                args.push(shell_quote(value));
-            }
-        }
-        if options.listunfl {
-            args.push("--listunfl".to_string());
-        }
-        if let Some(value) = options.cachesize_mb {
-            args.push("--cachesize".to_string());
-            args.push(value.to_string());
-        }
-        args.push("--plot".to_string());
-        args.push(self.plot_workspace.selected_plot.as_str().to_string());
-        for assignment in self.selected_plot_spec().cli_assignments() {
-            args.push("--plot-option".to_string());
-            args.push(shell_quote(&assignment));
-        }
-        args.push("--plot-output".to_string());
-        args.push(shell_quote(
-            &current_plot_output_path(
-                &self.plot_workspace.export_path,
-                self.plot_workspace.selected_plot,
-                format,
-            )
-            .display()
-            .to_string(),
-        ));
-        args.push("--plot-format".to_string());
-        args.push(format.extension().to_string());
-        args.push("--plot-width".to_string());
-        args.push(self.plot_workspace.export_width.to_string());
-        args.push("--plot-height".to_string());
-        args.push(self.plot_workspace.export_height.to_string());
-        args.push(shell_quote(&path.display().to_string()));
-        format!("listobs {}", args.join(" "))
+    fn current_msexplore_output_path(&self, format: MsExportFormat) -> PathBuf {
+        let configured_path = self.field_text("plot_output").unwrap_or_default();
+        let trimmed = configured_path.trim();
+        let mut path = if trimmed.is_empty() {
+            PathBuf::from(format!("msexplore-plot.{}", format.extension()))
+        } else {
+            PathBuf::from(trimmed)
+        };
+        path.set_extension(format.extension());
+        path
     }
 
-    fn set_selected_plot(&mut self, kind: ListObsPlotKind) {
-        if self.plot_workspace.selected_plot == kind {
+    fn current_msexplore_export_width(&self) -> u32 {
+        self.field_text("plot_width")
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(1600)
+    }
+
+    fn current_msexplore_export_height(&self) -> u32 {
+        self.field_text("plot_height")
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(900)
+    }
+
+    fn build_current_msexplore_plot_cli(&self, format: MsExportFormat) -> Result<String, String> {
+        let mut args = self.build_execution_plan()?.arguments;
+        let output_path = self.current_msexplore_output_path(format);
+        if !args.iter().any(|value| value == "--plot-output") {
+            args.push(OsString::from("--plot-output"));
+            args.push(output_path.into_os_string());
+        }
+        if !args.iter().any(|value| value == "--plot-format") {
+            args.push(OsString::from("--plot-format"));
+            args.push(OsString::from(format.extension()));
+        }
+        let rendered_args = args
+            .iter()
+            .map(|value| shell_quote(&value.to_string_lossy()))
+            .collect::<Vec<_>>();
+        Ok(format!("msexplore {}", rendered_args.join(" ")))
+    }
+
+    fn current_plot_catalog_target(&self) -> Option<PlotCatalogTarget> {
+        if self
+            .field_text("page_spec")
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Some(PlotCatalogTarget::PageSpec);
+        }
+        if let Some(preset) = self
+            .field_text("preset")
+            .filter(|value| !value.trim().is_empty())
+            .and_then(|value| MsPlotPreset::parse(&value).ok())
+        {
+            return Some(PlotCatalogTarget::Preset(preset));
+        }
+        if self
+            .field_text("x_axis")
+            .is_some_and(|value| !value.trim().is_empty())
+            && self
+                .field_text("y_axis")
+                .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Some(PlotCatalogTarget::CustomPlot);
+        }
+        None
+    }
+
+    fn apply_plot_catalog_target(&mut self, target: PlotCatalogTarget) {
+        match target {
+            PlotCatalogTarget::Preset(preset) => self.apply_msexplore_preset(preset),
+            PlotCatalogTarget::CustomPlot | PlotCatalogTarget::PageSpec => {}
+        }
+    }
+
+    fn apply_msexplore_preset(&mut self, preset: MsPlotPreset) {
+        if !self.is_msexplore_app() {
             return;
         }
-        self.plot_workspace.selected_plot = kind;
-        self.plot_workspace.selected_control = 0;
+        if let Err(error) = self.apply_startup_text_value("preset", preset.as_str().to_string()) {
+            self.result.status_line =
+                format!("Could not select {}: {error}", preset.display_name());
+            self.result.status_kind = StatusKind::Error;
+            return;
+        }
+        for (id, value) in [
+            ("page_spec", ""),
+            ("x_axis", ""),
+            ("y_axis", ""),
+            ("y_axis2", ""),
+        ] {
+            if let Err(error) = self.apply_startup_text_value(id, value.to_string()) {
+                self.result.status_line = format!(
+                    "Selected {}, but could not reset {id}: {error}",
+                    preset.display_name()
+                );
+                self.result.status_kind = StatusKind::Error;
+                return;
+            }
+        }
         self.plot_workspace.focus = PlotPaneFocus::Catalog;
+        self.plot_workspace.selected_control = 0;
         self.clear_plot_render_cache();
-        self.sync_plot_export_path_for_selected_plot();
+        self.result.status_line =
+            format!("Selected {}. Rendering preview...", preset.display_name());
+        self.result.status_kind = StatusKind::Info;
     }
 
     fn build_execution_plan(&self) -> Result<ExecutionPlan, String> {
@@ -9543,8 +9571,11 @@ impl AppState {
                 return;
             }
 
-            if matches!(running.renderer.as_deref(), Some("listobs-summary-v1")) {
-                match serde_json::from_str::<ListObsSummary>(&self.result.stdout) {
+            if matches!(
+                running.renderer.as_deref(),
+                Some("measurementset-summary-v1")
+            ) {
+                match serde_json::from_str::<MeasurementSetSummary>(&self.result.stdout) {
                     Ok(summary) => {
                         self.record_plot_snapshot(summary.clone());
                         self.result.structured = Some(summary);
@@ -9586,7 +9617,7 @@ impl AppState {
     }
 
     fn overview_lines(&self) -> Vec<String> {
-        if let Some(summary) = &self.result.structured {
+        if let Some(summary) = self.current_structured_summary() {
             let mut lines = Vec::new();
             lines.push("MeasurementSet".to_string());
             lines.push(format!(
@@ -9679,6 +9710,24 @@ fn spinner_frames(theme_mode: ThemeMode) -> &'static [&'static str] {
     }
 }
 
+fn seed_app_field_defaults(app_id: &str, fields: &mut [FormField]) {
+    if app_id != "msexplore" {
+        return;
+    }
+    if let Some(field) = fields
+        .iter_mut()
+        .find(|field| field.schema.id == "showlegend")
+    {
+        let _ = field.apply_toggle_value(true);
+    }
+    if let Some(field) = fields
+        .iter_mut()
+        .find(|field| field.schema.id == "legendposition")
+    {
+        let _ = field.apply_text_value("exteriorRight".to_string());
+    }
+}
+
 impl FormField {
     fn from_schema(schema: &UiArgumentSchema) -> Option<Self> {
         if schema.hidden_in_tui || matches!(schema.parser, UiArgumentParser::Action { .. }) {
@@ -9694,7 +9743,7 @@ impl FormField {
                     FormValue::Text(schema.default.clone().unwrap_or_default())
                 } else {
                     FormValue::Choice {
-                        value: schema.default.clone().unwrap_or_else(|| choices[0].clone()),
+                        value: schema.default.clone().unwrap_or_default(),
                         choices: choices.clone(),
                     }
                 }
@@ -9728,6 +9777,14 @@ impl FormField {
                     "[ ]".to_string()
                 }
             }
+            (FormValue::Choice { value, .. }, _)
+                if value.trim().is_empty() && self.schema.required =>
+            {
+                "<required>".to_string()
+            }
+            (FormValue::Choice { value, .. }, _) if value.trim().is_empty() => {
+                "<empty>".to_string()
+            }
             (FormValue::Choice { value, .. }, _) => value.clone(),
         };
         let mut rendered = format!("{:<18} {}", self.schema.label, value);
@@ -9758,8 +9815,13 @@ impl FormField {
                 }
             }
             (UiArgumentParser::Option { flags, .. }, FormValue::Choice { value, .. }) => {
-                arguments.push(OsString::from(&flags[0]));
-                arguments.push(OsString::from(value));
+                if self.schema.required && value.trim().is_empty() {
+                    return Err(format!("{} is required.", self.schema.label));
+                }
+                if !value.trim().is_empty() {
+                    arguments.push(OsString::from(&flags[0]));
+                    arguments.push(OsString::from(value));
+                }
             }
             (
                 UiArgumentParser::Toggle {
@@ -9782,6 +9844,14 @@ impl FormField {
             return;
         };
         if choices.is_empty() {
+            return;
+        }
+        if value.trim().is_empty() {
+            *value = if forward {
+                choices[0].clone()
+            } else {
+                choices[choices.len() - 1].clone()
+            };
             return;
         }
         let position = choices
@@ -9818,6 +9888,10 @@ impl FormField {
                 value: current,
                 choices,
             } => {
+                if value.trim().is_empty() && !self.schema.required {
+                    *current = String::new();
+                    return Ok(());
+                }
                 if !choices.is_empty() && !choices.iter().any(|choice| choice == &value) {
                     return Err(format!(
                         "{} expects one of: {}",
@@ -9913,7 +9987,7 @@ fn raw_lines(label: &str, text: &str) -> Vec<String> {
     }
 }
 
-fn build_observations_table(summary: &ListObsSummary) -> TableView {
+fn build_observations_table(summary: &MeasurementSetSummary) -> TableView {
     let header_cells = vec![
         "Obs".to_string(),
         "Telescope".to_string(),
@@ -9954,7 +10028,7 @@ fn build_observations_table(summary: &ListObsSummary) -> TableView {
     }
 }
 
-fn build_scans_table(summary: &ListObsSummary, listunfl: bool) -> TableView {
+fn build_scans_table(summary: &MeasurementSetSummary, listunfl: bool) -> TableView {
     let rows = summary
         .scans
         .iter()
@@ -10040,7 +10114,7 @@ fn build_scans_table(summary: &ListObsSummary, listunfl: bool) -> TableView {
     TableView { header, rows }
 }
 
-fn build_fields_table(summary: &ListObsSummary, listunfl: bool) -> TableView {
+fn build_fields_table(summary: &MeasurementSetSummary, listunfl: bool) -> TableView {
     let rows = summary
         .fields
         .iter()
@@ -10091,7 +10165,7 @@ fn build_fields_table(summary: &ListObsSummary, listunfl: bool) -> TableView {
     TableView { header, rows }
 }
 
-fn build_spws_table(summary: &ListObsSummary) -> TableView {
+fn build_spws_table(summary: &MeasurementSetSummary) -> TableView {
     let rows = summary
         .spectral_windows
         .iter()
@@ -10127,7 +10201,7 @@ fn build_spws_table(summary: &ListObsSummary) -> TableView {
     }
 }
 
-fn build_sources_table(summary: &ListObsSummary) -> TableView {
+fn build_sources_table(summary: &MeasurementSetSummary) -> TableView {
     let rows = summary
         .sources
         .iter()
@@ -10161,7 +10235,7 @@ fn build_sources_table(summary: &ListObsSummary) -> TableView {
     }
 }
 
-fn build_antennas_table(summary: &ListObsSummary) -> TableView {
+fn build_antennas_table(summary: &MeasurementSetSummary) -> TableView {
     let rows = summary
         .antennas
         .iter()
@@ -10203,7 +10277,7 @@ fn build_antennas_table(summary: &ListObsSummary) -> TableView {
     }
 }
 
-fn build_compact_antenna_lines(summary: &ListObsSummary) -> Vec<String> {
+fn build_compact_antenna_lines(summary: &MeasurementSetSummary) -> Vec<String> {
     let mut lines = vec![format!(
         "Antennas: {} 'name'='station'",
         summary.antennas.len()
@@ -11878,113 +11952,6 @@ fn browser_inspector_lines(inspector: &BrowserInspectorSnapshot) -> Vec<String> 
     }
     lines.extend(inspector.rendered_lines.iter().cloned());
     lines
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PlotChoiceDescriptor {
-    key: &'static str,
-    label: &'static str,
-    choices: &'static [&'static str],
-}
-
-const UV_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
-    PlotChoiceDescriptor {
-        key: "draw_mode",
-        label: "Draw mode",
-        choices: &["tracks", "points"],
-    },
-    PlotChoiceDescriptor {
-        key: "mirror",
-        label: "Mirror",
-        choices: &["on", "off"],
-    },
-    PlotChoiceDescriptor {
-        key: "axis_extent",
-        label: "Axis extent",
-        choices: &["auto", "1000", "10000", "100000"],
-    },
-];
-
-const ANTENNA_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
-    PlotChoiceDescriptor {
-        key: "labels",
-        label: "Labels",
-        choices: &["off", "id", "name"],
-    },
-    PlotChoiceDescriptor {
-        key: "coordinates",
-        label: "Coordinates",
-        choices: &["offset", "absolute"],
-    },
-    PlotChoiceDescriptor {
-        key: "size_by_diameter",
-        label: "Size by dish",
-        choices: &["on", "off"],
-    },
-];
-
-const SCAN_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
-    PlotChoiceDescriptor {
-        key: "lanes",
-        label: "Lane grouping",
-        choices: &["scan", "field"],
-    },
-    PlotChoiceDescriptor {
-        key: "color_by",
-        label: "Color by",
-        choices: &["field", "intent"],
-    },
-    PlotChoiceDescriptor {
-        key: "labels",
-        label: "Labels",
-        choices: &["none", "scan", "field"],
-    },
-];
-
-const SPW_PLOT_CONTROLS: [PlotChoiceDescriptor; 3] = [
-    PlotChoiceDescriptor {
-        key: "unit",
-        label: "X unit",
-        choices: &["ghz", "mhz"],
-    },
-    PlotChoiceDescriptor {
-        key: "labels",
-        label: "Labels",
-        choices: &["on", "off"],
-    },
-    PlotChoiceDescriptor {
-        key: "color_by",
-        label: "Color by",
-        choices: &["spw", "polarization"],
-    },
-];
-
-fn plot_choice_descriptors(kind: ListObsPlotKind) -> &'static [PlotChoiceDescriptor] {
-    match kind {
-        ListObsPlotKind::UvCoverage => &UV_PLOT_CONTROLS,
-        ListObsPlotKind::AntennaLayout => &ANTENNA_PLOT_CONTROLS,
-        ListObsPlotKind::ScanTimeline => &SCAN_PLOT_CONTROLS,
-        ListObsPlotKind::SpectralWindowCoverage => &SPW_PLOT_CONTROLS,
-    }
-}
-
-fn default_plot_export_path(kind: ListObsPlotKind, format: ListObsPlotExportFormat) -> String {
-    format!("{}.{}", kind.as_str(), format.extension())
-}
-
-fn current_plot_output_path(
-    configured_path: &str,
-    kind: ListObsPlotKind,
-    format: ListObsPlotExportFormat,
-) -> PathBuf {
-    let trimmed = configured_path.trim();
-    let mut path = if trimmed.is_empty() {
-        PathBuf::from(default_plot_export_path(kind, format))
-    } else {
-        PathBuf::from(trimmed)
-    };
-    path.set_extension(format.extension());
-    path
 }
 
 fn shell_quote(value: &str) -> String {

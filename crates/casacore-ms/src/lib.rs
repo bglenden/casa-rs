@@ -47,14 +47,16 @@ pub mod columns;
 pub mod derived;
 pub mod error;
 pub mod grouping;
-pub mod listobs;
+pub(crate) mod listobs;
 mod metadata;
 pub mod ms;
+pub mod msexplore;
 pub mod plot;
 pub mod schema;
 pub mod selection;
 pub mod selection_helpers;
 pub mod subtables;
+mod ui_schema;
 pub mod validate;
 
 #[cfg(test)]
@@ -63,15 +65,36 @@ pub(crate) mod test_helpers;
 pub use builder::{MeasurementSetBuilder, MsSchemas};
 pub use error::{MsError, MsResult};
 pub use listobs::{
-    ListObsOptions, ListObsOutputFormat, ListObsSummary, ListObsUvCoverage, ListObsUvPoint,
-    ListObsUvTrack,
+    ListObsOptions as MeasurementSetSummaryOptions,
+    ListObsOutputFormat as MeasurementSetSummaryOutputFormat,
+    ListObsSummary as MeasurementSetSummary, ListObsUvCoverage as MeasurementSetUvCoverage,
+    ListObsUvPoint as MeasurementSetUvPoint, ListObsUvTrack as MeasurementSetUvTrack,
 };
+pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;
+pub use msexplore::{
+    DEFAULT_MAX_PLOT_POINTS, MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
+    MsExportFormat, MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit,
+    MsFlagSampleEdit, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition,
+    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
+    MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
+    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelectionSpec, MsTransformSpec,
+    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+    build_msexplore_payload_from_spec, build_msexplore_plot_payload,
+    build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
+    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
+};
 pub use plot::{
-    ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
-    ListObsPlotSpec, ListObsPlotTheme, build_listobs_plot_payload_from_summary,
-    build_listobs_uv_plot_payload, export_listobs_plot, render_listobs_plot_image,
-    render_listobs_plot_image_with_style,
+    ListObsPlotExportFormat as MeasurementSetPlotExportFormat,
+    ListObsPlotKind as MeasurementSetPlotKind, ListObsPlotPayload as MeasurementSetPlotPayload,
+    ListObsPlotRenderStyle as MeasurementSetPlotRenderStyle,
+    ListObsPlotSpec as MeasurementSetPlotSpec, ListObsPlotTheme as MeasurementSetPlotTheme,
+    build_listobs_plot_payload_from_summary as build_measurement_set_plot_payload_from_summary,
+    build_listobs_uv_plot_payload as build_measurement_set_uv_plot_payload,
+    build_listobs_visibility_plot_payload as build_measurement_set_visibility_plot_payload,
+    export_listobs_plot as export_measurement_set_plot,
+    render_listobs_plot_image as render_measurement_set_plot_image,
+    render_listobs_plot_image_with_style as render_measurement_set_plot_image_with_style,
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};

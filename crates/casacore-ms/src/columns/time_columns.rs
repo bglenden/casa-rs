@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Typed accessors for TIME and TIME_CENTROID columns.
 //!
-//! Returns values as [`MEpoch`] with the correct reference frame.
-//! The MS stores times as MJD seconds in UTC by default.
+//! Returns values as [`MEpoch`] with the column reference reconstructed from
+//! `MEASINFO` when present, falling back to `UTC` for legacy/in-memory
+//! tables without measure metadata.
 //!
 //! Cf. C++ `MSMainColumns::timeMeas()`.
 
 use casacore_tables::Table;
+use casacore_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casacore_types::measures::{EpochRef, MEpoch};
 
 use crate::error::MsResult;
@@ -17,7 +19,8 @@ const SECONDS_PER_DAY: f64 = 86400.0;
 
 /// Typed accessor for the TIME column of the MS main table.
 ///
-/// Values are stored as MJD seconds (UTC) and returned as [`MEpoch`].
+/// Values are stored as MJD seconds and returned as [`MEpoch`] using the
+/// column's fixed epoch reference when it can be reconstructed.
 pub struct TimeColumn<'a> {
     table: &'a Table,
     column: &'static str,
@@ -30,7 +33,7 @@ impl<'a> TimeColumn<'a> {
         Self {
             table,
             column: "TIME",
-            refer: EpochRef::UTC,
+            refer: detect_epoch_ref(table, "TIME"),
         }
     }
 
@@ -39,7 +42,7 @@ impl<'a> TimeColumn<'a> {
         Self {
             table,
             column: "TIME_CENTROID",
-            refer: EpochRef::UTC,
+            refer: detect_epoch_ref(table, "TIME_CENTROID"),
         }
     }
 
@@ -56,12 +59,23 @@ impl<'a> TimeColumn<'a> {
     }
 }
 
+fn detect_epoch_ref(table: &Table, column: &str) -> EpochRef {
+    let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
+        return EpochRef::UTC;
+    };
+    match desc.ref_desc() {
+        MeasRefDesc::Fixed { refer } => refer.parse::<EpochRef>().unwrap_or(EpochRef::UTC),
+        MeasRefDesc::VariableInt { .. } | MeasRefDesc::VariableString { .. } => EpochRef::UTC,
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::column_def::build_table_schema;
     use crate::schema;
     use crate::test_helpers::{default_value, default_value_for_def};
+    use casacore_tables::table_measures::{MeasureType, TableMeasDesc};
     use casacore_types::{RecordField, RecordValue, ScalarValue, Value};
 
     #[test]
@@ -95,5 +109,32 @@ pub(crate) mod tests {
         // Verify default_value helper returns the right thing
         let dv = default_value("TIME");
         assert!(matches!(dv, Value::Scalar(ScalarValue::Float64(_))));
+    }
+
+    #[test]
+    fn read_time_respects_fixed_measinfo_reference() {
+        let schema =
+            build_table_schema(schema::main_table::REQUIRED_COLUMNS).expect("valid schema");
+        let mut table = Table::with_schema(schema);
+        TableMeasDesc::new_fixed("TIME", MeasureType::Epoch, "TAI")
+            .write(&mut table)
+            .expect("write TAI measinfo");
+
+        let mjd_sec = 59000.0 * SECONDS_PER_DAY;
+        let fields: Vec<RecordField> = schema::main_table::REQUIRED_COLUMNS
+            .iter()
+            .map(|c| {
+                if c.name == "TIME" || c.name == "TIME_CENTROID" {
+                    RecordField::new(c.name, Value::Scalar(ScalarValue::Float64(mjd_sec)))
+                } else {
+                    RecordField::new(c.name, default_value_for_def(c))
+                }
+            })
+            .collect();
+        table.add_row(RecordValue::new(fields)).unwrap();
+
+        let time_col = TimeColumn::new(&table);
+        let epoch = time_col.get_epoch(0).unwrap();
+        assert_eq!(epoch.refer(), EpochRef::TAI);
     }
 }

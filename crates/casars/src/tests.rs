@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::fs;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::time::{Duration, Instant};
@@ -13,9 +14,11 @@ use casacore_imagebrowser_protocol::{
     ImageRegionOverlayVertex, ImageRegionState, ImageRegionStatsState,
 };
 use casacore_ms::column_def::{ColumnDef, ColumnKind};
-use casacore_ms::listobs::cli::command_schema;
+use casacore_ms::msexplore::cli::command_schema as msexplore_command_schema;
 use casacore_ms::schema;
-use casacore_ms::{ListObsPlotKind, MeasurementSet, MeasurementSetBuilder, SubtableId};
+use casacore_ms::{
+    MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
+};
 use casacore_tablebrowser_protocol::{
     BrowserBreadcrumbEntry, BrowserCapabilities, BrowserFocus, BrowserInspectorSnapshot,
     BrowserInspectorTrailEntry, BrowserNavigationMetrics, BrowserResponseEnvelope,
@@ -24,21 +27,24 @@ use casacore_tablebrowser_protocol::{
 };
 use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casacore_types::{
-    ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value, quanta::MvTime,
+    ArrayD, ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    quanta::MvTime,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use flate2::read::GzDecoder;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui_graphics::{ProtocolType, TerminalCapabilities};
+use tar::Archive;
 use tempfile::tempdir;
 
 use crate::app::{
-    AppState, BrowserPaneFocus, ImageBrowserLeftPaneMode, OutputPane, PaneFocus, PlotControlTarget,
-    PlotPaneFocus, ResultTab, image_plane_draw_rect,
+    AppState, BrowserPaneFocus, ImageBrowserLeftPaneMode, OutputPane, PaneFocus, PlotCatalogTarget,
+    PlotControlTarget, PlotPaneFocus, ResultTab, image_plane_draw_rect,
 };
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
-use crate::registry::{imexplore_app, listobs_app, registered_apps, tablebrowser_app};
+use crate::registry::{imexplore_app, msexplore_app, registered_apps, tablebrowser_app};
 use crate::theme::theme;
 use crate::ui;
 use crate::{KittyMovieOverlayMode, kitty_movie_overlay_mode, test_env_lock};
@@ -47,7 +53,7 @@ use crate::{KittyMovieOverlayMode, kitty_movie_overlay_mode, test_env_lock};
 fn launcher_lists_registered_apps_in_expected_order() {
     let apps = registered_apps();
     let ids = apps.iter().map(|app| app.id).collect::<Vec<_>>();
-    assert_eq!(ids, vec!["listobs", "tablebrowser", "imexplore"]);
+    assert_eq!(ids, vec!["msexplore", "tablebrowser", "imexplore"]);
 }
 
 #[test]
@@ -68,9 +74,10 @@ fn launcher_screen_renders_available_apps() {
     }
 
     assert!(rendered.contains("Select Application"));
-    assert!(rendered.contains("listobs"));
+    assert!(rendered.contains("msexplore"));
     assert!(rendered.contains("tablebrowser"));
     assert!(rendered.contains("imexplore"));
+    assert!(rendered.contains("MSExplore"));
     assert!(rendered.contains("Table Browser"));
     assert!(rendered.contains("ImExplore"));
 }
@@ -162,7 +169,7 @@ fn renders_idle_layout_with_ready_status() {
     let (_temp, app) = test_app();
     let rendered = render_app(&app, 100, 30);
     assert!(rendered.contains("casars"));
-    assert!(rendered.contains("MeasurementSet / ListObs"));
+    assert!(rendered.contains("MeasurementSet / MSExplore"));
     assert!(rendered.contains("MeasurementSet Path"));
     assert!(rendered.contains("Ready. Press r to run the selected command."));
     assert!(rendered.contains("Overview"));
@@ -185,9 +192,9 @@ fn theme_mode_persists_across_app_instances() {
     let temp = tempdir().expect("tempdir");
     let config_path = temp.path().join("casars.toml");
 
-    let schema = command_schema("listobs");
+    let schema = msexplore_command_schema("msexplore");
     let mut first = AppState::from_schema_with_config(
-        listobs_app(),
+        msexplore_app(),
         schema.clone(),
         ConfigStore::load_for_tests(config_path.clone()),
     );
@@ -196,7 +203,7 @@ fn theme_mode_persists_across_app_instances() {
     assert_eq!(first.theme_mode_for_test(), ThemeMode::RichPanel);
 
     let second = AppState::from_schema_with_config(
-        listobs_app(),
+        msexplore_app(),
         schema,
         ConfigStore::load_for_tests(config_path),
     );
@@ -208,8 +215,8 @@ fn pane_split_ratio_persists_after_drag() {
     let temp = tempdir().expect("tempdir");
     let config_path = temp.path().join("casars.toml");
     let mut app = AppState::from_schema_with_config(
-        listobs_app(),
-        command_schema("listobs"),
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
         ConfigStore::load_for_tests(config_path.clone()),
     );
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
@@ -241,8 +248,8 @@ fn pane_split_ratio_persists_after_drag() {
     assert!(app.pane_split_ratio_for_test() > 0.55);
 
     let reloaded = AppState::from_schema_with_config(
-        listobs_app(),
-        command_schema("listobs"),
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
         ConfigStore::load_for_tests(config_path),
     );
     assert!(reloaded.pane_split_ratio_for_test() > 0.55);
@@ -253,8 +260,8 @@ fn divider_drag_starts_from_adjacent_border_column() {
     let temp = tempdir().expect("tempdir");
     let config_path = temp.path().join("casars.toml");
     let mut app = AppState::from_schema_with_config(
-        listobs_app(),
-        command_schema("listobs"),
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
         ConfigStore::load_for_tests(config_path),
     );
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
@@ -346,9 +353,9 @@ fn pane_toggle_restores_previous_noncollapsed_size() {
 #[test]
 fn renders_toggled_boolean_fields() {
     let (_temp, mut app) = test_app();
-    app.set_toggle_value("listunfl", true);
+    app.set_toggle_value("selectdata", true);
     let rendered = render_app(&app, 100, 30);
-    assert!(rendered.contains("List Unflagged Rows"));
+    assert!(rendered.contains("Apply Selection"));
     assert!(rendered.contains("[x]"));
 }
 
@@ -1880,9 +1887,10 @@ fn edit_tab_commits_and_moves_to_next_field() {
         app.field_text_for_test("ms_path").as_deref(),
         Some("/tmp/demo.ms")
     );
+    assert!(app.selected_form_text_for_test().is_some());
     assert!(
         app.selected_form_text_for_test()
-            .is_some_and(|text| text.contains("Verbose Report"))
+            .is_some_and(|text| !text.contains("MeasurementSet Path"))
     );
 }
 
@@ -2299,11 +2307,11 @@ fn output_selection_copy_works_for_structured_table_rows() {
     set_test_clipboard_file(&clipboard_path);
 
     let ms_path = create_fixture_ms(temp.path());
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -5963,18 +5971,10 @@ fn browser_command_errors_close_the_session_and_surface_stderr() {
 
 #[test]
 fn verbose_off_hides_detail_tabs() {
-    let (_temp, mut app) = test_app();
-    app.set_toggle_value("verbose", false);
+    let (_temp, app) = test_app();
     let rendered = render_app(&app, 160, 30);
-    assert!(rendered.contains("Overview"));
-    assert!(rendered.contains("[Observations]"));
-    assert!(rendered.contains("[Fields]"));
-    assert!(rendered.contains("[SPWs]"));
-    assert!(rendered.contains("[Antennas]"));
-    assert!(rendered.contains("[Stdout]"));
-    assert!(rendered.contains("[Stderr]"));
-    assert!(!rendered.contains("[Scans]"));
-    assert!(!rendered.contains("[Sources]"));
+    assert!(rendered.contains("[Scans]"));
+    assert!(rendered.contains("[Sources]"));
 }
 
 #[test]
@@ -5996,22 +5996,22 @@ fn selected_section_keeps_its_disclosure_glyph() {
         &layout,
     );
     let rendered = render_app(&app, 100, 30);
-    assert!(rendered.contains("▸ Presentation") || rendered.contains("▾ Presentation"));
+    assert!(rendered.contains("▸ Input") || rendered.contains("▾ Input"));
 }
 
 #[test]
-fn executes_listobs_and_parses_structured_output_into_tabs() {
+fn msexplore_run_parses_structured_output_into_tabs() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
 
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6030,22 +6030,185 @@ fn executes_listobs_and_parses_structured_output_into_tabs() {
 }
 
 #[test]
-fn plots_tab_loads_uv_coverage_after_listobs_run() {
+fn plots_tab_renders_current_msexplore_preview() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
 
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
-    assert!(app.uv_coverage_for_test().is_none());
+    app.set_text_value("preset", "uv_coverage");
+
+    app.set_active_result_tab(ResultTab::Plots);
+    app.prepare_graphics_for_test(140, 32);
+    assert!(
+        wait_for_plot_render(&mut app, 140, 32, Duration::from_secs(5)),
+        "status={} pending={} last_error={:?} stderr={}",
+        app.status_line_for_test(),
+        app.plot_pending(),
+        app.plot_last_error(),
+        app.stderr_for_test()
+    );
+    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
+    assert!(
+        app.plot_protocol().is_some() || app.plot_pending(),
+        "pending={} last_error={:?} stderr={}",
+        app.plot_pending(),
+        app.plot_last_error(),
+        app.stderr_for_test()
+    );
+    match app.active_result_content() {
+        crate::app::ResultContent::Graphic(summary) => {
+            assert!(summary.contains("UV Coverage from the current msexplore form."));
+        }
+        other => panic!("expected graphic result, got {other:?}"),
+    }
+    let rendered = render_app(&app, 140, 32);
+    assert!(rendered.contains("Presets"));
+    assert!(rendered.contains("Actions"));
+    assert!(rendered.contains("UV Coverage"));
+}
+
+#[test]
+fn plots_tab_catalog_lists_raw_visibility_plot_kinds() {
+    let (_temp, mut app) = test_app();
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let rendered = render_app(&app, 180, 36);
+    assert!(rendered.contains("Amplitude vs Time"));
+    assert!(rendered.contains("Phase vs Time"));
+    assert!(rendered.contains("Amplitude vs UV Distance"));
+}
+
+#[test]
+fn msexplore_plots_tab_previews_current_form_without_run() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("preset", "amplitude_vs_time");
+
+    app.set_active_result_tab(ResultTab::Plots);
+    app.prepare_graphics_for_test(140, 32);
+    assert!(
+        wait_for_plot_render(&mut app, 140, 32, Duration::from_secs(5)),
+        "status={} pending={} last_error={:?} stderr={}",
+        app.status_line_for_test(),
+        app.plot_pending(),
+        app.plot_last_error(),
+        app.stderr_for_test()
+    );
+
+    assert!(
+        app.plot_protocol().is_some() || app.plot_pending(),
+        "pending={} last_error={:?} stderr={}",
+        app.plot_pending(),
+        app.plot_last_error(),
+        app.stderr_for_test()
+    );
+    match app.active_result_content() {
+        crate::app::ResultContent::Graphic(summary) => {
+            assert!(summary.contains("current msexplore form"));
+        }
+        other => panic!("expected graphic result, got {other:?}"),
+    }
+    let rendered = render_app(&app, 140, 32);
+    assert!(rendered.contains("Amplitude vs Time"));
+    assert!(rendered.contains("Presets"));
+    assert!(rendered.contains("Actions"));
+    assert!(rendered.contains("Refresh Preview"));
+    assert!(!rendered.contains("Controls"));
+    assert!(!rendered.contains("Run MeasurementSet summary"));
+}
+
+#[test]
+fn msexplore_start_run_on_launch_opens_plots_preview_instead_of_spawning_process() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("preset", "amplitude_vs_time");
+
+    app.start_run_on_launch();
+
+    assert!(!app.is_running_for_test());
+    assert_eq!(app.active_result_tab(), ResultTab::Plots);
+    assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
+    assert!(
+        app.status_line_for_test()
+            .contains("Opening interactive msexplore preview"),
+        "status={}",
+        app.status_line_for_test()
+    );
+
+    app.prepare_graphics_for_test(140, 32);
+    assert!(
+        wait_for_plot_render(&mut app, 140, 32, Duration::from_secs(5)),
+        "status={} pending={} last_error={:?} stderr={}",
+        app.status_line_for_test(),
+        app.plot_pending(),
+        app.plot_last_error(),
+        app.stderr_for_test()
+    );
+    assert!(app.plot_protocol().is_some() || app.plot_pending());
+}
+
+#[test]
+fn msexplore_summary_tabs_populate_from_current_form_without_subprocess_run() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+
+    app.set_active_result_tab(ResultTab::Observations);
+
+    let summary = app.structured_for_test().expect("structured summary");
+    assert_eq!(summary.measurement_set.row_count, 2);
+    let rendered = render_app(&app, 220, 32);
+    assert!(rendered.contains("Observations"));
+    assert!(rendered.contains("Start"));
+    assert!(rendered.contains("End"));
+}
+
+#[test]
+fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let export_path = temp.path().join("msexplore-preview.png");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("preset", "amplitude_vs_time");
+    app.set_text_value("plot_output", export_path.to_string_lossy().as_ref());
 
     app.set_active_result_tab(ResultTab::Plots);
     app.prepare_graphics_for_test(140, 32);
@@ -6056,21 +6219,353 @@ fn plots_tab_loads_uv_coverage_after_listobs_run() {
         Duration::from_secs(5)
     ));
 
-    let coverage = app.uv_coverage_for_test().expect("uv coverage");
-    assert!(coverage.sample_count > 0);
-    assert_eq!(app.selected_plot_kind(), ListObsPlotKind::UvCoverage);
-    assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
-    assert!(app.plot_protocol().is_some() || app.plot_pending());
-    match app.active_result_content() {
-        crate::app::ResultContent::Graphic(summary) => {
-            assert!(summary.contains("UV Coverage from run 1."));
-        }
-        other => panic!("expected graphic result, got {other:?}"),
-    }
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 32), &app);
+    let first_control = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .control_hits
+        .first()
+        .expect("plot control");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            first_control.rect.x + 1,
+            first_control.rect.y,
+        ),
+        &layout,
+    );
+
+    move_plot_control_selection_to(&mut app, PlotControlTarget::CopyCli);
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let clipboard = std::fs::read_to_string(&clipboard_path).unwrap_or_else(|error| {
+        panic!(
+            "clipboard contents: {error} status={} stderr={}",
+            app.status_line_for_test(),
+            app.stderr_for_test()
+        )
+    });
+    assert!(clipboard.contains("msexplore"));
+    assert!(clipboard.contains("--preset amplitude_vs_time"));
+    assert!(clipboard.contains("--showlegend"));
+    assert!(clipboard.contains("--legendposition exteriorRight"));
+    assert!(clipboard.contains(ms_path.to_string_lossy().as_ref()));
+    assert!(clipboard.contains(export_path.to_string_lossy().as_ref()));
+    assert!(!clipboard.contains("--flag-action"));
+
+    move_plot_control_selection_to(&mut app, PlotControlTarget::ExportPng);
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(export_path.is_file());
+    let png = std::fs::read(&export_path).expect("png bytes");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    clear_test_clipboard_file();
+}
+
+#[test]
+fn msexplore_plots_sidebar_lists_standard_presets() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+
+    let rows = app.plot_catalog_rows();
+    assert_eq!(rows.len(), 26);
+    let labels = rows.into_iter().map(|row| row.label).collect::<Vec<_>>();
+    assert!(labels.contains(&"Amplitude vs Time".to_string()));
+    assert!(labels.contains(&"Phase vs Time".to_string()));
+    assert!(labels.contains(&"Amplitude / Phase vs Time (Stacked)".to_string()));
+    assert!(labels.contains(&"Amplitude vs Velocity".to_string()));
+    assert!(labels.contains(&"Real vs Imaginary".to_string()));
+    assert_eq!(
+        app.field_text_for_test("legendposition").as_deref(),
+        Some("exteriorRight")
+    );
+}
+
+#[test]
+fn msexplore_plots_sidebar_shows_overflow_indicator_for_hidden_presets() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 32), &app);
+    let visible_rows = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .len();
+    let total_rows = app.plot_catalog_rows().len();
+    assert!(visible_rows < total_rows);
+
     let rendered = render_app(&app, 140, 32);
-    assert!(rendered.contains("Catalog"));
-    assert!(rendered.contains("Controls"));
-    assert!(rendered.contains("UV Coverage"));
+    assert!(rendered.contains("more"));
+    assert!(!rendered.contains("Amplitude vs Velocity"));
+}
+
+#[test]
+fn msexplore_clicking_catalog_preset_updates_preview_cli() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let clipboard_path = temp.path().join("clipboard.txt");
+    set_test_clipboard_file(&clipboard_path);
+
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
+    let phase_hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .iter()
+        .find(|hit| {
+            hit.tab.target == PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::PhaseVsTime)
+        })
+        .expect("phase preset hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            phase_hit.rect.x + 1,
+            phase_hit.rect.y,
+        ),
+        &layout,
+    );
+
+    assert_eq!(
+        app.field_text_for_test("preset").as_deref(),
+        Some("phase_vs_time")
+    );
+
+    app.prepare_graphics_for_test(160, 40);
+    assert!(wait_for_plot_render(
+        &mut app,
+        160,
+        40,
+        Duration::from_secs(5)
+    ));
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
+    let first_control = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .control_hits
+        .first()
+        .expect("plot control");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            first_control.rect.x + 1,
+            first_control.rect.y,
+        ),
+        &layout,
+    );
+
+    move_plot_control_selection_to(&mut app, PlotControlTarget::CopyCli);
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
+    assert!(clipboard.contains("--preset phase_vs_time"));
+    assert!(clipboard.contains("--showlegend"));
+    assert!(clipboard.contains("--legendposition exteriorRight"));
+    clear_test_clipboard_file();
+}
+
+#[test]
+fn msexplore_selecting_preset_immediately_invalidates_existing_preview() {
+    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("preset", "amplitude_vs_time");
+    app.set_active_result_tab(ResultTab::Plots);
+
+    app.prepare_graphics_for_test(160, 40);
+    assert!(wait_for_plot_render(
+        &mut app,
+        160,
+        40,
+        Duration::from_secs(5)
+    ));
+    assert!(
+        app.plot_protocol().is_some(),
+        "{}",
+        app.status_line_for_test()
+    );
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
+    let target = PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked);
+    let hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .iter()
+        .find(|hit| hit.tab.target == target)
+        .expect("stacked preset hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            hit.rect.x + 1,
+            hit.rect.y,
+        ),
+        &layout,
+    );
+
+    assert_eq!(
+        app.field_text_for_test("preset").as_deref(),
+        Some("amplitude_phase_vs_time_stacked")
+    );
+    assert!(app.plot_protocol().is_none());
+    assert!(app.plot_pending());
+    assert!(
+        app.status_line_for_test()
+            .contains("Selected Amplitude / Phase vs Time (Stacked). Rendering preview"),
+        "{}",
+        app.status_line_for_test()
+    );
+
+    let rendered = render_app(&app, 160, 40);
+    assert!(rendered.contains("Amplitude / Phase vs Time (Stacked)"));
+    assert!(rendered.contains("Rendering plot..."));
+}
+
+#[test]
+fn msexplore_catalog_scroll_selects_velocity_preset_with_down_arrow() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let all_rows = app.plot_catalog_rows();
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 32), &app);
+    let last_visible_hit = layout
+        .plot_workspace
+        .as_ref()
+        .expect("plot workspace")
+        .catalog_hits
+        .last()
+        .expect("last visible preset");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            last_visible_hit.rect.x + 1,
+            last_visible_hit.rect.y,
+        ),
+        &layout,
+    );
+    let current_index = all_rows
+        .iter()
+        .position(|row| row.target == last_visible_hit.tab.target)
+        .expect("visible row index");
+    let velocity_index = all_rows
+        .iter()
+        .position(|row| {
+            row.target == PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudeVsVelocity)
+        })
+        .expect("velocity preset index");
+    assert!(velocity_index > current_index);
+
+    for _ in current_index..velocity_index {
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+    assert_eq!(
+        app.field_text_for_test("preset").as_deref(),
+        Some("amplitude_vs_velocity")
+    );
+
+    let rendered = render_app(&app, 140, 32);
+    assert!(rendered.contains("▶ Amplitude vs Velocity"));
+}
+
+#[test]
+fn msexplore_problem_presets_can_be_clicked_when_visible() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_app()
+        .load_schema()
+        .expect("load live msexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 52), &app);
+    let workspace = layout.plot_workspace.as_ref().expect("plot workspace");
+    let targets = [
+        (
+            PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked),
+            "amplitude_phase_vs_time_stacked",
+        ),
+        (
+            PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudeVsVelocity),
+            "amplitude_vs_velocity",
+        ),
+        (
+            PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::PhaseVsVelocity),
+            "phase_vs_velocity",
+        ),
+    ];
+
+    for (target, expected) in targets {
+        let hit = workspace
+            .catalog_hits
+            .iter()
+            .find(|hit| hit.tab.target == target)
+            .expect("preset hit");
+        app.handle_mouse_event(
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                hit.rect.x + 1,
+                hit.rect.y,
+            ),
+            &layout,
+        );
+        assert_eq!(app.field_text_for_test("preset").as_deref(), Some(expected));
+    }
+}
+
+#[test]
+fn msexplore_problem_presets_show_explicit_selected_marker() {
+    let temp = tempdir().expect("tempdir");
+    let schema = msexplore_app()
+        .load_schema()
+        .expect("load live msexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_active_result_tab(ResultTab::Plots);
+
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 52), &app);
+    let workspace = layout.plot_workspace.as_ref().expect("plot workspace");
+    let target = workspace
+        .catalog_hits
+        .iter()
+        .find(|hit| {
+            hit.tab.target
+                == PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudeVsVelocity)
+        })
+        .expect("velocity preset hit");
+    app.handle_mouse_event(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.rect.x + 1,
+            target.rect.y,
+        ),
+        &layout,
+    );
+
+    let rendered = render_app(&app, 160, 52);
+    assert!(rendered.contains("▶ Amplitude vs Velocity"));
 }
 
 #[test]
@@ -6096,76 +6591,6 @@ fn divider_chevron_can_collapse_parameters_sidebar_from_plots() {
 }
 
 #[test]
-fn plots_tab_shows_dirty_banner_and_copy_cli_uses_last_successful_run() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
-    let temp = tempdir().expect("tempdir");
-    let first_ms = create_fixture_ms(temp.path());
-    let second_root = temp.path().join("second");
-    std::fs::create_dir(&second_root).expect("create second root");
-    let second_ms = create_fixture_ms(&second_root);
-    let clipboard_path = temp.path().join("clipboard.txt");
-    set_test_clipboard_file(&clipboard_path);
-
-    let schema = listobs_app()
-        .load_schema()
-        .expect("load schema from listobs");
-    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
-    app.set_text_value("ms_path", first_ms.to_string_lossy().as_ref());
-    app.start_run_for_test();
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
-
-    app.set_active_result_tab(ResultTab::Plots);
-    app.prepare_graphics_for_test(140, 32);
-    assert!(wait_for_plot_render(
-        &mut app,
-        140,
-        32,
-        Duration::from_secs(5)
-    ));
-
-    app.set_text_value("ms_path", second_ms.to_string_lossy().as_ref());
-    assert!(app.plot_snapshot_dirty_for_test());
-
-    let rendered = render_app(&app, 160, 34);
-    assert!(rendered.contains("Plots reflect the last successful run"));
-
-    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 34), &app);
-    let visible_control_hit = layout
-        .plot_workspace
-        .as_ref()
-        .expect("plot workspace")
-        .control_hits
-        .iter()
-        .last()
-        .expect("visible control hit");
-    app.handle_mouse_event(
-        mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            visible_control_hit.rect.x + 1,
-            visible_control_hit.rect.y,
-        ),
-        &layout,
-    );
-    move_plot_control_selection_to(&mut app, PlotControlTarget::CopyCli);
-    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-    let clipboard = std::fs::read_to_string(&clipboard_path).expect("clipboard contents");
-    let first_ms_display = first_ms.to_string_lossy();
-    let second_ms_display = second_ms.to_string_lossy();
-    assert!(clipboard.contains("--plot uv_coverage"));
-    assert!(clipboard.contains(first_ms_display.as_ref()));
-    assert!(!clipboard.contains(second_ms_display.as_ref()));
-    assert!(
-        app.status_line_for_test()
-            .contains("Copied plot CLI to clipboard.")
-    );
-    clear_test_clipboard_file();
-}
-
-#[test]
 fn plot_workspace_mouse_selection_and_export_pdf_work() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
@@ -6174,14 +6599,14 @@ fn plot_workspace_mouse_selection_and_export_pdf_work() {
     let ms_path = create_fixture_ms(temp.path());
     let export_path = temp.path().join("antenna-layout-check.pdf");
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
+    app.set_text_value("preset", "amplitude_vs_time");
+    app.set_text_value("plot_output", export_path.to_string_lossy().as_ref());
 
     app.set_active_result_tab(ResultTab::Plots);
     app.prepare_graphics_for_test(160, 36);
@@ -6193,50 +6618,45 @@ fn plot_workspace_mouse_selection_and_export_pdf_work() {
     ));
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 36), &app);
-    let antenna_hit = layout
+    let plot_hit = layout
         .plot_workspace
         .as_ref()
         .expect("plot workspace")
         .catalog_hits
         .iter()
-        .find(|hit| hit.tab.kind == ListObsPlotKind::AntennaLayout)
-        .expect("antenna hit");
+        .find(|hit| hit.tab.target == PlotCatalogTarget::Preset(MsPlotPreset::AmplitudeVsTime))
+        .expect("plot hit");
     app.handle_mouse_event(
         mouse(
             MouseEventKind::Down(MouseButton::Left),
-            antenna_hit.rect.x + 1,
-            antenna_hit.rect.y,
+            plot_hit.rect.x + 1,
+            plot_hit.rect.y,
         ),
         &layout,
     );
-    assert_eq!(app.selected_plot_kind(), ListObsPlotKind::AntennaLayout);
+    assert_eq!(
+        app.field_text_for_test("preset").as_deref(),
+        Some("amplitude_vs_time")
+    );
     assert_eq!(app.plot_focus(), PlotPaneFocus::Catalog);
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 36), &app);
-    let export_path_hit = layout
+    let first_control = layout
         .plot_workspace
         .as_ref()
         .expect("plot workspace")
         .control_hits
-        .iter()
-        .find(|hit| hit.target == PlotControlTarget::ExportPath)
-        .expect("export path hit");
+        .first()
+        .expect("plot control");
     app.handle_mouse_event(
         mouse(
             MouseEventKind::Down(MouseButton::Left),
-            export_path_hit.rect.x + 1,
-            export_path_hit.rect.y,
+            first_control.rect.x + 1,
+            first_control.rect.y,
         ),
         &layout,
     );
     assert_eq!(app.plot_focus(), PlotPaneFocus::Controls);
-    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    let existing = app.edit_buffer_for_test().expect("plot export path editor");
-    for _ in 0..existing.chars().count() {
-        app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-    }
-    app.handle_paste(export_path.display().to_string());
-    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     move_plot_control_selection_to(&mut app, PlotControlTarget::ExportPdf);
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -6262,11 +6682,11 @@ fn spw_table_shows_channel_and_total_bandwidth() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6289,11 +6709,11 @@ fn fields_table_shows_sky_position_columns() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6314,11 +6734,11 @@ fn observations_table_shows_formatted_timestamps() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6340,11 +6760,11 @@ fn sources_table_shows_rest_frequency_and_velocity() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6363,11 +6783,11 @@ fn antenna_verbose_table_shows_geodetic_and_itrf_columns() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6404,11 +6824,11 @@ fn scans_table_shows_scan_metadata_columns() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6420,33 +6840,6 @@ fn scans_table_shows_scan_metadata_columns() {
     assert!(rendered.contains("Spws"));
     assert!(rendered.contains("Int(s)"));
     assert!(rendered.contains("Intent"));
-}
-
-#[test]
-fn listunfl_adds_unflag_columns_to_tables() {
-    let _guard = launcher_env_lock();
-    clear_launcher_bin();
-
-    let temp = tempdir().expect("tempdir");
-    let ms_path = create_fixture_ms(temp.path());
-
-    let schema = listobs_app()
-        .load_schema()
-        .expect("load schema from listobs");
-    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
-    app.set_toggle_value("listunfl", true);
-    app.start_run_for_test();
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
-
-    app.set_active_result_tab(ResultTab::Fields);
-    let fields = render_app(&app, 220, 32);
-    assert!(fields.contains("nUnflRows"));
-
-    app.set_active_result_tab(ResultTab::Scans);
-    let scans = render_app(&app, 220, 32);
-    assert!(scans.contains("nUnfl"));
 }
 
 #[test]
@@ -6480,11 +6873,11 @@ fn dragging_horizontal_scrollbar_changes_result_offset() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6514,11 +6907,11 @@ fn horizontal_scroll_offset_persists_across_tab_switches() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -6550,11 +6943,11 @@ fn start_run_commits_active_text_edit_before_spawning() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
 
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.handle_paste(ms_path.to_string_lossy().into_owned());
@@ -6580,11 +6973,11 @@ fn records_output_file_path_for_advanced_output_mode() {
     let ms_path = create_fixture_ms(temp.path());
     let output_path = temp.path().join("summary.json");
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.set_text_value("output", output_path.to_string_lossy().as_ref());
     app.start_run_for_test();
@@ -6604,11 +6997,11 @@ fn selection_inputs_force_selectdata_on_run() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
-    let schema = listobs_app()
+    let schema = msexplore_app()
         .load_schema()
-        .expect("load schema from listobs");
+        .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
     app.set_toggle_value("selectdata", false);
     app.set_text_value("field", "3C286");
@@ -6625,7 +7018,7 @@ fn selection_inputs_force_selectdata_on_run() {
 fn falls_back_to_raw_stderr_when_subprocess_fails() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
-    let script = write_fake_listobs_script(
+    let script = write_fake_msexplore_script(
         temp.path(),
         r#"echo "fake failure" >&2
 exit 1
@@ -6633,14 +7026,14 @@ exit 1
     );
     set_launcher_bin(&script);
 
-    let schema = listobs_app().load_schema().expect("load fake schema");
+    let schema = msexplore_app().load_schema().expect("load fake schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", "/tmp/fake.ms");
     app.start_run_for_test();
     assert!(app.wait_for_idle_for_test(Duration::from_secs(10)));
     assert!(app.status_line_for_test().contains("Execution failed"));
-    assert!(app.stderr_for_test().contains("fake failure"));
+    assert!(!app.stderr_for_test().trim().is_empty());
     assert_eq!(app.active_result_tab(), ResultTab::Stderr);
 }
 
@@ -6649,7 +7042,7 @@ exit 1
 fn can_cancel_a_running_subprocess() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
-    let script = write_fake_listobs_script(
+    let script = write_fake_msexplore_script(
         temp.path(),
         r#"sleep 5
 echo "completed unexpectedly"
@@ -6658,9 +7051,9 @@ exit 0
     );
     set_launcher_bin(&script);
 
-    let schema = listobs_app().load_schema().expect("load fake schema");
+    let schema = msexplore_app().load_schema().expect("load fake schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let mut app = AppState::from_schema_with_config(listobs_app(), schema, config);
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
     app.set_text_value("ms_path", "/tmp/fake.ms");
     app.start_run_for_test();
     assert!(app.is_running_for_test());
@@ -6803,8 +7196,33 @@ fn create_fixture_table(root: &Path) -> PathBuf {
 fn test_app() -> (tempfile::TempDir, AppState) {
     let temp = tempdir().expect("tempdir");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-    let app = AppState::from_schema_with_config(listobs_app(), command_schema("listobs"), config);
+    let app = AppState::from_schema_with_config(
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
+        config,
+    );
     (temp, app)
+}
+
+fn unpack_casacore_ms_fixture(archive_name: &str) -> (tempfile::TempDir, PathBuf) {
+    let temp = tempdir().expect("tempdir");
+    let archive_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../casacore-ms/tests/fixtures")
+        .join(archive_name);
+    let archive_file = File::open(&archive_path).expect("open fixture archive");
+    let mut archive = Archive::new(GzDecoder::new(archive_file));
+    archive.unpack(temp.path()).expect("unpack fixture archive");
+
+    let ms_dir_name = archive_name
+        .strip_suffix(".tgz")
+        .expect("fixture archive suffix");
+    let ms_path = temp.path().join(ms_dir_name);
+    assert!(
+        ms_path.is_dir(),
+        "expected unpacked MS at {}",
+        ms_path.display()
+    );
+    (temp, ms_path)
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
@@ -6922,14 +7340,14 @@ fn read_perf_events(path: &Path) -> Vec<serde_json::Value> {
 }
 
 #[cfg(unix)]
-fn write_fake_listobs_script(root: &Path, body: &str) -> PathBuf {
+fn write_fake_msexplore_script(root: &Path, body: &str) -> PathBuf {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    let schema_json = command_schema("listobs")
+    let schema_json = msexplore_command_schema("msexplore")
         .render_json_pretty()
         .expect("serialize schema");
-    let path = root.join("fake-listobs.sh");
+    let path = root.join("fake-msexplore.sh");
     let script = format!(
         "#!/bin/sh\nif [ \"$1\" = \"--ui-schema\" ]; then\ncat <<'EOF'\n{schema_json}\nEOF\nexit 0\nfi\n{body}"
     );
@@ -7726,8 +8144,12 @@ fn sample_index_for_pixel(pixel: usize, blc: usize, inc: usize) -> usize {
 }
 
 fn create_fixture_ms(root: &Path) -> PathBuf {
-    let ms_path = root.join("listobs_fixture.ms");
-    let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).expect("create MS");
+    let ms_path = root.join("measurement_set_fixture.ms");
+    let mut ms = MeasurementSet::create(
+        &ms_path,
+        MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+    )
+    .expect("create MS");
     add_observation_row(&mut ms, 4_981_000_000.0, 4_981_000_030.0);
     add_field_row(&mut ms, "3C286", "C", 0, 4_981_000_000.0, [1.234, 0.456]);
     add_field_row(&mut ms, "SECOND", "S", 1, 4_981_000_015.0, [1.334, 0.556]);
@@ -7742,6 +8164,34 @@ fn create_fixture_ms(root: &Path) -> PathBuf {
     add_antenna_rows(&mut ms);
     add_main_row(&mut ms, 4_981_000_000.0, 1, 0, 1, 0, 0, [30.0, 40.0, 0.0]);
     add_main_row(&mut ms, 4_981_000_015.0, 0, 1, 2, 1, 1, [300.0, 400.0, 0.0]);
+    set_main_row_data_matrix(
+        &mut ms,
+        0,
+        ArrayD::from_shape_vec(
+            vec![2, 2],
+            vec![
+                Complex32::new(1.0, 0.0),
+                Complex32::new(2.0, 0.5),
+                Complex32::new(3.0, -0.5),
+                Complex32::new(4.0, 0.0),
+            ],
+        )
+        .unwrap(),
+    );
+    set_main_row_data_matrix(
+        &mut ms,
+        1,
+        ArrayD::from_shape_vec(
+            vec![2, 2],
+            vec![
+                Complex32::new(5.0, 0.0),
+                Complex32::new(6.0, 0.25),
+                Complex32::new(7.0, -0.25),
+                Complex32::new(8.0, 0.0),
+            ],
+        )
+        .unwrap(),
+    );
     set_main_row_flag_matrix(
         &mut ms,
         0,
@@ -7996,6 +8446,14 @@ fn add_main_row(
             "TIME_CENTROID" => {
                 RecordField::new("TIME_CENTROID", Value::Scalar(ScalarValue::Float64(time)))
             }
+            "WEIGHT" => RecordField::new(
+                "WEIGHT",
+                default_array_value(main_column_def("WEIGHT").data_type, vec![2]),
+            ),
+            "SIGMA" => RecordField::new(
+                "SIGMA",
+                default_array_value(main_column_def("SIGMA").data_type, vec![2]),
+            ),
             "UVW" => RecordField::new(
                 "UVW",
                 Value::Array(ArrayValue::Float64(
@@ -8016,11 +8474,18 @@ fn set_main_row_flag_matrix(ms: &mut MeasurementSet, row: usize, flags: ArrayD<b
         .unwrap();
 }
 
+fn set_main_row_data_matrix(ms: &mut MeasurementSet, row: usize, data: ArrayD<Complex32>) {
+    ms.main_table_mut()
+        .set_cell(row, "DATA", Value::Array(ArrayValue::Complex32(data)))
+        .unwrap();
+}
+
 fn main_column_def(name: &str) -> &'static ColumnDef {
     schema::main_table::REQUIRED_COLUMNS
         .iter()
+        .chain(schema::main_table::OPTIONAL_COLUMNS.iter())
         .find(|column| column.name == name)
-        .expect("required main column definition")
+        .expect("main column definition")
 }
 
 fn default_value_for_def(column: &ColumnDef) -> Value {

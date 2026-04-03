@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared plot specification, payload building, rendering, and export support
-//! for `listobs`.
+//! for `listobs` metadata plots plus curated raw MeasurementSet visibility
+//! plots analogous to the common CASA `plotms` views.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -14,14 +15,14 @@ use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObje
 use serde::{Deserialize, Serialize};
 
 use crate::listobs::SpectralWindowSummary;
-use crate::{ListObsSummary, ListObsUvCoverage};
+use crate::{ListObsOptions, ListObsSummary, ListObsUvCoverage, MeasurementSet};
 
 const EXPORT_DPI: f32 = 72.0;
 #[cfg(not(target_os = "macos"))]
 const NON_MACOS_PLOT_FONT: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
 
 #[cfg(not(target_os = "macos"))]
-fn ensure_non_macos_plot_font() -> Result<(), String> {
+pub(crate) fn ensure_non_macos_plot_font() -> Result<(), String> {
     use std::sync::OnceLock;
 
     use plotters::style::{FontStyle, register_font};
@@ -49,15 +50,24 @@ pub enum ListObsPlotKind {
     ScanTimeline,
     /// SPECTRAL_WINDOW frequency-coverage plot.
     SpectralWindowCoverage,
+    /// Vector-averaged visibility amplitude against MAIN.TIME.
+    AmplitudeVsTime,
+    /// Vector-averaged visibility phase against MAIN.TIME.
+    PhaseVsTime,
+    /// Vector-averaged visibility amplitude against `sqrt(u² + v²)` in meters.
+    AmplitudeVsUvDistance,
 }
 
 impl ListObsPlotKind {
-    /// All plot kinds shipped in the first `listobs` plot workspace wave.
-    pub const ALL: [Self; 4] = [
+    /// All plot kinds shipped in the curated `listobs` plot workspace.
+    pub const ALL: [Self; 7] = [
         Self::UvCoverage,
         Self::AntennaLayout,
         Self::ScanTimeline,
         Self::SpectralWindowCoverage,
+        Self::AmplitudeVsTime,
+        Self::PhaseVsTime,
+        Self::AmplitudeVsUvDistance,
     ];
 
     /// Stable machine-readable identifier used by CLI and serialized specs.
@@ -67,6 +77,9 @@ impl ListObsPlotKind {
             Self::AntennaLayout => "antenna_layout",
             Self::ScanTimeline => "scan_timeline",
             Self::SpectralWindowCoverage => "spectral_window_coverage",
+            Self::AmplitudeVsTime => "amplitude_vs_time",
+            Self::PhaseVsTime => "phase_vs_time",
+            Self::AmplitudeVsUvDistance => "amplitude_vs_uv_distance",
         }
     }
 
@@ -77,7 +90,18 @@ impl ListObsPlotKind {
             Self::AntennaLayout => "Antenna Layout",
             Self::ScanTimeline => "Scan Timeline",
             Self::SpectralWindowCoverage => "Spectral Window Coverage",
+            Self::AmplitudeVsTime => "Amplitude vs Time",
+            Self::PhaseVsTime => "Phase vs Time",
+            Self::AmplitudeVsUvDistance => "Amplitude vs UV Distance",
         }
+    }
+
+    /// Returns `true` when this plot needs MAIN-table visibility data.
+    pub fn is_raw_visibility(self) -> bool {
+        matches!(
+            self,
+            Self::AmplitudeVsTime | Self::PhaseVsTime | Self::AmplitudeVsUvDistance
+        )
     }
 
     /// Parse a stable CLI / serialized identifier.
@@ -89,8 +113,13 @@ impl ListObsPlotKind {
             "spectral_window_coverage" | "spw_coverage" | "spws" => {
                 Ok(Self::SpectralWindowCoverage)
             }
+            "amplitude_vs_time" | "amp_time" => Ok(Self::AmplitudeVsTime),
+            "phase_vs_time" | "phase_time" => Ok(Self::PhaseVsTime),
+            "amplitude_vs_uv_distance" | "amplitude_vs_uvdist" | "amp_uvdist" => {
+                Ok(Self::AmplitudeVsUvDistance)
+            }
             other => Err(format!(
-                "unsupported plot kind {other:?}; expected one of: uv_coverage, antenna_layout, scan_timeline, spectral_window_coverage"
+                "unsupported plot kind {other:?}; expected one of: uv_coverage, antenna_layout, scan_timeline, spectral_window_coverage, amplitude_vs_time, phase_vs_time, amplitude_vs_uv_distance"
             )),
         }
     }
@@ -118,6 +147,17 @@ impl ListObsPlotKind {
                 options.insert("unit".to_string(), "ghz".to_string());
                 options.insert("labels".to_string(), "on".to_string());
                 options.insert("color_by".to_string(), "spw".to_string());
+            }
+            Self::AmplitudeVsTime | Self::PhaseVsTime | Self::AmplitudeVsUvDistance => {
+                options.insert("data_column".to_string(), "data".to_string());
+                options.insert(
+                    "color_by".to_string(),
+                    match self {
+                        Self::AmplitudeVsUvDistance => "spw",
+                        _ => "field",
+                    }
+                    .to_string(),
+                );
             }
         }
         ListObsPlotSpec {
@@ -241,17 +281,17 @@ pub struct ListObsPlotTheme {
 /// Rendering defaults for plot typography and symbols.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ListObsPlotRenderStyle {
-    margin_px: u32,
-    label_area_px: u32,
-    wide_y_label_area_px: u32,
-    axis_desc_font_px: i32,
-    axis_label_font_px: i32,
-    annotation_font_px: i32,
-    point_radius_px: i32,
-    mirror_point_radius_px: i32,
-    line_width_px: u32,
-    mirror_line_width_px: u32,
-    antenna_marker_scale_pct: u32,
+    pub(crate) margin_px: u32,
+    pub(crate) label_area_px: u32,
+    pub(crate) wide_y_label_area_px: u32,
+    pub(crate) axis_desc_font_px: i32,
+    pub(crate) axis_label_font_px: i32,
+    pub(crate) annotation_font_px: i32,
+    pub(crate) point_radius_px: i32,
+    pub(crate) mirror_point_radius_px: i32,
+    pub(crate) line_width_px: u32,
+    pub(crate) mirror_line_width_px: u32,
+    pub(crate) antenna_marker_scale_pct: u32,
 }
 
 impl ListObsPlotRenderStyle {
@@ -338,6 +378,8 @@ impl ListObsPlotTheme {
 pub enum ListObsPlotPayload {
     /// UV-coverage series grouped by baseline / field / SPW.
     UvCoverage(UvCoveragePlotPayload),
+    /// Curated raw visibility scatter payload.
+    VisibilityScatter(VisibilityScatterPlotPayload),
     /// Antenna layout scatter payload.
     AntennaLayout(AntennaLayoutPlotPayload),
     /// Scan timeline bar payload.
@@ -351,6 +393,7 @@ impl ListObsPlotPayload {
     pub fn kind(&self) -> ListObsPlotKind {
         match self {
             Self::UvCoverage(_) => ListObsPlotKind::UvCoverage,
+            Self::VisibilityScatter(payload) => payload.kind,
             Self::AntennaLayout(_) => ListObsPlotKind::AntennaLayout,
             Self::ScanTimeline(_) => ListObsPlotKind::ScanTimeline,
             Self::SpectralWindowCoverage(_) => ListObsPlotKind::SpectralWindowCoverage,
@@ -379,6 +422,34 @@ pub struct UvCoverageSeries {
     /// Stable label for hover/debug/export summaries.
     pub label: String,
     /// Plot points in lambda units.
+    pub points: Vec<(f64, f64)>,
+}
+
+/// Generic scatter payload for curated raw visibility plots.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibilityScatterPlotPayload {
+    /// Specific plot kind represented by this scatter payload.
+    pub kind: ListObsPlotKind,
+    /// X-axis label.
+    pub x_label: String,
+    /// Y-axis label.
+    pub y_label: String,
+    /// Optional fixed y-axis bounds.
+    pub fixed_y_bounds: Option<(f64, f64)>,
+    /// Series keyed by one selected metadata grouping.
+    pub series: Vec<VisibilityScatterSeries>,
+    /// Render summary.
+    pub summary: String,
+}
+
+/// One grouped visibility scatter series.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibilityScatterSeries {
+    /// Stable label for hover/debug/export summaries.
+    pub label: String,
+    /// Stable color-group key.
+    pub color_group: String,
+    /// Plot points.
     pub points: Vec<(f64, f64)>,
 }
 
@@ -483,6 +554,12 @@ pub fn build_listobs_plot_payload_from_summary(
         ListObsPlotKind::SpectralWindowCoverage => {
             build_spectral_window_coverage_payload(summary, spec)
         }
+        ListObsPlotKind::AmplitudeVsTime
+        | ListObsPlotKind::PhaseVsTime
+        | ListObsPlotKind::AmplitudeVsUvDistance => Err(format!(
+            "{} requires MAIN-table visibility data; build it with build_listobs_visibility_plot_payload",
+            spec.kind.display_name()
+        )),
     }
 }
 
@@ -540,6 +617,18 @@ pub fn build_listobs_uv_plot_payload(
     }))
 }
 
+/// Build one curated raw-visibility plot payload directly from a MeasurementSet.
+///
+/// This supports the common CASA `plotms` views implemented in this crate:
+/// amplitude vs time, phase vs time, and amplitude vs UV distance.
+pub fn build_listobs_visibility_plot_payload(
+    ms: &MeasurementSet,
+    options: &ListObsOptions,
+    spec: &ListObsPlotSpec,
+) -> Result<ListObsPlotPayload, String> {
+    crate::msexplore::build_listobs_compat_visibility_payload(ms, options, spec)
+}
+
 /// Render one plot payload into a bitmap image.
 pub fn render_listobs_plot_image(
     payload: &ListObsPlotPayload,
@@ -579,6 +668,9 @@ pub fn render_listobs_plot_image_with_style(
     match payload {
         ListObsPlotPayload::UvCoverage(payload) => {
             render_uv_coverage_plot(&root, payload, theme, style)?
+        }
+        ListObsPlotPayload::VisibilityScatter(payload) => {
+            render_visibility_scatter_plot(&root, payload, theme, style)?
         }
         ListObsPlotPayload::AntennaLayout(payload) => {
             render_antenna_layout_plot(&root, payload, theme, style)?
@@ -979,6 +1071,100 @@ fn render_uv_coverage_plot(
     Ok(())
 }
 
+fn render_visibility_scatter_plot(
+    root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
+    payload: &VisibilityScatterPlotPayload,
+    theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
+) -> Result<(), String> {
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = bounds(
+        payload
+            .series
+            .iter()
+            .flat_map(|series| series.points.iter().copied()),
+    )
+    .ok_or_else(|| "visibility scatter plot has no finite points".to_string())?;
+    if let Some((fixed_min, fixed_max)) = payload.fixed_y_bounds {
+        min_y = fixed_min;
+        max_y = fixed_max;
+    } else {
+        (min_y, max_y) = padded_range(min_y, max_y);
+    }
+    (min_x, max_x) = padded_range(min_x, max_x);
+
+    let x_offset = if matches!(
+        payload.kind,
+        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime
+    ) {
+        scan_timeline_axis_offset(min_x, max_x)
+    } else {
+        0.0
+    };
+    let x_label = if x_offset == 0.0 {
+        payload.x_label.clone()
+    } else if matches!(
+        payload.kind,
+        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime
+    ) {
+        format!("Time (MJD seconds - {:.0})", x_offset)
+    } else {
+        format!("{} - {:.0}", payload.x_label, x_offset)
+    };
+    let x_span = (max_x - min_x).abs();
+    let y_span = (max_y - min_y).abs();
+
+    let mut chart = ChartBuilder::on(root)
+        .margin(style.margin_px)
+        .x_label_area_size(style.label_area_px)
+        .y_label_area_size(style.wide_y_label_area_px)
+        .build_cartesian_2d((min_x - x_offset)..(max_x - x_offset), min_y..max_y)
+        .map_err(|error| error.to_string())?;
+    chart
+        .configure_mesh()
+        .x_desc(&x_label)
+        .y_desc(&payload.y_label)
+        .axis_desc_style(
+            ("sans-serif", style.axis_desc_font_px)
+                .into_font()
+                .color(&rgb(theme.axis)),
+        )
+        .axis_style(rgb(theme.axis))
+        .label_style(
+            ("sans-serif", style.axis_label_font_px)
+                .into_font()
+                .color(&rgb(theme.label)),
+        )
+        .light_line_style(rgb(theme.grid).mix(0.55))
+        .bold_line_style(rgb(theme.grid))
+        .x_labels(6)
+        .y_labels(6)
+        .x_label_formatter(&|value| format_numeric_tick(*value, x_span))
+        .y_label_formatter(&|value| format_numeric_tick(*value, y_span))
+        .draw()
+        .map_err(|error| error.to_string())?;
+
+    let point_radius = style.point_radius_px.saturating_sub(1).max(3);
+    for series in &payload.series {
+        let color = palette_color(&series.color_group, theme);
+        chart
+            .draw_series(PointSeries::of_element(
+                series
+                    .points
+                    .iter()
+                    .map(|(x, y)| (*x - x_offset, *y))
+                    .collect::<Vec<_>>(),
+                point_radius,
+                color.filled(),
+                &|coord, size, draw_style| {
+                    EmptyElement::at(coord) + Circle::new((0, 0), size, draw_style)
+                },
+            ))
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 fn render_antenna_layout_plot(
     root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
     payload: &AntennaLayoutPlotPayload,
@@ -1271,6 +1457,23 @@ fn validate_option(kind: ListObsPlotKind, key: &str, value: &str) -> Result<(), 
                 "unsupported option {key:?}={value:?} for spectral_window_coverage"
             )),
         },
+        ListObsPlotKind::AmplitudeVsTime
+        | ListObsPlotKind::PhaseVsTime
+        | ListObsPlotKind::AmplitudeVsUvDistance => match key {
+            "data_column" if matches!(value, "data" | "corrected" | "model") => Ok(()),
+            "color_by"
+                if matches!(
+                    value,
+                    "field" | "scan" | "spw" | "baseline" | "correlation" | "none"
+                ) =>
+            {
+                Ok(())
+            }
+            _ => Err(format!(
+                "unsupported option {key:?}={value:?} for {}",
+                kind.as_str()
+            )),
+        },
     }
 }
 
@@ -1352,6 +1555,20 @@ fn equal_axis_ranges(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> ((f64, f
         (center_x - half_extent, center_x + half_extent),
         (center_y - half_extent, center_y + half_extent),
     )
+}
+
+fn padded_range(min_value: f64, max_value: f64) -> (f64, f64) {
+    let span = (max_value - min_value).abs();
+    if !min_value.is_finite() || !max_value.is_finite() {
+        return (-1.0, 1.0);
+    }
+    if span < 1e-9 {
+        let padding = min_value.abs().max(1.0) * 0.1;
+        (min_value - padding, max_value + padding)
+    } else {
+        let padding = span * 0.08;
+        (min_value - padding, max_value + padding)
+    }
 }
 
 fn bounds(points: impl Iterator<Item = (f64, f64)>) -> Option<(f64, f64, f64, f64)> {
@@ -1465,9 +1682,8 @@ mod tests {
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
         ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary, SpectralWindowSummary,
     };
-    use crate::{
-        ListObsOptions, ListObsSummary, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack,
-    };
+    use crate::listobs::{ListObsUvPoint, ListObsUvTrack};
+    use crate::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
     use tempfile::tempdir;
 
     #[test]

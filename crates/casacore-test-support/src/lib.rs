@@ -111,6 +111,7 @@ pub(crate) fn lock_casacore_global_state(
 /// The lookup order is:
 /// 1. `CASA_RS_TESTDATA_ROOT`
 /// 2. `../casatestdata` relative to the repo root
+/// 3. `~/SoftwareProjects/casatestdata`
 pub fn casatestdata_root() -> Option<PathBuf> {
     if let Some(root) = std::env::var_os("CASA_RS_TESTDATA_ROOT") {
         let path = PathBuf::from(root);
@@ -135,7 +136,15 @@ fn casatestdata_root_candidates() -> Vec<PathBuf> {
         .ancestors()
         .nth(2)
         .expect("repo root");
-    vec![repo_root.join("../casatestdata")]
+    let mut candidates = vec![repo_root.join("../casatestdata")];
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(
+            PathBuf::from(home)
+                .join("SoftwareProjects")
+                .join("casatestdata"),
+        );
+    }
+    candidates
 }
 
 fn normalize_existing_path(path: &Path) -> PathBuf {
@@ -2267,10 +2276,19 @@ mod tests {
     }
 
     #[test]
-    fn casatestdata_candidates_include_repo_sibling() {
+    fn casatestdata_candidates_include_repo_sibling_and_home_workspace_fallback() {
         let candidates = casatestdata_root_candidates();
-        assert_eq!(candidates.len(), 1);
-        assert!(candidates[0].ends_with("../casatestdata"));
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("../casatestdata"))
+        );
+        if let Some(home) = std::env::var_os("HOME") {
+            let home_candidate = PathBuf::from(home)
+                .join("SoftwareProjects")
+                .join("casatestdata");
+            assert!(candidates.iter().any(|path| path == &home_candidate));
+        }
     }
 
     #[test]

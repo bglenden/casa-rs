@@ -43,10 +43,15 @@ fn ensure_plotters_font() -> Result<(), String> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ListObsPlotRenderInput {
-    pub payload: casacore_ms::ListObsPlotPayload,
+pub(crate) struct MsExplorePlotRenderInput {
+    pub payload: casacore_ms::MsPlotPayload,
     pub theme_mode: ThemeMode,
     pub terminal_cell_px: (u16, u16),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PlotRenderInput {
+    MsExplore(MsExplorePlotRenderInput),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -137,28 +142,26 @@ pub(crate) struct ImageSpectrumLayout {
     pub bottom_gutter: u32,
 }
 
-pub(crate) fn plot_theme(theme_mode: ThemeMode) -> casacore_ms::ListObsPlotTheme {
+pub(crate) fn plot_theme(theme_mode: ThemeMode) -> casacore_ms::MeasurementSetPlotTheme {
     match theme_mode {
-        ThemeMode::DenseAnsi => casacore_ms::ListObsPlotTheme::dark(),
-        ThemeMode::RichPanel => casacore_ms::ListObsPlotTheme::light(),
+        ThemeMode::DenseAnsi => casacore_ms::MeasurementSetPlotTheme::dark(),
+        ThemeMode::RichPanel => casacore_ms::MeasurementSetPlotTheme::light(),
     }
 }
 
 pub(crate) fn render_plot_image(
     width: u32,
     height: u32,
-    input: &ListObsPlotRenderInput,
+    input: &PlotRenderInput,
 ) -> Result<DynamicImage, String> {
-    casacore_ms::render_listobs_plot_image_with_style(
-        &input.payload,
-        plot_theme(input.theme_mode),
-        width,
-        height,
-        casacore_ms::ListObsPlotRenderStyle::for_terminal_cells(
-            input.terminal_cell_px.0,
-            input.terminal_cell_px.1,
+    match input {
+        PlotRenderInput::MsExplore(input) => casacore_ms::render_msexplore_plot_image(
+            &input.payload,
+            plot_theme(input.theme_mode),
+            width,
+            height,
         ),
-    )
+    }
 }
 
 pub(crate) fn render_image_plane_image(
