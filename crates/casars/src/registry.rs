@@ -136,10 +136,13 @@ impl RegistryApp {
         }
 
         let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+        let manifest_path = workspace_manifest_path();
         Ok(ResolvedCommand {
             program: cargo,
             prefix_args: vec![
                 OsString::from("run"),
+                OsString::from("--manifest-path"),
+                manifest_path.into_os_string(),
                 OsString::from("-q"),
                 OsString::from("-p"),
                 OsString::from(cargo_package),
@@ -283,6 +286,17 @@ fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
+fn workspace_manifest_path() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(|path| path.parent())
+        .unwrap_or_else(|| {
+            panic!("casars manifest dir should live under <workspace>/crates/casars")
+        })
+        .join("Cargo.toml")
+}
+
 fn sibling_binary_is_stale_for_current_process(sibling_path: &std::path::Path) -> bool {
     let current_exe = match env::current_exe() {
         Ok(path) => path,
@@ -399,6 +413,8 @@ mod tests {
             args,
             vec![
                 "run",
+                "--manifest-path",
+                workspace_manifest_path().to_string_lossy().as_ref(),
                 "-q",
                 "-p",
                 "casacore-tables",
