@@ -5929,9 +5929,7 @@ fn render_external_scatter_legend(
     style: ListObsPlotRenderStyle,
 ) -> Result<(), String> {
     let (width, height) = area.dim_in_pixel();
-    let font = ("sans-serif", style.axis_label_font_px())
-        .into_font()
-        .color(&rgb(theme.label));
+    let font = external_scatter_legend_text_style(theme, style);
     let marker_radius = i32::from(style.point_radius_px().saturating_sub(1).max(3));
     let line_height = i32::from(style.axis_label_font_px().saturating_add(8));
     let padding = 12i32;
@@ -6639,7 +6637,7 @@ fn render_scatter_panel(
                     })
                     .background_style(rgb(theme.background).mix(0.92))
                     .border_style(rgb(theme.axis))
-                    .label_font(("sans-serif", style.axis_label_font_px()))
+                    .label_font(internal_scatter_legend_text_style(theme, style))
                     .draw()
                     .map_err(|error| error.to_string())?;
             }
@@ -6754,12 +6752,30 @@ fn render_scatter_panel(
                 })
                 .background_style(rgb(theme.background).mix(0.92))
                 .border_style(rgb(theme.axis))
-                .label_font(("sans-serif", style.axis_label_font_px()))
+                .label_font(internal_scatter_legend_text_style(theme, style))
                 .draw()
                 .map_err(|error| error.to_string())?;
         }
     }
     Ok(())
+}
+
+fn external_scatter_legend_text_style(
+    theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
+) -> TextStyle<'static> {
+    ("sans-serif", style.axis_label_font_px())
+        .into_font()
+        .color(&rgb(theme.label))
+}
+
+fn internal_scatter_legend_text_style(
+    theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
+) -> TextStyle<'static> {
+    ("sans-serif", style.axis_label_font_px())
+        .into_font()
+        .color(&rgb(theme.axis))
 }
 
 fn scatter_bounds<I>(
@@ -6932,6 +6948,7 @@ fn rgb(color: [u8; 3]) -> RGBColor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plotters::style::Color;
 
     #[test]
     fn dual_axis_series_styles_use_distinct_markers_and_colors() {
@@ -6969,6 +6986,16 @@ mod tests {
         assert_eq!(primary_style.marker, ScatterMarker::FilledCircle);
         assert_eq!(secondary_style.marker, ScatterMarker::HollowSquare);
         assert_ne!(primary_style.color, secondary_style.color);
+    }
+
+    #[test]
+    fn internal_legend_text_style_uses_theme_axis_color() {
+        let theme = ListObsPlotTheme::dark();
+        let style = ListObsPlotRenderStyle::for_bitmap_size(1200, 800);
+
+        let text_style = internal_scatter_legend_text_style(theme, style);
+
+        assert_eq!(text_style.color.rgb, rgb(theme.axis).to_backend_color().rgb);
     }
 }
 
