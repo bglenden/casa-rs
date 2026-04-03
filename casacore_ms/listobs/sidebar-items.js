@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ListObsOutputFormat"],"struct":["AntennaSummary","DataDescriptionSummary","FieldSummary","ListObsOptions","ListObsSummary","ListObsUvCoverage","ListObsUvPoint","ListObsUvTrack","MeasurementSetInfo","ObservationSummary","PolarizationSummary","ScanSummary","SourceSummary","SpectralWindowSummary"]};
