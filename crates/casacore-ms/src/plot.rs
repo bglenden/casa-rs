@@ -1682,9 +1682,8 @@ mod tests {
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
         ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary, SpectralWindowSummary,
     };
-    use crate::{
-        ListObsOptions, ListObsSummary, ListObsUvCoverage, ListObsUvPoint, ListObsUvTrack,
-    };
+    use crate::listobs::{ListObsUvPoint, ListObsUvTrack};
+    use crate::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
     use tempfile::tempdir;
 
     #[test]

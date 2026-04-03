@@ -628,7 +628,6 @@ pub(crate) fn movie_debug_log(message: impl AsRef<str>) {
     );
 }
 
-
 /// Errors surfaced by the `casars` launcher.
 #[derive(Debug, Error)]
 pub enum CasarsError {

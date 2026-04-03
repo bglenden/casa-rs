@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Generic MeasurementSet plotting specifications and export helpers.
 //!
-//! `msexplore` is the next plotting layer above the curated `listobs` presets:
+//! `msexplore` is the next plotting layer above the curated MeasurementSet
+//! metadata presets:
 //!
-//! - `listobs` keeps its fixed, compatibility-oriented preset catalog.
+//! - metadata summaries keep their fixed, compatibility-oriented preset catalog.
 //! - `msexplore` exposes reusable plot specifications with explicit axes,
 //!   selections, averaging, transforms, and export settings.
-//! - Common `listobs` raw-visibility plots are lowered into the generic
+//! - Common curated raw-visibility plots are lowered into the generic
 //!   `msexplore` scatter builder so new feature work lands in one place.
 //!
 //! The first delivery focuses on the most common MeasurementSet `plotms`
@@ -41,7 +42,6 @@ use plotters::style::text_anchor::{HPos, Pos, VPos};
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 use serde::{Deserialize, Serialize};
 
-use crate::MeasurementSet;
 use crate::columns::{
     exposure_interval::IntervalColumn,
     frequency_columns::ChanFreqColumn,
@@ -59,11 +59,45 @@ use crate::plot::{
 };
 use crate::schema::main_table::VisibilityDataColumn;
 use crate::subtables::SubTable;
+use crate::{MeasurementSet, MeasurementSetSummaryOptions, MeasurementSetSummaryOutputFormat};
 
 const EXPORT_DPI: f32 = 72.0;
 const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
 type BitmapArea<'a> = DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>;
+
+struct ScatterPanelAxes<'a> {
+    x_axis: MsAxis,
+    y_axis: MsAxis,
+    secondary_y_axis: Option<MsAxis>,
+    x_label: &'a str,
+    y_label: &'a str,
+    secondary_y_label: Option<&'a str>,
+}
+
+struct ScatterPanelBounds {
+    fixed_x_bounds: Option<(f64, f64)>,
+    fixed_y_bounds: Option<(f64, f64)>,
+    secondary_fixed_y_bounds: Option<(f64, f64)>,
+    bounds_override: Option<(f64, f64, f64, f64)>,
+}
+
+struct ScatterPanelPresentation<'a> {
+    panel_title: Option<&'a str>,
+    showlegend: bool,
+    legend_position: MsLegendPosition,
+    showmajorgrid: bool,
+    showminorgrid: bool,
+}
+
+struct ScatterPanelRenderContext<'a> {
+    axes: ScatterPanelAxes<'a>,
+    bounds: ScatterPanelBounds,
+    series: &'a [MsScatterSeries],
+    presentation: ScatterPanelPresentation<'a>,
+    theme: ListObsPlotTheme,
+    style: ListObsPlotRenderStyle,
+}
 
 /// Stable preset identifiers for common MeasurementSet plots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -736,9 +770,9 @@ impl Default for MsSelectionSpec {
 }
 
 impl MsSelectionSpec {
-    /// Convert the generic selection spec into the shared `listobs` option set.
-    pub fn to_listobs_options(&self) -> ListObsOptions {
-        ListObsOptions {
+    /// Convert the generic selection spec into the shared summary option set.
+    pub fn to_summary_options(&self) -> MeasurementSetSummaryOptions {
+        MeasurementSetSummaryOptions {
             verbose: true,
             selectdata: self.selectdata,
             field: self.field.clone(),
@@ -760,7 +794,7 @@ impl MsSelectionSpec {
 }
 
 /// Averaging controls modeled after CASA `plotms`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct MsAverageSpec {
     /// Channel bin size used for channel/frequency plots.
     pub avgchannel: Option<usize>,
@@ -778,21 +812,6 @@ pub struct MsAverageSpec {
     pub avgspw: bool,
     /// Use scalar averaging instead of vector averaging.
     pub scalar: bool,
-}
-
-impl Default for MsAverageSpec {
-    fn default() -> Self {
-        Self {
-            avgchannel: None,
-            avgtime: None,
-            avgscan: false,
-            avgfield: false,
-            avgbaseline: false,
-            avgantenna: false,
-            avgspw: false,
-            scalar: false,
-        }
-    }
 }
 
 /// Transform controls modeled after CASA `plotms`.
@@ -1071,7 +1090,7 @@ impl fmt::Display for MsIterationAxis {
 }
 
 /// Iteration controls for multi-plot pages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct MsIterationSpec {
     /// Iteration axis identifier.
     pub iteraxis: Option<MsIterationAxis>,
@@ -1083,18 +1102,6 @@ pub struct MsIterationSpec {
     pub xsharedaxis: bool,
     /// Share Y axis across panels.
     pub ysharedaxis: bool,
-}
-
-impl Default for MsIterationSpec {
-    fn default() -> Self {
-        Self {
-            iteraxis: None,
-            xselfscale: false,
-            yselfscale: false,
-            xsharedaxis: false,
-            ysharedaxis: false,
-        }
-    }
 }
 
 /// Presentation controls for a single plot.
@@ -1145,6 +1152,16 @@ pub struct MsFlagEditSpec {
     pub extcorr: bool,
     /// Extend across channels.
     pub extchannel: bool,
+}
+
+struct FlagEditPreviewContext<'a> {
+    ms: &'a MeasurementSet,
+    plot_title: &'a str,
+    plot_index: Option<usize>,
+    panel_key: Option<String>,
+    panel_label: Option<String>,
+    x_axis: MsAxis,
+    y_axis: MsAxis,
 }
 
 /// Inclusive rectangular region used for staged flag editing.
@@ -1860,7 +1877,7 @@ pub struct MsExploreSpec {
     /// MeasurementSet root directory.
     pub ms_path: PathBuf,
     /// Human/machine-readable summary format.
-    pub summary_format: crate::listobs::ListObsOutputFormat,
+    pub summary_format: MeasurementSetSummaryOutputFormat,
     /// Shared row-selection controls.
     pub selection: MsSelectionSpec,
     /// Page header items shown above rendered plots.
@@ -2173,7 +2190,7 @@ fn build_msexplore_plot_payload_validated(
         .preset
         .and_then(MsPlotPreset::lowers_to_listobs_metadata)
     {
-        let listobs_options = selection.to_listobs_options();
+        let listobs_options = selection.to_summary_options();
         return match listobs_kind {
             ListObsPlotKind::UvCoverage => {
                 let coverage = ListObsUvCoverage::from_ms_with_options(ms, &listobs_options)
@@ -2358,13 +2375,15 @@ fn preview_msexplore_flag_edit_from_payload(
                 );
             }
             build_flag_edit_preview_from_series(
-                ms,
-                &payload.title,
-                None,
-                None,
-                None,
-                payload.x_axis,
-                payload.y_axis,
+                &FlagEditPreviewContext {
+                    ms,
+                    plot_title: &payload.title,
+                    plot_index: None,
+                    panel_key: None,
+                    panel_label: None,
+                    x_axis: payload.x_axis,
+                    y_axis: payload.y_axis,
+                },
                 &payload.series,
                 flag_edit,
             )
@@ -2411,13 +2430,15 @@ fn preview_msexplore_flag_edit_from_payload(
                 }
             };
             build_flag_edit_preview_from_series(
-                ms,
-                &payload.title,
-                None,
-                Some(panel.key.clone()),
-                Some(panel.label.clone()),
-                payload.x_axis,
-                payload.y_axis,
+                &FlagEditPreviewContext {
+                    ms,
+                    plot_title: &payload.title,
+                    plot_index: None,
+                    panel_key: Some(panel.key.clone()),
+                    panel_label: Some(panel.label.clone()),
+                    x_axis: payload.x_axis,
+                    y_axis: payload.y_axis,
+                },
                 &panel.series,
                 flag_edit,
             )
@@ -2466,13 +2487,15 @@ fn preview_msexplore_flag_edit_from_payload(
                 );
             }
             build_flag_edit_preview_from_series(
-                ms,
-                &item.plot.title,
-                Some(item.plotindex),
-                None,
-                None,
-                item.plot.x_axis,
-                item.plot.y_axis,
+                &FlagEditPreviewContext {
+                    ms,
+                    plot_title: &item.plot.title,
+                    plot_index: Some(item.plotindex),
+                    panel_key: None,
+                    panel_label: None,
+                    x_axis: item.plot.x_axis,
+                    y_axis: item.plot.y_axis,
+                },
                 &item.plot.series,
                 flag_edit,
             )
@@ -2553,13 +2576,7 @@ fn apply_page_header_lines(payload: &mut MsPlotPayload, header_lines: Vec<String
 }
 
 fn build_flag_edit_preview_from_series(
-    ms: &MeasurementSet,
-    plot_title: &str,
-    plot_index: Option<usize>,
-    panel_key: Option<String>,
-    panel_label: Option<String>,
-    x_axis: MsAxis,
-    y_axis: MsAxis,
+    context: &FlagEditPreviewContext<'_>,
     series: &[MsScatterSeries],
     flag_edit: &MsFlagEditSpec,
 ) -> Result<MsFlagEditPreview, String> {
@@ -2584,7 +2601,7 @@ fn build_flag_edit_preview_from_series(
             matched_points += 1;
             let (corr_count, chan_count) = *row_shapes
                 .entry(point_ref.row)
-                .or_insert(clone_flag_matrix(ms, point_ref.row)?.dim());
+                .or_insert(clone_flag_matrix(context.ms, point_ref.row)?.dim());
             let corr_start = if flag_edit.extcorr { 0 } else { point_ref.corr };
             let corr_end = if flag_edit.extcorr {
                 corr_count
@@ -2616,10 +2633,10 @@ fn build_flag_edit_preview_from_series(
         samples_by_row.entry(row).or_default().push((corr, chan));
     }
 
-    let flag_row = ms.flag_row_column();
+    let flag_row = context.ms.flag_row_column();
     for (row, samples) in samples_by_row {
         let old_flag_row = flag_row.get(row).map_err(|error| error.to_string())?;
-        let old_matrix = clone_flag_matrix(ms, row)?;
+        let old_matrix = clone_flag_matrix(context.ms, row)?;
         let mut new_matrix = old_matrix.clone();
         let mut changed_samples = 0usize;
         for (corr, chan) in samples {
@@ -2652,12 +2669,12 @@ fn build_flag_edit_preview_from_series(
     }
 
     Ok(MsFlagEditPreview {
-        plot_title: plot_title.to_string(),
-        plot_index,
-        panel_key,
-        panel_label,
-        x_axis,
-        y_axis,
+        plot_title: context.plot_title.to_string(),
+        plot_index: context.plot_index,
+        panel_key: context.panel_key.clone(),
+        panel_label: context.panel_label.clone(),
+        x_axis: context.x_axis,
+        y_axis: context.y_axis,
         region,
         action: flag_edit.action,
         extcorr: flag_edit.extcorr,
@@ -2710,7 +2727,7 @@ fn resolve_page_header_lines(
     if spec.header_items.is_empty() {
         return Ok(Vec::new());
     }
-    let summary = ListObsSummary::from_ms_with_options(ms, &spec.selection.to_listobs_options())
+    let summary = ListObsSummary::from_ms_with_options(ms, &spec.selection.to_summary_options())
         .map_err(|error| error.to_string())?;
     let segments = spec
         .header_items
@@ -3187,6 +3204,16 @@ struct AveragingPointKey {
     chan_ordinal: usize,
 }
 
+struct AveragingPointKeyInputs<'a> {
+    field_id: i32,
+    scan_number: i32,
+    spw_id: i32,
+    baseline: AveragingBaselineToken,
+    corr_index: usize,
+    row_time_value: f64,
+    bin: &'a ChannelBin,
+}
+
 #[derive(Debug, Default)]
 struct AveragedPointAccumulator {
     visibility_samples: Vec<Complex64>,
@@ -3236,7 +3263,7 @@ fn build_generic_visibility_scatter(
         return build_generic_visibility_scatter_with_averaging(ms, selection, spec, point_budget);
     }
 
-    let listobs_options = selection.to_listobs_options();
+    let listobs_options = selection.to_summary_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
 
     let needs_visibility_grid = spec.x_axis.is_visibility_math()
@@ -3850,39 +3877,38 @@ fn build_shared_time_average_scope_key(
 }
 
 fn build_averaging_point_key(
-    field_id: i32,
-    scan_number: i32,
-    spw_id: i32,
-    baseline: AveragingBaselineToken,
-    corr_index: usize,
-    row_time_value: f64,
-    bin: &ChannelBin,
+    inputs: AveragingPointKeyInputs<'_>,
     spec: &MsPlotSpec,
     time_scope_origins: &std::collections::BTreeMap<TimeAverageScopeKey, f64>,
 ) -> AveragingPointKey {
     let time_key = if let Some(avgtime) = spec.averaging.avgtime {
-        let scope =
-            build_time_average_scope_key(field_id, scan_number, spw_id, baseline.clone(), spec);
+        let scope = build_time_average_scope_key(
+            inputs.field_id,
+            inputs.scan_number,
+            inputs.spw_id,
+            inputs.baseline.clone(),
+            spec,
+        );
         let origin = time_scope_origins
             .get(&scope)
             .copied()
-            .unwrap_or(row_time_value);
-        let bucket =
-            ((row_time_value - origin + AVG_TIME_BUCKET_EPSILON_SECONDS) / avgtime).floor() as i64;
+            .unwrap_or(inputs.row_time_value);
+        let bucket = ((inputs.row_time_value - origin + AVG_TIME_BUCKET_EPSILON_SECONDS) / avgtime)
+            .floor() as i64;
         AveragingTimeKey::Bucket(bucket)
     } else {
-        AveragingTimeKey::Exact(row_time_value.to_bits())
+        AveragingTimeKey::Exact(inputs.row_time_value.to_bits())
     };
     AveragingPointKey {
         time_key,
-        field_id: (!spec.averaging.avgfield).then_some(field_id),
-        scan_number: (!spec.averaging.avgscan).then_some(scan_number),
-        spw_id: (!spec.averaging.avgspw).then_some(spw_id),
-        baseline,
-        corr_index,
-        chan_start: bin.start,
-        chan_end: bin.end,
-        chan_ordinal: bin.ordinal,
+        field_id: (!spec.averaging.avgfield).then_some(inputs.field_id),
+        scan_number: (!spec.averaging.avgscan).then_some(inputs.scan_number),
+        spw_id: (!spec.averaging.avgspw).then_some(inputs.spw_id),
+        baseline: inputs.baseline,
+        corr_index: inputs.corr_index,
+        chan_start: inputs.bin.start,
+        chan_end: inputs.bin.end,
+        chan_ordinal: inputs.bin.ordinal,
     }
 }
 
@@ -3974,7 +4000,7 @@ fn build_generic_visibility_scatter_with_averaging(
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
-    let listobs_options = selection.to_listobs_options();
+    let listobs_options = selection.to_summary_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
 
     let needs_visibility_grid = spec.x_axis.is_visibility_math()
@@ -4368,13 +4394,15 @@ fn build_generic_visibility_scatter_with_averaging(
                         );
                     }
                     let point_key = build_averaging_point_key(
-                        field_id_value,
-                        scan_number_value,
-                        spw_id,
-                        baseline_token.clone(),
-                        *corr_index,
-                        row_time_value,
-                        bin,
+                        AveragingPointKeyInputs {
+                            field_id: field_id_value,
+                            scan_number: scan_number_value,
+                            spw_id,
+                            baseline: baseline_token.clone(),
+                            corr_index: *corr_index,
+                            row_time_value,
+                            bin,
+                        },
                         spec,
                         &time_scope_origins,
                     );
@@ -4408,21 +4436,21 @@ fn build_generic_visibility_scatter_with_averaging(
                         }
 
                         let mut series_used = false;
-                        if spec.x_axis.is_visibility_math() || y_axis.is_visibility_math() {
-                            if !samples.is_empty() {
-                                let transformed_samples =
-                                    transform_visibility_samples_for_baseline_token(
-                                        &samples,
-                                        baseline_token,
-                                        antenna1_value,
-                                        antenna2_value,
-                                    );
-                                accumulator
-                                    .visibility_sample_weights
-                                    .extend(visibility_weight_samples.iter().copied());
-                                accumulator.visibility_samples.extend(transformed_samples);
-                                series_used = true;
-                            }
+                        if (spec.x_axis.is_visibility_math() || y_axis.is_visibility_math())
+                            && !samples.is_empty()
+                        {
+                            let transformed_samples =
+                                transform_visibility_samples_for_baseline_token(
+                                    &samples,
+                                    baseline_token,
+                                    antenna1_value,
+                                    antenna2_value,
+                                );
+                            accumulator
+                                .visibility_sample_weights
+                                .extend(visibility_weight_samples.iter().copied());
+                            accumulator.visibility_samples.extend(transformed_samples);
+                            series_used = true;
                         }
                         match spec.x_axis {
                             MsAxis::Flag => {
@@ -5886,7 +5914,7 @@ fn scalar_values_to_grid(values: &[f64], chan_count: usize) -> FloatGrid {
         chan_count,
         values: values
             .iter()
-            .flat_map(|value| std::iter::repeat(*value).take(chan_count))
+            .flat_map(|value| std::iter::repeat_n(*value, chan_count))
             .collect(),
     }
 }
@@ -5962,7 +5990,7 @@ fn draw_scatter_header_lines(
     let font = ("sans-serif", style.axis_label_font_px())
         .into_font()
         .color(&rgb(theme.label));
-    let line_height = i32::from(style.axis_label_font_px().saturating_add(6));
+    let line_height = style.axis_label_font_px().saturating_add(6);
     for (index, line) in header_lines.iter().enumerate() {
         area.draw(&Text::new(
             line.clone(),
@@ -6072,8 +6100,8 @@ fn render_external_scatter_legend(
 ) -> Result<(), String> {
     let (width, height) = area.dim_in_pixel();
     let font = external_scatter_legend_text_style(theme, style);
-    let marker_radius = i32::from(style.point_radius_px().saturating_sub(1).max(3));
-    let line_height = i32::from(style.axis_label_font_px().saturating_add(8));
+    let marker_radius = style.point_radius_px().saturating_sub(1).max(3);
+    let line_height = style.axis_label_font_px().saturating_add(8);
     let padding = 12i32;
 
     let draw_marker = |area: &BitmapArea<'_>,
@@ -6125,7 +6153,7 @@ fn render_external_scatter_legend(
             let mut y = padding + marker_radius;
             for entry in legend_entries {
                 let estimated_width = (entry.label.len() as i32)
-                    .saturating_mul(i32::from(style.axis_label_font_px()) / 2)
+                    .saturating_mul(style.axis_label_font_px() / 2)
                     .saturating_add(marker_radius * 2 + 24);
                 if x + estimated_width > width as i32 - padding {
                     x = padding;
@@ -6182,24 +6210,32 @@ fn render_scatter_image(
         reserve_scatter_canvas(&root, &payload.title, &payload.header_lines, theme, style)?;
     render_scatter_panel(
         &plot_root,
-        payload.x_axis,
-        payload.y_axis,
-        payload.secondary_y_axis,
-        &payload.x_label,
-        &payload.y_label,
-        payload.secondary_y_label.as_deref(),
-        payload.fixed_x_bounds,
-        payload.fixed_y_bounds,
-        payload.secondary_fixed_y_bounds,
-        &payload.series,
-        None,
-        theme,
-        style,
-        payload.showlegend,
-        payload.legend_position,
-        payload.showmajorgrid,
-        payload.showminorgrid,
-        None,
+        ScatterPanelRenderContext {
+            axes: ScatterPanelAxes {
+                x_axis: payload.x_axis,
+                y_axis: payload.y_axis,
+                secondary_y_axis: payload.secondary_y_axis,
+                x_label: &payload.x_label,
+                y_label: &payload.y_label,
+                secondary_y_label: payload.secondary_y_label.as_deref(),
+            },
+            bounds: ScatterPanelBounds {
+                fixed_x_bounds: payload.fixed_x_bounds,
+                fixed_y_bounds: payload.fixed_y_bounds,
+                secondary_fixed_y_bounds: payload.secondary_fixed_y_bounds,
+                bounds_override: None,
+            },
+            series: &payload.series,
+            presentation: ScatterPanelPresentation {
+                panel_title: None,
+                showlegend: payload.showlegend,
+                legend_position: payload.legend_position,
+                showmajorgrid: payload.showmajorgrid,
+                showminorgrid: payload.showminorgrid,
+            },
+            theme,
+            style,
+        },
     )?;
     drop(plot_root);
     root.present().map_err(|error| error.to_string())?;
@@ -6277,24 +6313,32 @@ fn render_scatter_grid_image(
         };
         render_scatter_panel(
             area,
-            payload.x_axis,
-            payload.y_axis,
-            None,
-            &payload.x_label,
-            &payload.y_label,
-            None,
-            payload.fixed_x_bounds,
-            payload.fixed_y_bounds,
-            None,
-            &panel.series,
-            Some(&panel.label),
-            theme,
-            style,
-            payload.showlegend,
-            payload.legend_position,
-            payload.showmajorgrid,
-            payload.showminorgrid,
-            resolved_bounds,
+            ScatterPanelRenderContext {
+                axes: ScatterPanelAxes {
+                    x_axis: payload.x_axis,
+                    y_axis: payload.y_axis,
+                    secondary_y_axis: None,
+                    x_label: &payload.x_label,
+                    y_label: &payload.y_label,
+                    secondary_y_label: None,
+                },
+                bounds: ScatterPanelBounds {
+                    fixed_x_bounds: payload.fixed_x_bounds,
+                    fixed_y_bounds: payload.fixed_y_bounds,
+                    secondary_fixed_y_bounds: None,
+                    bounds_override: resolved_bounds,
+                },
+                series: &panel.series,
+                presentation: ScatterPanelPresentation {
+                    panel_title: Some(&panel.label),
+                    showlegend: payload.showlegend,
+                    legend_position: payload.legend_position,
+                    showmajorgrid: payload.showmajorgrid,
+                    showminorgrid: payload.showminorgrid,
+                },
+                theme,
+                style,
+            },
         )?;
     }
     root.present().map_err(|error| error.to_string())?;
@@ -6482,30 +6526,34 @@ fn render_scatter_page_image(
                 cell.rowindex, cell.colindex, area_index
             )
         })?;
-        let resolved_bounds = match global_bounds {
-            Some((min_x, max_x, min_y, max_y)) => Some((min_x, max_x, min_y, max_y)),
-            None => None,
-        };
         render_scatter_panel(
             area,
-            cell.x_axis,
-            cell.y_axis,
-            cell.secondary_y_axis,
-            &cell.x_label,
-            &cell.y_label,
-            cell.secondary_y_label.as_deref(),
-            cell.fixed_x_bounds,
-            cell.fixed_y_bounds,
-            cell.secondary_fixed_y_bounds,
-            &cell.series,
-            Some(&cell.title),
-            theme,
-            style,
-            cell.showlegend,
-            cell.legend_position,
-            cell.showmajorgrid,
-            cell.showminorgrid,
-            resolved_bounds,
+            ScatterPanelRenderContext {
+                axes: ScatterPanelAxes {
+                    x_axis: cell.x_axis,
+                    y_axis: cell.y_axis,
+                    secondary_y_axis: cell.secondary_y_axis,
+                    x_label: &cell.x_label,
+                    y_label: &cell.y_label,
+                    secondary_y_label: cell.secondary_y_label.as_deref(),
+                },
+                bounds: ScatterPanelBounds {
+                    fixed_x_bounds: cell.fixed_x_bounds,
+                    fixed_y_bounds: cell.fixed_y_bounds,
+                    secondary_fixed_y_bounds: cell.secondary_fixed_y_bounds,
+                    bounds_override: global_bounds,
+                },
+                series: &cell.series,
+                presentation: ScatterPanelPresentation {
+                    panel_title: Some(&cell.title),
+                    showlegend: cell.showlegend,
+                    legend_position: cell.legend_position,
+                    showmajorgrid: cell.showmajorgrid,
+                    showminorgrid: cell.showminorgrid,
+                },
+                theme,
+                style,
+            },
         )?;
     }
     root.present().map_err(|error| error.to_string())?;
@@ -6553,25 +6601,38 @@ fn export_scatter_pdf(image: &DynamicImage, output_path: &Path, title: &str) -> 
 
 fn render_scatter_panel(
     root: &BitmapArea<'_>,
-    x_axis: MsAxis,
-    y_axis: MsAxis,
-    secondary_y_axis: Option<MsAxis>,
-    x_label: &str,
-    y_label: &str,
-    secondary_y_label: Option<&str>,
-    fixed_x_bounds: Option<(f64, f64)>,
-    fixed_y_bounds: Option<(f64, f64)>,
-    secondary_fixed_y_bounds: Option<(f64, f64)>,
-    series: &[MsScatterSeries],
-    panel_title: Option<&str>,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-    showlegend: bool,
-    legend_position: MsLegendPosition,
-    showmajorgrid: bool,
-    showminorgrid: bool,
-    bounds_override: Option<(f64, f64, f64, f64)>,
+    context: ScatterPanelRenderContext<'_>,
 ) -> Result<(), String> {
+    let ScatterPanelRenderContext {
+        axes,
+        bounds,
+        series,
+        presentation,
+        theme,
+        style,
+    } = context;
+    let ScatterPanelAxes {
+        x_axis,
+        y_axis,
+        secondary_y_axis,
+        x_label,
+        y_label,
+        secondary_y_label,
+    } = axes;
+    let ScatterPanelBounds {
+        fixed_x_bounds,
+        fixed_y_bounds,
+        secondary_fixed_y_bounds,
+        bounds_override,
+    } = bounds;
+    let ScatterPanelPresentation {
+        panel_title,
+        showlegend,
+        legend_position,
+        showmajorgrid,
+        showminorgrid,
+    } = presentation;
+
     let legend_entries = collect_scatter_legend_entries(series, y_axis, secondary_y_axis, theme);
     let (chart_root, legend_area) = split_scatter_panel_for_legend(
         root,
@@ -7075,6 +7136,32 @@ fn rgb(color: [u8; 3]) -> RGBColor {
     RGBColor(color[0], color[1], color[2])
 }
 
+impl ListObsPlotRenderStyle {
+    fn margin_px(&self) -> u32 {
+        self.margin_px
+    }
+
+    fn label_area_px(&self) -> u32 {
+        self.label_area_px
+    }
+
+    fn wide_y_label_area_px(&self) -> u32 {
+        self.wide_y_label_area_px
+    }
+
+    fn axis_desc_font_px(&self) -> i32 {
+        self.axis_desc_font_px
+    }
+
+    fn axis_label_font_px(&self) -> i32 {
+        self.axis_label_font_px
+    }
+
+    fn point_radius_px(&self) -> i32 {
+        self.point_radius_px
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7126,31 +7213,5 @@ mod tests {
         let text_style = internal_scatter_legend_text_style(theme, style);
 
         assert_eq!(text_style.color.rgb, rgb(theme.axis).to_backend_color().rgb);
-    }
-}
-
-impl ListObsPlotRenderStyle {
-    fn margin_px(&self) -> u32 {
-        self.margin_px
-    }
-
-    fn label_area_px(&self) -> u32 {
-        self.label_area_px
-    }
-
-    fn wide_y_label_area_px(&self) -> u32 {
-        self.wide_y_label_area_px
-    }
-
-    fn axis_desc_font_px(&self) -> i32 {
-        self.axis_desc_font_px
-    }
-
-    fn axis_label_font_px(&self) -> i32 {
-        self.axis_label_font_px
-    }
-
-    fn point_radius_px(&self) -> i32 {
-        self.point_radius_px
     }
 }

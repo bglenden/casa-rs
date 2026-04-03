@@ -6,10 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
 
-#[cfg(test)]
-use casacore_ms::listobs::cli::command_schema as listobs_command_schema;
-use casacore_ms::listobs::cli::UiCommandSchema;
-use casacore_ms::msexplore::cli::command_schema as msexplore_command_schema;
+use casacore_ms::msexplore::cli::{UiCommandSchema, command_schema as msexplore_command_schema};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
@@ -65,13 +62,8 @@ impl ResolvedCommand {
 
 impl RegistryApp {
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
-        if !self.has_explicit_binary_override() {
-            match self.id {
-                "msexplore" => return Ok(msexplore_command_schema("msexplore")),
-                #[cfg(test)]
-                "listobs" => return Ok(listobs_command_schema("listobs")),
-                _ => {}
-            }
+        if !self.has_explicit_binary_override() && self.id == "msexplore" {
+            return Ok(msexplore_command_schema("msexplore"));
         }
         match &self.kind {
             RegistryAppKind::Subprocess { binary_name, .. } => {
@@ -157,7 +149,7 @@ impl RegistryApp {
     }
 
     fn prefers_cargo_workspace_fallback_for_stale_sibling(&self) -> bool {
-        matches!(self.id, "listobs" | "msexplore")
+        self.id == "msexplore"
     }
 
     pub(crate) fn is_browser_session(&self) -> bool {
@@ -217,21 +209,6 @@ pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
     vec![msexplore_app(), tablebrowser_app(), imexplore_app()]
-}
-
-#[cfg(test)]
-pub(crate) fn listobs_app() -> RegistryApp {
-    RegistryApp {
-        id: "listobs",
-        category: "MeasurementSet",
-        display_name: "ListObs",
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "listobs",
-            cargo_package: "casacore-ms",
-            override_env: "CASARS_LISTOBS_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
 }
 
 pub(crate) fn tablebrowser_app() -> RegistryApp {
@@ -323,7 +300,7 @@ fn is_binary_stale(
 mod tests {
     use super::*;
     use casacore_ms::MsPlotPreset;
-    use casacore_ms::listobs::cli::UiArgumentParser;
+    use casacore_ms::msexplore::cli::UiArgumentParser;
     use std::time::Duration;
 
     #[test]

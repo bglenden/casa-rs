@@ -15,11 +15,11 @@ use super::{
     export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
 use crate::MeasurementSet;
-use crate::listobs::cli::{
+pub use crate::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiInjectedArgument,
     UiManagedOutputSchema, UiValueKind,
 };
-use crate::{ListObsOutputFormat, ListObsSummary};
+use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
 const UI_SCHEMA_VERSION: u32 = 1;
 const COMMAND_ID: &str = "msexplore";
@@ -31,13 +31,13 @@ const SUMMARY: &str = "explore and export common MeasurementSet plotms-style plo
 enum CliAction {
     Help,
     UiSchema,
-    Run(CliOptions),
+    Run(Box<CliOptions>),
 }
 
 #[derive(Debug)]
 struct CliOptions {
     ms_path: PathBuf,
-    summary_format: ListObsOutputFormat,
+    summary_format: MeasurementSetSummaryOutputFormat,
     summary_output: Option<PathBuf>,
     overwrite: bool,
     selection: MsSelectionSpec,
@@ -187,7 +187,7 @@ pub fn run_env(program_name: &str) -> i32 {
                 1
             }
         },
-        Ok(CliAction::Run(options)) => match run(options) {
+        Ok(CliAction::Run(options)) => match run(*options) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("Error: {error}");
@@ -270,25 +270,29 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "overwrite",
                 "Overwrite Output",
                 3,
-                &["--overwrite"],
-                &[],
-                false,
                 "Replace an existing output file",
-                "Output",
-                true,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--overwrite"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Output",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "selectdata",
                 "Apply Selection",
                 4,
-                &["--selectdata"],
-                &["--no-selectdata"],
-                true,
                 "Apply row-selection controls",
-                "Selection",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--selectdata"],
+                    false_flags: &["--no-selectdata"],
+                    default: true,
+                    group: "Selection",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             option_argument(
                 "field",
@@ -615,73 +619,85 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "avgscan",
                 "Average Scans",
                 25,
-                &["--avgscan"],
-                &[],
-                false,
                 "Permit time averaging across scan boundaries",
-                "Averaging",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--avgscan"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Averaging",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "avgfield",
                 "Average Fields",
                 26,
-                &["--avgfield"],
-                &[],
-                false,
                 "Permit time averaging across field boundaries",
-                "Averaging",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--avgfield"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Averaging",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "avgbaseline",
                 "Average Baselines",
                 27,
-                &["--avgbaseline"],
-                &[],
-                false,
                 "Average across selected baselines",
-                "Averaging",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--avgbaseline"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Averaging",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "avgantenna",
                 "Average Antennas",
                 28,
-                &["--avgantenna"],
-                &[],
-                false,
                 "Form per-antenna averages across contributing baselines",
-                "Averaging",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--avgantenna"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Averaging",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "avgspw",
                 "Average SPWs",
                 29,
-                &["--avgspw"],
-                &[],
-                false,
                 "Average across selected spectral windows",
-                "Averaging",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--avgspw"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Averaging",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "scalar",
                 "Scalar Average",
                 30,
-                &["--scalar"],
-                &[],
-                false,
                 "Use scalar averaging instead of vector averaging",
-                "Averaging",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--scalar"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Averaging",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             option_argument(
                 "freqframe",
@@ -773,49 +789,57 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "xselfscale",
                 "X Self Scale",
                 37,
-                &["--xselfscale"],
-                &[],
-                false,
                 "Use per-panel X bounds on iterated plots",
-                "Layout",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--xselfscale"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Layout",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "yselfscale",
                 "Y Self Scale",
                 38,
-                &["--yselfscale"],
-                &[],
-                false,
                 "Use per-panel Y bounds on iterated plots",
-                "Layout",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--yselfscale"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Layout",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "xsharedaxis",
                 "Share X Axis",
                 39,
-                &["--xsharedaxis"],
-                &[],
-                false,
                 "Force a shared X axis across iterated panels",
-                "Layout",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--xsharedaxis"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Layout",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "ysharedaxis",
                 "Share Y Axis",
                 40,
-                &["--ysharedaxis"],
-                &[],
-                false,
                 "Force a shared Y axis across iterated panels",
-                "Layout",
-                false,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--ysharedaxis"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Layout",
+                    advanced: false,
+                    hidden_in_tui: false,
+                },
             ),
             option_argument(
                 "title",
@@ -863,13 +887,15 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "showlegend",
                 "Show Legend",
                 44,
-                &["--showlegend"],
-                &[],
-                false,
                 "Show a legend for grouped series",
-                "Style",
-                true,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--showlegend"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Style",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
             ),
             option_argument(
                 "legendposition",
@@ -898,25 +924,29 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "showmajorgrid",
                 "Major Grid",
                 46,
-                &["--showmajorgrid"],
-                &[],
-                false,
                 "Show major grid lines",
-                "Style",
-                true,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--showmajorgrid"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Style",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "showminorgrid",
                 "Minor Grid",
                 47,
-                &["--showminorgrid"],
-                &[],
-                false,
                 "Show minor grid lines",
-                "Style",
-                true,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--showminorgrid"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Style",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
             ),
             option_argument(
                 "headeritems",
@@ -1104,37 +1134,43 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "flag_extcorr",
                 "Extend Correlation",
                 61,
-                &["--flag-extcorr"],
-                &[],
-                false,
                 "Extend staged edits across all correlations on matching channels",
-                "Flag Editing",
-                true,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--flag-extcorr"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Flag Editing",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "flag_extchannel",
                 "Extend Channel",
                 62,
-                &["--flag-extchannel"],
-                &[],
-                false,
                 "Extend staged edits across all channels on matching correlations",
-                "Flag Editing",
-                true,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--flag-extchannel"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Flag Editing",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
             ),
             toggle_argument(
                 "flag_apply",
                 "Apply Flag Edit",
                 63,
-                &["--flag-apply"],
-                &[],
-                false,
                 "Apply the staged flag edit to MAIN FLAG / FLAG_ROW; omit for preview-only",
-                "Flag Editing",
-                true,
-                false,
+                ToggleArgumentConfig {
+                    true_flags: &["--flag-apply"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Flag Editing",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
             ),
             option_argument(
                 "flag_output",
@@ -1154,7 +1190,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             action_argument(66, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
-            renderer: "listobs-summary-v1".to_string(),
+            renderer: "measurementset-summary-v1".to_string(),
             stdout_format: "json".to_string(),
             inject_arguments: vec![UiInjectedArgument {
                 flag: "--format".to_string(),
@@ -1179,7 +1215,7 @@ fn run(options: CliOptions) -> Result<(), String> {
     })?;
 
     let summary =
-        ListObsSummary::from_ms_with_options(&ms, &options.selection.to_listobs_options())
+        MeasurementSetSummary::from_ms_with_options(&ms, &options.selection.to_summary_options())
             .map_err(|error| error.to_string())?;
     let summary_text = summary
         .render(options.summary_format)
@@ -1227,10 +1263,10 @@ fn run(options: CliOptions) -> Result<(), String> {
         let explore_spec = explore_spec
             .as_ref()
             .ok_or_else(|| "msexplore plot export lost its prepared explore spec".to_string())?;
-        let payload = build_msexplore_payload(&ms, &explore_spec)?;
+        let payload = build_msexplore_payload(&ms, explore_spec)?;
         export_msexplore_plot(
             &payload,
-            crate::plot::ListObsPlotTheme::light(),
+            crate::MeasurementSetPlotTheme::light(),
             plot_output,
             options.plot_format,
             options.plot_width,
@@ -1907,8 +1943,8 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
 
     let ms_path = ms_path.ok_or_else(|| "missing required MeasurementSet path".to_string())?;
     let summary_format = match summary_format.as_str() {
-        "text" => ListObsOutputFormat::Text,
-        "json" => ListObsOutputFormat::Json,
+        "text" => MeasurementSetSummaryOutputFormat::Text,
+        "json" => MeasurementSetSummaryOutputFormat::Json,
         other => {
             return Err(format!(
                 "unsupported format {other:?}; expected text or json"
@@ -1960,7 +1996,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 .to_string(),
         );
     }
-    Ok(CliAction::Run(CliOptions {
+    Ok(CliAction::Run(Box::new(CliOptions {
         ms_path,
         summary_format,
         summary_output,
@@ -2015,7 +2051,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         plot_format,
         plot_width: plot_width.max(1),
         plot_height: plot_height.max(1),
-    }))
+    })))
 }
 
 fn write_output(path: Option<&std::path::Path>, overwrite: bool, text: &str) -> Result<(), String> {
@@ -2100,30 +2136,42 @@ fn toggle_argument(
     id: &str,
     label: &str,
     order: usize,
-    true_flags: &[&str],
-    false_flags: &[&str],
-    default: bool,
     help: &str,
-    group: &str,
-    advanced: bool,
-    hidden_in_tui: bool,
+    config: ToggleArgumentConfig<'_>,
 ) -> UiArgumentSchema {
     UiArgumentSchema {
         id: id.to_string(),
         label: label.to_string(),
         order,
         parser: UiArgumentParser::Toggle {
-            true_flags: true_flags.iter().map(|flag| (*flag).to_string()).collect(),
-            false_flags: false_flags.iter().map(|flag| (*flag).to_string()).collect(),
+            true_flags: config
+                .true_flags
+                .iter()
+                .map(|flag| (*flag).to_string())
+                .collect(),
+            false_flags: config
+                .false_flags
+                .iter()
+                .map(|flag| (*flag).to_string())
+                .collect(),
         },
         value_kind: UiValueKind::Bool,
         required: false,
-        default: Some(default.to_string()),
+        default: Some(config.default.to_string()),
         help: help.to_string(),
-        group: group.to_string(),
-        advanced,
-        hidden_in_tui,
+        group: config.group.to_string(),
+        advanced: config.advanced,
+        hidden_in_tui: config.hidden_in_tui,
     }
+}
+
+struct ToggleArgumentConfig<'a> {
+    true_flags: &'a [&'a str],
+    false_flags: &'a [&'a str],
+    default: bool,
+    group: &'a str,
+    advanced: bool,
+    hidden_in_tui: bool,
 }
 
 fn action_argument(

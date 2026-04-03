@@ -1762,7 +1762,7 @@ fn flag_edit_stacked_page_plot_index_matches_casa_table_writeback_and_post_edit_
         .expect("first point region");
     let explore = MsExploreSpec {
         ms_path: source.clone(),
-        summary_format: casacore_ms::ListObsOutputFormat::Text,
+        summary_format: casacore_ms::MeasurementSetSummaryOutputFormat::Text,
         selection: selection.clone(),
         header_items: Vec::new(),
         page_title: None,
@@ -1980,10 +1980,8 @@ fn run_rust_msexplore_on_with_page_spec(
 
 fn run_casa_plotms(kwargs: &[(&str, &str)]) -> Result<String, String> {
     let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
-    Ok(
-        String::from_utf8(run_casa_plotms_export_on(&ms_path, kwargs, "txt")?.body)
-            .map_err(|error| format!("decode CASA txt export: {error}"))?,
-    )
+    String::from_utf8(run_casa_plotms_export_on(&ms_path, kwargs, "txt")?.body)
+        .map_err(|error| format!("decode CASA txt export: {error}"))
 }
 
 fn run_casa_plotms_expr(
@@ -1991,10 +1989,10 @@ fn run_casa_plotms_expr(
     expr_kwargs: &[(&str, &str)],
 ) -> Result<String, String> {
     let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
-    Ok(String::from_utf8(
+    String::from_utf8(
         run_casa_plotms_export_on_with_expr(&ms_path, kwargs, expr_kwargs, "txt")?.body,
     )
-    .map_err(|error| format!("decode CASA txt export: {error}"))?)
+    .map_err(|error| format!("decode CASA txt export: {error}"))
 }
 
 fn run_casa_plotms_png(kwargs: &[(&str, &str)]) -> Result<CasaPlotmsExport, String> {

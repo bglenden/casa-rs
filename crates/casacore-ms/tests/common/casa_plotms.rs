@@ -20,7 +20,7 @@ pub struct CasaPython {
 pub fn discover_casa_python() -> Option<CasaPython> {
     casa_python_candidates()
         .into_iter()
-        .find_map(|program| probe_casa_python(program))
+        .find_map(probe_casa_python)
 }
 
 /// Resolve the shared `ngc5921.ms` MeasurementSet fixture.

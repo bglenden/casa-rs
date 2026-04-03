@@ -13,9 +13,10 @@ use casacore_ms::columns::position_columns::AntennaPositionColumn;
 use casacore_ms::columns::time_columns::TimeColumn;
 use casacore_ms::columns::uvw_column::UvwColumn;
 use casacore_ms::{
-    ListObsOptions, ListObsOutputFormat, ListObsPlotKind, ListObsPlotPayload, ListObsSummary,
-    MeasurementSet, MeasurementSetBuilder, MsError, OptionalMainColumn, SubTable, SubtableId,
-    VisibilityDataColumn, build_listobs_plot_payload_from_summary,
+    MeasurementSet, MeasurementSetBuilder, MeasurementSetPlotKind, MeasurementSetPlotPayload,
+    MeasurementSetSummary, MeasurementSetSummaryOptions, MeasurementSetSummaryOutputFormat,
+    MsError, OptionalMainColumn, SubTable, SubtableId, VisibilityDataColumn,
+    build_measurement_set_plot_payload_from_summary,
 };
 use casacore_tables::{ColumnSchema, Table, TableSchema};
 use casacore_types::measures::{EpochRef, PositionRef};
@@ -342,17 +343,17 @@ fn generic_subtable_wrappers_cover_common_read_write_paths() {
 fn listobs_library_summary_renders_real_fixture_with_selection() {
     let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small_multifield_spw.ms.tgz");
 
-    let options = ListObsOptions {
+    let options = MeasurementSetSummaryOptions {
         verbose: false,
         field: Some("NGC4826-F3".to_string()),
         spw: Some("5".to_string()),
         listunfl: true,
-        ..ListObsOptions::default()
+        ..MeasurementSetSummaryOptions::default()
     };
     assert!(options.has_selection());
 
-    let summary = ListObsSummary::from_path_with_options(&ms_path, &options)
-        .expect("listobs summary from path with options");
+    let summary = MeasurementSetSummary::from_path_with_options(&ms_path, &options)
+        .expect("measurement-set summary from path with options");
     assert_eq!(summary.schema_version, 1);
     assert_eq!(summary.options, options);
     assert_eq!(summary.fields.len(), 1);
@@ -362,7 +363,7 @@ fn listobs_library_summary_renders_real_fixture_with_selection() {
     assert!(summary.measurement_set.row_count > 0);
 
     let json = summary
-        .render(ListObsOutputFormat::Json)
+        .render(MeasurementSetSummaryOutputFormat::Json)
         .expect("render json");
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse summary json");
     assert_eq!(parsed["schema_version"], 1);
@@ -370,7 +371,7 @@ fn listobs_library_summary_renders_real_fixture_with_selection() {
     assert_eq!(parsed["spectral_windows"][0]["spectral_window_id"], 5);
 
     let text = summary
-        .render(ListObsOutputFormat::Text)
+        .render(MeasurementSetSummaryOutputFormat::Text)
         .expect("render text");
     assert!(text.contains("Fields:"));
     assert!(text.contains("Spectral Windows:"));
@@ -379,7 +380,7 @@ fn listobs_library_summary_renders_real_fixture_with_selection() {
 
     let default_summary = MeasurementSet::open(&ms_path)
         .expect("open MS")
-        .listobs_summary()
+        .summary()
         .expect("default summary");
     assert!(default_summary.fields.len() >= summary.fields.len());
     assert!(default_summary.measurement_set.row_count >= summary.measurement_set.row_count);
@@ -396,12 +397,13 @@ fn antenna_plot_uses_offset_coordinates_for_real_alma_fixture() {
     let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small.ms.tgz");
     let summary = MeasurementSet::open(&ms_path)
         .expect("open MS")
-        .listobs_summary()
+        .summary()
         .expect("summary");
 
-    let spec = ListObsPlotKind::AntennaLayout.default_spec();
-    let payload = build_listobs_plot_payload_from_summary(&summary, &spec).expect("plot payload");
-    let ListObsPlotPayload::AntennaLayout(payload) = payload else {
+    let spec = MeasurementSetPlotKind::AntennaLayout.default_spec();
+    let payload =
+        build_measurement_set_plot_payload_from_summary(&summary, &spec).expect("plot payload");
+    let MeasurementSetPlotPayload::AntennaLayout(payload) = payload else {
         panic!("expected antenna layout payload");
     };
 

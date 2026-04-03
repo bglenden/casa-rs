@@ -65,11 +65,11 @@ can expand after demand is clear.
 
 ---
 
-### 11.1 `listobs` Plot Workspace Infrastructure in `casars`
+### 11.1 MeasurementSet Plot Workspace Infrastructure in `casars`
 
 **Status:** IMPLEMENT
 
-**Reason:** Add a reusable `Plots` workspace to the `listobs` TUI so one
+**Reason:** Add a reusable `Plots` workspace to the MeasurementSet TUI so one
 application can host multiple plot kinds with a catalog, canvas, and controls
 pane tied to the last successful summary run.
 
@@ -99,7 +99,7 @@ plot rendering without pulling raw visibility extraction into the first wave.
 **Status:** IMPLEMENT
 
 **Reason:** The shared plot substrate now supports the most common curated
-raw-MAIN-table views used from CASA `plotms`, using existing `listobs`
+raw-MAIN-table views used from CASA `plotms`, using shared MeasurementSet
 selection semantics plus vector-averaged visibility extraction from MS data.
 
 ---

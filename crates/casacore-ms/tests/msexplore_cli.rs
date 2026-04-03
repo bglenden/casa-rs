@@ -8,17 +8,17 @@ use std::process::Command;
 
 use casacore_ms::columns::frequency_columns::ChanFreqColumn;
 use casacore_ms::derived::engine::MsCalEngine;
-use casacore_ms::listobs::cli::{UiArgumentParser, UiValueKind};
 use casacore_ms::msexplore::cli::command_schema;
+use casacore_ms::msexplore::cli::{UiArgumentParser, UiValueKind};
 use casacore_ms::subtables::SubTable;
 use casacore_ms::{
-    DEFAULT_MAX_PLOT_POINTS, ListObsOutputFormat, MeasurementSet, MsAxis, MsColorAxis,
-    MsDataColumn, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis,
-    MsLayoutSpec, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPayload,
-    MsPlotPreset, MsPlotSpec, MsSelectionSpec, apply_msexplore_flag_edit,
-    apply_msexplore_flag_edit_for_request, build_msexplore_payload, build_msexplore_plot_payload,
-    preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
-    render_msexplore_plot_image,
+    DEFAULT_MAX_PLOT_POINTS, MeasurementSet, MeasurementSetPlotTheme,
+    MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
+    MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLayoutSpec, MsLegendPosition,
+    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
+    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+    build_msexplore_plot_payload, preview_msexplore_flag_edit,
+    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
 };
 use casacore_types::ArrayValue;
 use casacore_types::measures::doppler::{DopplerRef, MDoppler};
@@ -139,7 +139,7 @@ fn msexplore_ui_schema_describes_launcher_contract() {
     assert_eq!(max_points.value_kind, UiValueKind::Float);
 
     let managed_output = schema.managed_output.expect("managed output");
-    assert_eq!(managed_output.renderer, "listobs-summary-v1");
+    assert_eq!(managed_output.renderer, "measurementset-summary-v1");
     assert_eq!(managed_output.stdout_format, "json");
 }
 
@@ -785,7 +785,7 @@ fn msexplore_payload_resolves_page_header_items() {
         &ms,
         &MsExploreSpec {
             ms_path,
-            summary_format: ListObsOutputFormat::Text,
+            summary_format: MeasurementSetSummaryOutputFormat::Text,
             selection: MsSelectionSpec::default(),
             header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
             page_title: Some("Amplitude".to_string()),
@@ -917,7 +917,7 @@ fn msexplore_generic_page_spec_builds_side_by_side_page_payload() {
         &ms,
         &MsExploreSpec {
             ms_path,
-            summary_format: ListObsOutputFormat::Text,
+            summary_format: MeasurementSetSummaryOutputFormat::Text,
             selection: MsSelectionSpec::default(),
             header_items: Vec::new(),
             page_title: Some("Amplitude and Phase Side by Side".to_string()),
@@ -1058,7 +1058,7 @@ fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
         &ms,
         &MsExploreSpec {
             ms_path,
-            summary_format: ListObsOutputFormat::Text,
+            summary_format: MeasurementSetSummaryOutputFormat::Text,
             selection: MsSelectionSpec::default(),
             header_items: Vec::new(),
             page_title: Some("Amplitude Overplot".to_string()),
@@ -1078,9 +1078,8 @@ fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
     assert_eq!(page.items[0].colindex, 0);
     assert_eq!(page.items[1].colindex, 0);
 
-    let image =
-        render_msexplore_plot_image(&payload, casacore_ms::ListObsPlotTheme::light(), 1200, 800)
-            .expect("render overplot image");
+    let image = render_msexplore_plot_image(&payload, MeasurementSetPlotTheme::light(), 1200, 800)
+        .expect("render overplot image");
     assert_eq!(image.width(), 1200);
     assert_eq!(image.height(), 800);
 }
@@ -1534,20 +1533,7 @@ fn dual_manifest_rows(path: &Path) -> Vec<(String, String, String, f64, f64)> {
         .collect()
 }
 
-fn page_manifest_rows(
-    path: &Path,
-) -> Vec<(
-    usize,
-    usize,
-    usize,
-    String,
-    String,
-    String,
-    String,
-    String,
-    f64,
-    f64,
-)> {
+fn page_manifest_rows(path: &Path) -> Vec<PageManifestRow> {
     std::fs::read_to_string(path)
         .expect("read manifest")
         .lines()
@@ -1592,6 +1578,19 @@ fn page_manifest_rows(
         .collect()
 }
 
+type PageManifestRow = (
+    usize,
+    usize,
+    usize,
+    String,
+    String,
+    String,
+    String,
+    String,
+    f64,
+    f64,
+);
+
 fn manifest_header_value<'a>(manifest: &'a str, key: &str) -> Option<&'a str> {
     manifest
         .lines()
@@ -1630,8 +1629,8 @@ fn preview_flag_edit_selects_one_unique_sample() {
     assert!(!preview.sample_edits[0].old_flag);
     assert!(preview.sample_edits[0].new_flag);
     assert_eq!(preview.row_edits[0].row, 0);
-    assert_eq!(preview.row_edits[0].old_flag_row, false);
-    assert_eq!(preview.row_edits[0].new_flag_row, false);
+    assert!(!preview.row_edits[0].old_flag_row);
+    assert!(!preview.row_edits[0].new_flag_row);
 }
 
 #[test]
@@ -1662,7 +1661,7 @@ fn preview_flag_edit_expands_across_correlation_and_channel() {
         preview.affected_samples,
         common::NUM_CORR * common::NUM_CHAN
     );
-    assert_eq!(preview.row_edits[0].new_flag_row, true);
+    assert!(preview.row_edits[0].new_flag_row);
 }
 
 #[test]
@@ -1947,7 +1946,7 @@ fn preview_flag_edit_on_stacked_page_requires_plot_index() {
     let ms = MeasurementSet::open(&ms_path).expect("open fixture");
     let explore = MsExploreSpec {
         ms_path: ms_path.clone(),
-        summary_format: ListObsOutputFormat::Text,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
         selection: MsSelectionSpec::default(),
         header_items: Vec::new(),
         page_title: None,
@@ -1985,7 +1984,7 @@ fn preview_flag_edit_on_stacked_page_targets_selected_plot_index() {
     let ms = MeasurementSet::open(&ms_path).expect("open fixture");
     let explore = MsExploreSpec {
         ms_path: ms_path.clone(),
-        summary_format: ListObsOutputFormat::Text,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
         selection: MsSelectionSpec::default(),
         header_items: Vec::new(),
         page_title: None,
@@ -2025,7 +2024,7 @@ fn apply_flag_edit_on_stacked_page_updates_selected_plot_samples() {
     let mut ms = MeasurementSet::open(&ms_path).expect("open fixture");
     let explore = MsExploreSpec {
         ms_path: ms_path.clone(),
-        summary_format: ListObsOutputFormat::Text,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
         selection: MsSelectionSpec::default(),
         header_items: Vec::new(),
         page_title: None,

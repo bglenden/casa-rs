@@ -15,9 +15,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use casacore_ms::{
-    ListObsOutputFormat, ListObsPlotTheme, ListObsSummary, MeasurementSet, MsColorAxis,
-    MsIterationAxis, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
-    build_msexplore_plot_payload, render_msexplore_plot_image,
+    MeasurementSet, MeasurementSetPlotTheme, MeasurementSetSummary,
+    MeasurementSetSummaryOutputFormat, MsColorAxis, MsIterationAxis, MsPlotPayload, MsPlotPreset,
+    MsPlotSpec, MsSelectionSpec, build_msexplore_plot_payload, render_msexplore_plot_image,
 };
 use image::ImageFormat;
 
@@ -123,11 +123,13 @@ fn run() -> Result<(), String> {
         options.repeats,
         options.warmups,
         || {
-            let summary =
-                ListObsSummary::from_ms_with_options(&open_ms, &selection.to_listobs_options())
-                    .map_err(|error| error.to_string())?;
+            let summary = MeasurementSetSummary::from_ms_with_options(
+                &open_ms,
+                &selection.to_summary_options(),
+            )
+            .map_err(|error| error.to_string())?;
             let rendered = summary
-                .render(ListObsOutputFormat::Json)
+                .render(MeasurementSetSummaryOutputFormat::Json)
                 .map_err(|error| error.to_string())?;
             Ok(rendered.len())
         },
@@ -157,7 +159,7 @@ fn run() -> Result<(), String> {
         let render = measure("render_bitmap", options.repeats, options.warmups, || {
             let image = render_msexplore_plot_image(
                 &payload,
-                ListObsPlotTheme::light(),
+                MeasurementSetPlotTheme::light(),
                 options.plot_width,
                 options.plot_height,
             )?;
@@ -176,7 +178,7 @@ fn run() -> Result<(), String> {
     let render = measure("render_bitmap", options.repeats, options.warmups, || {
         let image = render_msexplore_plot_image(
             &payload,
-            ListObsPlotTheme::light(),
+            MeasurementSetPlotTheme::light(),
             options.plot_width,
             options.plot_height,
         )?;
@@ -185,7 +187,7 @@ fn run() -> Result<(), String> {
 
     let rendered = render_msexplore_plot_image(
         &payload,
-        ListObsPlotTheme::light(),
+        MeasurementSetPlotTheme::light(),
         options.plot_width,
         options.plot_height,
     )?;
@@ -209,15 +211,15 @@ fn run() -> Result<(), String> {
         || {
             let ms = MeasurementSet::open(&options.ms_path).map_err(|error| error.to_string())?;
             let summary =
-                ListObsSummary::from_ms_with_options(&ms, &selection.to_listobs_options())
+                MeasurementSetSummary::from_ms_with_options(&ms, &selection.to_summary_options())
                     .map_err(|error| error.to_string())?;
             let rendered_summary = summary
-                .render(ListObsOutputFormat::Json)
+                .render(MeasurementSetSummaryOutputFormat::Json)
                 .map_err(|error| error.to_string())?;
             let payload = build_msexplore_plot_payload(&ms, &selection, &spec)?;
             let image = render_msexplore_plot_image(
                 &payload,
-                ListObsPlotTheme::light(),
+                MeasurementSetPlotTheme::light(),
                 options.plot_width,
                 options.plot_height,
             )?;
@@ -299,7 +301,7 @@ fn percent(part_ms: f64, whole_ms: f64) -> f64 {
 
 fn payload_kind(payload: &MsPlotPayload) -> &'static str {
     match payload {
-        MsPlotPayload::ListObs(_) => "listobs",
+        MsPlotPayload::ListObs(_) => "metadata",
         MsPlotPayload::Scatter(_) => "scatter",
         MsPlotPayload::ScatterGrid(_) => "scatter_grid",
         MsPlotPayload::ScatterPage(_) => "scatter_page",

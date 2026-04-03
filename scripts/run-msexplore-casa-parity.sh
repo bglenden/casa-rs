@@ -31,8 +31,5 @@ print(f"CASA preflight: casatasks ok, plotms={'yes' if has_plotms else 'no'}")
 PY
 fi
 
-echo "Running listobs CASA parity..."
-cargo test -p casacore-ms --test listobs_casa_parity -- --nocapture --test-threads=1
-
 echo "Running msexplore CASA parity..."
 cargo test -p casacore-ms --test msexplore_casa_parity -- --nocapture --test-threads=1

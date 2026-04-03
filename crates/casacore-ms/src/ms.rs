@@ -163,35 +163,35 @@ impl MeasurementSet {
         validate::validate_ms(&self.main, &self.subtables)
     }
 
-    /// Build a structured `listobs`-style summary for this MeasurementSet.
+    /// Build a structured MeasurementSet summary for this MeasurementSet.
     ///
     /// The returned summary is richer than CASA's returned `listobs` Python
     /// dictionary and is intended to drive both human-readable text output and
     /// machine-readable JSON without reparsing formatted text.
-    pub fn listobs_summary(&self) -> MsResult<crate::listobs::ListObsSummary> {
-        crate::listobs::ListObsSummary::from_ms(self)
+    pub fn summary(&self) -> MsResult<crate::MeasurementSetSummary> {
+        crate::MeasurementSetSummary::from_ms(self)
     }
 
-    /// Build a structured `listobs`-style summary using explicit task-style
+    /// Build a structured MeasurementSet summary using explicit task-style
     /// options.
-    pub fn listobs_summary_with_options(
+    pub fn summary_with_options(
         &self,
-        options: &crate::listobs::ListObsOptions,
-    ) -> MsResult<crate::listobs::ListObsSummary> {
-        crate::listobs::ListObsSummary::from_ms_with_options(self, options)
+        options: &crate::MeasurementSetSummaryOptions,
+    ) -> MsResult<crate::MeasurementSetSummary> {
+        crate::MeasurementSetSummary::from_ms_with_options(self, options)
     }
 
     /// Build lazy-load UV coverage for the current MeasurementSet selection.
-    pub fn listobs_uv_coverage(&self) -> MsResult<crate::listobs::ListObsUvCoverage> {
-        crate::listobs::ListObsUvCoverage::from_ms(self)
+    pub fn uv_coverage(&self) -> MsResult<crate::MeasurementSetUvCoverage> {
+        crate::MeasurementSetUvCoverage::from_ms(self)
     }
 
     /// Build lazy-load UV coverage using explicit task-style options.
-    pub fn listobs_uv_coverage_with_options(
+    pub fn uv_coverage_with_options(
         &self,
-        options: &crate::listobs::ListObsOptions,
-    ) -> MsResult<crate::listobs::ListObsUvCoverage> {
-        crate::listobs::ListObsUvCoverage::from_ms_with_options(self, options)
+        options: &crate::MeasurementSetSummaryOptions,
+    ) -> MsResult<crate::MeasurementSetUvCoverage> {
+        crate::MeasurementSetUvCoverage::from_ms_with_options(self, options)
     }
 
     /// Number of rows in the main table.

@@ -1,4 +1,4 @@
-# Wave 8 - Interop fixture matrix and msinfo CLI demo
+# Wave 8 - Interop Fixture Matrix and Historical `msinfo` Demo Notes
 
 ## Origin
 
@@ -7,7 +7,7 @@
 ## Goal
 
 - Close Phase 4 with canonical MS 2x2 interop fixtures, regression matrix, and
-  a small `msinfo` CLI/demo for operational validation.
+  historical notes for the removed `msinfo` operational demo.
 
 ## Non-goals
 
@@ -27,7 +27,8 @@
 
 ### API/docs/demo
 
-- Add `msinfo`-style CLI/demo and closeout docs.
+- Record how the removed `msinfo`-style demo informed the final MeasurementSet
+  tooling and closeout docs.
 
 ## Dependencies
 
@@ -58,7 +59,7 @@
 
 - [ ] Build canonical MS fixture matrix for end-to-end coverage.
 - [ ] Add full phase regression tests and skip gates.
-- [ ] Add `msinfo` CLI/demo and usage docs.
+- [ ] Record the removed `msinfo` demo expectations in the closeout docs.
 
 ## Test plan
 

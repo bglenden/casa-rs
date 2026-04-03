@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
 
-use casacore_ms::listobs::cli::{UiActionKind, UiArgumentParser, UiCommandSchema};
+use casacore_ms::msexplore::cli::{
+    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema,
+};
 
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
 
@@ -200,10 +202,7 @@ fn parse_schema_prefill_args(
     })
 }
 
-fn find_flag_argument<'a>(
-    schema: &'a UiCommandSchema,
-    raw: &str,
-) -> Option<&'a casacore_ms::listobs::cli::UiArgumentSchema> {
+fn find_flag_argument<'a>(schema: &'a UiCommandSchema, raw: &str) -> Option<&'a UiArgumentSchema> {
     schema
         .arguments
         .iter()
@@ -399,11 +398,9 @@ mod tests {
         assert!(values.iter().any(|entry| {
             entry.id == "field" && entry.value == StartupValue::Text("3C286".to_string())
         }));
-        assert!(
-            values.iter().any(|entry| {
-                entry.id == "showlegend" && entry.value == StartupValue::Toggle(true)
-            })
-        );
+        assert!(values.iter().any(|entry| {
+            entry.id == "showlegend" && entry.value == StartupValue::Toggle(true)
+        }));
     }
 
     #[test]

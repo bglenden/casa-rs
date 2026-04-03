@@ -49,18 +49,6 @@ pub enum ListObsOutputFormat {
     Json,
 }
 
-impl ListObsOutputFormat {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "text" => Ok(Self::Text),
-            "json" => Ok(Self::Json),
-            other => Err(format!(
-                "unsupported format {other:?}; expected one of: text, json"
-            )),
-        }
-    }
-}
-
 /// Library-level `listobs` options shared by the CLI and future bindings.
 ///
 /// This keeps the application layer thin: callers construct options once and
@@ -3218,10 +3206,6 @@ pub(crate) fn stokes_code(name: &str) -> Option<i32> {
         _ => None,
     }
 }
-
-/// Hidden CLI support shared by the `listobs` and `msinfo` binaries.
-#[doc(hidden)]
-pub mod cli;
 
 #[cfg(test)]
 mod tests {

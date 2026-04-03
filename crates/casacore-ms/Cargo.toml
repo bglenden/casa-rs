@@ -24,14 +24,6 @@ tar = "0.4"
 tempfile = "3"
 
 [[bin]]
-name = "msinfo"
-path = "src/bin/msinfo.rs"
-
-[[bin]]
-name = "listobs"
-path = "src/bin/listobs.rs"
-
-[[bin]]
 name = "msexplore"
 path = "src/bin/msexplore.rs"
 
