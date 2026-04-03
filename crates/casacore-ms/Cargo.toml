@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+slow-tests = []
+
 [dependencies]
 casacore-tables = { path = "../casacore-tables" }
 casacore-types = { path = "../casacore-types" }

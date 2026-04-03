@@ -22,6 +22,7 @@ Default local release gates:
   - cargo test --workspace
 
 Use --full to additionally run:
+  - scripts/test-slow.sh
   - scripts/run-coverage.sh --ci-like
 
 Examples:
@@ -110,6 +111,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
 if [[ "$run_full" == "true" ]]; then
+  echo "==> Running slow parity gate"
+  scripts/test-slow.sh
   echo "==> Running full coverage gate (CI-like)"
   scripts/run-coverage.sh --ci-like
 fi

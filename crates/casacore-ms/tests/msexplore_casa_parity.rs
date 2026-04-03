@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![cfg(feature = "slow-tests")]
 
 use std::cmp::Ordering;
 use std::fs;
