@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::SystemTime;
 
 use casacore_ms::listobs::cli::{UiCommandSchema, command_schema as listobs_command_schema};
 use casacore_ms::msexplore::cli::command_schema as msexplore_command_schema;
@@ -123,10 +125,14 @@ impl RegistryApp {
         }
 
         if let Some(path) = sibling_binary(binary_name) {
-            return Ok(ResolvedCommand {
-                program: path.into_os_string(),
-                prefix_args: Vec::new(),
-            });
+            if !self.prefers_cargo_workspace_fallback_for_stale_sibling()
+                || !sibling_binary_is_stale_for_current_process(&path)
+            {
+                return Ok(ResolvedCommand {
+                    program: path.into_os_string(),
+                    prefix_args: Vec::new(),
+                });
+            }
         }
 
         let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
@@ -142,6 +148,10 @@ impl RegistryApp {
                 OsString::from("--"),
             ],
         })
+    }
+
+    fn prefers_cargo_workspace_fallback_for_stale_sibling(&self) -> bool {
+        matches!(self.id, "listobs" | "msexplore")
     }
 
     pub(crate) fn is_browser_session(&self) -> bool {
@@ -273,11 +283,36 @@ fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
+fn sibling_binary_is_stale_for_current_process(sibling_path: &std::path::Path) -> bool {
+    let current_exe = match env::current_exe() {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let current_modified = file_modified_time(&current_exe);
+    let sibling_modified = file_modified_time(sibling_path);
+    is_binary_stale(sibling_modified, current_modified)
+}
+
+fn file_modified_time(path: &std::path::Path) -> Option<SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
+}
+
+fn is_binary_stale(
+    binary_modified: Option<SystemTime>,
+    reference_modified: Option<SystemTime>,
+) -> bool {
+    match (binary_modified, reference_modified) {
+        (Some(binary_modified), Some(reference_modified)) => binary_modified < reference_modified,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use casacore_ms::MsPlotPreset;
     use casacore_ms::listobs::cli::UiArgumentParser;
+    use std::time::Duration;
 
     #[test]
     fn resolve_app_defaults_and_rejects_unknown_ids() {
@@ -395,5 +430,24 @@ mod tests {
             .map(|preset| preset.as_str().to_string())
             .collect::<Vec<_>>();
         assert_eq!(choices, &expected);
+    }
+
+    #[test]
+    fn stale_binary_detection_requires_binary_older_than_reference() {
+        let older = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        let newer = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+        assert!(is_binary_stale(Some(older), Some(newer)));
+        assert!(!is_binary_stale(Some(newer), Some(older)));
+        assert!(!is_binary_stale(Some(newer), Some(newer)));
+        assert!(!is_binary_stale(None, Some(newer)));
+        assert!(!is_binary_stale(Some(older), None));
+    }
+
+    #[test]
+    fn workspace_ms_apps_prefer_cargo_fallback_for_stale_siblings() {
+        assert!(listobs_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+        assert!(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+        assert!(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+        assert!(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
     }
 }
