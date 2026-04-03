@@ -439,7 +439,7 @@ mod tests {
         assert!(text.contains("Usage:"));
         assert!(text.contains("tablebrowser"));
         assert!(text.contains("imexplore"));
-        assert!(text.contains("listobs"));
+        assert!(text.contains("msexplore"));
     }
 
     #[test]

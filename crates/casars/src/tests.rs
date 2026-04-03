@@ -56,10 +56,7 @@ use crate::{KittyMovieOverlayMode, kitty_movie_overlay_mode, test_env_lock};
 fn launcher_lists_registered_apps_in_expected_order() {
     let apps = registered_apps();
     let ids = apps.iter().map(|app| app.id).collect::<Vec<_>>();
-    assert_eq!(
-        ids,
-        vec!["listobs", "msexplore", "tablebrowser", "imexplore"]
-    );
+    assert_eq!(ids, vec!["msexplore", "tablebrowser", "imexplore"]);
 }
 
 #[test]
@@ -80,7 +77,6 @@ fn launcher_screen_renders_available_apps() {
     }
 
     assert!(rendered.contains("Select Application"));
-    assert!(rendered.contains("listobs"));
     assert!(rendered.contains("msexplore"));
     assert!(rendered.contains("tablebrowser"));
     assert!(rendered.contains("imexplore"));
@@ -6187,6 +6183,29 @@ fn msexplore_start_run_on_launch_opens_plots_preview_instead_of_spawning_process
         app.stderr_for_test()
     );
     assert!(app.plot_protocol().is_some() || app.plot_pending());
+}
+
+#[test]
+fn msexplore_summary_tabs_populate_from_current_form_without_subprocess_run() {
+    let _guard = launcher_env_lock();
+    clear_launcher_bin();
+
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+
+    let schema = msexplore_command_schema("msexplore");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
+    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+
+    app.set_active_result_tab(ResultTab::Observations);
+
+    let summary = app.structured_for_test().expect("structured summary");
+    assert_eq!(summary.measurement_set.row_count, 2);
+    let rendered = render_app(&app, 220, 32);
+    assert!(rendered.contains("Observations"));
+    assert!(rendered.contains("Start"));
+    assert!(rendered.contains("End"));
 }
 
 #[test]

@@ -24,7 +24,7 @@ use casacore_ms::msexplore::cli::build_explore_spec_from_args;
 use casacore_ms::{
     ListObsOptions, ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
     ListObsSummary, ListObsUvCoverage, MeasurementSet, MsExportFormat, MsPlotPayload, MsPlotPreset,
-    build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload,
+    MsSelectionSpec, build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload,
     build_listobs_visibility_plot_payload, build_msexplore_payload_from_spec, export_listobs_plot,
     export_msexplore_plot,
 };
@@ -2371,6 +2371,7 @@ impl AppState {
 
     pub(crate) fn on_tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % spinner_frames(self.theme_mode()).len();
+        self.ensure_current_summary_snapshot_if_needed();
         self.pump_plot_panel();
         if self.image_movie_scheduler_enabled() {
             self.maybe_emit_movie_perf_summary();
@@ -3906,35 +3907,35 @@ impl AppState {
     pub(crate) fn active_result_content(&self) -> ResultContent {
         match self.active_result_tab {
             ResultTab::Overview => ResultContent::Lines(self.overview_lines()),
-            ResultTab::Observations => match self.result.structured.as_ref() {
+            ResultTab::Observations => match self.current_structured_summary() {
                 Some(summary) => ResultContent::Table(build_observations_table(summary)),
                 None => {
                     ResultContent::Lines(vec!["No observation table available yet.".to_string()])
                 }
             },
-            ResultTab::Scans => match self.result.structured.as_ref() {
+            ResultTab::Scans => match self.current_structured_summary() {
                 Some(summary) => {
                     ResultContent::Table(build_scans_table(summary, self.listunfl_enabled()))
                 }
                 None => ResultContent::Lines(vec!["No scan table available yet.".to_string()]),
             },
-            ResultTab::Fields => match self.result.structured.as_ref() {
+            ResultTab::Fields => match self.current_structured_summary() {
                 Some(summary) => {
                     ResultContent::Table(build_fields_table(summary, self.listunfl_enabled()))
                 }
                 None => ResultContent::Lines(vec!["No field table available yet.".to_string()]),
             },
-            ResultTab::Spws => match self.result.structured.as_ref() {
+            ResultTab::Spws => match self.current_structured_summary() {
                 Some(summary) => ResultContent::Table(build_spws_table(summary)),
                 None => ResultContent::Lines(vec![
                     "No spectral-window table available yet.".to_string(),
                 ]),
             },
-            ResultTab::Sources => match self.result.structured.as_ref() {
+            ResultTab::Sources => match self.current_structured_summary() {
                 Some(summary) => ResultContent::Table(build_sources_table(summary)),
                 None => ResultContent::Lines(vec!["No source table available yet.".to_string()]),
             },
-            ResultTab::Antennas => match self.result.structured.as_ref() {
+            ResultTab::Antennas => match self.current_structured_summary() {
                 Some(summary) if self.verbose_enabled() => {
                     ResultContent::Table(build_antennas_table(summary))
                 }
@@ -4037,6 +4038,7 @@ impl AppState {
     fn activate_result_tab(&mut self, tab: ResultTab) {
         self.clear_output_selection();
         self.active_result_tab = tab;
+        self.ensure_current_summary_snapshot_if_needed();
         if self.active_result_tab == ResultTab::Plots {
             self.sync_plot_export_path_for_selected_plot();
         }
@@ -4126,7 +4128,7 @@ impl AppState {
 
     #[cfg(test)]
     pub(crate) fn structured_for_test(&self) -> Option<&ListObsSummary> {
-        self.result.structured.as_ref()
+        self.current_structured_summary()
     }
 
     #[cfg(test)]
@@ -7914,7 +7916,7 @@ impl AppState {
         }
     }
 
-    fn record_plot_snapshot(&mut self, summary: ListObsSummary) {
+    fn store_plot_snapshot(&mut self, summary: ListObsSummary, reset_plot_cache: bool) {
         let generation = self.plot_workspace.next_generation;
         self.plot_workspace.next_generation += 1;
         self.plot_workspace.snapshot = Some(ListObsRunSnapshot {
@@ -7926,8 +7928,18 @@ impl AppState {
         });
         self.plot_workspace.cached_uv_coverage = None;
         self.plot_workspace.uv_error = None;
-        self.plot_workspace.panel = None;
+        if reset_plot_cache {
+            self.plot_workspace.panel = None;
+        }
         self.sync_plot_export_path_for_selected_plot();
+    }
+
+    fn record_plot_snapshot(&mut self, summary: ListObsSummary) {
+        self.store_plot_snapshot(summary, true);
+    }
+
+    fn record_msexplore_summary_snapshot(&mut self, summary: ListObsSummary) {
+        self.store_plot_snapshot(summary, false);
     }
 
     fn sync_plot_export_path_for_selected_plot(&mut self) {
@@ -8135,6 +8147,97 @@ impl AppState {
             snapshot.generation,
             dirty_suffix
         ))
+    }
+
+    fn current_structured_summary(&self) -> Option<&ListObsSummary> {
+        if self.is_msexplore_app() {
+            return self
+                .plot_workspace
+                .snapshot
+                .as_ref()
+                .map(|snapshot| &snapshot.summary);
+        }
+        self.result.structured.as_ref()
+    }
+
+    fn is_summary_tab(tab: ResultTab) -> bool {
+        matches!(
+            tab,
+            ResultTab::Overview
+                | ResultTab::Observations
+                | ResultTab::Scans
+                | ResultTab::Fields
+                | ResultTab::Spws
+                | ResultTab::Sources
+                | ResultTab::Antennas
+        )
+    }
+
+    fn current_msexplore_summary_request(&self) -> Result<(PathBuf, ListObsOptions), String> {
+        let ms_path = self
+            .field_text("ms_path")
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                "Enter a MeasurementSet path to populate the summary tabs.".to_string()
+            })?;
+        let selection_value =
+            |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
+        let selection = MsSelectionSpec {
+            selectdata: self.bool_field_value("selectdata").unwrap_or(false),
+            field: selection_value("field"),
+            spw: selection_value("spw"),
+            timerange: selection_value("timerange"),
+            uvrange: selection_value("uvrange"),
+            antenna: selection_value("antenna"),
+            scan: selection_value("scan"),
+            correlation: selection_value("correlation"),
+            observation: selection_value("observation"),
+            array: selection_value("array"),
+            intent: selection_value("intent"),
+            feed: selection_value("feed"),
+            msselect: selection_value("msselect"),
+        };
+        Ok((ms_path, selection.to_listobs_options()))
+    }
+
+    fn ensure_current_summary_snapshot_if_needed(&mut self) {
+        if !self.is_msexplore_app() || !Self::is_summary_tab(self.active_result_tab) {
+            return;
+        }
+        let (path, options) = match self.current_msexplore_summary_request() {
+            Ok(request) => request,
+            Err(error) => {
+                self.plot_workspace.snapshot = None;
+                self.plot_workspace.cached_uv_coverage = None;
+                self.result.structured_error = Some(error);
+                return;
+            }
+        };
+        if let Some(snapshot) = self.plot_workspace.snapshot.as_mut()
+            && snapshot.path.as_ref() == Some(&path)
+            && snapshot.options == options
+        {
+            snapshot.dirty = false;
+            self.result.structured_error = None;
+            return;
+        }
+        match MeasurementSet::open(&path)
+            .map_err(|error| format!("open MeasurementSet {}: {error}", path.display()))
+            .and_then(|ms| {
+                ListObsSummary::from_ms_with_options(&ms, &options)
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(summary) => {
+                self.record_msexplore_summary_snapshot(summary);
+                self.result.structured_error = None;
+            }
+            Err(error) => {
+                self.plot_workspace.snapshot = None;
+                self.plot_workspace.cached_uv_coverage = None;
+                self.result.structured_error = Some(error);
+            }
+        }
     }
 
     fn selected_plot_spec(&self) -> &ListObsPlotSpec {
@@ -10137,7 +10240,7 @@ impl AppState {
     }
 
     fn overview_lines(&self) -> Vec<String> {
-        if let Some(summary) = &self.result.structured {
+        if let Some(summary) = self.current_structured_summary() {
             let mut lines = Vec::new();
             lines.push("MeasurementSet".to_string());
             lines.push(format!(

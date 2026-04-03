@@ -202,24 +202,19 @@ impl RegistryApp {
 }
 
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
-    match id.unwrap_or("listobs") {
+    match id.unwrap_or("msexplore") {
         "listobs" => Ok(listobs_app()),
         "msexplore" => Ok(msexplore_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: listobs, msexplore, tablebrowser, imexplore"
+            "unknown casars app {other:?}; expected one of: msexplore, tablebrowser, imexplore, listobs"
         )),
     }
 }
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
-    vec![
-        listobs_app(),
-        msexplore_app(),
-        tablebrowser_app(),
-        imexplore_app(),
-    ]
+    vec![msexplore_app(), tablebrowser_app(), imexplore_app()]
 }
 
 pub(crate) fn listobs_app() -> RegistryApp {
@@ -330,8 +325,9 @@ mod tests {
 
     #[test]
     fn resolve_app_defaults_and_rejects_unknown_ids() {
-        assert_eq!(resolve_app(None).unwrap().id, "listobs");
+        assert_eq!(resolve_app(None).unwrap().id, "msexplore");
         assert_eq!(resolve_app(Some("msexplore")).unwrap().id, "msexplore");
+        assert_eq!(resolve_app(Some("listobs")).unwrap().id, "listobs");
         assert_eq!(
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
