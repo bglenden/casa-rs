@@ -3990,7 +3990,17 @@ impl AppState {
     }
 
     #[cfg(test)]
+    fn test_idle_timeout(timeout: Duration, under_tarpaulin: bool) -> Duration {
+        if under_tarpaulin {
+            timeout.saturating_mul(3)
+        } else {
+            timeout
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn wait_for_idle_for_test(&mut self, timeout: Duration) -> bool {
+        let timeout = Self::test_idle_timeout(timeout, std::env::var_os("TARPAULIN").is_some());
         let start = Instant::now();
         while self.running.is_some() && start.elapsed() < timeout {
             self.drain_execution_events();
@@ -11976,10 +11986,13 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::{
-        centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
+        AppState, centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
         image_plane_draw_rect, image_zoom_parameters,
     };
-    use std::path::{Path, PathBuf};
+    use std::{
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
     #[test]
     fn expands_bare_tilde_to_home() {
@@ -12002,6 +12015,21 @@ mod tests {
         assert_eq!(
             expand_tilde_path_with_home("./relative/path", Some(Path::new("/tmp/home"))),
             PathBuf::from("./relative/path")
+        );
+    }
+
+    #[test]
+    fn test_idle_timeout_is_unchanged_without_tarpaulin() {
+        let timeout = Duration::from_secs(60);
+        assert_eq!(AppState::test_idle_timeout(timeout, false), timeout);
+    }
+
+    #[test]
+    fn test_idle_timeout_extends_under_tarpaulin() {
+        let timeout = Duration::from_secs(60);
+        assert_eq!(
+            AppState::test_idle_timeout(timeout, true),
+            Duration::from_secs(180)
         );
     }
 
