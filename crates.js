@@ -1,2 +1,2 @@
-window.ALL_CRATES = ["casacore_aipsio","casacore_coordinates","casacore_imagebrowser_protocol","casacore_images","casacore_lattices","casacore_measures_data","casacore_measures_tools","casacore_ms","casacore_tablebrowser_protocol","casacore_tables","casacore_test_support","casacore_types","casars","imexplore","import_observatories","lock_helper","msexplore","ratatui_graphics","tablebrowser"];
-//{"start":21,"fragment_lengths":[17,23,33,18,20,25,26,14,33,18,24,17,9,12,23,14,12,19,15]}
+window.ALL_CRATES = ["casa_aipsio","casa_coordinates","casa_images","casa_lattices","casa_measures_data","casa_measures_tools","casa_ms","casa_tables","casa_test_support","casa_types","casars","casars_imagebrowser_protocol","casars_tablebrowser_protocol","imexplore","import_observatories","lock_helper","msexplore","ratatui_graphics","tablebrowser"];
+//{"start":21,"fragment_lengths":[13,19,14,16,21,22,10,14,20,13,9,31,31,12,23,14,12,19,15]}

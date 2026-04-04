@@ -11,30 +11,30 @@
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>std::sync::{Arc, Mutex};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>std::time::{Duration, Instant};
 <a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casacore_imagebrowser_protocol::{
-<a href=#15 id=15 data-nosnippet>15</a>    ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserCommand, ImageBrowserFocus,
-<a href=#16 id=16 data-nosnippet>16</a>    ImageBrowserParameters, ImageBrowserPreviewRequest, ImageBrowserProbe, ImageBrowserSnapshot,
-<a href=#17 id=17 data-nosnippet>17</a>    ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImagePlaneContentMode,
-<a href=#18 id=18 data-nosnippet>18</a>    ImageProfilePayload,
-<a href=#19 id=19 data-nosnippet>19</a>};
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casacore_ms::msexplore::cli::{
-<a href=#21 id=21 data-nosnippet>21</a>    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
-<a href=#22 id=22 data-nosnippet>22</a>    build_explore_spec_from_args,
-<a href=#23 id=23 data-nosnippet>23</a>};
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>casacore_ms::{
-<a href=#25 id=25 data-nosnippet>25</a>    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
-<a href=#26 id=26 data-nosnippet>26</a>    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
-<a href=#27 id=27 data-nosnippet>27</a>    export_msexplore_plot,
-<a href=#28 id=28 data-nosnippet>28</a>};
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>casacore_tablebrowser_protocol::{
-<a href=#30 id=30 data-nosnippet>30</a>    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
-<a href=#31 id=31 data-nosnippet>31</a>    BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
-<a href=#32 id=32 data-nosnippet>32</a>    BrowserView <span class="kw">as </span>TableBrowserView, BrowserViewport,
-<a href=#33 id=33 data-nosnippet>33</a>};
-<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>casacore_types::measures::direction::{
-<a href=#35 id=35 data-nosnippet>35</a>    angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
-<a href=#36 id=36 data-nosnippet>36</a>};
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casacore_types::quanta::{MvAngle, MvTime, Quantity, Unit};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_ms::msexplore::cli::{
+<a href=#15 id=15 data-nosnippet>15</a>    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
+<a href=#16 id=16 data-nosnippet>16</a>    build_explore_spec_from_args,
+<a href=#17 id=17 data-nosnippet>17</a>};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>casa_ms::{
+<a href=#19 id=19 data-nosnippet>19</a>    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
+<a href=#20 id=20 data-nosnippet>20</a>    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
+<a href=#21 id=21 data-nosnippet>21</a>    export_msexplore_plot,
+<a href=#22 id=22 data-nosnippet>22</a>};
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_types::measures::direction::{
+<a href=#24 id=24 data-nosnippet>24</a>    angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
+<a href=#25 id=25 data-nosnippet>25</a>};
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>casa_types::quanta::{MvAngle, MvTime, Quantity, Unit};
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>casars_imagebrowser_protocol::{
+<a href=#28 id=28 data-nosnippet>28</a>    ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserCommand, ImageBrowserFocus,
+<a href=#29 id=29 data-nosnippet>29</a>    ImageBrowserParameters, ImageBrowserPreviewRequest, ImageBrowserProbe, ImageBrowserSnapshot,
+<a href=#30 id=30 data-nosnippet>30</a>    ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImagePlaneContentMode,
+<a href=#31 id=31 data-nosnippet>31</a>    ImageProfilePayload,
+<a href=#32 id=32 data-nosnippet>32</a>};
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>casars_tablebrowser_protocol::{
+<a href=#34 id=34 data-nosnippet>34</a>    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
+<a href=#35 id=35 data-nosnippet>35</a>    BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
+<a href=#36 id=36 data-nosnippet>36</a>    BrowserView <span class="kw">as </span>TableBrowserView, BrowserViewport,
+<a href=#37 id=37 data-nosnippet>37</a>};
 <a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>crossterm::event::{
 <a href=#39 id=39 data-nosnippet>39</a>    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 <a href=#40 id=40 data-nosnippet>40</a>};
@@ -1451,7 +1451,7 @@
 <a href=#1451 id=1451 data-nosnippet>1451</a>
 <a href=#1452 id=1452 data-nosnippet>1452</a>    <span class="kw">fn </span>selected_non_display_axis_state(
 <a href=#1453 id=1453 data-nosnippet>1453</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1454 id=1454 data-nosnippet>1454</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>casacore_imagebrowser_protocol::ImageNonDisplayAxisState&gt; {
+<a href=#1454 id=1454 data-nosnippet>1454</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>casars_imagebrowser_protocol::ImageNonDisplayAxisState&gt; {
 <a href=#1455 id=1455 data-nosnippet>1455</a>        <span class="self">self</span>.snapshot
 <a href=#1456 id=1456 data-nosnippet>1456</a>            .non_display_axes
 <a href=#1457 id=1457 data-nosnippet>1457</a>            .get(<span class="self">self</span>.selected_non_display_axis)
@@ -10913,7 +10913,7 @@
 <a href=#10913 id=10913 data-nosnippet>10913</a>    colormap: ImagePlaneColormap,
 <a href=#10914 id=10914 data-nosnippet>10914</a>    invert: bool,
 <a href=#10915 id=10915 data-nosnippet>10915</a>    overlay_markers: <span class="kw-2">&amp;</span>[ImagePlaneOverlayMarker],
-<a href=#10916 id=10916 data-nosnippet>10916</a>    region_overlay_shapes: <span class="kw-2">&amp;</span>[casacore_imagebrowser_protocol::ImageRegionOverlayShapeState],
+<a href=#10916 id=10916 data-nosnippet>10916</a>    region_overlay_shapes: <span class="kw-2">&amp;</span>[casars_imagebrowser_protocol::ImageRegionOverlayShapeState],
 <a href=#10917 id=10917 data-nosnippet>10917</a>) -&gt; u64 {
 <a href=#10918 id=10918 data-nosnippet>10918</a>    <span class="kw">let </span><span class="kw-2">mut </span>hasher = DefaultHasher::new();
 <a href=#10919 id=10919 data-nosnippet>10919</a>    snapshot.parameters.blc.hash(<span class="kw-2">&amp;mut </span>hasher);
@@ -11511,7 +11511,7 @@
 <a href=#11511 id=11511 data-nosnippet>11511</a>    }
 <a href=#11512 id=11512 data-nosnippet>11512</a>}
 <a href=#11513 id=11513 data-nosnippet>11513</a>
-<a href=#11514 id=11514 data-nosnippet>11514</a><span class="kw">fn </span>render_image_probe(probe: <span class="kw-2">&amp;</span>casacore_imagebrowser_protocol::ImageBrowserProbe) -&gt; String {
+<a href=#11514 id=11514 data-nosnippet>11514</a><span class="kw">fn </span>render_image_probe(probe: <span class="kw-2">&amp;</span>casars_imagebrowser_protocol::ImageBrowserProbe) -&gt; String {
 <a href=#11515 id=11515 data-nosnippet>11515</a>    <span class="kw">let </span><span class="kw-2">mut </span>lines = <span class="macro">vec!</span>[
 <a href=#11516 id=11516 data-nosnippet>11516</a>        <span class="macro">format!</span>(<span class="string">"value: {}"</span>, probe.value),
 <a href=#11517 id=11517 data-nosnippet>11517</a>        <span class="macro">format!</span>(
@@ -11601,7 +11601,7 @@
 <a href=#11601 id=11601 data-nosnippet>11601</a>}
 <a href=#11602 id=11602 data-nosnippet>11602</a>
 <a href=#11603 id=11603 data-nosnippet>11603</a><span class="kw">fn </span>format_profile_selected_label(
-<a href=#11604 id=11604 data-nosnippet>11604</a>    sample: <span class="kw-2">&amp;</span>casacore_imagebrowser_protocol::ImageProfileSampleState,
+<a href=#11604 id=11604 data-nosnippet>11604</a>    sample: <span class="kw-2">&amp;</span>casars_imagebrowser_protocol::ImageProfileSampleState,
 <a href=#11605 id=11605 data-nosnippet>11605</a>    value_unit: <span class="kw-2">&amp;</span>str,
 <a href=#11606 id=11606 data-nosnippet>11606</a>) -&gt; String {
 <a href=#11607 id=11607 data-nosnippet>11607</a>    <span class="kw">let </span>world = sample
@@ -11984,7 +11984,7 @@
 <a href=#11984 id=11984 data-nosnippet>11984</a>
 <a href=#11985 id=11985 data-nosnippet>11985</a><span class="attr">#[cfg(test)]
 <a href=#11986 id=11986 data-nosnippet>11986</a></span><span class="kw">mod </span>tests {
-<a href=#11987 id=11987 data-nosnippet>11987</a>    <span class="kw">use </span>casacore_imagebrowser_protocol::{
+<a href=#11987 id=11987 data-nosnippet>11987</a>    <span class="kw">use </span>casars_imagebrowser_protocol::{
 <a href=#11988 id=11988 data-nosnippet>11988</a>        ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserSnapshot,
 <a href=#11989 id=11989 data-nosnippet>11989</a>        ImageBrowserView, ImageDisplayAxisState, ImageNavigationMetrics, ImagePlaneCursorState,
 <a href=#11990 id=11990 data-nosnippet>11990</a>    };
