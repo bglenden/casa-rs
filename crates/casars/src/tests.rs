@@ -173,6 +173,33 @@ fn kitty_overlay_env_flags_select_disabled_or_animation_modes() {
 }
 
 #[test]
+fn kitty_overlay_new_starts_disabled_without_direct_kitty_support() {
+    let _guard = test_env_lock();
+    unsafe {
+        std::env::remove_var("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY");
+        std::env::remove_var("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY");
+    }
+
+    let overlay = KittyMovieOverlay::new().expect("construct kitty overlay");
+    assert_eq!(overlay.mode, KittyMovieOverlayMode::Disabled);
+    assert!(overlay.manager.is_none());
+    assert!(overlay.software_store.is_none());
+    assert!(overlay.software_slot.is_none());
+    assert!(overlay.handle.is_none());
+    assert!(overlay.software_images.is_empty());
+    assert_eq!(overlay.active_movie_key, None);
+    assert_eq!(overlay.active_axis, None);
+    assert_eq!(overlay.active_axis_index, None);
+    assert_eq!(overlay.active_canvas, None);
+    assert!(overlay.uploaded_axis_indices.is_empty());
+    assert!(overlay.seen_axis_indices.is_empty());
+    assert_eq!(overlay.active_fps, 0.0);
+    assert_eq!(overlay.seeding_started_at, None);
+    assert_eq!(overlay.looping_started_at, None);
+    assert!(!overlay.looping);
+}
+
+#[test]
 fn movie_overlay_helpers_cover_frame_numbering_and_reset_state() {
     match movie_gap(0.0) {
         KittyAnimationGap::Timed(duration) => assert_eq!(duration, Duration::from_secs(1000)),
