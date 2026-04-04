@@ -8,7 +8,7 @@
 ## Goal
 
 - Replace the alias-style `TempImage<T>` with a real temporary image type and
-  align the `casacore-images` overview/docs/examples with the actual API.
+  align the `casa-images` overview/docs/examples with the actual API.
 
 ## Non-goals
 
@@ -46,11 +46,11 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/image.rs`
-- `crates/casacore-images/src/lib.rs`
-- `crates/casacore-images/examples/`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/src/image.rs`
+- `crates/casa-images/src/lib.rs`
+- `crates/casa-images/examples/`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

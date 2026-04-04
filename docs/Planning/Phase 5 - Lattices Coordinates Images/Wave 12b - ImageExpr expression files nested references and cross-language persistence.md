@@ -51,11 +51,11 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/image_expr.rs`
-- `crates/casacore-images/src/lib.rs`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/src/lib.rs`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/src/image_expr.rs`
+- `crates/casa-images/src/lib.rs`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/src/lib.rs`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 
@@ -145,9 +145,9 @@
 - Date: 2026-03-06
 - Commit: (pending)
 - Commands:
-  - `cargo test -p casacore-images -- --test-threads=1` → PASS (105 tests)
-  - `cargo test -p casacore-test-support -- --test-threads=1` → PASS (all)
-  - `cargo clippy -p casacore-images -p casacore-test-support --all-targets -- -D warnings` → PASS
+  - `cargo test -p casa-images -- --test-threads=1` → PASS (105 tests)
+  - `cargo test -p casa-test-support -- --test-threads=1` → PASS (all)
+  - `cargo clippy -p casa-images -p casa-test-support --all-targets -- -D warnings` → PASS
   - `cargo fmt --all -- --check` → PASS
 - Interop matrix:
   - RR: PASS (`save_and_read_info_round_trip` + `expr_file::open` unit tests)

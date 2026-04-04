@@ -40,8 +40,8 @@
 
 ## Files likely touched
 
-- `crates/casacore-types/src/`
-- `crates/casacore-types/tests/`
+- `crates/casa-types/src/`
+- `crates/casa-types/tests/`
 
 ## Definition of Ready
 

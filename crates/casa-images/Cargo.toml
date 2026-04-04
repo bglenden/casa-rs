@@ -1,0 +1,26 @@
+[package]
+name = "casa-images"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "casacore-compatible typed images and lazy expressions"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
+casa-lattices = { path = "../casa-lattices" }
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
+ndarray.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror.workspace = true
+
+[dev-dependencies]
+casa-test-support = { path = "../casa-test-support" }
+tempfile = "3"

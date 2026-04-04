@@ -6,7 +6,7 @@ This PR finishes the `imexplore` region/mask wave as a mergeable cleanup pass ra
 
 It does four things:
 
-1. moves persistent region, mask, region-profile, and region-stat behavior behind `casacore-images` library APIs so `casars` is a thin client
+1. moves persistent region, mask, region-profile, and region-stat behavior behind `casa-images` library APIs so `casars` is a thin client
 2. switches persistent saved regions and masks to native casacore-compatible image metadata/table structures
 3. adds Rust-vs-C++ interop coverage for supported and unsupported region classes, plus region-statistics equivalence checks
 4. refactors the new `casars` image-browser left-pane manager behavior into reusable shell primitives instead of leaving it as `imexplore`-only UI glue
@@ -37,7 +37,7 @@ Everything else is rejected with explicit errors naming the casacore class.
 
 ## Library/API changes
 
-### `casacore-images`
+### `casa-images`
 
 - `OpenedImageView` now owns native saved-region CRUD and native mask operations
 - region editing/manipulation remains polygon-based, but the persistent save/load/remove/rename path is library-owned
@@ -51,12 +51,12 @@ Key behavior:
 - save with any open polygon -> explicit error
 - `write_region_mask(...)` writes a native persistent mask and can set it as default
 
-### `casacore-coordinates`
+### `casa-coordinates`
 
 - CASA-style record compatibility is improved for region persistence and temp-image interoperability
 - `LinearCoordinate` now serializes `pc` as a real matrix record shape compatible with casacore C++
 
-### `casacore-test-support`
+### `casa-test-support`
 
 - added C++ image shim coverage for:
   - supported polygon and union regions
@@ -123,7 +123,7 @@ This validates the Rust region-application and masked/finiteness filtering path 
 
 ## Structural cleanup
 
-- split `casacore-images` region persistence logic out of the large monolithic file into focused internal modules
+- split `casa-images` region persistence logic out of the large monolithic file into focused internal modules
 - split `casars` image-browser left-pane manager behavior into reusable pane-manager/browser-manager modules
 - removed stale/non-native persistence assumptions from comments and code paths
 - kept app-specific rendering in `casars`, but avoided duplicating persistence/stat logic there
@@ -143,7 +143,7 @@ Coverage:
 
 Changed-area coverage was also strengthened directly rather than relying only on the global gate:
 
-- `crates/casacore-images/src/image_view/region_persistence.rs`
+- `crates/casa-images/src/image_view/region_persistence.rs`
   - `199/258` lines covered (`77.13%`)
   - added focused tests for unsupported-class reporting, unit conversion failures, and quantum-vector parsing errors
 - `crates/casars/src/app/browser_manager.rs`
@@ -162,11 +162,11 @@ Changed-area coverage was also strengthened directly rather than relying only on
 
 Focus files:
 
-- `crates/casacore-images/src/image.rs`
-- `crates/casacore-images/src/image_view.rs`
-- `crates/casacore-images/src/image_view/region_persistence.rs`
-- `crates/casacore-images/src/imagebrowser_session.rs`
-- `crates/casacore-images/src/mask.rs`
+- `crates/casa-images/src/image.rs`
+- `crates/casa-images/src/image_view.rs`
+- `crates/casa-images/src/image_view/region_persistence.rs`
+- `crates/casa-images/src/imagebrowser_session.rs`
+- `crates/casa-images/src/mask.rs`
 
 Questions:
 
@@ -178,11 +178,11 @@ Questions:
 
 Focus files:
 
-- `crates/casacore-test-support/src/cpp/casacore_cpp_image_shim.cpp`
-- `crates/casacore-test-support/src/lib.rs`
-- `crates/casacore-test-support/src/table_interop.rs`
-- `crates/casacore-test-support/tests/images_interop.rs`
-- `crates/casacore-test-support/tests/tables_cross_matrix_stman_aipsio_undefined.rs`
+- `crates/casa-test-support/src/cpp/casacore_cpp_image_shim.cpp`
+- `crates/casa-test-support/src/lib.rs`
+- `crates/casa-test-support/src/table_interop.rs`
+- `crates/casa-test-support/tests/images_interop.rs`
+- `crates/casa-test-support/tests/tables_cross_matrix_stman_aipsio_undefined.rs`
 
 Questions:
 
@@ -211,9 +211,9 @@ Questions:
 
 Focus files:
 
-- `crates/casacore-coordinates/src/coordinate_system.rs`
-- `crates/casacore-coordinates/src/direction.rs`
-- `crates/casacore-coordinates/src/linear.rs`
+- `crates/casa-coordinates/src/coordinate_system.rs`
+- `crates/casa-coordinates/src/direction.rs`
+- `crates/casa-coordinates/src/linear.rs`
 
 Questions:
 

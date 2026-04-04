@@ -49,11 +49,11 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/image_expr.rs`
-- `crates/casacore-images/src/lib.rs`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/src/lib.rs`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/src/image_expr.rs`
+- `crates/casa-images/src/lib.rs`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/src/lib.rs`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 
@@ -77,7 +77,7 @@
 
 - [x] Implement parser support for the casacore expression forms needed for
       the Wave 11 frozen operator/function subset.
-      `crates/casacore-images/src/expr_parser.rs` — complete recursive descent
+      `crates/casa-images/src/expr_parser.rs` — complete recursive descent
       parser with tokenizer. 36 unit tests, 3 doc tests.
 - [x] Implement precedence, associativity, quoted filenames, escaping, and
       path-token handling needed for supported expressions.
@@ -143,7 +143,7 @@
   - `cargo fmt --all -- --check` -> PASS
   - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
   - `cargo test --workspace` -> PASS (interop: `--test-threads=1`)
-  - `cargo run -p casacore-images --example t_image_expr` -> PASS
+  - `cargo run -p casa-images --example t_image_expr` -> PASS
 - Interop matrix:
   - RR: 36 unit tests + 3 doc tests (PASS)
   - RC: `saved_lazy_expr_is_cpp_readable` (PASS, Wave 11)

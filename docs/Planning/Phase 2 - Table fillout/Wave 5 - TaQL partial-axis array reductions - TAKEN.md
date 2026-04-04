@@ -34,7 +34,7 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/taql/functions.rs`
+- `crates/casa-tables/src/taql/functions.rs`
 
 ## Definition of Ready
 

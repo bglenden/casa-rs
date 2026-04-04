@@ -10,10 +10,15 @@ This README is for API users. Contributor/developer policy is in `AGENTS.md`.
 
 Public API crates:
 
-- `casacore-types`: scalar/array/record value model.
-- `casacore-tables`: table-facing API crate (current facade is intentionally small).
+- `casa-types`: scalar/array/record value model.
+- `casa-tables`: table-facing API crate (current facade is intentionally small).
 
-`casacore-aipsio` is primarily an internal implementation crate used by table internals.
+`casa-aipsio` is primarily an internal implementation crate used by table internals.
+
+Naming:
+- `casa-*` crates are reusable libraries.
+- `casars-*` crates are app/runtime protocol crates for the terminal application layer.
+- The repo implements casacore-compatible behavior in native Rust; it is not a Rust wrapper around casacore C++.
 
 ## Current User-Facing Capabilities
 
@@ -30,7 +35,7 @@ Status legend:
 
 | casacore-c++ module | casa-rs status | Notes |
 |---|---|---|
-| `casa` | Partial / Available now | Core value model (`casacore-types`) exists; broader `casa` utility surface is not a parity target. |
+| `casa` | Partial / Available now | Core value model (`casa-types`) exists; broader `casa` utility surface is not a parity target. |
 | `tables` | Available now + Planned | Core table persistence APIs exist; closeout parity tracked in [Phase 2](docs/Planning/Phase%202%20-%20Table%20fillout/README.md). |
 | `measures` | Planned | Scoped in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
 | `meas` (TaQL UDF) | Planned (core subset) | Core subset in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md); full catalog deferred. |
@@ -110,10 +115,10 @@ itself. The intended convention is that argv parsing, `--help`, and
 `--ui-schema` all come from the same internal command schema so they stay in
 sync.
 
-## Minimal Example (`casacore-types`)
+## Minimal Example (`casa-types`)
 
 ```rust
-use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 let temperature = Value::Scalar(ScalarValue::Float64(273.15));
 
@@ -137,8 +142,8 @@ equivalent to the corresponding C++ test/demo. These demos:
 
 | Crate | Demo | C++ original | Run |
 |---|---|---|---|
-| `casacore-aipsio` | `t_aipsio` | `tAipsIO.cc` | `cargo run -p casacore-aipsio --example t_aipsio` |
-| `casacore-tables` | `t_table` | `tTable.cc` | `cargo run -p casacore-tables --example t_table` |
+| `casa-aipsio` | `t_aipsio` | `tAipsIO.cc` | `cargo run -p casa-aipsio --example t_aipsio` |
+| `casa-tables` | `t_table` | `tTable.cc` | `cargo run -p casa-tables --example t_table` |
 
 Demo source lives in each crate's `examples/` directory. The demo logic
 is in a `demo` module within the crate, so `cargo doc` renders it alongside
@@ -171,19 +176,19 @@ The bundled snapshot should be refreshed periodically (the
 **Command-line update** — download the latest data to `~/.casa-rs/data/`:
 
 ```bash
-cargo run --example update_eop -p casacore-measures-data --features update
+cargo run --example update_eop -p casa-measures-data --features update
 ```
 
 Or specify a custom directory:
 
 ```bash
-cargo run --example update_eop -p casacore-measures-data --features update -- --data-dir /path/to/data
+cargo run --example update_eop -p casa-measures-data --features update -- --data-dir /path/to/data
 ```
 
 **Programmatic update:**
 
 ```rust
-use casacore_measures_data::update::{download_and_install, UpdateResult};
+use casa_measures_data::update::{download_and_install, UpdateResult};
 use std::path::Path;
 
 match download_and_install(Path::new("/path/to/data"))? {
@@ -196,11 +201,11 @@ match download_and_install(Path::new("/path/to/data"))? {
 
 ```bash
 # Download latest to a temp directory
-cargo run --example update_eop -p casacore-measures-data --features update -- --data-dir /tmp/eop
+cargo run --example update_eop -p casa-measures-data --features update -- --data-dir /tmp/eop
 
 # Copy into the crate's data directory and commit
-cp /tmp/eop/finals2000A.data crates/casacore-measures-data/data/finals2000A.data
-git add crates/casacore-measures-data/data/finals2000A.data
+cp /tmp/eop/finals2000A.data crates/casa-measures-data/data/finals2000A.data
+git add crates/casa-measures-data/data/finals2000A.data
 git commit -m "data: refresh bundled IERS EOP snapshot"
 ```
 
@@ -209,7 +214,7 @@ git commit -m "data: refresh bundled IERS EOP snapshot"
 The bundled data staleness test runs automatically with `cargo test --workspace`:
 
 ```bash
-cargo test -p casacore-measures-data bundled_data_not_stale
+cargo test -p casa-measures-data bundled_data_not_stale
 ```
 
 This test fails when the bundled data's last measured entry is older than

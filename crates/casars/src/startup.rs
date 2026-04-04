@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
 
-use casacore_ms::msexplore::cli::{
-    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema,
-};
+use casa_ms::msexplore::cli::{UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema};
 
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
 
@@ -260,7 +258,7 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
 
-    use casacore_ms::msexplore::cli::command_schema;
+    use casa_ms::msexplore::cli::command_schema;
     use serde_json::json;
 
     use super::{

@@ -35,10 +35,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/taql/ast.rs`
-- `crates/casacore-tables/src/taql/parser.rs`
-- `crates/casacore-tables/src/taql/eval.rs`
-- `crates/casacore-tables/src/taql/exec.rs`
+- `crates/casa-tables/src/taql/ast.rs`
+- `crates/casa-tables/src/taql/parser.rs`
+- `crates/casa-tables/src/taql/eval.rs`
+- `crates/casa-tables/src/taql/exec.rs`
 
 ## Definition of Ready
 

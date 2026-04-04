@@ -45,8 +45,8 @@
 
 ## Files likely touched
 
-- `crates/casacore-lattices/src/`
-- `crates/casacore-lattices/tests/`
+- `crates/casa-lattices/src/`
+- `crates/casa-lattices/tests/`
 
 ## Definition of Ready
 

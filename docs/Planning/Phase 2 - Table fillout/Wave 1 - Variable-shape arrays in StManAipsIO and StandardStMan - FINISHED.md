@@ -42,11 +42,11 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/storage/stman_aipsio.rs`
-- `crates/casacore-tables/src/storage/standard_stman.rs`
-- `crates/casacore-tables/src/storage/stman_array_file.rs`
-- `crates/casacore-test-support/src/cpp/*vararray*.cpp`
-- `crates/casacore-test-support/tests/tables_cross_matrix_variable_arrays.rs`
+- `crates/casa-tables/src/storage/stman_aipsio.rs`
+- `crates/casa-tables/src/storage/standard_stman.rs`
+- `crates/casa-tables/src/storage/stman_array_file.rs`
+- `crates/casa-test-support/src/cpp/*vararray*.cpp`
+- `crates/casa-test-support/tests/tables_cross_matrix_variable_arrays.rs`
 
 ## Definition of Ready
 
@@ -74,7 +74,7 @@
 ## Performance plan
 
 - Workload: read/write 10k variable-shape array cells.
-- Rust command: `cargo test --release -p casacore-test-support --test tables_cross_matrix_variable_arrays`.
+- Rust command: `cargo test --release -p casa-test-support --test tables_cross_matrix_variable_arrays`.
 - C++ command: use matching C++ fixture path in test shim for comparison run.
 - Alert threshold: Rust > 2x C++.
 
@@ -98,7 +98,7 @@
   - `cargo test --workspace` -> PASS (all tests passed across all crates)
   - `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75` -> PASS (75.16% coverage)
   - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` -> PASS
-  - `cargo test --release -p casacore-test-support --test tables_cross_matrix_variable_arrays -- --nocapture` -> PASS (4 passed, 0 failed, 0.01s)
+  - `cargo test --release -p casa-test-support --test tables_cross_matrix_variable_arrays -- --nocapture` -> PASS (4 passed, 0 failed, 0.01s)
 - Interop matrix:
   - RR: PASS
   - RC: PASS

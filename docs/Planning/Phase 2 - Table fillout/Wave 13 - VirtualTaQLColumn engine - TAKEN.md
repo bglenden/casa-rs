@@ -34,10 +34,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/storage/virtual_taql_column.rs`
-- `crates/casacore-tables/src/storage/virtual_engine.rs`
-- `crates/casacore-tables/src/storage/mod.rs`
-- `crates/casacore-tables/src/table.rs`
+- `crates/casa-tables/src/storage/virtual_taql_column.rs`
+- `crates/casa-tables/src/storage/virtual_engine.rs`
+- `crates/casa-tables/src/storage/mod.rs`
+- `crates/casa-tables/src/table.rs`
 
 ## Definition of Ready
 

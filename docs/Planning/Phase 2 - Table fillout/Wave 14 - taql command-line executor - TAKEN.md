@@ -35,8 +35,8 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/examples/taql.rs` or `src/bin/taql.rs`
-- `crates/casacore-tables/src/table.rs` (if glue needed)
+- `crates/casa-tables/examples/taql.rs` or `src/bin/taql.rs`
+- `crates/casa-tables/src/table.rs` (if glue needed)
 - CLI tests/snapshots
 
 ## Definition of Ready

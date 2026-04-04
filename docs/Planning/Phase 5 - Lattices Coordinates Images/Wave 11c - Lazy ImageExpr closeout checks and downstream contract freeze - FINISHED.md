@@ -46,10 +46,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/image_expr.rs`
-- `crates/casacore-images/src/lib.rs`
-- `crates/casacore-images/tests/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/src/image_expr.rs`
+- `crates/casa-images/src/lib.rs`
+- `crates/casa-images/tests/`
+- `crates/casa-test-support/tests/`
 - `docs/Planning/Phase 5 - Lattices Coordinates Images/`
 
 ## Definition of Ready
@@ -130,9 +130,9 @@ fixed:
   - `cargo test --workspace` -> PASS
   - `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps` -> PASS
   - `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75` -> PASS (`76.92%`)
-  - `cargo test -p casacore-test-support --test images_perf_vs_cpp lazy_image_expr_closeout_slice_perf_vs_cpp -- --nocapture` -> PASS with performance alert
+  - `cargo test -p casa-test-support --test images_perf_vs_cpp lazy_image_expr_closeout_slice_perf_vs_cpp -- --nocapture` -> PASS with performance alert
 - Interop matrix:
-  - RR: `cargo test -p casacore-images image_expr -- --nocapture` passed, including added helper coverage for `pow_image`, `fmod_image`, and `atan2_image`.
+  - RR: `cargo test -p casa-images image_expr -- --nocapture` passed, including added helper coverage for `pow_image`, `fmod_image`, and `atan2_image`.
   - RC: Rust-created images and `save_as` outputs were read successfully by the C++ shim in `image_expr_interop`.
   - CR: C++-created images were consumed by Rust lazy expressions across unary, binary, scalar, and comparison/mask cases.
   - CC: Not exercised as a standalone matrix in this wave; the C++ side acts as the reference evaluator behind the shim.

@@ -30,7 +30,7 @@
 
 ## Dependencies
 
-- Existing C++ fixture harness in `casacore-test-support`.
+- Existing C++ fixture harness in `casa-test-support`.
 
 ## Ordering constraints
 
@@ -38,9 +38,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/src/lib.rs`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/src/lib.rs`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

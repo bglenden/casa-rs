@@ -12,7 +12,7 @@
 
 ## Goal
 
-- Create `casacore-lattices` crate and core lattice abstractions
+- Create `casa-lattices` crate and core lattice abstractions
   (shape, element access contract, coordinate attachment points).
 
 ## Non-goals
@@ -46,7 +46,7 @@
 ## Files likely touched
 
 - `Cargo.toml`
-- `crates/casacore-lattices/`
+- `crates/casa-lattices/`
 
 ## Definition of Ready
 

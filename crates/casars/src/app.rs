@@ -11,30 +11,30 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use casacore_imagebrowser_protocol::{
+use casa_ms::msexplore::cli::{
+    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
+    build_explore_spec_from_args,
+};
+use casa_ms::{
+    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
+    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
+    export_msexplore_plot,
+};
+use casa_types::measures::direction::{
+    angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
+};
+use casa_types::quanta::{MvAngle, MvTime, Quantity, Unit};
+use casars_imagebrowser_protocol::{
     ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserCommand, ImageBrowserFocus,
     ImageBrowserParameters, ImageBrowserPreviewRequest, ImageBrowserProbe, ImageBrowserSnapshot,
     ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImagePlaneContentMode,
     ImageProfilePayload,
 };
-use casacore_ms::msexplore::cli::{
-    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
-    build_explore_spec_from_args,
-};
-use casacore_ms::{
-    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
-    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
-    export_msexplore_plot,
-};
-use casacore_tablebrowser_protocol::{
+use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
     BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
     BrowserView as TableBrowserView, BrowserViewport,
 };
-use casacore_types::measures::direction::{
-    angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
-};
-use casacore_types::quanta::{MvAngle, MvTime, Quantity, Unit};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -1451,7 +1451,7 @@ impl ImageBrowserSessionState {
 
     fn selected_non_display_axis_state(
         &self,
-    ) -> Option<&casacore_imagebrowser_protocol::ImageNonDisplayAxisState> {
+    ) -> Option<&casars_imagebrowser_protocol::ImageNonDisplayAxisState> {
         self.snapshot
             .non_display_axes
             .get(self.selected_non_display_axis)
@@ -10913,7 +10913,7 @@ fn image_plane_render_signature(
     colormap: ImagePlaneColormap,
     invert: bool,
     overlay_markers: &[ImagePlaneOverlayMarker],
-    region_overlay_shapes: &[casacore_imagebrowser_protocol::ImageRegionOverlayShapeState],
+    region_overlay_shapes: &[casars_imagebrowser_protocol::ImageRegionOverlayShapeState],
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     snapshot.parameters.blc.hash(&mut hasher);
@@ -11511,7 +11511,7 @@ fn copyable_browser_text(inspector: &BrowserInspectorSnapshot) -> (String, &'sta
     }
 }
 
-fn render_image_probe(probe: &casacore_imagebrowser_protocol::ImageBrowserProbe) -> String {
+fn render_image_probe(probe: &casars_imagebrowser_protocol::ImageBrowserProbe) -> String {
     let mut lines = vec![
         format!("value: {}", probe.value),
         format!(
@@ -11601,7 +11601,7 @@ fn frequency_display_unit_for_profile(profile: &ImageProfilePayload) -> Option<&
 }
 
 fn format_profile_selected_label(
-    sample: &casacore_imagebrowser_protocol::ImageProfileSampleState,
+    sample: &casars_imagebrowser_protocol::ImageProfileSampleState,
     value_unit: &str,
 ) -> String {
     let world = sample
@@ -11984,7 +11984,7 @@ fn shell_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use casacore_imagebrowser_protocol::{
+    use casars_imagebrowser_protocol::{
         ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserSnapshot,
         ImageBrowserView, ImageDisplayAxisState, ImageNavigationMetrics, ImagePlaneCursorState,
     };

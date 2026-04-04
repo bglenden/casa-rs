@@ -25,7 +25,7 @@ means reading any table regardless of the endianness it was written with.
    `table.dat` on save.
 
 5. **LECanonical codec** — if not already present, implement little-endian
-   canonical read/write in `casacore-aipsio` alongside the existing big-endian
+   canonical read/write in `casa-aipsio` alongside the existing big-endian
    canonical path.
 
 ## Tests
@@ -39,12 +39,12 @@ means reading any table regardless of the endianness it was written with.
 
 ## Key files
 
-- `crates/casacore-tables/src/storage/table_control.rs` — endian marker parse
-- `crates/casacore-tables/src/storage/standard_stman.rs` — endian-aware buckets
-- `crates/casacore-tables/src/storage/stman_aipsio.rs` — thread byte order
-- `crates/casacore-tables/src/table.rs` — `TableOptions` endian field
-- `crates/casacore-aipsio/src/lib.rs` — LE canonical codec if needed
-- `crates/casacore-test-support/` — new interop tests
+- `crates/casa-tables/src/storage/table_control.rs` — endian marker parse
+- `crates/casa-tables/src/storage/standard_stman.rs` — endian-aware buckets
+- `crates/casa-tables/src/storage/stman_aipsio.rs` — thread byte order
+- `crates/casa-tables/src/table.rs` — `TableOptions` endian field
+- `crates/casa-aipsio/src/lib.rs` — LE canonical codec if needed
+- `crates/casa-test-support/` — new interop tests
 
 ## Lessons learned (closeout)
 

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
 
-use casacore_ms::msexplore::cli::{UiCommandSchema, command_schema as msexplore_command_schema};
+use casa_ms::msexplore::cli::{UiCommandSchema, command_schema as msexplore_command_schema};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
@@ -218,7 +218,7 @@ pub(crate) fn tablebrowser_app() -> RegistryApp {
         display_name: "Table Browser",
         kind: RegistryAppKind::Subprocess {
             binary_name: "tablebrowser",
-            cargo_package: "casacore-tables",
+            cargo_package: "casa-tables",
             override_env: "CASARS_TABLEBROWSER_BIN",
             interaction: AppInteraction::BrowserSession(BrowserAppKind::Table),
         },
@@ -232,7 +232,7 @@ pub(crate) fn imexplore_app() -> RegistryApp {
         display_name: "ImExplore",
         kind: RegistryAppKind::Subprocess {
             binary_name: "imexplore",
-            cargo_package: "casacore-images",
+            cargo_package: "casa-images",
             override_env: "CASARS_IMEXPLORE_BIN",
             interaction: AppInteraction::BrowserSession(BrowserAppKind::Image),
         },
@@ -246,7 +246,7 @@ pub(crate) fn msexplore_app() -> RegistryApp {
         display_name: "MSExplore",
         kind: RegistryAppKind::Subprocess {
             binary_name: "msexplore",
-            cargo_package: "casacore-ms",
+            cargo_package: "casa-ms",
             override_env: "CASARS_MSEXPLORE_BIN",
             interaction: AppInteraction::OneShot,
         },
@@ -299,8 +299,8 @@ fn is_binary_stale(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casacore_ms::MsPlotPreset;
-    use casacore_ms::msexplore::cli::UiArgumentParser;
+    use casa_ms::MsPlotPreset;
+    use casa_ms::msexplore::cli::UiArgumentParser;
     use std::fs;
     use std::time::Duration;
 
@@ -388,7 +388,7 @@ mod tests {
                 workspace_manifest_path().to_string_lossy().as_ref(),
                 "-q",
                 "-p",
-                "casacore-tables",
+                "casa-tables",
                 "--bin",
                 "tablebrowser",
                 "--"

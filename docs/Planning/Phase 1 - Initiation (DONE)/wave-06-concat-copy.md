@@ -27,10 +27,10 @@ format migration.
 
 | Component | Location |
 |-----------|----------|
-| `ConcatTable`, `ConcatRows` | `casacore-tables/src/concat_table.rs` |
-| `Table::concat`, `deep_copy`, `shallow_copy` | `casacore-tables/src/table.rs` |
+| `ConcatTable`, `ConcatRows` | `casa-tables/src/concat_table.rs` |
+| `Table::concat`, `deep_copy`, `shallow_copy` | `casa-tables/src/table.rs` |
 | On-disk read/write | `storage/table_control.rs` + `storage/mod.rs` |
-| C++ interop shims | `casacore-test-support/src/cpp/casacore_cpp_table_shim.cpp` |
+| C++ interop shims | `casa-test-support/src/cpp/casacore_cpp_table_shim.cpp` |
 | Interop tests | `tests/tables_concat_table_interop.rs`, `tests/tables_deep_copy_interop.rs` |
 | Demo | `demo_concat_and_copy()` in `demo.rs` |
 

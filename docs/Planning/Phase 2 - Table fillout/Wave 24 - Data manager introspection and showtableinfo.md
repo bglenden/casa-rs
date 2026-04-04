@@ -38,9 +38,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/table.rs`
-- `crates/casacore-tables/src/storage/mod.rs`
-- `crates/casacore-tables/src/bin/` or `examples/`
+- `crates/casa-tables/src/table.rs`
+- `crates/casa-tables/src/storage/mod.rs`
+- `crates/casa-tables/src/bin/` or `examples/`
 
 ## Definition of Ready
 

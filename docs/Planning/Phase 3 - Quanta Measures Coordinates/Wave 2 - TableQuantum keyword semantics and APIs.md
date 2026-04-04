@@ -88,21 +88,21 @@ The two keywords are mutually exclusive.
 
 | File | Change |
 |------|--------|
-| `crates/casacore-tables/src/table_quantum.rs` | **New**: `TableQuantumDesc`, `ScalarQuantColumn`, `ArrayQuantColumn` |
-| `crates/casacore-tables/src/lib.rs` | Add `pub mod table_quantum` |
-| `crates/casacore-tables/src/table.rs` | Add `has_quantum_column()`, `quantum_desc()` convenience methods |
-| `crates/casacore-test-support/src/cpp/casacore_cpp_table_quantum.cpp` | **New**: C++ shim for interop |
-| `crates/casacore-test-support/src/table_interop.rs` | Add quantum column helpers |
-| `crates/casacore-test-support/build.rs` | Register new C++ shim file |
+| `crates/casa-tables/src/table_quantum.rs` | **New**: `TableQuantumDesc`, `ScalarQuantColumn`, `ArrayQuantColumn` |
+| `crates/casa-tables/src/lib.rs` | Add `pub mod table_quantum` |
+| `crates/casa-tables/src/table.rs` | Add `has_quantum_column()`, `quantum_desc()` convenience methods |
+| `crates/casa-test-support/src/cpp/casacore_cpp_table_quantum.cpp` | **New**: C++ shim for interop |
+| `crates/casa-test-support/src/table_interop.rs` | Add quantum column helpers |
+| `crates/casa-test-support/build.rs` | Register new C++ shim file |
 
 ## Files to Create
 
 | File | Purpose |
 |------|---------|
-| `crates/casacore-tables/src/table_quantum.rs` | Core implementation |
-| `crates/casacore-tables/tests/table_quantum.rs` | Rust-only unit tests |
-| `crates/casacore-test-support/tests/table_quantum_interop.rs` | 2×2 interop tests |
-| `crates/casacore-test-support/src/cpp/casacore_cpp_table_quantum.cpp` | C++ shim |
+| `crates/casa-tables/src/table_quantum.rs` | Core implementation |
+| `crates/casa-tables/tests/table_quantum.rs` | Rust-only unit tests |
+| `crates/casa-test-support/tests/table_quantum_interop.rs` | 2×2 interop tests |
+| `crates/casa-test-support/src/cpp/casacore_cpp_table_quantum.cpp` | C++ shim |
 
 ## Implementation Details
 
@@ -341,7 +341,7 @@ Applied to this wave's plan:
   - Array read (4-element): Rust 103.8 ns/op, C++ 446.0 ns/op, ratio 0.23x (Rust 4.3x faster)
 - Skips/blockers/follow-ups:
   - tQuantumHolder (Quantity serialization for transport) not implemented — out of scope for this wave
-  - No standalone tUnit/tQuantum example in casacore-types — low priority, tests cover the functionality
+  - No standalone tUnit/tQuantum example in casa-types — low priority, tests cover the functionality
 
 ## Lessons learned
 

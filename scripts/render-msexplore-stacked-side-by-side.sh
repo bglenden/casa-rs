@@ -91,7 +91,7 @@ casa_copy="${output_path%.png}.casa.png"
 log_copy="${output_path%.png}.casa.log"
 
 echo "Rendering casa-rs stacked plot..."
-cargo run -q -p casacore-ms --bin msexplore -- \
+cargo run -q -p casa-ms --bin msexplore -- \
   --preset amplitude_phase_vs_time_stacked \
   --field "$field" \
   --spw "$spw" \

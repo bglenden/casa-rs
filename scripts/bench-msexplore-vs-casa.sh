@@ -47,7 +47,7 @@ echo "repeats=$repeats"
 echo "scenario=preset=amplitude_vs_time spw=0 iteraxis=scan gridcols=2 xselfscale color_by=correlation"
 echo
 
-cargo build --release -p casacore-ms --bin msexplore --example profile_msexplore >/dev/null
+cargo build --release -p casa-ms --bin msexplore --example profile_msexplore >/dev/null
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT

@@ -39,9 +39,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-ms/src/`
-- `crates/casacore-ms/tests/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-ms/src/`
+- `crates/casa-ms/tests/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

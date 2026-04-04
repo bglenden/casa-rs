@@ -38,11 +38,11 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/taql/token.rs`
-- `crates/casacore-tables/src/taql/lexer.rs`
-- `crates/casacore-tables/src/taql/ast.rs`
-- `crates/casacore-tables/src/taql/parser.rs`
-- `crates/casacore-tables/src/taql/eval.rs`
+- `crates/casa-tables/src/taql/token.rs`
+- `crates/casa-tables/src/taql/lexer.rs`
+- `crates/casa-tables/src/taql/ast.rs`
+- `crates/casa-tables/src/taql/parser.rs`
+- `crates/casa-tables/src/taql/eval.rs`
 
 ## Definition of Ready
 

@@ -29,7 +29,7 @@
 
 ## Dependencies
 
-- `casacore-aipsio` framing primitives.
+- `casa-aipsio` framing primitives.
 
 ## Ordering constraints
 
@@ -37,11 +37,11 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/storage/stman_aipsio.rs`
-- `crates/casacore-tables/src/storage/standard_stman.rs`
-- `crates/casacore-tables/src/storage/incremental_stman.rs`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-tables/src/storage/stman_aipsio.rs`
+- `crates/casa-tables/src/storage/standard_stman.rs`
+- `crates/casa-tables/src/storage/incremental_stman.rs`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 
