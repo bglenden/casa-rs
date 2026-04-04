@@ -16,7 +16,7 @@ Catalog of remaining gaps for practical MeasurementSet workflows using
 
 ## Extracted Into Waves
 
-Items `1.1`-`8.3` were extracted into Phase 4 Waves 1-8.
+Items `1.1`-`8.3` and `12.1` were extracted into Phase 4 Waves 1-9.
 
 ---
 
@@ -184,3 +184,62 @@ cap with smarter handling for dense plots:
 - optional decimation or binning strategies that preserve obvious structure
 - panel-parallel render/build execution for iterated and multi-plot pages
 - lower-allocation grouping keys in the scatter builder hot path
+
+---
+
+### 12.2 `casacore-calibration` Substrate with Permissive-Read / Strict-Write Policy
+
+**Status:** IMPLEMENT
+
+**Reason:** Build the new library crate that owns calibration-table IO,
+normalized metadata, indexing, interpolation, apply logic, and later solve
+logic, while keeping `casars` thin.
+
+---
+
+### 12.3 Apply Planner for Complex CASA Caltables
+
+**Status:** IMPLEMENT
+
+**Reason:** Separate table-chain resolution, `gainfield`, `spwmap`,
+interpolation, and scratch-column planning from row execution so trial mode,
+parity diffs, and multithreaded execution stay deterministic.
+
+---
+
+### 12.4 Public `calibrate` App with `applycal`-Class Execution
+
+**Status:** IMPLEMENT
+
+**Reason:** The first public release should actually calibrate an MS by
+applying existing complex caltables and creating `CORRECTED_DATA` when absent.
+
+---
+
+### 12.5 Limited `gaincal` (`G` / `T`, `p|ap`)
+
+**Status:** IMPLEMENT
+
+**Reason:** Solving should begin only after the caltable substrate and apply
+path are trustworthy, using the same on-disk compatibility contract and
+downstream parity checks.
+
+---
+
+### 12.6 `bandpass`, `calstat`, and `fluxscale`
+
+**Status:** IMPLEMENT
+
+**Reason:** These workflows build naturally on the same caltable substrate but
+carry broader scope and stricter workflow dependencies than the first apply
+release.
+
+---
+
+### 12.7 Deferred Calibration Backlog (`gainfield=nearest`, `callib`, `parang`, `FPARAM`, `BPOLY`, broad plotting)
+
+**Status:** DEFER
+
+**Reason:** These features expand the compatibility surface significantly and
+should not be represented as code TODOs before the complex `CPARAM` apply path
+is stable.

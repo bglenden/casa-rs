@@ -431,6 +431,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "casacore-calibration"
+version = "0.10.6"
+dependencies = [
+ "casacore-tables",
+ "casacore-test-support",
+ "casacore-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "casacore-coordinates"
 version = "0.10.6"
 dependencies = [

@@ -1,0 +1,30 @@
+[package]
+name = "casacore-calibration"
+description = "Calibration-table compatibility and workflow substrate for casa-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+slow-tests = []
+
+[dependencies]
+casacore-tables = { path = "../casacore-tables" }
+casacore-types = { path = "../casacore-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror.workspace = true
+
+[dev-dependencies]
+casacore-test-support = { path = "../casacore-test-support" }
+tempfile = "3"
+
+[[bin]]
+name = "calibrate"
+path = "src/bin/calibrate.rs"
+
+[lints]
+workspace = true
