@@ -105,6 +105,18 @@ fn parse_schema_prefill_args(
             _ => None,
         })
         .collect::<Vec<_>>();
+    let implicit_primary_id = if positional_ids.is_empty() {
+        schema
+            .arguments
+            .iter()
+            .filter(|argument| !argument.hidden_in_tui)
+            .filter(|argument| !matches!(argument.parser, UiArgumentParser::Action { .. }))
+            .filter(|argument| argument.value_kind == casacore_ms::msexplore::cli::UiValueKind::Path)
+            .min_by_key(|argument| argument.order)
+            .map(|argument| argument.id.as_str())
+    } else {
+        None
+    };
     let mut positional_index = 0usize;
     let mut raw_args = args
         .into_iter()
@@ -114,6 +126,7 @@ fn parse_schema_prefill_args(
         .peekable();
     let mut end_of_options = false;
     let mut saw_prefill = false;
+    let mut used_implicit_primary_prefill = false;
 
     while let Some(raw) = raw_args.next() {
         if !end_of_options && raw == "--" {
@@ -181,24 +194,35 @@ fn parse_schema_prefill_args(
             continue;
         }
 
-        let positional_id = positional_ids.get(positional_index).ok_or_else(|| {
-            format!(
-                "unexpected extra positional argument {raw:?} for {}",
-                schema.command_id
-            )
-        })?;
+        let positional_id = positional_ids
+            .get(positional_index)
+            .copied()
+            .or_else(|| {
+                (positional_index == 0)
+                    .then_some(implicit_primary_id)
+                    .flatten()
+            })
+            .ok_or_else(|| {
+                format!(
+                    "unexpected extra positional argument {raw:?} for {}",
+                    schema.command_id
+                )
+            })?;
         upsert_value(
             &mut values,
-            (*positional_id).to_string(),
+            positional_id.to_string(),
             StartupValue::Text(raw),
         );
+        if positional_ids.is_empty() && positional_index == 0 && implicit_primary_id.is_some() {
+            used_implicit_primary_prefill = true;
+        }
         positional_index += 1;
         saw_prefill = true;
     }
 
     Ok(SchemaPrefillParse::Prefill {
         values,
-        auto_run: saw_prefill,
+        auto_run: saw_prefill && !used_implicit_primary_prefill,
     })
 }
 
@@ -442,6 +466,47 @@ mod tests {
                 assert!(text.contains("\"schema_version\": 1"));
             }
             other => panic!("expected ui schema text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn startup_parser_prefills_calibrate_measurement_set_from_bare_path() {
+        match parse_startup_args(vec![
+            OsString::from("calibrate"),
+            OsString::from("/tmp/example.ms"),
+        ])
+        .expect("calibrate startup args")
+        {
+            StartupSelection::App(selection) => {
+                assert_eq!(selection.app.id, "calibrate");
+                assert!(!selection.auto_run);
+                assert!(selection.prefill.iter().any(|entry| {
+                    entry.id == "measurement_set"
+                        && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
+                }));
+            }
+            other => panic!("expected startup app selection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn startup_parser_autoruns_calibrate_when_ms_flag_is_explicit() {
+        match parse_startup_args(vec![
+            OsString::from("calibrate"),
+            OsString::from("--ms"),
+            OsString::from("/tmp/example.ms"),
+        ])
+        .expect("calibrate startup args")
+        {
+            StartupSelection::App(selection) => {
+                assert_eq!(selection.app.id, "calibrate");
+                assert!(selection.auto_run);
+                assert!(selection.prefill.iter().any(|entry| {
+                    entry.id == "measurement_set"
+                        && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
+                }));
+            }
+            other => panic!("expected startup app selection, got {other:?}"),
         }
     }
 

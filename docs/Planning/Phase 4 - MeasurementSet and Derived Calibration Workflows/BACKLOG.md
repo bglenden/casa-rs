@@ -390,6 +390,31 @@ complex-array mismatch on those non-default save modes, so the remaining
 performance leverage stays in deeper persistence work instead of a local
 storage-manager flag flip.
 
+Cold-start performance handoff for follow-on investigation:
+
+- Reproduce with:
+  `CAL_BENCH_REPEATS=2 scripts/bench-calibrate-vs-casa.sh`
+- Current benchmarked workload:
+  real `ngc5921.ms`, `field=0`, `spw=0`, timing excludes MS copy and caltable
+  generation.
+- Current representative numbers:
+  Rust median `~0.59s`, CASA median `~0.091s`, ratio `~6.5x`.
+- Current representative Rust timing breakdown:
+  `planning_selection ~0.19s`, `save ~0.35s`, row compute `~0.007s`,
+  row writeback `~0.001s`.
+- Already tried and rejected as insufficient or broken:
+  TaQL selection path, slot-indexed row scan, repeated local planner tweaks,
+  `StandardStMan` rewrite, and mixed per-column storage-manager save bindings.
+- Most likely file targets for the remaining work:
+  `crates/casacore-ms/src/selection.rs`,
+  `crates/casacore-ms/src/ms.rs`,
+  `crates/casacore-tables/src/table/io.rs`,
+  `crates/casacore-tables/src/storage/mod.rs`.
+- Working hypothesis:
+  the remaining parity gap is primarily MAIN-table persistence cost in
+  `casacore-tables`, not calibration math, not row writeback, and no longer
+  a high-leverage planner problem.
+
 ---
 
 ### 12.5 Limited `gaincal` (`G` / `T`, `p|ap`)

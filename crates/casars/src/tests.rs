@@ -166,6 +166,31 @@ fn calibrate_overview_renders_structured_stats_report() {
 }
 
 #[test]
+fn calibrate_apply_mode_arguments_do_not_include_stats_only_flags() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app().load_schema().expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value(
+        "measurement_set",
+        "/tmp/example.ms",
+    );
+
+    let args = app
+        .execution_arguments_for_test()
+        .expect("build execution arguments")
+        .into_iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert!(args.windows(2).any(|pair| pair == ["--mode", "apply"]));
+    assert!(args.windows(2).any(|pair| pair == ["--ms", "/tmp/example.ms"]));
+    assert!(!args.iter().any(|arg| arg == "--axis"));
+    assert!(!args.iter().any(|arg| arg == "--table"));
+    assert!(!args.iter().any(|arg| arg == "--datacolumn"));
+}
+
+#[test]
 fn back_to_launcher_requests_launcher_from_idle_app() {
     let (_temp, mut app) = test_app();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));

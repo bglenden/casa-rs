@@ -4067,6 +4067,11 @@ impl AppState {
     }
 
     #[cfg(test)]
+    pub(crate) fn execution_arguments_for_test(&self) -> Result<Vec<OsString>, String> {
+        Ok(self.build_execution_plan()?.arguments)
+    }
+
+    #[cfg(test)]
     pub(crate) fn theme_mode_for_test(&self) -> ThemeMode {
         self.theme_mode()
     }
@@ -9342,8 +9347,18 @@ impl AppState {
 
         let mut arguments = Vec::<OsString>::new();
         let force_selectdata = self.selection_inputs_present();
+        let calibrate_mode = if self.app.id == "calibrate" {
+            self.field_text("mode").unwrap_or_else(|| "apply".to_string())
+        } else {
+            String::new()
+        };
         for field in &self.fields {
             if field.schema.id == "selectdata" {
+                continue;
+            }
+            if self.app.id == "calibrate"
+                && !calibrate_argument_applies_to_mode(field.schema.id.as_str(), &calibrate_mode)
+            {
                 continue;
             }
             field.append_arguments(&mut arguments)?;
@@ -9908,6 +9923,25 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
                 report.spw_ids.len()
             ),
         ],
+    }
+}
+
+fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
+    match field_id {
+        "mode" | "format" | "output" | "overwrite" => true,
+        "measurement_set" | "gaintables" | "callib" | "parang" | "field" | "spw" | "antenna"
+        | "scan" | "observation" | "array" | "timerange" | "msselect" => {
+            matches!(mode, "apply" | "solve_gain" | "solve_bandpass")
+        }
+        "apply_mode" | "calwt" => mode == "apply",
+        "summary_paths" => mode == "summary",
+        "table_path" | "stats_axis" | "stats_datacolumn" | "use_flags" => mode == "stats",
+        "out_table" | "refant" => matches!(mode, "solve_gain" | "solve_bandpass"),
+        "gain_type" | "solve_mode" | "solint" | "gain_combine" => mode == "solve_gain",
+        "bandpass_combine" | "bandtype" | "solnorm" => mode == "solve_bandpass",
+        "fluxscale_input" | "reference_fields" | "transfer_fields" | "refspwmap"
+        | "gainthreshold" | "incremental" => mode == "fluxscale",
+        _ => true,
     }
 }
 
