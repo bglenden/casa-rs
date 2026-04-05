@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/casars",
-    "crates/casacore-calibration",
+    "crates/casa-calibration",
     "crates/casacore-imagebrowser-protocol",
     "crates/casacore-tablebrowser-protocol",
     "crates/casacore-types",
@@ -47,7 +47,7 @@ opt-level = 2
 opt-level = 2
 [profile.test.package.casacore-ms]
 opt-level = 2
-[profile.test.package.casacore-calibration]
+[profile.test.package.casa-calibration]
 opt-level = 2
 [profile.test.package.casacore-test-support]
 opt-level = 2

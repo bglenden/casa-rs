@@ -4,7 +4,7 @@ mod common;
 
 use tempfile::TempDir;
 
-use casacore_calibration::{CalibrationParameterFamily, summarize_table};
+use casa_calibration::{CalibrationParameterFamily, summarize_table};
 
 #[test]
 fn summarize_synthetic_complex_caltable() {

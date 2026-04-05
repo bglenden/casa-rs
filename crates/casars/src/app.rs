@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use casa_calibration::ManagedCalibrationOutput;
 use casacore_imagebrowser_protocol::{
     ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserCommand, ImageBrowserFocus,
     ImageBrowserParameters, ImageBrowserPreviewRequest, ImageBrowserProbe, ImageBrowserSnapshot,
@@ -1918,10 +1919,16 @@ struct ResultState {
     status_kind: StatusKind,
     stdout: String,
     stderr: String,
-    structured: Option<MeasurementSetSummary>,
+    structured: Option<StructuredResult>,
     structured_error: Option<String>,
     file_output_path: Option<String>,
     exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+enum StructuredResult {
+    MeasurementSetSummary(Box<MeasurementSetSummary>),
+    Calibration(Box<ManagedCalibrationOutput>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -4043,6 +4050,15 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn structured_for_test(&self) -> Option<&MeasurementSetSummary> {
         self.current_structured_summary()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_calibration_report_for_test(&mut self, report: ManagedCalibrationOutput) {
+        self.result.structured = Some(StructuredResult::Calibration(Box::new(report)));
+        self.result.structured_error = None;
+        self.result.status_line = "Execution completed successfully.".to_string();
+        self.result.status_kind = StatusKind::Ok;
+        self.active_result_tab = ResultTab::Overview;
     }
 
     #[cfg(test)]
@@ -7971,7 +7987,17 @@ impl AppState {
                 .as_ref()
                 .map(|snapshot| &snapshot.summary);
         }
-        self.result.structured.as_ref()
+        match self.result.structured.as_ref() {
+            Some(StructuredResult::MeasurementSetSummary(summary)) => Some(summary.as_ref()),
+            Some(StructuredResult::Calibration(_)) | None => None,
+        }
+    }
+
+    fn current_calibration_report(&self) -> Option<&ManagedCalibrationOutput> {
+        match self.result.structured.as_ref() {
+            Some(StructuredResult::Calibration(report)) => Some(report.as_ref()),
+            Some(StructuredResult::MeasurementSetSummary(_)) | None => None,
+        }
     }
 
     fn is_summary_tab(tab: ResultTab) -> bool {
@@ -9455,6 +9481,8 @@ impl AppState {
     }
 
     fn visible_result_tabs(&self) -> &'static [ResultTab] {
+        const CALIBRATION: [ResultTab; 3] =
+            [ResultTab::Overview, ResultTab::Stdout, ResultTab::Stderr];
         const COMPACT: [ResultTab; 8] = [
             ResultTab::Overview,
             ResultTab::Observations,
@@ -9465,6 +9493,9 @@ impl AppState {
             ResultTab::Stdout,
             ResultTab::Stderr,
         ];
+        if self.current_calibration_report().is_some() {
+            return &CALIBRATION;
+        }
         if self.verbose_enabled() {
             &ResultTab::ALL
         } else {
@@ -9593,7 +9624,33 @@ impl AppState {
                 match serde_json::from_str::<MeasurementSetSummary>(&self.result.stdout) {
                     Ok(summary) => {
                         self.record_plot_snapshot(summary.clone());
-                        self.result.structured = Some(summary);
+                        self.result.structured =
+                            Some(StructuredResult::MeasurementSetSummary(Box::new(summary)));
+                        self.result.structured_error = None;
+                        self.activate_result_tab(ResultTab::Overview);
+                    }
+                    Err(error) => {
+                        self.result.structured = None;
+                        self.result.structured_error =
+                            Some(format!("Failed to parse structured output: {error}"));
+                        self.result.status_line =
+                            "Execution completed, but structured rendering failed.".to_string();
+                        self.result.status_kind = StatusKind::Warning;
+                        self.active_result_tab = if !self.result.stdout.is_empty() {
+                            ResultTab::Stdout
+                        } else {
+                            ResultTab::Stderr
+                        };
+                    }
+                }
+            } else if matches!(
+                running.renderer.as_deref(),
+                Some("calibration-report-v1")
+            ) {
+                match serde_json::from_str::<ManagedCalibrationOutput>(&self.result.stdout) {
+                    Ok(report) => {
+                        self.result.structured =
+                            Some(StructuredResult::Calibration(Box::new(report)));
                         self.result.structured_error = None;
                         self.activate_result_tab(ResultTab::Overview);
                     }
@@ -9683,6 +9740,10 @@ impl AppState {
             return lines;
         }
 
+        if let Some(report) = self.current_calibration_report() {
+            return build_calibration_overview_lines(report);
+        }
+
         if let Some(path) = &self.result.file_output_path {
             return vec![
                 "Overview".to_string(),
@@ -9715,6 +9776,154 @@ impl AppState {
             "Overview".to_string(),
             "No structured result available yet.".to_string(),
         ]
+    }
+}
+
+fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<String> {
+    match report {
+        ManagedCalibrationOutput::Apply(report) => vec![
+            "Calibration Apply".to_string(),
+            format!(
+                "MS: {}",
+                report
+                    .plan
+                    .measurement_set_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "<in-memory>".to_string())
+            ),
+            format!(
+                "Rows selected: {}   Rows updated: {}   Tables: {}",
+                report.plan.selected_row_count,
+                report.updated_row_count,
+                report.plan.calibration_tables.len()
+            ),
+            format!(
+                "Created CORRECTED_DATA: {}   Wrote MS: {}",
+                yes_no(report.created_corrected_data_column),
+                yes_no(report.wrote_measurement_set)
+            ),
+            format!(
+                "Flagged rows: {}   Flagged samples: {}",
+                report.flagged_row_count, report.flagged_sample_count
+            ),
+            format!(
+                "Timing: total={}  planning={}  save={}",
+                format_duration_ns(report.timings.total_ns),
+                format_duration_ns(report.timings.planning_ns),
+                format_duration_ns(report.timings.save_ns)
+            ),
+        ],
+        ManagedCalibrationOutput::Summary(summaries) => {
+            let mut lines = vec![
+                "Calibration Table Summary".to_string(),
+                format!("Tables: {}", summaries.len()),
+            ];
+            for summary in summaries.iter().take(4) {
+                lines.push(format!(
+                    "{}  rows={}  family={:?}  subtype={}",
+                    summary.path.display(),
+                    summary.row_count,
+                    summary.parameter_family,
+                    summary.table_subtype
+                ));
+            }
+            if summaries.len() > 4 {
+                lines.push(format!("… {} more tables", summaries.len() - 4));
+            }
+            lines
+        }
+        ManagedCalibrationOutput::PlanApply(plan) => vec![
+            "Calibration Apply Plan".to_string(),
+            format!(
+                "MS: {}",
+                plan.measurement_set_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "<in-memory>".to_string())
+            ),
+            format!(
+                "Rows selected: {}   Tables: {}   Requires CORRECTED_DATA: {}",
+                plan.selected_row_count,
+                plan.calibration_tables.len(),
+                yes_no(plan.requires_corrected_data_column)
+            ),
+            format!(
+                "Fields: {}   SPWs: {}   DDIDs: {}",
+                plan.selected_field_ids.len(),
+                plan.selected_data_spw_ids.len(),
+                plan.selected_data_desc_ids.len()
+            ),
+        ],
+        ManagedCalibrationOutput::Stats(report) => vec![
+            "Calibration Stats".to_string(),
+            format!("Table: {}", report.path.display()),
+            format!(
+                "Axis: {:?}   Column: {}   Rows: {}",
+                report.axis,
+                report.datacolumn.as_deref().unwrap_or("default"),
+                report.row_count
+            ),
+            format!(
+                "Points: {}   Flagged: {}   Total: {}",
+                report.global.npts, report.global.flagged_npts, report.global.total_npts
+            ),
+            format!(
+                "Mean: {:.6}   Median: {:.6}   RMS: {:.6}",
+                report.global.mean, report.global.median, report.global.rms
+            ),
+        ],
+        ManagedCalibrationOutput::SolveGain(report) => vec![
+            "Gain Solve".to_string(),
+            format!("Output: {}", report.output_table.display()),
+            format!(
+                "Type: {:?}   RefAnt: {}   Rows: {}",
+                report.gain_type, report.refant_antenna_id, report.solution_row_count
+            ),
+            format!(
+                "Fields: {}   SPWs: {}",
+                report.field_ids.len(),
+                report.spectral_window_ids.len()
+            ),
+        ],
+        ManagedCalibrationOutput::SolveBandpass(report) => vec![
+            "Bandpass Solve".to_string(),
+            format!("Output: {}", report.output_table.display()),
+            format!(
+                "Subtype: {}   RefAnt: {}   Rows: {}",
+                report.table_subtype, report.refant_antenna_id, report.solution_row_count
+            ),
+            format!(
+                "SPWs: {}   Channels/row: {}",
+                report.spectral_window_ids.len(),
+                report.channel_count
+            ),
+        ],
+        ManagedCalibrationOutput::FluxScale(report) => vec![
+            "Fluxscale".to_string(),
+            format!("Output: {}", report.output_table.display()),
+            format!(
+                "Transfer fields: {}   SPWs: {}",
+                report.fields.len(),
+                report.spw_ids.len()
+            ),
+        ],
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+fn format_duration_ns(value: u64) -> String {
+    if value >= 1_000_000_000 {
+        format!("{:.3}s", value as f64 / 1_000_000_000.0)
+    } else if value >= 1_000_000 {
+        format!("{:.3}ms", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.3}us", value as f64 / 1_000.0)
+    } else {
+        format!("{value}ns")
     }
 }
 

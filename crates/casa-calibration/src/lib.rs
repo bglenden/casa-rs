@@ -20,15 +20,51 @@
 //! storage stack, so every on-disk assumption made here is exercised against
 //! the same table reader/writer substrate used elsewhere in the repo.
 
+mod bandpass;
+mod callib;
 mod cli;
 pub mod constants;
+mod execute;
+mod fluxscale;
+mod managed_output;
 mod model;
+mod plan;
+mod solve;
+mod stats;
 mod summary;
 
-pub use cli::run_env;
+pub use bandpass::{
+    BandpassSolveCombine, BandpassSolveError, BandpassSolveReport, BandpassSolveRequest,
+    BandpassType, solve_bandpass, solve_bandpass_from_path,
+};
+pub use callib::{CallibError, load_apply_specs_from_callib};
+pub use cli::{command_schema, run_env};
+pub use execute::{
+    ApplyExecutionError, ApplyExecutionReport, ApplyExecutionTimings, execute_apply,
+    execute_apply_from_path,
+};
+pub use fluxscale::{
+    FluxScaleError, FluxScaleFieldResult, FluxScaleReport, FluxScaleRequest, FluxScaleSpwResult,
+    fluxscale,
+};
+pub use managed_output::ManagedCalibrationOutput;
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
     CalibrationValidationIssue, TimeCoverageSummary,
+};
+pub use plan::{
+    ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode,
+    ApplyPlan, ApplyPlanError, ApplyPlanRequest, ApplyPlanTimings, ApplyRowPlan, ApplySpwMapping,
+    ApplyTableSelection, GainFieldSelector, ResolvedGainField, ResolvedNearestGainField,
+    SpectralWindowPlan, plan_apply, plan_apply_from_path, plan_apply_with_timings,
+};
+pub use solve::{
+    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveReport,
+    GainSolveRequest, GainType, RefAntSelector, solve_gain, solve_gain_from_path,
+};
+pub use stats::{
+    CalibrationIndexedStats, CalibrationStatsAxis, CalibrationStatsError, CalibrationStatsReport,
+    CalibrationStatsRequest, CalibrationValueStats, calibration_stats,
 };
 pub use summary::{CalibrationTableError, summarize_table, summarize_tables};

@@ -136,12 +136,21 @@ pub struct CalibrationTableSummary {
 }
 
 impl CalibrationTableSummary {
-    /// Returns `true` when the table lies inside the first planned `applycal`
-    /// surface: a `Calibration` table carrying complex `CPARAM` rows with no
-    /// error-level validation issues.
+    /// Returns `true` when the table lies inside the currently implemented
+    /// apply surface:
+    ///
+    /// - complex `CPARAM` antenna-based tables, or
+    /// - narrow float `FPARAM` support for `K Jones`
+    /// - legacy `BPOLY` bandpass tables
+    ///
+    /// and carries no error-level validation issues.
     pub fn supported_for_v1_apply(&self) -> bool {
         self.table_type == crate::constants::TABLE_INFO_TYPE
-            && self.parameter_family == CalibrationParameterFamily::Complex
+            && (matches!(
+                (&self.parameter_family, self.table_subtype.as_str()),
+                (CalibrationParameterFamily::Complex, _)
+                    | (CalibrationParameterFamily::Float, "K Jones")
+            ) || self.table_subtype == "BPOLY")
             && self
                 .issues
                 .iter()

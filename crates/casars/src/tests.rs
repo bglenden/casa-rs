@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::time::{Duration, Instant};
 
+use casa_calibration::{
+    CalibrationIndexedStats, CalibrationStatsAxis, CalibrationStatsReport, CalibrationValueStats,
+    ManagedCalibrationOutput,
+};
 use casacore_imagebrowser_protocol::{
     ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus as ProtocolImageFocus,
     ImageBrowserParameters, ImageBrowserProbe, ImageBrowserResponse, ImageBrowserResponseEnvelope,
@@ -48,7 +52,7 @@ use crate::app::{
 };
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
-use crate::registry::{imexplore_app, msexplore_app, registered_apps, tablebrowser_app};
+use crate::registry::{calibrate_app, imexplore_app, msexplore_app, registered_apps, tablebrowser_app};
 use crate::theme::theme;
 use crate::ui;
 use crate::{
@@ -61,7 +65,10 @@ use crate::{
 fn launcher_lists_registered_apps_in_expected_order() {
     let apps = registered_apps();
     let ids = apps.iter().map(|app| app.id).collect::<Vec<_>>();
-    assert_eq!(ids, vec!["msexplore", "tablebrowser", "imexplore"]);
+    assert_eq!(
+        ids,
+        vec!["msexplore", "calibrate", "tablebrowser", "imexplore"]
+    );
 }
 
 #[test]
@@ -83,11 +90,79 @@ fn launcher_screen_renders_available_apps() {
 
     assert!(rendered.contains("Select Application"));
     assert!(rendered.contains("msexplore"));
+    assert!(rendered.contains("calibrate"));
     assert!(rendered.contains("tablebrowser"));
     assert!(rendered.contains("imexplore"));
     assert!(rendered.contains("MSExplore"));
+    assert!(rendered.contains("Calibrate"));
     assert!(rendered.contains("Table Browser"));
     assert!(rendered.contains("ImExplore"));
+}
+
+#[test]
+fn calibrate_overview_renders_structured_stats_report() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app().load_schema().expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::Stats(
+        CalibrationStatsReport {
+            path: PathBuf::from("phase.gcal"),
+            axis: CalibrationStatsAxis::Amplitude,
+            datacolumn: Some("CPARAM".to_string()),
+            row_count: 42,
+            global: CalibrationValueStats {
+                npts: 32,
+                flagged_npts: 4,
+                total_npts: 36,
+                sum: 64.0,
+                sumsq: 140.0,
+                min: 0.5,
+                max: 3.0,
+                mean: 2.0,
+                median: 1.9,
+                medabsdevmed: 0.2,
+                q1: 1.0,
+                q3: 2.5,
+                quartile: 1.5,
+                var: 0.25,
+                stddev: 0.5,
+                rms: 2.09165,
+            },
+            by_field_id: vec![CalibrationIndexedStats {
+                key: 0,
+                stats: CalibrationValueStats {
+                    npts: 32,
+                    flagged_npts: 4,
+                    total_npts: 36,
+                    sum: 64.0,
+                    sumsq: 140.0,
+                    min: 0.5,
+                    max: 3.0,
+                    mean: 2.0,
+                    median: 1.9,
+                    medabsdevmed: 0.2,
+                    q1: 1.0,
+                    q3: 2.5,
+                    quartile: 1.5,
+                    var: 0.25,
+                    stddev: 0.5,
+                    rms: 2.09165,
+                },
+            }],
+            by_spectral_window_id: Vec::new(),
+            by_antenna1_id: Vec::new(),
+            by_observation_id: Vec::new(),
+        },
+    ));
+
+    let rendered = render_app(&app, 120, 28);
+    assert!(rendered.contains("Overview"));
+    assert!(rendered.contains("Calibration Stats"));
+    assert!(rendered.contains("phase.gcal"));
+    assert!(rendered.contains("Axis: Amplitude"));
+    assert!(rendered.contains("Points: 32"));
+    assert!(rendered.contains("Mean: 2.000000"));
 }
 
 #[test]

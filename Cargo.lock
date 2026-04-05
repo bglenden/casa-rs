@@ -422,24 +422,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "casa-calibration"
+version = "0.10.6"
+dependencies = [
+ "casacore-ms",
+ "casacore-tables",
+ "casacore-test-support",
+ "casacore-types",
+ "ndarray",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "casacore-aipsio"
 version = "0.10.6"
 dependencies = [
  "casacore-types",
  "ndarray",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "casacore-calibration"
-version = "0.10.6"
-dependencies = [
- "casacore-tables",
- "casacore-test-support",
- "casacore-types",
- "serde",
- "serde_json",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -597,6 +599,7 @@ name = "casars"
 version = "0.10.6"
 dependencies = [
  "arboard",
+ "casa-calibration",
  "casacore-imagebrowser-protocol",
  "casacore-images",
  "casacore-ms",

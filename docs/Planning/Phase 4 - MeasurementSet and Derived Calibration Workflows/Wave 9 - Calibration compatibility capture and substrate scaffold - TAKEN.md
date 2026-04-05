@@ -7,7 +7,7 @@
 ## Goal
 
 - Freeze real CASA `G` / `T` / `B` exemplar evidence and land the first
-  `casacore-calibration` substrate able to open, validate, and summarize those
+  `casa-calibration` substrate able to open, validate, and summarize those
   tables through the Rust table stack.
 
 ## Non-goals
@@ -22,7 +22,7 @@
 
 - Generate tiny CASA-produced calibration tables from `ngc5921.ms`.
 - Ensure `casacore-tables` can open those tables.
-- Add `casacore-calibration` summary/validation APIs over the opened tables.
+- Add `casa-calibration` summary/validation APIs over the opened tables.
 
 ### Write path
 
@@ -47,7 +47,7 @@
 ## Files likely touched
 
 - `crates/casacore-tables/`
-- `crates/casacore-calibration/`
+- `crates/casa-calibration/`
 - `scripts/`
 - `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`
 
@@ -63,7 +63,7 @@
 ## Implementation checklist
 
 - [x] Fix the scalar-`Direct` table-schema compatibility bug exposed by CASA `gaincal`.
-- [x] Add `casacore-calibration` crate scaffold with summary/validation API and CLI.
+- [x] Add `casa-calibration` crate scaffold with summary/validation API and CLI.
 - [x] Add fast synthetic summary coverage for a Rust-authored minimal complex caltable.
 - [x] Add slow CASA exemplar generation and summary parity tests for `G`, `T`, and `B`.
 - [x] Add a manual exemplar-capture script and Phase 4 backlog entries.
@@ -79,7 +79,7 @@
 ## Performance plan
 
 - Workload: N/A for this wave; capture/read correctness only.
-- Rust command: `cargo test -p casacore-calibration`
+- Rust command: `cargo test -p casa-calibration`
 - C++ command: CASA-generated exemplar capture through `CASA_RS_CASA_PYTHON`
 - Alert threshold: N/A
 
@@ -94,7 +94,7 @@
 - Date:
 - Commit:
 - Commands:
-  - `cargo test -p casacore-calibration` -> PASS
+  - `cargo test -p casa-calibration` -> PASS
 - Interop matrix:
   - RR: synthetic Rust-authored minimal caltable summary fixture
   - RC: pending later canonical writer parity

@@ -9,19 +9,17 @@ use casacore_types::{ScalarValue, Value};
 use thiserror::Error;
 
 use crate::constants::{
-    COL_ANTENNA1, COL_ANTENNA2, COL_CPARAM, COL_FIELD_ID, COL_INTERVAL, COL_OBSERVATION_ID,
-    COL_SPECTRAL_WINDOW_ID, COL_TIME, KEY_CASA_VERSION, KEY_MS_NAME, KEY_PAR_TYPE, KEY_POL_BASIS,
-    KEY_VIS_CAL, REQUIRED_COMPLEX_COLUMNS, STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE,
-    TOLERATED_OPTIONAL_COLUMNS,
+    COL_ANTENNA1, COL_ANTENNA2, COL_CPARAM, COL_FIELD_ID, COL_FPARAM, COL_INTERVAL,
+    COL_OBSERVATION_ID, COL_POLY_COEFF_AMP, COL_SPECTRAL_WINDOW_ID, COL_TIME, KEY_CASA_VERSION,
+    KEY_MS_NAME, KEY_PAR_TYPE, KEY_POL_BASIS, KEY_VIS_CAL, LEGACY_CAL_DESC_KEYWORD,
+    REQUIRED_BPOLY_COLUMNS, REQUIRED_COMPLEX_COLUMNS, REQUIRED_FLOAT_COLUMNS,
+    STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE, TOLERATED_OPTIONAL_COLUMNS,
 };
 use crate::model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
     CalibrationValidationIssue, TimeCoverageSummary,
 };
-
-/// Float-parameter column name, tolerated on read for future work.
-const COL_FPARAM: &str = "FPARAM";
 
 /// Errors returned while opening or summarizing a calibration table.
 #[derive(Debug, Error)]
@@ -71,17 +69,25 @@ fn build_summary(path: &Path, table: &Table) -> CalibrationTableSummary {
         .unwrap_or_default();
     let info = table.info();
     let keywords = summarize_keywords(table);
-    let parameter_family = infer_parameter_family(&columns, &keywords);
+    let parameter_family = infer_parameter_family(info.sub_type.as_str(), &columns, &keywords);
     let subtables = summarize_subtables(path, table);
-    let parameter_column = summarize_parameter_column(table, &columns, parameter_family);
+    let parameter_column =
+        summarize_parameter_column(table, &columns, parameter_family, info.sub_type.as_str());
     let mut issues = validate_shape(
+        path,
         info.table_type.as_str(),
+        info.sub_type.as_str(),
         &columns,
         &keywords,
         &subtables,
         parameter_family,
     );
     let coverage = scan_coverage(table, &columns, &mut issues);
+    let spectral_window_ids = if info.sub_type == "BPOLY" {
+        scan_bpoly_spectral_window_ids(path, &mut issues)
+    } else {
+        coverage.spw_ids.into_iter().collect()
+    };
 
     CalibrationTableSummary {
         path: path.to_path_buf(),
@@ -94,7 +100,7 @@ fn build_summary(path: &Path, table: &Table) -> CalibrationTableSummary {
         parameter_family,
         parameter_column,
         field_ids: coverage.field_ids.into_iter().collect(),
-        spectral_window_ids: coverage.spw_ids.into_iter().collect(),
+        spectral_window_ids,
         antenna1_ids: coverage.antenna1_ids.into_iter().collect(),
         antenna2_ids: coverage.antenna2_ids.into_iter().collect(),
         observation_ids: coverage.observation_ids.into_iter().collect(),
@@ -115,9 +121,13 @@ fn summarize_keywords(table: &Table) -> CalibrationKeywordSummary {
 }
 
 fn infer_parameter_family(
+    table_subtype: &str,
     columns: &[String],
     keywords: &CalibrationKeywordSummary,
 ) -> CalibrationParameterFamily {
+    if table_subtype == "BPOLY" {
+        return CalibrationParameterFamily::Unknown;
+    }
     match keywords.par_type.as_deref() {
         Some("Complex") => CalibrationParameterFamily::Complex,
         Some("Float") => CalibrationParameterFamily::Float,
@@ -188,8 +198,14 @@ fn summarize_parameter_column(
     table: &Table,
     columns: &[String],
     family: CalibrationParameterFamily,
+    table_subtype: &str,
 ) -> CalibrationColumnSummary {
-    let parameter_column = match family {
+    let parameter_column = if table_subtype == "BPOLY"
+        && columns.iter().any(|column| column == COL_POLY_COEFF_AMP)
+    {
+        Some(COL_POLY_COEFF_AMP.to_string())
+    } else {
+        match family {
         CalibrationParameterFamily::Complex
             if columns.iter().any(|column| column == COL_CPARAM) =>
         {
@@ -199,6 +215,7 @@ fn summarize_parameter_column(
             Some(COL_FPARAM.to_string())
         }
         _ => None,
+        }
     };
     let parameter_primitive_type = parameter_column
         .as_deref()
@@ -221,13 +238,19 @@ fn summarize_parameter_column(
 }
 
 fn validate_shape(
+    path: &Path,
     table_type: &str,
+    table_subtype: &str,
     columns: &[String],
     keywords: &CalibrationKeywordSummary,
     subtables: &[CalibrationSubtableSummary],
     parameter_family: CalibrationParameterFamily,
 ) -> Vec<CalibrationValidationIssue> {
     let mut issues = Vec::new();
+
+    if table_subtype == "BPOLY" {
+        return validate_bpoly_shape(path, table_type, columns);
+    }
 
     if table_type != TABLE_INFO_TYPE {
         issues.push(issue(
@@ -273,7 +296,12 @@ fn validate_shape(
         ));
     }
 
-    for column in REQUIRED_COMPLEX_COLUMNS {
+    let required_columns = match parameter_family {
+        CalibrationParameterFamily::Complex => REQUIRED_COMPLEX_COLUMNS,
+        CalibrationParameterFamily::Float => REQUIRED_FLOAT_COLUMNS,
+        CalibrationParameterFamily::Unknown => REQUIRED_COMPLEX_COLUMNS,
+    };
+    for column in required_columns {
         if !columns.iter().any(|present| present == column) {
             issues.push(issue(
                 format!("missing-column-{column}"),
@@ -328,10 +356,11 @@ fn validate_shape(
 
     match parameter_family {
         CalibrationParameterFamily::Complex => {}
+        CalibrationParameterFamily::Float if keywords.vis_cal.as_deref() == Some("K Jones") => {}
         CalibrationParameterFamily::Float => issues.push(issue(
             "unsupported-float-family",
             CalibrationIssueSeverity::Error,
-            "float-parameter calibration tables are not yet inside the v1 apply surface"
+            "float-parameter calibration tables are only supported for K Jones in the current apply surface"
                 .to_string(),
         )),
         CalibrationParameterFamily::Unknown => issues.push(issue(
@@ -339,6 +368,48 @@ fn validate_shape(
             CalibrationIssueSeverity::Error,
             "unable to infer calibration parameter family from ParType/CPARAM/FPARAM".to_string(),
         )),
+    }
+
+    issues
+}
+
+fn validate_bpoly_shape(
+    path: &Path,
+    table_type: &str,
+    columns: &[String],
+) -> Vec<CalibrationValidationIssue> {
+    let mut issues = Vec::new();
+    if table_type != TABLE_INFO_TYPE {
+        issues.push(issue(
+            "table-info-type",
+            CalibrationIssueSeverity::Error,
+            format!("expected table.info Type={TABLE_INFO_TYPE:?}, found {table_type:?}"),
+        ));
+    }
+
+    for column in REQUIRED_BPOLY_COLUMNS {
+        if !columns.iter().any(|present| present == column) {
+            issues.push(issue(
+                format!("missing-column-{column}"),
+                CalibrationIssueSeverity::Error,
+                format!("missing required BPOLY MAIN column {column}"),
+            ));
+        }
+    }
+
+    let cal_desc_path = path.join(LEGACY_CAL_DESC_KEYWORD);
+    if !cal_desc_path.exists() {
+        issues.push(issue(
+            "missing-cal-desc",
+            CalibrationIssueSeverity::Error,
+            "missing required CAL_DESC keyword subtable for BPOLY".to_string(),
+        ));
+    } else if let Err(error) = Table::open(TableOptions::new(&cal_desc_path)) {
+        issues.push(issue(
+            "failed-open-cal-desc",
+            CalibrationIssueSeverity::Error,
+            format!("failed to open CAL_DESC subtable for BPOLY: {error}"),
+        ));
     }
 
     issues
@@ -452,6 +523,48 @@ fn scan_coverage(
     }
 
     coverage
+}
+
+fn scan_bpoly_spectral_window_ids(
+    path: &Path,
+    issues: &mut Vec<CalibrationValidationIssue>,
+) -> Vec<i32> {
+    let cal_desc_path = path.join(LEGACY_CAL_DESC_KEYWORD);
+    let table = match Table::open(TableOptions::new(&cal_desc_path)) {
+        Ok(table) => table,
+        Err(error) => {
+            issues.push(issue(
+                "failed-open-cal-desc",
+                CalibrationIssueSeverity::Warning,
+                format!("failed to read BPOLY CAL_DESC spectral-window coverage: {error}"),
+            ));
+            return Vec::new();
+        }
+    };
+    let mut spw_ids = BTreeSet::new();
+    for row in 0..table.row_count() {
+        match table.get_array_cell(row, COL_SPECTRAL_WINDOW_ID) {
+            Ok(casacore_types::ArrayValue::Int32(values)) => {
+                for value in values.iter().copied() {
+                    spw_ids.insert(value);
+                }
+            }
+            Ok(other) => issues.push(issue(
+                "bpoly-spw-array-type",
+                CalibrationIssueSeverity::Warning,
+                format!(
+                    "BPOLY CAL_DESC row {row} used unexpected SPECTRAL_WINDOW_ID type {:?}",
+                    other.primitive_type()
+                ),
+            )),
+            Err(error) => issues.push(issue(
+                "bpoly-spw-array-read",
+                CalibrationIssueSeverity::Warning,
+                format!("failed to read BPOLY CAL_DESC SPECTRAL_WINDOW_ID row {row}: {error}"),
+            )),
+        }
+    }
+    spw_ids.into_iter().collect()
 }
 
 fn collect_i32_cell(

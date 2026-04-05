@@ -471,6 +471,264 @@ impl StorageManager for CompositeStorage {
 }
 
 impl CompositeStorage {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn save_borrowed(
+        &self,
+        table_path: &Path,
+        rows: &[RecordValue],
+        undefined_cells: &[HashSet<String>],
+        keywords: &RecordValue,
+        column_keywords: &HashMap<String, RecordValue>,
+        schema: Option<&TableSchema>,
+        table_info: &TableInfo,
+        virtual_columns: &HashSet<String>,
+        virtual_bindings: &[virtual_engine::VirtualColumnBinding],
+        dm_kind: crate::table::DataManagerKind,
+        big_endian: bool,
+        tile_shape: Option<&[usize]>,
+    ) -> Result<(), StorageError> {
+        use crate::table::DataManagerKind;
+
+        if table_path.is_dir() {
+            if let Ok(entries) = fs::read_dir(table_path) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("table.f") {
+                        let _ = fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
+
+        fs::create_dir_all(table_path)?;
+
+        let schema = schema.ok_or_else(|| {
+            StorageError::FormatMismatch("cannot save without schema".to_string())
+        })?;
+
+        let filtered_rows_storage;
+        let filtered_rows: &[RecordValue] = if undefined_cells.iter().any(|set| !set.is_empty()) {
+            filtered_rows_storage = filter_rows_for_save(rows, undefined_cells);
+            &filtered_rows_storage
+        } else {
+            rows
+        };
+        let nrrow = filtered_rows.len() as u64;
+        let data_path = table_path.join(format!("{}0", TABLE_DATA_FILE_PREFIX));
+        let has_virtual = !virtual_bindings.is_empty();
+
+        let stored_rows: Vec<RecordValue>;
+        let rows_for_data = if has_virtual {
+            stored_rows = rows
+                .iter()
+                .zip(undefined_cells)
+                .map(|(row, undef)| {
+                    let stored_fields: Vec<_> = row
+                        .fields()
+                        .iter()
+                        .filter(|f| !virtual_columns.contains(&f.name) && !undef.contains(&f.name))
+                        .cloned()
+                        .collect();
+                    RecordValue::new(stored_fields)
+                })
+                .collect();
+            &stored_rows
+        } else {
+            filtered_rows
+        };
+
+        let dm_type_name;
+        let dm_data;
+        match dm_kind {
+            DataManagerKind::StManAipsIO => {
+                dm_type_name = "StManAipsIO".to_string();
+                dm_data = Vec::new();
+                let table_dat = if has_virtual {
+                    TableDatContents::from_snapshot_with_virtual(
+                        schema,
+                        keywords,
+                        column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                        virtual_bindings,
+                        table_path,
+                    )
+                } else {
+                    TableDatContents::from_snapshot(
+                        schema,
+                        keywords,
+                        column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                    )
+                };
+                let control_path = table_path.join(TABLE_CONTROL_FILE);
+                write_table_dat(&control_path, &table_dat)?;
+                let stored_col_descs: Vec<_> = table_dat
+                    .table_desc
+                    .columns
+                    .iter()
+                    .filter(|c| !virtual_columns.contains(&c.col_name))
+                    .cloned()
+                    .collect();
+                write_stman_file(
+                    &data_path,
+                    &stored_col_descs,
+                    rows_for_data,
+                    ByteOrder::BigEndian,
+                )?;
+            }
+            DataManagerKind::StandardStMan => {
+                dm_type_name = "StandardStMan".to_string();
+                let table_dat_tmp = if has_virtual {
+                    TableDatContents::from_snapshot_with_virtual(
+                        schema,
+                        keywords,
+                        column_keywords,
+                        nrrow,
+                        "StandardStMan",
+                        &[],
+                        big_endian,
+                        virtual_bindings,
+                        table_path,
+                    )
+                } else {
+                    TableDatContents::from_snapshot(
+                        schema,
+                        keywords,
+                        column_keywords,
+                        nrrow,
+                        "StandardStMan",
+                        &[],
+                        big_endian,
+                    )
+                };
+                let stored_col_descs: Vec<_> = table_dat_tmp
+                    .table_desc
+                    .columns
+                    .iter()
+                    .filter(|c| !virtual_columns.contains(&c.col_name))
+                    .cloned()
+                    .collect();
+                dm_data = write_ssm_file(&data_path, &stored_col_descs, rows_for_data, big_endian)?;
+                let table_dat = if has_virtual {
+                    TableDatContents::from_snapshot_with_virtual(
+                        schema,
+                        keywords,
+                        column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                        virtual_bindings,
+                        table_path,
+                    )
+                } else {
+                    TableDatContents::from_snapshot(
+                        schema,
+                        keywords,
+                        column_keywords,
+                        nrrow,
+                        &dm_type_name,
+                        &dm_data,
+                        big_endian,
+                    )
+                };
+                let control_path = table_path.join(TABLE_CONTROL_FILE);
+                write_table_dat(&control_path, &table_dat)?;
+            }
+            DataManagerKind::IncrementalStMan => {
+                dm_type_name = "IncrementalStMan".to_string();
+                let table_dat_tmp = TableDatContents::from_snapshot(
+                    schema,
+                    keywords,
+                    column_keywords,
+                    nrrow,
+                    "IncrementalStMan",
+                    &[],
+                    big_endian,
+                );
+                dm_data = write_ism_file(
+                    &data_path,
+                    &table_dat_tmp.table_desc.columns,
+                    rows,
+                    big_endian,
+                )?;
+                let table_dat = TableDatContents::from_snapshot(
+                    schema,
+                    keywords,
+                    column_keywords,
+                    nrrow,
+                    &dm_type_name,
+                    &dm_data,
+                    big_endian,
+                );
+                let control_path = table_path.join(TABLE_CONTROL_FILE);
+                write_table_dat(&control_path, &table_dat)?;
+            }
+            DataManagerKind::TiledColumnStMan
+            | DataManagerKind::TiledShapeStMan
+            | DataManagerKind::TiledCellStMan
+            | DataManagerKind::TiledDataStMan => {
+                dm_type_name = match dm_kind {
+                    DataManagerKind::TiledColumnStMan => "TiledColumnStMan",
+                    DataManagerKind::TiledShapeStMan => "TiledShapeStMan",
+                    DataManagerKind::TiledCellStMan => "TiledCellStMan",
+                    DataManagerKind::TiledDataStMan => "TiledDataStMan",
+                    _ => unreachable!(),
+                }
+                .to_string();
+                dm_data = Vec::new();
+                let mut table_dat = TableDatContents::from_snapshot(
+                    schema,
+                    keywords,
+                    column_keywords,
+                    nrrow,
+                    &dm_type_name,
+                    &dm_data,
+                    big_endian,
+                );
+                let dm_group_name = table_dat
+                    .table_desc
+                    .columns
+                    .first()
+                    .map(|c| c.col_name.clone())
+                    .unwrap_or_default();
+                for desc in &mut table_dat.table_desc.columns {
+                    desc.data_manager_type = dm_type_name.clone();
+                    desc.data_manager_group = dm_group_name.clone();
+                }
+                let control_path = table_path.join(TABLE_CONTROL_FILE);
+                write_table_dat(&control_path, &table_dat)?;
+                let first_col_name = table_dat
+                    .table_desc
+                    .columns
+                    .first()
+                    .map(|c| c.col_name.as_str())
+                    .unwrap_or("");
+                tiled_stman::save_tiled_columns(
+                    table_path,
+                    0,
+                    &dm_type_name,
+                    &table_dat.table_desc.columns,
+                    rows,
+                    big_endian,
+                    tile_shape,
+                    first_col_name,
+                )?;
+            }
+        }
+
+        let info_path = table_path.join(TABLE_INFO_FILE);
+        fs::write(&info_path, table_info.to_string())?;
+        Ok(())
+    }
+
     pub(crate) fn load_with_row_hint(
         &self,
         table_path: &Path,

@@ -30,6 +30,6 @@ run_timed_step \
   cargo test -p casacore-ms --features slow-tests --test msexplore_casa_parity
 run_timed_step \
   "Running slow calibration-table CASA parity suite" \
-  cargo test -p casacore-calibration --features slow-tests --test casa_calibration_parity
+  cargo test -p casa-calibration --features slow-tests --test casa_calibration_parity
 script_finished_at="$(date +%s)"
 echo "Slow test suite completed in $(format_elapsed $(( script_finished_at - script_started_at )))"
