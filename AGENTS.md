@@ -26,6 +26,9 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   crates. The repo is a native Rust implementation of casacore-compatible data,
   not a Rust wrapper around casacore C++.
 - API docs belong in source (`///`, `//!`) and are rendered by `cargo doc`.
+- For `casars` TUI work, follow `docs/casars-tui-framework.md`; new apps must
+  conform to its shell-family conventions instead of inventing app-local UI
+  structure.
 - Prefer red/green development: add failing regression test first.
 - C++-dependent tests must skip cleanly when `pkg-config casacore` is missing.
 - Shared CASA dataset root defaults to `../casatestdata`.

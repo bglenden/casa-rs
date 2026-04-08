@@ -56,7 +56,7 @@ pub mod schema;
 pub mod selection;
 pub mod selection_helpers;
 pub mod subtables;
-mod ui_schema;
+pub mod ui_schema;
 pub mod validate;
 
 #[cfg(test)]

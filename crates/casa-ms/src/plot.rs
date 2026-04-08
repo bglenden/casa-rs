@@ -1563,7 +1563,7 @@ fn padded_range(min_value: f64, max_value: f64) -> (f64, f64) {
         return (-1.0, 1.0);
     }
     if span < 1e-9 {
-        let padding = min_value.abs().max(1.0) * 0.1;
+        let padding = min_value.abs().max(max_value.abs()).max(1.0) * 1e-6;
         (min_value - padding, max_value + padding)
     } else {
         let padding = span * 0.08;
@@ -1675,8 +1675,9 @@ mod tests {
     use super::{
         ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
         ListObsPlotSpec, ListObsPlotTheme, UvAxisScale, build_listobs_plot_payload_from_summary,
-        build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick, palette_color,
-        parse_on_off, render_listobs_plot_image, scan_timeline_axis_offset, uv_axis_scale,
+        build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick, padded_range,
+        palette_color, parse_on_off, render_listobs_plot_image, scan_timeline_axis_offset,
+        uv_axis_scale,
     };
     use crate::listobs::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
@@ -2304,6 +2305,20 @@ mod tests {
             4_197_926_100.0
         );
         assert_eq!(scan_timeline_axis_offset(10.0, 10.4), 0.0);
+    }
+
+    #[test]
+    fn zero_span_large_time_axis_uses_local_padding() {
+        let value = 4_304_481_700.0;
+        let (min, max) = padded_range(value, value);
+
+        assert!(min < value);
+        assert!(max > value);
+        assert!(
+            (max - min) < 20_000.0,
+            "unexpectedly wide zero-span padding: {}",
+            max - min
+        );
     }
 
     fn synthetic_summary() -> ListObsSummary {

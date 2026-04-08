@@ -97,22 +97,32 @@ impl Table {
     /// Returns [`TableError::Storage`] on I/O failure.
     pub fn save(&self, options: TableOptions) -> Result<(), TableError> {
         self.validate()?;
-        let snapshot = StorageSnapshot {
-            row_count: self.inner.row_count(),
-            rows: self.inner.rows()?.to_vec(),
-            undefined_cells: self.inner.undefined_cells()?.to_vec(),
-            keywords: self.inner.keywords().clone(),
-            column_keywords: self.inner.all_column_keywords().clone(),
-            schema: self.inner.schema().cloned(),
-            table_info: self.table_info.clone(),
-            virtual_columns: self.virtual_columns.clone(),
-            virtual_bindings: self.virtual_bindings.clone(),
-            dm_info: vec![],
-        };
+        self.save_assuming_valid(options)
+    }
+
+    /// Saves the table to disk without re-validating every row against the schema.
+    ///
+    /// This is intended for advanced callers that already know the in-memory
+    /// table is schema-valid because all mutations went through validating APIs
+    /// such as [`add_row`](crate::Table::add_row), [`add_column`](crate::Table::add_column),
+    /// and [`set_cell`](crate::Table::set_cell). It preserves the exact same
+    /// on-disk format as [`save`](Table::save), but skips the extra full-table
+    /// validation pass before serialization.
+    ///
+    /// Callers that are unsure whether the table state is valid should keep
+    /// using [`save`](Table::save).
+    pub fn save_assuming_valid(&self, options: TableOptions) -> Result<(), TableError> {
         let storage = CompositeStorage;
-        storage.save(
+        storage.save_borrowed(
             &options.path,
-            &snapshot,
+            self.inner.rows()?,
+            self.inner.undefined_cells()?,
+            self.inner.keywords(),
+            self.inner.all_column_keywords(),
+            self.inner.schema(),
+            &self.table_info,
+            &self.virtual_columns,
+            &self.virtual_bindings,
             options.data_manager,
             options.endian_format.is_big_endian(),
             options.tile_shape.as_deref(),

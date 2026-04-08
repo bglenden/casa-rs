@@ -16,11 +16,15 @@ pub enum SchemaError {
     #[error("schema contains duplicate column name \"{0}\"")]
     DuplicateColumn(String),
 
-    /// The `direct` option was set on a column that is not a [`ArrayShapeContract::Fixed`] array.
+    /// The `direct` option was set on a column that is neither scalar nor a
+    /// [`ArrayShapeContract::Fixed`] array.
     ///
-    /// Direct storage requires the cell size to be constant across all rows, which
-    /// is only possible when the array shape is fully specified at schema time.
-    /// Cf. C++ `ColumnDesc::Direct`, which is only valid alongside a fixed `IPosition`.
+    /// Direct storage requires the cell size to be constant across all rows.
+    /// Scalar columns and fixed-shape arrays satisfy that requirement; record
+    /// columns and variable-shape arrays do not.
+    ///
+    /// CASA calibration tables use direct scalar columns such as `TIME`, so the
+    /// Rust schema must accept the same column-flag combination.
     #[error("column \"{0}\" uses Direct but is not FixedShape array")]
     DirectRequiresFixedShape(String),
 
@@ -47,8 +51,9 @@ pub struct ColumnOptions {
     /// Store cell data inline (directly) within the table file rather than
     /// in a separate storage manager file.
     ///
-    /// Only valid for [`ArrayShapeContract::Fixed`] array columns; setting this
-    /// on any other kind of column returns [`SchemaError::DirectRequiresFixedShape`].
+    /// Only valid for scalar columns and [`ArrayShapeContract::Fixed`] array
+    /// columns; setting this on any other kind of column returns
+    /// [`SchemaError::DirectRequiresFixedShape`].
     /// Cf. C++ `ColumnDesc::Direct`.
     pub direct: bool,
 
@@ -223,7 +228,7 @@ impl ColumnSchema {
         if self.options.direct
             && !matches!(
                 self.column_type,
-                ColumnType::Array(ArrayShapeContract::Fixed { .. })
+                ColumnType::Scalar | ColumnType::Array(ArrayShapeContract::Fixed { .. })
             )
         {
             return Err(SchemaError::DirectRequiresFixedShape(self.name.clone()));
@@ -378,6 +383,16 @@ mod tests {
             column,
             Err(SchemaError::DirectRequiresFixedShape("data".to_string()))
         );
+    }
+
+    #[test]
+    fn direct_is_allowed_for_scalar_columns() {
+        let column =
+            ColumnSchema::scalar("time", PrimitiveType::Float64).with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            });
+        assert!(column.is_ok());
     }
 
     #[test]

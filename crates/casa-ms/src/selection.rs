@@ -22,6 +22,9 @@
 
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
+use casa_tables::Table;
+use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use std::collections::HashSet;
 
 /// Builder for MS row selection criteria.
 ///
@@ -162,6 +165,10 @@ impl MsSelection {
             effective_ddids = resolve_spw_to_ddid(ms, &sel.spw_ids)?;
         }
 
+        if sel.taql_exprs.is_empty() {
+            return apply_structured_selection(&sel, ms, &effective_ddids);
+        }
+
         let taql = if sel.spw_ids.is_empty() {
             sel.to_taql()
         } else {
@@ -253,6 +260,327 @@ impl MsSelection {
         }
 
         clauses
+    }
+}
+
+fn apply_structured_selection(
+    sel: &MsSelection,
+    ms: &MeasurementSet,
+    effective_ddids: &[i32],
+) -> MsResult<Vec<usize>> {
+    let field_ids: HashSet<i32> = sel.field_ids.iter().copied().collect();
+    let spw_ddids: HashSet<i32> = effective_ddids.iter().copied().collect();
+    let data_desc_ids: HashSet<i32> = sel.data_desc_ids.iter().copied().collect();
+    let antenna_ids: HashSet<i32> = sel.antenna_ids.iter().copied().collect();
+    let baselines: HashSet<(i32, i32)> = sel.baselines.iter().copied().collect();
+    let scan_numbers: HashSet<i32> = sel.scan_numbers.iter().copied().collect();
+    let state_ids: HashSet<i32> = sel.state_ids.iter().copied().collect();
+    let observation_ids: HashSet<i32> = sel.observation_ids.iter().copied().collect();
+    let array_ids: HashSet<i32> = sel.array_ids.iter().copied().collect();
+
+    if !sel.spw_ids.is_empty() && spw_ddids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let table = ms.main_table();
+    let columns = load_structured_selection_columns(
+        table,
+        StructuredSelectionColumnRequest {
+            field: !field_ids.is_empty(),
+            data_desc: !sel.spw_ids.is_empty() || !data_desc_ids.is_empty(),
+            antenna1: !antenna_ids.is_empty() || !baselines.is_empty(),
+            antenna2: !antenna_ids.is_empty() || !baselines.is_empty(),
+            time: sel.time_range.is_some(),
+            scan: !scan_numbers.is_empty(),
+            state: !state_ids.is_empty(),
+            observation: !observation_ids.is_empty(),
+            array: !array_ids.is_empty(),
+        },
+    )?;
+    let mut rows = Vec::new();
+
+    for row in 0..table.row_count() {
+        if let Some(field_column) = columns.field.as_ref() {
+            if !field_ids.contains(&field_column[row]) {
+                continue;
+            }
+        }
+
+        if let Some(data_desc_column) = columns.data_desc.as_ref() {
+            let data_desc_id = data_desc_column[row];
+            if !spw_ddids.is_empty() && !spw_ddids.contains(&data_desc_id) {
+                continue;
+            }
+            if !data_desc_ids.is_empty() && !data_desc_ids.contains(&data_desc_id) {
+                continue;
+            }
+        }
+
+        if let (Some(antenna1_column), Some(antenna2_column)) =
+            (columns.antenna1.as_ref(), columns.antenna2.as_ref())
+        {
+            let antenna1 = antenna1_column[row];
+            let antenna2 = antenna2_column[row];
+            if !antenna_ids.is_empty()
+                && !antenna_ids.contains(&antenna1)
+                && !antenna_ids.contains(&antenna2)
+            {
+                continue;
+            }
+            if !baselines.is_empty() && !baselines.contains(&(antenna1, antenna2)) {
+                continue;
+            }
+        }
+
+        if let (Some((start, end)), Some(time_column)) = (sel.time_range, columns.time.as_ref()) {
+            let time = time_column[row];
+            if time < start || time > end {
+                continue;
+            }
+        }
+
+        if let Some(scan_column) = columns.scan.as_ref() {
+            if !scan_numbers.contains(&scan_column[row]) {
+                continue;
+            }
+        }
+        if let Some(state_column) = columns.state.as_ref() {
+            if !state_ids.contains(&state_column[row]) {
+                continue;
+            }
+        }
+        if let Some(observation_column) = columns.observation.as_ref() {
+            if !observation_ids.contains(&observation_column[row]) {
+                continue;
+            }
+        }
+        if let Some(array_column) = columns.array.as_ref() {
+            if !array_ids.contains(&array_column[row]) {
+                continue;
+            }
+        }
+
+        rows.push(row);
+    }
+
+    Ok(rows)
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct StructuredSelectionColumnRequest {
+    field: bool,
+    data_desc: bool,
+    antenna1: bool,
+    antenna2: bool,
+    time: bool,
+    scan: bool,
+    state: bool,
+    observation: bool,
+    array: bool,
+}
+
+#[derive(Debug, Default)]
+struct StructuredSelectionColumns {
+    field: Option<Vec<i32>>,
+    data_desc: Option<Vec<i32>>,
+    antenna1: Option<Vec<i32>>,
+    antenna2: Option<Vec<i32>>,
+    time: Option<Vec<f64>>,
+    scan: Option<Vec<i32>>,
+    state: Option<Vec<i32>>,
+    observation: Option<Vec<i32>>,
+    array: Option<Vec<i32>>,
+}
+
+fn load_structured_selection_columns(
+    table: &Table,
+    request: StructuredSelectionColumnRequest,
+) -> MsResult<StructuredSelectionColumns> {
+    let rows = table.rows()?;
+    let mut columns = StructuredSelectionColumns::default();
+
+    if rows.is_empty() {
+        if request.field {
+            columns.field = Some(Vec::new());
+        }
+        if request.data_desc {
+            columns.data_desc = Some(Vec::new());
+        }
+        if request.antenna1 {
+            columns.antenna1 = Some(Vec::new());
+        }
+        if request.antenna2 {
+            columns.antenna2 = Some(Vec::new());
+        }
+        if request.time {
+            columns.time = Some(Vec::new());
+        }
+        if request.scan {
+            columns.scan = Some(Vec::new());
+        }
+        if request.state {
+            columns.state = Some(Vec::new());
+        }
+        if request.observation {
+            columns.observation = Some(Vec::new());
+        }
+        if request.array {
+            columns.array = Some(Vec::new());
+        }
+        return Ok(columns);
+    }
+
+    let first_row = &rows[0];
+    let field_index = request
+        .field
+        .then(|| find_column_index(first_row, "FIELD_ID"))
+        .transpose()?;
+    let data_desc_index = request
+        .data_desc
+        .then(|| find_column_index(first_row, "DATA_DESC_ID"))
+        .transpose()?;
+    let antenna1_index = request
+        .antenna1
+        .then(|| find_column_index(first_row, "ANTENNA1"))
+        .transpose()?;
+    let antenna2_index = request
+        .antenna2
+        .then(|| find_column_index(first_row, "ANTENNA2"))
+        .transpose()?;
+    let time_index = request
+        .time
+        .then(|| find_column_index(first_row, "TIME"))
+        .transpose()?;
+    let scan_index = request
+        .scan
+        .then(|| find_column_index(first_row, "SCAN_NUMBER"))
+        .transpose()?;
+    let state_index = request
+        .state
+        .then(|| find_column_index(first_row, "STATE_ID"))
+        .transpose()?;
+    let observation_index = request
+        .observation
+        .then(|| find_column_index(first_row, "OBSERVATION_ID"))
+        .transpose()?;
+    let array_index = request
+        .array
+        .then(|| find_column_index(first_row, "ARRAY_ID"))
+        .transpose()?;
+
+    if request.field {
+        columns.field = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.data_desc {
+        columns.data_desc = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.antenna1 {
+        columns.antenna1 = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.antenna2 {
+        columns.antenna2 = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.time {
+        columns.time = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.scan {
+        columns.scan = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.state {
+        columns.state = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.observation {
+        columns.observation = Some(Vec::with_capacity(rows.len()));
+    }
+    if request.array {
+        columns.array = Some(Vec::with_capacity(rows.len()));
+    }
+
+    for row in rows {
+        let fields = row.fields();
+        if let (Some(index), Some(values)) = (field_index, columns.field.as_mut()) {
+            values.push(read_i32_field(fields, index, "FIELD_ID")?);
+        }
+        if let (Some(index), Some(values)) = (data_desc_index, columns.data_desc.as_mut()) {
+            values.push(read_i32_field(fields, index, "DATA_DESC_ID")?);
+        }
+        if let (Some(index), Some(values)) = (antenna1_index, columns.antenna1.as_mut()) {
+            values.push(read_i32_field(fields, index, "ANTENNA1")?);
+        }
+        if let (Some(index), Some(values)) = (antenna2_index, columns.antenna2.as_mut()) {
+            values.push(read_i32_field(fields, index, "ANTENNA2")?);
+        }
+        if let (Some(index), Some(values)) = (time_index, columns.time.as_mut()) {
+            values.push(read_f64_field(fields, index, "TIME")?);
+        }
+        if let (Some(index), Some(values)) = (scan_index, columns.scan.as_mut()) {
+            values.push(read_i32_field(fields, index, "SCAN_NUMBER")?);
+        }
+        if let (Some(index), Some(values)) = (state_index, columns.state.as_mut()) {
+            values.push(read_i32_field(fields, index, "STATE_ID")?);
+        }
+        if let (Some(index), Some(values)) = (observation_index, columns.observation.as_mut()) {
+            values.push(read_i32_field(fields, index, "OBSERVATION_ID")?);
+        }
+        if let (Some(index), Some(values)) = (array_index, columns.array.as_mut()) {
+            values.push(read_i32_field(fields, index, "ARRAY_ID")?);
+        }
+    }
+
+    Ok(columns)
+}
+
+fn find_column_index(row: &RecordValue, column: &str) -> MsResult<usize> {
+    row.fields()
+        .iter()
+        .position(|field| field.name == column)
+        .ok_or_else(|| MsError::MissingColumn {
+            column: column.to_string(),
+            table: "MAIN".to_string(),
+        })
+}
+
+fn read_i32_field(fields: &[RecordField], index: usize, column: &str) -> MsResult<i32> {
+    let field = fields.get(index).ok_or_else(|| MsError::MissingColumn {
+        column: column.to_string(),
+        table: "MAIN".to_string(),
+    })?;
+    if field.name != column {
+        return Err(MsError::MissingColumn {
+            column: column.to_string(),
+            table: "MAIN".to_string(),
+        });
+    }
+    match &field.value {
+        Value::Scalar(ScalarValue::Int32(value)) => Ok(*value),
+        other => Err(MsError::ColumnTypeMismatch {
+            column: column.to_string(),
+            table: "MAIN".to_string(),
+            expected: "Int32".to_string(),
+            found: format!("{:?}", other.kind()),
+        }),
+    }
+}
+
+fn read_f64_field(fields: &[RecordField], index: usize, column: &str) -> MsResult<f64> {
+    let field = fields.get(index).ok_or_else(|| MsError::MissingColumn {
+        column: column.to_string(),
+        table: "MAIN".to_string(),
+    })?;
+    if field.name != column {
+        return Err(MsError::MissingColumn {
+            column: column.to_string(),
+            table: "MAIN".to_string(),
+        });
+    }
+    match &field.value {
+        Value::Scalar(ScalarValue::Float64(value)) => Ok(*value),
+        other => Err(MsError::ColumnTypeMismatch {
+            column: column.to_string(),
+            table: "MAIN".to_string(),
+            expected: "Float64".to_string(),
+            found: format!("{:?}", other.kind()),
+        }),
     }
 }
 
@@ -543,5 +871,54 @@ mod tests {
 
         let rows = MsSelection::new().spw(&[7]).apply(&ms).unwrap();
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn apply_field_and_spw_selection_returns_only_intersection() {
+        use crate::builder::MeasurementSetBuilder;
+        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+
+        ms.subtable_mut(SubtableId::DataDescription)
+            .unwrap()
+            .add_row(RecordValue::new(vec![
+                RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
+                RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
+                RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            ]))
+            .unwrap();
+        ms.subtable_mut(SubtableId::DataDescription)
+            .unwrap()
+            .add_row(RecordValue::new(vec![
+                RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
+                RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            ]))
+            .unwrap();
+
+        let schema = ms.main_table().schema().unwrap().clone();
+        for (field_id, data_desc_id) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            let row_fields: Vec<RecordField> = schema
+                .columns()
+                .iter()
+                .map(|col| match col.name() {
+                    "FIELD_ID" => {
+                        RecordField::new(col.name(), Value::Scalar(ScalarValue::Int32(field_id)))
+                    }
+                    "DATA_DESC_ID" => RecordField::new(
+                        col.name(),
+                        Value::Scalar(ScalarValue::Int32(data_desc_id)),
+                    ),
+                    name => RecordField::new(name, default_value(name)),
+                })
+                .collect();
+            ms.main_table_mut()
+                .add_row(RecordValue::new(row_fields))
+                .unwrap();
+        }
+
+        let rows = MsSelection::new().field(&[0]).spw(&[1]).apply(&ms).unwrap();
+        assert_eq!(rows, vec![1]);
     }
 }

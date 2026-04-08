@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 arboard = "3"
+casa-calibration = { path = "../casa-calibration" }
 casa-images = { path = "../casa-images" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casa-ms = { path = "../casa-ms" }

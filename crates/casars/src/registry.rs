@@ -6,13 +6,16 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
 
-use casa_ms::msexplore::cli::{UiCommandSchema, command_schema as msexplore_command_schema};
+use casa_calibration::command_schema as calibrate_command_schema;
+use casa_ms::msexplore::cli::command_schema as msexplore_command_schema;
+use casa_ms::ui_schema::UiCommandSchema;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
     pub id: &'static str,
     pub category: &'static str,
     pub display_name: &'static str,
+    shell_kind: AppShellKind,
     kind: RegistryAppKind,
 }
 
@@ -30,6 +33,13 @@ enum RegistryAppKind {
 pub(crate) enum AppInteraction {
     OneShot,
     BrowserSession(BrowserAppKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AppShellKind {
+    Inspect,
+    Browser,
+    Workflow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +74,9 @@ impl RegistryApp {
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
         if !self.has_explicit_binary_override() && self.id == "msexplore" {
             return Ok(msexplore_command_schema("msexplore"));
+        }
+        if !self.has_explicit_binary_override() && self.id == "calibrate" {
+            return Ok(calibrate_command_schema("calibrate"));
         }
         match &self.kind {
             RegistryAppKind::Subprocess { binary_name, .. } => {
@@ -149,7 +162,7 @@ impl RegistryApp {
     }
 
     fn prefers_cargo_workspace_fallback_for_stale_sibling(&self) -> bool {
-        self.id == "msexplore"
+        matches!(self.id, "msexplore" | "calibrate")
     }
 
     pub(crate) fn is_browser_session(&self) -> bool {
@@ -160,6 +173,10 @@ impl RegistryApp {
                 ..
             }
         )
+    }
+
+    pub(crate) fn shell_kind(&self) -> AppShellKind {
+        self.shell_kind
     }
 
     pub(crate) fn browser_kind(&self) -> Option<BrowserAppKind> {
@@ -183,15 +200,19 @@ impl RegistryApp {
     }
 
     pub(crate) fn ready_status_line(&self) -> &'static str {
-        match self.kind {
-            RegistryAppKind::Subprocess {
-                interaction: AppInteraction::BrowserSession(_),
-                ..
-            } => "Ready. Press r to open the browser session.",
-            RegistryAppKind::Subprocess {
-                interaction: AppInteraction::OneShot,
-                ..
-            } => "Ready. Press r to run the selected command.",
+        match (self.shell_kind, &self.kind) {
+            (
+                AppShellKind::Browser,
+                RegistryAppKind::Subprocess {
+                    interaction: AppInteraction::BrowserSession(_),
+                    ..
+                },
+            ) => "Ready. Press r to open the browser session.",
+            (AppShellKind::Inspect, _) => {
+                "Ready. Press r to run and refresh the current inspection view."
+            }
+            (AppShellKind::Workflow, _) => "Ready. Press r to run the selected workflow stage.",
+            (_, _) => "Ready. Press r to run the selected command.",
         }
     }
 }
@@ -199,16 +220,37 @@ impl RegistryApp {
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
     match id.unwrap_or("msexplore") {
         "msexplore" => Ok(msexplore_app()),
+        "calibrate" => Ok(calibrate_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: msexplore, tablebrowser, imexplore"
+            "unknown casars app {other:?}; expected one of: msexplore, calibrate, tablebrowser, imexplore"
         )),
     }
 }
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
-    vec![msexplore_app(), tablebrowser_app(), imexplore_app()]
+    vec![
+        msexplore_app(),
+        calibrate_app(),
+        tablebrowser_app(),
+        imexplore_app(),
+    ]
+}
+
+pub(crate) fn calibrate_app() -> RegistryApp {
+    RegistryApp {
+        id: "calibrate",
+        category: "Calibration",
+        display_name: "Calibrate",
+        shell_kind: AppShellKind::Workflow,
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "calibrate",
+            cargo_package: "casa-calibration",
+            override_env: "CASARS_CALIBRATE_BIN",
+            interaction: AppInteraction::OneShot,
+        },
+    }
 }
 
 pub(crate) fn tablebrowser_app() -> RegistryApp {
@@ -216,6 +258,7 @@ pub(crate) fn tablebrowser_app() -> RegistryApp {
         id: "tablebrowser",
         category: "Tables",
         display_name: "Table Browser",
+        shell_kind: AppShellKind::Browser,
         kind: RegistryAppKind::Subprocess {
             binary_name: "tablebrowser",
             cargo_package: "casa-tables",
@@ -230,6 +273,7 @@ pub(crate) fn imexplore_app() -> RegistryApp {
         id: "imexplore",
         category: "Images",
         display_name: "ImExplore",
+        shell_kind: AppShellKind::Browser,
         kind: RegistryAppKind::Subprocess {
             binary_name: "imexplore",
             cargo_package: "casa-images",
@@ -244,6 +288,7 @@ pub(crate) fn msexplore_app() -> RegistryApp {
         id: "msexplore",
         category: "MeasurementSet",
         display_name: "MSExplore",
+        shell_kind: AppShellKind::Inspect,
         kind: RegistryAppKind::Subprocess {
             binary_name: "msexplore",
             cargo_package: "casa-ms",
@@ -300,7 +345,7 @@ fn is_binary_stale(
 mod tests {
     use super::*;
     use casa_ms::MsPlotPreset;
-    use casa_ms::msexplore::cli::UiArgumentParser;
+    use casa_ms::ui_schema::UiArgumentParser;
     use std::fs;
     use std::time::Duration;
 
@@ -308,6 +353,7 @@ mod tests {
     fn resolve_app_defaults_and_rejects_unknown_ids() {
         assert_eq!(resolve_app(None).unwrap().id, "msexplore");
         assert_eq!(resolve_app(Some("msexplore")).unwrap().id, "msexplore");
+        assert_eq!(resolve_app(Some("calibrate")).unwrap().id, "calibrate");
         assert_eq!(
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
@@ -328,7 +374,16 @@ mod tests {
         assert_eq!(msexplore.browser_path_field_id(), None);
         assert_eq!(
             msexplore.ready_status_line(),
-            "Ready. Press r to run the selected command."
+            "Ready. Press r to run and refresh the current inspection view."
+        );
+
+        let calibrate = calibrate_app();
+        assert!(!calibrate.is_browser_session());
+        assert_eq!(calibrate.browser_kind(), None);
+        assert_eq!(calibrate.browser_path_field_id(), None);
+        assert_eq!(
+            calibrate.ready_status_line(),
+            "Ready. Press r to run the selected workflow stage."
         );
 
         let tablebrowser = tablebrowser_app();
@@ -367,10 +422,10 @@ mod tests {
     #[test]
     fn resolve_command_falls_back_to_cargo_run_prefix() {
         let _guard = crate::test_env_lock();
-        let app = tablebrowser_app();
+        let app = calibrate_app();
         unsafe {
-            env::remove_var("CASARS_TABLEBROWSER_BIN");
-            env::remove_var("CARGO_BIN_EXE_tablebrowser");
+            env::remove_var("CASARS_CALIBRATE_BIN");
+            env::remove_var("CARGO_BIN_EXE_calibrate");
             env::set_var("CARGO", "cargo");
         }
         let resolved = app.resolve_command().expect("resolve cargo fallback");
@@ -388,9 +443,9 @@ mod tests {
                 workspace_manifest_path().to_string_lossy().as_ref(),
                 "-q",
                 "-p",
-                "casa-tables",
+                "casa-calibration",
                 "--bin",
-                "tablebrowser",
+                "calibrate",
                 "--"
             ]
         );
@@ -436,6 +491,53 @@ mod tests {
             .map(|preset| preset.as_str().to_string())
             .collect::<Vec<_>>();
         assert_eq!(choices, &expected);
+    }
+
+    #[test]
+    fn calibrate_load_schema_describes_public_workflow_surface() {
+        let schema = calibrate_app()
+            .load_schema()
+            .expect("load calibrate schema");
+        assert_eq!(schema.command_id, "calibrate");
+        assert_eq!(schema.display_name, "Calibrate");
+        assert_eq!(schema.category, "Calibration");
+        let workflow_mode = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "mode")
+            .expect("workflow mode argument");
+        let UiArgumentParser::Option { choices, .. } = &workflow_mode.parser else {
+            panic!("mode should be an option parser");
+        };
+        assert_eq!(
+            choices,
+            &[
+                "apply",
+                "summary",
+                "stats",
+                "solve_gain",
+                "solve_bandpass",
+                "fluxscale",
+            ]
+        );
+        let gaintables = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "gaintables")
+            .expect("gaintables argument");
+        let UiArgumentParser::Option { choices, .. } = &gaintables.parser else {
+            panic!("gaintables should be an option parser");
+        };
+        assert!(choices.is_empty());
+        let mode = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "apply_mode")
+            .expect("apply mode argument");
+        let UiArgumentParser::Option { choices, .. } = &mode.parser else {
+            panic!("apply_mode should be an option parser");
+        };
+        assert_eq!(choices, &["calflag", "calonly", "trial"]);
     }
 
     #[test]
@@ -495,6 +597,7 @@ mod tests {
     #[test]
     fn workspace_ms_apps_prefer_cargo_fallback_for_stale_siblings() {
         assert!(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+        assert!(calibrate_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
     }

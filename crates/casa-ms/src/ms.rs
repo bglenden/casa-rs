@@ -144,6 +144,45 @@ impl MeasurementSet {
         Ok(())
     }
 
+    /// Save only the MS main table back to disk.
+    ///
+    /// This is intended for workflows that mutate only MAIN columns/keywords
+    /// while leaving all subtables untouched, such as the initial
+    /// `applycal`-class calibration executor. The method still refreshes
+    /// main-table metadata and subtable-link keywords before writing the
+    /// main table, but it skips rewriting the individual subtable directories.
+    pub fn save_main_table_only(&mut self) -> MsResult<()> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
+            .clone();
+
+        self.refresh_subtable_paths(&path);
+        self.sync_main_metadata(&path);
+        self.main.save(TableOptions::new(&path))?;
+        Ok(())
+    }
+
+    /// Save only the MS main table back to disk, assuming MAIN is already schema-valid.
+    ///
+    /// This preserves the same on-disk layout as [`save_main_table_only`](Self::save_main_table_only)
+    /// but skips the extra full-table validation pass before serializing the
+    /// main table. It is intended for write paths that mutate MAIN only
+    /// through validating APIs and want to avoid rechecking every row.
+    pub fn save_main_table_only_assuming_valid(&mut self) -> MsResult<()> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
+            .clone();
+
+        self.refresh_subtable_paths(&path);
+        self.sync_main_metadata(&path);
+        self.main.save_assuming_valid(TableOptions::new(&path))?;
+        Ok(())
+    }
+
     /// Save the MS to a new path.
     ///
     /// All persisted subtable references are rebased so the copied MS remains
@@ -792,7 +831,9 @@ fn subtable_keyword_value(base_path: &Path, subtable_path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::builder::MeasurementSetBuilder;
+    use crate::test_helpers::default_value;
     use casa_tables::TableOptions;
+    use casa_types::PrimitiveType;
     use std::fs;
 
     #[test]
@@ -1023,9 +1064,73 @@ mod tests {
     }
 
     #[test]
+    fn save_main_table_only_persists_main_mutations_without_rewriting_subtables() {
+        let dir = tempfile::tempdir().unwrap();
+        let ms_path = dir.path().join("main-only.ms");
+
+        let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
+        ms.antenna_mut()
+            .unwrap()
+            .add_antenna(
+                "ALMA01",
+                "A001",
+                "GROUND-BASED",
+                "ALT-AZ",
+                [1.0; 3],
+                [0.0; 3],
+                12.0,
+            )
+            .unwrap();
+        ms.save().unwrap();
+
+        let antenna_before = fs::metadata(ms_path.join("ANTENNA"))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        let schema = ms.main_table().schema().unwrap().clone();
+        let fields: Vec<RecordField> = schema
+            .columns()
+            .iter()
+            .map(|col| {
+                let value = if col.name() == "FIELD_ID" {
+                    Value::Scalar(ScalarValue::Int32(1))
+                } else {
+                    default_value(col.name())
+                };
+                RecordField::new(col.name(), value)
+            })
+            .collect();
+        ms.main_table_mut()
+            .add_row(RecordValue::new(fields))
+            .unwrap();
+        ms.save_main_table_only().unwrap();
+
+        let reopened = MeasurementSet::open(&ms_path).unwrap();
+        assert_eq!(reopened.row_count(), 1);
+        match reopened
+            .main_table()
+            .get_scalar_cell(0, "FIELD_ID")
+            .expect("field id cell")
+        {
+            ScalarValue::Int32(value) => assert_eq!(*value, 1),
+            other => panic!(
+                "expected FIELD_ID to be Int32, found {:?}",
+                other.primitive_type()
+            ),
+        }
+        assert_eq!(reopened.antenna().unwrap().row_count(), 1);
+
+        let antenna_after = fs::metadata(ms_path.join("ANTENNA"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(antenna_before, antenna_after);
+    }
+
+    #[test]
     fn validation_fails_on_wrong_column_type() {
         use casa_tables::{ColumnSchema, TableSchema};
-        use casa_types::PrimitiveType;
 
         // Create a table with TIME as Int32 instead of Float64
         let bad_schema = TableSchema::new(vec![

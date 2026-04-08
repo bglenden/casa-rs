@@ -39,14 +39,28 @@ use crate::ms::MeasurementSet;
 pub struct MsCalEngine {
     /// Antenna positions in ITRF.
     antenna_positions: Vec<MPosition>,
-    /// Whether each antenna uses an alt-az mount.
-    antenna_mount_alt_az: Vec<bool>,
+    /// Mount family for each antenna, matching the practical CASA
+    /// `MSDerivedValues::parAngle()` cases.
+    antenna_mount_types: Vec<AntennaMountType>,
     /// Field phase directions (constant term, J2000).
     field_directions: Vec<MDirection>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AntennaMountType {
+    AltAz,
+    Equatorial,
+    Orbiting,
+    XY,
+    NasmythRight,
+    NasmythLeft,
+    BwgRight,
+    BwgLeft,
+    Other,
 }
 
 impl MsCalEngine {
@@ -59,12 +73,12 @@ impl MsCalEngine {
         let ant = ms.antenna()?;
         let n_ant = ant.row_count();
         let mut antenna_positions = Vec::with_capacity(n_ant);
-        let mut antenna_mount_alt_az = Vec::with_capacity(n_ant);
+        let mut antenna_mount_types = Vec::with_capacity(n_ant);
         for row in 0..n_ant {
             let pos = ant.position(row)?;
             antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
             let mount = ant.mount(row)?;
-            antenna_mount_alt_az.push(mount.to_ascii_lowercase().starts_with("alt-az"));
+            antenna_mount_types.push(AntennaMountType::from_mount_string(&mount));
         }
 
         let field = ms.field()?;
@@ -91,7 +105,7 @@ impl MsCalEngine {
 
         Ok(Self {
             antenna_positions,
-            antenna_mount_alt_az,
+            antenna_mount_types,
             field_directions,
             observatory_position,
             time_reference,
@@ -105,7 +119,26 @@ impl MsCalEngine {
         observatory_position: MPosition,
     ) -> Self {
         Self {
-            antenna_mount_alt_az: vec![true; antenna_positions.len()],
+            antenna_mount_types: vec![AntennaMountType::AltAz; antenna_positions.len()],
+            antenna_positions,
+            field_directions,
+            observatory_position,
+            time_reference: EpochRef::UTC,
+        }
+    }
+
+    /// Create an engine with explicit mount metadata (useful for testing).
+    pub fn from_parts_with_mounts(
+        antenna_positions: Vec<MPosition>,
+        antenna_mounts: Vec<String>,
+        field_directions: Vec<MDirection>,
+        observatory_position: MPosition,
+    ) -> Self {
+        Self {
+            antenna_mount_types: antenna_mounts
+                .into_iter()
+                .map(|mount| AntennaMountType::from_mount_string(&mount))
+                .collect(),
             antenna_positions,
             field_directions,
             observatory_position,
@@ -208,17 +241,50 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<f64> {
-        if !self.antenna_is_alt_az(antenna_id)? {
-            return Ok(0.0);
-        }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let source_azel = self
-            .field_dir(field_id)?
-            .convert_to(DirectionRef::AZEL, &frame)?;
-        let pole_azel =
-            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-                .convert_to(DirectionRef::AZEL, &frame)?;
-        Ok(spherical_position_angle(&source_azel, &pole_azel))
+        let source = self.field_dir(field_id)?;
+        let mount = self.antenna_mount_type(antenna_id)?;
+
+        match mount {
+            AntennaMountType::AltAz => base_parallactic_angle(&frame, source),
+            AntennaMountType::NasmythRight => {
+                let (_, elevation) = azel_angles(source, &frame)?;
+                Ok(base_parallactic_angle(&frame, source)? + elevation)
+            }
+            AntennaMountType::NasmythLeft => {
+                let (_, elevation) = azel_angles(source, &frame)?;
+                Ok(base_parallactic_angle(&frame, source)? - elevation)
+            }
+            AntennaMountType::BwgRight => {
+                let (azimuth, elevation) = azel_angles(source, &frame)?;
+                Ok(base_parallactic_angle(&frame, source)? + elevation - azimuth)
+            }
+            AntennaMountType::BwgLeft => {
+                let (azimuth, elevation) = azel_angles(source, &frame)?;
+                Ok(base_parallactic_angle(&frame, source)? - elevation + azimuth)
+            }
+            AntennaMountType::XY => {
+                let source_hadec = source.convert_to(DirectionRef::HADEC, &frame)?;
+                let ha = source_hadec.longitude_rad();
+                let dec = source_hadec.latitude_rad();
+                Ok((-ha.cos()).atan2(-ha.sin() * dec.sin()))
+            }
+            AntennaMountType::Equatorial | AntennaMountType::Orbiting | AntennaMountType::Other => {
+                Ok(0.0)
+            }
+        }
+    }
+
+    /// Compute CASA-style feed parallactic angle for receptor 0 by adding
+    /// `FEED::RECEPTOR_ANGLE[0]` to the mount-aware nominal parallactic angle.
+    pub fn feed_parallactic_angle(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        antenna_id: usize,
+        receptor0_angle_rad: f64,
+    ) -> MsResult<f64> {
+        Ok(self.parallactic_angle(time_mjd_sec, field_id, antenna_id)? + receptor0_angle_rad)
     }
 
     /// Compute the array-fiducial hour angle (radians) using the observatory position.
@@ -394,16 +460,44 @@ impl MsCalEngine {
         self.time_reference
     }
 
-    fn antenna_is_alt_az(&self, antenna_id: usize) -> MsResult<bool> {
-        self.antenna_mount_alt_az
+    fn antenna_mount_type(&self, antenna_id: usize) -> MsResult<AntennaMountType> {
+        self.antenna_mount_types
             .get(antenna_id)
             .copied()
             .ok_or_else(|| MsError::InvalidIndex {
                 index: antenna_id,
-                max: self.antenna_mount_alt_az.len(),
+                max: self.antenna_mount_types.len(),
                 context: "antenna_id".to_string(),
             })
     }
+}
+
+impl AntennaMountType {
+    fn from_mount_string(mount: &str) -> Self {
+        match mount.to_ascii_lowercase().as_str() {
+            "" | "alt-az" | "alt-az+rotator" => Self::AltAz,
+            "equatorial" => Self::Equatorial,
+            "orbiting" => Self::Orbiting,
+            "x-y" => Self::XY,
+            "alt-az+nasmyth-r" => Self::NasmythRight,
+            "alt-az+nasmyth-l" => Self::NasmythLeft,
+            "alt-az+bwg-r" => Self::BwgRight,
+            "alt-az+bwg-l" => Self::BwgLeft,
+            _ => Self::Other,
+        }
+    }
+}
+
+fn base_parallactic_angle(frame: &MeasFrame, source: &MDirection) -> MsResult<f64> {
+    let source_azel = source.convert_to(DirectionRef::AZEL, frame)?;
+    let pole_azel = MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
+        .convert_to(DirectionRef::AZEL, frame)?;
+    Ok(spherical_position_angle(&source_azel, &pole_azel))
+}
+
+fn azel_angles(source: &MDirection, frame: &MeasFrame) -> MsResult<(f64, f64)> {
+    let source_azel = source.convert_to(DirectionRef::AZEL, frame)?;
+    Ok((source_azel.longitude_rad(), source_azel.latitude_rad()))
 }
 
 fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
@@ -583,6 +677,54 @@ mod tests {
         let time = 59000.5 * 86400.0;
         let pa = engine.parallactic_angle_observatory(time, 0).unwrap();
         assert!(pa.is_finite(), "observatory PA should be finite, got {pa}");
+    }
+
+    #[test]
+    fn equatorial_mount_has_zero_parallactic_angle() {
+        let pos = MPosition::from_observatory_name("VLA").unwrap();
+        let dir = MDirection::from_angles(0.25, 0.5, DirectionRef::J2000);
+        let engine = MsCalEngine::from_parts_with_mounts(
+            vec![pos.clone()],
+            vec!["EQUATORIAL".to_string()],
+            vec![dir],
+            pos,
+        );
+        let pa = engine.parallactic_angle(59000.5 * 86400.0, 0, 0).unwrap();
+        assert!(pa.abs() < 1e-12, "equatorial PA should be zero, got {pa}");
+    }
+
+    #[test]
+    fn bwg_mount_differs_from_plain_altaz() {
+        let pos = MPosition::from_observatory_name("VLA").unwrap();
+        let dir = MDirection::from_angles(0.25, 0.5, DirectionRef::J2000);
+        let altaz = MsCalEngine::from_parts_with_mounts(
+            vec![pos.clone()],
+            vec!["ALT-AZ".to_string()],
+            vec![dir.clone()],
+            pos.clone(),
+        );
+        let bwg = MsCalEngine::from_parts_with_mounts(
+            vec![pos.clone()],
+            vec!["ALT-AZ+BWG-R".to_string()],
+            vec![dir],
+            pos,
+        );
+        let time = 59000.5 * 86400.0;
+        let altaz_pa = altaz.parallactic_angle(time, 0, 0).unwrap();
+        let bwg_pa = bwg.parallactic_angle(time, 0, 0).unwrap();
+        assert!(
+            (altaz_pa - bwg_pa).abs() > 1e-6,
+            "BWG PA should differ from plain ALT-AZ, altaz={altaz_pa}, bwg={bwg_pa}"
+        );
+    }
+
+    #[test]
+    fn feed_parallactic_angle_adds_receptor0_angle() {
+        let engine = make_engine();
+        let time = 59000.5 * 86400.0;
+        let nominal = engine.parallactic_angle(time, 0, 0).unwrap();
+        let feed_pa = engine.feed_parallactic_angle(time, 0, 0, 0.125).unwrap();
+        assert!((feed_pa - (nominal + 0.125)).abs() < 1e-12);
     }
 
     #[test]
