@@ -303,8 +303,14 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
     let dir = TempDir::new().expect("tempdir");
     let prior_gains = [
         [Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
-        [Complex32::new(0.9887711, 0.14943813), Complex32::new(0.9689124, -0.24740396)],
-        [Complex32::new(0.9950042, -0.09983342), Complex32::new(0.9393727, 0.3428978)],
+        [
+            Complex32::new(0.9887711, 0.14943813),
+            Complex32::new(0.9689124, -0.24740396),
+        ],
+        [
+            Complex32::new(0.9950042, -0.09983342),
+            Complex32::new(0.9393727, 0.3428978),
+        ],
     ];
     let bandpass_gains = [
         [

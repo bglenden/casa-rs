@@ -14,13 +14,16 @@ use ratatui::widgets::{
 use ratatui_image::Image as PanelImage;
 
 use crate::app::{
-    AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, PlotControlTarget,
-    PlotPaneFocus, ResultContent, ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
+    AppState, FormRowKind, FormSelection, OutputPane, PaneFocus, PlotControlTarget, PlotPaneFocus,
+    ResultContent, ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
 };
 use crate::config::ThemeMode;
 use crate::registry::RegistryApp;
 use crate::theme::{Theme, theme};
-pub(crate) use browser_manager::{browser_mode_picker_area, browser_mode_picker_list_area};
+pub(crate) use browser_manager::{
+    browser_mode_picker_area, browser_mode_picker_list_area, choice_picker_area,
+    choice_picker_list_area,
+};
 use browser_manager::{
     browser_mode_selector_rect, draw_browser_mode_picker, selector_button_label,
     visible_browser_manager_hits,
@@ -45,7 +48,6 @@ pub(crate) struct UiLayout {
     pub result_hscrollbar: Option<Rect>,
     pub plot_workspace: Option<PlotWorkspaceLayout>,
     pub tab_hits: Vec<TabHit>,
-    pub browser_tab_hits: Vec<BrowserTabHit>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,12 +59,6 @@ pub(crate) struct FormRowHit {
 #[derive(Debug, Clone)]
 pub(crate) struct TabHit {
     pub tab: ResultTab,
-    pub rect: Rect,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct BrowserTabHit {
-    pub tab: BrowserTab,
     pub rect: Rect,
 }
 
@@ -128,13 +124,6 @@ impl UiLayout {
 
     pub(crate) fn result_tab_at(&self, column: u16, row: u16) -> Option<ResultTab> {
         self.tab_hits
-            .iter()
-            .find(|hit| rect_contains(hit.rect, column, row))
-            .map(|hit| hit.tab)
-    }
-
-    pub(crate) fn browser_tab_at(&self, column: u16, row: u16) -> Option<BrowserTab> {
-        self.browser_tab_hits
             .iter()
             .find(|hit| rect_contains(hit.rect, column, row))
             .map(|hit| hit.tab)
@@ -289,20 +278,10 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
             .saturating_sub(status_height + tabs_height),
     };
 
-    let tab_hits = if app.browser_is_active() {
-        Vec::new()
-    } else {
-        visible_tab_hits(result_tabs, app)
-    };
-    let browser_tab_hits = if app.browser_is_active() {
-        visible_browser_tab_hits(result_tabs, app)
-    } else {
-        Vec::new()
-    };
+    let tab_hits = visible_tab_hits(result_tabs, app);
     let result_scrollbar = result_scrollbar_rect(app, result_content);
     let result_hscrollbar = result_hscrollbar_rect(app, result_content);
-    let plot_workspace = if !app.browser_is_active() && app.active_result_tab() == ResultTab::Plots
-    {
+    let plot_workspace = if !app.browser_is_active() && app.result_tab_uses_plot_workspace() {
         Some(build_plot_workspace_layout(result_content, app))
     } else {
         None
@@ -326,7 +305,6 @@ pub(crate) fn compute_layout(area: Rect, app: &AppState) -> UiLayout {
         result_hscrollbar,
         plot_workspace,
         tab_hits,
-        browser_tab_hits,
     }
 }
 
@@ -366,6 +344,8 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
     draw_result(frame, app, layout, palette);
     if app.path_chooser_active() {
         draw_path_chooser(frame, app, layout, palette);
+    } else if app.choice_picker_active() {
+        draw_choice_picker(frame, app, layout, palette);
     } else if app.browser_mode_picker_active() {
         draw_browser_mode_picker(frame, app, layout, palette);
     }
@@ -509,6 +489,9 @@ fn draw_form(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: 
                     .bg(palette.inactive_selection_bg)
                     .add_modifier(Modifier::BOLD),
                 (FormRowKind::Section { .. }, false, _) => Style::default()
+                    .fg(palette.section_fg)
+                    .add_modifier(Modifier::BOLD),
+                (FormRowKind::Subsection, _, _) => Style::default()
                     .fg(palette.section_fg)
                     .add_modifier(Modifier::BOLD),
                 (FormRowKind::Field, true, PaneFocus::Parameters) => Style::default()
@@ -707,22 +690,22 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
 
     let content = app.active_result_content();
     if let ResultContent::Graphic(summary) = &content {
-        if app.active_result_tab() == ResultTab::Plots {
+        if app.result_tab_uses_plot_workspace() {
             draw_plot_workspace(frame, app, layout, palette, summary);
         } else {
             draw_graphic_result(frame, app, layout, palette, summary);
         }
         return;
     }
-    let vertical_scrollbar =
-        result_scrollbar_state(&content, app.active_result_scroll(), layout.result_content);
-    let horizontal_scrollbar =
-        result_hscrollbar_state(&content, app.active_result_hscroll(), layout.result_content);
-    let content_area = content_viewport_area(
+    let resolved = result_scrollbars(
+        &content,
+        app.active_result_scroll(),
+        app.active_result_hscroll(),
         layout.result_content,
-        vertical_scrollbar.is_some(),
-        horizontal_scrollbar.is_some(),
     );
+    let vertical_scrollbar = resolved.vertical;
+    let horizontal_scrollbar = resolved.horizontal;
+    let content_area = resolved.viewport;
     if let Some(buffer) = app.visible_text_buffer(OutputPane::Result, layout) {
         render_visible_text_buffer(
             frame,
@@ -1031,11 +1014,11 @@ fn draw_plot_workspace(
 fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
     if layout.result_tabs.height > 0 {
         let mut spans = Vec::<Span<'static>>::new();
-        for tab in app.browser_tabs() {
+        for tab in app.result_tabs() {
             if !spans.is_empty() {
                 spans.push(Span::raw(" "));
             }
-            let active = app.active_browser_tab_label() == Some(tab.label());
+            let active = *tab == app.active_result_tab();
             let style = if active {
                 Style::default()
                     .fg(palette.active_tab_fg)
@@ -1044,10 +1027,7 @@ fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout,
             } else {
                 Style::default().fg(palette.tab_fg)
             };
-            spans.push(Span::styled(
-                browser_tab_label(*tab, active, palette),
-                style,
-            ));
+            spans.push(Span::styled(tab_label(*tab, active, palette), style));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), layout.result_tabs);
     }
@@ -1056,18 +1036,31 @@ fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout,
         return;
     }
 
-    if app.image_raster_plane_active() {
+    if app.browser_result_requires_special_renderer() {
         draw_image_plane_workspace(frame, app, layout, palette);
         return;
     }
 
-    let vertical_scrollbar = browser_scrollbar_state(app, layout.result_content);
-    let horizontal_scrollbar = browser_hscrollbar_state(app, layout.result_content);
-    let content_area = content_viewport_area(
-        layout.result_content,
-        vertical_scrollbar.is_some(),
-        horizontal_scrollbar.is_some(),
-    );
+    let content = app.active_result_content();
+    if let ResultContent::Graphic(summary) = &content {
+        draw_graphic_result(frame, app, layout, palette, summary);
+        return;
+    }
+
+    let use_browser_scrollbars = app.browser_result_uses_live_navigation();
+    let resolved = if use_browser_scrollbars {
+        browser_scrollbars(app, layout.result_content)
+    } else {
+        result_scrollbars(
+            &content,
+            app.active_result_scroll(),
+            app.active_result_hscroll(),
+            layout.result_content,
+        )
+    };
+    let vertical_scrollbar = resolved.vertical;
+    let horizontal_scrollbar = resolved.horizontal;
+    let content_area = resolved.viewport;
 
     let Some(buffer) = app.visible_text_buffer(OutputPane::Result, layout) else {
         return;
@@ -1289,6 +1282,93 @@ fn draw_path_chooser(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, p
     );
 }
 
+fn draw_choice_picker(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
+    let anchor = layout
+        .form_rows
+        .iter()
+        .find(|row| Some(row.target) == app.choice_picker_field_index().map(FormSelection::Field))
+        .map(|row| row.rect);
+    let entries = app.choice_picker_entries().unwrap_or_default();
+    let area = choice_picker_area(anchor, layout.form_block, entries.len());
+    let list_area = choice_picker_list_area(area);
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title(
+            app.choice_picker_title()
+                .unwrap_or("Choose Value")
+                .to_string(),
+        )
+        .title_style(
+            Style::default()
+                .fg(palette.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(palette.border_set)
+        .border_style(Style::default().fg(palette.active_pane_border_fg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    frame.render_widget(
+        Paragraph::new(format!(
+            "filter: {}",
+            app.choice_picker_filter().unwrap_or("")
+        ))
+        .style(Style::default().fg(palette.footer_fg))
+        .wrap(Wrap { trim: false }),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        },
+    );
+
+    let visible_height = list_area.height as usize;
+    let selected_row = entries
+        .iter()
+        .position(|(_, selected)| *selected)
+        .unwrap_or(0);
+    let scroll = choice_picker_scroll(selected_row, visible_height);
+    let items = if entries.is_empty() {
+        vec![ListItem::new("  No matching choices").style(Style::default().fg(palette.footer_fg))]
+    } else {
+        entries
+            .into_iter()
+            .skip(scroll)
+            .take(visible_height)
+            .map(|(label, selected)| {
+                let style = if selected {
+                    Style::default()
+                        .fg(palette.field_selected_fg)
+                        .bg(palette.field_selected_bg)
+                } else {
+                    Style::default().fg(palette.footer_fg)
+                };
+                ListItem::new(Line::from(format!("  {label}"))).style(style)
+            })
+            .collect::<Vec<_>>()
+    };
+    frame.render_widget(List::new(items), list_area);
+    frame.render_widget(
+        Paragraph::new("Type to filter  Enter/click choose  Esc cancel  Arrows/jk move")
+            .style(Style::default().fg(palette.footer_fg)),
+        Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        },
+    );
+}
+
+fn choice_picker_scroll(selected_row: usize, visible_height: usize) -> usize {
+    if visible_height == 0 {
+        return 0;
+    }
+    selected_row.saturating_sub(visible_height.saturating_sub(1))
+}
+
 fn render_visible_text_buffer(
     frame: &mut Frame<'_>,
     buffer: &VisibleTextBuffer,
@@ -1421,33 +1501,6 @@ fn visible_tab_hits(area: Rect, app: &AppState) -> Vec<TabHit> {
             height: 1,
         };
         hits.push(TabHit { tab: *tab, rect });
-        x = x.saturating_add(width + 1);
-    }
-    hits
-}
-
-fn visible_browser_tab_hits(area: Rect, app: &AppState) -> Vec<BrowserTabHit> {
-    if area.height == 0 || area.width == 0 {
-        return Vec::new();
-    }
-
-    let palette = theme(app.theme_mode());
-    let mut hits = Vec::new();
-    let mut x = area.x;
-    for tab in app.browser_tabs() {
-        let active = app.active_browser_tab_label() == Some(tab.label());
-        let label = browser_tab_label(*tab, active, palette);
-        let width = label.chars().count() as u16;
-        if x >= area.x + area.width {
-            break;
-        }
-        let rect = Rect {
-            x,
-            y: area.y,
-            width: width.min(area.x + area.width - x),
-            height: 1,
-        };
-        hits.push(BrowserTabHit { tab: *tab, rect });
         x = x.saturating_add(width + 1);
     }
     hits
@@ -1595,6 +1648,7 @@ fn render_form_row_text(
             };
             fit_text(&format!("  {disclosure} {}", row.text), width as usize)
         }
+        FormRowKind::Subsection => fit_text(&format!("    {}", row.text), width as usize),
         FormRowKind::Field => {
             let marker = if row.selected {
                 if focus == PaneFocus::Parameters {
@@ -1654,6 +1708,13 @@ fn render_manager_row_text(
 fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
     let short = match tab {
         ResultTab::Overview => "Overview",
+        ResultTab::Data => "Data",
+        ResultTab::Structure => "Struct",
+        ResultTab::Content => "Content",
+        ResultTab::Inspector => "Inspect",
+        ResultTab::Products => "Products",
+        ResultTab::Diagnostics => "Diag",
+        ResultTab::History => "History",
         ResultTab::Observations => "Obs",
         ResultTab::Scans => "Scans",
         ResultTab::Fields => "Fields",
@@ -1914,27 +1975,6 @@ fn truncate_to_width(text: &str, width: usize) -> String {
     text.chars().take(width).collect()
 }
 
-fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {
-    let short = match tab {
-        BrowserTab::Overview => "Overview",
-        BrowserTab::Columns => "Cols",
-        BrowserTab::Keywords => "Keys",
-        BrowserTab::Cells => "Cells",
-        BrowserTab::Subtables => "Links",
-        BrowserTab::Plane => "Plane",
-        BrowserTab::Spectrum => "Spec",
-        BrowserTab::Metadata => "Meta",
-        BrowserTab::Coordinates => "Coords",
-    };
-    if active {
-        format!("◖ {} ◗", tab.label())
-    } else if palette.selection_glyph == "▌" {
-        format!("·{short}·")
-    } else {
-        format!("[{}]", tab.label())
-    }
-}
-
 fn result_scrollbar_state(
     content: &ResultContent,
     scroll: u16,
@@ -1946,15 +1986,7 @@ fn result_scrollbar_state(
         ResultContent::Graphic(_) => return None,
     };
 
-    if content_length <= viewport_length || viewport_length == 0 {
-        return None;
-    }
-
-    Some(
-        ScrollbarState::new(content_length)
-            .position(scroll as usize)
-            .viewport_content_length(viewport_length),
-    )
+    scrollbar_state_from_metrics(Some((content_length, viewport_length)), scroll)
 }
 
 fn result_hscrollbar_state(
@@ -1972,14 +2004,53 @@ fn result_hscrollbar_state(
         ResultContent::Graphic(_) => return None,
     };
     let viewport_width = area.width as usize;
-    if viewport_width == 0 || content_width <= viewport_width {
-        return None;
+    scrollbar_state_from_metrics(Some((content_width, viewport_width)), scroll)
+}
+
+#[derive(Debug)]
+struct ResolvedScrollbars {
+    viewport: Rect,
+    vertical: Option<ScrollbarState>,
+    horizontal: Option<ScrollbarState>,
+}
+
+fn resolve_scrollbars<FV, FH>(
+    area: Rect,
+    vertical_for_area: FV,
+    horizontal_for_area: FH,
+) -> ResolvedScrollbars
+where
+    FV: Fn(Rect) -> Option<ScrollbarState>,
+    FH: Fn(Rect) -> Option<ScrollbarState>,
+{
+    let mut has_vertical = false;
+    let mut has_horizontal = false;
+
+    for _ in 0..3 {
+        let viewport = content_viewport_area(area, has_vertical, has_horizontal);
+        let vertical = vertical_for_area(viewport);
+        let horizontal = horizontal_for_area(viewport);
+        let new_has_vertical = vertical.is_some();
+        let new_has_horizontal = horizontal.is_some();
+
+        if new_has_vertical == has_vertical && new_has_horizontal == has_horizontal {
+            return ResolvedScrollbars {
+                viewport,
+                vertical,
+                horizontal,
+            };
+        }
+
+        has_vertical = new_has_vertical;
+        has_horizontal = new_has_horizontal;
     }
-    Some(
-        ScrollbarState::new(content_width)
-            .position(scroll as usize)
-            .viewport_content_length(viewport_width),
-    )
+
+    let viewport = content_viewport_area(area, has_vertical, has_horizontal);
+    ResolvedScrollbars {
+        viewport,
+        vertical: vertical_for_area(viewport),
+        horizontal: horizontal_for_area(viewport),
+    }
 }
 
 fn scrollbar_state_from_metrics(
@@ -1990,9 +2061,11 @@ fn scrollbar_state_from_metrics(
     if content_length <= viewport_length || viewport_length == 0 {
         return None;
     }
+    let max_scroll = content_length.saturating_sub(viewport_length);
+    let scroll_positions = max_scroll.saturating_add(1);
     Some(
-        ScrollbarState::new(content_length)
-            .position(scroll as usize)
+        ScrollbarState::new(scroll_positions)
+            .position((scroll as usize).min(max_scroll))
             .viewport_content_length(viewport_length),
     )
 }
@@ -2008,6 +2081,27 @@ fn browser_hscrollbar_state(app: &AppState, area: Rect) -> Option<ScrollbarState
     scrollbar_state_from_metrics(
         app.active_browser_hscroll_metrics(area.width),
         app.active_browser_hscroll(),
+    )
+}
+
+fn result_scrollbars(
+    content: &ResultContent,
+    scroll: u16,
+    hscroll: u16,
+    area: Rect,
+) -> ResolvedScrollbars {
+    resolve_scrollbars(
+        area,
+        |viewport| result_scrollbar_state(content, scroll, viewport),
+        |viewport| result_hscrollbar_state(content, hscroll, viewport),
+    )
+}
+
+fn browser_scrollbars(app: &AppState, area: Rect) -> ResolvedScrollbars {
+    resolve_scrollbars(
+        area,
+        |viewport| browser_scrollbar_state(app, viewport),
+        |viewport| browser_hscrollbar_state(app, viewport),
     )
 }
 
@@ -2129,53 +2223,56 @@ pub(crate) fn image_workspace_divider_toggle_area(
 
 fn result_scrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
     if app.browser_is_active() {
-        browser_scrollbar_state(app, area)?;
-        let has_horizontal = browser_hscrollbar_state(app, area).is_some();
+        let resolved = browser_scrollbars(app, area);
+        resolved.vertical?;
         return Some(Rect {
             x: area.x + area.width.saturating_sub(1),
             y: area.y,
             width: 1,
-            height: area
-                .height
-                .saturating_sub(if has_horizontal { 1 } else { 0 }),
+            height: resolved.viewport.height,
         });
     }
 
     let content = app.active_result_content();
-    let scroll = app.active_result_scroll();
-    result_scrollbar_state(&content, scroll, area)?;
-    let has_horizontal =
-        result_hscrollbar_state(&content, app.active_result_hscroll(), area).is_some();
+    let resolved = result_scrollbars(
+        &content,
+        app.active_result_scroll(),
+        app.active_result_hscroll(),
+        area,
+    );
+    resolved.vertical?;
     Some(Rect {
         x: area.x + area.width.saturating_sub(1),
         y: area.y,
         width: 1,
-        height: area
-            .height
-            .saturating_sub(if has_horizontal { 1 } else { 0 }),
+        height: resolved.viewport.height,
     })
 }
 
 fn result_hscrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
     if app.browser_is_active() {
-        browser_hscrollbar_state(app, area)?;
-        let has_vertical = browser_scrollbar_state(app, area).is_some();
+        let resolved = browser_scrollbars(app, area);
+        resolved.horizontal?;
         return Some(Rect {
             x: area.x,
             y: area.y + area.height.saturating_sub(1),
-            width: area.width.saturating_sub(if has_vertical { 1 } else { 0 }),
+            width: resolved.viewport.width,
             height: 1,
         });
     }
 
     let content = app.active_result_content();
-    let hscroll = app.active_result_hscroll();
-    result_hscrollbar_state(&content, hscroll, area)?;
-    let has_vertical = result_scrollbar_state(&content, app.active_result_scroll(), area).is_some();
+    let resolved = result_scrollbars(
+        &content,
+        app.active_result_scroll(),
+        app.active_result_hscroll(),
+        area,
+    );
+    resolved.horizontal?;
     Some(Rect {
         x: area.x,
         y: area.y + area.height.saturating_sub(1),
-        width: area.width.saturating_sub(if has_vertical { 1 } else { 0 }),
+        width: resolved.viewport.width,
         height: 1,
     })
 }
@@ -2251,7 +2348,13 @@ fn fit_text_preserving_suffix(text: &str, width: usize, suffix: &str) -> String 
 
 #[cfg(test)]
 mod tests {
-    use super::fit_text_preserving_suffix;
+    use ratatui::layout::Rect;
+
+    use super::{
+        choice_picker_scroll, fit_text_preserving_suffix, resolve_scrollbars,
+        result_hscrollbar_state, result_scrollbar_state,
+    };
+    use crate::app::ResultContent;
 
     #[test]
     fn preserves_browse_suffix_when_truncating() {
@@ -2268,5 +2371,36 @@ mod tests {
     fn falls_back_to_normal_fit_without_suffix() {
         let rendered = fit_text_preserving_suffix("abcdef", 5, " [browse]");
         assert_eq!(rendered, "ab...");
+    }
+
+    #[test]
+    fn resolved_scrollbars_use_final_viewport_after_cross_axis_shrink() {
+        let content = ResultContent::Lines(vec!["x".repeat(50); 100]);
+        let resolved = resolve_scrollbars(
+            Rect::new(0, 0, 40, 10),
+            |viewport| result_scrollbar_state(&content, 0, viewport),
+            |viewport| result_hscrollbar_state(&content, 0, viewport),
+        );
+
+        assert!(resolved.vertical.is_some());
+        assert!(resolved.horizontal.is_some());
+        assert_eq!(resolved.viewport.width, 39);
+        assert_eq!(resolved.viewport.height, 9);
+        assert!(
+            format!("{:?}", resolved.horizontal.expect("horizontal scrollbar"))
+                .contains("viewport_content_length: 39")
+        );
+        assert!(
+            format!("{:?}", resolved.vertical.expect("vertical scrollbar"))
+                .contains("viewport_content_length: 9")
+        );
+    }
+
+    #[test]
+    fn choice_picker_scroll_keeps_selected_entry_visible() {
+        assert_eq!(choice_picker_scroll(0, 5), 0);
+        assert_eq!(choice_picker_scroll(4, 5), 0);
+        assert_eq!(choice_picker_scroll(5, 5), 1);
+        assert_eq!(choice_picker_scroll(9, 5), 5);
     }
 }

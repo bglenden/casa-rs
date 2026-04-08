@@ -10,8 +10,8 @@ use std::process::Command;
 use casacore_ms::MeasurementSetBuilder;
 use casacore_ms::column_def::{ColumnDef, ColumnKind, build_table_schema};
 use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::main_table::VisibilityDataColumn;
 use casacore_ms::schema::main_table::OptionalMainColumn;
+use casacore_ms::schema::main_table::VisibilityDataColumn;
 use casacore_ms::schema::{self as ms_schema, SubtableId};
 use casacore_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
 #[cfg(feature = "slow-tests")]
@@ -610,7 +610,10 @@ pub fn create_apply_delay_caltable(
         .map(|row| row.spectral_window_id)
         .collect::<Vec<_>>();
     write_caltable_field_subtable(root.join("FIELD"), field_names);
-    write_delay_caltable_spectral_window_subtable(root.join("SPECTRAL_WINDOW"), &spectral_window_ids);
+    write_delay_caltable_spectral_window_subtable(
+        root.join("SPECTRAL_WINDOW"),
+        &spectral_window_ids,
+    );
     write_minimal_observation_table(root.join("OBSERVATION"));
     let antenna_count = rows
         .iter()
@@ -634,9 +637,21 @@ pub fn create_apply_bpoly_caltable(root: &Path, rows: &[SyntheticBPolySolutionRo
         ColumnSchema::scalar("N_POLY_AMP", casacore_types::PrimitiveType::Int32),
         ColumnSchema::scalar("N_POLY_PHASE", casacore_types::PrimitiveType::Int32),
         ColumnSchema::scalar("PHASE_UNITS", casacore_types::PrimitiveType::String),
-        ColumnSchema::array_variable("VALID_DOMAIN", casacore_types::PrimitiveType::Float64, Some(1)),
-        ColumnSchema::array_variable("POLY_COEFF_AMP", casacore_types::PrimitiveType::Float64, Some(4)),
-        ColumnSchema::array_variable("POLY_COEFF_PHASE", casacore_types::PrimitiveType::Float64, Some(4)),
+        ColumnSchema::array_variable(
+            "VALID_DOMAIN",
+            casacore_types::PrimitiveType::Float64,
+            Some(1),
+        ),
+        ColumnSchema::array_variable(
+            "POLY_COEFF_AMP",
+            casacore_types::PrimitiveType::Float64,
+            Some(4),
+        ),
+        ColumnSchema::array_variable(
+            "POLY_COEFF_PHASE",
+            casacore_types::PrimitiveType::Float64,
+            Some(4),
+        ),
     ])
     .expect("valid BPOLY schema");
     let mut table = Table::with_schema(schema);
@@ -1755,7 +1770,11 @@ fn write_bpoly_cal_desc_subtable(
 ) {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("NUM_RECEPTORS", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("SPECTRAL_WINDOW_ID", casacore_types::PrimitiveType::Int32, Some(1)),
+        ColumnSchema::array_variable(
+            "SPECTRAL_WINDOW_ID",
+            casacore_types::PrimitiveType::Int32,
+            Some(1),
+        ),
     ])
     .expect("BPOLY CAL_DESC schema");
     let mut table = Table::with_schema(schema);
@@ -2260,7 +2279,16 @@ pub fn run_casa_applycal(
     calwt: bool,
     parang: bool,
 ) -> Result<(), String> {
-    run_casa_applycal_chain(ms_path, &[caltable], field, spw, scan, applymode, calwt, parang)
+    run_casa_applycal_chain(
+        ms_path,
+        &[caltable],
+        field,
+        spw,
+        scan,
+        applymode,
+        calwt,
+        parang,
+    )
 }
 
 #[cfg(feature = "slow-tests")]
@@ -2301,7 +2329,10 @@ applycal(
         .env("CASA_RS_APPLY_GAINFIELD", gainfield)
         .env("CASA_RS_APPLY_MODE", applymode)
         .env("CASA_RS_APPLY_CALWT", if calwt { "true" } else { "false" })
-        .env("CASA_RS_APPLY_PARANG", if parang { "true" } else { "false" })
+        .env(
+            "CASA_RS_APPLY_PARANG",
+            if parang { "true" } else { "false" },
+        )
         .arg("-c")
         .arg(script)
         .output()
@@ -2347,7 +2378,10 @@ applycal(
         .env("CASA_RS_APPLY_SPW", spw)
         .env("CASA_RS_APPLY_CALLIB", callib)
         .env("CASA_RS_APPLY_MODE", applymode)
-        .env("CASA_RS_APPLY_PARANG", if parang { "true" } else { "false" })
+        .env(
+            "CASA_RS_APPLY_PARANG",
+            if parang { "true" } else { "false" },
+        )
         .arg("-c")
         .arg(script)
         .output()
@@ -2408,7 +2442,10 @@ applycal(
         .env("CASA_RS_APPLY_SPW", spw)
         .env("CASA_RS_APPLY_MODE", applymode)
         .env("CASA_RS_APPLY_CALWT", if calwt { "true" } else { "false" })
-        .env("CASA_RS_APPLY_PARANG", if parang { "true" } else { "false" })
+        .env(
+            "CASA_RS_APPLY_PARANG",
+            if parang { "true" } else { "false" },
+        )
         .arg("-c")
         .arg(script);
     if let Some(scan) = scan

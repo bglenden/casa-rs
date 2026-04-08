@@ -723,9 +723,7 @@ mod tests {
         let engine = make_engine();
         let time = 59000.5 * 86400.0;
         let nominal = engine.parallactic_angle(time, 0, 0).unwrap();
-        let feed_pa = engine
-            .feed_parallactic_angle(time, 0, 0, 0.125)
-            .unwrap();
+        let feed_pa = engine.feed_parallactic_angle(time, 0, 0, 0.125).unwrap();
         assert!((feed_pa - (nominal + 0.125)).abs() < 1e-12);
     }
 

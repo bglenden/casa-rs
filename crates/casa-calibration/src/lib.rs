@@ -29,6 +29,7 @@ mod fluxscale;
 mod managed_output;
 mod model;
 mod plan;
+mod plots;
 mod solve;
 mod stats;
 mod summary;
@@ -37,7 +38,7 @@ pub use bandpass::{
     BandpassSolveCombine, BandpassSolveError, BandpassSolveReport, BandpassSolveRequest,
     BandpassType, solve_bandpass, solve_bandpass_from_path,
 };
-pub use callib::{CallibError, load_apply_specs_from_callib};
+pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
 pub use cli::{command_schema, run_env};
 pub use execute::{
     ApplyExecutionError, ApplyExecutionReport, ApplyExecutionTimings, execute_apply,
@@ -58,6 +59,10 @@ pub use plan::{
     ApplyPlan, ApplyPlanError, ApplyPlanRequest, ApplyPlanTimings, ApplyRowPlan, ApplySpwMapping,
     ApplyTableSelection, GainFieldSelector, ResolvedGainField, ResolvedNearestGainField,
     SpectralWindowPlan, plan_apply, plan_apply_from_path, plan_apply_with_timings,
+};
+pub use plots::{
+    CalibrationPlotError, CalibrationPlotPreset, CalibrationPlotRequest,
+    build_calibration_plot_payload,
 };
 pub use solve::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveReport,

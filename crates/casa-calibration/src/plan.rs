@@ -589,8 +589,7 @@ fn build_table_plan(
             return Err(ApplyPlanError::ResolveGainField {
                 path: spec.path.display().to_string(),
                 selector: format!("{selector:?}"),
-                reason: "BPOLY apply currently supports only the default field mapping"
-                    .to_string(),
+                reason: "BPOLY apply currently supports only the default field mapping".to_string(),
             });
         }
         (None, Vec::new())
@@ -602,9 +601,14 @@ fn build_table_plan(
     } else {
         summary.spectral_window_ids.clone()
     };
-    let spw_mapping = resolve_spw_mapping(spec, &available_calibration_spw_ids, &applicable_data_spw_ids)?;
+    let spw_mapping = resolve_spw_mapping(
+        spec,
+        &available_calibration_spw_ids,
+        &applicable_data_spw_ids,
+    )?;
     let calibration_spectral_windows = if is_bpoly {
-        let mapped_cal_spw_ids = unique_i32(spw_mapping.iter().map(|mapping| mapping.calibration_spw_id));
+        let mapped_cal_spw_ids =
+            unique_i32(spw_mapping.iter().map(|mapping| mapping.calibration_spw_id));
         load_ms_spectral_windows(ms, &mapped_cal_spw_ids)?
     } else {
         load_caltable_spectral_windows(&summary, &spw_mapping)?
@@ -916,7 +920,10 @@ fn load_bpoly_spectral_window_ids(path: &Path) -> Result<Vec<i32>, ApplyPlanErro
             }
             other => {
                 return Err(ApplyPlanError::ScalarTypeMismatch {
-                    context: format!("CAL_DESC:SPECTRAL_WINDOW_ID primitive {:?}", other.primitive_type()),
+                    context: format!(
+                        "CAL_DESC:SPECTRAL_WINDOW_ID primitive {:?}",
+                        other.primitive_type()
+                    ),
                     expected: "Int32 array",
                     found: "non-Int32 array",
                 });

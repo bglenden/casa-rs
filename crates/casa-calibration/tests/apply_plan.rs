@@ -274,9 +274,11 @@ fn plan_apply_rejects_explicit_gainfield_for_bpoly_tables() {
     )
     .expect_err("BPOLY gainfield should be rejected");
 
-    assert!(error
-        .to_string()
-        .contains("BPOLY apply currently supports only the default field mapping"));
+    assert!(
+        error
+            .to_string()
+            .contains("BPOLY apply currently supports only the default field mapping")
+    );
 }
 
 #[test]

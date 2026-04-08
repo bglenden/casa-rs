@@ -111,7 +111,9 @@ fn parse_schema_prefill_args(
             .iter()
             .filter(|argument| !argument.hidden_in_tui)
             .filter(|argument| !matches!(argument.parser, UiArgumentParser::Action { .. }))
-            .filter(|argument| argument.value_kind == casacore_ms::msexplore::cli::UiValueKind::Path)
+            .filter(|argument| {
+                argument.value_kind == casacore_ms::msexplore::cli::UiValueKind::Path
+            })
             .min_by_key(|argument| argument.order)
             .map(|argument| argument.id.as_str())
     } else {

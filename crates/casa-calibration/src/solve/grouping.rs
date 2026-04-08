@@ -10,8 +10,7 @@ use casacore_types::{ArrayValue, Complex32};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveRequest, GainType,
-    RefAntSelector,
-    correlation_receptors, get_f64, get_i32, stokes_name,
+    RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
 };
 use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};

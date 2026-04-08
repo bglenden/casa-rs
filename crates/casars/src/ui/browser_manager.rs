@@ -112,6 +112,14 @@ pub(crate) fn browser_mode_picker_list_area(area: Rect) -> Rect {
     selector_popup_list_area(area)
 }
 
+pub(crate) fn choice_picker_area(anchor: Option<Rect>, bounds: Rect, item_count: usize) -> Rect {
+    selector_popup_area(anchor, bounds, item_count)
+}
+
+pub(crate) fn choice_picker_list_area(area: Rect) -> Rect {
+    selector_popup_list_area(area)
+}
+
 pub(super) fn browser_mode_selector_rect(
     form_inner: Rect,
     form_rows_len: usize,

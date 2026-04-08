@@ -37,6 +37,16 @@ pub enum CallibError {
         source: std::io::Error,
     },
 
+    /// Writing the callibrary file failed.
+    #[error("failed to write callibrary file {path}: {source}")]
+    WriteFile {
+        /// Path that was being written.
+        path: String,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
     /// One callibrary line could not be parsed inside the supported surface.
     #[error("failed to parse callibrary line {line_number} in {path}: {reason}: {line}")]
     ParseLine {
@@ -104,6 +114,28 @@ pub fn load_apply_specs_from_callib(
     }
 
     Ok(specs)
+}
+
+/// Save supported apply specs to a CASA callibrary file.
+pub fn save_apply_specs_to_callib(
+    path: impl AsRef<Path>,
+    specs: &[ApplyCalibrationTableSpec],
+) -> Result<(), CallibError> {
+    let path = path.as_ref();
+    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let contents = specs
+        .iter()
+        .map(|spec| format_callib_line(base_dir, spec))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut output = contents;
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    fs::write(path, output).map_err(|source| CallibError::WriteFile {
+        path: path.display().to_string(),
+        source,
+    })
 }
 
 fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTableSpec, String> {
@@ -191,6 +223,89 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         interp,
         calwt,
     })
+}
+
+fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> String {
+    let mut parts = vec![
+        format!(
+            "caltable='{}'",
+            escape_callib_string(&format_callib_path(base_dir, &spec.path))
+        ),
+        format!("calwt={}", if spec.calwt { "T" } else { "F" }),
+    ];
+
+    if !spec.apply_to.field_ids.is_empty() {
+        parts.push(format!(
+            "field='{}'",
+            join_numeric_selector(&spec.apply_to.field_ids)
+        ));
+    }
+    if !spec.apply_to.spectral_window_ids.is_empty() {
+        parts.push(format!(
+            "spw='{}'",
+            join_numeric_selector(&spec.apply_to.spectral_window_ids)
+        ));
+    }
+    if !spec.apply_to.observation_ids.is_empty() {
+        parts.push(format!(
+            "obs='{}'",
+            join_numeric_selector(&spec.apply_to.observation_ids)
+        ));
+    }
+    if let Some(gainfield) = spec.gainfield.as_ref() {
+        parts.push(format!(
+            "fldmap='{}'",
+            escape_callib_string(&format_gainfield_selector(gainfield))
+        ));
+    }
+    if !spec.spwmap.is_empty() {
+        parts.push(format!(
+            "spwmap=[{}]",
+            spec.spwmap
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+
+    match spec.interp {
+        ApplyInterpolationMode::Nearest => parts.push("tinterp='nearest'".to_string()),
+        ApplyInterpolationMode::Linear => parts.push("tinterp='linear'".to_string()),
+        ApplyInterpolationMode::NearestLinear => {
+            parts.push("tinterp='nearest'".to_string());
+            parts.push("finterp='linear'".to_string());
+        }
+    }
+
+    parts.join(" ")
+}
+
+fn format_callib_path(base_dir: &Path, path: &Path) -> String {
+    path.strip_prefix(base_dir)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn join_numeric_selector(values: &[i32]) -> String {
+    values
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_gainfield_selector(selector: &GainFieldSelector) -> String {
+    match selector {
+        GainFieldSelector::Nearest => "nearest".to_string(),
+        GainFieldSelector::FieldId(field_id) => field_id.to_string(),
+        GainFieldSelector::FieldName(name) => name.clone(),
+    }
+}
+
+fn escape_callib_string(value: &str) -> String {
+    value.replace('\'', "\\'")
 }
 
 fn tokenize_callib_line(line: &str) -> Result<Vec<String>, String> {
@@ -375,8 +490,10 @@ fn parse_interp(
 mod tests {
     use tempfile::TempDir;
 
-    use super::load_apply_specs_from_callib;
-    use crate::{ApplyInterpolationMode, ApplyTableSelection, GainFieldSelector};
+    use super::{load_apply_specs_from_callib, save_apply_specs_to_callib};
+    use crate::{
+        ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyTableSelection, GainFieldSelector,
+    };
 
     #[test]
     fn load_callib_parses_supported_apply_entries() {
@@ -419,5 +536,37 @@ caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear'
             error.to_string().contains("intent="),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn save_callib_round_trips_supported_specs() {
+        let dir = TempDir::new().expect("tempdir");
+        let callib = dir.path().join("apply.callib");
+        let specs = vec![
+            ApplyCalibrationTableSpec {
+                path: dir.path().join("phase.gcal"),
+                apply_to: ApplyTableSelection {
+                    field_ids: vec![0, 1],
+                    spectral_window_ids: vec![0, 2],
+                    observation_ids: vec![3],
+                },
+                gainfield: Some(GainFieldSelector::Nearest),
+                spwmap: Vec::new(),
+                interp: ApplyInterpolationMode::Nearest,
+                calwt: false,
+            },
+            ApplyCalibrationTableSpec {
+                path: dir.path().join("bandpass.bcal"),
+                apply_to: ApplyTableSelection::default(),
+                gainfield: Some(GainFieldSelector::FieldId(2)),
+                spwmap: vec![0, 0],
+                interp: ApplyInterpolationMode::NearestLinear,
+                calwt: true,
+            },
+        ];
+
+        save_apply_specs_to_callib(&callib, &specs).expect("save callib");
+        let loaded = load_apply_specs_from_callib(&callib).expect("reload callib");
+        assert_eq!(loaded, specs);
     }
 }

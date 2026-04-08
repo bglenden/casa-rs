@@ -7,9 +7,11 @@ mod execution;
 mod graphics;
 mod movie_perf;
 mod registry;
+mod shell;
 mod startup;
 mod theme;
 mod ui;
+mod workflow;
 
 use std::fs::OpenOptions;
 use std::io::{self, Stdout, Write as _};
@@ -41,6 +43,17 @@ use crate::startup::{StartupLaunch, StartupSelection, StartupValue, parse_startu
 
 const KITTY_MOVIE_OVERLAY_ID_BASE: u32 = 1_000_000;
 const KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE: u32 = KITTY_MOVIE_OVERLAY_ID_BASE + 1_000;
+
+pub(crate) fn basic_terminal_mode_enabled() -> bool {
+    std::env::var_os("CASARS_ASSUME_BASIC_TERMINAL").is_some()
+}
+
+pub(crate) fn terminal_picker() -> Picker {
+    if basic_terminal_mode_enabled() {
+        return Picker::halfblocks();
+    }
+    Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+}
 
 fn software_direct_movie_overlay_enabled() -> bool {
     std::env::var_os("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY").is_none()
@@ -106,7 +119,7 @@ struct KittyMovieOverlay {
 
 impl KittyMovieOverlay {
     fn new() -> Result<Self, CasarsError> {
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        let picker = terminal_picker();
         let capabilities = TerminalCapabilities::from_picker(&picker);
         let mode = kitty_movie_overlay_mode(&capabilities);
         movie_debug_log(format!(
@@ -738,6 +751,8 @@ fn run_selected_app(
     }
     if auto_run {
         app.start_run_on_launch();
+    } else {
+        app.prime_idle_summary_for_launch();
     }
 
     let mut last_tick = Instant::now();

@@ -12,13 +12,13 @@ use casacore_ms::msexplore::cli::{
 use casacore_ms::selection::MsSelection;
 
 use crate::{
-    ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyMode, ApplyPlan, ApplyPlanRequest,
-    BandpassSolveCombine, BandpassSolveReport, BandpassSolveRequest, BandpassType, CalibrationStatsAxis,
-    CalibrationStatsReport, CalibrationStatsRequest, CalibrationTableSummary, FluxScaleReport,
-    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveReport,
-    GainSolveRequest, GainType, ManagedCalibrationOutput, RefAntSelector, calibration_stats, execute_apply_from_path,
-    fluxscale,
-    load_apply_specs_from_callib, plan_apply_from_path, solve_bandpass_from_path,
+    ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyInterpolationMode, ApplyMode, ApplyPlan,
+    ApplyPlanRequest, BandpassSolveCombine, BandpassSolveReport, BandpassSolveRequest,
+    BandpassType, CalibrationStatsAxis, CalibrationStatsReport, CalibrationStatsRequest,
+    CalibrationTableSummary, FluxScaleReport, FluxScaleRequest, GainFieldSelector,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveReport, GainSolveRequest,
+    GainType, ManagedCalibrationOutput, RefAntSelector, calibration_stats, execute_apply_from_path,
+    fluxscale, load_apply_specs_from_callib, plan_apply_from_path, solve_bandpass_from_path,
     solve_gain_from_path, summarize_tables,
 };
 
@@ -263,7 +263,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 default: None,
                 choices: &[],
                 help: "Path to the MeasurementSet root directory for apply and solve workflows",
-                group: "Workflow",
+                group: "Input",
                 required: false,
                 advanced: false,
             }),
@@ -324,9 +324,51 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "gainfield",
+                label: "Gainfield Overrides",
+                order: 6,
+                flags: &["--gainfield"],
+                metavar: "GFIELD[;GFIELD...]",
+                value_kind: UiValueKind::String,
+                default: None,
+                choices: &[],
+                help: "Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all)",
+                group: "Apply",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "interp",
+                label: "Interpolation",
+                order: 7,
+                flags: &["--interp"],
+                metavar: "MODE[;MODE...]",
+                value_kind: UiValueKind::String,
+                default: None,
+                choices: &[],
+                help: "Semicolon-separated interpolation modes aligned to --gaintables: nearest, linear, nearest,linear",
+                group: "Apply",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "spwmap",
+                label: "SPW Maps",
+                order: 8,
+                flags: &["--spwmap"],
+                metavar: "MAP[;MAP...]",
+                value_kind: UiValueKind::String,
+                default: None,
+                choices: &[],
+                help: "Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list",
+                group: "Apply",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "apply_mode",
                 label: "Apply Mode",
-                order: 6,
+                order: 9,
                 flags: &["--apply-mode"],
                 metavar: "MODE",
                 value_kind: UiValueKind::Choice,
@@ -340,7 +382,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "calwt",
                 label: "Cal Weight",
-                order: 7,
+                order: 10,
                 flags: &["--calwt"],
                 metavar: "BOOL[,BOOL...]",
                 value_kind: UiValueKind::String,
@@ -354,7 +396,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(ToggleArgumentConfig {
                 id: "parang",
                 label: "Parallactic Angle",
-                order: 8,
+                order: 11,
                 help: "Apply the parallactic-angle P Jones term during calibration",
                 true_flags: &["--parang"],
                 false_flags: &["--no-parang"],
@@ -365,7 +407,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "format",
                 label: "Output Format",
-                order: 9,
+                order: 12,
                 flags: &["--format"],
                 metavar: "FORMAT",
                 value_kind: UiValueKind::Choice,
@@ -1042,7 +1084,9 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 Some("summary") => parse_summary_args(&remaining_args, managed_output),
                 Some("stats") => parse_stats_args(&remaining_args, managed_output),
                 Some("solve_gain") => parse_solve_gain_args(&remaining_args, managed_output),
-                Some("solve_bandpass") => parse_solve_bandpass_args(&remaining_args, managed_output),
+                Some("solve_bandpass") => {
+                    parse_solve_bandpass_args(&remaining_args, managed_output)
+                }
                 Some("fluxscale") => parse_fluxscale_args(&remaining_args, managed_output),
                 Some(other) => Err(format!(
                     "unsupported --mode {other:?}; expected apply, summary, stats, solve_gain, solve_bandpass, or fluxscale"
@@ -1057,6 +1101,9 @@ fn parse_apply_args(args: &[OsString], managed_output: bool) -> Result<CliAction
     let mut measurement_set = None;
     let mut calibration_table_paths = Vec::new();
     let mut callib = None;
+    let mut gainfield = None;
+    let mut interp = None;
+    let mut spwmap = None;
     let mut calwt = None;
     let mut apply_mode = ApplyMode::CalFlag;
     let mut parang = false;
@@ -1095,6 +1142,18 @@ fn parse_apply_args(args: &[OsString], managed_output: bool) -> Result<CliAction
                     .get(index)
                     .ok_or_else(|| "missing value for --callib".to_string())?;
                 callib = Some(PathBuf::from(value));
+            }
+            "--gainfield" => {
+                index += 1;
+                gainfield = Some(take_string_value(index, args, "--gainfield")?);
+            }
+            "--interp" => {
+                index += 1;
+                interp = Some(take_string_value(index, args, "--interp")?);
+            }
+            "--spwmap" => {
+                index += 1;
+                spwmap = Some(take_string_value(index, args, "--spwmap")?);
             }
             "--calwt" => {
                 index += 1;
@@ -1174,8 +1233,14 @@ fn parse_apply_args(args: &[OsString], managed_output: bool) -> Result<CliAction
 
     let measurement_set =
         measurement_set.ok_or_else(|| "expected <ms-path> for calibration apply".to_string())?;
-    let calibration_tables =
-        build_input_calibration_table_specs(callib, calibration_table_paths, calwt.as_deref())?;
+    let calibration_tables = build_input_calibration_table_specs(
+        callib,
+        calibration_table_paths,
+        gainfield.as_deref(),
+        interp.as_deref(),
+        spwmap.as_deref(),
+        calwt.as_deref(),
+    )?;
 
     Ok(CliAction::Run(Box::new(RunRequest {
         managed_output,
@@ -1249,6 +1314,9 @@ fn parse_apply_plan_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut measurement_set = None;
     let mut calibration_table_paths = Vec::new();
     let mut callib = None;
+    let mut gainfield = None;
+    let mut interp = None;
+    let mut spwmap = None;
     let mut calwt = None;
     let mut parang = false;
     let mut format = OutputFormat::Text;
@@ -1274,6 +1342,18 @@ fn parse_apply_plan_args(args: &[OsString], managed_output: bool) -> Result<CliA
                     .get(index)
                     .ok_or_else(|| "missing value for --callib".to_string())?;
                 callib = Some(PathBuf::from(value));
+            }
+            "--gainfield" => {
+                index += 1;
+                gainfield = Some(take_string_value(index, args, "--gainfield")?);
+            }
+            "--interp" => {
+                index += 1;
+                interp = Some(take_string_value(index, args, "--interp")?);
+            }
+            "--spwmap" => {
+                index += 1;
+                spwmap = Some(take_string_value(index, args, "--spwmap")?);
             }
             "--calwt" => {
                 index += 1;
@@ -1305,8 +1385,14 @@ fn parse_apply_plan_args(args: &[OsString], managed_output: bool) -> Result<CliA
 
     let measurement_set =
         measurement_set.ok_or_else(|| "plan-apply requires --ms <measurement-set>".to_string())?;
-    let calibration_tables =
-        build_input_calibration_table_specs(callib, calibration_table_paths, calwt.as_deref())?;
+    let calibration_tables = build_input_calibration_table_specs(
+        callib,
+        calibration_table_paths,
+        gainfield.as_deref(),
+        interp.as_deref(),
+        spwmap.as_deref(),
+        calwt.as_deref(),
+    )?;
 
     Ok(CliAction::Run(Box::new(RunRequest {
         managed_output,
@@ -1396,6 +1482,9 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut output_table = None;
     let mut calibration_table_paths = Vec::new();
     let mut callib = None;
+    let mut gainfield = None;
+    let mut interp = None;
+    let mut spwmap = None;
     let mut gain_type = GainType::G;
     let mut solve_mode = GainSolveMode::Phase;
     let mut solve_interval = GainSolveInterval::Infinite;
@@ -1445,6 +1534,18 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
                         .ok_or_else(|| "missing value for --callib".to_string())?,
                 ));
             }
+            "--gainfield" => {
+                index += 1;
+                gainfield = Some(take_string_value(index, args, "--gainfield")?);
+            }
+            "--interp" => {
+                index += 1;
+                interp = Some(take_string_value(index, args, "--interp")?);
+            }
+            "--spwmap" => {
+                index += 1;
+                spwmap = Some(take_string_value(index, args, "--spwmap")?);
+            }
             "--gain-type" => {
                 index += 1;
                 gain_type = parse_gain_type(&take_string_value(index, args, "--gain-type")?)?;
@@ -1464,13 +1565,16 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             }
             "--refant" => {
                 index += 1;
-                refant = Some(parse_refant_selector(&take_string_value(index, args, "--refant")?));
+                refant = Some(parse_refant_selector(&take_string_value(
+                    index, args, "--refant",
+                )?));
             }
             "--parang" => parang = true,
             "--no-parang" => parang = false,
             "--format" => {
                 index += 1;
-                format = parse_output_format("--format", &take_string_value(index, args, "--format")?)?;
+                format =
+                    parse_output_format("--format", &take_string_value(index, args, "--format")?)?;
             }
             "-o" | "--output" => {
                 index += 1;
@@ -1520,13 +1624,18 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
         index += 1;
     }
 
-    let measurement_set = measurement_set
-        .ok_or_else(|| "solve-gain requires --ms <measurement-set>".to_string())?;
+    let measurement_set =
+        measurement_set.ok_or_else(|| "solve-gain requires --ms <measurement-set>".to_string())?;
     let output_table =
         output_table.ok_or_else(|| "solve-gain requires --out <caltable>".to_string())?;
     let refant = refant.ok_or_else(|| "solve-gain requires --refant <antenna>".to_string())?;
-    let prior_calibration_tables =
-        build_input_calibration_table_specs_for_solver(callib, calibration_table_paths)?;
+    let prior_calibration_tables = build_input_calibration_table_specs_for_solver(
+        callib,
+        calibration_table_paths,
+        gainfield.as_deref(),
+        interp.as_deref(),
+        spwmap.as_deref(),
+    )?;
 
     Ok(CliAction::Run(Box::new(RunRequest {
         managed_output,
@@ -1553,6 +1662,9 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
     let mut output_table = None;
     let mut calibration_table_paths = Vec::new();
     let mut callib = None;
+    let mut gainfield = None;
+    let mut interp = None;
+    let mut spwmap = None;
     let mut refant = None;
     let mut parang = false;
     let mut combine = BandpassSolveCombine::default();
@@ -1603,9 +1715,23 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
                         .ok_or_else(|| "missing value for --callib".to_string())?,
                 ));
             }
+            "--gainfield" => {
+                index += 1;
+                gainfield = Some(take_string_value(index, args, "--gainfield")?);
+            }
+            "--interp" => {
+                index += 1;
+                interp = Some(take_string_value(index, args, "--interp")?);
+            }
+            "--spwmap" => {
+                index += 1;
+                spwmap = Some(take_string_value(index, args, "--spwmap")?);
+            }
             "--refant" => {
                 index += 1;
-                refant = Some(parse_refant_selector(&take_string_value(index, args, "--refant")?));
+                refant = Some(parse_refant_selector(&take_string_value(
+                    index, args, "--refant",
+                )?));
             }
             "--combine" | "--combine-bandpass" => {
                 index += 1;
@@ -1619,17 +1745,20 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
             "--no-solnorm" => normalize_average_amplitude = false,
             "--degamp" => {
                 index += 1;
-                amplitude_degree = parse_usize_flag("--degamp", &take_string_value(index, args, "--degamp")?)?;
+                amplitude_degree =
+                    parse_usize_flag("--degamp", &take_string_value(index, args, "--degamp")?)?;
             }
             "--degphase" => {
                 index += 1;
-                phase_degree = parse_usize_flag("--degphase", &take_string_value(index, args, "--degphase")?)?;
+                phase_degree =
+                    parse_usize_flag("--degphase", &take_string_value(index, args, "--degphase")?)?;
             }
             "--parang" => parang = true,
             "--no-parang" => parang = false,
             "--format" => {
                 index += 1;
-                format = parse_output_format("--format", &take_string_value(index, args, "--format")?)?;
+                format =
+                    parse_output_format("--format", &take_string_value(index, args, "--format")?)?;
             }
             "-o" | "--output" => {
                 index += 1;
@@ -1683,10 +1812,14 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
         .ok_or_else(|| "solve-bandpass requires --ms <measurement-set>".to_string())?;
     let output_table =
         output_table.ok_or_else(|| "solve-bandpass requires --out <caltable>".to_string())?;
-    let refant =
-        refant.ok_or_else(|| "solve-bandpass requires --refant <antenna>".to_string())?;
-    let prior_calibration_tables =
-        build_input_calibration_table_specs_for_solver(callib, calibration_table_paths)?;
+    let refant = refant.ok_or_else(|| "solve-bandpass requires --refant <antenna>".to_string())?;
+    let prior_calibration_tables = build_input_calibration_table_specs_for_solver(
+        callib,
+        calibration_table_paths,
+        gainfield.as_deref(),
+        interp.as_deref(),
+        spwmap.as_deref(),
+    )?;
 
     Ok(CliAction::Run(Box::new(RunRequest {
         managed_output,
@@ -1743,7 +1876,8 @@ fn parse_fluxscale_args(args: &[OsString], managed_output: bool) -> Result<CliAc
             }
             "--reference" => {
                 index += 1;
-                reference_fields = parse_string_list(&take_string_value(index, args, "--reference")?);
+                reference_fields =
+                    parse_string_list(&take_string_value(index, args, "--reference")?);
             }
             "--transfer" => {
                 index += 1;
@@ -1751,7 +1885,10 @@ fn parse_fluxscale_args(args: &[OsString], managed_output: bool) -> Result<CliAc
             }
             "--refspwmap" => {
                 index += 1;
-                refspwmap = parse_i32_list("--refspwmap", &take_string_value(index, args, "--refspwmap")?)?;
+                refspwmap = parse_i32_list(
+                    "--refspwmap",
+                    &take_string_value(index, args, "--refspwmap")?,
+                )?;
             }
             "--gainthreshold" => {
                 index += 1;
@@ -1765,7 +1902,8 @@ fn parse_fluxscale_args(args: &[OsString], managed_output: bool) -> Result<CliAc
             "--no-incremental" => incremental = false,
             "--format" => {
                 index += 1;
-                format = parse_output_format("--format", &take_string_value(index, args, "--format")?)?;
+                format =
+                    parse_output_format("--format", &take_string_value(index, args, "--format")?)?;
             }
             "-o" | "--output" => {
                 index += 1;
@@ -1886,7 +2024,11 @@ fn parse_gain_solve_combine(value: &str) -> Result<GainSolveCombine, String> {
     }
 
     let mut combine = GainSolveCombine::default();
-    for axis in trimmed.split(',').map(str::trim).filter(|axis| !axis.is_empty()) {
+    for axis in trimmed
+        .split(',')
+        .map(str::trim)
+        .filter(|axis| !axis.is_empty())
+    {
         match axis {
             "scan" => combine.scans = true,
             "field" => combine.fields = true,
@@ -1907,7 +2049,11 @@ fn parse_bandpass_combine(value: &str) -> Result<BandpassSolveCombine, String> {
     }
 
     let mut combine = BandpassSolveCombine::default();
-    for part in trimmed.split(',').map(str::trim).filter(|part| !part.is_empty()) {
+    for part in trimmed
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
         match part {
             "scan" => combine.scans = true,
             "field" => combine.fields = true,
@@ -1986,14 +2132,132 @@ fn parse_string_list(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn parse_semicolon_segments(value: &str) -> Vec<String> {
+    if !value.contains(';') {
+        return vec![value.trim().to_string()];
+    }
+    value
+        .split(';')
+        .map(|item| item.trim().to_string())
+        .collect()
+}
+
+fn expand_aligned_values<T: Clone>(
+    flag: &str,
+    values: Vec<T>,
+    len: usize,
+    default: T,
+) -> Result<Vec<T>, String> {
+    if values.is_empty() {
+        Ok(vec![default; len])
+    } else if values.len() == 1 {
+        Ok(vec![values[0].clone(); len])
+    } else if values.len() == len {
+        Ok(values)
+    } else {
+        Err(format!(
+            "{flag} provided {} values for {} calibration tables; expected one value or one per table",
+            values.len(),
+            len
+        ))
+    }
+}
+
+fn parse_gainfield_value(_flag: &str, value: &str) -> Result<Option<GainFieldSelector>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.eq_ignore_ascii_case("nearest") {
+        return Ok(Some(GainFieldSelector::Nearest));
+    }
+    if let Ok(field_id) = value.parse::<i32>() {
+        return Ok(Some(GainFieldSelector::FieldId(field_id)));
+    }
+    Ok(Some(GainFieldSelector::FieldName(value.to_string())))
+}
+
+fn parse_optional_gainfield_list(
+    flag: &str,
+    value: &str,
+) -> Result<Vec<Option<GainFieldSelector>>, String> {
+    parse_semicolon_segments(value)
+        .into_iter()
+        .map(|segment| parse_gainfield_value(flag, &segment))
+        .collect()
+}
+
+fn parse_interp_value(flag: &str, value: &str) -> Result<ApplyInterpolationMode, String> {
+    let normalized = value.trim().to_ascii_lowercase().replace(' ', "");
+    match normalized.as_str() {
+        "" | "nearest" => Ok(ApplyInterpolationMode::Nearest),
+        "linear" => Ok(ApplyInterpolationMode::Linear),
+        "nearest,linear" | "nearestlinear" => Ok(ApplyInterpolationMode::NearestLinear),
+        _ => Err(format!(
+            "{flag} value {value:?} is unsupported; expected nearest, linear, or nearest,linear"
+        )),
+    }
+}
+
+fn parse_interp_list(flag: &str, value: &str) -> Result<Vec<ApplyInterpolationMode>, String> {
+    parse_semicolon_segments(value)
+        .into_iter()
+        .map(|segment| parse_interp_value(flag, &segment))
+        .collect()
+}
+
+fn parse_spwmap_value(flag: &str, value: &str) -> Result<Vec<i32>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    let inner = value
+        .strip_prefix('[')
+        .and_then(|candidate| candidate.strip_suffix(']'))
+        .unwrap_or(value);
+    parse_i32_list(flag, inner)
+}
+
+fn parse_spwmap_list(flag: &str, value: &str) -> Result<Vec<Vec<i32>>, String> {
+    parse_semicolon_segments(value)
+        .into_iter()
+        .map(|segment| parse_spwmap_value(flag, &segment))
+        .collect()
+}
+
 fn build_calibration_table_specs(
     paths: Vec<PathBuf>,
+    gainfield: Option<&str>,
+    interp: Option<&str>,
+    spwmap: Option<&str>,
     calwt: Option<&str>,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, String> {
+    let gainfield_values = match gainfield {
+        Some(raw) => parse_optional_gainfield_list("--gainfield", raw)?,
+        None => Vec::new(),
+    };
+    let interp_values = match interp {
+        Some(raw) => parse_interp_list("--interp", raw)?,
+        None => Vec::new(),
+    };
+    let spwmap_values = match spwmap {
+        Some(raw) => parse_spwmap_list("--spwmap", raw)?,
+        None => Vec::new(),
+    };
     let calwt_values = match calwt {
         Some(raw) => parse_bool_list("--calwt", raw)?,
         None => Vec::new(),
     };
+    let expanded_gainfield =
+        expand_aligned_values("--gainfield", gainfield_values, paths.len(), None)?;
+    let expanded_interp = expand_aligned_values(
+        "--interp",
+        interp_values,
+        paths.len(),
+        ApplyInterpolationMode::Nearest,
+    )?;
+    let expanded_spwmap =
+        expand_aligned_values("--spwmap", spwmap_values, paths.len(), Vec::new())?;
     let expanded_calwt = if calwt_values.is_empty() {
         vec![false; paths.len()]
     } else if calwt_values.len() == 1 {
@@ -2010,9 +2274,15 @@ fn build_calibration_table_specs(
 
     Ok(paths
         .into_iter()
+        .zip(expanded_gainfield)
+        .zip(expanded_interp)
+        .zip(expanded_spwmap)
         .zip(expanded_calwt)
-        .map(|(path, calwt)| {
+        .map(|((((path, gainfield), interp), spwmap), calwt)| {
             let mut spec = ApplyCalibrationTableSpec::new(path);
+            spec.gainfield = gainfield;
+            spec.interp = interp;
+            spec.spwmap = spwmap;
             spec.calwt = calwt;
             spec
         })
@@ -2022,6 +2292,9 @@ fn build_calibration_table_specs(
 fn build_input_calibration_table_specs(
     callib: Option<PathBuf>,
     calibration_table_paths: Vec<PathBuf>,
+    gainfield: Option<&str>,
+    interp: Option<&str>,
+    spwmap: Option<&str>,
     calwt: Option<&str>,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, String> {
     match (callib, calibration_table_paths.is_empty()) {
@@ -2029,29 +2302,45 @@ fn build_input_calibration_table_specs(
             Err("pass either --callib PATH or --gaintables / positional caltables, not both".to_string())
         }
         (Some(callib), true) => {
-            if calwt.is_some() {
-                return Err("--calwt cannot be combined with --callib; set calwt inside the callibrary file".to_string());
+            if gainfield.is_some() || interp.is_some() || spwmap.is_some() || calwt.is_some() {
+                return Err("--gainfield, --interp, --spwmap, and --calwt cannot be combined with --callib; set per-table chain controls inside the callibrary file".to_string());
             }
             load_apply_specs_from_callib(&callib).map_err(|error| error.to_string())
         }
         (None, true) => {
             Err("apply requires calibration input; pass --callib PATH or --gaintables PATH[,PATH...] or positional caltable paths".to_string())
         }
-        (None, false) => build_calibration_table_specs(calibration_table_paths, calwt),
+        (None, false) => build_calibration_table_specs(
+            calibration_table_paths,
+            gainfield,
+            interp,
+            spwmap,
+            calwt,
+        ),
     }
 }
 
 fn build_input_calibration_table_specs_for_solver(
     callib: Option<PathBuf>,
     calibration_table_paths: Vec<PathBuf>,
+    gainfield: Option<&str>,
+    interp: Option<&str>,
+    spwmap: Option<&str>,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, String> {
     match (callib, calibration_table_paths.is_empty()) {
         (Some(_), false) => {
             Err("pass either --callib PATH or --gaintables PATH[,PATH...], not both".to_string())
         }
-        (Some(callib), true) => load_apply_specs_from_callib(&callib).map_err(|error| error.to_string()),
+        (Some(callib), true) => {
+            if gainfield.is_some() || interp.is_some() || spwmap.is_some() {
+                return Err("--gainfield, --interp, and --spwmap cannot be combined with --callib; set per-table chain controls inside the callibrary file".to_string());
+            }
+            load_apply_specs_from_callib(&callib).map_err(|error| error.to_string())
+        }
         (None, true) => Ok(Vec::new()),
-        (None, false) => build_calibration_table_specs(calibration_table_paths, None),
+        (None, false) => {
+            build_calibration_table_specs(calibration_table_paths, gainfield, interp, spwmap, None)
+        }
     }
 }
 
@@ -2407,7 +2696,11 @@ fn render_gain_solve_report_text(report: &GainSolveReport) -> String {
     let _ = writeln!(out, "  gain_type={:?}", report.gain_type);
     let _ = writeln!(out, "  refant_antenna_id={}", report.refant_antenna_id);
     let _ = writeln!(out, "  field_ids={:?}", report.field_ids);
-    let _ = writeln!(out, "  spectral_window_ids={:?}", report.spectral_window_ids);
+    let _ = writeln!(
+        out,
+        "  spectral_window_ids={:?}",
+        report.spectral_window_ids
+    );
     let _ = writeln!(out, "  solution_rows={}", report.solution_row_count);
     out
 }
@@ -2416,10 +2709,18 @@ fn render_bandpass_solve_report_text(report: &BandpassSolveReport) -> String {
     use std::fmt::Write;
 
     let mut out = String::new();
-    let _ = writeln!(out, "Bandpass Solve Report: {}", report.output_table.display());
+    let _ = writeln!(
+        out,
+        "Bandpass Solve Report: {}",
+        report.output_table.display()
+    );
     let _ = writeln!(out, "  refant_antenna_id={}", report.refant_antenna_id);
     let _ = writeln!(out, "  field_ids={:?}", report.field_ids);
-    let _ = writeln!(out, "  spectral_window_ids={:?}", report.spectral_window_ids);
+    let _ = writeln!(
+        out,
+        "  spectral_window_ids={:?}",
+        report.spectral_window_ids
+    );
     let _ = writeln!(out, "  solution_rows={}", report.solution_row_count);
     let _ = writeln!(out, "  channel_count={}", report.channel_count);
     out
@@ -2596,8 +2897,9 @@ mod tests {
 
     use super::{CliAction, Command, OutputFormat, command_schema, parse_args};
     use crate::{
-        ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine, BandpassType,
-        GainSolveInterval, GainSolveMode, GainType, RefAntSelector,
+        ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, BandpassSolveCombine,
+        BandpassType, GainFieldSelector, GainSolveInterval, GainSolveMode, GainType,
+        RefAntSelector,
     };
 
     #[test]
@@ -2612,6 +2914,7 @@ mod tests {
         assert_eq!(workflow_mode.default.as_deref(), Some("apply"));
         let measurement_set = schema.argument("measurement_set").expect("measurement_set");
         assert_eq!(measurement_set.value_kind, UiValueKind::Path);
+        assert_eq!(measurement_set.group, "Input");
         assert!(schema.argument("summary_paths").is_some());
         assert!(schema.argument("table_path").is_some());
         let gaintables = schema.argument("gaintables").expect("gaintables");
@@ -2704,6 +3007,49 @@ mod tests {
                 assert_eq!(options.apply_mode, ApplyMode::Trial);
                 assert_eq!(options.format, OutputFormat::Json);
                 assert_eq!(options.selection.spw.as_deref(), Some("0,1"));
+            }
+            _ => panic!("expected apply action"),
+        }
+    }
+
+    #[test]
+    fn parse_args_accepts_aligned_apply_chain_metadata_lists() {
+        let action = parse_args([
+            "apply".into(),
+            "dataset.ms".into(),
+            "--gaintables".into(),
+            "phase.gcal,bandpass.bcal".into(),
+            "--gainfield".into(),
+            "nearest;0".into(),
+            "--interp".into(),
+            "linear;nearest,linear".into(),
+            "--spwmap".into(),
+            ";0,0".into(),
+        ])
+        .expect("parse succeeds");
+        match action {
+            CliAction::Run(request) => {
+                let Command::Apply(options) = request.command else {
+                    panic!("expected apply action");
+                };
+                assert_eq!(
+                    options.calibration_tables,
+                    vec![
+                        {
+                            let mut spec = ApplyCalibrationTableSpec::new("phase.gcal");
+                            spec.gainfield = Some(GainFieldSelector::Nearest);
+                            spec.interp = ApplyInterpolationMode::Linear;
+                            spec
+                        },
+                        {
+                            let mut spec = ApplyCalibrationTableSpec::new("bandpass.bcal");
+                            spec.gainfield = Some(GainFieldSelector::FieldId(0));
+                            spec.interp = ApplyInterpolationMode::NearestLinear;
+                            spec.spwmap = vec![0, 0];
+                            spec
+                        },
+                    ]
+                );
             }
             _ => panic!("expected apply action"),
         }
@@ -2940,7 +3286,10 @@ mod tests {
                 assert_eq!(options.solve_interval, GainSolveInterval::Seconds(30.0));
                 assert!(options.combine.scans);
                 assert!(options.combine.fields);
-                assert_eq!(options.refant, RefAntSelector::AntennaName("VA15".to_string()));
+                assert_eq!(
+                    options.refant,
+                    RefAntSelector::AntennaName("VA15".to_string())
+                );
                 assert_eq!(options.prior_calibration_tables.len(), 1);
                 assert_eq!(options.format, OutputFormat::Json);
                 assert_eq!(options.selection.field.as_deref(), Some("0"));

@@ -7046,7 +7046,7 @@ where
 fn padded_range(min: f64, max: f64) -> (f64, f64) {
     let span = (max - min).abs();
     let padding = if span == 0.0 {
-        min.abs().max(1.0) * 0.05
+        min.abs().max(max.abs()).max(1.0) * 1e-6
     } else {
         span * 0.05
     };
@@ -8126,5 +8126,19 @@ mod tests {
         let text_style = internal_scatter_legend_text_style(theme, style);
 
         assert_eq!(text_style.color.rgb, rgb(theme.axis).to_backend_color().rgb);
+    }
+
+    #[test]
+    fn zero_span_large_time_axis_uses_local_padding() {
+        let value = 4_304_481_700.0;
+        let (min, max) = padded_range(value, value);
+
+        assert!(min < value);
+        assert!(max > value);
+        assert!(
+            (max - min) < 20_000.0,
+            "unexpectedly wide zero-span padding: {}",
+            max - min
+        );
     }
 }

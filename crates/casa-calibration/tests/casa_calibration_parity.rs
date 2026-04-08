@@ -15,8 +15,8 @@ use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
     BandpassSolveRequest, BandpassType, CalibrationParameterFamily, FluxScaleRequest,
     GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveRequest,
-    GainType, RefAntSelector, execute_apply_from_path, fluxscale,
-    load_apply_specs_from_callib, solve_bandpass_from_path, solve_gain_from_path, summarize_table,
+    GainType, RefAntSelector, execute_apply_from_path, fluxscale, load_apply_specs_from_callib,
+    solve_bandpass_from_path, solve_gain_from_path, summarize_table,
 };
 
 #[test]
@@ -76,8 +76,17 @@ fn apply_phase_gain_matches_casa_applycal_on_ngc5921_subset() {
     common::copy_measurement_set(&source_ms, &rust_ms).expect("copy rust ms");
     common::copy_measurement_set(&source_ms, &casa_ms).expect("copy casa ms");
 
-    common::run_casa_applycal(&casa_ms, &phase_gcal, "0", "0", None, "calflag", false, false)
-        .expect("run CASA applycal");
+    common::run_casa_applycal(
+        &casa_ms,
+        &phase_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("run CASA applycal");
 
     execute_apply_from_path(
         &rust_ms,
@@ -131,7 +140,10 @@ fn apply_k_delay_matches_casa_applycal_on_ngc5921_subset() {
 
     let delay_summary = summarize_table(&delay_kcal).expect("summarize CASA K table");
     assert_eq!(delay_summary.table_subtype, "K Jones");
-    assert_eq!(delay_summary.parameter_family, CalibrationParameterFamily::Float);
+    assert_eq!(
+        delay_summary.parameter_family,
+        CalibrationParameterFamily::Float
+    );
     assert!(delay_summary.supported_for_v1_apply());
 
     let rust_ms = dir.path().join("rust-delay.ms");
@@ -139,8 +151,17 @@ fn apply_k_delay_matches_casa_applycal_on_ngc5921_subset() {
     common::copy_measurement_set(&source_ms, &rust_ms).expect("copy rust ms");
     common::copy_measurement_set(&source_ms, &casa_ms).expect("copy casa ms");
 
-    common::run_casa_applycal(&casa_ms, &delay_kcal, "0", "0", None, "calflag", false, false)
-        .expect("run CASA applycal for K Jones");
+    common::run_casa_applycal(
+        &casa_ms,
+        &delay_kcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("run CASA applycal for K Jones");
 
     execute_apply_from_path(
         &rust_ms,
@@ -259,8 +280,17 @@ fn apply_phase_gain_with_calwt_matches_casa_applycal_weights_on_ngc5921_subset()
     common::copy_measurement_set(&source_ms, &rust_ms).expect("copy rust ms");
     common::copy_measurement_set(&source_ms, &casa_ms).expect("copy casa ms");
 
-    common::run_casa_applycal(&casa_ms, &phase_gcal, "0", "0", None, "calflag", true, false)
-        .expect("run CASA applycal");
+    common::run_casa_applycal(
+        &casa_ms,
+        &phase_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        true,
+        false,
+    )
+    .expect("run CASA applycal");
 
     let mut spec = ApplyCalibrationTableSpec::new(&phase_gcal);
     spec.calwt = true;
@@ -306,8 +336,17 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_ngc5921_subset() {
     common::copy_measurement_set(&source_ms, &rust_ms).expect("copy rust ms");
     common::copy_measurement_set(&source_ms, &casa_ms).expect("copy casa ms");
 
-    common::run_casa_applycal(&casa_ms, &phase_gcal, "0", "0", None, "calflag", false, true)
-        .expect("run CASA applycal with parang");
+    common::run_casa_applycal(
+        &casa_ms,
+        &phase_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        true,
+    )
+    .expect("run CASA applycal with parang");
 
     execute_apply_from_path(
         &rust_ms,
@@ -359,8 +398,17 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_bwg_mounts() {
     common::set_ms_antenna_mounts(&rust_ms, &bwg_mounts);
     common::set_ms_antenna_mounts(&casa_ms, &bwg_mounts);
 
-    common::run_casa_applycal(&casa_ms, &phase_gcal, "0", "0", None, "calflag", false, true)
-        .expect("run CASA applycal with BWG parang");
+    common::run_casa_applycal(
+        &casa_ms,
+        &phase_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        true,
+    )
+    .expect("run CASA applycal with BWG parang");
 
     execute_apply_from_path(
         &rust_ms,
@@ -546,10 +594,28 @@ fn solve_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
     common::copy_measurement_set(&source_ms, &casa_apply_ms).expect("copy casa apply ms");
     common::copy_measurement_set(&source_ms, &rust_apply_ms).expect("copy rust apply ms");
 
-    common::run_casa_applycal(&casa_apply_ms, &casa_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply CASA gaincal table");
-    common::run_casa_applycal(&rust_apply_ms, &rust_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply Rust gaincal table in CASA");
+    common::run_casa_applycal(
+        &casa_apply_ms,
+        &casa_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply CASA gaincal table");
+    common::run_casa_applycal(
+        &rust_apply_ms,
+        &rust_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply Rust gaincal table in CASA");
 
     assert_apply_state_close_with_tolerance(
         &rust_apply_ms,
@@ -700,10 +766,28 @@ fn solve_amplitude_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal(
     common::copy_measurement_set(&source_ms, &casa_apply_ms).expect("copy casa apply ms");
     common::copy_measurement_set(&source_ms, &rust_apply_ms).expect("copy rust apply ms");
 
-    common::run_casa_applycal(&casa_apply_ms, &casa_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply CASA gaincal table");
-    common::run_casa_applycal(&rust_apply_ms, &rust_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply Rust gaincal table in CASA");
+    common::run_casa_applycal(
+        &casa_apply_ms,
+        &casa_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply CASA gaincal table");
+    common::run_casa_applycal(
+        &rust_apply_ms,
+        &rust_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply Rust gaincal table in CASA");
 
     assert_apply_state_close_with_tolerance(
         &rust_apply_ms,
@@ -768,10 +852,28 @@ fn solve_phase_gain_with_solint_integration_matches_casa_gaincal_downstream() {
     common::copy_measurement_set(&source_ms, &casa_apply_ms).expect("copy casa apply ms");
     common::copy_measurement_set(&source_ms, &rust_apply_ms).expect("copy rust apply ms");
 
-    common::run_casa_applycal(&casa_apply_ms, &casa_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply CASA integration gaincal table");
-    common::run_casa_applycal(&rust_apply_ms, &rust_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply Rust integration gaincal table in CASA");
+    common::run_casa_applycal(
+        &casa_apply_ms,
+        &casa_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply CASA integration gaincal table");
+    common::run_casa_applycal(
+        &rust_apply_ms,
+        &rust_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply Rust integration gaincal table in CASA");
 
     assert_apply_state_close_with_tolerance(
         &rust_apply_ms,
@@ -838,10 +940,28 @@ fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
     common::copy_measurement_set(&source_ms, &casa_apply_ms).expect("copy casa apply ms");
     common::copy_measurement_set(&source_ms, &rust_apply_ms).expect("copy rust apply ms");
 
-    common::run_casa_applycal(&casa_apply_ms, &casa_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply CASA combine-scan gaincal table");
-    common::run_casa_applycal(&rust_apply_ms, &rust_gcal, "0", "0", None, "calflag", false, false)
-        .expect("apply Rust combine-scan gaincal table in CASA");
+    common::run_casa_applycal(
+        &casa_apply_ms,
+        &casa_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply CASA combine-scan gaincal table");
+    common::run_casa_applycal(
+        &rust_apply_ms,
+        &rust_gcal,
+        "0",
+        "0",
+        None,
+        "calflag",
+        false,
+        false,
+    )
+    .expect("apply Rust combine-scan gaincal table in CASA");
 
     assert_apply_state_close_with_tolerance(
         &rust_apply_ms,

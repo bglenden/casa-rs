@@ -30,12 +30,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::constants::{
-    COL_ANTENNA1, COL_ANTENNA2, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG,
-    COL_INTERVAL, COL_N_POLY_AMP, COL_N_POLY_PHASE, COL_OBSERVATION_ID, COL_PARAMERR,
-    COL_PHASE_UNITS, COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR, COL_SCAN_NUMBER,
-    COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_VALID_DOMAIN, COL_WEIGHT,
-    KEY_CASA_VERSION, KEY_MS_NAME, KEY_PAR_TYPE, KEY_POL_BASIS, KEY_VIS_CAL,
-    LEGACY_CAL_DESC_KEYWORD, STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE,
+    COL_ANTENNA1, COL_ANTENNA2, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
+    COL_N_POLY_AMP, COL_N_POLY_PHASE, COL_OBSERVATION_ID, COL_PARAMERR, COL_PHASE_UNITS,
+    COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR, COL_SCAN_NUMBER, COL_SNR,
+    COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_VALID_DOMAIN, COL_WEIGHT, KEY_CASA_VERSION, KEY_MS_NAME,
+    KEY_PAR_TYPE, KEY_POL_BASIS, KEY_VIS_CAL, LEGACY_CAL_DESC_KEYWORD, STANDARD_SUBTABLE_KEYWORDS,
+    TABLE_INFO_TYPE,
 };
 use crate::execute::{ApplyExecutionError, EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanError, ApplyPlanRequest, plan_apply};
@@ -1005,19 +1005,39 @@ fn write_bpoly_caltable(
         ColumnSchema::scalar("SIDEBAND_REF", casacore_types::PrimitiveType::Complex32),
         ColumnSchema::array_variable("REF_ANT", casacore_types::PrimitiveType::Int32, Some(1)),
         ColumnSchema::array_variable("REF_FEED", casacore_types::PrimitiveType::Int32, Some(1)),
-        ColumnSchema::array_variable("REF_RECEPTOR", casacore_types::PrimitiveType::Int32, Some(1)),
-        ColumnSchema::array_variable("REF_FREQUENCY", casacore_types::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::array_variable(
+            "REF_RECEPTOR",
+            casacore_types::PrimitiveType::Int32,
+            Some(1),
+        ),
+        ColumnSchema::array_variable(
+            "REF_FREQUENCY",
+            casacore_types::PrimitiveType::Float64,
+            Some(1),
+        ),
         ColumnSchema::scalar("MEAS_FREQ_REF", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("REF_DIRECTION", casacore_types::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::array_variable(
+            "REF_DIRECTION",
+            casacore_types::PrimitiveType::Float64,
+            Some(1),
+        ),
         ColumnSchema::scalar("MEAS_DIR_REF", casacore_types::PrimitiveType::Int32),
         ColumnSchema::scalar("TOTAL_SOLUTION_OK", casacore_types::PrimitiveType::Bool),
         ColumnSchema::scalar("TOTAL_FIT", casacore_types::PrimitiveType::Float32),
         ColumnSchema::scalar("TOTAL_FIT_WEIGHT", casacore_types::PrimitiveType::Float32),
         ColumnSchema::array_variable("SOLUTION_OK", casacore_types::PrimitiveType::Bool, Some(1)),
         ColumnSchema::array_variable("FIT", casacore_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("FIT_WEIGHT", casacore_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable(
+            "FIT_WEIGHT",
+            casacore_types::PrimitiveType::Float32,
+            Some(1),
+        ),
         ColumnSchema::array_variable(COL_FLAG, casacore_types::PrimitiveType::Bool, Some(1)),
-        ColumnSchema::array_variable(COL_PARAMERR, casacore_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable(
+            COL_PARAMERR,
+            casacore_types::PrimitiveType::Float32,
+            Some(1),
+        ),
         ColumnSchema::array_variable(COL_SNR, casacore_types::PrimitiveType::Float32, Some(1)),
         ColumnSchema::array_variable(COL_WEIGHT, casacore_types::PrimitiveType::Float32, Some(1)),
         ColumnSchema::scalar("POLY_TYPE", casacore_types::PrimitiveType::String),
@@ -1026,7 +1046,11 @@ fn write_bpoly_caltable(
         ColumnSchema::scalar(COL_N_POLY_AMP, casacore_types::PrimitiveType::Int32),
         ColumnSchema::scalar(COL_N_POLY_PHASE, casacore_types::PrimitiveType::Int32),
         ColumnSchema::scalar(COL_PHASE_UNITS, casacore_types::PrimitiveType::String),
-        ColumnSchema::array_variable(COL_VALID_DOMAIN, casacore_types::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::array_variable(
+            COL_VALID_DOMAIN,
+            casacore_types::PrimitiveType::Float64,
+            Some(1),
+        ),
         ColumnSchema::array_variable(
             COL_POLY_COEFF_AMP,
             casacore_types::PrimitiveType::Float64,
@@ -1047,9 +1071,10 @@ fn write_bpoly_caltable(
     table
         .keywords_mut()
         .upsert(LEGACY_CAL_DESC_KEYWORD, Value::table_ref("././CAL_DESC"));
-    table
-        .keywords_mut()
-        .upsert(LEGACY_CAL_HISTORY_KEYWORD, Value::table_ref("././CAL_HISTORY"));
+    table.keywords_mut().upsert(
+        LEGACY_CAL_HISTORY_KEYWORD,
+        Value::table_ref("././CAL_HISTORY"),
+    );
     table.keywords_mut().upsert(
         KEY_VIS_CAL,
         Value::Scalar(ScalarValue::String("BPOLY".to_string())),
@@ -1171,10 +1196,7 @@ fn write_bpoly_caltable(
                     "SOURCE_CODE",
                     Value::Scalar(ScalarValue::String(String::new())),
                 ),
-                RecordField::new(
-                    "CALIBRATION_GROUP",
-                    Value::Scalar(ScalarValue::Int32(0)),
-                ),
+                RecordField::new("CALIBRATION_GROUP", Value::Scalar(ScalarValue::Int32(0))),
                 RecordField::new(
                     COL_CAL_DESC_ID,
                     Value::Scalar(ScalarValue::Int32(
@@ -1186,7 +1208,9 @@ fn write_bpoly_caltable(
                 RecordField::new("CAL_HISTORY_ID", Value::Scalar(ScalarValue::Int32(0))),
                 RecordField::new(
                     "GAIN",
-                    Value::Array(ArrayValue::from_complex32_vec(vec![Complex32::new(1.0, 0.0)])),
+                    Value::Array(ArrayValue::from_complex32_vec(vec![Complex32::new(
+                        1.0, 0.0,
+                    )])),
                 ),
                 RecordField::new(
                     "SIDEBAND_REF",
@@ -1196,10 +1220,7 @@ fn write_bpoly_caltable(
                     "REF_ANT",
                     Value::Array(ArrayValue::from_i32_vec(vec![row.antenna_id])),
                 ),
-                RecordField::new(
-                    "REF_FEED",
-                    Value::Array(ArrayValue::from_i32_vec(vec![0])),
-                ),
+                RecordField::new("REF_FEED", Value::Array(ArrayValue::from_i32_vec(vec![0]))),
                 RecordField::new(
                     "REF_RECEPTOR",
                     Value::Array(ArrayValue::from_i32_vec(vec![0])),
@@ -1214,15 +1235,9 @@ fn write_bpoly_caltable(
                     Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
                 ),
                 RecordField::new("MEAS_DIR_REF", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new(
-                    "TOTAL_SOLUTION_OK",
-                    Value::Scalar(ScalarValue::Bool(true)),
-                ),
+                RecordField::new("TOTAL_SOLUTION_OK", Value::Scalar(ScalarValue::Bool(true))),
                 RecordField::new("TOTAL_FIT", Value::Scalar(ScalarValue::Float32(0.0))),
-                RecordField::new(
-                    "TOTAL_FIT_WEIGHT",
-                    Value::Scalar(ScalarValue::Float32(1.0)),
-                ),
+                RecordField::new("TOTAL_FIT_WEIGHT", Value::Scalar(ScalarValue::Float32(1.0))),
                 RecordField::new(
                     "SOLUTION_OK",
                     Value::Array(ArrayValue::from_bool_vec(vec![true, true])),
@@ -1343,7 +1358,11 @@ fn write_bpoly_caltable(
     Table::with_schema(TableSchema::new(vec![]).expect("empty schema"))
         .save(TableOptions::new(request.output_table.join("CAL_HISTORY")))
         .map_err(|source| BandpassSolveError::SaveCalibrationTable {
-            path: request.output_table.join("CAL_HISTORY").display().to_string(),
+            path: request
+                .output_table
+                .join("CAL_HISTORY")
+                .display()
+                .to_string(),
             source: Box::new(source),
         })?;
 
@@ -1373,15 +1392,15 @@ fn fit_bpoly_rows(
     amplitude_degree: usize,
     phase_degree: usize,
 ) -> Result<Vec<BPolySolutionRow>, BandpassSolveError> {
-    let spectral_window = ms
-        .spectral_window()
-        .map_err(|source| BandpassSolveError::OpenMeasurementSet {
-            path: ms
-                .path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "<in-memory>".to_string()),
-            source,
-        })?;
+    let spectral_window =
+        ms.spectral_window()
+            .map_err(|source| BandpassSolveError::OpenMeasurementSet {
+                path: ms
+                    .path()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "<in-memory>".to_string()),
+                source,
+            })?;
     rows.iter()
         .map(|row| {
             let spw_row = usize::try_from(row.spw_id).map_err(|_| {
@@ -1390,16 +1409,15 @@ fn fit_bpoly_rows(
                     shape: vec![row.spw_id as usize],
                 }
             })?;
-            let channel_frequencies_hz =
-                spectral_window
-                    .chan_freq(spw_row)
-                    .map_err(|source| BandpassSolveError::OpenMeasurementSet {
-                        path: ms
-                            .path()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "<in-memory>".to_string()),
-                        source,
-                    })?;
+            let channel_frequencies_hz = spectral_window.chan_freq(spw_row).map_err(|source| {
+                BandpassSolveError::OpenMeasurementSet {
+                    path: ms
+                        .path()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "<in-memory>".to_string()),
+                    source,
+                }
+            })?;
             fit_bpoly_row(row, &channel_frequencies_hz, amplitude_degree, phase_degree)
         })
         .collect()
@@ -1470,19 +1488,32 @@ fn fit_legacy_bpoly_coefficients(
     degree: usize,
     row: &BandpassSolutionRow,
 ) -> Result<Vec<f64>, BandpassSolveError> {
-    let coefficient_count = degree.saturating_add(1).min(channel_frequencies_hz.len().max(1));
+    let coefficient_count = degree
+        .saturating_add(1)
+        .min(channel_frequencies_hz.len().max(1));
     if coefficient_count == 0 {
         return Ok(Vec::new());
     }
     if coefficient_count == 1 {
-        return Ok(vec![2.0 * values.iter().copied().sum::<f64>() / values.len().max(1) as f64]);
+        return Ok(vec![
+            2.0 * values.iter().copied().sum::<f64>() / values.len().max(1) as f64,
+        ]);
     }
 
     let mut ata = vec![vec![0.0_f64; coefficient_count]; coefficient_count];
     let mut aty = vec![0.0_f64; coefficient_count];
     let mut basis = vec![0.0_f64; coefficient_count];
-    for (frequency_hz, value) in channel_frequencies_hz.iter().copied().zip(values.iter().copied()) {
-        legacy_bpoly_basis(valid_domain_hz[0], valid_domain_hz[1], frequency_hz, &mut basis);
+    for (frequency_hz, value) in channel_frequencies_hz
+        .iter()
+        .copied()
+        .zip(values.iter().copied())
+    {
+        legacy_bpoly_basis(
+            valid_domain_hz[0],
+            valid_domain_hz[1],
+            frequency_hz,
+            &mut basis,
+        );
         for i in 0..coefficient_count {
             aty[i] += basis[i] * value;
             for j in 0..coefficient_count {
@@ -1498,12 +1529,7 @@ fn fit_legacy_bpoly_coefficients(
     })
 }
 
-fn legacy_bpoly_basis(
-    x_start: f64,
-    x_end: f64,
-    x: f64,
-    basis: &mut [f64],
-) {
+fn legacy_bpoly_basis(x_start: f64, x_end: f64, x: f64, basis: &mut [f64]) {
     if basis.is_empty() {
         return;
     }
@@ -1549,7 +1575,11 @@ fn solve_linear_system(matrix: &mut [Vec<f64>], rhs: &mut [f64]) -> Option<Vec<f
     for pivot in 0..size {
         let (pivot_row, pivot_value) = (pivot..size)
             .map(|row| (row, matrix[row][pivot].abs()))
-            .max_by(|lhs, rhs| lhs.1.partial_cmp(&rhs.1).unwrap_or(std::cmp::Ordering::Equal))?;
+            .max_by(|lhs, rhs| {
+                lhs.1
+                    .partial_cmp(&rhs.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })?;
         if pivot_value <= f64::EPSILON {
             return None;
         }
@@ -1590,7 +1620,11 @@ fn write_bpoly_cal_desc_subtable(
 ) -> Result<(), BandpassSolveError> {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("NUM_RECEPTORS", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("SPECTRAL_WINDOW_ID", casacore_types::PrimitiveType::Int32, Some(1)),
+        ColumnSchema::array_variable(
+            "SPECTRAL_WINDOW_ID",
+            casacore_types::PrimitiveType::Int32,
+            Some(1),
+        ),
     ])
     .expect("BPOLY CAL_DESC schema");
     let mut table = Table::with_schema(schema);
@@ -1624,12 +1658,12 @@ fn write_bpoly_cal_desc_subtable(
             ]))
             .expect("insert BPOLY CAL_DESC row");
     }
-    table
-        .save(TableOptions::new(&path))
-        .map_err(|source| BandpassSolveError::SaveCalibrationTable {
+    table.save(TableOptions::new(&path)).map_err(|source| {
+        BandpassSolveError::SaveCalibrationTable {
             path: path.display().to_string(),
             source: Box::new(source),
-        })
+        }
+    })
 }
 
 fn all_antenna_ids(ms: &MeasurementSet) -> Result<BTreeSet<i32>, BandpassSolveError> {

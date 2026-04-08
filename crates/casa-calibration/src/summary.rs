@@ -200,23 +200,24 @@ fn summarize_parameter_column(
     family: CalibrationParameterFamily,
     table_subtype: &str,
 ) -> CalibrationColumnSummary {
-    let parameter_column = if table_subtype == "BPOLY"
-        && columns.iter().any(|column| column == COL_POLY_COEFF_AMP)
-    {
-        Some(COL_POLY_COEFF_AMP.to_string())
-    } else {
-        match family {
-        CalibrationParameterFamily::Complex
-            if columns.iter().any(|column| column == COL_CPARAM) =>
-        {
-            Some(COL_CPARAM.to_string())
-        }
-        CalibrationParameterFamily::Float if columns.iter().any(|column| column == COL_FPARAM) => {
-            Some(COL_FPARAM.to_string())
-        }
-        _ => None,
-        }
-    };
+    let parameter_column =
+        if table_subtype == "BPOLY" && columns.iter().any(|column| column == COL_POLY_COEFF_AMP) {
+            Some(COL_POLY_COEFF_AMP.to_string())
+        } else {
+            match family {
+                CalibrationParameterFamily::Complex
+                    if columns.iter().any(|column| column == COL_CPARAM) =>
+                {
+                    Some(COL_CPARAM.to_string())
+                }
+                CalibrationParameterFamily::Float
+                    if columns.iter().any(|column| column == COL_FPARAM) =>
+                {
+                    Some(COL_FPARAM.to_string())
+                }
+                _ => None,
+            }
+        };
     let parameter_primitive_type = parameter_column
         .as_deref()
         .and_then(|column| table.schema()?.column(column))

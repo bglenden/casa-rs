@@ -170,6 +170,33 @@ roughly `0.20s` to `0.19s`, but the end-to-end `applycal` ratio is still about
 `6.5x` slower than CASA because MAIN-table save remains the dominant cost.
 This closes the plausible local planner optimizations; the remaining leverage
 under `12.4` is now deeper persistence work rather than more selection tweaks.
+Wave 38 extracts the first real calibration plotting slice from `12.6` and
+the deferred broad-plotting backlog in `12.7`. `casa-calibration` now lowers
+selected calibration workflows into the existing `casacore-ms` scatter-plot
+payloads, and `casars` exposes those plots through the `calibrate` Plots tab.
+The first shipped presets are the most practical operator-facing plots called
+out consistently by CASA docs and the local radio-astronomy reference corpus:
+gain amplitude/phase vs time, bandpass amplitude/phase vs frequency, and
+corrected-data amplitude/phase vs time/frequency. Fast synthetic tests are
+green, and slow parity now proves that real CASA-generated `G` and `B` tables
+can be turned into plot payloads by the Rust stack.
+Wave 39 extracts the first framework-owned `casars` shell-family slice for the
+evaluation UI. The launcher now treats `msexplore`, `tablebrowser`,
+`imexplore`, and `calibrate` as members of a shared shell family
+(`InspectShell`, `BrowserShell`, `WorkflowShell`) with fixed left/right pane
+structure, shell-specific result tabs, and a workflow graph model that tracks
+ordered stages, versioned products, staleness, and iteration history for
+`calibrate`. Fast `casars` tests and the ratatui smoke harness are green for
+all shipped apps against real local MS/image fixtures.
+Wave 40 extracts the first usability-complete workflow-shell polish for
+`calibrate`. Workflow-owned context rows, product rows, chain editing,
+callibrary editing, stage guidance, stage-specific parameter grouping, native
+inspection defaults, and post-run progression now make the TUI behave like a
+guided calibration session instead of a filtered CLI-schema form. The current
+handoff state is deliberate: `casars` is now ready for real interactive user
+testing of the shell-family model and the calibration workflow, with the fast
+suite (`fmt`, `clippy`, `casa-calibration` lib tests, `casars` lib tests, and
+the real-fixture smoke harness) all green at this checkpoint.
 
 ---
 
@@ -523,8 +550,22 @@ surface to `combine='field'` and `combine='scan,field'`. Wave 36 adds the
 first richer `calibrate` UI/workflow surface by wiring managed launcher output
 through `casars`, including Overview rendering for stats and the other public
 workflow reports. Follow-on work under `12.6` should now focus on broader
-evaluation/help surfaces in `calibrate` and any future BPOLY fit tightening
-rather than baseline `bandpass combine=*` compatibility.
+evaluation/help surfaces in `calibrate`, richer plot/export affordances, and
+any future BPOLY fit tightening rather than baseline `bandpass combine=*`
+compatibility. Wave 38 then adds the first real plotting surface in
+`calibrate`: inspection plots for gain and bandpass tables plus corrected-data
+diagnostic plots for apply/solve evaluation, all exposed through the launcher
+Plots tab while keeping plot generation in `casa-calibration`. Wave 39 then
+starts the framework-level shell-family migration in `casars`: browser apps
+now render through the shared `BrowserShell` layout instead of dropping back to
+legacy left-pane inspector rows, and `calibrate` now uses a reusable
+workflow-graph layer that tracks ordered-but-revisitable stages, versioned
+products, stale downstream artifacts after upstream reruns, and session
+history. The `WorkflowShell` Overview and Products tabs now surface the shell-
+level model directly rather than only echoing the latest CLI report. Follow-on
+work for this UI/framework slice should focus on lifting workflow metadata
+further into registry/protocol-level descriptors and migrating `msexplore`
+away from schema-derived controls into a cleaner `InspectShell` view model.
 
 ---
 
@@ -542,4 +583,5 @@ extracts the first float-parameter family by supporting `FPARAM`-backed
 `K Jones` delay tables in the apply path. Wave 33 further removes `BPOLY`
 from the deferred set by landing a narrow solve/write/apply parity slice under
 `12.6`. The remaining deferred items are now broader float-parameter families
-beyond `K` and broader inspection/plotting work.
+beyond `K`, plus any plotting work beyond the first shipped `calibrate`
+inspection/diagnostic presets.

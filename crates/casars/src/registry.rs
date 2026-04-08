@@ -14,6 +14,7 @@ pub(crate) struct RegistryApp {
     pub id: &'static str,
     pub category: &'static str,
     pub display_name: &'static str,
+    shell_kind: AppShellKind,
     kind: RegistryAppKind,
 }
 
@@ -31,6 +32,13 @@ enum RegistryAppKind {
 pub(crate) enum AppInteraction {
     OneShot,
     BrowserSession(BrowserAppKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AppShellKind {
+    Inspect,
+    Browser,
+    Workflow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +174,10 @@ impl RegistryApp {
         )
     }
 
+    pub(crate) fn shell_kind(&self) -> AppShellKind {
+        self.shell_kind
+    }
+
     pub(crate) fn browser_kind(&self) -> Option<BrowserAppKind> {
         match self.kind {
             RegistryAppKind::Subprocess {
@@ -187,15 +199,19 @@ impl RegistryApp {
     }
 
     pub(crate) fn ready_status_line(&self) -> &'static str {
-        match self.kind {
-            RegistryAppKind::Subprocess {
-                interaction: AppInteraction::BrowserSession(_),
-                ..
-            } => "Ready. Press r to open the browser session.",
-            RegistryAppKind::Subprocess {
-                interaction: AppInteraction::OneShot,
-                ..
-            } => "Ready. Press r to run the selected command.",
+        match (self.shell_kind, &self.kind) {
+            (
+                AppShellKind::Browser,
+                RegistryAppKind::Subprocess {
+                    interaction: AppInteraction::BrowserSession(_),
+                    ..
+                },
+            ) => "Ready. Press r to open the browser session.",
+            (AppShellKind::Inspect, _) => {
+                "Ready. Press r to run and refresh the current inspection view."
+            }
+            (AppShellKind::Workflow, _) => "Ready. Press r to run the selected workflow stage.",
+            (_, _) => "Ready. Press r to run the selected command.",
         }
     }
 }
@@ -226,6 +242,7 @@ pub(crate) fn calibrate_app() -> RegistryApp {
         id: "calibrate",
         category: "Calibration",
         display_name: "Calibrate",
+        shell_kind: AppShellKind::Workflow,
         kind: RegistryAppKind::Subprocess {
             binary_name: "calibrate",
             cargo_package: "casa-calibration",
@@ -240,6 +257,7 @@ pub(crate) fn tablebrowser_app() -> RegistryApp {
         id: "tablebrowser",
         category: "Tables",
         display_name: "Table Browser",
+        shell_kind: AppShellKind::Browser,
         kind: RegistryAppKind::Subprocess {
             binary_name: "tablebrowser",
             cargo_package: "casacore-tables",
@@ -254,6 +272,7 @@ pub(crate) fn imexplore_app() -> RegistryApp {
         id: "imexplore",
         category: "Images",
         display_name: "ImExplore",
+        shell_kind: AppShellKind::Browser,
         kind: RegistryAppKind::Subprocess {
             binary_name: "imexplore",
             cargo_package: "casacore-images",
@@ -268,6 +287,7 @@ pub(crate) fn msexplore_app() -> RegistryApp {
         id: "msexplore",
         category: "MeasurementSet",
         display_name: "MSExplore",
+        shell_kind: AppShellKind::Inspect,
         kind: RegistryAppKind::Subprocess {
             binary_name: "msexplore",
             cargo_package: "casacore-ms",
@@ -353,7 +373,7 @@ mod tests {
         assert_eq!(msexplore.browser_path_field_id(), None);
         assert_eq!(
             msexplore.ready_status_line(),
-            "Ready. Press r to run the selected command."
+            "Ready. Press r to run and refresh the current inspection view."
         );
 
         let calibrate = calibrate_app();
@@ -362,7 +382,7 @@ mod tests {
         assert_eq!(calibrate.browser_path_field_id(), None);
         assert_eq!(
             calibrate.ready_status_line(),
-            "Ready. Press r to run the selected command."
+            "Ready. Press r to run the selected workflow stage."
         );
 
         let tablebrowser = tablebrowser_app();

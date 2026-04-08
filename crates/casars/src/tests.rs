@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::env;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -7,8 +8,9 @@ use std::sync::MutexGuard;
 use std::time::{Duration, Instant};
 
 use casa_calibration::{
-    CalibrationIndexedStats, CalibrationStatsAxis, CalibrationStatsReport, CalibrationValueStats,
-    ManagedCalibrationOutput,
+    BandpassSolveReport, CalibrationIndexedStats, CalibrationStatsAxis, CalibrationStatsReport,
+    CalibrationValueStats, GainSolveReport, GainType, ManagedCalibrationOutput,
+    load_apply_specs_from_callib,
 };
 use casacore_imagebrowser_protocol::{
     ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus as ProtocolImageFocus,
@@ -48,17 +50,20 @@ use tempfile::tempdir;
 
 use crate::app::{
     AppState, BrowserPaneFocus, ImageBrowserLeftPaneMode, OutputPane, PaneFocus, PlotCatalogTarget,
-    PlotControlTarget, PlotPaneFocus, ResultTab, image_plane_draw_rect,
+    PlotControlTarget, PlotPaneFocus, ResultTab, WorkflowChainSettingKind,
+    WorkflowContextSettingKind, WorkflowProductActionKind, WorkflowStageId, image_plane_draw_rect,
 };
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
-use crate::registry::{calibrate_app, imexplore_app, msexplore_app, registered_apps, tablebrowser_app};
+use crate::registry::{
+    calibrate_app, imexplore_app, msexplore_app, registered_apps, tablebrowser_app,
+};
 use crate::theme::theme;
 use crate::ui;
 use crate::{
     KittyMovieOverlay, KittyMovieOverlayMode, first_movie_frame, kitty_movie_overlay_mode,
     loop_forever, movie_debug_log, movie_frame_number, movie_gap, run_with_app, run_with_cli_args,
-    test_env_lock,
+    terminal_picker, test_env_lock,
 };
 
 #[test]
@@ -102,16 +107,37 @@ fn launcher_screen_renders_available_apps() {
 #[test]
 fn calibrate_overview_renders_structured_stats_report() {
     let temp = tempdir().expect("tempdir");
-    let schema = calibrate_app().load_schema().expect("load calibrate schema");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_calibration_report_for_test(ManagedCalibrationOutput::Stats(
-        CalibrationStatsReport {
-            path: PathBuf::from("phase.gcal"),
-            axis: CalibrationStatsAxis::Amplitude,
-            datacolumn: Some("CPARAM".to_string()),
-            row_count: 42,
-            global: CalibrationValueStats {
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::Stats(CalibrationStatsReport {
+        path: PathBuf::from("phase.gcal"),
+        axis: CalibrationStatsAxis::Amplitude,
+        datacolumn: Some("CPARAM".to_string()),
+        row_count: 42,
+        global: CalibrationValueStats {
+            npts: 32,
+            flagged_npts: 4,
+            total_npts: 36,
+            sum: 64.0,
+            sumsq: 140.0,
+            min: 0.5,
+            max: 3.0,
+            mean: 2.0,
+            median: 1.9,
+            medabsdevmed: 0.2,
+            q1: 1.0,
+            q3: 2.5,
+            quartile: 1.5,
+            var: 0.25,
+            stddev: 0.5,
+            rms: 2.09165,
+        },
+        by_field_id: vec![CalibrationIndexedStats {
+            key: 0,
+            stats: CalibrationValueStats {
                 npts: 32,
                 flagged_npts: 4,
                 total_npts: 36,
@@ -129,32 +155,13 @@ fn calibrate_overview_renders_structured_stats_report() {
                 stddev: 0.5,
                 rms: 2.09165,
             },
-            by_field_id: vec![CalibrationIndexedStats {
-                key: 0,
-                stats: CalibrationValueStats {
-                    npts: 32,
-                    flagged_npts: 4,
-                    total_npts: 36,
-                    sum: 64.0,
-                    sumsq: 140.0,
-                    min: 0.5,
-                    max: 3.0,
-                    mean: 2.0,
-                    median: 1.9,
-                    medabsdevmed: 0.2,
-                    q1: 1.0,
-                    q3: 2.5,
-                    quartile: 1.5,
-                    var: 0.25,
-                    stddev: 0.5,
-                    rms: 2.09165,
-                },
-            }],
-            by_spectral_window_id: Vec::new(),
-            by_antenna1_id: Vec::new(),
-            by_observation_id: Vec::new(),
-        },
-    ));
+        }],
+        by_spectral_window_id: Vec::new(),
+        by_antenna1_id: Vec::new(),
+        by_observation_id: Vec::new(),
+    }));
+    assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
+    app.set_active_result_tab(ResultTab::Overview);
 
     let rendered = render_app(&app, 120, 28);
     assert!(rendered.contains("Overview"));
@@ -168,13 +175,14 @@ fn calibrate_overview_renders_structured_stats_report() {
 #[test]
 fn calibrate_apply_mode_arguments_do_not_include_stats_only_flags() {
     let temp = tempdir().expect("tempdir");
-    let schema = calibrate_app().load_schema().expect("load calibrate schema");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value(
-        "measurement_set",
-        "/tmp/example.ms",
-    );
+    app.select_workflow_stage_for_test(WorkflowStageId::Apply);
+    app.set_text_value("mode", "apply");
+    app.set_text_value("measurement_set", "/tmp/example.ms");
 
     let args = app
         .execution_arguments_for_test()
@@ -184,10 +192,1422 @@ fn calibrate_apply_mode_arguments_do_not_include_stats_only_flags() {
         .collect::<Vec<_>>();
 
     assert!(args.windows(2).any(|pair| pair == ["--mode", "apply"]));
-    assert!(args.windows(2).any(|pair| pair == ["--ms", "/tmp/example.ms"]));
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--ms", "/tmp/example.ms"])
+    );
     assert!(!args.iter().any(|arg| arg == "--axis"));
     assert!(!args.iter().any(|arg| arg == "--table"));
     assert!(!args.iter().any(|arg| arg == "--datacolumn"));
+}
+
+#[test]
+fn calibrate_defaults_to_inspect_dataset_stage_on_launch() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+
+    assert_eq!(app.field_text_for_test("mode").as_deref(), Some("summary"));
+}
+
+#[test]
+fn calibrate_first_run_with_prefilled_ms_executes_dataset_summary() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+
+    start_run_with_default_calibrate_launcher(&mut app);
+
+    assert!(
+        app.status_line_for_test()
+            .contains("MeasurementSet summary refreshed"),
+        "status={} stderr={}",
+        app.status_line_for_test(),
+        app.stderr_for_test()
+    );
+    assert!(
+        app.structured_for_test().is_some(),
+        "expected dataset summary"
+    );
+}
+
+#[test]
+fn calibrate_guided_flow_runs_inspect_and_solve_gain_on_ngc5921() {
+    let Some(source_ms) = shared_ngc5921_ms_path() else {
+        eprintln!(
+            "skipping calibrate guided-flow regression: missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, or ~/SoftwareProjects/casatestdata"
+        );
+        return;
+    };
+
+    let temp = tempdir().expect("tempdir");
+    let writable_ms = temp.path().join("ngc5921.ms");
+    copy_dir_recursive(&source_ms, &writable_ms).expect("copy ngc5921.ms");
+
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", writable_ms.to_string_lossy().as_ref());
+
+    start_run_with_default_calibrate_launcher(&mut app);
+    assert!(
+        app.status_line_for_test()
+            .contains("MeasurementSet summary refreshed")
+    );
+    assert_eq!(app.active_result_tab(), ResultTab::Overview);
+
+    app.set_text_value("refant", "VA15");
+    app.set_text_value("field", "0");
+    app.set_text_value("spw", "0");
+    app.set_text_value("gain_type", "g");
+    app.set_text_value("solve_mode", "p");
+    app.set_text_value("solint", "inf");
+    app.set_text_value(
+        "out_table",
+        temp.path().join("phase.gcal").to_string_lossy().as_ref(),
+    );
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::SolveGain));
+    app.set_text_value("mode", "solve_gain");
+    let gain_table = app
+        .field_text_for_test("out_table")
+        .expect("solve-gain output table");
+
+    start_run_with_default_calibrate_launcher(&mut app);
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    assert!(
+        Path::new(&gain_table).exists(),
+        "expected {gain_table} to exist"
+    );
+    assert_eq!(
+        app.field_text_for_test("mode").as_deref(),
+        Some("solve_bandpass")
+    );
+    assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
+    assert_eq!(
+        app.field_text_for_test("table_path").as_deref(),
+        Some(gain_table.as_str())
+    );
+    assert!(
+        app.status_line_for_test()
+            .contains("Recommended next stage: Solve Bandpass")
+    );
+}
+
+#[test]
+fn calibrate_guided_flow_runs_gain_bandpass_and_apply_on_ngc5921() {
+    let Some(source_ms) = shared_ngc5921_ms_path() else {
+        eprintln!(
+            "skipping calibrate full guided-flow regression: missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, or ~/SoftwareProjects/casatestdata"
+        );
+        return;
+    };
+
+    let temp = tempdir().expect("tempdir");
+    let writable_ms = temp.path().join("ngc5921.ms");
+    copy_dir_recursive(&source_ms, &writable_ms).expect("copy ngc5921.ms");
+
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", writable_ms.to_string_lossy().as_ref());
+
+    start_run_with_default_calibrate_launcher(&mut app);
+    assert!(
+        app.status_line_for_test()
+            .contains("MeasurementSet summary refreshed")
+    );
+
+    app.set_text_value("refant", "VA15");
+    app.set_text_value("field", "0");
+    app.set_text_value("spw", "0");
+    app.set_text_value("gain_type", "g");
+    app.set_text_value("solve_mode", "p");
+    app.set_text_value("solint", "inf");
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::SolveGain));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.set_text_value("mode", "solve_gain");
+    app.set_text_value(
+        "out_table",
+        temp.path().join("phase.gcal").to_string_lossy().as_ref(),
+    );
+    let gain_table = app
+        .field_text_for_test("out_table")
+        .expect("solve-gain output table");
+
+    start_run_with_default_calibrate_launcher(&mut app);
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    assert!(
+        Path::new(&gain_table).exists(),
+        "expected {gain_table} to exist"
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT));
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some(gain_table.as_str())
+    );
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::SolveBandpass));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.set_text_value("mode", "solve_bandpass");
+    app.set_text_value(
+        "out_table",
+        temp.path().join("bandpass.bcal").to_string_lossy().as_ref(),
+    );
+    let bandpass_table = app
+        .field_text_for_test("out_table")
+        .expect("solve-bandpass output table");
+
+    start_run_with_default_calibrate_launcher(&mut app);
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    assert!(
+        Path::new(&bandpass_table).exists(),
+        "expected {bandpass_table} to exist"
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT));
+    let expected_chain = format!("{gain_table},{bandpass_table}");
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some(expected_chain.as_str())
+    );
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::Apply));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.set_text_value("mode", "apply");
+    app.set_pane_focus_for_test(PaneFocus::Parameters);
+    start_run_with_default_calibrate_launcher(&mut app);
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    assert!(
+        app.status_line_for_test().contains("Apply completed.")
+            || app
+                .status_line_for_test()
+                .contains("Recommended next stage: Inspect Results"),
+        "status={} stderr={}",
+        app.status_line_for_test(),
+        app.stderr_for_test()
+    );
+    assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
+    assert!(
+        app.stderr_for_test().trim().is_empty(),
+        "{}",
+        app.stderr_for_test()
+    );
+}
+
+#[test]
+fn calibrate_summary_mode_arguments_do_not_include_apply_only_flags() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("mode", "summary");
+    app.set_text_value("summary_paths", "/tmp/example.gcal");
+
+    let args = app
+        .execution_arguments_for_test()
+        .expect("build execution arguments")
+        .into_iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert!(args.windows(2).any(|pair| pair == ["--mode", "summary"]));
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--summary-paths", "/tmp/example.gcal"])
+    );
+    assert!(!args.iter().any(|arg| arg == "--selectdata"));
+    assert!(!args.iter().any(|arg| arg == "--apply-mode"));
+    assert!(!args.iter().any(|arg| arg == "--ms"));
+}
+
+#[test]
+fn calibrate_prefilled_measurement_set_populates_idle_summary_tabs() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+
+    let summary = app.structured_for_test().expect("structured summary");
+    assert_eq!(summary.measurement_set.row_count, 2);
+    assert_eq!(
+        app.field_text_for_test("measurement_set").as_deref(),
+        Some(ms_path.to_string_lossy().as_ref())
+    );
+
+    let overview = render_app(&app, 140, 32);
+    assert!(overview.contains("MeasurementSet"));
+    assert!(overview.contains("Rows: 2"));
+    assert!(overview.contains("Observations: 1"));
+
+    app.set_active_result_tab(ResultTab::Fields);
+    let fields = render_app(&app, 180, 32);
+    assert!(fields.contains("3C286"));
+    assert!(fields.contains("SECOND"));
+}
+
+#[test]
+fn calibrate_overview_horizontal_thumb_tracks_real_overflow_ratio() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+    app.set_active_result_tab(ResultTab::Overview);
+
+    let width = 120;
+    let height = 32;
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let layout = ui::compute_layout(Rect::new(0, 0, width, height), &app);
+    terminal
+        .draw(|frame| ui::draw(frame, &app, &layout))
+        .expect("draw app");
+    let buffer = terminal.backend().buffer().clone();
+
+    let scrollbar = layout
+        .result_hscrollbar
+        .expect("overview horizontal scrollbar");
+    let thumb_width = (0..scrollbar.width)
+        .filter(|offset| buffer[(scrollbar.x + *offset, scrollbar.y)].symbol() == "█")
+        .count();
+    assert!(thumb_width > 0, "expected visible scrollbar thumb");
+
+    let content_width = match app.active_result_content() {
+        crate::app::ResultContent::Lines(lines) => lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0),
+        other => panic!("unexpected result content: {other:?}"),
+    };
+    let viewport_width = scrollbar.width as usize;
+    let ideal_ratio = viewport_width as f64 / content_width as f64;
+    let actual_ratio = thumb_width as f64 / scrollbar.width as f64;
+
+    assert!(
+        (actual_ratio - ideal_ratio).abs() < 0.15,
+        "thumb ratio {actual_ratio:.3} should roughly match overflow ratio {ideal_ratio:.3}"
+    );
+}
+
+#[test]
+fn calibrate_shows_input_section_first() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+
+    let rendered = render_app(&app, 100, 30);
+    let context_index = rendered.find("Context").expect("context section");
+    let products_index = rendered.find("Products").expect("products section");
+    let stages_index = rendered.find("Stages").expect("stages section");
+    assert!(context_index < products_index);
+    assert!(products_index < stages_index);
+}
+
+#[test]
+fn msexplore_shell_uses_framework_inspect_sections_and_tabs() {
+    let temp = tempdir().expect("tempdir");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(
+        msexplore_app(),
+        msexplore_command_schema("msexplore"),
+        config,
+    );
+
+    let rows = app.form_rows();
+    let section_labels = rows
+        .iter()
+        .filter_map(|row| {
+            matches!(row.kind, crate::app::FormRowKind::Section { .. }).then_some(row.text.clone())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(section_labels, vec!["Context", "Views", "Controls"]);
+
+    let tab_labels = app
+        .result_tabs()
+        .iter()
+        .map(|tab| tab.label())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tab_labels,
+        vec!["Overview", "Data", "Plots", "History", "Stdout", "Stderr"]
+    );
+
+    let rendered = render_app(&app, 120, 28);
+    assert!(rendered.contains("Inspect Session"));
+    assert!(rendered.contains("Current view: Observations"));
+    assert!(rendered.contains("Tabs: Overview, Data, Plots"));
+}
+
+#[test]
+fn calibrate_shell_uses_framework_workflow_sections_and_tabs() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+
+    let rows = app.form_rows();
+    let section_labels = rows
+        .iter()
+        .filter_map(|row| {
+            matches!(row.kind, crate::app::FormRowKind::Section { .. }).then_some(row.text.clone())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        section_labels,
+        vec!["Context", "Products", "Stages", "Stage Parameters"]
+    );
+
+    let tab_labels = app
+        .result_tabs()
+        .iter()
+        .map(|tab| tab.label())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tab_labels,
+        vec![
+            "Overview",
+            "Data",
+            "Products",
+            "Diagnostics",
+            "History",
+            "Stdout",
+            "Stderr"
+        ]
+    );
+}
+
+#[test]
+fn calibrate_ready_status_and_stage_selection_are_guided() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+
+    assert!(
+        app.status_line_for_test()
+            .contains("Choose a stage, review Context and Products")
+    );
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::InspectResults));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(
+        app.status_line_for_test()
+            .contains("Workflow stage selected: Inspect Results")
+    );
+    assert!(app.status_line_for_test().contains("Point Table Path"));
+}
+
+#[test]
+fn calibrate_field_picker_uses_summary_derived_choices() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+    assert!(app.select_form_field_for_test("field"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+
+    let labels = app.choice_picker_labels_for_test();
+    assert!(labels.iter().any(|label| label.contains("3C286")));
+    assert!(labels.iter().any(|label| label.contains("SECOND")));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE));
+    let filtered = app.choice_picker_labels_for_test();
+    assert!(!filtered.is_empty());
+    assert!(
+        filtered
+            .iter()
+            .all(|label| label.to_ascii_lowercase().contains('s'))
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.choice_picker_active());
+    assert_eq!(app.field_text_for_test("field").as_deref(), Some("1"));
+}
+
+#[test]
+fn calibrate_workflow_overview_recommends_the_next_stage() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", "/tmp/example.ms");
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+    assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
+    app.set_active_result_tab(ResultTab::Overview);
+
+    match app.active_result_content() {
+        crate::app::ResultContent::Lines(lines) => {
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("Recommended next stage: Solve Bandpass"))
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("Products: active=1 stale=0 total=1"))
+            );
+        }
+        other => panic!("expected workflow overview lines, got {other:?}"),
+    }
+}
+
+#[test]
+fn calibrate_workflow_products_track_revisions_and_staleness() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", "/tmp/example.ms");
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase-r1.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveBandpass(
+        BandpassSolveReport {
+            output_table: PathBuf::from("/tmp/bandpass-r1.bcal"),
+            table_subtype: "B Jones".to_string(),
+            refant_antenna_id: 3,
+            field_ids: vec![0],
+            spectral_window_ids: vec![0],
+            solution_row_count: 16,
+            channel_count: 63,
+        },
+    ));
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase-r2.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+    app.set_active_result_tab(ResultTab::Products);
+
+    match app.active_result_content() {
+        crate::app::ResultContent::Lines(lines) => {
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("/tmp/phase-r1.gcal [G | superseded]"))
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("/tmp/phase-r2.gcal [G | active]"))
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("/tmp/bandpass-r1.bcal [B Jones | stale]"))
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("depends_on=solve_gain@r1"))
+            );
+        }
+        other => panic!("expected workflow products lines, got {other:?}"),
+    }
+}
+
+#[test]
+fn calibrate_products_section_shows_chain_entries_and_artifacts() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", "/tmp/example.ms");
+    app.set_text_value("gaintables", "/tmp/phase.gcal,/tmp/bandpass.bcal");
+    app.set_text_value("callib", "/tmp/apply.callib");
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+
+    let rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+    assert!(rows.iter().any(|row| row == "Products"));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Chain") && row.contains("/tmp/phase.gcal"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Chain") && row.contains("/tmp/bandpass.bcal"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Callibrary") && row.contains("/tmp/apply.callib"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("phase.gcal") && row.contains("[Solve Gain"))
+    );
+}
+
+#[test]
+fn calibrate_context_section_shows_native_role_rows() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    let ms_path = create_fixture_ms(temp.path());
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+
+    let rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+
+    assert!(rows.iter().any(|row| row.contains("Selected Fields")));
+    assert!(rows.iter().any(|row| row.contains("Refant")));
+    assert!(rows.iter().any(|row| row.contains("Flux Reference")));
+    assert!(rows.iter().any(|row| row.contains("Flux Transfer")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Refant") && row.contains("suggested"))
+    );
+}
+
+#[test]
+fn calibrate_products_section_expands_callibrary_entries_with_policy_rows() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    let callib = temp.path().join("apply.callib");
+    fs::write(
+        &callib,
+        "caltable='phase.gcal' calwt=F fldmap='nearest' tinterp='nearest'\n\
+caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear' field='0' spw='0'\n",
+    )
+    .expect("write callib");
+    app.set_text_value("callib", callib.to_string_lossy().as_ref());
+
+    let rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+
+    assert!(rows.iter().any(|row| row.contains("Callibrary")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Callib 1") && row.contains("phase.gcal"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Callib 2") && row.contains("bandpass.bcal"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("gainfield") && row.contains("nearest"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("spwmap") && row.contains("0,0"))
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("apply_to")
+            && row.contains("field=0")
+            && row.contains("spw=0"))
+    );
+}
+
+#[test]
+fn calibrate_context_role_rows_support_native_editing() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    let ms_path = create_fixture_ms(temp.path());
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+
+    assert!(app.select_workflow_context_setting_for_test(WorkflowContextSettingKind::ActiveFields));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    let field_labels = app.choice_picker_labels_for_test();
+    assert!(field_labels.iter().any(|label| label.contains("3C286")));
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.field_text_for_test("field").as_deref(), Some("0"));
+
+    assert!(app.select_workflow_context_setting_for_test(WorkflowContextSettingKind::RefAnt));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    let refant_labels = app.choice_picker_labels_for_test();
+    assert!(refant_labels.iter().any(|label| label.contains("VLA01")));
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.field_text_for_test("refant").as_deref(), Some("VLA02"));
+
+    assert!(
+        app.select_workflow_context_setting_for_test(
+            WorkflowContextSettingKind::FluxReferenceFields
+        )
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.field_text_for_test("reference_fields").as_deref(),
+        Some("3C286")
+    );
+
+    assert!(
+        app.select_workflow_context_setting_for_test(
+            WorkflowContextSettingKind::FluxTransferFields
+        )
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.field_text_for_test("transfer_fields").as_deref(),
+        Some("SECOND")
+    );
+}
+
+#[test]
+fn choice_picker_scrolls_long_refant_lists_to_selected_entry() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    let ms_path = create_fixture_ms_with_antenna_count(temp.path(), 12);
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+
+    assert!(app.select_workflow_context_setting_for_test(WorkflowContextSettingKind::RefAnt));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    for _ in 0..10 {
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+
+    let rendered = render_app(&app, 120, 20);
+    assert!(rendered.contains("VLA11"));
+    assert!(!rendered.contains("VLA01 (N01)"));
+}
+
+#[test]
+fn calibrate_products_section_shows_native_chain_setting_rows() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("gaintables", "/tmp/phase.gcal,/tmp/bandpass.bcal");
+    app.set_text_value("gainfield", "nearest;");
+    app.set_text_value("interp", "linear;nearest,linear");
+    app.set_text_value("spwmap", ";0,0");
+    app.set_text_value("calwt", "true,false");
+
+    let rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("gainfield") && row.contains("nearest"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("interp") && row.contains("linear"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("spwmap") && row.contains("0,0"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("calwt") && row.contains("true"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("interp") && row.contains("nearest,linear"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("+ Add solved product to chain"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("+ Import calibration table into chain"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("+ Choose callibrary file"))
+    );
+}
+
+#[test]
+fn calibrate_chain_setting_rows_support_native_editing() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    let ms_path = create_fixture_ms(temp.path());
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+    app.set_text_value("gaintables", "/tmp/phase.gcal");
+
+    assert!(app.select_workflow_chain_setting_for_test(0, WorkflowChainSettingKind::Interp));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    let interp_labels = app.choice_picker_labels_for_test();
+    assert!(interp_labels.contains(&"nearest".to_string()));
+    assert!(interp_labels.contains(&"linear".to_string()));
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.field_text_for_test("interp").as_deref(), Some("linear"));
+
+    assert!(app.select_workflow_chain_setting_for_test(0, WorkflowChainSettingKind::Calwt));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.field_text_for_test("calwt").as_deref(), Some("true"));
+
+    assert!(app.select_workflow_chain_setting_for_test(0, WorkflowChainSettingKind::Gainfield));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let gainfield_labels = app.choice_picker_labels_for_test();
+    assert!(
+        gainfield_labels
+            .iter()
+            .any(|label| label.contains("0") && label.contains("3C286"))
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.field_text_for_test("gainfield").as_deref(),
+        Some("nearest")
+    );
+
+    assert!(app.select_workflow_chain_setting_for_test(0, WorkflowChainSettingKind::Spwmap));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let spwmap_labels = app.choice_picker_labels_for_test();
+    assert!(
+        spwmap_labels
+            .iter()
+            .any(|label| label.contains("<identity>"))
+    );
+    assert!(
+        spwmap_labels
+            .iter()
+            .any(|label| label.contains("all selected SPWs -> 0"))
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.field_text_for_test("spwmap").as_deref(), Some("0,1"));
+}
+
+#[test]
+fn calibrate_products_actions_support_add_import_and_callibrary_authoring() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+
+    assert!(
+        app.select_workflow_product_action_for_test(WorkflowProductActionKind::AddSolvedProduct)
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some("/tmp/phase.gcal")
+    );
+
+    let imported = temp.path().join("imported.gcal");
+    fs::write(&imported, "stub").expect("write imported table placeholder");
+    app.set_text_value("table_path", imported.to_string_lossy().as_ref());
+    assert!(
+        app.select_workflow_product_action_for_test(WorkflowProductActionKind::ImportChainTable)
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.path_chooser_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let imported_display = fs::canonicalize(&imported)
+        .expect("canonicalize imported table")
+        .display()
+        .to_string();
+    let imported_chain = format!("/tmp/phase.gcal,{imported_display}");
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some(imported_chain.as_str())
+    );
+
+    let callib = temp.path().join("apply.callib");
+    fs::write(&callib, "caltable='/tmp/phase.gcal'").expect("write callib");
+    app.set_text_value("callib", callib.to_string_lossy().as_ref());
+    assert!(
+        app.select_workflow_product_action_for_test(WorkflowProductActionKind::ChooseCallibrary)
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.path_chooser_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.field_text_for_test("gaintables").as_deref(), Some(""));
+    let callib_display = fs::canonicalize(&callib)
+        .expect("canonicalize callib")
+        .display()
+        .to_string();
+    assert_eq!(
+        app.field_text_for_test("callib").as_deref(),
+        Some(callib_display.as_str())
+    );
+}
+
+#[test]
+fn calibrate_callibrary_entries_warn_on_direct_mutation_attempts() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    let callib = temp.path().join("apply.callib");
+    fs::write(&callib, "caltable='phase.gcal' calwt=F tinterp='nearest'\n").expect("write callib");
+    app.set_text_value("callib", callib.to_string_lossy().as_ref());
+
+    assert!(app.select_workflow_chain_entry_for_test(1));
+    app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+    assert!(
+        app.status_line_for_test()
+            .contains("Callibrary entries are managed by")
+    );
+    assert_eq!(
+        app.field_text_for_test("callib").as_deref(),
+        Some(callib.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn calibrate_callibrary_entries_support_native_setting_editing() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    let ms_path = create_fixture_ms(temp.path());
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+    let callib = temp.path().join("apply.callib");
+    fs::write(&callib, "caltable='phase.gcal' calwt=F tinterp='nearest'\n").expect("write callib");
+    app.set_text_value("callib", callib.to_string_lossy().as_ref());
+
+    assert!(app.select_workflow_chain_setting_for_test(1, WorkflowChainSettingKind::Interp));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(app.select_workflow_chain_setting_for_test(1, WorkflowChainSettingKind::Calwt));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(app.select_workflow_chain_setting_for_test(1, WorkflowChainSettingKind::Spwmap));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.choice_picker_active());
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let specs = load_apply_specs_from_callib(&callib).expect("reload edited callib");
+    assert_eq!(specs.len(), 1);
+    assert_eq!(
+        specs[0].interp,
+        casa_calibration::ApplyInterpolationMode::Linear
+    );
+    assert!(specs[0].calwt);
+    assert_eq!(specs[0].spwmap, vec![0, 1]);
+    assert_eq!(
+        app.field_text_for_test("callib").as_deref(),
+        Some(callib.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn calibrate_delete_removes_selected_chain_entry() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("gaintables", "/tmp/phase.gcal,/tmp/bandpass.bcal");
+
+    assert!(app.select_workflow_chain_entry_for_test(0));
+    app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some("/tmp/bandpass.bcal")
+    );
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("/tmp/bandpass.bcal"))
+    );
+}
+
+#[test]
+fn calibrate_ctrl_jk_reorders_chain_entries() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value(
+        "gaintables",
+        "/tmp/phase.gcal,/tmp/bandpass.bcal,/tmp/flux.gcal",
+    );
+
+    assert!(app.select_workflow_chain_entry_for_test(1));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some("/tmp/bandpass.bcal,/tmp/phase.gcal,/tmp/flux.gcal")
+    );
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("/tmp/bandpass.bcal"))
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some("/tmp/phase.gcal,/tmp/bandpass.bcal,/tmp/flux.gcal")
+    );
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("/tmp/bandpass.bcal"))
+    );
+}
+
+#[test]
+fn calibrate_shift_p_promotes_selected_workflow_product_into_chain() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+
+    assert!(app.select_workflow_product_for_test(0));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT));
+
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some("/tmp/phase.gcal")
+    );
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("Chain") && text.contains("/tmp/phase.gcal"))
+    );
+}
+
+#[test]
+fn calibrate_shift_p_replaces_prior_same_stage_chain_entry() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase-r1.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase-r2.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 43,
+    }));
+    app.set_text_value("gaintables", "/tmp/phase-r1.gcal,/tmp/bandpass.bcal");
+
+    assert!(app.select_workflow_product_for_test(1));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT));
+
+    assert_eq!(
+        app.field_text_for_test("gaintables").as_deref(),
+        Some("/tmp/phase-r2.gcal,/tmp/bandpass.bcal")
+    );
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("Chain") && text.contains("/tmp/phase-r2.gcal"))
+    );
+}
+
+#[test]
+fn calibrate_stage_parameters_follow_selected_stage() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+
+    let inspect_rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+    assert!(inspect_rows.iter().any(|row| {
+        row.contains("Goal")
+            && row.contains(
+                "Summarize the MeasurementSet and verify the calibrator/target selections",
+            )
+    }));
+    assert!(
+        inspect_rows
+            .iter()
+            .any(|row| row.contains("Produces") && row.contains("MeasurementSet summary"))
+    );
+    assert!(
+        inspect_rows
+            .iter()
+            .any(|row| row.contains("Hint") && row.contains("Start here"))
+    );
+    assert!(
+        inspect_rows
+            .iter()
+            .any(|row| row.contains("Action") && row.contains("Run dataset summary now"))
+    );
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::Apply));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let apply_rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+    assert!(
+        apply_rows
+            .iter()
+            .any(|row| row.contains("Goal")
+                && row.contains("Apply the configured calibration chain"))
+    );
+    assert!(
+        apply_rows
+            .iter()
+            .any(|row| row.contains("Produces") && row.contains("CORRECTED_DATA"))
+    );
+    assert!(
+        apply_rows
+            .iter()
+            .any(|row| row.contains("Hint") && row.contains("Products chain"))
+    );
+    assert!(
+        apply_rows
+            .iter()
+            .any(|row| row.contains("Action") && row.contains("Run apply now"))
+    );
+    assert!(apply_rows.iter().any(|row| row.contains("Apply Settings")));
+    assert!(apply_rows.iter().any(|row| row.contains("Selection")));
+    assert!(apply_rows.iter().any(|row| row.contains("Apply Mode")));
+    assert!(
+        !apply_rows
+            .iter()
+            .any(|row| row.contains("Calibration Tables"))
+    );
+    assert!(!apply_rows.iter().any(|row| row.contains("Callibrary File")));
+    assert!(
+        !apply_rows
+            .iter()
+            .any(|row| row.contains("Gainfield Overrides"))
+    );
+    assert!(!apply_rows.iter().any(|row| row.contains("Interpolation")));
+    assert!(!apply_rows.iter().any(|row| row.contains("SPW Maps")));
+    assert!(!apply_rows.iter().any(|row| row.contains("Cal Weight")));
+    assert!(!apply_rows.iter().any(|row| row.contains("Table Path")));
+    assert!(
+        !apply_rows
+            .iter()
+            .any(|row| row.contains("Fluxscale Input Table"))
+    );
+
+    app.set_text_value("mode", "stats");
+    let stats_rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+    assert!(
+        stats_rows
+            .iter()
+            .any(|row| row.contains("Goal") && row.contains("Inspect solved tables"))
+    );
+    assert!(
+        stats_rows
+            .iter()
+            .any(|row| row.contains("Action") && row.contains("Run stats now"))
+    );
+    assert!(stats_rows.iter().any(|row| row.contains("Inspect")));
+    assert!(stats_rows.iter().any(|row| row.contains("Table Path")));
+    assert!(stats_rows.iter().any(|row| row.contains("Stats Axis")));
+    assert!(!stats_rows.iter().any(|row| row.contains("Apply Mode")));
+    assert!(
+        !stats_rows
+            .iter()
+            .any(|row| row.contains("Fluxscale Input Table"))
+    );
+
+    app.set_text_value("mode", "fluxscale");
+    let fluxscale_rows = app
+        .form_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+    assert!(fluxscale_rows.iter().any(
+        |row| row.contains("Goal") && row.contains("Transfer the absolute flux density scale")
+    ));
+    assert!(
+        fluxscale_rows
+            .iter()
+            .any(|row| row.contains("Action") && row.contains("Run fluxscale now"))
+    );
+    assert!(
+        fluxscale_rows
+            .iter()
+            .any(|row| row.contains("Fluxscale Input Table"))
+    );
+    assert!(fluxscale_rows.iter().any(|row| row.contains("Fluxscale")));
+    assert!(
+        fluxscale_rows
+            .iter()
+            .any(|row| row.contains("Flux Reference"))
+    );
+    assert!(
+        fluxscale_rows
+            .iter()
+            .any(|row| row.contains("Flux Transfer"))
+    );
+    assert!(!fluxscale_rows.iter().any(|row| row.contains("Apply Mode")));
+}
+
+#[test]
+fn calibrate_stage_selection_and_post_run_guidance_prime_defaults() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", "/tmp/ngc5921.ms");
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::SolveGain));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.field_text_for_test("out_table").as_deref(),
+        Some("/tmp/ngc5921.gain.gcal")
+    );
+
+    app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
+        output_table: PathBuf::from("/tmp/phase.gcal"),
+        gain_type: GainType::G,
+        refant_antenna_id: 3,
+        field_ids: vec![0],
+        spectral_window_ids: vec![0],
+        solution_row_count: 42,
+    }));
+
+    assert_eq!(
+        app.field_text_for_test("mode").as_deref(),
+        Some("solve_bandpass")
+    );
+    assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
+    assert_eq!(
+        app.field_text_for_test("table_path").as_deref(),
+        Some("/tmp/phase.gcal")
+    );
+    assert!(
+        app.status_line_for_test()
+            .contains("Recommended next stage: Solve Bandpass")
+    );
+
+    assert!(app.select_workflow_stage_for_test(WorkflowStageId::FluxScale));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.field_text_for_test("fluxscale_input").as_deref(),
+        Some("/tmp/phase.gcal")
+    );
+    assert_eq!(
+        app.field_text_for_test("out_table").as_deref(),
+        Some("/tmp/ngc5921.flux.gcal")
+    );
+}
+
+#[test]
+fn calibrate_idle_summary_shows_plots_tab() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.prime_idle_summary_for_launch();
+
+    let rendered = render_app(&app, 160, 32);
+    assert!(rendered.contains("Overview"));
+    assert!(rendered.contains("Data"));
+    assert!(rendered.contains("Diagnostics"));
+    assert!(rendered.contains("Products"));
+}
+
+#[test]
+fn calibrate_plot_catalog_lists_diagnostic_and_inspection_presets() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+
+    let labels = app
+        .plot_catalog_rows()
+        .into_iter()
+        .map(|row| row.label)
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"Diagnostic: Corrected Amplitude vs Time".to_string()));
+    assert!(labels.contains(&"Diagnostic: Corrected Phase vs Frequency".to_string()));
+    assert!(labels.contains(&"Inspect: Gain Phase vs Time".to_string()));
+    assert!(labels.contains(&"Inspect: Bandpass Amplitude vs Frequency".to_string()));
+}
+
+#[test]
+fn calibrate_plot_controls_omit_copy_cli() {
+    let temp = tempdir().expect("tempdir");
+    let schema = calibrate_app()
+        .load_schema()
+        .expect("load calibrate schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(calibrate_app(), schema, config);
+
+    let labels = app
+        .plot_control_rows()
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"Refresh Preview".to_string()));
+    assert!(labels.contains(&"Export PNG".to_string()));
+    assert!(labels.contains(&"Export PDF".to_string()));
+    assert!(!labels.contains(&"Copy CLI".to_string()));
 }
 
 #[test]
@@ -269,6 +1689,24 @@ fn kitty_overlay_env_flags_select_disabled_or_animation_modes() {
     unsafe {
         std::env::remove_var("CASARS_IMEXPLORE_ENABLE_KITTY_ANIMATION_OVERLAY");
         std::env::remove_var("CASARS_IMEXPLORE_DISABLE_DIRECT_OVERLAY");
+    }
+}
+
+#[test]
+fn basic_terminal_mode_forces_halfblock_picker() {
+    let _guard = test_env_lock();
+    unsafe {
+        std::env::set_var("CASARS_ASSUME_BASIC_TERMINAL", "1");
+    }
+
+    let picker = terminal_picker();
+    assert_eq!(
+        picker.font_size(),
+        ratatui_graphics::Picker::halfblocks().font_size()
+    );
+
+    unsafe {
+        std::env::remove_var("CASARS_ASSUME_BASIC_TERMINAL");
     }
 }
 
@@ -436,20 +1874,16 @@ fn renders_idle_layout_with_ready_status() {
     assert!(rendered.contains("casars"));
     assert!(rendered.contains("MeasurementSet / MSExplore"));
     assert!(rendered.contains("MeasurementSet Path"));
-    assert!(rendered.contains("Ready. Press r to run the selected command."));
+    assert!(rendered.contains("Ready. Press r"));
     assert!(rendered.contains("Overview"));
 }
 
 #[test]
 fn default_section_visibility_and_toggle_work() {
-    let (_temp, mut app) = test_app();
-    assert_eq!(app.section_collapsed_for_test("Input"), Some(false));
-    assert_eq!(app.section_collapsed_for_test("Selection"), Some(false));
-    assert_eq!(app.section_collapsed_for_test("Output"), Some(true));
-
-    app.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-    let rendered = render_app(&app, 100, 30);
-    assert!(rendered.contains("[+] Output"));
+    let (_temp, app) = test_app();
+    assert_eq!(app.section_collapsed_for_test("Context"), Some(false));
+    assert_eq!(app.section_collapsed_for_test("Views"), Some(false));
+    assert_eq!(app.section_collapsed_for_test("Controls"), Some(true));
 }
 
 #[test]
@@ -484,7 +1918,7 @@ fn pane_split_ratio_persists_after_drag() {
         msexplore_command_schema("msexplore"),
         ConfigStore::load_for_tests(config_path.clone()),
     );
-    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 48), &app);
 
     app.handle_mouse_event(
         mouse(
@@ -823,23 +2257,23 @@ fn double_click_enters_text_edit_mode() {
 fn clicking_result_pane_changes_focus_and_tab_click_selects_tab() {
     let (_temp, mut app) = test_app();
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
-    let fields_tab = layout
+    let data_tab = layout
         .tab_hits
         .iter()
-        .find(|hit| hit.tab == ResultTab::Fields)
-        .expect("fields tab");
+        .find(|hit| hit.tab == ResultTab::Data)
+        .expect("data tab");
 
     app.handle_mouse_event(
         mouse(
             MouseEventKind::Down(MouseButton::Left),
-            fields_tab.rect.x,
-            fields_tab.rect.y,
+            data_tab.rect.x,
+            data_tab.rect.y,
         ),
         &layout,
     );
 
     assert_eq!(app.pane_focus_for_test(), PaneFocus::Result);
-    assert_eq!(app.active_result_tab(), ResultTab::Fields);
+    assert_eq!(app.active_result_tab(), ResultTab::Data);
 }
 
 #[test]
@@ -933,8 +2367,8 @@ fn rich_panel_keeps_content_clear_of_the_frame() {
     let (_temp, mut app) = test_app();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
     let rendered = render_app(&app, 100, 30);
-    assert!(rendered.contains("▾ Input"));
-    assert!(!rendered.contains("▾ ▾ Input"));
+    assert!(rendered.contains("▾ Context"));
+    assert!(!rendered.contains("▾ ▾ Context"));
 }
 
 #[test]
@@ -2255,7 +3689,7 @@ fn browser_tab_moves_focus_and_brackets_switch_views() {
 
 #[cfg(unix)]
 #[test]
-fn browser_tabs_are_clickable() {
+fn browser_views_are_clickable_from_the_browser_shell() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
     let script = write_fake_tablebrowser_script(
@@ -2295,21 +3729,24 @@ fn browser_tabs_are_clickable() {
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
-    let cells_tab = layout
-        .browser_tab_hits
+    let cells_view = layout
+        .form_rows
         .iter()
-        .find(|hit| hit.tab == crate::app::BrowserTab::Cells)
-        .expect("cells browser tab");
+        .find(|hit| {
+            hit.target == crate::app::FormSelection::BrowserView(crate::app::BrowserTab::Cells)
+        })
+        .expect("cells browser view");
     app.handle_mouse_event(
         mouse(
             MouseEventKind::Down(MouseButton::Left),
-            cells_tab.rect.x,
-            cells_tab.rect.y,
+            cells_view.rect.x,
+            cells_view.rect.y,
         ),
         &layout,
     );
 
     assert_eq!(app.active_browser_tab_label(), Some("Cells"));
+    assert_eq!(app.active_result_tab(), ResultTab::Content);
 }
 
 #[test]
@@ -6232,8 +7669,10 @@ fn browser_command_errors_close_the_session_and_surface_stderr() {
 fn verbose_off_hides_detail_tabs() {
     let (_temp, app) = test_app();
     let rendered = render_app(&app, 160, 30);
-    assert!(rendered.contains("[Scans]"));
-    assert!(rendered.contains("[Sources]"));
+    assert!(rendered.contains("[Data]"));
+    assert!(rendered.contains("[Plots]"));
+    assert!(!rendered.contains("[Scans]"));
+    assert!(!rendered.contains("[Sources]"));
 }
 
 #[test]
@@ -6255,7 +7694,7 @@ fn selected_section_keeps_its_disclosure_glyph() {
         &layout,
     );
     let rendered = render_app(&app, 100, 30);
-    assert!(rendered.contains("▸ Input") || rendered.contains("▾ Input"));
+    assert!(rendered.contains("▸ Context") || rendered.contains("▾ Context"));
 }
 
 #[test]
@@ -6924,8 +8363,9 @@ fn plot_workspace_mouse_selection_and_export_pdf_work() {
 fn verbose_on_exposes_scans_and_sources_tabs() {
     let (_temp, app) = test_app();
     let rendered = render_app(&app, 140, 30);
-    assert!(rendered.contains("[Scans]"));
-    assert!(rendered.contains("[Sources]"));
+    assert!(rendered.contains("Overview"));
+    assert!(rendered.contains("Data"));
+    assert!(rendered.contains("History"));
 }
 
 #[test]
@@ -7057,6 +8497,24 @@ fn keyboard_horizontal_scroll_changes_result_offset() {
     );
     app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
     assert!(app.active_result_hscroll_for_test() > 0);
+}
+
+#[test]
+fn horizontal_scrollable_result_lines_clip_instead_of_using_ellipsis() {
+    let (_temp, mut app) = test_app();
+    app.set_result_for_test("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\nsecond line\n", "");
+    app.set_active_result_tab(ResultTab::Stdout);
+    let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 40, 20), &app);
+    let scrollbar = layout
+        .result_hscrollbar
+        .expect("result horizontal scrollbar");
+    assert!(scrollbar.width > 0);
+
+    let buffer = app
+        .visible_text_buffer(OutputPane::Result, &layout)
+        .expect("visible buffer");
+    let first = &buffer.lines[0].text;
+    assert!(!first.contains("..."), "line should clip cleanly: {first}");
 }
 
 #[test]
@@ -7454,6 +8912,18 @@ fn start_run_with_default_msexplore_launcher(app: &mut AppState) {
     });
 }
 
+fn start_run_with_default_calibrate_launcher(app: &mut AppState) {
+    with_test_env_lock(|| {
+        if let Some(path) = test_workspace_binary("calibrate") {
+            set_calibrate_launcher_bin(&path);
+        } else {
+            clear_calibrate_launcher_bin();
+        }
+        app.start_run_for_test();
+        clear_calibrate_launcher_bin();
+    });
+}
+
 fn start_run_with_msexplore_launcher_bin(app: &mut AppState, path: &Path) {
     with_test_env_lock(|| {
         set_launcher_bin(path);
@@ -7473,6 +8943,70 @@ fn set_launcher_bin(path: &Path) {
     // Tests hold a process-global mutex before mutating the environment.
     unsafe {
         std::env::set_var("CASARS_MSEXPLORE_BIN", path);
+    }
+}
+
+fn shared_ngc5921_ms_path() -> Option<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") {
+        roots.push(PathBuf::from(root));
+    }
+    roots.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("casatestdata"),
+    );
+    if let Some(home) = env::var_os("HOME") {
+        roots.push(
+            PathBuf::from(home)
+                .join("SoftwareProjects")
+                .join("casatestdata"),
+        );
+    }
+    roots
+        .into_iter()
+        .map(|root| root.join("measurementset").join("vla").join("ngc5921.ms"))
+        .find(|path| path.exists())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path)?;
+        } else if file_type.is_symlink() {
+            let target = fs::read_link(&source_path)?;
+            let resolved = if target.is_absolute() {
+                target
+            } else {
+                source_path.parent().unwrap_or(source).join(target)
+            };
+            if resolved.is_dir() {
+                copy_dir_recursive(&resolved, &destination_path)?;
+            } else {
+                fs::copy(resolved, destination_path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn clear_calibrate_launcher_bin() {
+    unsafe {
+        std::env::remove_var("CASARS_CALIBRATE_BIN");
+    }
+}
+
+fn set_calibrate_launcher_bin(path: &Path) {
+    unsafe {
+        std::env::set_var("CASARS_CALIBRATE_BIN", path);
     }
 }
 
@@ -8373,7 +9907,7 @@ fn create_fixture_ms(root: &Path) -> PathBuf {
     add_polarization_row(&mut ms, &[5, 8]);
     add_data_description_row(&mut ms, 0, 0);
     add_data_description_row(&mut ms, 1, 1);
-    add_antenna_rows(&mut ms);
+    add_antenna_rows_with_count(&mut ms, 2);
     add_main_row(&mut ms, 4_981_000_000.0, 1, 0, 1, 0, 0, [30.0, 40.0, 0.0]);
     add_main_row(&mut ms, 4_981_000_015.0, 0, 1, 2, 1, 1, [300.0, 400.0, 0.0]);
     set_main_row_data_matrix(
@@ -8414,6 +9948,43 @@ fn create_fixture_ms(root: &Path) -> PathBuf {
         1,
         ArrayD::from_shape_vec(vec![2, 2], vec![true, true, true, true]).unwrap(),
     );
+    ms.save().expect("save MS");
+    ms_path
+}
+
+fn create_fixture_ms_with_antenna_count(root: &Path, antenna_count: usize) -> PathBuf {
+    let ms_path = root.join("measurement_set_fixture_many_antennas.ms");
+    let mut ms = MeasurementSet::create(
+        &ms_path,
+        MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+    )
+    .expect("create MS");
+    add_observation_row(&mut ms, 4_981_000_000.0, 4_981_000_030.0);
+    add_field_row(&mut ms, "3C286", "C", 0, 4_981_000_000.0, [1.234, 0.456]);
+    add_field_row(&mut ms, "SECOND", "S", 1, 4_981_000_015.0, [1.334, 0.556]);
+    add_state_row(&mut ms, "CALIBRATE_PHASE.ON_SOURCE");
+    add_state_row(&mut ms, "TARGET.ON_SOURCE");
+    add_spectral_window_row(&mut ms, "SPW0", 1.4e9);
+    add_spectral_window_row(&mut ms, "SPW1", 2.8e9);
+    add_polarization_row(&mut ms, &[9, 12]);
+    add_polarization_row(&mut ms, &[5, 8]);
+    add_data_description_row(&mut ms, 0, 0);
+    add_data_description_row(&mut ms, 1, 1);
+    add_antenna_rows_with_count(&mut ms, antenna_count.max(2));
+    add_main_row(&mut ms, 4_981_000_000.0, 1, 0, 1, 0, 0, [30.0, 40.0, 0.0]);
+    add_main_row(&mut ms, 4_981_000_015.0, 0, 1, 2, 1, 1, [300.0, 400.0, 0.0]);
+    for antenna2 in 2..antenna_count.max(2) {
+        add_main_row(
+            &mut ms,
+            4_981_000_015.0 + antenna2 as f64,
+            antenna2 as i32,
+            0,
+            antenna2 as i32 + 1,
+            0,
+            0,
+            [300.0 + antenna2 as f64, 400.0 + antenna2 as f64, 0.0],
+        );
+    }
     ms.save().expect("save MS");
     ms_path
 }
@@ -8594,30 +10165,22 @@ fn add_state_row(ms: &mut MeasurementSet, obs_mode: &str) {
         .unwrap();
 }
 
-fn add_antenna_rows(ms: &mut MeasurementSet) {
+fn add_antenna_rows_with_count(ms: &mut MeasurementSet, count: usize) {
     let mut antenna = ms.antenna_mut().expect("ANTENNA accessor");
-    antenna
-        .add_antenna(
-            "VLA01",
-            "N01",
-            "GROUND-BASED",
-            "ALT-AZ",
-            [0.0, 10.0, 20.0],
-            [0.0, 0.0, 0.0],
-            25.0,
-        )
-        .unwrap();
-    antenna
-        .add_antenna(
-            "VLA02",
-            "N02",
-            "GROUND-BASED",
-            "ALT-AZ",
-            [1.0, 11.0, 21.0],
-            [0.0, 0.0, 0.0],
-            25.0,
-        )
-        .unwrap();
+    for index in 0..count {
+        let ordinal = index + 1;
+        antenna
+            .add_antenna(
+                &format!("VLA{ordinal:02}"),
+                &format!("N{ordinal:02}"),
+                "GROUND-BASED",
+                "ALT-AZ",
+                [index as f64, 10.0 + index as f64, 20.0 + index as f64],
+                [0.0, 0.0, 0.0],
+                25.0,
+            )
+            .unwrap();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

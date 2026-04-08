@@ -3,7 +3,7 @@
 mod browser_manager;
 pub(crate) use browser_manager::BrowserManagerRowView;
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -11,7 +11,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use casa_calibration::ManagedCalibrationOutput;
+use casa_calibration::{
+    ApplyCalibrationTableSpec, ApplyInterpolationMode, CalibrationPlotPreset,
+    CalibrationPlotRequest, GainFieldSelector, ManagedCalibrationOutput,
+    build_calibration_plot_payload, load_apply_specs_from_callib, save_apply_specs_to_callib,
+};
 use casacore_imagebrowser_protocol::{
     ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserCommand, ImageBrowserFocus,
     ImageBrowserParameters, ImageBrowserPreviewRequest, ImageBrowserProbe, ImageBrowserSnapshot,
@@ -61,8 +65,24 @@ use crate::movie_perf::{
     BackendTimingBreakdown, MovieFrameOutcome, MoviePerfContext, MoviePerfTracer,
     MoviePipelineState,
 };
-use crate::registry::{BrowserAppKind, RegistryApp};
+use crate::registry::{AppShellKind, BrowserAppKind, RegistryApp};
+use crate::shell::{
+    BrowserOverviewDisplay, InspectOverviewDisplay, render_browser_overview_lines,
+    render_inspect_overview_lines,
+};
+use crate::terminal_picker;
 use crate::ui::UiLayout;
+use crate::workflow::{
+    WorkflowArtifactDisplay, WorkflowArtifactGroupDisplay, WorkflowCalibrationArtifactKind,
+    WorkflowDetailDisplay, WorkflowDiagnosticSummaryDisplay, WorkflowOverviewDisplay,
+    WorkflowProductRowDisplay, WorkflowProductSnapshot, WorkflowProductStatus, WorkflowRunSnapshot,
+    WorkflowStageDisplay, WorkflowStageSpec, WorkflowStageState, WorkflowValueDisplay,
+    derive_stage_states, preferred_workflow_calibration_preset, render_workflow_artifact_groups,
+    render_workflow_detail_display, render_workflow_diagnostic_summary,
+    render_workflow_overview_lines, render_workflow_product_row_display,
+    render_workflow_stage_display, render_workflow_value_display, stale_descendant_product_indices,
+    workflow_calibration_catalog_entries,
+};
 
 const DENSE_SPINNER_FRAMES: &[&str] = &["|", "/", "-", "\\"];
 const RICH_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠴", "⠦"];
@@ -87,7 +107,7 @@ const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 9] = [
     "clip_high",
     "fps",
 ];
-const RESULT_TAB_COUNT: usize = 10;
+const RESULT_TAB_COUNT: usize = 17;
 const BROWSE_SUFFIX: &str = " [browse]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +131,10 @@ enum ParameterAction {
     ChoicePrevious,
     ChoiceNext,
     Activate,
+    PromoteWorkflowProduct,
+    Delete,
+    MoveUp,
+    MoveDown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,7 +309,98 @@ pub(crate) enum PaneFocus {
 pub(crate) enum FormSelection {
     Section(usize),
     Field(usize),
+    SummaryView(SummaryDataView),
+    BrowserView(BrowserTab),
+    WorkflowContextSetting(WorkflowContextSettingKind),
+    WorkflowStageGuide(WorkflowStageGuideKind),
+    WorkflowStageAction,
+    WorkflowProductAction(WorkflowProductActionKind),
+    WorkflowChainEntry(usize),
+    WorkflowChainSetting(usize, WorkflowChainSettingKind),
+    WorkflowProduct(usize),
+    WorkflowStage(WorkflowStageId),
     BrowserPane(BrowserPaneSelection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowContextSettingKind {
+    ActiveFields,
+    RefAnt,
+    FluxReferenceFields,
+    FluxTransferFields,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowStageGuideKind {
+    Goal,
+    Produces,
+    Hint,
+}
+
+impl WorkflowStageGuideKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Goal => "Goal",
+            Self::Produces => "Produces",
+            Self::Hint => "Hint",
+        }
+    }
+}
+
+impl WorkflowContextSettingKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ActiveFields => "Selected Fields",
+            Self::RefAnt => "Refant",
+            Self::FluxReferenceFields => "Flux Reference",
+            Self::FluxTransferFields => "Flux Transfer",
+        }
+    }
+
+    fn field_id(self) -> &'static str {
+        match self {
+            Self::ActiveFields => "field",
+            Self::RefAnt => "refant",
+            Self::FluxReferenceFields => "reference_fields",
+            Self::FluxTransferFields => "transfer_fields",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowProductActionKind {
+    AddSolvedProduct,
+    ImportChainTable,
+    ChooseCallibrary,
+}
+
+impl WorkflowProductActionKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AddSolvedProduct => "+ Add solved product to chain",
+            Self::ImportChainTable => "+ Import calibration table into chain",
+            Self::ChooseCallibrary => "+ Choose callibrary file",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowChainSettingKind {
+    Gainfield,
+    Interp,
+    Spwmap,
+    Calwt,
+}
+
+impl WorkflowChainSettingKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Gainfield => "gainfield",
+            Self::Interp => "interp",
+            Self::Spwmap => "spwmap",
+            Self::Calwt => "calwt",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -295,9 +410,17 @@ pub(crate) enum BrowserPaneSelection {
     Mask(usize),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ResultTab {
     Overview,
+    Data,
+    Structure,
+    Content,
+    Inspector,
+    Products,
+    Diagnostics,
+    History,
     Observations,
     Scans,
     Fields,
@@ -310,22 +433,16 @@ pub(crate) enum ResultTab {
 }
 
 impl ResultTab {
-    pub(crate) const ALL: [Self; RESULT_TAB_COUNT] = [
-        Self::Overview,
-        Self::Observations,
-        Self::Scans,
-        Self::Fields,
-        Self::Spws,
-        Self::Sources,
-        Self::Antennas,
-        Self::Plots,
-        Self::Stdout,
-        Self::Stderr,
-    ];
-
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
+            Self::Data => "Data",
+            Self::Structure => "Structure",
+            Self::Content => "Content",
+            Self::Inspector => "Inspector",
+            Self::Products => "Products",
+            Self::Diagnostics => "Diagnostics",
+            Self::History => "History",
             Self::Observations => "Observations",
             Self::Scans => "Scans",
             Self::Fields => "Fields",
@@ -341,15 +458,176 @@ impl ResultTab {
     fn index(self) -> usize {
         match self {
             Self::Overview => 0,
-            Self::Observations => 1,
-            Self::Scans => 2,
-            Self::Fields => 3,
-            Self::Spws => 4,
-            Self::Sources => 5,
-            Self::Antennas => 6,
-            Self::Plots => 7,
-            Self::Stdout => 8,
-            Self::Stderr => 9,
+            Self::Data => 1,
+            Self::Structure => 2,
+            Self::Content => 3,
+            Self::Inspector => 4,
+            Self::Products => 5,
+            Self::Diagnostics => 6,
+            Self::History => 7,
+            Self::Observations => 8,
+            Self::Scans => 9,
+            Self::Fields => 10,
+            Self::Spws => 11,
+            Self::Sources => 12,
+            Self::Antennas => 13,
+            Self::Plots => 14,
+            Self::Stdout => 15,
+            Self::Stderr => 16,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum SummaryDataView {
+    Observations,
+    Scans,
+    Fields,
+    Spws,
+    Sources,
+    Antennas,
+}
+
+impl SummaryDataView {
+    const ALL: [Self; 6] = [
+        Self::Observations,
+        Self::Scans,
+        Self::Fields,
+        Self::Spws,
+        Self::Sources,
+        Self::Antennas,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Observations => "Observations",
+            Self::Scans => "Scans",
+            Self::Fields => "Fields",
+            Self::Spws => "SPWs",
+            Self::Sources => "Sources",
+            Self::Antennas => "Antennas",
+        }
+    }
+
+    fn cycle(self, forward: bool) -> Self {
+        let position = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or(0);
+        if forward {
+            Self::ALL[(position + 1) % Self::ALL.len()]
+        } else if position == 0 {
+            Self::ALL[Self::ALL.len() - 1]
+        } else {
+            Self::ALL[position - 1]
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowStageId {
+    InspectDataset,
+    SolveGain,
+    SolveBandpass,
+    FluxScale,
+    Apply,
+    InspectResults,
+}
+
+impl WorkflowStageId {
+    const ALL: [Self; 6] = [
+        Self::InspectDataset,
+        Self::SolveGain,
+        Self::SolveBandpass,
+        Self::FluxScale,
+        Self::Apply,
+        Self::InspectResults,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::InspectDataset => "Inspect Dataset",
+            Self::SolveGain => "Solve Gain",
+            Self::SolveBandpass => "Solve Bandpass",
+            Self::FluxScale => "Fluxscale",
+            Self::Apply => "Apply",
+            Self::InspectResults => "Inspect Results",
+        }
+    }
+
+    fn cli_mode(self) -> &'static str {
+        match self {
+            Self::InspectDataset => "summary",
+            Self::SolveGain => "solve_gain",
+            Self::SolveBandpass => "solve_bandpass",
+            Self::FluxScale => "fluxscale",
+            Self::Apply => "apply",
+            Self::InspectResults => "stats",
+        }
+    }
+
+    fn from_mode(mode: &str) -> Self {
+        match mode {
+            "summary" => Self::InspectDataset,
+            "solve_gain" => Self::SolveGain,
+            "solve_bandpass" => Self::SolveBandpass,
+            "fluxscale" => Self::FluxScale,
+            "stats" => Self::InspectResults,
+            "apply" => Self::Apply,
+            _ => Self::Apply,
+        }
+    }
+
+    fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|stage| stage.key() == key)
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::InspectDataset => "inspect_dataset",
+            Self::SolveGain => "solve_gain",
+            Self::SolveBandpass => "solve_bandpass",
+            Self::FluxScale => "fluxscale",
+            Self::Apply => "apply",
+            Self::InspectResults => "inspect_results",
+        }
+    }
+
+    fn depends_on_keys(self) -> &'static [&'static str] {
+        match self {
+            Self::InspectDataset => &[],
+            Self::SolveGain => &["inspect_dataset"],
+            Self::SolveBandpass => &["solve_gain"],
+            Self::FluxScale => &["solve_gain"],
+            Self::Apply => &["solve_gain"],
+            Self::InspectResults => &["apply"],
+        }
+    }
+
+    fn produces_product(self) -> bool {
+        !matches!(self, Self::InspectDataset | Self::InspectResults)
+    }
+
+    fn spec(self) -> WorkflowStageSpec {
+        WorkflowStageSpec {
+            id: self.key(),
+            label: self.label(),
+            depends_on: self.depends_on_keys(),
+            produces_product: self.produces_product(),
+        }
+    }
+
+    fn cycle(self, forward: bool) -> Self {
+        let position = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or(0);
+        if forward {
+            Self::ALL[(position + 1) % Self::ALL.len()]
+        } else if position == 0 {
+            Self::ALL[Self::ALL.len() - 1]
+        } else {
+            Self::ALL[position - 1]
         }
     }
 }
@@ -365,6 +643,7 @@ pub(crate) struct FormRowView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FormRowKind {
     Section { collapsed: bool },
+    Subsection,
     Field,
 }
 
@@ -418,6 +697,7 @@ pub(crate) struct PlotCatalogRowView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlotCatalogTarget {
     Preset(MsPlotPreset),
+    Calibration(CalibrationPlotPreset),
     CustomPlot,
     PageSpec,
 }
@@ -477,6 +757,16 @@ impl BrowserTab {
             Self::Spectrum => "Spectrum",
             Self::Metadata => "Metadata",
             Self::Coordinates => "Coordinates",
+        }
+    }
+
+    fn shell_result_tab(self) -> ResultTab {
+        match self {
+            Self::Overview | Self::Columns | Self::Keywords | Self::Subtables => {
+                ResultTab::Structure
+            }
+            Self::Cells | Self::Plane | Self::Spectrum => ResultTab::Content,
+            Self::Metadata | Self::Coordinates => ResultTab::Structure,
         }
     }
 
@@ -562,9 +852,13 @@ pub(crate) struct AppState {
     active_result_tab: ResultTab,
     result_scrolls: [u16; RESULT_TAB_COUNT],
     result_hscrolls: [u16; RESULT_TAB_COUNT],
+    selected_summary_view: SummaryDataView,
+    history_entries: Vec<HistoryEntry>,
+    workflow_products: Vec<WorkflowProductRecord>,
     running: Option<RunningState>,
     plot_workspace: PlotWorkspaceState,
     path_chooser: Option<PathChooserState>,
+    choice_picker: Option<ChoicePickerState>,
     browser_mode_picker: Option<ImageBrowserLeftPaneMode>,
     browser_session: Option<BrowserSession>,
     spinner_frame: usize,
@@ -1224,7 +1518,7 @@ fn render_movie_presentation(
 }
 
 fn new_image_plane_panel_state() -> ImagePlanePanelState {
-    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    let picker = terminal_picker();
     let font_size = picker.font_size();
     let render_image_cache = Arc::new(Mutex::new(RenderImageCache::new(
         IMAGE_PLANE_RENDER_CACHE_CAPACITY,
@@ -1264,7 +1558,7 @@ fn new_image_plane_panel_state() -> ImagePlanePanelState {
 }
 
 fn new_image_spectrum_panel_state() -> ImageSpectrumPanelState {
-    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    let picker = terminal_picker();
     let font_size = picker.font_size();
     let render_image_cache = Arc::new(Mutex::new(RenderImageCache::new(
         IMAGE_SPECTRUM_RENDER_CACHE_CAPACITY,
@@ -1828,9 +2122,16 @@ struct PlotPanelState {
 
 #[derive(Debug)]
 struct PathChooserState {
-    field_index: usize,
+    target: PathChooserTarget,
     explorer: FileExplorer,
     last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathChooserTarget {
+    Field(usize),
+    WorkflowImportChainTable,
+    WorkflowChooseCallibrary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1863,7 +2164,7 @@ struct MeasurementSetRunSnapshot {
 
 #[derive(Debug, Clone)]
 enum CurrentPlotPayload {
-    MsExplore(MsPlotPayload),
+    MsPlot(MsPlotPayload),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1875,6 +2176,7 @@ enum EditTarget {
 struct PlotWorkspaceState {
     focus: PlotPaneFocus,
     selected_control: usize,
+    selected_catalog_target: Option<PlotCatalogTarget>,
     snapshot: Option<MeasurementSetRunSnapshot>,
     next_generation: u64,
     preview_invalidated: bool,
@@ -1887,6 +2189,7 @@ impl PlotWorkspaceState {
         Self {
             focus: PlotPaneFocus::Catalog,
             selected_control: 0,
+            selected_catalog_target: None,
             snapshot: None,
             next_generation: 1,
             preview_invalidated: false,
@@ -1901,6 +2204,7 @@ impl fmt::Debug for PlotWorkspaceState {
         f.debug_struct("PlotWorkspaceState")
             .field("focus", &self.focus)
             .field("selected_control", &self.selected_control)
+            .field("selected_catalog_target", &self.selected_catalog_target)
             .field("snapshot", &self.snapshot)
             .field("next_generation", &self.next_generation)
             .field("preview_invalidated", &self.preview_invalidated)
@@ -1941,6 +2245,18 @@ enum StatusKind {
     Warning,
 }
 
+impl StatusKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Running => "running",
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::Warning => "warning",
+        }
+    }
+}
+
 #[derive(Debug)]
 struct EditState {
     target: EditTarget,
@@ -1953,6 +2269,70 @@ struct FormField {
     value: FormValue,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaticFormItem {
+    Field(usize),
+    SummaryView(SummaryDataView),
+    BrowserView(BrowserTab),
+    WorkflowStage(WorkflowStageId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChoicePickerEntry {
+    value: String,
+    label: String,
+}
+
+#[derive(Debug)]
+struct ChoicePickerState {
+    target: ChoicePickerTarget,
+    title: String,
+    entries: Vec<ChoicePickerEntry>,
+    selected_filtered_index: usize,
+    filter: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChoicePickerTarget {
+    Field(usize),
+    WorkflowContextSetting(WorkflowContextSettingKind),
+    WorkflowProductAction(WorkflowProductActionKind),
+    WorkflowChainSetting(usize, WorkflowChainSettingKind),
+}
+
+impl ChoicePickerState {
+    fn filtered_entries(&self) -> Vec<(usize, &ChoicePickerEntry)> {
+        let needle = self.filter.trim();
+        if needle.is_empty() {
+            return self.entries.iter().enumerate().collect();
+        }
+        let needle_lower = needle.to_ascii_lowercase();
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                entry.label.to_ascii_lowercase().contains(&needle_lower)
+                    || entry.value.to_ascii_lowercase().contains(&needle_lower)
+            })
+            .collect()
+    }
+
+    fn clamp_selection(&mut self) {
+        let visible = self.filtered_entries();
+        if visible.is_empty() {
+            self.selected_filtered_index = 0;
+        } else {
+            self.selected_filtered_index = self.selected_filtered_index.min(visible.len() - 1);
+        }
+    }
+
+    fn selected_entry(&self) -> Option<&ChoicePickerEntry> {
+        let visible = self.filtered_entries();
+        let (_, entry) = visible.get(self.selected_filtered_index)?;
+        Some(*entry)
+    }
+}
+
 #[derive(Debug)]
 enum FormValue {
     Text(String),
@@ -1963,8 +2343,65 @@ enum FormValue {
 #[derive(Debug)]
 struct FormSection {
     name: String,
-    field_indices: Vec<usize>,
+    content: FormSectionContent,
     collapsed: bool,
+}
+
+#[derive(Debug)]
+enum FormSectionContent {
+    Items(Vec<StaticFormItem>),
+}
+
+#[derive(Debug, Clone)]
+struct HistoryEntry {
+    sequence: usize,
+    stage: Option<WorkflowStageId>,
+    title: String,
+    status_kind: StatusKind,
+    details: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowProductRecord {
+    path: PathBuf,
+    stage: WorkflowStageId,
+    family: String,
+    revision: usize,
+    provenance: String,
+    status: WorkflowProductStatus,
+    dependency_revisions: BTreeMap<&'static str, usize>,
+    run_sequence: usize,
+}
+
+#[derive(Debug, Clone)]
+enum WorkflowChainEntrySource {
+    DirectTable,
+    CallibraryFile {
+        path: PathBuf,
+    },
+    CallibrarySpec {
+        callib_path: PathBuf,
+        spec_index: usize,
+        spec: ApplyCalibrationTableSpec,
+    },
+    CallibraryError {
+        path: PathBuf,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowChainEntryRecord {
+    label: String,
+    inspect_path: Option<PathBuf>,
+    source: WorkflowChainEntrySource,
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowChainSettingRecord {
+    entry: usize,
+    kind: WorkflowChainSettingKind,
+    text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1976,11 +2413,15 @@ enum ClickTarget {
     Pane(PaneFocus),
     Section(usize),
     Field(usize),
+    WorkflowContextSetting(WorkflowContextSettingKind),
+    WorkflowProductAction(WorkflowProductActionKind),
+    WorkflowChainEntry(usize),
+    WorkflowChainSetting(usize, WorkflowChainSettingKind),
+    WorkflowProduct(usize),
     Tab(ResultTab),
     PlotCatalog(PlotCatalogTarget),
     PlotControl(PlotControlTarget),
     PlotCanvas,
-    BrowserTab(BrowserTab),
     PathChooserEntry(usize),
 }
 
@@ -2000,17 +2441,25 @@ impl AppState {
         schema: UiCommandSchema,
         config_store: ConfigStore,
     ) -> Self {
-        let ready_status_line = app.ready_status_line().to_string();
+        let default_summary_view = default_summary_view_for_app(app.id);
+        let ready_status_line = if app.shell_kind() == AppShellKind::Workflow
+            && app.id == "calibrate"
+        {
+            "Ready. Choose a stage, review Context and Products, then run the stage action or press r."
+                .to_string()
+        } else {
+            app.ready_status_line().to_string()
+        };
         let mut fields = schema
             .arguments
             .iter()
             .filter_map(FormField::from_schema)
             .collect::<Vec<_>>();
         seed_app_field_defaults(app.id, &mut fields);
-        let sections = build_sections(&fields);
+        let sections = build_sections(&app, &fields);
         let selected_form = initial_form_selection(&sections, &fields, false);
 
-        Self {
+        let mut app_state = Self {
             app,
             config_store,
             schema: Some(schema),
@@ -2029,9 +2478,13 @@ impl AppState {
             active_result_tab: ResultTab::Overview,
             result_scrolls: [0; RESULT_TAB_COUNT],
             result_hscrolls: [0; RESULT_TAB_COUNT],
+            selected_summary_view: default_summary_view,
+            history_entries: Vec::new(),
+            workflow_products: Vec::new(),
             running: None,
             plot_workspace: PlotWorkspaceState::new(),
             path_chooser: None,
+            choice_picker: None,
             browser_mode_picker: None,
             browser_session: None,
             spinner_frame: 0,
@@ -2052,7 +2505,18 @@ impl AppState {
             movie_perf: MoviePerfTracer::from_env(),
             quit: false,
             return_to_launcher: false,
+        };
+        if app_state.app.shell_kind() == AppShellKind::Workflow && app_state.app.id == "calibrate" {
+            if matches!(
+                app_state.field_text("mode").as_deref(),
+                None | Some("apply")
+            ) {
+                app_state.set_current_workflow_stage(WorkflowStageId::InspectDataset);
+            }
+            let stage = app_state.current_workflow_stage();
+            app_state.ensure_workflow_stage_defaults(None, stage);
         }
+        app_state
     }
 
     pub(crate) fn schema_error(app: RegistryApp, error: String) -> Self {
@@ -2085,9 +2549,13 @@ impl AppState {
             active_result_tab: ResultTab::Stderr,
             result_scrolls: [0; RESULT_TAB_COUNT],
             result_hscrolls: [0; RESULT_TAB_COUNT],
+            selected_summary_view: SummaryDataView::Fields,
+            history_entries: Vec::new(),
+            workflow_products: Vec::new(),
             running: None,
             plot_workspace: PlotWorkspaceState::new(),
             path_chooser: None,
+            choice_picker: None,
             browser_mode_picker: None,
             browser_session: None,
             spinner_frame: 0,
@@ -2133,8 +2601,16 @@ impl AppState {
 
     pub(crate) fn path_chooser_title(&self) -> Option<String> {
         let chooser = self.path_chooser.as_ref()?;
-        let field = self.fields.get(chooser.field_index)?;
-        Some(format!("Browse {}", field.schema.label))
+        Some(match chooser.target {
+            PathChooserTarget::Field(field_index) => {
+                let field = self.fields.get(field_index)?;
+                format!("Browse {}", field.schema.label)
+            }
+            PathChooserTarget::WorkflowImportChainTable => {
+                "Import Calibration Table Into Chain".to_string()
+            }
+            PathChooserTarget::WorkflowChooseCallibrary => "Choose Callibrary File".to_string(),
+        })
     }
 
     pub(crate) fn path_chooser_cwd(&self) -> Option<String> {
@@ -2164,6 +2640,65 @@ impl AppState {
                 })
                 .collect(),
         )
+    }
+
+    pub(crate) fn choice_picker_active(&self) -> bool {
+        self.choice_picker.is_some()
+    }
+
+    pub(crate) fn choice_picker_title(&self) -> Option<&str> {
+        self.choice_picker
+            .as_ref()
+            .map(|picker| picker.title.as_str())
+    }
+
+    pub(crate) fn choice_picker_filter(&self) -> Option<&str> {
+        self.choice_picker
+            .as_ref()
+            .map(|picker| picker.filter.as_str())
+    }
+
+    pub(crate) fn choice_picker_entries(&self) -> Option<Vec<(String, bool)>> {
+        let picker = self.choice_picker.as_ref()?;
+        Some(
+            picker
+                .filtered_entries()
+                .into_iter()
+                .enumerate()
+                .map(|(offset, (_, entry))| {
+                    (
+                        entry.label.clone(),
+                        offset == picker.selected_filtered_index,
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn choice_picker_field_index(&self) -> Option<usize> {
+        self.choice_picker
+            .as_ref()
+            .and_then(|picker| match picker.target {
+                ChoicePickerTarget::Field(field_index) => Some(field_index),
+                _ => None,
+            })
+    }
+
+    fn choice_picker_anchor_target(&self) -> Option<FormSelection> {
+        self.choice_picker
+            .as_ref()
+            .map(|picker| match picker.target {
+                ChoicePickerTarget::Field(field_index) => FormSelection::Field(field_index),
+                ChoicePickerTarget::WorkflowContextSetting(kind) => {
+                    FormSelection::WorkflowContextSetting(kind)
+                }
+                ChoicePickerTarget::WorkflowProductAction(kind) => {
+                    FormSelection::WorkflowProductAction(kind)
+                }
+                ChoicePickerTarget::WorkflowChainSetting(entry, kind) => {
+                    FormSelection::WorkflowChainSetting(entry, kind)
+                }
+            })
     }
 
     fn selected_path_field_index(&self) -> Option<usize> {
@@ -2200,6 +2735,327 @@ impl AppState {
         column >= browse_start && column < text_end
     }
 
+    fn field_picker_entries(&self, field_index: usize) -> Option<Vec<ChoicePickerEntry>> {
+        let field = self.fields.get(field_index)?;
+        if field.is_path() {
+            return None;
+        }
+        if let FormValue::Choice { choices, .. } = &field.value
+            && !choices.is_empty()
+        {
+            return Some(
+                choices
+                    .iter()
+                    .map(|choice| ChoicePickerEntry {
+                        value: choice.clone(),
+                        label: choice.clone(),
+                    })
+                    .collect(),
+            );
+        }
+        dynamic_field_picker_entries(self, field.schema.id.as_str())
+    }
+
+    fn open_choice_picker(&mut self, field_index: usize) {
+        let Some(entries) = self.field_picker_entries(field_index) else {
+            return;
+        };
+        let title = self
+            .fields
+            .get(field_index)
+            .map(|field| format!("Choose {}", field.schema.label))
+            .unwrap_or_else(|| "Choose Value".to_string());
+        let current = self
+            .fields
+            .get(field_index)
+            .and_then(FormField::text_value)
+            .unwrap_or_default();
+        self.open_choice_picker_target(
+            ChoicePickerTarget::Field(field_index),
+            title,
+            entries,
+            current,
+        );
+    }
+
+    fn open_choice_picker_target(
+        &mut self,
+        target: ChoicePickerTarget,
+        title: String,
+        entries: Vec<ChoicePickerEntry>,
+        current: String,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        self.path_chooser = None;
+        let selected_filtered_index = entries
+            .iter()
+            .position(|entry| entry.value == current)
+            .unwrap_or(0);
+        self.choice_picker = Some(ChoicePickerState {
+            target,
+            title,
+            entries,
+            selected_filtered_index,
+            filter: String::new(),
+        });
+    }
+
+    fn workflow_product_picker_entries(&self) -> Vec<ChoicePickerEntry> {
+        self.workflow_products
+            .iter()
+            .filter(|product| product.stage != WorkflowStageId::Apply)
+            .map(|product| ChoicePickerEntry {
+                value: product.path.display().to_string(),
+                label: format!(
+                    "r{}  {}  [{} | {}]",
+                    product.revision,
+                    product.path.display(),
+                    product.family,
+                    product.status.label()
+                ),
+            })
+            .collect()
+    }
+
+    fn workflow_context_picker_entries(
+        &self,
+        kind: WorkflowContextSettingKind,
+    ) -> Vec<ChoicePickerEntry> {
+        match kind {
+            WorkflowContextSettingKind::ActiveFields => {
+                let mut entries = vec![ChoicePickerEntry {
+                    value: String::new(),
+                    label: "<all fields>".to_string(),
+                }];
+                if let Some(summary) = self.current_structured_summary() {
+                    entries.extend(summary.fields.iter().map(|field| ChoicePickerEntry {
+                        value: field.field_id.to_string(),
+                        label: format!("{}  {}", field.field_id, field.name),
+                    }));
+                }
+                entries
+            }
+            WorkflowContextSettingKind::RefAnt => {
+                dynamic_field_picker_entries(self, "refant").unwrap_or_default()
+            }
+            WorkflowContextSettingKind::FluxReferenceFields => {
+                let mut entries = vec![ChoicePickerEntry {
+                    value: String::new(),
+                    label: "<unset>".to_string(),
+                }];
+                entries.extend(
+                    dynamic_field_picker_entries(self, "reference_fields").unwrap_or_default(),
+                );
+                entries
+            }
+            WorkflowContextSettingKind::FluxTransferFields => {
+                let mut entries = vec![ChoicePickerEntry {
+                    value: String::new(),
+                    label: "<unset>".to_string(),
+                }];
+                entries.extend(
+                    dynamic_field_picker_entries(self, "transfer_fields").unwrap_or_default(),
+                );
+                entries
+            }
+        }
+    }
+
+    fn workflow_chain_setting_picker_entries(
+        &self,
+        kind: WorkflowChainSettingKind,
+    ) -> Vec<ChoicePickerEntry> {
+        match kind {
+            WorkflowChainSettingKind::Gainfield => {
+                let mut entries = vec![
+                    ChoicePickerEntry {
+                        value: String::new(),
+                        label: "<default>".to_string(),
+                    },
+                    ChoicePickerEntry {
+                        value: "nearest".to_string(),
+                        label: "nearest".to_string(),
+                    },
+                ];
+                if let Some(summary) = self.current_structured_summary() {
+                    entries.extend(summary.fields.iter().map(|field| ChoicePickerEntry {
+                        value: field.field_id.to_string(),
+                        label: format!("{}  {}", field.field_id, field.name),
+                    }));
+                }
+                entries
+            }
+            WorkflowChainSettingKind::Interp => ["nearest", "linear", "nearest,linear"]
+                .into_iter()
+                .map(|value| ChoicePickerEntry {
+                    value: value.to_string(),
+                    label: value.to_string(),
+                })
+                .collect(),
+            WorkflowChainSettingKind::Spwmap => {
+                let mut entries = vec![ChoicePickerEntry {
+                    value: String::new(),
+                    label: "<identity>".to_string(),
+                }];
+                if let Some(summary) = self.current_structured_summary() {
+                    let spw_ids = summary
+                        .spectral_windows
+                        .iter()
+                        .map(|spw| spw.spectral_window_id)
+                        .collect::<Vec<_>>();
+                    if !spw_ids.is_empty() {
+                        if spw_ids.len() > 1 {
+                            let exact = spw_ids
+                                .iter()
+                                .map(|spw| spw.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            entries.push(ChoicePickerEntry {
+                                value: exact.clone(),
+                                label: format!("match selected SPWs ({exact})"),
+                            });
+                        }
+                        entries.extend(spw_ids.iter().map(|spw_id| {
+                            let map = if spw_ids.len() > 1 {
+                                std::iter::repeat_n(spw_id.to_string(), spw_ids.len())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            } else {
+                                spw_id.to_string()
+                            };
+                            ChoicePickerEntry {
+                                value: map.clone(),
+                                label: format!("all selected SPWs -> {spw_id} ({map})"),
+                            }
+                        }));
+                    }
+                }
+                entries
+            }
+            WorkflowChainSettingKind::Calwt => ["false", "true"]
+                .into_iter()
+                .map(|value| ChoicePickerEntry {
+                    value: value.to_string(),
+                    label: value.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    fn close_choice_picker(&mut self) {
+        self.choice_picker = None;
+    }
+
+    fn commit_choice_picker(&mut self) {
+        let Some((target, value, label)) = self.choice_picker.as_ref().and_then(|picker| {
+            picker
+                .selected_entry()
+                .map(|entry| (picker.target, entry.value.clone(), entry.label.clone()))
+        }) else {
+            self.close_choice_picker();
+            return;
+        };
+        match target {
+            ChoicePickerTarget::Field(field_index) => {
+                if let Some(field) = self.fields.get_mut(field_index) {
+                    field.set_text(value.clone());
+                }
+                self.apply_live_image_view_parameters_if_needed(field_index);
+                self.mark_plot_snapshot_dirty();
+            }
+            ChoicePickerTarget::WorkflowContextSetting(kind) => {
+                let _ = self.apply_startup_text_value(kind.field_id(), value.clone());
+                self.selected_form = FormSelection::WorkflowContextSetting(kind);
+            }
+            ChoicePickerTarget::WorkflowProductAction(
+                WorkflowProductActionKind::AddSolvedProduct,
+            ) => {
+                self.append_workflow_chain_path(value.clone());
+            }
+            ChoicePickerTarget::WorkflowProductAction(
+                WorkflowProductActionKind::ImportChainTable,
+            )
+            | ChoicePickerTarget::WorkflowProductAction(
+                WorkflowProductActionKind::ChooseCallibrary,
+            ) => {}
+            ChoicePickerTarget::WorkflowChainSetting(entry, kind) => {
+                if let Err(error) =
+                    self.apply_workflow_chain_setting_value(entry, kind, value.clone())
+                {
+                    self.close_choice_picker();
+                    self.result.status_line = error;
+                    self.result.status_kind = StatusKind::Warning;
+                    return;
+                }
+            }
+        }
+        self.close_choice_picker();
+        self.result.status_line = format!("Selected {}.", label);
+        self.result.status_kind = StatusKind::Ok;
+    }
+
+    fn cancel_choice_picker(&mut self) {
+        self.close_choice_picker();
+        self.result.status_line = "Choice picker canceled.".to_string();
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn activate_workflow_context_setting(&mut self, kind: WorkflowContextSettingKind) {
+        self.selected_form = FormSelection::WorkflowContextSetting(kind);
+        let entries = self.workflow_context_picker_entries(kind);
+        if entries.is_empty() {
+            self.result.status_line = format!(
+                "No {} choices are available yet.",
+                kind.label().to_ascii_lowercase()
+            );
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        let current = self.field_text(kind.field_id()).unwrap_or_default();
+        self.open_choice_picker_target(
+            ChoicePickerTarget::WorkflowContextSetting(kind),
+            format!("Choose {}", kind.label()),
+            entries,
+            current,
+        );
+    }
+
+    fn cycle_choice_picker(&mut self, forward: bool) {
+        let Some(picker) = self.choice_picker.as_mut() else {
+            return;
+        };
+        let visible_len = picker.filtered_entries().len();
+        if visible_len == 0 {
+            picker.selected_filtered_index = 0;
+            return;
+        }
+        if forward {
+            picker.selected_filtered_index = (picker.selected_filtered_index + 1) % visible_len;
+        } else if picker.selected_filtered_index == 0 {
+            picker.selected_filtered_index = visible_len - 1;
+        } else {
+            picker.selected_filtered_index -= 1;
+        }
+    }
+
+    fn extend_choice_picker_filter(&mut self, ch: char) {
+        let Some(picker) = self.choice_picker.as_mut() else {
+            return;
+        };
+        picker.filter.push(ch);
+        picker.clamp_selection();
+    }
+
+    fn delete_choice_picker_filter_backward(&mut self) {
+        let Some(picker) = self.choice_picker.as_mut() else {
+            return;
+        };
+        picker.filter.pop();
+        picker.clamp_selection();
+    }
+
     fn open_path_chooser_for_selected_field(&mut self) {
         let Some(field_index) = self.selected_path_field_index() else {
             return;
@@ -2208,11 +3064,18 @@ impl AppState {
     }
 
     fn open_path_chooser(&mut self, field_index: usize) {
-        self.prepare_path_chooser_field(field_index);
         let Some(field) = self.fields.get(field_index) else {
             return;
         };
         let start = chooser_start_path(field.text_value().as_deref());
+        self.open_path_chooser_target(PathChooserTarget::Field(field_index), start);
+    }
+
+    fn open_path_chooser_target(&mut self, target: PathChooserTarget, start: PathBuf) {
+        if let PathChooserTarget::Field(field_index) = target {
+            self.prepare_path_chooser_field(field_index);
+        }
+        self.choice_picker = None;
         let start_is_dir = start.is_dir();
         let builder = if start_is_dir {
             FileExplorerBuilder::default().working_dir(start)
@@ -2225,7 +3088,7 @@ impl AppState {
                     explorer.set_selected_idx(1);
                 }
                 self.path_chooser = Some(PathChooserState {
-                    field_index,
+                    target,
                     explorer,
                     last_error: None,
                 });
@@ -2260,32 +3123,42 @@ impl AppState {
     }
 
     fn confirm_path_chooser(&mut self) {
-        let Some((field_index, selected_path)) = self
+        let Some((target, selected_path)) = self
             .path_chooser
             .as_ref()
-            .map(|chooser| (chooser.field_index, chooser.explorer.current().path.clone()))
+            .map(|chooser| (chooser.target, chooser.explorer.current().path.clone()))
         else {
             return;
         };
-        self.select_path_chooser_path(field_index, &selected_path);
+        self.select_path_chooser_path(target, &selected_path);
     }
 
     fn select_current_path_chooser_entry(&mut self) {
-        let Some((field_index, selected_path)) = self
+        let Some((target, selected_path)) = self
             .path_chooser
             .as_ref()
-            .map(|chooser| (chooser.field_index, chooser.explorer.current().path.clone()))
+            .map(|chooser| (chooser.target, chooser.explorer.current().path.clone()))
         else {
             return;
         };
-        self.select_path_chooser_path(field_index, &selected_path);
+        self.select_path_chooser_path(target, &selected_path);
     }
 
-    fn select_path_chooser_path(&mut self, selected_field_index: usize, selected_path: &Path) {
+    fn select_path_chooser_path(&mut self, target: PathChooserTarget, selected_path: &Path) {
         let value = absolute_display_path(selected_path);
-        if let Some(field) = self.fields.get_mut(selected_field_index) {
-            field.set_text(value.clone());
-            self.mark_plot_snapshot_dirty();
+        match target {
+            PathChooserTarget::Field(selected_field_index) => {
+                if let Some(field) = self.fields.get_mut(selected_field_index) {
+                    field.set_text(value.clone());
+                    self.mark_plot_snapshot_dirty();
+                }
+            }
+            PathChooserTarget::WorkflowImportChainTable => {
+                self.append_workflow_chain_path(value.clone());
+            }
+            PathChooserTarget::WorkflowChooseCallibrary => {
+                self.set_workflow_callibrary_path(value.clone());
+            }
         }
         self.close_path_chooser();
         self.result.status_line = format!("Selected path: {value}");
@@ -2351,6 +3224,10 @@ impl AppState {
         } else if self.browser_session.is_some() {
             if self.browser_uses_parameter_pane() && self.pane_focus == PaneFocus::Parameters {
                 InputMode::Parameters
+            } else if self.pane_focus == PaneFocus::Result
+                && !self.browser_result_uses_live_navigation()
+            {
+                InputMode::Result
             } else {
                 InputMode::Browser
             }
@@ -2392,7 +3269,7 @@ impl AppState {
         if !self.parameters_pane_collapsed() {
             ring.push(FocusTarget::ParametersPane);
         }
-        if self.active_result_tab == ResultTab::Plots {
+        if self.result_tab_uses_plot_workspace() {
             ring.extend([
                 FocusTarget::PlotCatalog,
                 FocusTarget::PlotCanvas,
@@ -2422,7 +3299,7 @@ impl AppState {
                 FocusTarget::ParametersPane
             }
             PaneFocus::Parameters | PaneFocus::Result => {
-                if self.active_result_tab == ResultTab::Plots {
+                if self.result_tab_uses_plot_workspace() {
                     match self.plot_workspace.focus {
                         PlotPaneFocus::Catalog => FocusTarget::PlotCatalog,
                         PlotPaneFocus::Canvas => FocusTarget::PlotCanvas,
@@ -2513,7 +3390,7 @@ impl AppState {
 
     fn resolve_default_key_action(&self, key_event: KeyEvent) -> Option<AppAction> {
         let mode = self.input_mode();
-        let plots_active = mode == InputMode::Result && self.active_result_tab == ResultTab::Plots;
+        let plots_active = mode == InputMode::Result && self.result_tab_uses_plot_workspace();
 
         if mode == InputMode::PathChooser {
             return match key_event.code {
@@ -2856,6 +3733,18 @@ impl AppState {
         if self.consume_kitty_protocol_response_key(key_event) {
             return;
         }
+        if key_event.code == KeyCode::Char('P')
+            && key_event.modifiers == KeyModifiers::SHIFT
+            && self.pane_focus == PaneFocus::Result
+            && self.app.id == "calibrate"
+            && self.promote_latest_workflow_product_from_current_report()
+        {
+            return;
+        }
+        if self.choice_picker.is_some() {
+            self.handle_choice_picker_key(key_event);
+            return;
+        }
         if self.browser_mode_picker.is_some() {
             self.handle_browser_mode_picker_key(key_event);
             return;
@@ -2919,6 +3808,10 @@ impl AppState {
             ));
         }
         if movie_input_fully_ignored_for_debug() && self.image_movie_active() {
+            return;
+        }
+        if self.choice_picker.is_some() {
+            self.handle_choice_picker_mouse(mouse_event, layout);
             return;
         }
         if self.browser_mode_picker.is_some() {
@@ -3097,7 +3990,7 @@ impl AppState {
                 parts.push("Esc region/reticle".to_string());
             }
             parts.push("y copy".to_string());
-        } else if self.active_result_tab == ResultTab::Plots {
+        } else if self.result_tab_uses_plot_workspace() {
             parts.extend([
                 "[/] tabs".to_string(),
                 "Arrows/hjkl move".to_string(),
@@ -3162,6 +4055,22 @@ impl AppState {
                     "Adjust: Left/Right".to_string(),
                     "Activate: Enter or Space".to_string(),
                 ]);
+                match self.selected_form {
+                    FormSelection::WorkflowProductAction(_) => {
+                        lines.push("Workflow action: Enter opens picker or chooser".to_string());
+                    }
+                    FormSelection::WorkflowProduct(_) => {
+                        lines
+                            .push("Workflow product: Shift-P promote into apply chain".to_string());
+                    }
+                    FormSelection::WorkflowChainEntry(_) => {
+                        lines.push("Chain entry: Delete remove  Ctrl-K/Ctrl-J reorder".to_string());
+                    }
+                    FormSelection::WorkflowChainSetting(_, _) => {
+                        lines.push("Chain setting: Enter opens picker".to_string());
+                    }
+                    _ => {}
+                }
             }
             FocusTarget::ResultPane => {
                 lines.extend([
@@ -3377,23 +4286,33 @@ impl AppState {
     }
 
     pub(crate) fn form_rows(&self) -> Vec<FormRowView> {
-        if self.browser_session.is_some() && !self.browser_uses_parameter_pane() {
-            return self.browser_inspector_rows();
-        }
-
         if self.image_browser_session_state().is_some() {
             return self.live_parameter_rows();
         }
 
         let mut rows = Vec::new();
         for (section_index, section) in self.sections.iter().enumerate() {
-            let visible_fields = section
-                .field_indices
-                .iter()
-                .copied()
-                .filter(|index| self.show_advanced || !self.fields[*index].schema.advanced)
-                .collect::<Vec<_>>();
-            if visible_fields.is_empty() {
+            let visible_items = self.visible_section_items(section);
+            let context_rows = self.workflow_context_rows_for_section(section);
+            let stage_rows = self.workflow_stage_parameter_rows_for_section(section);
+            let product_action_rows = self.workflow_product_action_rows_for_section(section);
+            let chain_rows = self.workflow_chain_rows_for_section(section);
+            let product_rows = self.workflow_product_rows_for_section(section);
+            let keep_section = self.keep_empty_workflow_products_section(section);
+            let visible_items_empty = visible_items.is_empty();
+            let context_rows_empty = context_rows.is_empty();
+            let stage_rows_empty = stage_rows.is_empty();
+            let product_action_rows_empty = product_action_rows.is_empty();
+            let chain_rows_empty = chain_rows.is_empty();
+            let product_rows_empty = product_rows.is_empty();
+            if visible_items_empty
+                && context_rows_empty
+                && stage_rows_empty
+                && product_action_rows_empty
+                && chain_rows_empty
+                && product_rows_empty
+                && !keep_section
+            {
                 continue;
             }
 
@@ -3410,13 +4329,29 @@ impl AppState {
                 continue;
             }
 
-            for field_index in visible_fields {
+            rows.extend(self.render_section_items_for_section(
+                section,
+                section_index,
+                &visible_items,
+            ));
+            rows.extend(context_rows);
+            rows.extend(stage_rows);
+            rows.extend(product_action_rows);
+            rows.extend(chain_rows);
+            rows.extend(product_rows);
+            if keep_section
+                && visible_items_empty
+                && context_rows_empty
+                && stage_rows_empty
+                && product_action_rows_empty
+                && chain_rows_empty
+                && product_rows_empty
+            {
                 rows.push(FormRowView {
-                    target: FormSelection::Field(field_index),
-                    text: self.fields[field_index]
-                        .render_line(self.edit_state.as_ref(), field_index),
+                    target: FormSelection::Section(section_index),
+                    text: "No chain entries or products yet.".to_string(),
                     kind: FormRowKind::Field,
-                    selected: self.selected_form == FormSelection::Field(field_index),
+                    selected: false,
                 });
             }
         }
@@ -3433,20 +4368,59 @@ impl AppState {
         rows
     }
 
+    fn render_section_items_for_section(
+        &self,
+        section: &FormSection,
+        section_index: usize,
+        visible_items: &[StaticFormItem],
+    ) -> Vec<FormRowView> {
+        if !(self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Stage Parameters")
+        {
+            return visible_items
+                .iter()
+                .copied()
+                .map(|item| self.render_section_item(item))
+                .collect();
+        }
+
+        let mut rows = Vec::new();
+        let mut last_group: Option<&str> = None;
+        for item in visible_items.iter().copied() {
+            if let StaticFormItem::Field(field_index) = item {
+                let group = self.workflow_stage_parameter_subsection_title(field_index);
+                if last_group != Some(group) {
+                    rows.push(FormRowView {
+                        target: FormSelection::Section(section_index),
+                        text: group.to_string(),
+                        kind: FormRowKind::Subsection,
+                        selected: false,
+                    });
+                    last_group = Some(group);
+                }
+            }
+            rows.push(self.render_section_item(item));
+        }
+        rows
+    }
+
     fn live_parameter_rows(&self) -> Vec<FormRowView> {
         let mut rows = Vec::new();
         for (section_index, section) in self.sections.iter().enumerate() {
-            let visible_fields = section
-                .field_indices
-                .iter()
-                .copied()
-                .filter(|index| self.show_advanced || !self.fields[*index].schema.advanced)
-                .filter(|index| {
-                    let field_id = self.fields[*index].schema.id.as_str();
-                    IMEXPLORE_LIVE_PARAMETER_FIELD_IDS.contains(&field_id)
+            let visible_items = self
+                .visible_section_items(section)
+                .into_iter()
+                .filter(|item| {
+                    matches!(
+                        item,
+                        StaticFormItem::Field(index)
+                            if IMEXPLORE_LIVE_PARAMETER_FIELD_IDS
+                                .contains(&self.fields[*index].schema.id.as_str())
+                    )
                 })
                 .collect::<Vec<_>>();
-            if visible_fields.is_empty() {
+            if visible_items.is_empty() {
                 continue;
             }
 
@@ -3463,17 +4437,404 @@ impl AppState {
                 continue;
             }
 
-            for field_index in visible_fields {
-                rows.push(FormRowView {
-                    target: FormSelection::Field(field_index),
-                    text: self.fields[field_index]
-                        .render_line(self.edit_state.as_ref(), field_index),
-                    kind: FormRowKind::Field,
-                    selected: self.selected_form == FormSelection::Field(field_index),
-                });
+            for item in visible_items {
+                rows.push(self.render_section_item(item));
             }
         }
         rows
+    }
+
+    fn visible_section_items(&self, section: &FormSection) -> Vec<StaticFormItem> {
+        match &section.content {
+            FormSectionContent::Items(items) => items
+                .iter()
+                .copied()
+                .filter(|item| match item {
+                    StaticFormItem::Field(index) => {
+                        (self.show_advanced || !self.fields[*index].schema.advanced)
+                            && !self.workflow_context_owns_field(section, *index)
+                            && (!self.is_calibrate_workflow_stage_parameters(section)
+                                || calibrate_argument_applies_to_mode(
+                                    self.fields[*index].schema.id.as_str(),
+                                    self.current_workflow_stage().cli_mode(),
+                                ))
+                    }
+                    StaticFormItem::SummaryView(_)
+                    | StaticFormItem::BrowserView(_)
+                    | StaticFormItem::WorkflowStage(_) => true,
+                })
+                .collect(),
+        }
+    }
+
+    fn workflow_context_owns_field(&self, section: &FormSection, field_index: usize) -> bool {
+        self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Context"
+            && matches!(
+                self.fields[field_index].schema.id.as_str(),
+                "field" | "refant" | "reference_fields" | "transfer_fields"
+            )
+    }
+
+    fn workflow_context_rows_for_section(&self, section: &FormSection) -> Vec<FormRowView> {
+        if !(self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Context")
+        {
+            return Vec::new();
+        }
+        self.workflow_context_displays()
+            .into_iter()
+            .map(|(kind, display)| FormRowView {
+                target: FormSelection::WorkflowContextSetting(kind),
+                text: render_workflow_value_display(&display),
+                kind: FormRowKind::Field,
+                selected: self.selected_form == FormSelection::WorkflowContextSetting(kind),
+            })
+            .collect()
+    }
+
+    fn workflow_context_displays(&self) -> Vec<(WorkflowContextSettingKind, WorkflowValueDisplay)> {
+        [
+            WorkflowContextSettingKind::ActiveFields,
+            WorkflowContextSettingKind::RefAnt,
+            WorkflowContextSettingKind::FluxReferenceFields,
+            WorkflowContextSettingKind::FluxTransferFields,
+        ]
+        .into_iter()
+        .map(|kind| {
+            (
+                kind,
+                WorkflowValueDisplay {
+                    label: kind.label().to_string(),
+                    value: self.workflow_context_setting_display_value(kind),
+                },
+            )
+        })
+        .collect()
+    }
+
+    fn workflow_stage_parameter_rows_for_section(&self, section: &FormSection) -> Vec<FormRowView> {
+        if !(self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Stage Parameters")
+        {
+            return Vec::new();
+        }
+        let stage = self.current_workflow_stage();
+        let mut rows = self
+            .workflow_stage_guide_displays(stage)
+            .into_iter()
+            .map(|(kind, display)| FormRowView {
+                target: FormSelection::WorkflowStageGuide(kind),
+                text: render_workflow_detail_display(&display),
+                kind: FormRowKind::Field,
+                selected: self.selected_form == FormSelection::WorkflowStageGuide(kind),
+            })
+            .collect::<Vec<_>>();
+        rows.push(FormRowView {
+            target: FormSelection::WorkflowStageAction,
+            text: render_workflow_detail_display(&WorkflowDetailDisplay {
+                label: "Action".to_string(),
+                value: self.workflow_stage_action_label(stage).to_string(),
+                indent: 0,
+            }),
+            kind: FormRowKind::Field,
+            selected: self.selected_form == FormSelection::WorkflowStageAction,
+        });
+        rows
+    }
+
+    fn workflow_stage_parameter_subsection_title(&self, field_index: usize) -> &'static str {
+        match self.fields[field_index].schema.group.as_str() {
+            "Apply" => "Apply Settings",
+            "Output" => "Output",
+            "Inspect" => "Inspect",
+            "Solve" => "Solve",
+            "Solve Gain" => "Gain Solve",
+            "Solve Bandpass" => "Bandpass Solve",
+            "Fluxscale" => "Fluxscale",
+            "Selection" => "Selection",
+            "Input" => "Inputs",
+            _ => "Parameters",
+        }
+    }
+
+    fn workflow_stage_guide_displays(
+        &self,
+        stage: WorkflowStageId,
+    ) -> Vec<(WorkflowStageGuideKind, WorkflowDetailDisplay)> {
+        [
+            (
+                WorkflowStageGuideKind::Goal,
+                WorkflowDetailDisplay {
+                    label: WorkflowStageGuideKind::Goal.label().to_string(),
+                    value: self.workflow_stage_goal(stage).to_string(),
+                    indent: 0,
+                },
+            ),
+            (
+                WorkflowStageGuideKind::Produces,
+                WorkflowDetailDisplay {
+                    label: WorkflowStageGuideKind::Produces.label().to_string(),
+                    value: self.workflow_stage_output(stage).to_string(),
+                    indent: 0,
+                },
+            ),
+            (
+                WorkflowStageGuideKind::Hint,
+                WorkflowDetailDisplay {
+                    label: WorkflowStageGuideKind::Hint.label().to_string(),
+                    value: self.workflow_stage_hint(stage).to_string(),
+                    indent: 0,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    fn workflow_product_rows_for_section(&self, section: &FormSection) -> Vec<FormRowView> {
+        if !(self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Products")
+        {
+            return Vec::new();
+        }
+        self.workflow_products
+            .iter()
+            .enumerate()
+            .map(|(index, product)| {
+                let display_name = product
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| product.path.display().to_string());
+                FormRowView {
+                    target: FormSelection::WorkflowProduct(index),
+                    text: render_workflow_product_row_display(&WorkflowProductRowDisplay {
+                        family: product.family.clone(),
+                        revision: product.revision,
+                        display_name,
+                        stage_label: product.stage.label().to_string(),
+                        status_label: product.status.label().to_string(),
+                    }),
+                    kind: FormRowKind::Field,
+                    selected: self.selected_form == FormSelection::WorkflowProduct(index),
+                }
+            })
+            .collect()
+    }
+
+    fn workflow_context_setting_display_value(&self, kind: WorkflowContextSettingKind) -> String {
+        let mut current =
+            self.non_empty_field_text(kind.field_id())
+                .unwrap_or_else(|| match kind {
+                    WorkflowContextSettingKind::ActiveFields => "<all fields>".to_string(),
+                    WorkflowContextSettingKind::RefAnt => "<unset>".to_string(),
+                    WorkflowContextSettingKind::FluxReferenceFields
+                    | WorkflowContextSettingKind::FluxTransferFields => "<unset>".to_string(),
+                });
+        if kind == WorkflowContextSettingKind::ActiveFields
+            && let Ok(field_id) = current.parse::<usize>()
+            && let Some(summary) = self.current_structured_summary()
+            && let Some(field) = summary
+                .fields
+                .iter()
+                .find(|field| field.field_id == field_id)
+        {
+            current = field.name.clone();
+        }
+        if kind != WorkflowContextSettingKind::RefAnt {
+            return current;
+        }
+        match self.workflow_recommended_refant_name() {
+            Some(recommended) if current == "<unset>" => {
+                format!("{current}  [suggested {recommended}]")
+            }
+            Some(recommended) if current == recommended => format!("{current}  [suggested]"),
+            Some(recommended) => format!("{current}  [suggested {recommended}]"),
+            None => current,
+        }
+    }
+
+    fn workflow_recommended_refant_name(&self) -> Option<String> {
+        let summary = self.current_structured_summary()?;
+        summary
+            .antennas
+            .iter()
+            .find(|antenna| !antenna.station.ends_with(":OUT"))
+            .or_else(|| summary.antennas.first())
+            .map(|antenna| antenna.name.clone())
+    }
+
+    fn workflow_product_action_rows_for_section(&self, section: &FormSection) -> Vec<FormRowView> {
+        if !(self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Products")
+        {
+            return Vec::new();
+        }
+        [
+            WorkflowProductActionKind::AddSolvedProduct,
+            WorkflowProductActionKind::ImportChainTable,
+            WorkflowProductActionKind::ChooseCallibrary,
+        ]
+        .into_iter()
+        .map(|kind| FormRowView {
+            target: FormSelection::WorkflowProductAction(kind),
+            text: kind.label().to_string(),
+            kind: FormRowKind::Field,
+            selected: self.selected_form == FormSelection::WorkflowProductAction(kind),
+        })
+        .collect()
+    }
+
+    fn workflow_chain_rows_for_section(&self, section: &FormSection) -> Vec<FormRowView> {
+        if !(self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Products")
+        {
+            return Vec::new();
+        }
+        let mut rows = Vec::new();
+        for (index, entry) in self.workflow_chain_entries().into_iter().enumerate() {
+            rows.push(FormRowView {
+                target: FormSelection::WorkflowChainEntry(index),
+                text: entry.label.clone(),
+                kind: FormRowKind::Field,
+                selected: self.selected_form == FormSelection::WorkflowChainEntry(index),
+            });
+            rows.extend(self.workflow_chain_detail_rows(index, &entry));
+        }
+        rows
+    }
+
+    fn workflow_chain_detail_rows(
+        &self,
+        entry: usize,
+        record: &WorkflowChainEntryRecord,
+    ) -> Vec<FormRowView> {
+        match &record.source {
+            WorkflowChainEntrySource::DirectTable => self
+                .workflow_chain_setting_records(entry)
+                .into_iter()
+                .map(|setting| FormRowView {
+                    target: FormSelection::WorkflowChainSetting(setting.entry, setting.kind),
+                    text: setting.text,
+                    kind: FormRowKind::Field,
+                    selected: self.selected_form
+                        == FormSelection::WorkflowChainSetting(setting.entry, setting.kind),
+                })
+                .collect(),
+            WorkflowChainEntrySource::CallibraryFile { path } => vec![FormRowView {
+                target: FormSelection::WorkflowChainEntry(entry),
+                text: render_workflow_detail_display(&WorkflowDetailDisplay {
+                    label: "source".to_string(),
+                    value: path.display().to_string(),
+                    indent: 2,
+                }),
+                kind: FormRowKind::Field,
+                selected: false,
+            }],
+            WorkflowChainEntrySource::CallibrarySpec { spec, .. } => {
+                let mut rows = [
+                    WorkflowChainSettingKind::Gainfield,
+                    WorkflowChainSettingKind::Interp,
+                    WorkflowChainSettingKind::Spwmap,
+                    WorkflowChainSettingKind::Calwt,
+                ]
+                .into_iter()
+                .map(|kind| FormRowView {
+                    target: FormSelection::WorkflowChainSetting(entry, kind),
+                    text: render_workflow_detail_display(&WorkflowDetailDisplay {
+                        label: kind.label().to_string(),
+                        value: workflow_callib_setting_display_value(spec, kind),
+                        indent: 2,
+                    }),
+                    kind: FormRowKind::Field,
+                    selected: self.selected_form
+                        == FormSelection::WorkflowChainSetting(entry, kind),
+                })
+                .collect::<Vec<_>>();
+                if let Some(apply_to) = workflow_callib_apply_to_row(spec) {
+                    rows.push(FormRowView {
+                        target: FormSelection::WorkflowChainEntry(entry),
+                        text: apply_to,
+                        kind: FormRowKind::Field,
+                        selected: false,
+                    });
+                }
+                rows
+            }
+            WorkflowChainEntrySource::CallibraryError { message, .. } => vec![FormRowView {
+                target: FormSelection::WorkflowChainEntry(entry),
+                text: render_workflow_detail_display(&WorkflowDetailDisplay {
+                    label: "error".to_string(),
+                    value: message.clone(),
+                    indent: 2,
+                }),
+                kind: FormRowKind::Field,
+                selected: false,
+            }],
+        }
+    }
+
+    fn keep_empty_workflow_products_section(&self, section: &FormSection) -> bool {
+        self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Products"
+    }
+
+    fn render_section_item(&self, item: StaticFormItem) -> FormRowView {
+        match item {
+            StaticFormItem::Field(field_index) => FormRowView {
+                target: FormSelection::Field(field_index),
+                text: self.render_field_line(field_index),
+                kind: FormRowKind::Field,
+                selected: self.selected_form == FormSelection::Field(field_index),
+            },
+            StaticFormItem::SummaryView(view) => FormRowView {
+                target: FormSelection::SummaryView(view),
+                text: format!("{:<18} {}", "View", view.label()),
+                kind: FormRowKind::Field,
+                selected: self.selected_form == FormSelection::SummaryView(view),
+            },
+            StaticFormItem::BrowserView(view) => FormRowView {
+                target: FormSelection::BrowserView(view),
+                text: format!("{:<18} {}", "View", view.label()),
+                kind: FormRowKind::Field,
+                selected: self.selected_form == FormSelection::BrowserView(view),
+            },
+            StaticFormItem::WorkflowStage(stage) => FormRowView {
+                target: FormSelection::WorkflowStage(stage),
+                text: self.workflow_stage_row_text(stage),
+                kind: FormRowKind::Field,
+                selected: self.selected_form == FormSelection::WorkflowStage(stage),
+            },
+        }
+    }
+
+    fn render_field_line(&self, field_index: usize) -> String {
+        let Some(field) = self.fields.get(field_index) else {
+            return String::new();
+        };
+        let mut rendered = field.render_line(self.edit_state.as_ref(), field_index);
+        if !field.is_path()
+            && self
+                .field_picker_entries(field_index)
+                .is_some_and(|entries| !entries.is_empty())
+        {
+            rendered.push_str(" [pick]");
+        }
+        rendered
+    }
+
+    fn is_calibrate_workflow_stage_parameters(&self, section: &FormSection) -> bool {
+        self.app.shell_kind() == AppShellKind::Workflow
+            && self.app.id == "calibrate"
+            && section.name == "Stage Parameters"
     }
 
     pub(crate) fn browser_parameter_summary_lines(&self) -> Vec<String> {
@@ -3725,6 +5086,8 @@ impl AppState {
             .unwrap_or(&BrowserTab::TABLE_ALL)
     }
 
+    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn active_browser_tab_label(&self) -> Option<&'static str> {
         self.active_browser_tab().map(BrowserTab::label)
     }
@@ -3733,6 +5096,9 @@ impl AppState {
         &self,
         _viewport_height: u16,
     ) -> Option<(usize, usize)> {
+        if !self.browser_result_uses_live_navigation() {
+            return None;
+        }
         self.browser_session()?.vertical_metrics()
     }
 
@@ -3740,32 +5106,14 @@ impl AppState {
         &self,
         viewport_width: u16,
     ) -> Option<(usize, usize)> {
+        if !self.browser_result_uses_live_navigation() {
+            return None;
+        }
         self.browser_session()?.horizontal_metrics(viewport_width)
     }
 
     pub(crate) fn browser_inspector_lines(&self) -> Option<Vec<String>> {
         self.browser_session()?.inspector_lines()
-    }
-
-    fn browser_inspector_rows(&self) -> Vec<FormRowView> {
-        let lines = self.browser_inspector_lines().unwrap_or_else(|| {
-            vec![
-                "Inspector".to_string(),
-                String::new(),
-                "No value selected.".to_string(),
-            ]
-        });
-
-        lines
-            .into_iter()
-            .enumerate()
-            .map(|(index, text)| FormRowView {
-                target: FormSelection::Section(index),
-                text,
-                kind: FormRowKind::Field,
-                selected: false,
-            })
-            .collect()
     }
 
     fn browser_main_content_lines(&self) -> Option<Vec<String>> {
@@ -3809,11 +5157,7 @@ impl AppState {
     fn image_plane_font_size(&self) -> (u16, u16) {
         self.image_browser_session_state()
             .and_then(|state| state.panel.as_ref().map(|panel| panel.font_size))
-            .unwrap_or_else(|| {
-                Picker::from_query_stdio()
-                    .unwrap_or_else(|_| Picker::halfblocks())
-                    .font_size()
-            })
+            .unwrap_or_else(|| terminal_picker().font_size())
     }
 
     fn defer_image_browser_resize_during_divider_drag(&self) -> bool {
@@ -3837,6 +5181,13 @@ impl AppState {
     pub(crate) fn active_result_content(&self) -> ResultContent {
         match self.active_result_tab {
             ResultTab::Overview => ResultContent::Lines(self.overview_lines()),
+            ResultTab::Data => self.data_result_content(),
+            ResultTab::Structure => self.browser_structure_result_content(),
+            ResultTab::Content => self.browser_content_result_content(),
+            ResultTab::Inspector => self.browser_inspector_result_content(),
+            ResultTab::Products => ResultContent::Lines(self.products_tab_lines()),
+            ResultTab::Diagnostics => ResultContent::Graphic(self.plots_tab_summary()),
+            ResultTab::History => ResultContent::Lines(self.history_tab_lines()),
             ResultTab::Observations => match self.current_structured_summary() {
                 Some(summary) => ResultContent::Table(build_observations_table(summary)),
                 None => {
@@ -3876,6 +5227,217 @@ impl AppState {
             ResultTab::Stdout => ResultContent::Lines(raw_lines("stdout", &self.result.stdout)),
             ResultTab::Stderr => ResultContent::Lines(raw_lines("stderr", &self.result.stderr)),
         }
+    }
+
+    fn browser_structure_result_content(&self) -> ResultContent {
+        if !self.browser_is_active() {
+            return ResultContent::Lines(vec![
+                "Structure".to_string(),
+                "This application does not expose browser structure views.".to_string(),
+            ]);
+        }
+        match self.browser_active_view_result_tab() {
+            Some(ResultTab::Structure) => ResultContent::Lines(
+                self.browser_main_content_lines()
+                    .unwrap_or_else(|| vec!["No structure view available yet.".to_string()]),
+            ),
+            Some(ResultTab::Content) => ResultContent::Lines(vec![
+                "Structure".to_string(),
+                format!(
+                    "The selected browser view ({}) is content-oriented. Choose a structure view from the left pane.",
+                    self.active_browser_tab()
+                        .map(BrowserTab::label)
+                        .unwrap_or("unknown")
+                ),
+            ]),
+            _ => ResultContent::Lines(vec![
+                "Structure".to_string(),
+                "Choose a browser view from the left pane to inspect structure.".to_string(),
+            ]),
+        }
+    }
+
+    fn browser_content_result_content(&self) -> ResultContent {
+        if !self.browser_is_active() {
+            return ResultContent::Lines(vec![
+                "Content".to_string(),
+                "This application does not expose browser content views.".to_string(),
+            ]);
+        }
+        match self.browser_active_view_result_tab() {
+            Some(ResultTab::Content) => ResultContent::Lines(
+                self.browser_main_content_lines()
+                    .unwrap_or_else(|| vec!["No content view available yet.".to_string()]),
+            ),
+            Some(ResultTab::Structure) => ResultContent::Lines(vec![
+                "Content".to_string(),
+                format!(
+                    "The selected browser view ({}) is structure-oriented. Choose a content view from the left pane.",
+                    self.active_browser_tab()
+                        .map(BrowserTab::label)
+                        .unwrap_or("unknown")
+                ),
+            ]),
+            _ => ResultContent::Lines(vec![
+                "Content".to_string(),
+                "Choose a browser view from the left pane to inspect content.".to_string(),
+            ]),
+        }
+    }
+
+    fn browser_inspector_result_content(&self) -> ResultContent {
+        if !self.browser_is_active() {
+            return ResultContent::Lines(vec![
+                "Inspector".to_string(),
+                "This application does not expose a browser inspector.".to_string(),
+            ]);
+        }
+        ResultContent::Lines(self.browser_inspector_lines().unwrap_or_else(|| {
+            vec![
+                "Inspector".to_string(),
+                String::new(),
+                "No value selected.".to_string(),
+            ]
+        }))
+    }
+
+    fn data_result_content(&self) -> ResultContent {
+        match self.selected_summary_view {
+            SummaryDataView::Observations => match self.current_structured_summary() {
+                Some(summary) => ResultContent::Table(build_observations_table(summary)),
+                None => {
+                    ResultContent::Lines(vec!["No observation table available yet.".to_string()])
+                }
+            },
+            SummaryDataView::Scans => match self.current_structured_summary() {
+                Some(summary) => {
+                    ResultContent::Table(build_scans_table(summary, self.listunfl_enabled()))
+                }
+                None => ResultContent::Lines(vec!["No scan table available yet.".to_string()]),
+            },
+            SummaryDataView::Fields => match self.current_structured_summary() {
+                Some(summary) => {
+                    ResultContent::Table(build_fields_table(summary, self.listunfl_enabled()))
+                }
+                None => ResultContent::Lines(vec!["No field table available yet.".to_string()]),
+            },
+            SummaryDataView::Spws => match self.current_structured_summary() {
+                Some(summary) => ResultContent::Table(build_spws_table(summary)),
+                None => ResultContent::Lines(vec![
+                    "No spectral-window table available yet.".to_string(),
+                ]),
+            },
+            SummaryDataView::Sources => match self.current_structured_summary() {
+                Some(summary) => ResultContent::Table(build_sources_table(summary)),
+                None => ResultContent::Lines(vec!["No source table available yet.".to_string()]),
+            },
+            SummaryDataView::Antennas => match self.current_structured_summary() {
+                Some(summary) if self.verbose_enabled() => {
+                    ResultContent::Table(build_antennas_table(summary))
+                }
+                Some(summary) => ResultContent::Lines(build_compact_antenna_lines(summary)),
+                None => ResultContent::Lines(vec!["No antenna table available yet.".to_string()]),
+            },
+        }
+    }
+
+    fn history_tab_lines(&self) -> Vec<String> {
+        if self.history_entries.is_empty() {
+            return vec![
+                "History".to_string(),
+                "No runs have been recorded in this session yet.".to_string(),
+            ];
+        }
+        let mut lines = vec!["History".to_string()];
+        for (index, entry) in self.history_entries.iter().enumerate() {
+            lines.push(format!(
+                "{}. [{}] {}",
+                entry.sequence.max(index + 1),
+                entry.status_kind.label(),
+                entry.title
+            ));
+            if let Some(stage) = entry.stage {
+                lines.push(format!("   stage={} ({})", stage.label(), stage.key()));
+            }
+            lines.extend(entry.details.iter().map(|detail| format!("   {detail}")));
+        }
+        lines
+    }
+
+    fn products_tab_lines(&self) -> Vec<String> {
+        if self.app.shell_kind() != AppShellKind::Workflow {
+            return vec![
+                "Products".to_string(),
+                "This application does not expose workflow products.".to_string(),
+            ];
+        }
+        render_workflow_artifact_groups(
+            &self.workflow_products_display_groups(),
+            "No workflow products have been configured or produced yet.",
+        )
+    }
+
+    fn workflow_products_display_groups(&self) -> Vec<WorkflowArtifactGroupDisplay> {
+        let mut configured = self
+            .split_csv_field("gaintables")
+            .into_iter()
+            .map(|path| WorkflowArtifactDisplay {
+                heading: format!("Chain: {path}"),
+                detail_lines: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        if let Some(callib) = self.non_empty_field_text("callib") {
+            configured.push(WorkflowArtifactDisplay {
+                heading: format!("Callibrary: {callib}"),
+                detail_lines: Vec::new(),
+            });
+        }
+
+        let derived = self
+            .workflow_products
+            .iter()
+            .map(|product| {
+                let dependencies = if product.dependency_revisions.is_empty() {
+                    "none".to_string()
+                } else {
+                    product
+                        .dependency_revisions
+                        .iter()
+                        .map(|(stage, revision)| format!("{stage}@r{revision}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                WorkflowArtifactDisplay {
+                    heading: format!(
+                        "r{} {} [{} | {}]",
+                        product.revision,
+                        product.path.display(),
+                        product.family,
+                        product.status.label()
+                    ),
+                    detail_lines: vec![
+                        format!(
+                            "stage={}  provenance={}  run={}",
+                            product.stage.label(),
+                            product.provenance,
+                            product.run_sequence
+                        ),
+                        format!("depends_on={dependencies}"),
+                    ],
+                }
+            })
+            .collect::<Vec<_>>();
+
+        vec![
+            WorkflowArtifactGroupDisplay {
+                title: "Configured chain".to_string(),
+                items: configured,
+            },
+            WorkflowArtifactGroupDisplay {
+                title: "Derived products".to_string(),
+                items: derived,
+            },
+        ]
     }
 
     #[cfg(test)]
@@ -3938,7 +5500,7 @@ impl AppState {
     pub(crate) fn start_run_on_launch(&mut self) {
         if self.is_msexplore_app() {
             self.clear_output_selection();
-            self.activate_result_tab(ResultTab::Plots);
+            self.activate_result_tab(self.default_plot_result_tab());
             self.pane_focus = PaneFocus::Result;
             self.plot_workspace.preview_invalidated = true;
             self.result.status_line = if self.msexplore_form_has_plot_spec() {
@@ -4054,11 +5616,18 @@ impl AppState {
 
     #[cfg(test)]
     pub(crate) fn set_calibration_report_for_test(&mut self, report: ManagedCalibrationOutput) {
+        let history_entry = Self::calibration_history_entry(&report, self.next_history_sequence());
+        self.record_calibration_products(&report, history_entry.sequence);
+        self.history_entries.push(history_entry);
         self.result.structured = Some(StructuredResult::Calibration(Box::new(report)));
         self.result.structured_error = None;
-        self.result.status_line = "Execution completed successfully.".to_string();
-        self.result.status_kind = StatusKind::Ok;
         self.active_result_tab = ResultTab::Overview;
+        if let Some(report) = self.current_calibration_report().cloned() {
+            self.apply_workflow_post_run_guidance(&report);
+        } else {
+            self.result.status_line = "Execution completed successfully.".to_string();
+            self.result.status_kind = StatusKind::Ok;
+        }
     }
 
     #[cfg(test)]
@@ -4092,6 +5661,11 @@ impl AppState {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_pane_focus_for_test(&mut self, focus: PaneFocus) {
+        self.pane_focus = focus;
+    }
+
+    #[cfg(test)]
     pub(crate) fn section_collapsed_for_test(&self, name: &str) -> Option<bool> {
         self.sections
             .iter()
@@ -4110,6 +5684,79 @@ impl AppState {
             .into_iter()
             .find(|row| row.selected)
             .map(|row| row.text)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_form_field_for_test(&mut self, id: &str) -> bool {
+        let Some(field_index) = self.fields.iter().position(|field| field.schema.id == id) else {
+            return false;
+        };
+        self.selected_form = FormSelection::Field(field_index);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_workflow_chain_entry_for_test(&mut self, index: usize) -> bool {
+        if index >= self.workflow_chain_entries().len() {
+            return false;
+        }
+        self.select_workflow_chain_entry(index);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_workflow_product_for_test(&mut self, index: usize) -> bool {
+        if index >= self.workflow_products.len() {
+            return false;
+        }
+        self.select_workflow_product(index);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_workflow_product_action_for_test(
+        &mut self,
+        kind: WorkflowProductActionKind,
+    ) -> bool {
+        self.selected_form = FormSelection::WorkflowProductAction(kind);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_workflow_context_setting_for_test(
+        &mut self,
+        kind: WorkflowContextSettingKind,
+    ) -> bool {
+        self.selected_form = FormSelection::WorkflowContextSetting(kind);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_workflow_chain_setting_for_test(
+        &mut self,
+        entry: usize,
+        kind: WorkflowChainSettingKind,
+    ) -> bool {
+        if entry >= self.workflow_chain_entries().len() {
+            return false;
+        }
+        self.selected_form = FormSelection::WorkflowChainSetting(entry, kind);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_workflow_stage_for_test(&mut self, stage: WorkflowStageId) -> bool {
+        self.selected_form = FormSelection::WorkflowStage(stage);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn choice_picker_labels_for_test(&self) -> Vec<String> {
+        self.choice_picker_entries()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
     }
 
     #[cfg(test)]
@@ -4509,7 +6156,7 @@ impl AppState {
     }
 
     pub(crate) fn prepare_graphics(&mut self, layout: &UiLayout) {
-        if self.active_result_tab == ResultTab::Plots {
+        if self.result_tab_uses_plot_workspace() {
             self.ensure_plot_requested(layout);
         }
         if self.defer_image_plane_render_during_divider_drag() {
@@ -4983,7 +6630,7 @@ impl AppState {
         }
         match target {
             OutputPane::Result => {
-                if self.browser_is_active() {
+                if self.browser_result_uses_live_navigation() {
                     if self.image_raster_plane_active() {
                         return None;
                     }
@@ -5372,6 +7019,16 @@ impl AppState {
             ParameterAction::ChoicePrevious => self.adjust_selected_choice(false),
             ParameterAction::ChoiceNext => self.adjust_selected_choice(true),
             ParameterAction::Activate => self.activate_selected_form_item(),
+            ParameterAction::PromoteWorkflowProduct => self.promote_selected_workflow_product(),
+            ParameterAction::Delete => self.delete_selected_parameter_item(),
+            ParameterAction::MoveUp => self.move_selected_workflow_chain_entry(false),
+            ParameterAction::MoveDown => self.move_selected_workflow_chain_entry(true),
+        }
+    }
+
+    fn delete_selected_parameter_item(&mut self) {
+        if let FormSelection::WorkflowChainEntry(index) = self.selected_form {
+            self.remove_workflow_chain_entry(index);
         }
     }
 
@@ -5381,6 +7038,90 @@ impl AppState {
             PathChooserAction::Confirm => self.confirm_path_chooser(),
             PathChooserAction::SelectCurrent => self.select_current_path_chooser_entry(),
             PathChooserAction::Navigate(input) => self.apply_path_chooser_input(input),
+        }
+    }
+
+    fn handle_choice_picker_key(&mut self, key_event: KeyEvent) {
+        if key_event.kind != KeyEventKind::Press {
+            return;
+        }
+        match key_event.code {
+            KeyCode::Esc if key_event.modifiers.is_empty() => self.cancel_choice_picker(),
+            KeyCode::Enter | KeyCode::Char(' ') if key_event.modifiers.is_empty() => {
+                self.commit_choice_picker();
+            }
+            KeyCode::Up | KeyCode::Char('k')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_choice_picker(false);
+            }
+            KeyCode::Down | KeyCode::Char('j')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_choice_picker(true);
+            }
+            KeyCode::Left | KeyCode::Char('h')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_choice_picker(false);
+            }
+            KeyCode::Right | KeyCode::Char('l')
+                if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.cycle_choice_picker(true);
+            }
+            KeyCode::Backspace if key_event.modifiers.is_empty() => {
+                self.delete_choice_picker_filter_backward();
+            }
+            KeyCode::Char(ch) if key_event.modifiers.is_empty() => {
+                self.extend_choice_picker_filter(ch);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_choice_picker_mouse(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
+        let anchor = layout
+            .form_rows
+            .iter()
+            .find(|row| Some(row.target) == self.choice_picker_anchor_target())
+            .map(|row| row.rect);
+        let item_count = self
+            .choice_picker_entries()
+            .map(|entries| entries.len())
+            .unwrap_or_default();
+        let area = crate::ui::choice_picker_area(anchor, layout.form_block, item_count);
+        let list_area = crate::ui::choice_picker_list_area(area);
+        match mouse_event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if !rect_contains(area, mouse_event.column, mouse_event.row) {
+                    self.cancel_choice_picker();
+                    return;
+                }
+                if !rect_contains(list_area, mouse_event.column, mouse_event.row) {
+                    return;
+                }
+                let Some(row_offset) =
+                    popup_index_at(list_area, mouse_event.column, mouse_event.row, item_count)
+                else {
+                    return;
+                };
+                if let Some(picker) = self.choice_picker.as_mut() {
+                    picker.selected_filtered_index = row_offset;
+                }
+                self.commit_choice_picker();
+            }
+            MouseEventKind::ScrollUp
+                if rect_contains(area, mouse_event.column, mouse_event.row) =>
+            {
+                self.cycle_choice_picker(false);
+            }
+            MouseEventKind::ScrollDown
+                if rect_contains(area, mouse_event.column, mouse_event.row) =>
+            {
+                self.cycle_choice_picker(true);
+            }
+            _ => {}
         }
     }
 
@@ -5421,7 +7162,7 @@ impl AppState {
                 });
                 let double_click_target = if double_click {
                     Some((
-                        chooser.field_index,
+                        chooser.target,
                         chooser.explorer.current().path.clone(),
                         chooser.explorer.current().is_dir,
                     ))
@@ -5429,11 +7170,11 @@ impl AppState {
                     None
                 };
                 let _ = chooser;
-                if let Some((field_index, path, is_dir)) = double_click_target {
+                if let Some((target, path, is_dir)) = double_click_target {
                     if is_dir {
                         self.apply_path_chooser_input(ExplorerInput::Right);
                     } else {
-                        self.select_path_chooser_path(field_index, &path);
+                        self.select_path_chooser_path(target, &path);
                     }
                 }
             }
@@ -5452,7 +7193,7 @@ impl AppState {
     }
 
     fn apply_result_action(&mut self, action: ResultAction) {
-        if self.active_result_tab == ResultTab::Plots {
+        if self.result_tab_uses_plot_workspace() {
             match action {
                 ResultAction::PreviousTab => {
                     self.cycle_visible_result_tab(false);
@@ -6031,7 +7772,7 @@ impl AppState {
             .or_else(|| {
                 if self.browser_session.is_some() {
                     self.browser_clipboard_payload()
-                } else if self.active_result_tab == ResultTab::Plots {
+                } else if self.result_tab_uses_plot_workspace() {
                     self.current_plot_summary()
                         .map(|summary| (summary, "plot summary"))
                 } else {
@@ -6104,7 +7845,18 @@ impl AppState {
             .into_iter()
             .filter_map(|target| match target {
                 FormSelection::Field(index) => Some(index),
-                FormSelection::Section(_) | FormSelection::BrowserPane(_) => None,
+                FormSelection::Section(_)
+                | FormSelection::WorkflowStageGuide(_)
+                | FormSelection::WorkflowStageAction
+                | FormSelection::WorkflowContextSetting(_)
+                | FormSelection::SummaryView(_)
+                | FormSelection::BrowserView(_)
+                | FormSelection::WorkflowProductAction(_)
+                | FormSelection::WorkflowChainEntry(_)
+                | FormSelection::WorkflowChainSetting(_, _)
+                | FormSelection::WorkflowProduct(_)
+                | FormSelection::WorkflowStage(_)
+                | FormSelection::BrowserPane(_) => None,
             })
             .collect::<Vec<_>>();
         let Some(position) = targets
@@ -6200,17 +7952,6 @@ impl AppState {
             return;
         }
 
-        if let Some(tab) = layout.browser_tab_at(mouse_event.column, mouse_event.row) {
-            self.clear_output_selection_for_target(OutputPane::Result);
-            self.pane_focus = PaneFocus::Result;
-            self.activate_browser_tab(tab);
-            self.last_click = Some(ClickState {
-                target: ClickTarget::BrowserTab(tab),
-                at: Instant::now(),
-            });
-            return;
-        }
-
         if self.image_workspace_divider_toggle_hit(mouse_event.column, mouse_event.row, layout) {
             self.clear_output_selection_for_target(OutputPane::Result);
             self.set_focus_target(FocusTarget::BrowserMain);
@@ -6236,7 +7977,7 @@ impl AppState {
             return;
         }
 
-        if self.active_result_tab == ResultTab::Plots {
+        if self.result_tab_uses_plot_workspace() {
             if let Some(row) = layout.plot_catalog_at(mouse_event.column, mouse_event.row) {
                 self.pane_focus = PaneFocus::Result;
                 self.clear_output_selection_for_target(OutputPane::Result);
@@ -6368,10 +8109,6 @@ impl AppState {
             return;
         }
 
-        if self.has_active_session() && !self.browser_uses_parameter_pane() {
-            return;
-        }
-
         if layout.in_browser_mode_selector(mouse_event.column, mouse_event.row) {
             self.pane_focus = PaneFocus::Parameters;
             self.open_browser_mode_picker();
@@ -6383,16 +8120,26 @@ impl AppState {
         }
 
         if let Some(target) = layout.form_target_at(mouse_event.column, mouse_event.row) {
-            if self.browser_uses_parameter_pane() {
-                self.pane_focus = PaneFocus::Parameters;
-            } else if self.browser_session.is_some() {
-                self.set_focus_target(FocusTarget::BrowserInspector);
-            } else {
-                self.pane_focus = PaneFocus::Parameters;
-            }
+            self.pane_focus = PaneFocus::Parameters;
             let click_target = match target {
                 FormSelection::Section(index) => ClickTarget::Section(index),
                 FormSelection::Field(index) => ClickTarget::Field(index),
+                FormSelection::WorkflowContextSetting(kind) => {
+                    ClickTarget::WorkflowContextSetting(kind)
+                }
+                FormSelection::WorkflowProductAction(kind) => {
+                    ClickTarget::WorkflowProductAction(kind)
+                }
+                FormSelection::WorkflowChainEntry(index) => ClickTarget::WorkflowChainEntry(index),
+                FormSelection::WorkflowChainSetting(entry, kind) => {
+                    ClickTarget::WorkflowChainSetting(entry, kind)
+                }
+                FormSelection::WorkflowProduct(index) => ClickTarget::WorkflowProduct(index),
+                FormSelection::SummaryView(_)
+                | FormSelection::BrowserView(_)
+                | FormSelection::WorkflowStageGuide(_)
+                | FormSelection::WorkflowStageAction
+                | FormSelection::WorkflowStage(_) => ClickTarget::Pane(PaneFocus::Parameters),
                 FormSelection::BrowserPane(_) => ClickTarget::Pane(PaneFocus::Parameters),
             };
             let double_click = self.last_click.is_some_and(|last| {
@@ -6409,10 +8156,61 @@ impl AppState {
                     self.selected_form = FormSelection::Section(section_index);
                     self.toggle_section(section_index);
                 }
+                FormSelection::SummaryView(view) => {
+                    self.selected_form = FormSelection::SummaryView(view);
+                    self.activate_selected_form_item();
+                }
+                FormSelection::WorkflowContextSetting(kind) => {
+                    self.selected_form = FormSelection::WorkflowContextSetting(kind);
+                    if double_click {
+                        self.activate_selected_form_item();
+                    }
+                }
+                FormSelection::WorkflowStageGuide(kind) => {
+                    self.selected_form = FormSelection::WorkflowStageGuide(kind);
+                }
+                FormSelection::WorkflowStageAction => {
+                    self.selected_form = FormSelection::WorkflowStageAction;
+                    if double_click {
+                        self.activate_selected_form_item();
+                    }
+                }
+                FormSelection::BrowserView(view) => {
+                    self.selected_form = FormSelection::BrowserView(view);
+                    self.activate_selected_form_item();
+                }
+                FormSelection::WorkflowChainEntry(index) => {
+                    self.selected_form = FormSelection::WorkflowChainEntry(index);
+                    self.activate_selected_form_item();
+                }
+                FormSelection::WorkflowProductAction(kind) => {
+                    self.selected_form = FormSelection::WorkflowProductAction(kind);
+                    self.activate_selected_form_item();
+                }
+                FormSelection::WorkflowChainSetting(entry, kind) => {
+                    self.selected_form = FormSelection::WorkflowChainSetting(entry, kind);
+                    if double_click {
+                        self.activate_selected_form_item();
+                    }
+                }
+                FormSelection::WorkflowProduct(index) => {
+                    self.selected_form = FormSelection::WorkflowProduct(index);
+                    self.activate_selected_form_item();
+                }
+                FormSelection::WorkflowStage(stage) => {
+                    self.selected_form = FormSelection::WorkflowStage(stage);
+                    self.activate_selected_form_item();
+                }
                 FormSelection::Field(field_index) => {
                     self.selected_form = FormSelection::Field(field_index);
                     if self.path_field_browse_hit(field_index, mouse_event.column, layout) {
                         self.open_path_chooser(field_index);
+                    } else if self
+                        .field_picker_entries(field_index)
+                        .is_some_and(|entries| !entries.is_empty())
+                        && double_click
+                    {
+                        self.open_choice_picker(field_index);
                     } else if double_click {
                         self.enter_edit_mode(field_index);
                     }
@@ -6528,7 +8326,7 @@ impl AppState {
             return;
         }
 
-        if self.active_result_tab == ResultTab::Plots {
+        if self.result_tab_uses_plot_workspace() {
             if layout
                 .plot_catalog_at(mouse_event.column, mouse_event.row)
                 .is_some()
@@ -6582,7 +8380,7 @@ impl AppState {
     }
 
     fn handle_mouse_hscroll(&mut self, mouse_event: MouseEvent, layout: &UiLayout, delta: i16) {
-        if self.active_result_tab == ResultTab::Plots {
+        if self.result_tab_uses_plot_workspace() {
             if layout
                 .plot_control_at(mouse_event.column, mouse_event.row)
                 .is_some()
@@ -6666,10 +8464,49 @@ impl AppState {
     fn activate_selected_form_item(&mut self) {
         match self.selected_form {
             FormSelection::Section(section_index) => self.toggle_section(section_index),
+            FormSelection::SummaryView(view) => {
+                self.selected_summary_view = view;
+                self.activate_result_tab(ResultTab::Data);
+            }
+            FormSelection::WorkflowContextSetting(kind) => {
+                self.activate_workflow_context_setting(kind)
+            }
+            FormSelection::WorkflowStageGuide(_) => {}
+            FormSelection::WorkflowStageAction => self.start_run(),
+            FormSelection::BrowserView(view) => {
+                self.activate_browser_tab(view);
+                self.activate_result_tab(view.shell_result_tab());
+                self.result.status_line = format!("Browser view selected: {}.", view.label());
+                self.result.status_kind = StatusKind::Info;
+            }
+            FormSelection::WorkflowChainEntry(index) => self.select_workflow_chain_entry(index),
+            FormSelection::WorkflowProductAction(kind) => {
+                self.activate_workflow_product_action(kind)
+            }
+            FormSelection::WorkflowChainSetting(entry, kind) => {
+                self.activate_workflow_chain_setting(entry, kind)
+            }
+            FormSelection::WorkflowProduct(index) => self.select_workflow_product(index),
+            FormSelection::WorkflowStage(stage) => {
+                self.set_current_workflow_stage(stage);
+                self.result.status_line = format!(
+                    "Workflow stage selected: {}. {}",
+                    stage.label(),
+                    self.workflow_stage_hint(stage)
+                );
+                self.result.status_kind = StatusKind::Info;
+            }
             FormSelection::Field(field_index) => {
                 let Some(field) = self.fields.get(field_index) else {
                     return;
                 };
+                if self
+                    .field_picker_entries(field_index)
+                    .is_some_and(|entries| !entries.is_empty())
+                {
+                    self.open_choice_picker(field_index);
+                    return;
+                }
                 match &field.value {
                     FormValue::Text(_) => self.enter_edit_mode(field_index),
                     FormValue::Toggle(_) => self.toggle_field(field_index),
@@ -6717,7 +8554,100 @@ impl AppState {
 
     fn adjust_selected_choice(&mut self, forward: bool) {
         match self.selected_form {
-            FormSelection::Field(field_index) => self.cycle_field_choice(field_index, forward),
+            FormSelection::Field(field_index) => {
+                if self
+                    .field_picker_entries(field_index)
+                    .is_some_and(|entries| !entries.is_empty())
+                {
+                    self.open_choice_picker(field_index);
+                } else {
+                    self.cycle_field_choice(field_index, forward);
+                }
+            }
+            FormSelection::SummaryView(view) => {
+                self.selected_summary_view = view.cycle(forward);
+                self.selected_form = FormSelection::SummaryView(self.selected_summary_view);
+                self.activate_result_tab(ResultTab::Data);
+            }
+            FormSelection::BrowserView(view) => {
+                let tabs = self.browser_tabs();
+                if tabs.is_empty() {
+                    return;
+                }
+                let position = tabs
+                    .iter()
+                    .position(|candidate| *candidate == view)
+                    .unwrap_or(0);
+                let next = if forward {
+                    tabs[(position + 1) % tabs.len()]
+                } else if position == 0 {
+                    tabs[tabs.len() - 1]
+                } else {
+                    tabs[position - 1]
+                };
+                self.selected_form = FormSelection::BrowserView(next);
+                self.activate_browser_tab(next);
+                self.activate_result_tab(next.shell_result_tab());
+            }
+            FormSelection::WorkflowChainEntry(index) => {
+                let entries = self.workflow_chain_entries();
+                if entries.is_empty() {
+                    return;
+                }
+                let next = if forward {
+                    (index + 1) % entries.len()
+                } else if index == 0 {
+                    entries.len() - 1
+                } else {
+                    index - 1
+                };
+                self.selected_form = FormSelection::WorkflowChainEntry(next);
+                self.select_workflow_chain_entry(next);
+            }
+            FormSelection::WorkflowProductAction(kind) => {
+                self.selected_form = FormSelection::WorkflowProductAction(kind);
+                match kind {
+                    WorkflowProductActionKind::AddSolvedProduct => {
+                        self.activate_workflow_product_action(kind);
+                    }
+                    WorkflowProductActionKind::ImportChainTable
+                    | WorkflowProductActionKind::ChooseCallibrary => {}
+                }
+            }
+            FormSelection::WorkflowContextSetting(kind) => {
+                self.activate_workflow_context_setting(kind);
+            }
+            FormSelection::WorkflowStageGuide(_) => {}
+            FormSelection::WorkflowStageAction => {}
+            FormSelection::WorkflowChainSetting(entry, kind) => match kind {
+                WorkflowChainSettingKind::Interp => {
+                    self.open_workflow_chain_setting_picker(entry, kind);
+                }
+                WorkflowChainSettingKind::Calwt => {
+                    self.open_workflow_chain_setting_picker(entry, kind);
+                }
+                WorkflowChainSettingKind::Gainfield | WorkflowChainSettingKind::Spwmap => {
+                    self.open_workflow_chain_setting_picker(entry, kind);
+                }
+            },
+            FormSelection::WorkflowProduct(index) => {
+                if self.workflow_products.is_empty() {
+                    return;
+                }
+                let next = if forward {
+                    (index + 1) % self.workflow_products.len()
+                } else if index == 0 {
+                    self.workflow_products.len() - 1
+                } else {
+                    index - 1
+                };
+                self.selected_form = FormSelection::WorkflowProduct(next);
+                self.select_workflow_product(next);
+            }
+            FormSelection::WorkflowStage(stage) => {
+                let next = stage.cycle(forward);
+                self.set_current_workflow_stage(next);
+            }
             FormSelection::BrowserPane(BrowserPaneSelection::Mode(_)) => {
                 if self.browser_mode_picker.is_none() {
                     self.open_browser_mode_picker();
@@ -6731,6 +8661,40 @@ impl AppState {
 
     fn active_browser_tab(&self) -> Option<BrowserTab> {
         self.browser_session().map(BrowserSession::active_tab)
+    }
+
+    fn browser_active_view_result_tab(&self) -> Option<ResultTab> {
+        self.active_browser_tab().map(BrowserTab::shell_result_tab)
+    }
+
+    pub(crate) fn browser_result_uses_live_navigation(&self) -> bool {
+        matches!(
+            self.active_result_tab,
+            ResultTab::Structure | ResultTab::Content
+        ) && self.browser_active_view_result_tab() == Some(self.active_result_tab)
+    }
+
+    pub(crate) fn browser_result_requires_special_renderer(&self) -> bool {
+        self.browser_result_uses_live_navigation()
+            && self.active_result_tab == ResultTab::Content
+            && self.image_raster_plane_active()
+    }
+
+    fn sync_browser_shell_state(&mut self, force_result_tab: bool) {
+        let Some(view) = self.active_browser_tab() else {
+            return;
+        };
+        if !self.browser_uses_parameter_pane() {
+            self.selected_form = FormSelection::BrowserView(view);
+        }
+        if force_result_tab
+            || matches!(
+                self.active_result_tab,
+                ResultTab::Structure | ResultTab::Content
+            )
+        {
+            self.active_result_tab = view.shell_result_tab();
+        }
     }
 
     fn toggle_primary_aux_pane(&mut self) {
@@ -6747,7 +8711,7 @@ impl AppState {
         };
         self.config_store.set_pane_split_ratio(next);
         if next == 0.0 {
-            self.set_focus_target(if self.active_result_tab == ResultTab::Plots {
+            self.set_focus_target(if self.result_tab_uses_plot_workspace() {
                 FocusTarget::PlotCatalog
             } else {
                 FocusTarget::ResultPane
@@ -6900,7 +8864,7 @@ impl AppState {
         let Some(track) = layout.result_scrollbar else {
             return;
         };
-        let metrics = if self.browser_session.is_some() {
+        let metrics = if self.browser_result_uses_live_navigation() {
             self.active_browser_scroll_metrics(track.height)
         } else {
             self.active_result_scroll_metrics(track.height)
@@ -6909,7 +8873,7 @@ impl AppState {
             return;
         };
         if content_length <= viewport_length || track.height == 0 {
-            if self.browser_session.is_some() {
+            if self.browser_result_uses_live_navigation() {
                 self.set_active_browser_scroll(0);
             } else {
                 self.set_active_result_scroll(0);
@@ -6927,7 +8891,7 @@ impl AppState {
         } else {
             (row_offset * max_scroll + denominator / 2) / denominator
         };
-        if self.browser_session.is_some() {
+        if self.browser_result_uses_live_navigation() {
             self.set_active_browser_scroll(scroll);
         } else {
             self.set_active_result_scroll(scroll);
@@ -6938,7 +8902,7 @@ impl AppState {
         let Some(track) = layout.result_hscrollbar else {
             return;
         };
-        let metrics = if self.browser_session.is_some() {
+        let metrics = if self.browser_result_uses_live_navigation() {
             self.active_browser_hscroll_metrics(track.width)
         } else {
             self.active_result_hscroll_metrics(track.width)
@@ -6947,7 +8911,7 @@ impl AppState {
             return;
         };
         if content_width <= viewport_width || track.width == 0 {
-            if self.browser_session.is_some() {
+            if self.browser_result_uses_live_navigation() {
                 self.set_active_browser_hscroll(0);
             } else {
                 self.set_active_result_hscroll(0);
@@ -6968,7 +8932,7 @@ impl AppState {
             let thumb_offset = adjusted.min(max_thumb_offset);
             (thumb_offset * max_scroll + max_thumb_offset / 2) / max_thumb_offset
         };
-        if self.browser_session.is_some() {
+        if self.browser_result_uses_live_navigation() {
             self.set_active_browser_hscroll(scroll);
         } else {
             self.set_active_result_hscroll(scroll);
@@ -7015,7 +8979,7 @@ impl AppState {
         let Some(track) = layout.result_hscrollbar else {
             return 0;
         };
-        let metrics = if self.browser_session.is_some() {
+        let metrics = if self.browser_result_uses_live_navigation() {
             self.active_browser_hscroll_metrics(track.width)
         } else {
             self.active_result_hscroll_metrics(track.width)
@@ -7035,7 +8999,7 @@ impl AppState {
             return 0;
         }
 
-        let active_hscroll = if self.browser_session.is_some() {
+        let active_hscroll = if self.browser_result_uses_live_navigation() {
             self.active_browser_hscroll()
         } else {
             self.active_result_hscroll()
@@ -7082,6 +9046,8 @@ impl AppState {
 
     fn start_run(&mut self) {
         self.clear_output_selection();
+        self.choice_picker = None;
+        self.path_chooser = None;
         self.commit_edit_buffer();
 
         if self.schema.is_none() {
@@ -7093,6 +9059,13 @@ impl AppState {
 
         if self.app.is_browser_session() {
             self.start_browser_session();
+            return;
+        }
+
+        if self.app.id == "calibrate"
+            && self.current_workflow_stage() == WorkflowStageId::InspectDataset
+        {
+            self.run_calibrate_dataset_summary_inline();
             return;
         }
 
@@ -7131,6 +9104,44 @@ impl AppState {
                 self.active_result_tab = ResultTab::Stderr;
             }
         }
+    }
+
+    fn run_calibrate_dataset_summary_inline(&mut self) {
+        let Some(ms_path) = self.non_empty_field_text("measurement_set") else {
+            self.result.status_line =
+                "Enter a MeasurementSet path before running dataset summary.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            self.active_result_tab = ResultTab::Overview;
+            return;
+        };
+
+        self.result = ResultState::default();
+        self.active_result_tab = ResultTab::Overview;
+        self.pane_focus = PaneFocus::Result;
+        self.result_scrolls = [0; RESULT_TAB_COUNT];
+        self.result_hscrolls = [0; RESULT_TAB_COUNT];
+        self.ensure_current_summary_snapshot_if_needed();
+
+        if let Some(error) = self.result.structured_error.clone() {
+            self.result.status_line = "Dataset summary failed.".to_string();
+            self.result.status_kind = StatusKind::Error;
+            self.record_history_entry(
+                Some(WorkflowStageId::InspectDataset),
+                "Dataset Summary Failed".to_string(),
+                StatusKind::Error,
+                vec![format!("MS: {ms_path}"), error],
+            );
+            return;
+        }
+
+        self.result.status_line = "MeasurementSet summary refreshed.".to_string();
+        self.result.status_kind = StatusKind::Ok;
+        self.record_history_entry(
+            Some(WorkflowStageId::InspectDataset),
+            "Dataset Summary".to_string(),
+            StatusKind::Ok,
+            vec![format!("MS: {ms_path}")],
+        );
     }
 
     fn start_browser_session(&mut self) {
@@ -7191,6 +9202,9 @@ impl AppState {
                                     viewport,
                                 })),
                             });
+                            self.result_scrolls = [0; RESULT_TAB_COUNT];
+                            self.result_hscrolls = [0; RESULT_TAB_COUNT];
+                            self.sync_browser_shell_state(true);
                         }
                         Err(error) => {
                             let _ = client.cancel();
@@ -7264,6 +9278,9 @@ impl AppState {
                                 root_path: path,
                                 kind: BrowserSessionKind::Image(Box::new(state)),
                             });
+                            self.result_scrolls = [0; RESULT_TAB_COUNT];
+                            self.result_hscrolls = [0; RESULT_TAB_COUNT];
+                            self.sync_browser_shell_state(true);
                             if let Some(parameters) = self
                                 .browser_session()
                                 .and_then(BrowserSession::image_parameters)
@@ -7429,11 +9446,7 @@ impl AppState {
                         .panel
                         .as_ref()
                         .map(|panel| panel.font_size)
-                        .unwrap_or_else(|| {
-                            Picker::from_query_stdio()
-                                .unwrap_or_else(|_| Picker::halfblocks())
-                                .font_size()
-                        });
+                        .unwrap_or_else(|| terminal_picker().font_size());
                     let request = match command {
                         BrowserRequest::Resize {
                             width,
@@ -7720,6 +9733,7 @@ impl AppState {
         match result {
             Ok(()) => {
                 self.clear_output_selection();
+                self.sync_browser_shell_state(false);
                 self.pane_focus = match self.browser_session() {
                     Some(session)
                         if session.focus() == BrowserPaneFocus::Inspector
@@ -7962,10 +9976,54 @@ impl AppState {
     }
 
     pub(crate) fn selected_plot_label(&self) -> String {
+        if self.app.id == "calibrate" {
+            let target = self
+                .current_plot_catalog_target()
+                .unwrap_or_else(|| self.default_calibration_plot_target());
+            return match target {
+                PlotCatalogTarget::Calibration(preset) => preset.display_name().to_string(),
+                PlotCatalogTarget::Preset(_)
+                | PlotCatalogTarget::CustomPlot
+                | PlotCatalogTarget::PageSpec => "Calibration Plot".to_string(),
+            };
+        }
         self.msexplore_plot_label()
     }
 
     fn current_plot_summary(&self) -> Option<String> {
+        if self.app.id == "calibrate" {
+            let target = self
+                .current_plot_catalog_target()
+                .unwrap_or_else(|| self.default_calibration_plot_target());
+            let PlotCatalogTarget::Calibration(preset) = target else {
+                return Some("Choose one calibration plot preset.".to_string());
+            };
+            if preset.uses_calibration_table() {
+                return Some(render_workflow_diagnostic_summary(
+                    &WorkflowDiagnosticSummaryDisplay {
+                        description: preset.summary().to_string(),
+                        source_path: self
+                            .current_calibration_plot_table_path()
+                            .map(|path| path.display().to_string()),
+                        missing_source_message: Some(
+                            "Choose or enter a calibration table to preview inspection plots."
+                                .to_string(),
+                        ),
+                    },
+                ));
+            }
+            let ms_path = self.field_text("measurement_set").unwrap_or_default();
+            return Some(render_workflow_diagnostic_summary(
+                &WorkflowDiagnosticSummaryDisplay {
+                    description: preset.summary().to_string(),
+                    source_path: (!ms_path.trim().is_empty()).then(|| ms_path.trim().to_string()),
+                    missing_source_message: Some(
+                        "Enter a MeasurementSet path to preview corrected-data diagnostics."
+                            .to_string(),
+                    ),
+                },
+            ));
+        }
         let ms_path = self.field_text("ms_path").unwrap_or_default();
         if ms_path.trim().is_empty() {
             return Some(
@@ -7992,6 +10050,12 @@ impl AppState {
                 .as_ref()
                 .map(|snapshot| &snapshot.summary);
         }
+        if self.app.id == "calibrate"
+            && self.result.structured.is_none()
+            && let Some(snapshot) = self.plot_workspace.snapshot.as_ref()
+        {
+            return Some(&snapshot.summary);
+        }
         match self.result.structured.as_ref() {
             Some(StructuredResult::MeasurementSetSummary(summary)) => Some(summary.as_ref()),
             Some(StructuredResult::Calibration(_)) | None => None,
@@ -8005,10 +10069,268 @@ impl AppState {
         }
     }
 
+    fn next_history_sequence(&self) -> usize {
+        self.history_entries.len() + 1
+    }
+
+    fn record_history_entry(
+        &mut self,
+        stage: Option<WorkflowStageId>,
+        title: String,
+        status_kind: StatusKind,
+        details: Vec<String>,
+    ) {
+        self.history_entries.push(HistoryEntry {
+            sequence: self.next_history_sequence(),
+            stage,
+            title,
+            status_kind,
+            details,
+        });
+    }
+
+    fn record_calibration_products(
+        &mut self,
+        report: &ManagedCalibrationOutput,
+        run_sequence: usize,
+    ) {
+        let product = match report {
+            ManagedCalibrationOutput::SolveGain(report) => Some((
+                report.output_table.clone(),
+                WorkflowStageId::SolveGain,
+                format!("{:?}", report.gain_type),
+                "solved gain table".to_string(),
+            )),
+            ManagedCalibrationOutput::SolveBandpass(report) => Some((
+                report.output_table.clone(),
+                WorkflowStageId::SolveBandpass,
+                report.table_subtype.clone(),
+                "solved bandpass table".to_string(),
+            )),
+            ManagedCalibrationOutput::FluxScale(report) => Some((
+                report.output_table.clone(),
+                WorkflowStageId::FluxScale,
+                "Fluxscale".to_string(),
+                "fluxscale output".to_string(),
+            )),
+            ManagedCalibrationOutput::Apply(report) => {
+                report.plan.measurement_set_path.clone().map(|path| {
+                    (
+                        path,
+                        WorkflowStageId::Apply,
+                        "CorrectedData".to_string(),
+                        "updated measurement set".to_string(),
+                    )
+                })
+            }
+            ManagedCalibrationOutput::Summary(_)
+            | ManagedCalibrationOutput::PlanApply(_)
+            | ManagedCalibrationOutput::Stats(_) => None,
+        };
+        let Some((path, stage, family, provenance)) = product else {
+            return;
+        };
+        let dependency_revisions = self.active_workflow_dependency_revisions();
+        for record in self.workflow_products.iter_mut().filter(|record| {
+            record.stage == stage && record.status == WorkflowProductStatus::Active
+        }) {
+            record.status = WorkflowProductStatus::Superseded;
+        }
+        let revision = self
+            .workflow_products
+            .iter()
+            .filter(|record| record.stage == stage)
+            .count()
+            + 1;
+        self.workflow_products.push(WorkflowProductRecord {
+            path,
+            stage,
+            family,
+            revision,
+            provenance,
+            status: WorkflowProductStatus::Active,
+            dependency_revisions,
+            run_sequence,
+        });
+        let snapshots = self.workflow_product_snapshots();
+        let stale_indices = stale_descendant_product_indices(
+            &self.workflow_stage_specs(),
+            &snapshots,
+            stage.key(),
+            revision,
+        );
+        for index in stale_indices {
+            if let Some(product) = self.workflow_products.get_mut(index)
+                && product.status == WorkflowProductStatus::Active
+            {
+                product.status = WorkflowProductStatus::Stale;
+            }
+        }
+    }
+
+    fn workflow_stage_from_report(report: &ManagedCalibrationOutput) -> Option<WorkflowStageId> {
+        match report {
+            ManagedCalibrationOutput::Apply(_) => Some(WorkflowStageId::Apply),
+            ManagedCalibrationOutput::Summary(_) => Some(WorkflowStageId::InspectDataset),
+            ManagedCalibrationOutput::Stats(_) => Some(WorkflowStageId::InspectResults),
+            ManagedCalibrationOutput::SolveGain(_) => Some(WorkflowStageId::SolveGain),
+            ManagedCalibrationOutput::SolveBandpass(_) => Some(WorkflowStageId::SolveBandpass),
+            ManagedCalibrationOutput::FluxScale(_) => Some(WorkflowStageId::FluxScale),
+            ManagedCalibrationOutput::PlanApply(_) => None,
+        }
+    }
+
+    fn workflow_recommended_next_stage(&self) -> Option<WorkflowStageId> {
+        self.workflow_stage_states()
+            .into_iter()
+            .find(|state| state.recommended)
+            .and_then(|state| WorkflowStageId::from_key(state.id))
+    }
+
+    fn apply_workflow_post_run_guidance(&mut self, report: &ManagedCalibrationOutput) {
+        if !(self.app.shell_kind() == AppShellKind::Workflow && self.app.id == "calibrate") {
+            return;
+        }
+
+        match report {
+            ManagedCalibrationOutput::SolveGain(report) => {
+                self.apply_inspection_defaults_for_path(report.output_table.display().to_string());
+                self.activate_result_tab(ResultTab::Diagnostics);
+            }
+            ManagedCalibrationOutput::SolveBandpass(report) => {
+                self.apply_inspection_defaults_for_path(report.output_table.display().to_string());
+                self.activate_result_tab(ResultTab::Diagnostics);
+            }
+            ManagedCalibrationOutput::FluxScale(report) => {
+                self.apply_inspection_defaults_for_path(report.output_table.display().to_string());
+                self.activate_result_tab(ResultTab::Diagnostics);
+            }
+            ManagedCalibrationOutput::Stats(report) => {
+                self.apply_inspection_defaults_for_path(report.path.display().to_string());
+                self.activate_result_tab(ResultTab::Diagnostics);
+            }
+            ManagedCalibrationOutput::Apply(_) => {
+                if let Some(preset) =
+                    self.workflow_preferred_diagnostic_preset_for_stage(WorkflowStageId::Apply)
+                {
+                    self.plot_workspace.selected_catalog_target =
+                        Some(PlotCatalogTarget::Calibration(preset));
+                }
+                self.activate_result_tab(ResultTab::Diagnostics);
+            }
+            ManagedCalibrationOutput::Summary(_) => {
+                self.activate_result_tab(ResultTab::Overview);
+            }
+            ManagedCalibrationOutput::PlanApply(_) => {}
+        }
+
+        let Some(completed_stage) = Self::workflow_stage_from_report(report) else {
+            return;
+        };
+        let next_stage = self.workflow_recommended_next_stage();
+        if let Some(next_stage) = next_stage
+            && next_stage != completed_stage
+        {
+            self.set_current_workflow_stage(next_stage);
+            self.result.status_line = format!(
+                "{} completed. Recommended next stage: {}.",
+                completed_stage.label(),
+                next_stage.label()
+            );
+            self.result.status_kind = StatusKind::Ok;
+            return;
+        }
+
+        self.result.status_line = format!("{} completed.", completed_stage.label());
+        self.result.status_kind = StatusKind::Ok;
+    }
+
+    fn apply_inspection_defaults_for_path(&mut self, path: String) {
+        let _ = self.apply_startup_text_value("table_path", path.clone());
+        let _ = self.apply_startup_text_value("summary_paths", path);
+    }
+
+    fn calibration_history_entry(
+        report: &ManagedCalibrationOutput,
+        sequence: usize,
+    ) -> HistoryEntry {
+        let (stage, title, details) = match report {
+            ManagedCalibrationOutput::Apply(report) => (
+                Some(WorkflowStageId::Apply),
+                "Apply".to_string(),
+                vec![
+                    format!("rows updated={}", report.updated_row_count),
+                    format!(
+                        "measurement set={}",
+                        report
+                            .plan
+                            .measurement_set_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "<in-memory>".to_string())
+                    ),
+                ],
+            ),
+            ManagedCalibrationOutput::Summary(summaries) => (
+                Some(WorkflowStageId::InspectDataset),
+                "Inspect Dataset".to_string(),
+                vec![format!("tables={}", summaries.len())],
+            ),
+            ManagedCalibrationOutput::PlanApply(plan) => (
+                None,
+                "Plan Apply".to_string(),
+                vec![
+                    format!("rows selected={}", plan.selected_row_count),
+                    format!("tables={}", plan.calibration_tables.len()),
+                ],
+            ),
+            ManagedCalibrationOutput::Stats(report) => (
+                Some(WorkflowStageId::InspectResults),
+                "Inspect Results".to_string(),
+                vec![
+                    format!("table={}", report.path.display()),
+                    format!("axis={:?}", report.axis),
+                ],
+            ),
+            ManagedCalibrationOutput::SolveGain(report) => (
+                Some(WorkflowStageId::SolveGain),
+                "Solve Gain".to_string(),
+                vec![
+                    format!("output={}", report.output_table.display()),
+                    format!("rows={}", report.solution_row_count),
+                ],
+            ),
+            ManagedCalibrationOutput::SolveBandpass(report) => (
+                Some(WorkflowStageId::SolveBandpass),
+                "Solve Bandpass".to_string(),
+                vec![
+                    format!("output={}", report.output_table.display()),
+                    format!("rows={}", report.solution_row_count),
+                ],
+            ),
+            ManagedCalibrationOutput::FluxScale(report) => (
+                Some(WorkflowStageId::FluxScale),
+                "Fluxscale".to_string(),
+                vec![
+                    format!("output={}", report.output_table.display()),
+                    format!("fields={}", report.fields.len()),
+                ],
+            ),
+        };
+        HistoryEntry {
+            sequence,
+            stage,
+            title,
+            status_kind: StatusKind::Ok,
+            details,
+        }
+    }
+
     fn is_summary_tab(tab: ResultTab) -> bool {
         matches!(
             tab,
             ResultTab::Overview
+                | ResultTab::Data
                 | ResultTab::Observations
                 | ResultTab::Scans
                 | ResultTab::Fields
@@ -8048,17 +10370,131 @@ impl AppState {
         Ok((ms_path, selection.to_summary_options()))
     }
 
+    fn current_calibrate_summary_request(
+        &self,
+    ) -> Result<(PathBuf, MeasurementSetSummaryOptions), String> {
+        let ms_path = self
+            .field_text("measurement_set")
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                "Enter a MeasurementSet path to populate the summary tabs.".to_string()
+            })?;
+        let selection_value =
+            |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
+        let options = MeasurementSetSummaryOptions {
+            verbose: self.verbose_enabled(),
+            selectdata: self.bool_field_value("selectdata").unwrap_or(true),
+            field: selection_value("field"),
+            spw: selection_value("spw"),
+            antenna: selection_value("antenna"),
+            scan: selection_value("scan"),
+            observation: selection_value("observation"),
+            array: selection_value("array"),
+            timerange: selection_value("timerange"),
+            uvrange: None,
+            correlation: None,
+            intent: None,
+            msselect: selection_value("msselect"),
+            feed: None,
+            listunfl: self.listunfl_enabled(),
+            cachesize_mb: None,
+        };
+        Ok((ms_path, options))
+    }
+
+    fn current_calibrate_selection_spec(&self) -> MsSelectionSpec {
+        let selection_value =
+            |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
+        MsSelectionSpec {
+            selectdata: self.bool_field_value("selectdata").unwrap_or(true),
+            field: selection_value("field"),
+            spw: selection_value("spw"),
+            timerange: selection_value("timerange"),
+            uvrange: None,
+            antenna: selection_value("antenna"),
+            scan: selection_value("scan"),
+            correlation: None,
+            array: selection_value("array"),
+            observation: selection_value("observation"),
+            intent: None,
+            feed: None,
+            msselect: selection_value("msselect"),
+        }
+    }
+
+    fn current_calibration_plot_request(&self) -> CalibrationPlotRequest {
+        CalibrationPlotRequest {
+            measurement_set_path: self
+                .field_text("measurement_set")
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from),
+            calibration_table_path: self.current_calibration_plot_table_path(),
+            selection: self.current_calibrate_selection_spec(),
+        }
+    }
+
+    fn current_calibration_plot_table_path(&self) -> Option<PathBuf> {
+        self.first_path_value("table_path")
+            .or_else(|| self.first_csv_path_value("gaintables"))
+            .or_else(|| self.first_path_value("fluxscale_input"))
+            .or_else(|| self.first_csv_path_value("summary_paths"))
+    }
+
+    fn default_calibration_plot_target(&self) -> PlotCatalogTarget {
+        if self.current_calibration_plot_table_path().is_some() {
+            PlotCatalogTarget::Calibration(preferred_workflow_calibration_preset(
+                WorkflowCalibrationArtifactKind::GainLike,
+            ))
+        } else {
+            PlotCatalogTarget::Calibration(preferred_workflow_calibration_preset(
+                WorkflowCalibrationArtifactKind::CorrectedData,
+            ))
+        }
+    }
+
+    fn first_path_value(&self, field_id: &str) -> Option<PathBuf> {
+        self.field_text(field_id)
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    }
+
+    fn first_csv_path_value(&self, field_id: &str) -> Option<PathBuf> {
+        self.field_text(field_id).and_then(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .find(|entry| !entry.is_empty())
+                .map(PathBuf::from)
+        })
+    }
+
     fn ensure_current_summary_snapshot_if_needed(&mut self) {
-        if !self.is_msexplore_app() || !Self::is_summary_tab(self.active_result_tab) {
+        if !Self::is_summary_tab(self.active_result_tab) {
             return;
         }
-        let (path, options) = match self.current_msexplore_summary_request() {
-            Ok(request) => request,
-            Err(error) => {
-                self.plot_workspace.snapshot = None;
-                self.result.structured_error = Some(error);
-                return;
+        let (path, options) = if self.is_msexplore_app() {
+            match self.current_msexplore_summary_request() {
+                Ok(request) => request,
+                Err(error) => {
+                    self.plot_workspace.snapshot = None;
+                    self.result.structured_error = Some(error);
+                    return;
+                }
             }
+        } else if self.app.id == "calibrate" && self.result.structured.is_none() {
+            match self.current_calibrate_summary_request() {
+                Ok(request) => request,
+                Err(error) => {
+                    self.plot_workspace.snapshot = None;
+                    self.result.structured_error = Some(error);
+                    return;
+                }
+            }
+        } else {
+            return;
         };
         if let Some(snapshot) = self.plot_workspace.snapshot.as_mut()
             && snapshot.path.as_ref() == Some(&path)
@@ -8085,6 +10521,10 @@ impl AppState {
         }
     }
 
+    pub(crate) fn prime_idle_summary_for_launch(&mut self) {
+        self.ensure_current_summary_snapshot_if_needed();
+    }
+
     fn current_msexplore_plot_payload(&self) -> Result<MsPlotPayload, String> {
         let plan = self.build_execution_plan()?;
         let spec = build_explore_spec_from_args(plan.arguments)?;
@@ -8092,8 +10532,64 @@ impl AppState {
     }
 
     fn current_plot_payload(&self) -> Result<CurrentPlotPayload, String> {
+        if self.app.id == "calibrate" {
+            let target = self
+                .current_plot_catalog_target()
+                .unwrap_or_else(|| self.default_calibration_plot_target());
+            let PlotCatalogTarget::Calibration(preset) = target else {
+                return Err("choose one calibration plot preset".to_string());
+            };
+            return build_calibration_plot_payload(
+                &self.current_calibration_plot_request(),
+                preset,
+            )
+            .map(CurrentPlotPayload::MsPlot)
+            .map_err(|error| error.to_string());
+        }
         self.current_msexplore_plot_payload()
-            .map(CurrentPlotPayload::MsExplore)
+            .map(CurrentPlotPayload::MsPlot)
+    }
+
+    fn current_plot_spec_key(&self) -> Result<String, String> {
+        if self.app.id == "calibrate" {
+            let target = self
+                .current_plot_catalog_target()
+                .unwrap_or_else(|| self.default_calibration_plot_target());
+            let mut parts = vec![self.selected_plot_label()];
+            if let Some(path) = self
+                .field_text("measurement_set")
+                .filter(|value| !value.trim().is_empty())
+            {
+                parts.push(format!("ms={}", path.trim()));
+            }
+            if let Some(path) = self.current_calibration_plot_table_path() {
+                parts.push(format!("table={}", path.display()));
+            }
+            let selection = self.current_calibrate_selection_spec();
+            for (label, value) in [
+                ("field", selection.field),
+                ("spw", selection.spw),
+                ("timerange", selection.timerange),
+                ("antenna", selection.antenna),
+                ("scan", selection.scan),
+                ("observation", selection.observation),
+                ("array", selection.array),
+                ("msselect", selection.msselect),
+            ] {
+                if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+                    parts.push(format!("{label}={value}"));
+                }
+            }
+            parts.push(format!("target={target:?}"));
+            return Ok(parts.join("\u{1f}"));
+        }
+        self.build_execution_plan().map(|plan| {
+            plan.arguments
+                .iter()
+                .map(|value| value.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("\u{1f}")
+        })
     }
 
     fn pump_plot_panel(&mut self) {
@@ -8138,7 +10634,7 @@ impl AppState {
             pixel_height.max(1),
             image::Rgba([background[0], background[1], background[2], 255]),
         );
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        let picker = terminal_picker();
         build_panel_protocol_from_rgba_owned(&picker, Resize::Fit(None), area, image)
             .ok()
             .map(|prepared| prepared.protocol)
@@ -8423,7 +10919,7 @@ impl AppState {
         {
             return;
         }
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        let picker = terminal_picker();
         let font_size = state
             .panel
             .as_ref()
@@ -8565,11 +11061,7 @@ impl AppState {
             .spectrum_panel
             .as_ref()
             .map(|panel| panel.font_size)
-            .unwrap_or_else(|| {
-                Picker::from_query_stdio()
-                    .unwrap_or_else(|_| Picker::halfblocks())
-                    .font_size()
-            });
+            .unwrap_or_else(|| terminal_picker().font_size());
         let snapshot = state.snapshot.clone();
         let Some(request) = self.current_image_spectrum_render_request(
             layout,
@@ -8666,7 +11158,7 @@ impl AppState {
     }
 
     fn ensure_plot_requested(&mut self, layout: &UiLayout) {
-        if self.active_result_tab != ResultTab::Plots {
+        if !self.result_tab_uses_plot_workspace() {
             return;
         }
         let Some(area) = crate::ui::plot_canvas_area(layout) else {
@@ -8675,13 +11167,8 @@ impl AppState {
         if area.is_empty() {
             return;
         }
-        let spec_key = match self.build_execution_plan() {
-            Ok(plan) => plan
-                .arguments
-                .iter()
-                .map(|value| value.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join("\u{1f}"),
+        let spec_key = match self.current_plot_spec_key() {
+            Ok(key) => key,
             Err(error) => {
                 self.plot_workspace.preview_invalidated = false;
                 self.result.status_line = "Plot payload unavailable.".to_string();
@@ -8725,7 +11212,7 @@ impl AppState {
         };
 
         let panel = self.plot_workspace.panel.get_or_insert_with(|| {
-            let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+            let picker = terminal_picker();
             let font_size = picker.font_size();
             let renderer = PanelRenderer::new(picker, Resize::Fit(None), |job| {
                 render_plot_image(job.max_pixel_width, job.max_pixel_height, &job.input)
@@ -8750,7 +11237,7 @@ impl AppState {
             pixel_width.max(1),
             pixel_height.max(1),
             match payload {
-                CurrentPlotPayload::MsExplore(payload) => {
+                CurrentPlotPayload::MsPlot(payload) => {
                     PlotRenderInput::MsExplore(MsExplorePlotRenderInput {
                         payload,
                         theme_mode,
@@ -9056,6 +11543,20 @@ impl AppState {
 
     pub(crate) fn plot_catalog_rows(&self) -> Vec<PlotCatalogRowView> {
         let selected = self.current_plot_catalog_target();
+        if self.app.id == "calibrate" {
+            let selected_preset = match selected {
+                Some(PlotCatalogTarget::Calibration(preset)) => Some(preset),
+                _ => None,
+            };
+            return workflow_calibration_catalog_entries(selected_preset)
+                .into_iter()
+                .map(|entry| PlotCatalogRowView {
+                    target: PlotCatalogTarget::Calibration(entry.target),
+                    label: entry.label,
+                    selected: entry.selected,
+                })
+                .collect();
+        }
         let mut rows = Vec::new();
         match selected {
             Some(PlotCatalogTarget::PageSpec) => rows.push(PlotCatalogRowView {
@@ -9084,12 +11585,21 @@ impl AppState {
 
     pub(crate) fn plot_control_rows(&self) -> Vec<PlotControlRowView> {
         let mut rows = Vec::new();
-        for (target, label) in [
-            (PlotControlTarget::Refresh, "Refresh Preview"),
-            (PlotControlTarget::CopyCli, "Copy CLI"),
-            (PlotControlTarget::ExportPng, "Export PNG"),
-            (PlotControlTarget::ExportPdf, "Export PDF"),
-        ] {
+        let catalog = if self.app.id == "calibrate" {
+            vec![
+                (PlotControlTarget::Refresh, "Refresh Preview"),
+                (PlotControlTarget::ExportPng, "Export PNG"),
+                (PlotControlTarget::ExportPdf, "Export PDF"),
+            ]
+        } else {
+            vec![
+                (PlotControlTarget::Refresh, "Refresh Preview"),
+                (PlotControlTarget::CopyCli, "Copy CLI"),
+                (PlotControlTarget::ExportPng, "Export PNG"),
+                (PlotControlTarget::ExportPdf, "Export PDF"),
+            ]
+        };
+        for (target, label) in catalog {
             rows.push(PlotControlRowView {
                 target,
                 text: label.to_string(),
@@ -9183,6 +11693,12 @@ impl AppState {
     }
 
     fn copy_current_plot_cli(&mut self) {
+        if self.app.id == "calibrate" {
+            self.result.status_line =
+                "Copy CLI is not available yet for calibrate plot presets.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
         match self.build_current_msexplore_plot_cli(MsExportFormat::Png) {
             Ok(cli) => self.copy_text_to_clipboard(cli, "plot CLI"),
             Err(error) => {
@@ -9203,11 +11719,11 @@ impl AppState {
                 return;
             }
         };
-        let output_path = self.current_msexplore_output_path(format);
-        let width = self.current_msexplore_export_width();
-        let height = self.current_msexplore_export_height();
+        let output_path = self.current_plot_output_path(format);
+        let width = self.current_plot_export_width();
+        let height = self.current_plot_export_height();
         let export_result = match payload {
-            CurrentPlotPayload::MsExplore(payload) => export_msexplore_plot(
+            CurrentPlotPayload::MsPlot(payload) => export_msexplore_plot(
                 &payload,
                 plot_theme(self.theme_mode()),
                 &output_path,
@@ -9227,6 +11743,42 @@ impl AppState {
                 self.result.stderr = format!("{error}\n");
             }
         }
+    }
+
+    fn current_plot_output_path(&self, format: MsExportFormat) -> PathBuf {
+        if self.app.id == "calibrate" {
+            let mut path = self
+                .field_text("output")
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    let slug = self
+                        .selected_plot_label()
+                        .to_ascii_lowercase()
+                        .replace(':', "")
+                        .replace(['/', ' '], "-");
+                    PathBuf::from(format!("calibrate-{slug}.{}", format.extension()))
+                });
+            path.set_extension(format.extension());
+            return path;
+        }
+        self.current_msexplore_output_path(format)
+    }
+
+    fn current_plot_export_width(&self) -> u32 {
+        if self.app.id == "calibrate" {
+            return 1600;
+        }
+        self.current_msexplore_export_width()
+    }
+
+    fn current_plot_export_height(&self) -> u32 {
+        if self.app.id == "calibrate" {
+            return 900;
+        }
+        self.current_msexplore_export_height()
     }
 
     fn current_msexplore_output_path(&self, format: MsExportFormat) -> PathBuf {
@@ -9274,6 +11826,13 @@ impl AppState {
     }
 
     fn current_plot_catalog_target(&self) -> Option<PlotCatalogTarget> {
+        if self.app.id == "calibrate" {
+            return Some(
+                self.plot_workspace
+                    .selected_catalog_target
+                    .unwrap_or_else(|| self.default_calibration_plot_target()),
+            );
+        }
         if self
             .field_text("page_spec")
             .is_some_and(|value| !value.trim().is_empty())
@@ -9301,6 +11860,11 @@ impl AppState {
 
     fn apply_plot_catalog_target(&mut self, target: PlotCatalogTarget) {
         match target {
+            PlotCatalogTarget::Calibration(preset) => {
+                self.plot_workspace.selected_catalog_target =
+                    Some(PlotCatalogTarget::Calibration(preset));
+                self.clear_plot_render_cache();
+            }
             PlotCatalogTarget::Preset(preset) => self.apply_msexplore_preset(preset),
             PlotCatalogTarget::CustomPlot | PlotCatalogTarget::PageSpec => {}
         }
@@ -9348,7 +11912,8 @@ impl AppState {
         let mut arguments = Vec::<OsString>::new();
         let force_selectdata = self.selection_inputs_present();
         let calibrate_mode = if self.app.id == "calibrate" {
-            self.field_text("mode").unwrap_or_else(|| "apply".to_string())
+            self.field_text("mode")
+                .unwrap_or_else(|| "apply".to_string())
         } else {
             String::new()
         };
@@ -9363,7 +11928,11 @@ impl AppState {
             }
             field.append_arguments(&mut arguments)?;
         }
-        self.append_effective_selectdata_argument(&mut arguments, force_selectdata)?;
+        let include_selectdata = self.app.id != "calibrate"
+            || calibrate_argument_applies_to_mode("selectdata", &calibrate_mode);
+        if include_selectdata {
+            self.append_effective_selectdata_argument(&mut arguments, force_selectdata)?;
+        }
 
         let output = self.field_text("output");
         let listfile = self.field_text("listfile");
@@ -9404,6 +11973,1076 @@ impl AppState {
             .iter()
             .find(|field| field.schema.id == id)
             .and_then(|field| field.text_value())
+    }
+
+    fn non_empty_field_text(&self, id: &str) -> Option<String> {
+        self.field_text(id).filter(|value| !value.trim().is_empty())
+    }
+
+    fn split_csv_field(&self, id: &str) -> Vec<String> {
+        self.non_empty_field_text(id)
+            .into_iter()
+            .flat_map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn split_semicolon_field(&self, id: &str) -> Vec<String> {
+        self.non_empty_field_text(id)
+            .into_iter()
+            .flat_map(|value| {
+                value
+                    .split(';')
+                    .map(|item| item.trim().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn workflow_chain_setting_values(&self, kind: WorkflowChainSettingKind) -> Vec<String> {
+        let len = self.split_csv_field("gaintables").len();
+        let mut values = match kind {
+            WorkflowChainSettingKind::Gainfield => self.split_semicolon_field("gainfield"),
+            WorkflowChainSettingKind::Interp => self.split_semicolon_field("interp"),
+            WorkflowChainSettingKind::Spwmap => self.split_semicolon_field("spwmap"),
+            WorkflowChainSettingKind::Calwt => self.split_csv_field("calwt"),
+        };
+        values.resize(len, String::new());
+        values
+    }
+
+    fn workflow_chain_setting_raw_value(
+        &self,
+        entry: usize,
+        kind: WorkflowChainSettingKind,
+    ) -> String {
+        match self
+            .workflow_chain_entries()
+            .get(entry)
+            .map(|record| &record.source)
+        {
+            Some(WorkflowChainEntrySource::DirectTable) => self
+                .workflow_chain_setting_values(kind)
+                .get(entry)
+                .cloned()
+                .unwrap_or_default(),
+            Some(WorkflowChainEntrySource::CallibrarySpec { spec, .. }) => {
+                workflow_callib_setting_raw_value(spec, kind)
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn set_workflow_chain_setting_value(
+        &mut self,
+        entry: usize,
+        kind: WorkflowChainSettingKind,
+        value: String,
+    ) {
+        let len = self.split_csv_field("gaintables").len();
+        if entry >= len {
+            return;
+        }
+        let field_id = match kind {
+            WorkflowChainSettingKind::Gainfield => "gainfield",
+            WorkflowChainSettingKind::Interp => "interp",
+            WorkflowChainSettingKind::Spwmap => "spwmap",
+            WorkflowChainSettingKind::Calwt => "calwt",
+        };
+        let separator = match kind {
+            WorkflowChainSettingKind::Calwt => ",",
+            _ => ";",
+        };
+        let mut values = self.workflow_chain_setting_values(kind);
+        if values.len() < len {
+            values.resize(len, String::new());
+        }
+        values[entry] = value.trim().to_string();
+        while values.last().is_some_and(|item| item.is_empty()) {
+            values.pop();
+        }
+        let _ = self.apply_startup_text_value(field_id, values.join(separator));
+    }
+
+    fn set_workflow_callib_setting_value(
+        &mut self,
+        entry: usize,
+        callib_path: &Path,
+        spec_index: usize,
+        kind: WorkflowChainSettingKind,
+        value: String,
+    ) -> Result<(), String> {
+        let mut specs =
+            load_apply_specs_from_callib(callib_path).map_err(|error| error.to_string())?;
+        let Some(spec) = specs.get_mut(spec_index) else {
+            return Err(format!(
+                "callibrary entry {} no longer exists in {}",
+                spec_index + 1,
+                callib_path.display()
+            ));
+        };
+        match kind {
+            WorkflowChainSettingKind::Gainfield => {
+                spec.gainfield = parse_workflow_gainfield_value(&value)?;
+            }
+            WorkflowChainSettingKind::Interp => {
+                spec.interp = parse_workflow_interp_value(&value)?;
+            }
+            WorkflowChainSettingKind::Spwmap => {
+                spec.spwmap = parse_workflow_spwmap_value(&value)?;
+            }
+            WorkflowChainSettingKind::Calwt => {
+                spec.calwt = parse_workflow_calwt_value(&value)?;
+            }
+        }
+        save_apply_specs_to_callib(callib_path, &specs).map_err(|error| error.to_string())?;
+        self.selected_form = FormSelection::WorkflowChainSetting(entry, kind);
+        Ok(())
+    }
+
+    fn apply_workflow_chain_setting_value(
+        &mut self,
+        entry: usize,
+        kind: WorkflowChainSettingKind,
+        value: String,
+    ) -> Result<(), String> {
+        let Some(source) = self
+            .workflow_chain_entries()
+            .get(entry)
+            .map(|record| record.source.clone())
+        else {
+            return Err("workflow chain entry is no longer available".to_string());
+        };
+        match source {
+            WorkflowChainEntrySource::DirectTable => {
+                self.set_workflow_chain_setting_value(entry, kind, value);
+                Ok(())
+            }
+            WorkflowChainEntrySource::CallibrarySpec {
+                callib_path,
+                spec_index,
+                ..
+            } => {
+                self.set_workflow_callib_setting_value(entry, &callib_path, spec_index, kind, value)
+            }
+            WorkflowChainEntrySource::CallibraryFile { .. } => {
+                Err("select a callibrary entry to edit its policies".to_string())
+            }
+            WorkflowChainEntrySource::CallibraryError { .. } => {
+                Err("fix the callibrary parse error before editing entries".to_string())
+            }
+        }
+    }
+
+    fn workflow_chain_setting_records(&self, entry: usize) -> Vec<WorkflowChainSettingRecord> {
+        [
+            WorkflowChainSettingKind::Gainfield,
+            WorkflowChainSettingKind::Interp,
+            WorkflowChainSettingKind::Spwmap,
+            WorkflowChainSettingKind::Calwt,
+        ]
+        .into_iter()
+        .map(|kind| {
+            let value = self.workflow_chain_setting_display_value(entry, kind);
+            WorkflowChainSettingRecord {
+                entry,
+                kind,
+                text: render_workflow_detail_display(&WorkflowDetailDisplay {
+                    label: kind.label().to_string(),
+                    value,
+                    indent: 2,
+                }),
+            }
+        })
+        .collect()
+    }
+
+    fn workflow_chain_setting_display_value(
+        &self,
+        entry: usize,
+        kind: WorkflowChainSettingKind,
+    ) -> String {
+        let value = self.workflow_chain_setting_raw_value(entry, kind);
+        if value.is_empty() {
+            match kind {
+                WorkflowChainSettingKind::Gainfield => "<default>".to_string(),
+                WorkflowChainSettingKind::Interp => "nearest".to_string(),
+                WorkflowChainSettingKind::Spwmap => "<identity>".to_string(),
+                WorkflowChainSettingKind::Calwt => "false".to_string(),
+            }
+        } else {
+            value
+        }
+    }
+
+    fn workflow_stage_specs(&self) -> Vec<WorkflowStageSpec> {
+        WorkflowStageId::ALL
+            .into_iter()
+            .map(WorkflowStageId::spec)
+            .collect()
+    }
+
+    fn workflow_run_snapshots(&self) -> Vec<WorkflowRunSnapshot> {
+        self.history_entries
+            .iter()
+            .filter_map(|entry| {
+                entry.stage.map(|stage| WorkflowRunSnapshot {
+                    stage_id: stage.key(),
+                    sequence: entry.sequence,
+                })
+            })
+            .collect()
+    }
+
+    fn workflow_product_snapshots(&self) -> Vec<WorkflowProductSnapshot> {
+        self.workflow_products
+            .iter()
+            .map(|product| WorkflowProductSnapshot {
+                stage_id: product.stage.key(),
+                revision: product.revision,
+                status: product.status,
+                dependency_revisions: product.dependency_revisions.clone(),
+            })
+            .collect()
+    }
+
+    fn workflow_stage_states(&self) -> Vec<WorkflowStageState> {
+        let mut states = derive_stage_states(
+            &self.workflow_stage_specs(),
+            &self.workflow_run_snapshots(),
+            &self.workflow_product_snapshots(),
+        );
+        if self.app.id == "calibrate" && self.non_empty_field_text("measurement_set").is_some() {
+            if let Some(inspect_stage) = states
+                .iter_mut()
+                .find(|state| state.id == WorkflowStageId::InspectDataset.key())
+            {
+                inspect_stage.status = crate::workflow::WorkflowStageStatus::Completed;
+                inspect_stage.recommended = false;
+            }
+            if !states.iter().any(|state| state.recommended)
+                && let Some(next_index) = states.iter().position(|state| {
+                    matches!(
+                        state.status,
+                        crate::workflow::WorkflowStageStatus::Stale
+                            | crate::workflow::WorkflowStageStatus::Ready
+                    )
+                })
+            {
+                if let Some(state) = states.get_mut(next_index) {
+                    state.recommended = true;
+                }
+            }
+        }
+        states
+    }
+
+    fn workflow_stage_state(&self, stage: WorkflowStageId) -> Option<WorkflowStageState> {
+        self.workflow_stage_states()
+            .into_iter()
+            .find(|state| state.id == stage.key())
+    }
+
+    fn active_workflow_dependency_revisions(&self) -> BTreeMap<&'static str, usize> {
+        let mut revisions = BTreeMap::new();
+        for product in self
+            .workflow_products
+            .iter()
+            .filter(|product| product.status == WorkflowProductStatus::Active)
+        {
+            revisions
+                .entry(product.stage.key())
+                .and_modify(|current: &mut usize| *current = (*current).max(product.revision))
+                .or_insert(product.revision);
+        }
+        revisions
+    }
+
+    fn current_workflow_stage(&self) -> WorkflowStageId {
+        WorkflowStageId::from_mode(
+            self.field_text("mode")
+                .as_deref()
+                .unwrap_or(WorkflowStageId::InspectDataset.cli_mode()),
+        )
+    }
+
+    fn set_current_workflow_stage(&mut self, stage: WorkflowStageId) {
+        let previous_stage = self.current_workflow_stage();
+        let _ = self.apply_startup_text_value("mode", stage.cli_mode().to_string());
+        self.ensure_workflow_stage_defaults(Some(previous_stage), stage);
+        self.selected_form = FormSelection::WorkflowStage(stage);
+    }
+
+    fn ensure_workflow_stage_defaults(
+        &mut self,
+        previous_stage: Option<WorkflowStageId>,
+        stage: WorkflowStageId,
+    ) {
+        match stage {
+            WorkflowStageId::SolveGain
+            | WorkflowStageId::SolveBandpass
+            | WorkflowStageId::FluxScale => {
+                let current_output = self.non_empty_field_text("out_table");
+                let previous_suggestion = previous_stage
+                    .and_then(|previous| self.workflow_suggested_output_table_path(previous));
+                let should_update = current_output.is_none()
+                    || matches!(
+                        (&current_output, &previous_suggestion),
+                        (Some(current), Some(previous)) if current == previous
+                    );
+                if should_update
+                    && let Some(path) = self.workflow_suggested_output_table_path(stage)
+                {
+                    let _ = self.apply_startup_text_value("out_table", path);
+                }
+            }
+            WorkflowStageId::InspectResults => {
+                if self.current_calibration_plot_table_path().is_none()
+                    && let Some(path) = self.workflow_latest_inspectable_product_path()
+                {
+                    self.apply_inspection_defaults_for_path(path);
+                }
+            }
+            WorkflowStageId::InspectDataset | WorkflowStageId::Apply => {}
+        }
+
+        if stage == WorkflowStageId::FluxScale
+            && self.non_empty_field_text("fluxscale_input").is_none()
+            && let Some(path) = self.workflow_latest_stage_product_path(WorkflowStageId::SolveGain)
+        {
+            let _ = self.apply_startup_text_value("fluxscale_input", path);
+        }
+    }
+
+    fn workflow_suggested_output_table_path(&self, stage: WorkflowStageId) -> Option<String> {
+        let base_path = match stage {
+            WorkflowStageId::FluxScale => self
+                .non_empty_field_text("fluxscale_input")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    self.non_empty_field_text("measurement_set")
+                        .map(PathBuf::from)
+                }),
+            WorkflowStageId::SolveGain | WorkflowStageId::SolveBandpass => self
+                .non_empty_field_text("measurement_set")
+                .map(PathBuf::from),
+            WorkflowStageId::InspectDataset
+            | WorkflowStageId::Apply
+            | WorkflowStageId::InspectResults => None,
+        }?;
+        let parent = base_path.parent().unwrap_or_else(|| Path::new("."));
+        let name = base_path.file_name()?.to_string_lossy();
+        let stem = if let Some(stem) = name.strip_suffix(".ms") {
+            stem.to_string()
+        } else if let Some(stem) = base_path.file_stem() {
+            stem.to_string_lossy().into_owned()
+        } else {
+            name.into_owned()
+        };
+        let suffix = match stage {
+            WorkflowStageId::SolveGain => "gain.gcal",
+            WorkflowStageId::SolveBandpass => "bandpass.bcal",
+            WorkflowStageId::FluxScale => "flux.gcal",
+            WorkflowStageId::InspectDataset
+            | WorkflowStageId::Apply
+            | WorkflowStageId::InspectResults => return None,
+        };
+        Some(
+            parent
+                .join(format!("{stem}.{suffix}"))
+                .display()
+                .to_string(),
+        )
+    }
+
+    fn workflow_latest_stage_product_path(&self, stage: WorkflowStageId) -> Option<String> {
+        self.workflow_products
+            .iter()
+            .filter(|product| {
+                product.stage == stage && product.status == WorkflowProductStatus::Active
+            })
+            .max_by_key(|product| product.revision)
+            .map(|product| product.path.display().to_string())
+    }
+
+    fn workflow_latest_inspectable_product_path(&self) -> Option<String> {
+        self.workflow_products
+            .iter()
+            .filter(|product| {
+                product.status == WorkflowProductStatus::Active
+                    && matches!(
+                        product.stage,
+                        WorkflowStageId::SolveGain
+                            | WorkflowStageId::SolveBandpass
+                            | WorkflowStageId::FluxScale
+                    )
+            })
+            .max_by_key(|product| product.run_sequence)
+            .map(|product| product.path.display().to_string())
+    }
+
+    fn workflow_stage_row_text(&self, stage: WorkflowStageId) -> String {
+        let selected = self.current_workflow_stage() == stage;
+        let Some(state) = self.workflow_stage_state(stage) else {
+            return render_workflow_stage_display(&WorkflowStageDisplay {
+                label: stage.label().to_string(),
+                status: crate::workflow::WorkflowStageStatus::Blocked,
+                latest_revision: None,
+                stale_revisions: 0,
+                run_count: 0,
+                recommended: false,
+                selected,
+            });
+        };
+        render_workflow_stage_display(&WorkflowStageDisplay {
+            label: stage.label().to_string(),
+            status: state.status,
+            latest_revision: state.latest_revision,
+            stale_revisions: state.stale_revisions,
+            run_count: state.run_count,
+            recommended: state.recommended,
+            selected,
+        })
+    }
+
+    fn workflow_preferred_diagnostic_preset_for_stage(
+        &self,
+        stage: WorkflowStageId,
+    ) -> Option<CalibrationPlotPreset> {
+        let kind = match stage {
+            WorkflowStageId::SolveGain | WorkflowStageId::FluxScale => {
+                WorkflowCalibrationArtifactKind::GainLike
+            }
+            WorkflowStageId::SolveBandpass => WorkflowCalibrationArtifactKind::BandpassLike,
+            WorkflowStageId::Apply => WorkflowCalibrationArtifactKind::CorrectedData,
+            WorkflowStageId::InspectDataset | WorkflowStageId::InspectResults => return None,
+        };
+        Some(preferred_workflow_calibration_preset(kind))
+    }
+
+    fn workflow_stage_goal(&self, stage: WorkflowStageId) -> &'static str {
+        match stage {
+            WorkflowStageId::InspectDataset => {
+                "Summarize the MeasurementSet and verify the calibrator/target selections."
+            }
+            WorkflowStageId::SolveGain => {
+                "Solve per-antenna gain corrections on the selected calibrator data."
+            }
+            WorkflowStageId::SolveBandpass => {
+                "Solve frequency-dependent bandpass corrections using prior gain calibration."
+            }
+            WorkflowStageId::FluxScale => {
+                "Transfer the absolute flux density scale from the reference calibrator."
+            }
+            WorkflowStageId::Apply => {
+                "Apply the configured calibration chain to the selected MeasurementSet rows."
+            }
+            WorkflowStageId::InspectResults => {
+                "Inspect solved tables or computed calibration statistics before the next step."
+            }
+        }
+    }
+
+    fn workflow_stage_output(&self, stage: WorkflowStageId) -> &'static str {
+        match stage {
+            WorkflowStageId::InspectDataset => "MeasurementSet summary and selection context",
+            WorkflowStageId::SolveGain => "Gain calibration table (G/T Jones)",
+            WorkflowStageId::SolveBandpass => "Bandpass calibration table (B Jones)",
+            WorkflowStageId::FluxScale => "Flux-scaled gain table",
+            WorkflowStageId::Apply => "Updated CORRECTED_DATA and apply report",
+            WorkflowStageId::InspectResults => "Calibration stats report and inspection plots",
+        }
+    }
+
+    fn workflow_stage_hint(&self, stage: WorkflowStageId) -> &'static str {
+        match stage {
+            WorkflowStageId::InspectDataset => {
+                "Start here: choose the dataset and confirm fields, SPWs, and refant."
+            }
+            WorkflowStageId::SolveGain => {
+                "Typical first solve: primary calibrator field, spw 0, refant set, solint inf or int."
+            }
+            WorkflowStageId::SolveBandpass => {
+                "Usually run after gain solve and include the gain table in the chain or callibrary."
+            }
+            WorkflowStageId::FluxScale => {
+                "Use after gain/bandpass when you want to transfer absolute flux from the flux calibrator."
+            }
+            WorkflowStageId::Apply => {
+                "Make sure the Products chain is correct, then run apply and inspect corrected-data diagnostics."
+            }
+            WorkflowStageId::InspectResults => {
+                "Point Table Path at the table you want to inspect; use Diagnostics for the recommended plots."
+            }
+        }
+    }
+
+    fn workflow_stage_action_label(&self, stage: WorkflowStageId) -> &'static str {
+        match stage {
+            WorkflowStageId::InspectDataset => "Run dataset summary now [Enter/r]",
+            WorkflowStageId::SolveGain => "Run gain solve now [Enter/r]",
+            WorkflowStageId::SolveBandpass => "Run bandpass solve now [Enter/r]",
+            WorkflowStageId::FluxScale => "Run fluxscale now [Enter/r]",
+            WorkflowStageId::Apply => "Run apply now [Enter/r]",
+            WorkflowStageId::InspectResults => "Run stats now [Enter/r]",
+        }
+    }
+
+    fn workflow_chain_entries(&self) -> Vec<WorkflowChainEntryRecord> {
+        let mut entries = self
+            .split_csv_field("gaintables")
+            .into_iter()
+            .enumerate()
+            .map(|(index, path)| WorkflowChainEntryRecord {
+                label: format!("Chain {:<12} {}", index + 1, path),
+                inspect_path: Some(PathBuf::from(path)),
+                source: WorkflowChainEntrySource::DirectTable,
+            })
+            .collect::<Vec<_>>();
+        if let Some(callib) = self.non_empty_field_text("callib") {
+            let callib_path = PathBuf::from(&callib);
+            entries.push(WorkflowChainEntryRecord {
+                label: format!("Callibrary      {callib}"),
+                inspect_path: None,
+                source: WorkflowChainEntrySource::CallibraryFile {
+                    path: callib_path.clone(),
+                },
+            });
+            match load_apply_specs_from_callib(&callib_path) {
+                Ok(specs) => {
+                    entries.extend(specs.into_iter().enumerate().map(|(index, spec)| {
+                        let table_path = spec.path.clone();
+                        WorkflowChainEntryRecord {
+                            label: format!("Callib {:<13} {}", index + 1, table_path.display()),
+                            inspect_path: Some(table_path),
+                            source: WorkflowChainEntrySource::CallibrarySpec {
+                                callib_path: callib_path.clone(),
+                                spec_index: index,
+                                spec,
+                            },
+                        }
+                    }));
+                }
+                Err(error) => {
+                    entries.push(WorkflowChainEntryRecord {
+                        label: "Callib parse error".to_string(),
+                        inspect_path: None,
+                        source: WorkflowChainEntrySource::CallibraryError {
+                            path: callib_path,
+                            message: error.to_string(),
+                        },
+                    });
+                }
+            }
+        }
+        entries
+    }
+
+    fn workflow_products_section_index(&self) -> usize {
+        self.sections
+            .iter()
+            .position(|section| section.name == "Products")
+            .unwrap_or(0)
+    }
+
+    fn select_workflow_chain_entry(&mut self, index: usize) {
+        let Some(entry) = self.workflow_chain_entries().get(index).cloned() else {
+            return;
+        };
+        self.selected_form = FormSelection::WorkflowChainEntry(index);
+        match entry.source {
+            WorkflowChainEntrySource::DirectTable => {
+                if let Some(path) = entry.inspect_path {
+                    let path_text = path.display().to_string();
+                    let _ = self.apply_startup_text_value("table_path", path_text.clone());
+                    let _ = self.apply_startup_text_value("summary_paths", path_text.clone());
+                    let preset = self
+                        .workflow_products
+                        .iter()
+                        .find(|product| product.path == path)
+                        .and_then(|product| {
+                            self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                        })
+                        .unwrap_or_else(|| {
+                            preferred_workflow_calibration_preset(
+                                WorkflowCalibrationArtifactKind::GainLike,
+                            )
+                        });
+                    self.plot_workspace.selected_catalog_target =
+                        Some(PlotCatalogTarget::Calibration(preset));
+                    self.clear_plot_render_cache();
+                    self.activate_result_tab(ResultTab::Diagnostics);
+                    self.result.status_line = format!(
+                        "Selected chain entry: {}. Enter inspects it. Delete removes it. Ctrl-K/Ctrl-J reorder.",
+                        path.display()
+                    );
+                }
+            }
+            WorkflowChainEntrySource::CallibraryFile { path } => {
+                self.activate_result_tab(ResultTab::Products);
+                self.result.status_line = format!(
+                    "Selected callibrary file: {}. Delete removes it.",
+                    path.display()
+                );
+            }
+            WorkflowChainEntrySource::CallibrarySpec { callib_path, .. } => {
+                if let Some(path) = entry.inspect_path {
+                    let path_text = path.display().to_string();
+                    let _ = self.apply_startup_text_value("table_path", path_text.clone());
+                    let _ = self.apply_startup_text_value("summary_paths", path_text.clone());
+                    let preset = self
+                        .workflow_products
+                        .iter()
+                        .find(|product| product.path == path)
+                        .and_then(|product| {
+                            self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                        })
+                        .unwrap_or_else(|| {
+                            preferred_workflow_calibration_preset(
+                                WorkflowCalibrationArtifactKind::GainLike,
+                            )
+                        });
+                    self.plot_workspace.selected_catalog_target =
+                        Some(PlotCatalogTarget::Calibration(preset));
+                    self.clear_plot_render_cache();
+                    self.activate_result_tab(ResultTab::Diagnostics);
+                    self.result.status_line = format!(
+                        "Selected callibrary entry from {}: {}. Enter inspects it. Chain settings edit the file.",
+                        callib_path.display(),
+                        path.display()
+                    );
+                }
+            }
+            WorkflowChainEntrySource::CallibraryError { path, message } => {
+                self.activate_result_tab(ResultTab::Products);
+                self.result.status_line =
+                    format!("Callibrary parse error for {}: {}", path.display(), message);
+                self.result.status_kind = StatusKind::Warning;
+                return;
+            }
+        }
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn remove_workflow_chain_entry(&mut self, index: usize) {
+        let entries = self.workflow_chain_entries();
+        let Some(entry) = entries.get(index).cloned() else {
+            return;
+        };
+        match entry.source {
+            WorkflowChainEntrySource::DirectTable => {}
+            WorkflowChainEntrySource::CallibraryFile { .. } => {
+                let _ = self.apply_startup_text_value("callib", String::new());
+                self.result.status_line = "Removed callibrary entry.".to_string();
+                self.result.status_kind = StatusKind::Info;
+                self.selected_form = FormSelection::Section(self.workflow_products_section_index());
+                self.activate_result_tab(ResultTab::Products);
+                return;
+            }
+            WorkflowChainEntrySource::CallibrarySpec { callib_path, .. }
+            | WorkflowChainEntrySource::CallibraryError {
+                path: callib_path, ..
+            } => {
+                self.result.status_line = format!(
+                    "Callibrary entries are managed by {}. Clear or replace the callibrary file to change them.",
+                    callib_path.display()
+                );
+                self.result.status_kind = StatusKind::Warning;
+                return;
+            }
+        }
+        let mut gaintables = self.split_csv_field("gaintables");
+        if index < gaintables.len() {
+            let removed = gaintables.remove(index);
+            let _ = self.apply_startup_text_value("gaintables", gaintables.join(","));
+            for kind in [
+                WorkflowChainSettingKind::Gainfield,
+                WorkflowChainSettingKind::Interp,
+                WorkflowChainSettingKind::Spwmap,
+                WorkflowChainSettingKind::Calwt,
+            ] {
+                let mut values = self.workflow_chain_setting_values(kind);
+                if index < values.len() {
+                    values.remove(index);
+                }
+                let separator = if kind == WorkflowChainSettingKind::Calwt {
+                    ","
+                } else {
+                    ";"
+                };
+                let field_id = match kind {
+                    WorkflowChainSettingKind::Gainfield => "gainfield",
+                    WorkflowChainSettingKind::Interp => "interp",
+                    WorkflowChainSettingKind::Spwmap => "spwmap",
+                    WorkflowChainSettingKind::Calwt => "calwt",
+                };
+                while values.last().is_some_and(|item| item.is_empty()) {
+                    values.pop();
+                }
+                let _ = self.apply_startup_text_value(field_id, values.join(separator));
+            }
+            self.result.status_line = format!("Removed chain entry: {removed}.");
+            self.result.status_kind = StatusKind::Info;
+        }
+
+        let updated_entries = self.workflow_chain_entries();
+        if updated_entries.is_empty() {
+            self.selected_form = FormSelection::Section(self.workflow_products_section_index());
+            self.activate_result_tab(ResultTab::Products);
+        } else {
+            self.select_workflow_chain_entry(index.min(updated_entries.len().saturating_sub(1)));
+        }
+    }
+
+    fn move_selected_workflow_chain_entry(&mut self, forward: bool) {
+        let FormSelection::WorkflowChainEntry(index) = self.selected_form else {
+            return;
+        };
+        let entries = self.workflow_chain_entries();
+        if !matches!(
+            entries.get(index).map(|entry| &entry.source),
+            Some(WorkflowChainEntrySource::DirectTable)
+        ) {
+            self.result.status_line =
+                "Only direct calibration-table chain entries can be reordered.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        let mut gaintables = self.split_csv_field("gaintables");
+        if index >= gaintables.len() || gaintables.len() < 2 {
+            return;
+        }
+        let target = if forward {
+            (index + 1).min(gaintables.len() - 1)
+        } else {
+            index.saturating_sub(1)
+        };
+        if target == index {
+            return;
+        }
+        gaintables.swap(index, target);
+        let _ = self.apply_startup_text_value("gaintables", gaintables.join(","));
+        for kind in [
+            WorkflowChainSettingKind::Gainfield,
+            WorkflowChainSettingKind::Interp,
+            WorkflowChainSettingKind::Spwmap,
+            WorkflowChainSettingKind::Calwt,
+        ] {
+            let mut values = self.workflow_chain_setting_values(kind);
+            if target < values.len() && index < values.len() {
+                values.swap(index, target);
+                let separator = if kind == WorkflowChainSettingKind::Calwt {
+                    ","
+                } else {
+                    ";"
+                };
+                let field_id = match kind {
+                    WorkflowChainSettingKind::Gainfield => "gainfield",
+                    WorkflowChainSettingKind::Interp => "interp",
+                    WorkflowChainSettingKind::Spwmap => "spwmap",
+                    WorkflowChainSettingKind::Calwt => "calwt",
+                };
+                while values.last().is_some_and(|item| item.is_empty()) {
+                    values.pop();
+                }
+                let _ = self.apply_startup_text_value(field_id, values.join(separator));
+            }
+        }
+        self.select_workflow_chain_entry(target);
+        self.result.status_line = if forward {
+            "Moved chain entry down.".to_string()
+        } else {
+            "Moved chain entry up.".to_string()
+        };
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn promote_selected_workflow_product(&mut self) {
+        let FormSelection::WorkflowProduct(index) = self.selected_form else {
+            return;
+        };
+        let Some(product) = self.workflow_products.get(index).cloned() else {
+            return;
+        };
+        if !matches!(
+            product.stage,
+            WorkflowStageId::SolveGain
+                | WorkflowStageId::SolveBandpass
+                | WorkflowStageId::FluxScale
+        ) {
+            self.result.status_line =
+                "Selected workflow product cannot be promoted into the apply chain.".to_string();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+
+        let product_path = product.path.display().to_string();
+        let mut gaintables = self.split_csv_field("gaintables");
+        if let Some(existing_index) = gaintables.iter().position(|path| path == &product_path) {
+            self.select_workflow_chain_entry(existing_index);
+            self.result.status_line = format!(
+                "Workflow product already in chain: {}.",
+                product.path.display()
+            );
+            self.result.status_kind = StatusKind::Info;
+            return;
+        }
+
+        if self.non_empty_field_text("callib").is_some() {
+            let _ = self.apply_startup_text_value("callib", String::new());
+        }
+
+        let replacement_index = gaintables.iter().position(|path| {
+            let candidate = PathBuf::from(path);
+            self.workflow_products
+                .iter()
+                .any(|record| record.path == candidate && record.stage == product.stage)
+        });
+
+        let target_index = if let Some(index) = replacement_index {
+            gaintables[index] = product_path.clone();
+            index
+        } else {
+            gaintables.push(product_path.clone());
+            gaintables.len() - 1
+        };
+
+        let _ = self.apply_startup_text_value("gaintables", gaintables.join(","));
+        if replacement_index.is_none() {
+            for kind in [
+                WorkflowChainSettingKind::Gainfield,
+                WorkflowChainSettingKind::Interp,
+                WorkflowChainSettingKind::Spwmap,
+                WorkflowChainSettingKind::Calwt,
+            ] {
+                let default = match kind {
+                    WorkflowChainSettingKind::Interp => "nearest".to_string(),
+                    WorkflowChainSettingKind::Calwt => "false".to_string(),
+                    _ => String::new(),
+                };
+                self.set_workflow_chain_setting_value(target_index, kind, default);
+            }
+        }
+        self.select_workflow_chain_entry(target_index);
+        self.result.status_line = if replacement_index.is_some() {
+            format!(
+                "Promoted workflow product into chain, replacing the prior {} table.",
+                product.stage.label()
+            )
+        } else {
+            format!(
+                "Promoted workflow product into chain: {}.",
+                product.path.display()
+            )
+        };
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn promote_latest_workflow_product_from_current_report(&mut self) -> bool {
+        let Some(report) = self.current_calibration_report() else {
+            return false;
+        };
+        let Some(stage) = Self::workflow_stage_from_report(report) else {
+            return false;
+        };
+        if !matches!(
+            stage,
+            WorkflowStageId::SolveGain
+                | WorkflowStageId::SolveBandpass
+                | WorkflowStageId::FluxScale
+        ) {
+            return false;
+        }
+
+        let product_path = match report {
+            ManagedCalibrationOutput::SolveGain(report) => &report.output_table,
+            ManagedCalibrationOutput::SolveBandpass(report) => &report.output_table,
+            ManagedCalibrationOutput::FluxScale(report) => &report.output_table,
+            ManagedCalibrationOutput::Apply(_)
+            | ManagedCalibrationOutput::Summary(_)
+            | ManagedCalibrationOutput::PlanApply(_)
+            | ManagedCalibrationOutput::Stats(_) => return false,
+        };
+
+        let Some(index) =
+            self.workflow_products
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, product)| {
+                    (product.stage == stage && product.path == *product_path).then_some(index)
+                })
+        else {
+            return false;
+        };
+
+        self.selected_form = FormSelection::WorkflowProduct(index);
+        self.promote_selected_workflow_product();
+        true
+    }
+
+    fn append_workflow_chain_path(&mut self, path: String) {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return;
+        }
+        let mut gaintables = self.split_csv_field("gaintables");
+        if let Some(existing_index) = gaintables.iter().position(|candidate| candidate == &path) {
+            self.select_workflow_chain_entry(existing_index);
+            self.result.status_line = format!("Chain already contains {path}.");
+            self.result.status_kind = StatusKind::Info;
+            return;
+        }
+        if self.non_empty_field_text("callib").is_some() {
+            let _ = self.apply_startup_text_value("callib", String::new());
+        }
+        gaintables.push(path.clone());
+        let index = gaintables.len() - 1;
+        let _ = self.apply_startup_text_value("gaintables", gaintables.join(","));
+        for kind in [
+            WorkflowChainSettingKind::Gainfield,
+            WorkflowChainSettingKind::Interp,
+            WorkflowChainSettingKind::Spwmap,
+            WorkflowChainSettingKind::Calwt,
+        ] {
+            let default = match kind {
+                WorkflowChainSettingKind::Interp => "nearest".to_string(),
+                WorkflowChainSettingKind::Calwt => "false".to_string(),
+                _ => String::new(),
+            };
+            self.set_workflow_chain_setting_value(index, kind, default);
+        }
+        self.select_workflow_chain_entry(index);
+        self.result.status_line = format!("Added chain entry: {path}.");
+        self.result.status_kind = StatusKind::Ok;
+    }
+
+    fn set_workflow_callibrary_path(&mut self, path: String) {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return;
+        }
+        let _ = self.apply_startup_text_value("gaintables", String::new());
+        for field_id in ["gainfield", "interp", "spwmap", "calwt"] {
+            let _ = self.apply_startup_text_value(field_id, String::new());
+        }
+        let _ = self.apply_startup_text_value("callib", path.clone());
+        self.select_workflow_chain_entry(0);
+        self.result.status_line = format!("Using callibrary: {path}.");
+        self.result.status_kind = StatusKind::Ok;
+    }
+
+    fn select_workflow_product(&mut self, index: usize) {
+        let Some(product) = self.workflow_products.get(index).cloned() else {
+            return;
+        };
+        self.selected_form = FormSelection::WorkflowProduct(index);
+        let product_path = product.path.display().to_string();
+        match product.stage {
+            WorkflowStageId::SolveGain
+            | WorkflowStageId::SolveBandpass
+            | WorkflowStageId::FluxScale => {
+                let _ = self.apply_startup_text_value("table_path", product_path.clone());
+                let _ = self.apply_startup_text_value("summary_paths", product_path.clone());
+                if let Some(preset) =
+                    self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                {
+                    self.plot_workspace.selected_catalog_target =
+                        Some(PlotCatalogTarget::Calibration(preset));
+                }
+            }
+            WorkflowStageId::Apply => {
+                if let Some(preset) =
+                    self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                {
+                    self.plot_workspace.selected_catalog_target =
+                        Some(PlotCatalogTarget::Calibration(preset));
+                }
+            }
+            WorkflowStageId::InspectDataset | WorkflowStageId::InspectResults => {}
+        }
+        self.clear_plot_render_cache();
+        self.activate_result_tab(if self.app.shell_kind() == AppShellKind::Workflow {
+            ResultTab::Diagnostics
+        } else {
+            ResultTab::Overview
+        });
+        self.result.status_line = format!(
+            "Selected workflow product: {}. Enter inspects it. Shift-P promotes it into the chain.",
+            product.path.display()
+        );
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn activate_workflow_product_action(&mut self, kind: WorkflowProductActionKind) {
+        self.selected_form = FormSelection::WorkflowProductAction(kind);
+        match kind {
+            WorkflowProductActionKind::AddSolvedProduct => {
+                let entries = self.workflow_product_picker_entries();
+                if entries.is_empty() {
+                    self.result.status_line =
+                        "No solved products available to add to the chain yet.".to_string();
+                    self.result.status_kind = StatusKind::Warning;
+                    return;
+                }
+                self.open_choice_picker_target(
+                    ChoicePickerTarget::WorkflowProductAction(kind),
+                    "Add Solved Product to Chain".to_string(),
+                    entries,
+                    String::new(),
+                );
+            }
+            WorkflowProductActionKind::ImportChainTable => {
+                let start_hint = self
+                    .non_empty_field_text("table_path")
+                    .or_else(|| self.non_empty_field_text("measurement_set"));
+                let start = chooser_start_path(start_hint.as_deref());
+                self.open_path_chooser_target(PathChooserTarget::WorkflowImportChainTable, start);
+            }
+            WorkflowProductActionKind::ChooseCallibrary => {
+                let start_hint = self
+                    .non_empty_field_text("callib")
+                    .or_else(|| self.non_empty_field_text("measurement_set"));
+                let start = chooser_start_path(start_hint.as_deref());
+                self.open_path_chooser_target(PathChooserTarget::WorkflowChooseCallibrary, start);
+            }
+        }
+    }
+
+    fn activate_workflow_chain_setting(&mut self, entry: usize, kind: WorkflowChainSettingKind) {
+        self.selected_form = FormSelection::WorkflowChainSetting(entry, kind);
+        self.open_workflow_chain_setting_picker(entry, kind);
+    }
+
+    fn open_workflow_chain_setting_picker(&mut self, entry: usize, kind: WorkflowChainSettingKind) {
+        let entries = self.workflow_chain_setting_picker_entries(kind);
+        let current = self.workflow_chain_setting_raw_value(entry, kind);
+        self.open_choice_picker_target(
+            ChoicePickerTarget::WorkflowChainSetting(entry, kind),
+            format!("Choose chain entry {} {}", entry + 1, kind.label()),
+            entries,
+            current,
+        );
+    }
+
+    fn default_plot_result_tab(&self) -> ResultTab {
+        match self.app.shell_kind() {
+            AppShellKind::Workflow => ResultTab::Diagnostics,
+            _ => ResultTab::Plots,
+        }
+    }
+
+    pub(crate) fn result_tab_uses_plot_workspace(&self) -> bool {
+        matches!(
+            self.active_result_tab,
+            ResultTab::Plots | ResultTab::Diagnostics
+        )
     }
 
     fn current_image_browser_parameters(&self) -> ImageBrowserParameters {
@@ -9496,25 +13135,49 @@ impl AppState {
     }
 
     fn visible_result_tabs(&self) -> &'static [ResultTab] {
-        const CALIBRATION: [ResultTab; 3] =
-            [ResultTab::Overview, ResultTab::Stdout, ResultTab::Stderr];
-        const COMPACT: [ResultTab; 8] = [
+        const CALIBRATION_LEGACY: [ResultTab; 4] = [
             ResultTab::Overview,
-            ResultTab::Observations,
-            ResultTab::Fields,
-            ResultTab::Spws,
-            ResultTab::Antennas,
             ResultTab::Plots,
             ResultTab::Stdout,
             ResultTab::Stderr,
         ];
+        const BROWSER: [ResultTab; 7] = [
+            ResultTab::Overview,
+            ResultTab::Structure,
+            ResultTab::Content,
+            ResultTab::Inspector,
+            ResultTab::History,
+            ResultTab::Stdout,
+            ResultTab::Stderr,
+        ];
+        const INSPECT: [ResultTab; 6] = [
+            ResultTab::Overview,
+            ResultTab::Data,
+            ResultTab::Plots,
+            ResultTab::History,
+            ResultTab::Stdout,
+            ResultTab::Stderr,
+        ];
+        const WORKFLOW: [ResultTab; 7] = [
+            ResultTab::Overview,
+            ResultTab::Data,
+            ResultTab::Products,
+            ResultTab::Diagnostics,
+            ResultTab::History,
+            ResultTab::Stdout,
+            ResultTab::Stderr,
+        ];
         if self.current_calibration_report().is_some() {
-            return &CALIBRATION;
+            return if self.app.shell_kind() == AppShellKind::Workflow {
+                &WORKFLOW
+            } else {
+                &CALIBRATION_LEGACY
+            };
         }
-        if self.verbose_enabled() {
-            &ResultTab::ALL
-        } else {
-            &COMPACT
+        match self.app.shell_kind() {
+            AppShellKind::Inspect => &INSPECT,
+            AppShellKind::Workflow => &WORKFLOW,
+            AppShellKind::Browser => &BROWSER,
         }
     }
 
@@ -9618,6 +13281,12 @@ impl AppState {
             } else {
                 ResultTab::Stdout
             };
+            self.record_history_entry(
+                None,
+                "Canceled".to_string(),
+                StatusKind::Warning,
+                vec!["The child process was canceled before completion.".to_string()],
+            );
             return;
         }
 
@@ -9643,6 +13312,12 @@ impl AppState {
                             Some(StructuredResult::MeasurementSetSummary(Box::new(summary)));
                         self.result.structured_error = None;
                         self.activate_result_tab(ResultTab::Overview);
+                        self.record_history_entry(
+                            None,
+                            "Inspect Dataset".to_string(),
+                            StatusKind::Ok,
+                            vec!["MeasurementSet summary refreshed.".to_string()],
+                        );
                     }
                     Err(error) => {
                         self.result.structured = None;
@@ -9658,16 +13333,20 @@ impl AppState {
                         };
                     }
                 }
-            } else if matches!(
-                running.renderer.as_deref(),
-                Some("calibration-report-v1")
-            ) {
+            } else if matches!(running.renderer.as_deref(), Some("calibration-report-v1")) {
                 match serde_json::from_str::<ManagedCalibrationOutput>(&self.result.stdout) {
                     Ok(report) => {
+                        let history_entry =
+                            Self::calibration_history_entry(&report, self.next_history_sequence());
+                        self.record_calibration_products(&report, history_entry.sequence);
+                        self.history_entries.push(history_entry);
                         self.result.structured =
                             Some(StructuredResult::Calibration(Box::new(report)));
                         self.result.structured_error = None;
                         self.activate_result_tab(ResultTab::Overview);
+                        if let Some(report) = self.current_calibration_report().cloned() {
+                            self.apply_workflow_post_run_guidance(&report);
+                        }
                     }
                     Err(error) => {
                         self.result.structured = None;
@@ -9689,6 +13368,12 @@ impl AppState {
                 } else {
                     ResultTab::Overview
                 });
+                self.record_history_entry(
+                    None,
+                    "Command".to_string(),
+                    StatusKind::Ok,
+                    vec![self.result.status_line.clone()],
+                );
             }
         } else {
             self.result.status_line = "Execution failed.".to_string();
@@ -9700,6 +13385,12 @@ impl AppState {
             } else {
                 ResultTab::Stdout
             });
+            self.record_history_entry(
+                None,
+                "Command Failed".to_string(),
+                StatusKind::Error,
+                vec![self.result.status_line.clone()],
+            );
         }
     }
 
@@ -9755,6 +13446,53 @@ impl AppState {
             return lines;
         }
 
+        if self.app.shell_kind() == AppShellKind::Workflow {
+            return render_workflow_overview_lines(&WorkflowOverviewDisplay {
+                dataset_path: self.non_empty_field_text("measurement_set"),
+                recommended_stage: self
+                    .workflow_stage_states()
+                    .into_iter()
+                    .find(|state| state.recommended)
+                    .and_then(|state| WorkflowStageId::from_key(state.id))
+                    .map(|stage| stage.label().to_string()),
+                selected_stage: self.current_workflow_stage().label().to_string(),
+                active_products: self
+                    .workflow_products
+                    .iter()
+                    .filter(|product| product.status == WorkflowProductStatus::Active)
+                    .count(),
+                stale_products: self
+                    .workflow_products
+                    .iter()
+                    .filter(|product| product.status == WorkflowProductStatus::Stale)
+                    .count(),
+                total_products: self.workflow_products.len(),
+                guidance:
+                    "Use Context for dataset/selection, Products for revisions, Stages for the ordered workflow, and Diagnostics for recommended plots/stats."
+                        .to_string(),
+                latest_run_lines: self
+                    .current_calibration_report()
+                    .map(build_calibration_overview_lines)
+                    .unwrap_or_default(),
+            });
+        }
+
+        if self.app.shell_kind() == AppShellKind::Inspect {
+            return render_inspect_overview_lines(&InspectOverviewDisplay {
+                dataset_path: self.non_empty_field_text("ms_path"),
+                current_view: self.selected_summary_view.label().to_string(),
+                current_plot: Some(self.selected_plot_label()),
+                tab_labels: self
+                    .visible_result_tabs()
+                    .iter()
+                    .map(|tab| tab.label().to_string())
+                    .collect(),
+                guidance:
+                    "Use Context for dataset selection, Views for summary tables, and Plots for the current interactive preset."
+                        .to_string(),
+            });
+        }
+
         if let Some(report) = self.current_calibration_report() {
             return build_calibration_overview_lines(report);
         }
@@ -9776,7 +13514,19 @@ impl AppState {
         }
 
         if let Some(session) = self.browser_session() {
-            return session.main_content_lines();
+            return render_browser_overview_lines(&BrowserOverviewDisplay {
+                root_path: session.root_path.clone(),
+                active_view: session.active_tab().label().to_string(),
+                shell_tab: session.active_tab().shell_result_tab().label().to_string(),
+                status: session.status_line().to_string(),
+                browser_kind: self.app.browser_kind().map(|kind| match kind {
+                    BrowserAppKind::Table => "table".to_string(),
+                    BrowserAppKind::Image => "image".to_string(),
+                }),
+                guidance:
+                    "Use Structure and Content to inspect the selected browser view, and Inspector for the live value trail."
+                        .to_string(),
+            });
         }
 
         if let Some(error) = &self.result.structured_error {
@@ -9929,8 +13679,10 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
 fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
     match field_id {
         "mode" | "format" | "output" | "overwrite" => true,
-        "measurement_set" | "gaintables" | "callib" | "parang" | "field" | "spw" | "antenna"
-        | "scan" | "observation" | "array" | "timerange" | "msselect" => {
+        "selectdata" => matches!(mode, "apply" | "solve_gain" | "solve_bandpass"),
+        "measurement_set" | "gaintables" | "callib" | "gainfield" | "interp" | "spwmap"
+        | "parang" | "field" | "spw" | "antenna" | "scan" | "observation" | "array"
+        | "timerange" | "msselect" => {
             matches!(mode, "apply" | "solve_gain" | "solve_bandpass")
         }
         "apply_mode" | "calwt" => mode == "apply",
@@ -10185,26 +13937,230 @@ impl FormField {
     }
 }
 
-fn build_sections(fields: &[FormField]) -> Vec<FormSection> {
-    let mut sections = Vec::<FormSection>::new();
-    for (field_index, field) in fields.iter().enumerate() {
-        if let Some(section) = sections
-            .iter_mut()
-            .find(|section| section.name == field.schema.group)
-        {
-            section.field_indices.push(field_index);
-        } else {
-            sections.push(FormSection {
-                collapsed: !matches!(
-                    field.schema.group.as_str(),
-                    "Input" | "Presentation" | "Selection"
-                ),
-                name: field.schema.group.clone(),
-                field_indices: vec![field_index],
-            });
-        }
+fn build_sections(app: &RegistryApp, fields: &[FormField]) -> Vec<FormSection> {
+    match app.shell_kind() {
+        AppShellKind::Inspect => build_inspect_sections(app.id, fields),
+        AppShellKind::Workflow => build_workflow_sections(app.id, fields),
+        AppShellKind::Browser => build_browser_sections(app.browser_kind(), fields),
     }
-    sections
+}
+
+fn build_inspect_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection> {
+    if app_id != "msexplore" {
+        return build_browser_sections(None, fields);
+    }
+    let context_ids = [
+        "ms_path",
+        "selectdata",
+        "field",
+        "spw",
+        "antenna",
+        "baseline",
+        "scan",
+        "observation",
+        "array",
+        "timerange",
+        "uvrange",
+        "correlation",
+        "intent",
+        "feed",
+        "taql",
+    ];
+    let view_ids = [
+        "preset",
+        "page_spec",
+        "x_axis",
+        "y_axis",
+        "y_axis2",
+        "data_column",
+        "color_by",
+        "avgchannel",
+        "avgtime",
+        "avgscan",
+        "avgfield",
+        "avgbaseline",
+        "avgantenna",
+        "avgspw",
+        "scalar",
+        "freqframe",
+        "restfreq",
+        "veldef",
+        "iteraxis",
+        "gridrows",
+        "gridcols",
+        "xselfscale",
+        "yselfscale",
+        "xsharedaxis",
+        "ysharedaxis",
+        "title",
+        "xlabel",
+        "ylabel",
+        "showlegend",
+        "legendposition",
+        "showmajorgrid",
+        "showminorgrid",
+        "headeritems",
+        "max_points",
+    ];
+    let context = collect_field_items(fields, &context_ids);
+    let views = SummaryDataView::ALL
+        .into_iter()
+        .map(StaticFormItem::SummaryView)
+        .chain(collect_field_items(fields, &view_ids))
+        .collect::<Vec<_>>();
+    let used = context_ids
+        .into_iter()
+        .chain(view_ids)
+        .collect::<std::collections::HashSet<_>>();
+    let controls = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| !used.contains(field.schema.id.as_str()))
+        .map(|(index, _)| StaticFormItem::Field(index))
+        .collect::<Vec<_>>();
+    vec![
+        FormSection {
+            name: "Context".to_string(),
+            content: FormSectionContent::Items(context),
+            collapsed: false,
+        },
+        FormSection {
+            name: "Views".to_string(),
+            content: FormSectionContent::Items(views),
+            collapsed: false,
+        },
+        FormSection {
+            name: "Controls".to_string(),
+            content: FormSectionContent::Items(controls),
+            collapsed: true,
+        },
+    ]
+}
+
+fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection> {
+    if app_id != "calibrate" {
+        return build_browser_sections(None, fields);
+    }
+    let context_ids = [
+        "measurement_set",
+        "selectdata",
+        "field",
+        "refant",
+        "reference_fields",
+        "transfer_fields",
+        "spw",
+        "antenna",
+        "scan",
+        "observation",
+        "array",
+        "timerange",
+        "msselect",
+        "parang",
+    ];
+    let product_ids: [&str; 0] = [];
+    let workflow_owned_ids = [
+        "gaintables",
+        "callib",
+        "gainfield",
+        "interp",
+        "spwmap",
+        "calwt",
+    ];
+    let stage_param_excluded = context_ids
+        .into_iter()
+        .chain(product_ids)
+        .chain(workflow_owned_ids)
+        .chain(["mode"])
+        .collect::<std::collections::HashSet<_>>();
+    let context = collect_field_items(fields, &context_ids);
+    let products = collect_field_items(fields, &product_ids);
+    let stages = WorkflowStageId::ALL
+        .into_iter()
+        .map(StaticFormItem::WorkflowStage)
+        .collect::<Vec<_>>();
+    let stage_parameters = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| !stage_param_excluded.contains(field.schema.id.as_str()))
+        .map(|(index, _)| StaticFormItem::Field(index))
+        .collect::<Vec<_>>();
+    vec![
+        FormSection {
+            name: "Context".to_string(),
+            content: FormSectionContent::Items(context),
+            collapsed: false,
+        },
+        FormSection {
+            name: "Products".to_string(),
+            content: FormSectionContent::Items(products),
+            collapsed: false,
+        },
+        FormSection {
+            name: "Stages".to_string(),
+            content: FormSectionContent::Items(stages),
+            collapsed: false,
+        },
+        FormSection {
+            name: "Stage Parameters".to_string(),
+            content: FormSectionContent::Items(stage_parameters),
+            collapsed: false,
+        },
+    ]
+}
+
+fn build_browser_sections(kind: Option<BrowserAppKind>, fields: &[FormField]) -> Vec<FormSection> {
+    let context = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| field.schema.value_kind == UiValueKind::Path)
+        .map(|(index, _)| StaticFormItem::Field(index))
+        .collect::<Vec<_>>();
+    let views = kind
+        .map(|kind| match kind {
+            BrowserAppKind::Table => BrowserTab::TABLE_ALL
+                .into_iter()
+                .map(StaticFormItem::BrowserView)
+                .collect::<Vec<_>>(),
+            BrowserAppKind::Image => BrowserTab::IMAGE_ALL
+                .into_iter()
+                .map(StaticFormItem::BrowserView)
+                .collect::<Vec<_>>(),
+        })
+        .unwrap_or_default();
+    let tools = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| field.schema.value_kind != UiValueKind::Path)
+        .map(|(index, _)| StaticFormItem::Field(index))
+        .collect::<Vec<_>>();
+    vec![
+        FormSection {
+            name: "Context".to_string(),
+            content: FormSectionContent::Items(context),
+            collapsed: false,
+        },
+        FormSection {
+            name: "Views".to_string(),
+            content: FormSectionContent::Items(views),
+            collapsed: false,
+        },
+        FormSection {
+            name: "Tools".to_string(),
+            content: FormSectionContent::Items(tools),
+            collapsed: true,
+        },
+    ]
+}
+
+fn collect_field_items(fields: &[FormField], ids: &[&str]) -> Vec<StaticFormItem> {
+    ids.iter()
+        .filter_map(|id| {
+            fields
+                .iter()
+                .position(|field| field.schema.id == *id)
+                .map(StaticFormItem::Field)
+        })
+        .collect()
 }
 
 fn initial_form_selection(
@@ -10213,21 +14169,374 @@ fn initial_form_selection(
     show_advanced: bool,
 ) -> FormSelection {
     for (section_index, section) in sections.iter().enumerate() {
-        let visible_fields = section
-            .field_indices
-            .iter()
-            .copied()
-            .filter(|index| show_advanced || !fields[*index].schema.advanced)
-            .collect::<Vec<_>>();
-        if visible_fields.is_empty() {
+        let visible_items = match &section.content {
+            FormSectionContent::Items(items) => items
+                .iter()
+                .copied()
+                .filter(|item| match item {
+                    StaticFormItem::Field(index) => {
+                        show_advanced || !fields[*index].schema.advanced
+                    }
+                    StaticFormItem::SummaryView(_)
+                    | StaticFormItem::BrowserView(_)
+                    | StaticFormItem::WorkflowStage(_) => true,
+                })
+                .collect::<Vec<_>>(),
+        };
+        if visible_items.is_empty() {
             continue;
         }
         if section.collapsed {
             return FormSelection::Section(section_index);
         }
-        return FormSelection::Field(visible_fields[0]);
+        return match visible_items[0] {
+            StaticFormItem::Field(index) => FormSelection::Field(index),
+            StaticFormItem::SummaryView(view) => FormSelection::SummaryView(view),
+            StaticFormItem::BrowserView(view) => FormSelection::BrowserView(view),
+            StaticFormItem::WorkflowStage(stage) => FormSelection::WorkflowStage(stage),
+        };
     }
     FormSelection::Section(0)
+}
+
+fn default_summary_view_for_app(app_id: &str) -> SummaryDataView {
+    match app_id {
+        "calibrate" => SummaryDataView::Fields,
+        _ => SummaryDataView::Observations,
+    }
+}
+
+fn popup_index_at(list_area: Rect, column: u16, row: u16, item_count: usize) -> Option<usize> {
+    if !rect_contains(list_area, column, row) {
+        return None;
+    }
+    let index = row.saturating_sub(list_area.y) as usize;
+    (index < item_count).then_some(index)
+}
+
+fn dynamic_field_picker_entries(app: &AppState, field_id: &str) -> Option<Vec<ChoicePickerEntry>> {
+    match field_id {
+        "field" => {
+            let summary = app.current_structured_summary()?;
+            Some(
+                summary
+                    .fields
+                    .iter()
+                    .map(|field| ChoicePickerEntry {
+                        value: field.field_id.to_string(),
+                        label: format!("{}  {}", field.field_id, field.name),
+                    })
+                    .collect(),
+            )
+        }
+        "spw" => {
+            let summary = app.current_structured_summary()?;
+            Some(
+                summary
+                    .spectral_windows
+                    .iter()
+                    .map(|spw| ChoicePickerEntry {
+                        value: spw.spectral_window_id.to_string(),
+                        label: format!(
+                            "{}  {}  {:.6} GHz",
+                            spw.spectral_window_id,
+                            spw.name,
+                            spw.center_frequency_hz / 1.0e9
+                        ),
+                    })
+                    .collect(),
+            )
+        }
+        "antenna" => {
+            let summary = app.current_structured_summary()?;
+            Some(
+                summary
+                    .antennas
+                    .iter()
+                    .map(|antenna| ChoicePickerEntry {
+                        value: antenna.name.clone(),
+                        label: format!(
+                            "{}  {} ({})",
+                            antenna.antenna_id, antenna.name, antenna.station
+                        ),
+                    })
+                    .collect(),
+            )
+        }
+        "refant" => {
+            let summary = app.current_structured_summary()?;
+            Some(
+                summary
+                    .antennas
+                    .iter()
+                    .map(|antenna| ChoicePickerEntry {
+                        value: antenna.name.clone(),
+                        label: format!("{} ({})", antenna.name, antenna.station),
+                    })
+                    .collect(),
+            )
+        }
+        "scan" => {
+            let summary = app.current_structured_summary()?;
+            let mut seen = HashSet::new();
+            Some(
+                summary
+                    .scans
+                    .iter()
+                    .filter(|scan| seen.insert(scan.scan_number))
+                    .map(|scan| ChoicePickerEntry {
+                        value: scan.scan_number.to_string(),
+                        label: format!(
+                            "{}  field={}  {}",
+                            scan.scan_number, scan.field_id, scan.field_name
+                        ),
+                    })
+                    .collect(),
+            )
+        }
+        "observation" => {
+            let summary = app.current_structured_summary()?;
+            Some(
+                summary
+                    .observations
+                    .iter()
+                    .map(|observation| ChoicePickerEntry {
+                        value: observation.observation_id.to_string(),
+                        label: format!(
+                            "{}  {}  {}",
+                            observation.observation_id,
+                            observation.telescope_name,
+                            observation.project
+                        ),
+                    })
+                    .collect(),
+            )
+        }
+        "array" => {
+            let summary = app.current_structured_summary()?;
+            let arrays = summary
+                .scans
+                .iter()
+                .map(|scan| scan.array_id)
+                .collect::<BTreeSet<_>>();
+            Some(
+                arrays
+                    .into_iter()
+                    .map(|array_id| ChoicePickerEntry {
+                        value: array_id.to_string(),
+                        label: format!("Array {array_id}"),
+                    })
+                    .collect(),
+            )
+        }
+        "intent" => {
+            let summary = app.current_structured_summary()?;
+            let intents = summary
+                .scans
+                .iter()
+                .flat_map(|scan| scan.scan_intents.iter().cloned())
+                .collect::<BTreeSet<_>>();
+            Some(
+                intents
+                    .into_iter()
+                    .map(|intent| ChoicePickerEntry {
+                        value: intent.clone(),
+                        label: intent,
+                    })
+                    .collect(),
+            )
+        }
+        "reference_fields" | "transfer_fields" => {
+            let summary = app.current_structured_summary()?;
+            Some(
+                summary
+                    .fields
+                    .iter()
+                    .map(|field| ChoicePickerEntry {
+                        value: field.name.clone(),
+                        label: format!("{}  {}", field.field_id, field.name),
+                    })
+                    .collect(),
+            )
+        }
+        "gaintables" | "summary_paths" | "table_path" | "fluxscale_input" => {
+            let entries = app
+                .workflow_products
+                .iter()
+                .filter(|product| product.stage != WorkflowStageId::Apply)
+                .map(|product| ChoicePickerEntry {
+                    value: product.path.display().to_string(),
+                    label: format!(
+                        "r{}  {}  [{} | {}]",
+                        product.revision,
+                        product.path.display(),
+                        product.family,
+                        product.status.label()
+                    ),
+                })
+                .collect::<Vec<_>>();
+            (!entries.is_empty()).then_some(entries)
+        }
+        _ => None,
+    }
+}
+
+fn workflow_callib_setting_display_value(
+    spec: &ApplyCalibrationTableSpec,
+    kind: WorkflowChainSettingKind,
+) -> String {
+    match kind {
+        WorkflowChainSettingKind::Gainfield => format_gainfield_selector(spec.gainfield.as_ref()),
+        WorkflowChainSettingKind::Interp => format_apply_interp(spec.interp).to_string(),
+        WorkflowChainSettingKind::Spwmap => format_spwmap_value(&spec.spwmap),
+        WorkflowChainSettingKind::Calwt => yes_no(spec.calwt).to_string(),
+    }
+}
+
+fn workflow_callib_setting_raw_value(
+    spec: &ApplyCalibrationTableSpec,
+    kind: WorkflowChainSettingKind,
+) -> String {
+    match kind {
+        WorkflowChainSettingKind::Gainfield => match spec.gainfield.as_ref() {
+            None => String::new(),
+            Some(GainFieldSelector::Nearest) => "nearest".to_string(),
+            Some(GainFieldSelector::FieldId(field_id)) => field_id.to_string(),
+            Some(GainFieldSelector::FieldName(name)) => name.clone(),
+        },
+        WorkflowChainSettingKind::Interp => format_apply_interp(spec.interp).to_string(),
+        WorkflowChainSettingKind::Spwmap => {
+            if spec.spwmap.is_empty() {
+                String::new()
+            } else {
+                spec.spwmap
+                    .iter()
+                    .map(i32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }
+        }
+        WorkflowChainSettingKind::Calwt => spec.calwt.to_string(),
+    }
+}
+
+fn workflow_callib_apply_to_row(spec: &ApplyCalibrationTableSpec) -> Option<String> {
+    (!spec.apply_to.is_empty())
+        .then(|| format!("  apply_to         {}", format_apply_table_selection(spec)))
+}
+
+fn format_gainfield_selector(selector: Option<&GainFieldSelector>) -> String {
+    match selector {
+        None => "<default>".to_string(),
+        Some(GainFieldSelector::Nearest) => "nearest".to_string(),
+        Some(GainFieldSelector::FieldId(field_id)) => field_id.to_string(),
+        Some(GainFieldSelector::FieldName(name)) => name.clone(),
+    }
+}
+
+fn format_apply_interp(interp: ApplyInterpolationMode) -> &'static str {
+    match interp {
+        ApplyInterpolationMode::Nearest => "nearest",
+        ApplyInterpolationMode::Linear => "linear",
+        ApplyInterpolationMode::NearestLinear => "nearest,linear",
+    }
+}
+
+fn format_spwmap_value(spwmap: &[i32]) -> String {
+    if spwmap.is_empty() {
+        "<identity>".to_string()
+    } else {
+        spwmap
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn format_apply_table_selection(spec: &ApplyCalibrationTableSpec) -> String {
+    let mut parts = Vec::new();
+    if !spec.apply_to.field_ids.is_empty() {
+        parts.push(format!(
+            "field={}",
+            spec.apply_to
+                .field_ids
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    if !spec.apply_to.spectral_window_ids.is_empty() {
+        parts.push(format!(
+            "spw={}",
+            spec.apply_to
+                .spectral_window_ids
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    if !spec.apply_to.observation_ids.is_empty() {
+        parts.push(format!(
+            "obs={}",
+            spec.apply_to
+                .observation_ids
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    parts.join("  ")
+}
+
+fn parse_workflow_gainfield_value(value: &str) -> Result<Option<GainFieldSelector>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.eq_ignore_ascii_case("nearest") {
+        return Ok(Some(GainFieldSelector::Nearest));
+    }
+    if let Ok(field_id) = value.parse::<i32>() {
+        return Ok(Some(GainFieldSelector::FieldId(field_id)));
+    }
+    Ok(Some(GainFieldSelector::FieldName(value.to_string())))
+}
+
+fn parse_workflow_interp_value(value: &str) -> Result<ApplyInterpolationMode, String> {
+    match value.trim() {
+        "" | "nearest" => Ok(ApplyInterpolationMode::Nearest),
+        "linear" => Ok(ApplyInterpolationMode::Linear),
+        "nearest,linear" => Ok(ApplyInterpolationMode::NearestLinear),
+        other => Err(format!("unsupported apply interpolation {other:?}")),
+    }
+}
+
+fn parse_workflow_spwmap_value(value: &str) -> Result<Vec<i32>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse::<i32>()
+                .map_err(|error| format!("invalid spwmap value {item:?}: {error}"))
+        })
+        .collect()
+}
+
+fn parse_workflow_calwt_value(value: &str) -> Result<bool, String> {
+    match value.trim() {
+        "true" => Ok(true),
+        "false" | "" => Ok(false),
+        other => Err(format!("unsupported calwt value {other:?}")),
+    }
 }
 
 fn inject_managed_arguments(arguments: &mut Vec<OsString>, managed_output: &UiManagedOutputSchema) {
@@ -10805,8 +15114,7 @@ fn slice_visible_text(text: &str, offset: usize, width: usize) -> String {
     if width == 0 {
         return String::new();
     }
-    let sliced = text.chars().skip(offset).collect::<String>();
-    fit_visible_text(&sliced, width)
+    text.chars().skip(offset).take(width).collect()
 }
 
 fn slice_visible_line(line: &VisibleTextLine, offset: usize, width: usize) -> VisibleTextLine {
@@ -10827,33 +15135,10 @@ fn slice_visible_line(line: &VisibleTextLine, offset: usize, width: usize) -> Vi
         };
     }
 
-    if width <= 3 {
-        return VisibleTextLine::plain(".".repeat(width));
+    VisibleTextLine {
+        text: chars[offset..offset + width].iter().collect(),
+        roles: line.roles[offset..offset + width].to_vec(),
     }
-
-    let visible_len = width - 3;
-    let mut text = chars[offset..offset + visible_len]
-        .iter()
-        .collect::<String>();
-    text.push_str("...");
-    let mut roles = line.roles[offset..offset + visible_len].to_vec();
-    roles.extend(std::iter::repeat_n(VisibleTextRole::Plain, 3));
-    VisibleTextLine { text, roles }
-}
-
-fn fit_visible_text(text: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if text.chars().count() <= width {
-        return text.to_string();
-    }
-    if width <= 3 {
-        return ".".repeat(width);
-    }
-    let mut out = text.chars().take(width - 3).collect::<String>();
-    out.push_str("...");
-    out
 }
 
 fn image_browser_content_width(snapshot: &ImageBrowserSnapshot) -> usize {
@@ -12075,6 +16360,15 @@ fn chooser_input_from_key(key_event: KeyEvent) -> Option<ExplorerInput> {
 
 fn resolve_parameter_action(key_event: KeyEvent) -> Option<ParameterAction> {
     match key_event.code {
+        KeyCode::Char('P') if key_event.modifiers == KeyModifiers::SHIFT => {
+            Some(ParameterAction::PromoteWorkflowProduct)
+        }
+        KeyCode::Char('k') if key_event.modifiers == KeyModifiers::CONTROL => {
+            Some(ParameterAction::MoveUp)
+        }
+        KeyCode::Char('j') if key_event.modifiers == KeyModifiers::CONTROL => {
+            Some(ParameterAction::MoveDown)
+        }
         KeyCode::Up | KeyCode::Char('k')
             if key_event.modifiers.is_empty() || key_event.modifiers == KeyModifiers::SHIFT =>
         {
@@ -12090,6 +16384,7 @@ fn resolve_parameter_action(key_event: KeyEvent) -> Option<ParameterAction> {
         KeyCode::Enter | KeyCode::Char(' ') if key_event.modifiers.is_empty() => {
             Some(ParameterAction::Activate)
         }
+        KeyCode::Delete if key_event.modifiers.is_empty() => Some(ParameterAction::Delete),
         _ => None,
     }
 }

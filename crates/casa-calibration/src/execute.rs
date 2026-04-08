@@ -36,10 +36,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::constants::{
-    COL_ANTENNA1, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM,
-    COL_N_POLY_AMP, COL_N_POLY_PHASE, COL_PHASE_UNITS, COL_POLY_COEFF_AMP,
-    COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR, COL_SPECTRAL_WINDOW_ID, COL_TIME,
-    COL_VALID_DOMAIN, LEGACY_CAL_DESC_KEYWORD,
+    COL_ANTENNA1, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM, COL_N_POLY_AMP,
+    COL_N_POLY_PHASE, COL_PHASE_UNITS, COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR,
+    COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_VALID_DOMAIN, LEGACY_CAL_DESC_KEYWORD,
 };
 use crate::model::CalibrationParameterFamily;
 use crate::plan::{
@@ -918,7 +917,8 @@ impl ParallacticAngleState {
         exact_spw
             .into_iter()
             .min_by(|left, right| {
-                feed_row_distance(left, time_seconds).total_cmp(&feed_row_distance(right, time_seconds))
+                feed_row_distance(left, time_seconds)
+                    .total_cmp(&feed_row_distance(right, time_seconds))
             })
             .map(|row| row.receptor0_angle_rad)
     }
@@ -1294,13 +1294,13 @@ impl DelayGrid {
         cal_ref_frequency_hz: f64,
         path: &Path,
     ) -> Result<GainSample, ApplyExecutionError> {
-        let target_frequency_hz = *data_frequencies_hz
-            .get(data_chan_index)
-            .ok_or_else(|| ApplyExecutionError::UnsupportedInterpolation {
+        let target_frequency_hz = *data_frequencies_hz.get(data_chan_index).ok_or_else(|| {
+            ApplyExecutionError::UnsupportedInterpolation {
                 path: path.display().to_string(),
                 interp: ApplyInterpolationMode::Nearest,
                 reason: "data channel index is outside the MeasurementSet SPW grid".to_string(),
-            })?;
+            }
+        })?;
         let receptor = receptor.min(self.receptor_count.saturating_sub(1));
         let delay_ns = self.value_at(receptor, 0);
         let flagged = self.flag_at(receptor, 0);
@@ -1481,9 +1481,8 @@ fn interpolate_time_linear(
                 _ => Err(ApplyExecutionError::UnsupportedInterpolation {
                     path: path.display().to_string(),
                     interp: ApplyInterpolationMode::Linear,
-                    reason:
-                        "time interpolation requires matching calibration parameter families"
-                            .to_string(),
+                    reason: "time interpolation requires matching calibration parameter families"
+                        .to_string(),
                 }),
             }
         }
@@ -1525,13 +1524,12 @@ fn load_calibration_table(
             })?;
         let grid = match table_plan.summary.parameter_family {
             CalibrationParameterFamily::Complex => {
-                let gains =
-                    table
-                        .get_array_cell(row_index, COL_CPARAM)
-                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                            path: table_plan.spec.path.display().to_string(),
-                            source: MsError::from(source),
-                        })?;
+                let gains = table
+                    .get_array_cell(row_index, COL_CPARAM)
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: table_plan.spec.path.display().to_string(),
+                        source: MsError::from(source),
+                    })?;
                 CalibrationGrid::Complex(GainGrid::from_arrays(
                     &table_plan.spec.path,
                     gains,
@@ -1564,10 +1562,7 @@ fn load_calibration_table(
         solutions
             .entry((field_id, spw_id, antenna_id))
             .or_default()
-            .push(CalibrationSolution {
-                time_seconds,
-                grid,
-            });
+            .push(CalibrationSolution { time_seconds, grid });
     }
 
     Ok(LoadedCalibrationTable {
@@ -1590,11 +1585,13 @@ fn load_bpoly_calibration_table(
     let cal_desc = Table::open(TableOptions::new(
         table_plan.spec.path.join(LEGACY_CAL_DESC_KEYWORD),
     ))
-    .map_err(|source| ApplyExecutionError::OpenCalibrationAuxiliaryTable {
-        path: table_plan.spec.path.display().to_string(),
-        subtable: LEGACY_CAL_DESC_KEYWORD,
-        source,
-    })?;
+    .map_err(
+        |source| ApplyExecutionError::OpenCalibrationAuxiliaryTable {
+            path: table_plan.spec.path.display().to_string(),
+            subtable: LEGACY_CAL_DESC_KEYWORD,
+            source,
+        },
+    )?;
     let cal_desc_map = load_bpoly_cal_desc_map(&table_plan.spec.path, &cal_desc)?;
     let spw_plans = table_plan
         .calibration_spectral_windows
@@ -1608,13 +1605,12 @@ fn load_bpoly_calibration_table(
         let antenna_id = get_i32(&table, row_index, COL_ANTENNA1)?;
         let time_seconds = get_f64(&table, row_index, COL_TIME)?;
         let cal_desc_id = get_i32(&table, row_index, COL_CAL_DESC_ID)?;
-        let cal_desc_entry =
-            cal_desc_map
-                .get(&cal_desc_id)
-                .ok_or_else(|| ApplyExecutionError::UnsupportedCalibrationTable {
-                    path: table_plan.spec.path.display().to_string(),
-                    reason: format!("CAL_DESC_ID {cal_desc_id} was not present in CAL_DESC"),
-                })?;
+        let cal_desc_entry = cal_desc_map.get(&cal_desc_id).ok_or_else(|| {
+            ApplyExecutionError::UnsupportedCalibrationTable {
+                path: table_plan.spec.path.display().to_string(),
+                reason: format!("CAL_DESC_ID {cal_desc_id} was not present in CAL_DESC"),
+            }
+        })?;
         let spw_plan = spw_plans.get(&cal_desc_entry.spw_id).ok_or_else(|| {
             ApplyExecutionError::UnsupportedCalibrationTable {
                 path: table_plan.spec.path.display().to_string(),
@@ -1624,7 +1620,13 @@ fn load_bpoly_calibration_table(
                 ),
             }
         })?;
-        let grid = sample_bpoly_row(&table, row_index, &table_plan.spec.path, spw_plan, *cal_desc_entry)?;
+        let grid = sample_bpoly_row(
+            &table,
+            row_index,
+            &table_plan.spec.path,
+            spw_plan,
+            *cal_desc_entry,
+        )?;
         solutions
             .entry((field_id, cal_desc_entry.spw_id, antenna_id))
             .or_default()
@@ -1645,15 +1647,14 @@ fn load_bpoly_cal_desc_map(
 ) -> Result<HashMap<i32, LegacyCalDescEntry>, ApplyExecutionError> {
     let mut entries = HashMap::new();
     for row_index in 0..cal_desc.row_count() {
-        let spw_ids =
-            cal_desc
-                .get_array_cell(row_index, COL_SPECTRAL_WINDOW_ID)
-                .map_err(|source| ApplyExecutionError::UnsupportedCalibrationTable {
-                    path: path.display().to_string(),
-                    reason: format!(
-                        "failed to read CAL_DESC SPECTRAL_WINDOW_ID row {row_index}: {source}"
-                    ),
-                })?;
+        let spw_ids = cal_desc
+            .get_array_cell(row_index, COL_SPECTRAL_WINDOW_ID)
+            .map_err(|source| ApplyExecutionError::UnsupportedCalibrationTable {
+                path: path.display().to_string(),
+                reason: format!(
+                    "failed to read CAL_DESC SPECTRAL_WINDOW_ID row {row_index}: {source}"
+                ),
+            })?;
         let ArrayValue::Int32(spw_ids) = spw_ids else {
             return Err(ApplyExecutionError::UnsupportedCalibrationTable {
                 path: path.display().to_string(),
@@ -1673,13 +1674,14 @@ fn load_bpoly_cal_desc_map(
             });
         };
         let receptor_count = get_i32(cal_desc, row_index, "NUM_RECEPTORS")?;
-        let receptor_count =
-            usize::try_from(receptor_count).map_err(|_| ApplyExecutionError::UnsupportedCalibrationTable {
+        let receptor_count = usize::try_from(receptor_count).map_err(|_| {
+            ApplyExecutionError::UnsupportedCalibrationTable {
                 path: path.display().to_string(),
                 reason: format!(
                     "CAL_DESC row {row_index} had invalid NUM_RECEPTORS value {receptor_count}"
                 ),
-            })?;
+            }
+        })?;
         entries.insert(
             row_index as i32,
             LegacyCalDescEntry {
@@ -1706,12 +1708,13 @@ fn sample_bpoly_row(
             reason: format!("BPOLY VALID_DOMAIN row {row_index} must contain exactly two values"),
         });
     };
-    let amp_coeff_count = usize::try_from(get_i32(table, row_index, COL_N_POLY_AMP)?).map_err(|_| {
-        ApplyExecutionError::UnsupportedCalibrationTable {
-            path: path.display().to_string(),
-            reason: format!("BPOLY N_POLY_AMP row {row_index} was negative"),
-        }
-    })?;
+    let amp_coeff_count =
+        usize::try_from(get_i32(table, row_index, COL_N_POLY_AMP)?).map_err(|_| {
+            ApplyExecutionError::UnsupportedCalibrationTable {
+                path: path.display().to_string(),
+                reason: format!("BPOLY N_POLY_AMP row {row_index} was negative"),
+            }
+        })?;
     let phase_coeff_count =
         usize::try_from(get_i32(table, row_index, COL_N_POLY_PHASE)?).map_err(|_| {
             ApplyExecutionError::UnsupportedCalibrationTable {
@@ -1762,7 +1765,10 @@ fn sample_bpoly_row(
         row_index,
         COL_POLY_COEFF_PHASE,
     )?;
-    let phase_unit_scale = match get_string(table, row_index, COL_PHASE_UNITS)?.to_ascii_uppercase().as_str() {
+    let phase_unit_scale = match get_string(table, row_index, COL_PHASE_UNITS)?
+        .to_ascii_uppercase()
+        .as_str()
+    {
         "RAD" | "RADIAN" | "RADIANS" => 1.0_f64,
         "DEG" | "DEGREE" | "DEGREES" => std::f64::consts::PI / 180.0_f64,
         other => {
@@ -1808,13 +1814,12 @@ fn sample_bpoly_row(
                 domain_end_hz,
                 frequency_hz,
             );
-            let phase_rad =
-                legacy_bpoly_chebyshev_value(
-                    phase_coeff,
-                    domain_start_hz,
-                    domain_end_hz,
-                    frequency_hz,
-                ) * phase_unit_scale;
+            let phase_rad = legacy_bpoly_chebyshev_value(
+                phase_coeff,
+                domain_start_hz,
+                domain_end_hz,
+                frequency_hz,
+            ) * phase_unit_scale;
             let amp_scale = amp_value.exp() as f32;
             let polynomial_gain =
                 Complex32::new(phase_rad.cos() as f32, phase_rad.sin() as f32) * amp_scale;
@@ -2049,7 +2054,11 @@ fn get_complex32(
     }
 }
 
-fn get_string(table: &Table, row_index: usize, column: &str) -> Result<String, ApplyExecutionError> {
+fn get_string(
+    table: &Table,
+    row_index: usize,
+    column: &str,
+) -> Result<String, ApplyExecutionError> {
     match table.get_scalar_cell(row_index, column).map_err(|source| {
         ApplyExecutionError::MutateMeasurementSet {
             path: "<table>".to_string(),
