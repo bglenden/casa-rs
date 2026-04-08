@@ -11,8 +11,8 @@
 
 ## Goal
 
-- Perform the final module-wide closeout for `casacore-lattices`,
-  `casacore-coordinates`, and `casacore-images`: verify parity coverage, API
+- Perform the final module-wide closeout for `casa-lattices`,
+  `casa-coordinates`, and `casa-images`: verify parity coverage, API
   documentation quality, examples/demos, interop evidence, and performance
   status, then leave an explicit final record of any residual gaps.
 - Produce a final Wave 15 report that explicitly covers the five `casa-review`
@@ -48,9 +48,9 @@
 ### API/docs/demo
 
 - Review public Rust docs for doxygen-comparable completeness across:
-  - `crates/casacore-lattices/src/`
-  - `crates/casacore-coordinates/src/`
-  - `crates/casacore-images/src/`
+  - `crates/casa-lattices/src/`
+  - `crates/casa-coordinates/src/`
+  - `crates/casa-images/src/`
 - Review crate overviews, examples, and demos for accuracy against the final
   supported surface.
 - Cross-check the final examples/demos against relevant upstream casacore
@@ -80,14 +80,14 @@
 
 ## Files likely touched
 
-- `crates/casacore-lattices/src/`
-- `crates/casacore-coordinates/src/`
-- `crates/casacore-images/src/`
-- `crates/casacore-images/examples/`
-- `crates/casacore-tables/examples/`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/src/lib.rs`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-lattices/src/`
+- `crates/casa-coordinates/src/`
+- `crates/casa-images/src/`
+- `crates/casa-images/examples/`
+- `crates/casa-tables/examples/`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/src/lib.rs`
+- `crates/casa-test-support/tests/`
 - `docs/Planning/Phase 5 - Lattices Coordinates Images/`
 
 ## Definition of Ready
@@ -164,7 +164,7 @@
   performance-sensitive surfaces.
 - Rust command: release benchmark pipeline covering final closeout workloads,
   including the `casa-review` baseline command
-  `cargo test --release -p casacore-test-support "vs_cpp" -- --nocapture`
+  `cargo test --release -p casa-test-support "vs_cpp" -- --nocapture`
   plus any additional Wave 15-specific closeout runs needed for lattices,
   coordinates, and images.
 - C++ command: matching casacore reference benchmark pipeline.
@@ -216,13 +216,13 @@ specific follow-up blocker with rationale.
   - `cargo test --workspace` -> PASS (all tests pass)
   - `cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75` -> PASS (76.43%)
   - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` -> PASS
-  - `cargo run --example t_lattice -p casacore-lattices` -> PASS
-  - `cargo run --example t_coordinate -p casacore-coordinates` -> PASS
-  - `cargo run --example t_image -p casacore-images` -> PASS
-  - `cargo run --example t_image_expr -p casacore-images` -> PASS
-  - `cargo run --example t_subimage -p casacore-images` -> PASS
-  - `cargo test --release -p casacore-test-support "vs_cpp" -- --nocapture` -> PASS
-  - `cargo test --release -p casacore-test-support --test images_perf_vs_cpp -- --nocapture` -> PASS
+  - `cargo run --example t_lattice -p casa-lattices` -> PASS
+  - `cargo run --example t_coordinate -p casa-coordinates` -> PASS
+  - `cargo run --example t_image -p casa-images` -> PASS
+  - `cargo run --example t_image_expr -p casa-images` -> PASS
+  - `cargo run --example t_subimage -p casa-images` -> PASS
+  - `cargo test --release -p casa-test-support "vs_cpp" -- --nocapture` -> PASS
+  - `cargo test --release -p casa-test-support --test images_perf_vs_cpp -- --nocapture` -> PASS
 
 ### `casa-review` report sections
 
@@ -290,25 +290,25 @@ tile-cache work.
 
 | C++ demo               | Rust equivalent                                    | Status |
 |-------------------------|----------------------------------------------------|--------|
-| tArrayLattice           | `casacore-lattices/examples/t_lattice.rs` sec 1    | DONE   |
-| tPagedArray             | `casacore-lattices/examples/t_lattice.rs` sec 2    | DONE   |
-| tLatticeIterator        | `casacore-lattices/examples/t_lattice.rs` sec 3    | DONE   |
-| tTempLattice            | `casacore-lattices/examples/t_lattice.rs` sec 4    | DONE   |
-| tSubLattice             | `casacore-lattices/examples/t_lattice.rs` sec 5    | DONE   |
-| tCoordinateSystem       | `casacore-coordinates/examples/t_coordinate.rs` s7 | DONE   |
-| tDirectionCoordinate    | `casacore-coordinates/examples/t_coordinate.rs` s1 | DONE   |
-| tSpectralCoordinate     | `casacore-coordinates/examples/t_coordinate.rs` s2 | DONE   |
-| tStokesCoordinate       | `casacore-coordinates/examples/t_coordinate.rs` s3 | DONE   |
-| tLinearCoordinate       | `casacore-coordinates/examples/t_coordinate.rs` s4 | DONE   |
-| tTabularCoordinate      | `casacore-coordinates/examples/t_coordinate.rs` s5 | DONE   |
-| tProjection             | `casacore-coordinates/examples/t_coordinate.rs` s6 | DONE   |
-| tObsInfo                | `casacore-coordinates/examples/t_coordinate.rs` s8 | DONE   |
-| tPagedImage             | `casacore-images/examples/t_image.rs`              | DONE   |
-| tImageExpr              | `casacore-images/examples/t_image_expr.rs`         | DONE   |
-| tSubImage               | `casacore-images/examples/t_subimage.rs`           | DONE   |
-| tTable                  | `casacore-tables/examples/t_table.rs`              | DONE   |
-| tAipsIO                 | `casacore-aipsio/examples/t_aipsio.rs`             | DONE   |
-| tMeasure                | `casacore-types/examples/t_measure.rs`             | DONE   |
+| tArrayLattice           | `casa-lattices/examples/t_lattice.rs` sec 1    | DONE   |
+| tPagedArray             | `casa-lattices/examples/t_lattice.rs` sec 2    | DONE   |
+| tLatticeIterator        | `casa-lattices/examples/t_lattice.rs` sec 3    | DONE   |
+| tTempLattice            | `casa-lattices/examples/t_lattice.rs` sec 4    | DONE   |
+| tSubLattice             | `casa-lattices/examples/t_lattice.rs` sec 5    | DONE   |
+| tCoordinateSystem       | `casa-coordinates/examples/t_coordinate.rs` s7 | DONE   |
+| tDirectionCoordinate    | `casa-coordinates/examples/t_coordinate.rs` s1 | DONE   |
+| tSpectralCoordinate     | `casa-coordinates/examples/t_coordinate.rs` s2 | DONE   |
+| tStokesCoordinate       | `casa-coordinates/examples/t_coordinate.rs` s3 | DONE   |
+| tLinearCoordinate       | `casa-coordinates/examples/t_coordinate.rs` s4 | DONE   |
+| tTabularCoordinate      | `casa-coordinates/examples/t_coordinate.rs` s5 | DONE   |
+| tProjection             | `casa-coordinates/examples/t_coordinate.rs` s6 | DONE   |
+| tObsInfo                | `casa-coordinates/examples/t_coordinate.rs` s8 | DONE   |
+| tPagedImage             | `casa-images/examples/t_image.rs`              | DONE   |
+| tImageExpr              | `casa-images/examples/t_image_expr.rs`         | DONE   |
+| tSubImage               | `casa-images/examples/t_subimage.rs`           | DONE   |
+| tTable                  | `casa-tables/examples/t_table.rs`              | DONE   |
+| tAipsIO                 | `casa-aipsio/examples/t_aipsio.rs`             | DONE   |
+| tMeasure                | `casa-types/examples/t_measure.rs`             | DONE   |
 
 **19/19 demo programs covering all supported modules.** FITS round-trip demo
 included in `t_coordinate.rs` section 9.
@@ -318,12 +318,12 @@ included in `t_coordinate.rs` section 9.
 - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` -> PASS
 - All public types in Phase 5 crates have `///` documentation with C++ class
   cross-references:
-  - `casacore-lattices`: `ArrayLattice`, `PagedArray`, `TempLattice`,
+  - `casa-lattices`: `ArrayLattice`, `PagedArray`, `TempLattice`,
     `LatticeIter`, `SubLattice`, `LCBox`, `LCEllipsoid` — all documented
-  - `casacore-coordinates`: `CoordinateSystem`, `DirectionCoordinate`,
+  - `casa-coordinates`: `CoordinateSystem`, `DirectionCoordinate`,
     `SpectralCoordinate`, `StokesCoordinate`, `LinearCoordinate`,
     `TabularCoordinate`, `Projection`, `ObsInfo` — all documented
-  - `casacore-images`: `PagedImage`, `TempImage`, `ImageExpr`, `SubImage`,
+  - `casa-images`: `PagedImage`, `TempImage`, `ImageExpr`, `SubImage`,
     `ImageInfo`, `GaussianBeam`, `ImageBeamSet` — all documented
 - Module-level `//!` docs present for all Phase 5 crates and key modules
 - All `Cargo.toml` files now have `description` and `repository` fields
@@ -331,15 +331,15 @@ included in `t_coordinate.rs` section 9.
 #### 5. Crate separation
 
 - `publish = false` verified on internal crates:
-  - `casacore-aipsio/Cargo.toml`: confirmed
-  - `casacore-test-support/Cargo.toml`: confirmed
-  - `casacore-measures-data/Cargo.toml`: confirmed
+  - `casa-aipsio/Cargo.toml`: confirmed
+  - `casa-test-support/Cargo.toml`: confirmed
+  - `casa-measures-data/Cargo.toml`: confirmed
 - Public API leakage scan:
-  - `casacore-lattices/src/lib.rs`: 17 re-exports, all lattice types — CLEAN
-  - `casacore-coordinates/src/lib.rs`: 12 re-exports, all coordinate types — CLEAN
-  - `casacore-images/src/lib.rs`: 14 re-exports, all image types — CLEAN
-  - No `casacore-aipsio` or `casacore-tables` storage internals leaked
-- `casacore-types` is types-only: no I/O or storage logic — CLEAN
+  - `casa-lattices/src/lib.rs`: 17 re-exports, all lattice types — CLEAN
+  - `casa-coordinates/src/lib.rs`: 12 re-exports, all coordinate types — CLEAN
+  - `casa-images/src/lib.rs`: 14 re-exports, all image types — CLEAN
+  - No `casa-aipsio` or `casa-tables` storage internals leaked
+- `casa-types` is types-only: no I/O or storage logic — CLEAN
 
 ### Final parity matrix
 

@@ -92,21 +92,37 @@ def resolve_shared_ms(root: pathlib.Path) -> pathlib.Path:
     )
 
 
-def resolve_shared_image() -> pathlib.Path:
-    candidates = [
-        pathlib.Path("/Volumes/home/casatestdata/image/n4826_bima.im"),
-        pathlib.Path("/Volumes/home/casatestdata/image/test.clean.image"),
-        pathlib.Path("/Volumes/home/casatestdata/image/ngc5921.clean.image"),
+def image_candidates(root: pathlib.Path) -> list[pathlib.Path]:
+    candidate_roots: list[pathlib.Path] = []
+    env_root = os.environ.get("CASA_RS_TESTDATA_ROOT")
+    if env_root:
+        candidate_roots.append(pathlib.Path(env_root))
+    candidate_roots.append(pathlib.Path("/Volumes/home/casatestdata"))
+    candidate_roots.append((root / "../casatestdata").resolve())
+    candidate_roots.append(pathlib.Path.home() / "SoftwareProjects/casatestdata")
+
+    names = [
+        "image/n4826_bima.im",
+        "image/test.clean.image",
+        "image/ngc5921.clean.image",
     ]
+    candidates: list[pathlib.Path] = []
+    seen: set[pathlib.Path] = set()
+    for base in candidate_roots:
+        resolved = base.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        candidates.extend(resolved / name for name in names)
+    return candidates
+
+
+def resolve_shared_image(root: pathlib.Path) -> pathlib.Path | None:
+    candidates = image_candidates(root)
     for candidate in candidates:
         if candidate.exists():
             return candidate
-
-    searched = "\n".join(f"  - {path}" for path in candidates)
-    raise SystemExit(
-        "could not find shared CASA image fixture; searched:\n"
-        f"{searched}"
-    )
+    return None
 
 
 def read_available(master_fd: int, deadline: float) -> str:
@@ -200,7 +216,7 @@ def build_cases(root: pathlib.Path, ms_path: pathlib.Path, image_path: pathlib.P
         SmokeCase(
             name="msexplore",
             command=["cargo", "run", "-q", "-p", "casars", "--", "msexplore", ms_str],
-            expected=("MeasurementSet Pa", "Presets", "Current Plot"),
+            expected=("View: Plots", "Presets", "Current Plot"),
             timeout_s=15.0,
         ),
         SmokeCase(
@@ -253,7 +269,20 @@ def main() -> int:
 
     root = repo_root()
     ms_path = resolve_shared_ms(root)
-    image_path = resolve_shared_image() if args.app in {"imexplore", "all"} else None
+    image_path = resolve_shared_image(root) if args.app in {"imexplore", "all"} else None
+    if args.app == "imexplore" and image_path is None:
+        searched = "\n".join(f"  - {path}" for path in image_candidates(root))
+        raise SystemExit(
+            "could not find shared CASA image fixture; searched:\n"
+            f"{searched}"
+        )
+    if args.app == "all" and image_path is None:
+        searched = "\n".join(f"  - {path}" for path in image_candidates(root))
+        print(
+            "skipping imexplore smoke: could not find shared CASA image fixture\n"
+            f"{searched}",
+            file=sys.stderr,
+        )
     ensure_casars_built(root)
     cases = build_cases(root, ms_path, image_path)
     if args.app != "all":

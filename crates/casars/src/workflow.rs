@@ -7,8 +7,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_calibration::CalibrationPlotPreset;
-
 pub(crate) const WORKFLOW_VALUE_LABEL_WIDTH: usize = 18;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,13 +78,6 @@ pub(crate) struct WorkflowCatalogEntryDisplay<T> {
     pub target: T,
     pub label: String,
     pub selected: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WorkflowCalibrationArtifactKind {
-    GainLike,
-    BandpassLike,
-    CorrectedData,
 }
 
 pub(crate) fn render_workflow_value_display(entry: &WorkflowValueDisplay) -> String {
@@ -203,33 +194,6 @@ pub(crate) fn render_workflow_diagnostic_summary(
         (Some(source_path), _) => format!("{} Source: {source_path}", entry.description),
         (None, Some(message)) => message.clone(),
         (None, None) => entry.description.clone(),
-    }
-}
-
-pub(crate) fn workflow_calibration_catalog_entries(
-    selected: Option<CalibrationPlotPreset>,
-) -> Vec<WorkflowCatalogEntryDisplay<CalibrationPlotPreset>> {
-    CalibrationPlotPreset::ALL
-        .into_iter()
-        .map(|preset| WorkflowCatalogEntryDisplay {
-            target: preset,
-            label: preset.display_name().to_string(),
-            selected: selected == Some(preset),
-        })
-        .collect()
-}
-
-pub(crate) fn preferred_workflow_calibration_preset(
-    kind: WorkflowCalibrationArtifactKind,
-) -> CalibrationPlotPreset {
-    match kind {
-        WorkflowCalibrationArtifactKind::GainLike => CalibrationPlotPreset::GainPhaseVsTime,
-        WorkflowCalibrationArtifactKind::BandpassLike => {
-            CalibrationPlotPreset::BandpassAmplitudeVsFrequency
-        }
-        WorkflowCalibrationArtifactKind::CorrectedData => {
-            CalibrationPlotPreset::CorrectedAmplitudeVsTime
-        }
     }
 }
 
@@ -461,19 +425,16 @@ fn dependencies_satisfied(
 
 #[cfg(test)]
 mod tests {
-    use casa_calibration::CalibrationPlotPreset;
-
     use super::{
         WORKFLOW_VALUE_LABEL_WIDTH, WorkflowArtifactDisplay, WorkflowArtifactGroupDisplay,
-        WorkflowCalibrationArtifactKind, WorkflowDetailDisplay, WorkflowDiagnosticSummaryDisplay,
-        WorkflowOverviewDisplay, WorkflowProductRowDisplay, WorkflowProductSnapshot,
-        WorkflowProductStatus, WorkflowRunSnapshot, WorkflowStageDisplay, WorkflowStageSpec,
-        WorkflowStageStatus, WorkflowValueDisplay, derive_stage_states,
-        preferred_workflow_calibration_preset, render_workflow_artifact_groups,
+        WorkflowDetailDisplay, WorkflowDiagnosticSummaryDisplay, WorkflowOverviewDisplay,
+        WorkflowProductRowDisplay, WorkflowProductSnapshot, WorkflowProductStatus,
+        WorkflowRunSnapshot, WorkflowStageDisplay, WorkflowStageSpec, WorkflowStageStatus,
+        WorkflowValueDisplay, derive_stage_states, render_workflow_artifact_groups,
         render_workflow_detail_display, render_workflow_diagnostic_summary,
         render_workflow_overview_lines, render_workflow_product_row_display,
         render_workflow_stage_display, render_workflow_value_display,
-        stale_descendant_product_indices, workflow_calibration_catalog_entries,
+        stale_descendant_product_indices,
     };
     use std::collections::BTreeMap;
 
@@ -616,34 +577,6 @@ mod tests {
         assert_eq!(
             rendered,
             "Inspect: Gain Phase vs Time Source: /tmp/phase.gcal"
-        );
-    }
-
-    #[test]
-    fn workflow_calibration_catalog_entries_marks_selected_preset() {
-        let rows =
-            workflow_calibration_catalog_entries(Some(CalibrationPlotPreset::GainPhaseVsTime));
-        let selected = rows
-            .into_iter()
-            .find(|row| row.target == CalibrationPlotPreset::GainPhaseVsTime)
-            .expect("selected row");
-        assert!(selected.selected);
-        assert_eq!(selected.label, "Inspect: Gain Phase vs Time");
-    }
-
-    #[test]
-    fn preferred_workflow_calibration_preset_matches_artifact_kind() {
-        assert_eq!(
-            preferred_workflow_calibration_preset(WorkflowCalibrationArtifactKind::GainLike),
-            CalibrationPlotPreset::GainPhaseVsTime
-        );
-        assert_eq!(
-            preferred_workflow_calibration_preset(WorkflowCalibrationArtifactKind::BandpassLike),
-            CalibrationPlotPreset::BandpassAmplitudeVsFrequency
-        );
-        assert_eq!(
-            preferred_workflow_calibration_preset(WorkflowCalibrationArtifactKind::CorrectedData),
-            CalibrationPlotPreset::CorrectedAmplitudeVsTime
         );
     }
 

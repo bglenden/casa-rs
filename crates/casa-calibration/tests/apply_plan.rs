@@ -8,7 +8,7 @@ use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
     ApplyTableSelection, GainFieldSelector, plan_apply_from_path,
 };
-use casacore_ms::selection::MsSelection;
+use casa_ms::selection::MsSelection;
 
 #[test]
 fn plan_apply_marks_corrected_data_creation_when_absent() {
@@ -214,7 +214,7 @@ fn plan_apply_accepts_bpoly_tables() {
             field_id: 0,
             spectral_window_id: 0,
             antenna_id: 0,
-            scale_factor: casacore_types::Complex32::new(1.0, 0.0),
+            scale_factor: casa_types::Complex32::new(1.0, 0.0),
             valid_domain_hz: [1.0e9, 1.001e9],
             amp_coefficients: vec![vec![0.0, 0.0], vec![0.0, 0.0]],
             phase_coefficients: vec![vec![0.0], vec![0.0]],
@@ -248,7 +248,7 @@ fn plan_apply_rejects_explicit_gainfield_for_bpoly_tables() {
             field_id: 0,
             spectral_window_id: 0,
             antenna_id: 0,
-            scale_factor: casacore_types::Complex32::new(1.0, 0.0),
+            scale_factor: casa_types::Complex32::new(1.0, 0.0),
             valid_domain_hz: [1.0e9, 1.001e9],
             amp_coefficients: vec![vec![0.0, 0.0], vec![0.0, 0.0]],
             phase_coefficients: vec![vec![0.0], vec![0.0]],

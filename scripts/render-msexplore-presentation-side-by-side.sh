@@ -122,7 +122,7 @@ cat >"$page_spec" <<EOF
 EOF
 
 echo "Rendering casa-rs presentation page..."
-cargo run -q -p casacore-ms --bin msexplore -- \
+cargo run -q -p casa-ms --bin msexplore -- \
   --page-spec "$page_spec" \
   --field "$field" \
   --spw "$spw" \

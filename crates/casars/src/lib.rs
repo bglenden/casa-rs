@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 mod app;
 mod browser_client;
+mod calibration_workflow;
 mod clipboard;
 mod config;
 mod execution;

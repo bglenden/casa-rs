@@ -9,7 +9,7 @@ instead of advertising a dead Plots tab.
 ## Scope
 
 - Add a library-first calibration plotting module in `casa-calibration`.
-- Reuse the existing `casacore-ms` scatter-plot payload/render/export path
+- Reuse the existing `casa-ms` scatter-plot payload/render/export path
   instead of creating a parallel plotting stack.
 - Expose a focused preset catalog in `casars` for the most useful initial
   calibration plots.

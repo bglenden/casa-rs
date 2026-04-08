@@ -19,11 +19,11 @@ mod writer;
 
 use std::path::{Path, PathBuf};
 
-use casacore_ms::MsError;
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::selection::MsSelection;
-use casacore_tables::{Table, TableError};
-use casacore_types::ScalarValue;
+use casa_ms::MsError;
+use casa_ms::ms::MeasurementSet;
+use casa_ms::selection::MsSelection;
+use casa_tables::{Table, TableError};
+use casa_types::ScalarValue;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

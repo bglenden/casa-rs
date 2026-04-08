@@ -5,11 +5,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use casacore_ms::MsError;
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::SubtableId;
-use casacore_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
-use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_ms::MsError;
+use casa_ms::ms::MeasurementSet;
+use casa_ms::schema::SubtableId;
+use casa_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::{GainSolveError, GainSolveReport, GainSolveRequest};
@@ -33,29 +33,21 @@ pub(crate) fn write_gain_caltable(
     prepare_output_root(&request.output_table)?;
 
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar(COL_TIME, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_FIELD_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA1, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA2, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_INTERVAL, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_SCAN_NUMBER, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_OBSERVATION_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ARRAY_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::array_variable(
-            COL_CPARAM,
-            casacore_types::PrimitiveType::Complex32,
-            Some(2),
-        ),
-        ColumnSchema::array_variable(
-            COL_PARAMERR,
-            casacore_types::PrimitiveType::Float32,
-            Some(2),
-        ),
-        ColumnSchema::array_variable(COL_FLAG, casacore_types::PrimitiveType::Bool, Some(2)),
-        ColumnSchema::array_variable(COL_SNR, casacore_types::PrimitiveType::Float32, Some(2)),
-        ColumnSchema::array_variable(COL_WEIGHT, casacore_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA1, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA2, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
+        ColumnSchema::array_variable(COL_CPARAM, casa_types::PrimitiveType::Complex32, Some(2)),
+        ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
+        ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid gain caltable schema");
     let mut table = Table::with_schema(schema);

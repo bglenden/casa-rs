@@ -57,13 +57,13 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/image_expr.rs`
-- `crates/casacore-images/src/image.rs`
-- `crates/casacore-images/src/iterator.rs`
-- `crates/casacore-images/src/lib.rs`
-- `crates/casacore-images/tests/`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/src/image_expr.rs`
+- `crates/casa-images/src/image.rs`
+- `crates/casa-images/src/iterator.rs`
+- `crates/casa-images/src/lib.rs`
+- `crates/casa-images/tests/`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 
@@ -122,8 +122,8 @@
 - Date: 2026-03-06
 - Commit: `1e71366` (Wave 11 closeout validated on top of the current uncommitted worktree)
 - Commands:
-  - `cargo test -p casacore-images image_expr -- --nocapture` -> PASS
-  - `cargo test -p casacore-test-support --test image_expr_interop -- --nocapture` -> PASS
+  - `cargo test -p casa-images image_expr -- --nocapture` -> PASS
+  - `cargo test -p casa-test-support --test image_expr_interop -- --nocapture` -> PASS
   - `cargo test --workspace` -> PASS during Wave 11c closeout
 - Interop matrix:
   - RR: Representative lazy-expression unit coverage passed for lazy slicing, metadata propagation, and read-only semantics.

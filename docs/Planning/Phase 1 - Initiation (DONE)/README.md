@@ -70,7 +70,7 @@ Every wave must pass ALL of the following before commit/push:
 ### Test coverage
 - Unit tests for all new public methods and error paths
 - **2×2 interop matrix**: Rust-writes → C++-reads AND C++-writes → Rust-reads
-  (via `casacore-test-support` shims, skipped when `pkg-config casacore` missing)
+  (via `casa-test-support` shims, skipped when `pkg-config casacore` missing)
 - Regression: all pre-existing tests still pass
 
 ### Documentation

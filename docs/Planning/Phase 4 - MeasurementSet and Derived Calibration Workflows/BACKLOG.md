@@ -172,7 +172,7 @@ This closes the plausible local planner optimizations; the remaining leverage
 under `12.4` is now deeper persistence work rather than more selection tweaks.
 Wave 38 extracts the first real calibration plotting slice from `12.6` and
 the deferred broad-plotting backlog in `12.7`. `casa-calibration` now lowers
-selected calibration workflows into the existing `casacore-ms` scatter-plot
+selected calibration workflows into the existing `casa-ms` scatter-plot
 payloads, and `casars` exposes those plots through the `calibrate` Plots tab.
 The first shipped presets are the most practical operator-facing plots called
 out consistently by CASA docs and the local radio-astronomy reference corpus:
@@ -439,6 +439,8 @@ Cold-start performance handoff for follow-on investigation:
 
 - Reproduce with:
   `CAL_BENCH_REPEATS=2 scripts/bench-calibrate-vs-casa.sh`
+- Broader solve/fluxscale wall-clock sanity checks now live in:
+  `CAL_SOLVE_BENCH_REPEATS=2 scripts/bench-calibration-solves-vs-casa.sh`
 - Current benchmarked workload:
   real `ngc5921.ms`, `field=0`, `spw=0`, timing excludes MS copy and caltable
   generation.
@@ -451,13 +453,13 @@ Cold-start performance handoff for follow-on investigation:
   TaQL selection path, slot-indexed row scan, repeated local planner tweaks,
   `StandardStMan` rewrite, and mixed per-column storage-manager save bindings.
 - Most likely file targets for the remaining work:
-  `crates/casacore-ms/src/selection.rs`,
-  `crates/casacore-ms/src/ms.rs`,
-  `crates/casacore-tables/src/table/io.rs`,
-  `crates/casacore-tables/src/storage/mod.rs`.
+  `crates/casa-ms/src/selection.rs`,
+  `crates/casa-ms/src/ms.rs`,
+  `crates/casa-tables/src/table/io.rs`,
+  `crates/casa-tables/src/storage/mod.rs`.
 - Working hypothesis:
   the remaining parity gap is primarily MAIN-table persistence cost in
-  `casacore-tables`, not calibration math, not row writeback, and no longer
+  `casa-tables`, not calibration math, not row writeback, and no longer
   a high-leverage planner problem.
 
 ---
@@ -497,6 +499,10 @@ surface under `12.5` now also includes
 `gaincal(..., gaintype='G', calmode='p', solint='inf', combine='scan')`.
 Wave 31 further extends that accepted parity surface to
 `gaincal(..., gaintype='G', calmode='p', solint='inf', parang=True)`.
+Performance validation beyond correctness is currently wall-clock oriented:
+use `scripts/bench-calibration-solves-vs-casa.sh` for repeated local medians on
+the representative `solve_gain` workload until solve-specific timing
+instrumentation is justified.
 
 ---
 
@@ -584,6 +590,10 @@ level model directly rather than only echoing the latest CLI report. Follow-on
 work for this UI/framework slice should focus on lifting workflow metadata
 further into registry/protocol-level descriptors and migrating `msexplore`
 away from schema-derived controls into a cleaner `InspectShell` view model.
+Performance validation for the broader solve/app surface now includes a local
+wall-clock benchmark harness for `solve_gain`, `solve_bandpass`, and
+`fluxscale` in `scripts/bench-calibration-solves-vs-casa.sh`, complementing
+the deeper apply-specific timing harness in `scripts/bench-calibrate-vs-casa.sh`.
 
 ---
 

@@ -32,4 +32,4 @@ PY
 fi
 
 echo "Running msexplore CASA parity..."
-cargo test -p casacore-ms --test msexplore_casa_parity -- --nocapture --test-threads=1
+cargo test -p casa-ms --test msexplore_casa_parity -- --nocapture --test-threads=1

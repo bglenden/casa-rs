@@ -80,7 +80,7 @@ expanded incrementally after UDF framework stabilizes.
 
 **Status:** DEFER
 
-**Reason:** `casacore-types` still depends on record/value types that currently
+**Reason:** `casa-types` still depends on record/value types that currently
 live in the table layer. Splitting that shared data model into its own crate is
 worth doing, but it cuts across package boundaries and should stay out of the
 current wave unless a larger crate-graph cleanup is already in flight.

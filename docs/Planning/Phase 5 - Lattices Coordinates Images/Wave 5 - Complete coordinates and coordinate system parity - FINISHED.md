@@ -45,9 +45,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-coordinates/`
+- `crates/casa-coordinates/`
 - workspace wiring if new crate is introduced
-- `crates/casacore-test-support/tests/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

@@ -69,7 +69,7 @@
 
 ## Files touched
 
-- `crates/casacore-ms/src/derived/engine.rs`
+- `crates/casa-ms/src/derived/engine.rs`
 - `crates/casa-calibration/src/plan.rs`
 - `crates/casa-calibration/src/execute.rs`
 - `crates/casa-calibration/src/solve.rs`

@@ -3,10 +3,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use casacore_ms::MsError;
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::selection::MsSelection;
-use casacore_types::{ArrayValue, Complex32};
+use casa_ms::MsError;
+use casa_ms::ms::MeasurementSet;
+use casa_ms::selection::MsSelection;
+use casa_types::{ArrayValue, Complex32};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveRequest, GainType,

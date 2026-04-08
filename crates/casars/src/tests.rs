@@ -12,7 +12,19 @@ use casa_calibration::{
     CalibrationValueStats, GainSolveReport, GainType, ManagedCalibrationOutput,
     load_apply_specs_from_callib,
 };
-use casacore_imagebrowser_protocol::{
+use casa_ms::column_def::{ColumnDef, ColumnKind};
+use casa_ms::msexplore::cli::command_schema as msexplore_command_schema;
+use casa_ms::schema;
+use casa_ms::ui_schema::UiCommandSchema;
+use casa_ms::{
+    MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
+};
+use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casa_types::{
+    ArrayD, ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    quanta::MvTime,
+};
+use casars_imagebrowser_protocol::{
     ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus as ProtocolImageFocus,
     ImageBrowserParameters, ImageBrowserProbe, ImageBrowserResponse, ImageBrowserResponseEnvelope,
     ImageBrowserSnapshot, ImageBrowserView as ProtocolImageView, ImageDisplayAxisState,
@@ -20,22 +32,11 @@ use casacore_imagebrowser_protocol::{
     ImageProfilePayload, ImageProfileSampleState, ImageRegionOverlayShapeState,
     ImageRegionOverlayVertex, ImageRegionState, ImageRegionStatsState,
 };
-use casacore_ms::column_def::{ColumnDef, ColumnKind};
-use casacore_ms::msexplore::cli::{UiCommandSchema, command_schema as msexplore_command_schema};
-use casacore_ms::schema;
-use casacore_ms::{
-    MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
-};
-use casacore_tablebrowser_protocol::{
+use casars_tablebrowser_protocol::{
     BrowserBreadcrumbEntry, BrowserCapabilities, BrowserFocus, BrowserInspectorSnapshot,
     BrowserInspectorTrailEntry, BrowserNavigationMetrics, BrowserResponseEnvelope,
     BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as ProtocolBrowserView,
     BrowserViewport,
-};
-use casacore_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casacore_types::{
-    ArrayD, ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-    quanta::MvTime,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use flate2::read::GzDecoder;
@@ -50,8 +51,11 @@ use tempfile::tempdir;
 
 use crate::app::{
     AppState, BrowserPaneFocus, ImageBrowserLeftPaneMode, OutputPane, PaneFocus, PlotCatalogTarget,
-    PlotControlTarget, PlotPaneFocus, ResultTab, WorkflowChainSettingKind,
-    WorkflowContextSettingKind, WorkflowProductActionKind, WorkflowStageId, image_plane_draw_rect,
+    PlotControlTarget, PlotPaneFocus, ResultTab, image_plane_draw_rect,
+};
+use crate::calibration_workflow::{
+    WorkflowChainSettingKind, WorkflowContextSettingKind, WorkflowProductActionKind,
+    WorkflowStageId,
 };
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
@@ -3875,7 +3879,7 @@ fn browser_inspector_renders_in_left_pane_without_duplicate_result_content() {
                     summary: "\"alpha\"".to_string(),
                 }],
                 node: BrowserValueNode::Scalar {
-                    value: casacore_tablebrowser_protocol::BrowserScalarValue::String(
+                    value: casars_tablebrowser_protocol::BrowserScalarValue::String(
                         "alpha".to_string(),
                     ),
                 },
@@ -7784,7 +7788,7 @@ fn msexplore_plots_tab_previews_current_form_without_run() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
 
-    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let (_fixture_temp, ms_path) = unpack_casa_ms_fixture("mssel_test_small.ms.tgz");
     let temp = tempdir().expect("tempdir");
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
@@ -7830,7 +7834,7 @@ fn msexplore_start_run_on_launch_opens_plots_preview_instead_of_spawning_process
     let _guard = launcher_env_lock();
     clear_launcher_bin();
 
-    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let (_fixture_temp, ms_path) = unpack_casa_ms_fixture("mssel_test_small.ms.tgz");
     let temp = tempdir().expect("tempdir");
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
@@ -7890,7 +7894,7 @@ fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
 
-    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let (_fixture_temp, ms_path) = unpack_casa_ms_fixture("mssel_test_small.ms.tgz");
     let temp = tempdir().expect("tempdir");
     let export_path = temp.path().join("msexplore-preview.png");
     let clipboard_path = temp.path().join("clipboard.txt");
@@ -8003,7 +8007,7 @@ fn msexplore_clicking_catalog_preset_updates_preview_cli() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
 
-    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let (_fixture_temp, ms_path) = unpack_casa_ms_fixture("mssel_test_small.ms.tgz");
     let temp = tempdir().expect("tempdir");
     let clipboard_path = temp.path().join("clipboard.txt");
     set_test_clipboard_file(&clipboard_path);
@@ -8021,9 +8025,7 @@ fn msexplore_clicking_catalog_preset_updates_preview_cli() {
         .expect("plot workspace")
         .catalog_hits
         .iter()
-        .find(|hit| {
-            hit.tab.target == PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::PhaseVsTime)
-        })
+        .find(|hit| hit.tab.target == PlotCatalogTarget::Preset(casa_ms::MsPlotPreset::PhaseVsTime))
         .expect("phase preset hit");
     app.handle_mouse_event(
         mouse(
@@ -8075,7 +8077,7 @@ fn msexplore_clicking_catalog_preset_updates_preview_cli() {
 
 #[test]
 fn msexplore_selecting_preset_immediately_invalidates_existing_preview() {
-    let (_fixture_temp, ms_path) = unpack_casacore_ms_fixture("mssel_test_small.ms.tgz");
+    let (_fixture_temp, ms_path) = unpack_casa_ms_fixture("mssel_test_small.ms.tgz");
     let temp = tempdir().expect("tempdir");
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
@@ -8098,7 +8100,7 @@ fn msexplore_selecting_preset_immediately_invalidates_existing_preview() {
     );
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
-    let target = PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked);
+    let target = PlotCatalogTarget::Preset(casa_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked);
     let hit = layout
         .plot_workspace
         .as_ref()
@@ -8166,7 +8168,7 @@ fn msexplore_catalog_scroll_selects_velocity_preset_with_down_arrow() {
     let velocity_index = all_rows
         .iter()
         .position(|row| {
-            row.target == PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudeVsVelocity)
+            row.target == PlotCatalogTarget::Preset(casa_ms::MsPlotPreset::AmplitudeVsVelocity)
         })
         .expect("velocity preset index");
     assert!(velocity_index > current_index);
@@ -8197,15 +8199,15 @@ fn msexplore_problem_presets_can_be_clicked_when_visible() {
     let workspace = layout.plot_workspace.as_ref().expect("plot workspace");
     let targets = [
         (
-            PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked),
+            PlotCatalogTarget::Preset(casa_ms::MsPlotPreset::AmplitudePhaseVsTimeStacked),
             "amplitude_phase_vs_time_stacked",
         ),
         (
-            PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudeVsVelocity),
+            PlotCatalogTarget::Preset(casa_ms::MsPlotPreset::AmplitudeVsVelocity),
             "amplitude_vs_velocity",
         ),
         (
-            PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::PhaseVsVelocity),
+            PlotCatalogTarget::Preset(casa_ms::MsPlotPreset::PhaseVsVelocity),
             "phase_vs_velocity",
         ),
     ];
@@ -8244,8 +8246,7 @@ fn msexplore_problem_presets_show_explicit_selected_marker() {
         .catalog_hits
         .iter()
         .find(|hit| {
-            hit.tab.target
-                == PlotCatalogTarget::Preset(casacore_ms::MsPlotPreset::AmplitudeVsVelocity)
+            hit.tab.target == PlotCatalogTarget::Preset(casa_ms::MsPlotPreset::AmplitudeVsVelocity)
         })
         .expect("velocity preset hit");
     app.handle_mouse_event(
@@ -8817,10 +8818,10 @@ fn test_app() -> (tempfile::TempDir, AppState) {
     (temp, app)
 }
 
-fn unpack_casacore_ms_fixture(archive_name: &str) -> (tempfile::TempDir, PathBuf) {
+fn unpack_casa_ms_fixture(archive_name: &str) -> (tempfile::TempDir, PathBuf) {
     let temp = tempdir().expect("tempdir");
     let archive_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casacore-ms/tests/fixtures")
+        .join("../casa-ms/tests/fixtures")
         .join(archive_name);
     let archive_file = File::open(&archive_path).expect("open fixture archive");
     let mut archive = Archive::new(GzDecoder::new(archive_file));

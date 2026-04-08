@@ -27,7 +27,7 @@ run_timed_step() {
 script_started_at="$(date +%s)"
 run_timed_step \
   "Running slow msexplore CASA parity suite" \
-  cargo test -p casacore-ms --features slow-tests --test msexplore_casa_parity
+  cargo test -p casa-ms --features slow-tests --test msexplore_casa_parity
 run_timed_step \
   "Running slow calibration-table CASA parity suite" \
   cargo test -p casa-calibration --features slow-tests --test casa_calibration_parity

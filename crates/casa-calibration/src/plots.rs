@@ -10,18 +10,18 @@
 //!
 //! This follows common CASA practice around `plotcal`, `plotbandpass`, and
 //! `plotms`, while keeping the application layer thin by lowering every plot
-//! request into the existing generic `casacore-ms` scatter payloads.
+//! request into the existing generic `casa-ms` scatter payloads.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-use casacore_ms::{
+use casa_ms::{
     MeasurementSet, MsAxis, MsDataColumn, MsLegendPosition, MsPlotPayload, MsPlotPreset,
     MsPlotSpec, MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelectionSpec,
     VisibilityDataColumn, build_msexplore_plot_payload,
 };
-use casacore_tables::{Table, TableError, TableOptions};
-use casacore_types::{ArrayValue, Complex32, ScalarValue};
+use casa_tables::{Table, TableError, TableOptions};
+use casa_types::{ArrayValue, Complex32, ScalarValue};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

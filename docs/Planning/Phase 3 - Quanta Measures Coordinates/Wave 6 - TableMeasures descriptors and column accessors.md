@@ -40,10 +40,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/storage/table_control.rs`
-- `crates/casacore-tables/src/table.rs`
-- `crates/casacore-tables/tests/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-tables/src/storage/table_control.rs`
+- `crates/casa-tables/src/table.rs`
+- `crates/casa-tables/tests/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

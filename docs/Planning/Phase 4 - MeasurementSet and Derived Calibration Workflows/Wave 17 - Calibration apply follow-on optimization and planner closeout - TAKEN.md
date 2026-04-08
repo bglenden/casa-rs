@@ -54,10 +54,10 @@
 - `crates/casa-calibration/src/execute.rs`
 - `crates/casa-calibration/src/lib.rs`
 - `crates/casa-calibration/src/plan.rs`
-- `crates/casacore-ms/src/ms.rs`
-- `crates/casacore-ms/src/selection.rs`
-- `crates/casacore-tables/src/storage/mod.rs`
-- `crates/casacore-tables/src/table/io.rs`
+- `crates/casa-ms/src/ms.rs`
+- `crates/casa-ms/src/selection.rs`
+- `crates/casa-tables/src/storage/mod.rs`
+- `crates/casa-tables/src/table/io.rs`
 - `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`
 - `scripts/bench-calibrate-vs-casa.sh`
 
@@ -73,10 +73,10 @@
 ## Test plan
 
 - [x] `cargo fmt --all -- --check`
-- [x] `cargo clippy -p casacore-tables -p casacore-ms -p casa-calibration --all-targets -- -D warnings`
-- [x] `cargo test -p casacore-tables flush_writes_changes_to_disk`
-- [x] `cargo test -p casacore-ms save_main_table_only_persists_main_mutations_without_rewriting_subtables`
-- [x] `cargo test -p casacore-ms apply_field_and_spw_selection_returns_only_intersection`
+- [x] `cargo clippy -p casa-tables -p casa-ms -p casa-calibration --all-targets -- -D warnings`
+- [x] `cargo test -p casa-tables flush_writes_changes_to_disk`
+- [x] `cargo test -p casa-ms save_main_table_only_persists_main_mutations_without_rewriting_subtables`
+- [x] `cargo test -p casa-ms apply_field_and_spw_selection_returns_only_intersection`
 - [x] `cargo test -p casa-calibration`
 - [x] `cargo test -p casa-calibration --features slow-tests --test casa_calibration_parity -- --nocapture`
 - [x] `CAL_BENCH_REPEATS=2 scripts/bench-calibrate-vs-casa.sh`
@@ -126,10 +126,10 @@
 - Commit:
 - Commands:
   - `cargo fmt --all -- --check` -> PASS
-  - `cargo clippy -p casacore-tables -p casacore-ms -p casa-calibration --all-targets -- -D warnings` -> PASS
-  - `cargo test -p casacore-tables flush_writes_changes_to_disk` -> PASS
-  - `cargo test -p casacore-ms save_main_table_only_persists_main_mutations_without_rewriting_subtables` -> PASS
-  - `cargo test -p casacore-ms apply_field_and_spw_selection_returns_only_intersection` -> PASS
+  - `cargo clippy -p casa-tables -p casa-ms -p casa-calibration --all-targets -- -D warnings` -> PASS
+  - `cargo test -p casa-tables flush_writes_changes_to_disk` -> PASS
+  - `cargo test -p casa-ms save_main_table_only_persists_main_mutations_without_rewriting_subtables` -> PASS
+  - `cargo test -p casa-ms apply_field_and_spw_selection_returns_only_intersection` -> PASS
   - `cargo test -p casa-calibration` -> PASS
   - `cargo test -p casa-calibration --features slow-tests --test casa_calibration_parity -- --nocapture` -> PASS
   - `CAL_BENCH_REPEATS=2 scripts/bench-calibrate-vs-casa.sh` -> PASS

@@ -49,10 +49,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/image_expr.rs`
-- `crates/casacore-images/tests/`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/src/image_expr.rs`
+- `crates/casa-images/tests/`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 
@@ -107,9 +107,9 @@
 - Date: 2026-03-06
 - Commit: `1e71366` (closeout reviewed in Wave 11c on top of uncommitted worktree changes)
 - Commands:
-  - `cargo test -p casacore-images image_expr -- --nocapture` -> PASS
-  - `cargo test -p casacore-test-support --test image_expr_interop -- --nocapture` -> PASS
-  - `cargo clippy -p casacore-images -p casacore-test-support --all-targets -- -D warnings` -> PASS
+  - `cargo test -p casa-images image_expr -- --nocapture` -> PASS
+  - `cargo test -p casa-test-support --test image_expr_interop -- --nocapture` -> PASS
+  - `cargo clippy -p casa-images -p casa-test-support --all-targets -- -D warnings` -> PASS
 - Interop matrix:
   - RR: Rust unit coverage for lazy operator families passed.
   - RC: Rust-authored persistent images and materialized expressions were read by the C++ shim.

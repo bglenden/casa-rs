@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use casacore_imagebrowser_protocol::{
+use casa_types::measures::direction::{format_declination, format_right_ascension};
+use casa_types::quanta::{Quantity, Unit};
+use casars_imagebrowser_protocol::{
     ImageBrowserProbe, ImageDisplayAxisState, ImagePlaneRaster, ImageProfilePayload,
     ImageRegionOverlayShapeState,
 };
-use casacore_types::measures::direction::{format_declination, format_right_ascension};
-use casacore_types::quanta::{Quantity, Unit};
 use image::{DynamicImage, Rgb, RgbImage};
 use plotters::backend::BitMapBackend;
 use plotters::drawing::IntoDrawingArea;
@@ -31,7 +31,7 @@ fn ensure_plotters_font() -> Result<(), String> {
                 register_font(
                     "sans-serif",
                     FontStyle::Normal,
-                    include_bytes!("../../casacore-ms/assets/NotoSans-Regular.ttf"),
+                    include_bytes!("../../casa-ms/assets/NotoSans-Regular.ttf"),
                 )
                 .map_err(|_| "failed to register bundled sans-serif font")
             })
@@ -44,7 +44,7 @@ fn ensure_plotters_font() -> Result<(), String> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MsExplorePlotRenderInput {
-    pub payload: casacore_ms::MsPlotPayload,
+    pub payload: casa_ms::MsPlotPayload,
     pub theme_mode: ThemeMode,
     pub terminal_cell_px: (u16, u16),
 }
@@ -142,10 +142,10 @@ pub(crate) struct ImageSpectrumLayout {
     pub bottom_gutter: u32,
 }
 
-pub(crate) fn plot_theme(theme_mode: ThemeMode) -> casacore_ms::MeasurementSetPlotTheme {
+pub(crate) fn plot_theme(theme_mode: ThemeMode) -> casa_ms::MeasurementSetPlotTheme {
     match theme_mode {
-        ThemeMode::DenseAnsi => casacore_ms::MeasurementSetPlotTheme::dark(),
-        ThemeMode::RichPanel => casacore_ms::MeasurementSetPlotTheme::light(),
+        ThemeMode::DenseAnsi => casa_ms::MeasurementSetPlotTheme::dark(),
+        ThemeMode::RichPanel => casa_ms::MeasurementSetPlotTheme::light(),
     }
 }
 
@@ -155,7 +155,7 @@ pub(crate) fn render_plot_image(
     input: &PlotRenderInput,
 ) -> Result<DynamicImage, String> {
     match input {
-        PlotRenderInput::MsExplore(input) => casacore_ms::render_msexplore_plot_image(
+        PlotRenderInput::MsExplore(input) => casa_ms::render_msexplore_plot_image(
             &input.payload,
             plot_theme(input.theme_mode),
             width,
@@ -2143,7 +2143,7 @@ fn draw_profile_series(
     }
 }
 
-fn profile_sample_x_value(sample: &casacore_imagebrowser_protocol::ImageProfileSampleState) -> f64 {
+fn profile_sample_x_value(sample: &casars_imagebrowser_protocol::ImageProfileSampleState) -> f64 {
     sample
         .world_axis
         .as_ref()
@@ -2273,7 +2273,7 @@ mod tests {
         render_image_spectrum_image, spectrum_value_range, spectrum_y_title_x,
     };
     use crate::config::ThemeMode;
-    use casacore_imagebrowser_protocol::{
+    use casars_imagebrowser_protocol::{
         ImageBrowserAxisValue, ImageBrowserProbe, ImageDisplayAxisState, ImagePlaneRaster,
         ImageProfilePayload, ImageProfileSampleState,
     };

@@ -373,7 +373,7 @@ fn checkbox_hit(column: u16, row_rect: Rect, enabled: bool) -> bool {
 mod tests {
     use super::*;
     use crate::registry::msexplore_app;
-    use casacore_ms::msexplore::cli::command_schema;
+    use casa_ms::msexplore::cli::command_schema;
 
     #[test]
     fn popup_index_at_only_returns_visible_rows() {

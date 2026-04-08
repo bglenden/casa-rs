@@ -46,10 +46,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/tests/`
-- `crates/casacore-lattices/examples/`
-- `crates/casacore-images/examples/`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/tests/`
+- `crates/casa-lattices/examples/`
+- `crates/casa-images/examples/`
 - `docs/`
 
 ## Definition of Ready

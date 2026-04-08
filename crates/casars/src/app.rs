@@ -12,34 +12,33 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyInterpolationMode, CalibrationPlotPreset,
-    CalibrationPlotRequest, GainFieldSelector, ManagedCalibrationOutput,
+    CalibrationPlotPreset, CalibrationPlotRequest, ManagedCalibrationOutput,
     build_calibration_plot_payload, load_apply_specs_from_callib, save_apply_specs_to_callib,
 };
-use casacore_imagebrowser_protocol::{
+use casa_ms::msexplore::cli::build_explore_spec_from_args;
+use casa_ms::ui_schema::{
+    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
+};
+use casa_ms::{
+    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
+    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
+    export_msexplore_plot,
+};
+use casa_types::measures::direction::{
+    angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
+};
+use casa_types::quanta::{MvAngle, MvTime, Quantity, Unit};
+use casars_imagebrowser_protocol::{
     ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserCommand, ImageBrowserFocus,
     ImageBrowserParameters, ImageBrowserPreviewRequest, ImageBrowserProbe, ImageBrowserSnapshot,
     ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImagePlaneContentMode,
     ImageProfilePayload,
 };
-use casacore_ms::msexplore::cli::{
-    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
-    build_explore_spec_from_args,
-};
-use casacore_ms::{
-    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
-    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
-    export_msexplore_plot,
-};
-use casacore_tablebrowser_protocol::{
+use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
     BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
     BrowserView as TableBrowserView, BrowserViewport,
 };
-use casacore_types::measures::direction::{
-    angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
-};
-use casacore_types::quanta::{MvAngle, MvTime, Quantity, Unit};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -52,6 +51,20 @@ use ratatui_graphics::{
 };
 
 use crate::browser_client::{BrowserClient, ImageBrowserClient};
+use crate::calibration_workflow::{
+    WorkflowCalibrationArtifactKind, WorkflowChainEntryRecord, WorkflowChainEntrySource,
+    WorkflowChainSettingKind, WorkflowChainSettingRecord, WorkflowContextSettingKind,
+    WorkflowProductActionKind, WorkflowProductRecord, WorkflowStageGuideKind, WorkflowStageId,
+    calibration_stage_specs, parse_workflow_calwt_value, parse_workflow_gainfield_value,
+    parse_workflow_interp_value, parse_workflow_spwmap_value,
+    preferred_workflow_calibration_preset, suggested_output_table_path,
+    workflow_calibration_catalog_entries, workflow_callib_apply_to_row,
+    workflow_callib_setting_display_value, workflow_callib_setting_raw_value,
+    workflow_chain_entries, workflow_preferred_diagnostic_preset_for_stage,
+    workflow_product_metadata_from_report, workflow_products_display_groups,
+    workflow_stage_action_label, workflow_stage_from_report, workflow_stage_goal,
+    workflow_stage_hint, workflow_stage_output, workflow_stage_states,
+};
 use crate::clipboard;
 use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
@@ -73,15 +86,13 @@ use crate::shell::{
 use crate::terminal_picker;
 use crate::ui::UiLayout;
 use crate::workflow::{
-    WorkflowArtifactDisplay, WorkflowArtifactGroupDisplay, WorkflowCalibrationArtifactKind,
-    WorkflowDetailDisplay, WorkflowDiagnosticSummaryDisplay, WorkflowOverviewDisplay,
-    WorkflowProductRowDisplay, WorkflowProductSnapshot, WorkflowProductStatus, WorkflowRunSnapshot,
-    WorkflowStageDisplay, WorkflowStageSpec, WorkflowStageState, WorkflowValueDisplay,
-    derive_stage_states, preferred_workflow_calibration_preset, render_workflow_artifact_groups,
-    render_workflow_detail_display, render_workflow_diagnostic_summary,
-    render_workflow_overview_lines, render_workflow_product_row_display,
-    render_workflow_stage_display, render_workflow_value_display, stale_descendant_product_indices,
-    workflow_calibration_catalog_entries,
+    WorkflowArtifactGroupDisplay, WorkflowDetailDisplay, WorkflowDiagnosticSummaryDisplay,
+    WorkflowOverviewDisplay, WorkflowProductRowDisplay, WorkflowProductSnapshot,
+    WorkflowProductStatus, WorkflowRunSnapshot, WorkflowStageDisplay, WorkflowStageState,
+    WorkflowValueDisplay, render_workflow_artifact_groups, render_workflow_detail_display,
+    render_workflow_diagnostic_summary, render_workflow_overview_lines,
+    render_workflow_product_row_display, render_workflow_stage_display,
+    render_workflow_value_display, stale_descendant_product_indices,
 };
 
 const DENSE_SPINNER_FRAMES: &[&str] = &["|", "/", "-", "\\"];
@@ -323,87 +334,6 @@ pub(crate) enum FormSelection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum WorkflowContextSettingKind {
-    ActiveFields,
-    RefAnt,
-    FluxReferenceFields,
-    FluxTransferFields,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum WorkflowStageGuideKind {
-    Goal,
-    Produces,
-    Hint,
-}
-
-impl WorkflowStageGuideKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Goal => "Goal",
-            Self::Produces => "Produces",
-            Self::Hint => "Hint",
-        }
-    }
-}
-
-impl WorkflowContextSettingKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::ActiveFields => "Selected Fields",
-            Self::RefAnt => "Refant",
-            Self::FluxReferenceFields => "Flux Reference",
-            Self::FluxTransferFields => "Flux Transfer",
-        }
-    }
-
-    fn field_id(self) -> &'static str {
-        match self {
-            Self::ActiveFields => "field",
-            Self::RefAnt => "refant",
-            Self::FluxReferenceFields => "reference_fields",
-            Self::FluxTransferFields => "transfer_fields",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum WorkflowProductActionKind {
-    AddSolvedProduct,
-    ImportChainTable,
-    ChooseCallibrary,
-}
-
-impl WorkflowProductActionKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::AddSolvedProduct => "+ Add solved product to chain",
-            Self::ImportChainTable => "+ Import calibration table into chain",
-            Self::ChooseCallibrary => "+ Choose callibrary file",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum WorkflowChainSettingKind {
-    Gainfield,
-    Interp,
-    Spwmap,
-    Calwt,
-}
-
-impl WorkflowChainSettingKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Gainfield => "gainfield",
-            Self::Interp => "interp",
-            Self::Spwmap => "spwmap",
-            Self::Calwt => "calwt",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum BrowserPaneSelection {
     Mode(ImageBrowserLeftPaneMode),
     SavedRegion(usize),
@@ -506,114 +436,6 @@ impl SummaryDataView {
             Self::Spws => "SPWs",
             Self::Sources => "Sources",
             Self::Antennas => "Antennas",
-        }
-    }
-
-    fn cycle(self, forward: bool) -> Self {
-        let position = Self::ALL
-            .iter()
-            .position(|candidate| *candidate == self)
-            .unwrap_or(0);
-        if forward {
-            Self::ALL[(position + 1) % Self::ALL.len()]
-        } else if position == 0 {
-            Self::ALL[Self::ALL.len() - 1]
-        } else {
-            Self::ALL[position - 1]
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum WorkflowStageId {
-    InspectDataset,
-    SolveGain,
-    SolveBandpass,
-    FluxScale,
-    Apply,
-    InspectResults,
-}
-
-impl WorkflowStageId {
-    const ALL: [Self; 6] = [
-        Self::InspectDataset,
-        Self::SolveGain,
-        Self::SolveBandpass,
-        Self::FluxScale,
-        Self::Apply,
-        Self::InspectResults,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::InspectDataset => "Inspect Dataset",
-            Self::SolveGain => "Solve Gain",
-            Self::SolveBandpass => "Solve Bandpass",
-            Self::FluxScale => "Fluxscale",
-            Self::Apply => "Apply",
-            Self::InspectResults => "Inspect Results",
-        }
-    }
-
-    fn cli_mode(self) -> &'static str {
-        match self {
-            Self::InspectDataset => "summary",
-            Self::SolveGain => "solve_gain",
-            Self::SolveBandpass => "solve_bandpass",
-            Self::FluxScale => "fluxscale",
-            Self::Apply => "apply",
-            Self::InspectResults => "stats",
-        }
-    }
-
-    fn from_mode(mode: &str) -> Self {
-        match mode {
-            "summary" => Self::InspectDataset,
-            "solve_gain" => Self::SolveGain,
-            "solve_bandpass" => Self::SolveBandpass,
-            "fluxscale" => Self::FluxScale,
-            "stats" => Self::InspectResults,
-            "apply" => Self::Apply,
-            _ => Self::Apply,
-        }
-    }
-
-    fn from_key(key: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|stage| stage.key() == key)
-    }
-
-    fn key(self) -> &'static str {
-        match self {
-            Self::InspectDataset => "inspect_dataset",
-            Self::SolveGain => "solve_gain",
-            Self::SolveBandpass => "solve_bandpass",
-            Self::FluxScale => "fluxscale",
-            Self::Apply => "apply",
-            Self::InspectResults => "inspect_results",
-        }
-    }
-
-    fn depends_on_keys(self) -> &'static [&'static str] {
-        match self {
-            Self::InspectDataset => &[],
-            Self::SolveGain => &["inspect_dataset"],
-            Self::SolveBandpass => &["solve_gain"],
-            Self::FluxScale => &["solve_gain"],
-            Self::Apply => &["solve_gain"],
-            Self::InspectResults => &["apply"],
-        }
-    }
-
-    fn produces_product(self) -> bool {
-        !matches!(self, Self::InspectDataset | Self::InspectResults)
-    }
-
-    fn spec(self) -> WorkflowStageSpec {
-        WorkflowStageSpec {
-            id: self.key(),
-            label: self.label(),
-            depends_on: self.depends_on_keys(),
-            produces_product: self.produces_product(),
         }
     }
 
@@ -1746,7 +1568,7 @@ impl ImageBrowserSessionState {
 
     fn selected_non_display_axis_state(
         &self,
-    ) -> Option<&casacore_imagebrowser_protocol::ImageNonDisplayAxisState> {
+    ) -> Option<&casars_imagebrowser_protocol::ImageNonDisplayAxisState> {
         self.snapshot
             .non_display_axes
             .get(self.selected_non_display_axis)
@@ -2359,49 +2181,6 @@ struct HistoryEntry {
     title: String,
     status_kind: StatusKind,
     details: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-struct WorkflowProductRecord {
-    path: PathBuf,
-    stage: WorkflowStageId,
-    family: String,
-    revision: usize,
-    provenance: String,
-    status: WorkflowProductStatus,
-    dependency_revisions: BTreeMap<&'static str, usize>,
-    run_sequence: usize,
-}
-
-#[derive(Debug, Clone)]
-enum WorkflowChainEntrySource {
-    DirectTable,
-    CallibraryFile {
-        path: PathBuf,
-    },
-    CallibrarySpec {
-        callib_path: PathBuf,
-        spec_index: usize,
-        spec: ApplyCalibrationTableSpec,
-    },
-    CallibraryError {
-        path: PathBuf,
-        message: String,
-    },
-}
-
-#[derive(Debug, Clone)]
-struct WorkflowChainEntryRecord {
-    label: String,
-    inspect_path: Option<PathBuf>,
-    source: WorkflowChainEntrySource,
-}
-
-#[derive(Debug, Clone)]
-struct WorkflowChainSettingRecord {
-    entry: usize,
-    kind: WorkflowChainSettingKind,
-    text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4537,7 +4316,7 @@ impl AppState {
             target: FormSelection::WorkflowStageAction,
             text: render_workflow_detail_display(&WorkflowDetailDisplay {
                 label: "Action".to_string(),
-                value: self.workflow_stage_action_label(stage).to_string(),
+                value: workflow_stage_action_label(stage).to_string(),
                 indent: 0,
             }),
             kind: FormRowKind::Field,
@@ -4570,7 +4349,7 @@ impl AppState {
                 WorkflowStageGuideKind::Goal,
                 WorkflowDetailDisplay {
                     label: WorkflowStageGuideKind::Goal.label().to_string(),
-                    value: self.workflow_stage_goal(stage).to_string(),
+                    value: workflow_stage_goal(stage).to_string(),
                     indent: 0,
                 },
             ),
@@ -4578,7 +4357,7 @@ impl AppState {
                 WorkflowStageGuideKind::Produces,
                 WorkflowDetailDisplay {
                     label: WorkflowStageGuideKind::Produces.label().to_string(),
-                    value: self.workflow_stage_output(stage).to_string(),
+                    value: workflow_stage_output(stage).to_string(),
                     indent: 0,
                 },
             ),
@@ -4586,7 +4365,7 @@ impl AppState {
                 WorkflowStageGuideKind::Hint,
                 WorkflowDetailDisplay {
                     label: WorkflowStageGuideKind::Hint.label().to_string(),
-                    value: self.workflow_stage_hint(stage).to_string(),
+                    value: workflow_stage_hint(stage).to_string(),
                     indent: 0,
                 },
             ),
@@ -5378,66 +5157,11 @@ impl AppState {
     }
 
     fn workflow_products_display_groups(&self) -> Vec<WorkflowArtifactGroupDisplay> {
-        let mut configured = self
-            .split_csv_field("gaintables")
-            .into_iter()
-            .map(|path| WorkflowArtifactDisplay {
-                heading: format!("Chain: {path}"),
-                detail_lines: Vec::new(),
-            })
-            .collect::<Vec<_>>();
-        if let Some(callib) = self.non_empty_field_text("callib") {
-            configured.push(WorkflowArtifactDisplay {
-                heading: format!("Callibrary: {callib}"),
-                detail_lines: Vec::new(),
-            });
-        }
-
-        let derived = self
-            .workflow_products
-            .iter()
-            .map(|product| {
-                let dependencies = if product.dependency_revisions.is_empty() {
-                    "none".to_string()
-                } else {
-                    product
-                        .dependency_revisions
-                        .iter()
-                        .map(|(stage, revision)| format!("{stage}@r{revision}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                WorkflowArtifactDisplay {
-                    heading: format!(
-                        "r{} {} [{} | {}]",
-                        product.revision,
-                        product.path.display(),
-                        product.family,
-                        product.status.label()
-                    ),
-                    detail_lines: vec![
-                        format!(
-                            "stage={}  provenance={}  run={}",
-                            product.stage.label(),
-                            product.provenance,
-                            product.run_sequence
-                        ),
-                        format!("depends_on={dependencies}"),
-                    ],
-                }
-            })
-            .collect::<Vec<_>>();
-
-        vec![
-            WorkflowArtifactGroupDisplay {
-                title: "Configured chain".to_string(),
-                items: configured,
-            },
-            WorkflowArtifactGroupDisplay {
-                title: "Derived products".to_string(),
-                items: derived,
-            },
-        ]
+        workflow_products_display_groups(
+            &self.split_csv_field("gaintables"),
+            self.non_empty_field_text("callib").as_deref(),
+            &self.workflow_products,
+        )
     }
 
     #[cfg(test)]
@@ -8492,7 +8216,7 @@ impl AppState {
                 self.result.status_line = format!(
                     "Workflow stage selected: {}. {}",
                     stage.label(),
-                    self.workflow_stage_hint(stage)
+                    workflow_stage_hint(stage)
                 );
                 self.result.status_kind = StatusKind::Info;
             }
@@ -10094,39 +9818,7 @@ impl AppState {
         report: &ManagedCalibrationOutput,
         run_sequence: usize,
     ) {
-        let product = match report {
-            ManagedCalibrationOutput::SolveGain(report) => Some((
-                report.output_table.clone(),
-                WorkflowStageId::SolveGain,
-                format!("{:?}", report.gain_type),
-                "solved gain table".to_string(),
-            )),
-            ManagedCalibrationOutput::SolveBandpass(report) => Some((
-                report.output_table.clone(),
-                WorkflowStageId::SolveBandpass,
-                report.table_subtype.clone(),
-                "solved bandpass table".to_string(),
-            )),
-            ManagedCalibrationOutput::FluxScale(report) => Some((
-                report.output_table.clone(),
-                WorkflowStageId::FluxScale,
-                "Fluxscale".to_string(),
-                "fluxscale output".to_string(),
-            )),
-            ManagedCalibrationOutput::Apply(report) => {
-                report.plan.measurement_set_path.clone().map(|path| {
-                    (
-                        path,
-                        WorkflowStageId::Apply,
-                        "CorrectedData".to_string(),
-                        "updated measurement set".to_string(),
-                    )
-                })
-            }
-            ManagedCalibrationOutput::Summary(_)
-            | ManagedCalibrationOutput::PlanApply(_)
-            | ManagedCalibrationOutput::Stats(_) => None,
-        };
+        let product = workflow_product_metadata_from_report(report);
         let Some((path, stage, family, provenance)) = product else {
             return;
         };
@@ -10154,7 +9846,7 @@ impl AppState {
         });
         let snapshots = self.workflow_product_snapshots();
         let stale_indices = stale_descendant_product_indices(
-            &self.workflow_stage_specs(),
+            &calibration_stage_specs(),
             &snapshots,
             stage.key(),
             revision,
@@ -10165,18 +9857,6 @@ impl AppState {
             {
                 product.status = WorkflowProductStatus::Stale;
             }
-        }
-    }
-
-    fn workflow_stage_from_report(report: &ManagedCalibrationOutput) -> Option<WorkflowStageId> {
-        match report {
-            ManagedCalibrationOutput::Apply(_) => Some(WorkflowStageId::Apply),
-            ManagedCalibrationOutput::Summary(_) => Some(WorkflowStageId::InspectDataset),
-            ManagedCalibrationOutput::Stats(_) => Some(WorkflowStageId::InspectResults),
-            ManagedCalibrationOutput::SolveGain(_) => Some(WorkflowStageId::SolveGain),
-            ManagedCalibrationOutput::SolveBandpass(_) => Some(WorkflowStageId::SolveBandpass),
-            ManagedCalibrationOutput::FluxScale(_) => Some(WorkflowStageId::FluxScale),
-            ManagedCalibrationOutput::PlanApply(_) => None,
         }
     }
 
@@ -10211,7 +9891,7 @@ impl AppState {
             }
             ManagedCalibrationOutput::Apply(_) => {
                 if let Some(preset) =
-                    self.workflow_preferred_diagnostic_preset_for_stage(WorkflowStageId::Apply)
+                    workflow_preferred_diagnostic_preset_for_stage(WorkflowStageId::Apply)
                 {
                     self.plot_workspace.selected_catalog_target =
                         Some(PlotCatalogTarget::Calibration(preset));
@@ -10224,7 +9904,7 @@ impl AppState {
             ManagedCalibrationOutput::PlanApply(_) => {}
         }
 
-        let Some(completed_stage) = Self::workflow_stage_from_report(report) else {
+        let Some(completed_stage) = workflow_stage_from_report(report) else {
             return;
         };
         let next_stage = self.workflow_recommended_next_stage();
@@ -12181,13 +11861,6 @@ impl AppState {
         }
     }
 
-    fn workflow_stage_specs(&self) -> Vec<WorkflowStageSpec> {
-        WorkflowStageId::ALL
-            .into_iter()
-            .map(WorkflowStageId::spec)
-            .collect()
-    }
-
     fn workflow_run_snapshots(&self) -> Vec<WorkflowRunSnapshot> {
         self.history_entries
             .iter()
@@ -12213,34 +11886,11 @@ impl AppState {
     }
 
     fn workflow_stage_states(&self) -> Vec<WorkflowStageState> {
-        let mut states = derive_stage_states(
-            &self.workflow_stage_specs(),
+        workflow_stage_states(
             &self.workflow_run_snapshots(),
             &self.workflow_product_snapshots(),
-        );
-        if self.app.id == "calibrate" && self.non_empty_field_text("measurement_set").is_some() {
-            if let Some(inspect_stage) = states
-                .iter_mut()
-                .find(|state| state.id == WorkflowStageId::InspectDataset.key())
-            {
-                inspect_stage.status = crate::workflow::WorkflowStageStatus::Completed;
-                inspect_stage.recommended = false;
-            }
-            if !states.iter().any(|state| state.recommended)
-                && let Some(next_index) = states.iter().position(|state| {
-                    matches!(
-                        state.status,
-                        crate::workflow::WorkflowStageStatus::Stale
-                            | crate::workflow::WorkflowStageStatus::Ready
-                    )
-                })
-            {
-                if let Some(state) = states.get_mut(next_index) {
-                    state.recommended = true;
-                }
-            }
-        }
-        states
+            self.non_empty_field_text("measurement_set").is_some(),
+        )
     }
 
     fn workflow_stage_state(&self, stage: WorkflowStageId) -> Option<WorkflowStageState> {
@@ -12336,29 +11986,7 @@ impl AppState {
             | WorkflowStageId::Apply
             | WorkflowStageId::InspectResults => None,
         }?;
-        let parent = base_path.parent().unwrap_or_else(|| Path::new("."));
-        let name = base_path.file_name()?.to_string_lossy();
-        let stem = if let Some(stem) = name.strip_suffix(".ms") {
-            stem.to_string()
-        } else if let Some(stem) = base_path.file_stem() {
-            stem.to_string_lossy().into_owned()
-        } else {
-            name.into_owned()
-        };
-        let suffix = match stage {
-            WorkflowStageId::SolveGain => "gain.gcal",
-            WorkflowStageId::SolveBandpass => "bandpass.bcal",
-            WorkflowStageId::FluxScale => "flux.gcal",
-            WorkflowStageId::InspectDataset
-            | WorkflowStageId::Apply
-            | WorkflowStageId::InspectResults => return None,
-        };
-        Some(
-            parent
-                .join(format!("{stem}.{suffix}"))
-                .display()
-                .to_string(),
-        )
+        suggested_output_table_path(stage, &base_path)
     }
 
     fn workflow_latest_stage_product_path(&self, stage: WorkflowStageId) -> Option<String> {
@@ -12411,137 +12039,11 @@ impl AppState {
         })
     }
 
-    fn workflow_preferred_diagnostic_preset_for_stage(
-        &self,
-        stage: WorkflowStageId,
-    ) -> Option<CalibrationPlotPreset> {
-        let kind = match stage {
-            WorkflowStageId::SolveGain | WorkflowStageId::FluxScale => {
-                WorkflowCalibrationArtifactKind::GainLike
-            }
-            WorkflowStageId::SolveBandpass => WorkflowCalibrationArtifactKind::BandpassLike,
-            WorkflowStageId::Apply => WorkflowCalibrationArtifactKind::CorrectedData,
-            WorkflowStageId::InspectDataset | WorkflowStageId::InspectResults => return None,
-        };
-        Some(preferred_workflow_calibration_preset(kind))
-    }
-
-    fn workflow_stage_goal(&self, stage: WorkflowStageId) -> &'static str {
-        match stage {
-            WorkflowStageId::InspectDataset => {
-                "Summarize the MeasurementSet and verify the calibrator/target selections."
-            }
-            WorkflowStageId::SolveGain => {
-                "Solve per-antenna gain corrections on the selected calibrator data."
-            }
-            WorkflowStageId::SolveBandpass => {
-                "Solve frequency-dependent bandpass corrections using prior gain calibration."
-            }
-            WorkflowStageId::FluxScale => {
-                "Transfer the absolute flux density scale from the reference calibrator."
-            }
-            WorkflowStageId::Apply => {
-                "Apply the configured calibration chain to the selected MeasurementSet rows."
-            }
-            WorkflowStageId::InspectResults => {
-                "Inspect solved tables or computed calibration statistics before the next step."
-            }
-        }
-    }
-
-    fn workflow_stage_output(&self, stage: WorkflowStageId) -> &'static str {
-        match stage {
-            WorkflowStageId::InspectDataset => "MeasurementSet summary and selection context",
-            WorkflowStageId::SolveGain => "Gain calibration table (G/T Jones)",
-            WorkflowStageId::SolveBandpass => "Bandpass calibration table (B Jones)",
-            WorkflowStageId::FluxScale => "Flux-scaled gain table",
-            WorkflowStageId::Apply => "Updated CORRECTED_DATA and apply report",
-            WorkflowStageId::InspectResults => "Calibration stats report and inspection plots",
-        }
-    }
-
-    fn workflow_stage_hint(&self, stage: WorkflowStageId) -> &'static str {
-        match stage {
-            WorkflowStageId::InspectDataset => {
-                "Start here: choose the dataset and confirm fields, SPWs, and refant."
-            }
-            WorkflowStageId::SolveGain => {
-                "Typical first solve: primary calibrator field, spw 0, refant set, solint inf or int."
-            }
-            WorkflowStageId::SolveBandpass => {
-                "Usually run after gain solve and include the gain table in the chain or callibrary."
-            }
-            WorkflowStageId::FluxScale => {
-                "Use after gain/bandpass when you want to transfer absolute flux from the flux calibrator."
-            }
-            WorkflowStageId::Apply => {
-                "Make sure the Products chain is correct, then run apply and inspect corrected-data diagnostics."
-            }
-            WorkflowStageId::InspectResults => {
-                "Point Table Path at the table you want to inspect; use Diagnostics for the recommended plots."
-            }
-        }
-    }
-
-    fn workflow_stage_action_label(&self, stage: WorkflowStageId) -> &'static str {
-        match stage {
-            WorkflowStageId::InspectDataset => "Run dataset summary now [Enter/r]",
-            WorkflowStageId::SolveGain => "Run gain solve now [Enter/r]",
-            WorkflowStageId::SolveBandpass => "Run bandpass solve now [Enter/r]",
-            WorkflowStageId::FluxScale => "Run fluxscale now [Enter/r]",
-            WorkflowStageId::Apply => "Run apply now [Enter/r]",
-            WorkflowStageId::InspectResults => "Run stats now [Enter/r]",
-        }
-    }
-
     fn workflow_chain_entries(&self) -> Vec<WorkflowChainEntryRecord> {
-        let mut entries = self
-            .split_csv_field("gaintables")
-            .into_iter()
-            .enumerate()
-            .map(|(index, path)| WorkflowChainEntryRecord {
-                label: format!("Chain {:<12} {}", index + 1, path),
-                inspect_path: Some(PathBuf::from(path)),
-                source: WorkflowChainEntrySource::DirectTable,
-            })
-            .collect::<Vec<_>>();
-        if let Some(callib) = self.non_empty_field_text("callib") {
-            let callib_path = PathBuf::from(&callib);
-            entries.push(WorkflowChainEntryRecord {
-                label: format!("Callibrary      {callib}"),
-                inspect_path: None,
-                source: WorkflowChainEntrySource::CallibraryFile {
-                    path: callib_path.clone(),
-                },
-            });
-            match load_apply_specs_from_callib(&callib_path) {
-                Ok(specs) => {
-                    entries.extend(specs.into_iter().enumerate().map(|(index, spec)| {
-                        let table_path = spec.path.clone();
-                        WorkflowChainEntryRecord {
-                            label: format!("Callib {:<13} {}", index + 1, table_path.display()),
-                            inspect_path: Some(table_path),
-                            source: WorkflowChainEntrySource::CallibrarySpec {
-                                callib_path: callib_path.clone(),
-                                spec_index: index,
-                                spec,
-                            },
-                        }
-                    }));
-                }
-                Err(error) => {
-                    entries.push(WorkflowChainEntryRecord {
-                        label: "Callib parse error".to_string(),
-                        inspect_path: None,
-                        source: WorkflowChainEntrySource::CallibraryError {
-                            path: callib_path,
-                            message: error.to_string(),
-                        },
-                    });
-                }
-            }
-        }
-        entries
+        workflow_chain_entries(
+            &self.split_csv_field("gaintables"),
+            self.non_empty_field_text("callib").as_deref(),
+        )
     }
 
     fn workflow_products_section_index(&self) -> usize {
@@ -12567,7 +12069,7 @@ impl AppState {
                         .iter()
                         .find(|product| product.path == path)
                         .and_then(|product| {
-                            self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                            workflow_preferred_diagnostic_preset_for_stage(product.stage)
                         })
                         .unwrap_or_else(|| {
                             preferred_workflow_calibration_preset(
@@ -12601,7 +12103,7 @@ impl AppState {
                         .iter()
                         .find(|product| product.path == path)
                         .and_then(|product| {
-                            self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                            workflow_preferred_diagnostic_preset_for_stage(product.stage)
                         })
                         .unwrap_or_else(|| {
                             preferred_workflow_calibration_preset(
@@ -12848,7 +12350,7 @@ impl AppState {
         let Some(report) = self.current_calibration_report() else {
             return false;
         };
-        let Some(stage) = Self::workflow_stage_from_report(report) else {
+        let Some(stage) = workflow_stage_from_report(report) else {
             return false;
         };
         if !matches!(
@@ -12950,16 +12452,14 @@ impl AppState {
             | WorkflowStageId::FluxScale => {
                 let _ = self.apply_startup_text_value("table_path", product_path.clone());
                 let _ = self.apply_startup_text_value("summary_paths", product_path.clone());
-                if let Some(preset) =
-                    self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                if let Some(preset) = workflow_preferred_diagnostic_preset_for_stage(product.stage)
                 {
                     self.plot_workspace.selected_catalog_target =
                         Some(PlotCatalogTarget::Calibration(preset));
                 }
             }
             WorkflowStageId::Apply => {
-                if let Some(preset) =
-                    self.workflow_preferred_diagnostic_preset_for_stage(product.stage)
+                if let Some(preset) = workflow_preferred_diagnostic_preset_for_stage(product.stage)
                 {
                     self.plot_workspace.selected_catalog_target =
                         Some(PlotCatalogTarget::Calibration(preset));
@@ -14381,164 +13881,6 @@ fn dynamic_field_picker_entries(app: &AppState, field_id: &str) -> Option<Vec<Ch
     }
 }
 
-fn workflow_callib_setting_display_value(
-    spec: &ApplyCalibrationTableSpec,
-    kind: WorkflowChainSettingKind,
-) -> String {
-    match kind {
-        WorkflowChainSettingKind::Gainfield => format_gainfield_selector(spec.gainfield.as_ref()),
-        WorkflowChainSettingKind::Interp => format_apply_interp(spec.interp).to_string(),
-        WorkflowChainSettingKind::Spwmap => format_spwmap_value(&spec.spwmap),
-        WorkflowChainSettingKind::Calwt => yes_no(spec.calwt).to_string(),
-    }
-}
-
-fn workflow_callib_setting_raw_value(
-    spec: &ApplyCalibrationTableSpec,
-    kind: WorkflowChainSettingKind,
-) -> String {
-    match kind {
-        WorkflowChainSettingKind::Gainfield => match spec.gainfield.as_ref() {
-            None => String::new(),
-            Some(GainFieldSelector::Nearest) => "nearest".to_string(),
-            Some(GainFieldSelector::FieldId(field_id)) => field_id.to_string(),
-            Some(GainFieldSelector::FieldName(name)) => name.clone(),
-        },
-        WorkflowChainSettingKind::Interp => format_apply_interp(spec.interp).to_string(),
-        WorkflowChainSettingKind::Spwmap => {
-            if spec.spwmap.is_empty() {
-                String::new()
-            } else {
-                spec.spwmap
-                    .iter()
-                    .map(i32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            }
-        }
-        WorkflowChainSettingKind::Calwt => spec.calwt.to_string(),
-    }
-}
-
-fn workflow_callib_apply_to_row(spec: &ApplyCalibrationTableSpec) -> Option<String> {
-    (!spec.apply_to.is_empty())
-        .then(|| format!("  apply_to         {}", format_apply_table_selection(spec)))
-}
-
-fn format_gainfield_selector(selector: Option<&GainFieldSelector>) -> String {
-    match selector {
-        None => "<default>".to_string(),
-        Some(GainFieldSelector::Nearest) => "nearest".to_string(),
-        Some(GainFieldSelector::FieldId(field_id)) => field_id.to_string(),
-        Some(GainFieldSelector::FieldName(name)) => name.clone(),
-    }
-}
-
-fn format_apply_interp(interp: ApplyInterpolationMode) -> &'static str {
-    match interp {
-        ApplyInterpolationMode::Nearest => "nearest",
-        ApplyInterpolationMode::Linear => "linear",
-        ApplyInterpolationMode::NearestLinear => "nearest,linear",
-    }
-}
-
-fn format_spwmap_value(spwmap: &[i32]) -> String {
-    if spwmap.is_empty() {
-        "<identity>".to_string()
-    } else {
-        spwmap
-            .iter()
-            .map(|value| value.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-}
-
-fn format_apply_table_selection(spec: &ApplyCalibrationTableSpec) -> String {
-    let mut parts = Vec::new();
-    if !spec.apply_to.field_ids.is_empty() {
-        parts.push(format!(
-            "field={}",
-            spec.apply_to
-                .field_ids
-                .iter()
-                .map(|value| value.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        ));
-    }
-    if !spec.apply_to.spectral_window_ids.is_empty() {
-        parts.push(format!(
-            "spw={}",
-            spec.apply_to
-                .spectral_window_ids
-                .iter()
-                .map(|value| value.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        ));
-    }
-    if !spec.apply_to.observation_ids.is_empty() {
-        parts.push(format!(
-            "obs={}",
-            spec.apply_to
-                .observation_ids
-                .iter()
-                .map(|value| value.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        ));
-    }
-    parts.join("  ")
-}
-
-fn parse_workflow_gainfield_value(value: &str) -> Result<Option<GainFieldSelector>, String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    if value.eq_ignore_ascii_case("nearest") {
-        return Ok(Some(GainFieldSelector::Nearest));
-    }
-    if let Ok(field_id) = value.parse::<i32>() {
-        return Ok(Some(GainFieldSelector::FieldId(field_id)));
-    }
-    Ok(Some(GainFieldSelector::FieldName(value.to_string())))
-}
-
-fn parse_workflow_interp_value(value: &str) -> Result<ApplyInterpolationMode, String> {
-    match value.trim() {
-        "" | "nearest" => Ok(ApplyInterpolationMode::Nearest),
-        "linear" => Ok(ApplyInterpolationMode::Linear),
-        "nearest,linear" => Ok(ApplyInterpolationMode::NearestLinear),
-        other => Err(format!("unsupported apply interpolation {other:?}")),
-    }
-}
-
-fn parse_workflow_spwmap_value(value: &str) -> Result<Vec<i32>, String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(Vec::new());
-    }
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(|item| {
-            item.parse::<i32>()
-                .map_err(|error| format!("invalid spwmap value {item:?}: {error}"))
-        })
-        .collect()
-}
-
-fn parse_workflow_calwt_value(value: &str) -> Result<bool, String> {
-    match value.trim() {
-        "true" => Ok(true),
-        "false" | "" => Ok(false),
-        other => Err(format!("unsupported calwt value {other:?}")),
-    }
-}
-
 fn inject_managed_arguments(arguments: &mut Vec<OsString>, managed_output: &UiManagedOutputSchema) {
     for argument in &managed_output.inject_arguments {
         arguments.push(OsString::from(&argument.flag));
@@ -15441,7 +14783,7 @@ fn image_plane_render_signature(
     colormap: ImagePlaneColormap,
     invert: bool,
     overlay_markers: &[ImagePlaneOverlayMarker],
-    region_overlay_shapes: &[casacore_imagebrowser_protocol::ImageRegionOverlayShapeState],
+    region_overlay_shapes: &[casars_imagebrowser_protocol::ImageRegionOverlayShapeState],
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     snapshot.parameters.blc.hash(&mut hasher);
@@ -16039,7 +15381,7 @@ fn copyable_browser_text(inspector: &BrowserInspectorSnapshot) -> (String, &'sta
     }
 }
 
-fn render_image_probe(probe: &casacore_imagebrowser_protocol::ImageBrowserProbe) -> String {
+fn render_image_probe(probe: &casars_imagebrowser_protocol::ImageBrowserProbe) -> String {
     let mut lines = vec![
         format!("value: {}", probe.value),
         format!(
@@ -16129,7 +15471,7 @@ fn frequency_display_unit_for_profile(profile: &ImageProfilePayload) -> Option<&
 }
 
 fn format_profile_selected_label(
-    sample: &casacore_imagebrowser_protocol::ImageProfileSampleState,
+    sample: &casars_imagebrowser_protocol::ImageProfileSampleState,
     value_unit: &str,
 ) -> String {
     let world = sample
@@ -16522,7 +15864,7 @@ fn shell_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use casacore_imagebrowser_protocol::{
+    use casars_imagebrowser_protocol::{
         ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserSnapshot,
         ImageBrowserView, ImageDisplayAxisState, ImageNavigationMetrics, ImagePlaneCursorState,
     };

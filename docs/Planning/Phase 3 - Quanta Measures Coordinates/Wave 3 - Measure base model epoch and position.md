@@ -44,9 +44,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-types/src/`
-- `crates/casacore-types/tests/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-types/src/`
+- `crates/casa-types/tests/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 
@@ -116,5 +116,5 @@
 - C++ `MeasFrame` lazily computes derived quantities. Rust takes an immutable-builder
   approach instead, computing derived values on demand.
 - EOP (Earth Orientation Parameter) data is required for UT1 and GAST/LAST
-  conversions. The `casacore-measures-data` crate bundles IERS finals2000A.data
+  conversions. The `casa-measures-data` crate bundles IERS finals2000A.data
   to ensure tests always work without external data.

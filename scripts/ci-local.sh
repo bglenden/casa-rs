@@ -84,8 +84,8 @@ case "$command" in
       cargo fmt --all -- --check &&
       cargo clippy --workspace --all-targets -- -D warnings &&
       cargo test --workspace &&
-      cargo run -p casacore-aipsio --example t_aipsio &&
-      cargo run -p casacore-tables --example t_table
+      cargo run -p casa-aipsio --example t_aipsio &&
+      cargo run -p casa-tables --example t_table
     '
     ;;
   coverage)
@@ -99,8 +99,8 @@ case "$command" in
       cargo fmt --all -- --check &&
       cargo clippy --workspace --all-targets -- -D warnings &&
       cargo test --workspace &&
-      cargo run -p casacore-aipsio --example t_aipsio &&
-      cargo run -p casacore-tables --example t_table &&
+      cargo run -p casa-aipsio --example t_aipsio &&
+      cargo run -p casa-tables --example t_table &&
       ./scripts/run-coverage.sh --ci-like
     '
     ;;

@@ -41,10 +41,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-ms/src/`
-- `crates/casacore-ms/tests/`
-- `crates/casacore-tables/src/storage/virtual_bitflags.rs`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-ms/src/`
+- `crates/casa-ms/tests/`
+- `crates/casa-tables/src/storage/virtual_bitflags.rs`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

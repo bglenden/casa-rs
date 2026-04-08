@@ -28,7 +28,7 @@ jobs:
         run: cargo doc --workspace --no-deps
 
       - name: Add redirect index
-        run: echo '<meta http-equiv="refresh" content="0;url=casacore_tables/index.html">' > target/doc/index.html
+        run: echo '<meta http-equiv="refresh" content="0;url=casa_tables/index.html">' > target/doc/index.html
 
       - name: Deploy to gh-pages
         env:

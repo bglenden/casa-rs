@@ -1,0 +1,21 @@
+[package]
+name = "casa-measures-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Internal maintenance tools for casacore measures data"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-measures-data = { path = "../casa-measures-data" }
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
+
+[[bin]]
+name = "import_observatories"
+path = "src/bin/import_observatories.rs"

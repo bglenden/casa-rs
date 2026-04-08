@@ -12,7 +12,7 @@
 
 ## Goal
 
-- Create `casacore-images` crate and core image model built on lattices plus
+- Create `casa-images` crate and core image model built on lattices plus
   attached coordinate systems and metadata.
 
 ## Non-goals
@@ -47,8 +47,8 @@
 ## Files likely touched
 
 - `Cargo.toml`
-- `crates/casacore-images/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

@@ -3,8 +3,8 @@
 mod common;
 
 use casa_calibration::{FluxScaleRequest, fluxscale};
-use casacore_tables::{Table, TableOptions};
-use casacore_types::{ArrayValue, Complex32, ScalarValue, Value};
+use casa_tables::{Table, TableOptions};
+use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use tempfile::TempDir;
 
 #[test]

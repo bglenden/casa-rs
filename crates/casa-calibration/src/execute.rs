@@ -24,13 +24,13 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use casacore_ms::column_def::build_table_schema;
-use casacore_ms::derived::engine::MsCalEngine;
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::main_table::VisibilityDataColumn;
-use casacore_ms::{MsError, MsResult};
-use casacore_tables::{ColumnSchema, Table, TableError, TableOptions};
-use casacore_types::{ArrayValue, Complex32, ScalarValue, Value};
+use casa_ms::column_def::build_table_schema;
+use casa_ms::derived::engine::MsCalEngine;
+use casa_ms::ms::MeasurementSet;
+use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::{MsError, MsResult};
+use casa_tables::{ColumnSchema, Table, TableError, TableOptions};
+use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -2127,8 +2127,8 @@ fn get_f64_array(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casacore_types::measures::direction::{DirectionRef, MDirection};
-    use casacore_types::measures::position::MPosition;
+    use casa_types::measures::direction::{DirectionRef, MDirection};
+    use casa_types::measures::position::MPosition;
 
     #[test]
     fn circular_parang_gain_matches_expected_rr_rl_lr_ll_phases() {

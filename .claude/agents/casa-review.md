@@ -38,7 +38,7 @@ Cross-reference the C++ casacore source at `~/SoftwareProjects/casacore` to buil
 - **Edge cases:** empty tables, missing columns, undefined cells
 - **Keywords and table info records**
 
-Scan `casacore-test-support/tests/` and other test directories for existing cross-matrix tests. Verify each area has RR (Rust-read), RC (Rust-read C++-written), CR (C++-read Rust-written), CC (C++-read C++-written) legs and endian variants where applicable.
+Scan `casa-test-support/tests/` and other test directories for existing cross-matrix tests. Verify each area has RR (Rust-read), RC (Rust-read C++-written), CR (C++-read Rust-written), CC (C++-read C++-written) legs and endian variants where applicable.
 
 **Output:** A matrix showing coverage status. Flag specific gaps: which types, dimensions, or storage managers lack coverage.
 
@@ -65,7 +65,7 @@ Check `examples/` dirs in each crate for Rust equivalents of C++ demos. Cross-re
 
 ### 4. Rustdoc Documentation
 
-Check documentation coverage on public API surface (`casacore-types` and `casacore-tables`):
+Check documentation coverage on public API surface (`casa-types` and `casa-tables`):
 
 - `//!` module-level docs on all public modules
 - `///` doc comments on public types, methods, and functions
@@ -91,10 +91,10 @@ Run all four. For any that fail, include the relevant error output (first ~20 li
 
 Verify architectural boundaries:
 
-- `publish = false` on internal crates (`casacore-aipsio`, `casacore-test-support`)
-- `casacore-tables` doesn't leak internal types in its public API
+- `publish = false` on internal crates (`casa-aipsio`, `casa-test-support`)
+- `casa-tables` doesn't leak internal types in its public API
 - Scan for `pub use` re-exports that might expose implementation details
-- `casacore-types` contains only types (no I/O, no storage logic)
+- `casa-types` contains only types (no I/O, no storage logic)
 
 **Output:** Any boundary violations found.
 

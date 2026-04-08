@@ -16,7 +16,7 @@
 //!   table falls inside the initial `Complex`/`CPARAM` family targeted by the
 //!   upcoming `applycal`-class workflow.
 //!
-//! The implementation is built on [`casacore_tables::Table`] rather than a new
+//! The implementation is built on [`casa_tables::Table`] rather than a new
 //! storage stack, so every on-disk assumption made here is exercised against
 //! the same table reader/writer substrate used elsewhere in the repo.
 

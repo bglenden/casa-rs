@@ -25,10 +25,10 @@ that don't need disk persistence.
 
 | Component | Location |
 |-----------|----------|
-| `TableKind` enum | `casacore-tables/src/table.rs` |
-| Memory constructors (`new_memory`, etc.) | `casacore-tables/src/table.rs` |
-| `to_memory()`, `is_memory()`, `table_kind()` | `casacore-tables/src/table.rs` |
-| Locking no-ops for memory tables | `casacore-tables/src/table.rs` |
+| `TableKind` enum | `casa-tables/src/table.rs` |
+| Memory constructors (`new_memory`, etc.) | `casa-tables/src/table.rs` |
+| `to_memory()`, `is_memory()`, `table_kind()` | `casa-tables/src/table.rs` |
+| Locking no-ops for memory tables | `casa-tables/src/table.rs` |
 | Demo | `demo_memory_tables()` in `demo.rs` |
 
 **Test counts:** 14 unit tests + 1 demo test.

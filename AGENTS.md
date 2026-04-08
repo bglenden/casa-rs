@@ -31,7 +31,7 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - Shared CASA dataset root defaults to `../casatestdata`.
 - Override the shared dataset root with `CASA_RS_TESTDATA_ROOT`.
 - Do not treat `/private/tmp` as the canonical home for shared CASA datasets.
-- Small bundled real-MS CI fixtures live in `crates/casacore-ms/tests/fixtures/`.
+- Small bundled real-MS CI fixtures live in `crates/casa-ms/tests/fixtures/`.
 - If C++ has a demo for a supported module, provide a Rust equivalent demo.
 - When implementing new casacore-c++ functionality, document all public types and
   methods at a level comparable to the C++ doxygen in the corresponding .h files.
@@ -93,14 +93,14 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
   `cargo test --workspace`
   `scripts/test-slow.sh`
   `scripts/run-coverage.sh --ci-like`
-  `cargo run -p casacore-aipsio --example t_aipsio`
-  `cargo run -p casacore-tables --example t_table`
+  `cargo run -p casa-aipsio --example t_aipsio`
+  `cargo run -p casa-tables --example t_table`
 
 ## Architecture Decisions (Condensed)
 
-- Public API surface: `casacore-types` and `casacore-tables`.
+- Public API surface: `casa-types` and `casa-tables`.
 - Internal implementation crates:
-  - `casacore-aipsio` (`publish = false`)
-  - `casacore-test-support` (`publish = false`)
-- `casacore-tables` keeps codec/storage helpers crate-internal.
-- `casacore-aipsio` provides full AipsIO-style framing + `tAipsIO` parity demo/tests.
+  - `casa-aipsio` (`publish = false`)
+  - `casa-test-support` (`publish = false`)
+- `casa-tables` keeps codec/storage helpers crate-internal.
+- `casa-aipsio` provides full AipsIO-style framing + `tAipsIO` parity demo/tests.

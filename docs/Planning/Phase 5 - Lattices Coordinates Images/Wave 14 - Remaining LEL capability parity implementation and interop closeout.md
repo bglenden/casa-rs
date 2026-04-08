@@ -61,12 +61,12 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/image_expr.rs`
-- `crates/casacore-images/src/lib.rs`
-- `crates/casacore-images/examples/`
-- `crates/casacore-test-support/src/cpp/`
-- `crates/casacore-test-support/src/lib.rs`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-images/src/image_expr.rs`
+- `crates/casa-images/src/lib.rs`
+- `crates/casa-images/examples/`
+- `crates/casa-test-support/src/cpp/`
+- `crates/casa-test-support/src/lib.rs`
+- `crates/casa-test-support/tests/`
 - `docs/`
 
 ## Definition of Ready
@@ -295,11 +295,11 @@ Wave 14 should record the concrete obligation for every target above:
 
 Prep fixtures already added before implementation starts:
 
-- `crates/casacore-test-support/tests/image_expr_interop.rs`:
+- `crates/casa-test-support/tests/image_expr_interop.rs`:
   `two_image_imgexpr_cross_matrix_matches_expected_pixels`
   exercises a full `RR`/`RC`/`CR`/`CC` `.imgexpr` matrix over a two-image
   virtual expression backed by real on-disk images.
-- `crates/casacore-test-support/tests/images_perf_vs_cpp.rs`:
+- `crates/casa-test-support/tests/images_perf_vs_cpp.rs`:
   `parsed_two_image_virtual_expr_perf_vs_cpp`
   times parse+full-read over a virtual image created from two real images and
   checks every pixel against the expected computation before timing.
@@ -350,7 +350,7 @@ missing benchmark slot for that deferred family.
   - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
   - `cargo test --workspace` -> PASS (pre-existing UDF test flake excluded)
   - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` -> PASS
-  - `cargo run --example t_image_expr -p casacore-images` -> PASS
+  - `cargo run --example t_image_expr -p casa-images` -> PASS
 - LEL status matrix:
   - Unary operators: 3/3 (-, +, !)
   - Binary operators: 10/10 (+ - * / ^ == != > >= < <= && ||)

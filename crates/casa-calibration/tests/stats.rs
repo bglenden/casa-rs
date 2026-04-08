@@ -2,7 +2,7 @@
 
 mod common;
 
-use casacore_types::Complex32;
+use casa_types::Complex32;
 #[cfg(feature = "slow-tests")]
 use serde_json::Value as JsonValue;
 use tempfile::TempDir;

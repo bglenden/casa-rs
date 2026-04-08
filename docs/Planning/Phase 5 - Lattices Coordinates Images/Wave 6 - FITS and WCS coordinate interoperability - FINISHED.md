@@ -45,9 +45,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-coordinates/src/`
-- `crates/casacore-coordinates/tests/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-coordinates/src/`
+- `crates/casa-coordinates/tests/`
+- `crates/casa-test-support/tests/`
 
 ## Definition of Ready
 

@@ -40,9 +40,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-types/src/`
-- `crates/casacore-test-support/src/`
-- `crates/casacore-test-support/tests/`
+- `crates/casa-types/src/`
+- `crates/casa-test-support/src/`
+- `crates/casa-test-support/tests/`
 - `docs/`
 
 ## Definition of Ready
@@ -97,7 +97,7 @@
 - Commands:
   - `cargo fmt --all -- --check` -> PASS
   - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
-  - `cargo test -p casacore-measures-data` -> PASS (16 tests)
+  - `cargo test -p casa-measures-data` -> PASS (16 tests)
   - `cargo test --workspace` -> PASS
   - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` -> PASS
 - Interop matrix:

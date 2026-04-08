@@ -4,7 +4,7 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::f64::consts::PI;
 
-use casacore_types::Complex32;
+use casa_types::Complex32;
 
 use super::{GainSolveError, GainSolveMode, GainType};
 use crate::solve::grouping::SolveAccumulator;

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
 
-use casacore_ms::msexplore::cli::{
-    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema,
+use casa_ms::ui_schema::{
+    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
 };
 
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
@@ -111,9 +111,7 @@ fn parse_schema_prefill_args(
             .iter()
             .filter(|argument| !argument.hidden_in_tui)
             .filter(|argument| !matches!(argument.parser, UiArgumentParser::Action { .. }))
-            .filter(|argument| {
-                argument.value_kind == casacore_ms::msexplore::cli::UiValueKind::Path
-            })
+            .filter(|argument| argument.value_kind == UiValueKind::Path)
             .min_by_key(|argument| argument.order)
             .map(|argument| argument.id.as_str())
     } else {
@@ -286,7 +284,7 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
 
-    use casacore_ms::msexplore::cli::command_schema;
+    use casa_ms::msexplore::cli::command_schema;
     use serde_json::json;
 
     use super::{

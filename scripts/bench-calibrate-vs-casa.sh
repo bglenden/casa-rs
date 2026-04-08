@@ -136,7 +136,7 @@ echo
 warm_rust_ms="$tmpdir/warm-rust.ms"
 copy_ms "$ms_path" "$warm_rust_ms"
 target/release/calibrate \
-  "$warm_rust_ms" \
+  --ms "$warm_rust_ms" \
   --gaintables "$phase_gcal" \
   --field "$field" \
   --spw "$spw" \
@@ -176,7 +176,7 @@ for run in $(seq 1 "$repeats"); do
   rust_report="$tmpdir/rust-run-$run.json"
   /usr/bin/time -lp \
     target/release/calibrate \
-      "$run_ms" \
+      --ms "$run_ms" \
       --gaintables "$phase_gcal" \
       --field "$field" \
       --spw "$spw" \

@@ -18,18 +18,18 @@ This README is for API users. Contributor/developer policy is in `AGENTS.md`.
 
 Public API crates:
 
-- `casacore-types`: scalar/array/record value model.
-- `casacore-tables`: table persistence and schema-facing APIs.
-- `casacore-ms`: MeasurementSet summary, selection, and plotting support.
-- `casacore-images`: image, mask, region, and image-browser support.
+- `casa-types`: scalar/array/record value model.
+- `casa-tables`: table persistence and schema-facing APIs.
+- `casa-ms`: MeasurementSet summary, selection, and plotting support.
+- `casa-images`: image, mask, region, and image-browser support.
 
 Internal or protocol-facing crates include:
 
 - `casars`: ratatui terminal application shell and workflow UI
 - `casa-calibration`: calibration workflows used by the `calibrate` app
-- `casacore-aipsio`: AipsIO framing and compatibility helpers
-- `casacore-tablebrowser-protocol`: table browser session protocol
-- `casacore-imagebrowser-protocol`: image browser session protocol
+- `casa-aipsio`: AipsIO framing and compatibility helpers
+- `casars-tablebrowser-protocol`: table browser session protocol
+- `casars-imagebrowser-protocol`: image browser session protocol
 
 ## Current User-Facing Capabilities
 
@@ -37,7 +37,7 @@ Internal or protocol-facing crates include:
 - table persistence and typed schema helpers
 - MeasurementSet summaries, selection, and plotting primitives
 - calibration solve/apply/stats/inspection workflows through `casa-calibration`
-- image browsing and region/mask workflows through `casacore-images`
+- image browsing and region/mask workflows through `casa-images`
 - `casars`, a framework-owned shell family for terminal applications:
   - `InspectShell`
   - `BrowserShell`
@@ -52,7 +52,7 @@ Status legend:
 
 | casacore-c++ module | casa-rs status | Notes |
 |---|---|---|
-| `casa` | Partial / Available now | Core value model (`casacore-types`) exists; broader `casa` utility surface is not a parity target. |
+| `casa` | Partial / Available now | Core value model (`casa-types`) exists; broader `casa` utility surface is not a parity target. |
 | `tables` | Available now + Planned | Core table persistence APIs exist; closeout parity tracked in [Phase 2](docs/Planning/Phase%202%20-%20Table%20fillout/README.md). |
 | `measures` | Available now + Planned | Bundled EOP data and coordinate conversion support exist; broader parity tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
 | `meas` (TaQL UDF) | Partial / Available now | Core subset exists; broader catalog tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
@@ -136,10 +136,10 @@ not treat a raw schema dump as their primary UX. The shell-family conventions in
 `docs/casars-tui-framework.md` are the required contract for new `casars`
 applications.
 
-## Minimal Example (`casacore-types`)
+## Minimal Example (`casa-types`)
 
 ```rust
-use casacore_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 let temperature = Value::Scalar(ScalarValue::Float64(273.15));
 
@@ -163,8 +163,8 @@ equivalent to the corresponding C++ test/demo. These demos:
 
 | Crate | Demo | C++ original | Run |
 |---|---|---|---|
-| `casacore-aipsio` | `t_aipsio` | `tAipsIO.cc` | `cargo run -p casacore-aipsio --example t_aipsio` |
-| `casacore-tables` | `t_table` | `tTable.cc` | `cargo run -p casacore-tables --example t_table` |
+| `casa-aipsio` | `t_aipsio` | `tAipsIO.cc` | `cargo run -p casa-aipsio --example t_aipsio` |
+| `casa-tables` | `t_table` | `tTable.cc` | `cargo run -p casa-tables --example t_table` |
 
 Demo source lives in each crate's `examples/` directory. The demo logic
 is in a `demo` module within the crate, so `cargo doc` renders it alongside
@@ -197,19 +197,19 @@ The bundled snapshot should be refreshed periodically (the
 **Command-line update** — download the latest data to `~/.casa-rs/data/`:
 
 ```bash
-cargo run --example update_eop -p casacore-measures-data --features update
+cargo run --example update_eop -p casa-measures-data --features update
 ```
 
 Or specify a custom directory:
 
 ```bash
-cargo run --example update_eop -p casacore-measures-data --features update -- --data-dir /path/to/data
+cargo run --example update_eop -p casa-measures-data --features update -- --data-dir /path/to/data
 ```
 
 **Programmatic update:**
 
 ```rust
-use casacore_measures_data::update::{download_and_install, UpdateResult};
+use casa_measures_data::update::{download_and_install, UpdateResult};
 use std::path::Path;
 
 match download_and_install(Path::new("/path/to/data"))? {
@@ -222,11 +222,11 @@ match download_and_install(Path::new("/path/to/data"))? {
 
 ```bash
 # Download latest to a temp directory
-cargo run --example update_eop -p casacore-measures-data --features update -- --data-dir /tmp/eop
+cargo run --example update_eop -p casa-measures-data --features update -- --data-dir /tmp/eop
 
 # Copy into the crate's data directory and commit
-cp /tmp/eop/finals2000A.data crates/casacore-measures-data/data/finals2000A.data
-git add crates/casacore-measures-data/data/finals2000A.data
+cp /tmp/eop/finals2000A.data crates/casa-measures-data/data/finals2000A.data
+git add crates/casa-measures-data/data/finals2000A.data
 git commit -m "data: refresh bundled IERS EOP snapshot"
 ```
 
@@ -235,7 +235,7 @@ git commit -m "data: refresh bundled IERS EOP snapshot"
 The bundled data staleness test runs automatically with `cargo test --workspace`:
 
 ```bash
-cargo test -p casacore-measures-data bundled_data_not_stale
+cargo test -p casa-measures-data bundled_data_not_stale
 ```
 
 This test fails when the bundled data's last measured entry is older than

@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use casacore_imagebrowser_protocol::{
+use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserPreviewPayload, ImageBrowserRequestEnvelope,
     ImageBrowserResponse, ImageBrowserResponseEnvelope, ImageBrowserSnapshot,
 };
-use casacore_tablebrowser_protocol::{
+use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserRequestEnvelope, BrowserResponse, BrowserResponseEnvelope,
     BrowserSnapshot,
 };
@@ -420,7 +420,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::thread;
 
-    use casacore_tablebrowser_protocol::{
+    use casars_tablebrowser_protocol::{
         BrowserCommand, BrowserResponseEnvelope, BrowserSnapshot, BrowserViewport,
     };
     use tempfile::tempdir;
@@ -498,9 +498,9 @@ mod tests {
 
     fn write_slow_browser_script(root: &Path, delay_ms: u64) -> PathBuf {
         let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-            capabilities: casacore_tablebrowser_protocol::BrowserCapabilities { editable: false },
-            view: casacore_tablebrowser_protocol::BrowserView::Overview,
-            focus: casacore_tablebrowser_protocol::BrowserFocus::Main,
+            capabilities: casars_tablebrowser_protocol::BrowserCapabilities { editable: false },
+            view: casars_tablebrowser_protocol::BrowserView::Overview,
+            focus: casars_tablebrowser_protocol::BrowserFocus::Main,
             table_path: "/tmp/fake.ms".to_string(),
             breadcrumb: Vec::new(),
             viewport: BrowserViewport::new(80, 24),

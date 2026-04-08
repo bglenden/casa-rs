@@ -1,4 +1,4 @@
-# Wave 1 - casacore-ms crate scaffold and canonical schema constants
+# Wave 1 - casa-ms crate scaffold and canonical schema constants
 
 ## Origin
 
@@ -6,7 +6,7 @@
 
 ## Goal
 
-- Create a dedicated `casacore-ms` crate and define canonical MS table/subtable
+- Create a dedicated `casa-ms` crate and define canonical MS table/subtable
   schema constants and shared identifiers.
 
 ## Non-goals
@@ -40,7 +40,7 @@
 ## Files likely touched
 
 - `Cargo.toml`
-- `crates/casacore-ms/`
+- `crates/casa-ms/`
 - workspace docs and crate-level docs
 
 ## Definition of Ready

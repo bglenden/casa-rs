@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use casacore_tables::{Table, TableError, TableOptions};
-use casacore_types::{ScalarValue, Value};
+use casa_tables::{Table, TableError, TableOptions};
+use casa_types::{ScalarValue, Value};
 use thiserror::Error;
 
 use crate::constants::{
@@ -24,7 +24,7 @@ use crate::model::{
 /// Errors returned while opening or summarizing a calibration table.
 #[derive(Debug, Error)]
 pub enum CalibrationTableError {
-    /// The table could not be opened through the shared `casacore-tables`
+    /// The table could not be opened through the shared `casa-tables`
     /// substrate.
     #[error("failed to open calibration table {path}: {source}")]
     Open {
@@ -545,7 +545,7 @@ fn scan_bpoly_spectral_window_ids(
     let mut spw_ids = BTreeSet::new();
     for row in 0..table.row_count() {
         match table.get_array_cell(row, COL_SPECTRAL_WINDOW_ID) {
-            Ok(casacore_types::ArrayValue::Int32(values)) => {
+            Ok(casa_types::ArrayValue::Int32(values)) => {
                 for value in values.iter().copied() {
                     spw_ids.insert(value);
                 }
@@ -592,7 +592,7 @@ fn collect_i32_cell(
     }
 }
 
-fn keyword_string(record: &casacore_types::RecordValue, name: &str) -> Option<String> {
+fn keyword_string(record: &casa_types::RecordValue, name: &str) -> Option<String> {
     match record.get(name) {
         Some(Value::Scalar(ScalarValue::String(value))) => Some(value.clone()),
         _ => None,

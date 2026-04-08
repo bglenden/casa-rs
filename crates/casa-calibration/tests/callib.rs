@@ -8,10 +8,10 @@ use casa_calibration::{
     ApplyMode, ApplyPlanRequest, execute_apply_from_path, load_apply_specs_from_callib,
     plan_apply_from_path,
 };
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::main_table::VisibilityDataColumn;
-use casacore_ms::selection::MsSelection;
-use casacore_types::ArrayValue;
+use casa_ms::ms::MeasurementSet;
+use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::selection::MsSelection;
+use casa_types::ArrayValue;
 
 #[test]
 fn plan_apply_from_callib_tracks_per_table_applicability_and_relative_paths() {
@@ -71,8 +71,8 @@ fn execute_apply_from_callib_respects_field_selectors_and_relative_paths() {
         panic!("expected complex corrected row 1");
     };
 
-    assert_eq!(row0[[0, 0]], casacore_types::Complex32::new(0.5, 0.0));
-    assert_eq!(row1[[0, 0]], casacore_types::Complex32::new(0.05, 0.0));
+    assert_eq!(row0[[0, 0]], casa_types::Complex32::new(0.5, 0.0));
+    assert_eq!(row1[[0, 0]], casa_types::Complex32::new(0.05, 0.0));
 }
 
 fn create_two_table_callib_fixture(
@@ -89,8 +89,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(1.0, 0.0),
-                    casacore_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -100,8 +100,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(4.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -117,8 +117,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 1,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -128,8 +128,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 1,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(10.0, 0.0),
-                    casacore_types::Complex32::new(20.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(20.0, 0.0),
                 ],
                 flags: vec![false, false],
             },

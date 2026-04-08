@@ -18,8 +18,8 @@ without redesigning the wire format.
 
 The committed JSON Schemas live in:
 
-- `crates/casacore-tablebrowser-protocol/schemas/request.schema.json`
-- `crates/casacore-tablebrowser-protocol/schemas/response.schema.json`
+- `crates/casars-tablebrowser-protocol/schemas/request.schema.json`
+- `crates/casars-tablebrowser-protocol/schemas/response.schema.json`
 
 ## Request Envelope
 

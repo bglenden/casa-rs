@@ -36,11 +36,11 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/table.rs`
-- `crates/casacore-tables/src/table_impl.rs`
-- `crates/casacore-tables/src/storage/mod.rs`
-- `crates/casacore-tables/src/storage/tiled_stman.rs`
-- `crates/casacore-tables/src/storage/standard_stman.rs`
+- `crates/casa-tables/src/table.rs`
+- `crates/casa-tables/src/table_impl.rs`
+- `crates/casa-tables/src/storage/mod.rs`
+- `crates/casa-tables/src/storage/tiled_stman.rs`
+- `crates/casa-tables/src/storage/standard_stman.rs`
 
 ## Definition of Ready
 

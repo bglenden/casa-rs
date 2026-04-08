@@ -1,0 +1,30 @@
+[package]
+name = "casa-test-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Cross-language test infrastructure (internal)"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-aipsio = { path = "../casa-aipsio" }
+casa-images = { path = "../casa-images" }
+casa-coordinates = { path = "../casa-coordinates" }
+casa-lattices = { path = "../casa-lattices" }
+casa-measures-data = { path = "../casa-measures-data" }
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
+libc = "0.2"
+ndarray.workspace = true
+sofars.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+
+[build-dependencies]
+cc = "1.1"
+pkg-config = "0.3"

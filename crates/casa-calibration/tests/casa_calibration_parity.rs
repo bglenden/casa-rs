@@ -3,11 +3,11 @@
 
 mod common;
 
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::main_table::VisibilityDataColumn;
-use casacore_ms::selection::MsSelection;
-use casacore_tables::{Table, TableOptions};
-use casacore_types::{ArrayValue, Complex32};
+use casa_ms::ms::MeasurementSet;
+use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::selection::MsSelection;
+use casa_tables::{Table, TableOptions};
+use casa_types::{ArrayValue, Complex32};
 use ndarray::Ix2;
 use tempfile::TempDir;
 
@@ -2254,9 +2254,7 @@ fn read_cparam_rows_for_field(table_path: &std::path::Path, field_id: i32) -> Ve
     let mut rows = Vec::new();
     for row in 0..table.row_count() {
         let current_field_id = match table.cell(row, "FIELD_ID").expect("FIELD_ID cell") {
-            Some(casacore_types::Value::Scalar(casacore_types::ScalarValue::Int32(value))) => {
-                *value
-            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(value))) => *value,
             other => panic!("unexpected FIELD_ID value: {other:?}"),
         };
         if current_field_id != field_id {

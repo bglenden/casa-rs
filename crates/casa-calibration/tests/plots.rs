@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use casa_calibration::{
     CalibrationPlotPreset, CalibrationPlotRequest, build_calibration_plot_payload,
 };
-use casacore_ms::{MsAxis, MsPlotPayload, MsSelectionSpec};
-use casacore_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
-use casacore_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+use casa_ms::{MsAxis, MsPlotPayload, MsSelectionSpec};
+use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
+use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use tempfile::tempdir;
 
@@ -151,18 +151,18 @@ fn casa_generated_gain_and_bandpass_tables_build_plot_payloads() {
 
 fn create_bandpass_fixture_caltable(root: &Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA2", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("SCAN_NUMBER", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("OBSERVATION_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ARRAY_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("TIME_EXTRA_PREC", casacore_types::PrimitiveType::Float64),
-        ColumnSchema::array_variable("CPARAM", casacore_types::PrimitiveType::Complex32, Some(2)),
-        ColumnSchema::array_variable("FLAG", casacore_types::PrimitiveType::Bool, Some(2)),
+        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA2", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar("SCAN_NUMBER", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("ARRAY_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME_EXTRA_PREC", casa_types::PrimitiveType::Float64),
+        ColumnSchema::array_variable("CPARAM", casa_types::PrimitiveType::Complex32, Some(2)),
+        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Bool, Some(2)),
     ])
     .expect("valid schema");
     let mut table = Table::with_schema(schema);
@@ -259,7 +259,7 @@ fn save_empty_subtable(path: &Path) {
 fn save_field_subtable(path: &Path) {
     let schema = TableSchema::new(vec![ColumnSchema::scalar(
         "NAME",
-        casacore_types::PrimitiveType::String,
+        casa_types::PrimitiveType::String,
     )])
     .expect("schema");
     let mut table = Table::with_schema(schema);
@@ -274,8 +274,8 @@ fn save_field_subtable(path: &Path) {
 
 fn save_spectral_window_subtable(path: &Path) {
     let schema = TableSchema::new(vec![
-        ColumnSchema::array_variable("CHAN_FREQ", casacore_types::PrimitiveType::Float64, Some(1)),
-        ColumnSchema::scalar("NUM_CHAN", casacore_types::PrimitiveType::Int32),
+        ColumnSchema::array_variable("CHAN_FREQ", casa_types::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::scalar("NUM_CHAN", casa_types::PrimitiveType::Int32),
     ])
     .expect("schema");
     let mut table = Table::with_schema(schema);

@@ -21,7 +21,7 @@
 ### Planner library
 
 - Add plan request/response types for apply planning.
-- Resolve selected MS rows through existing `casacore-ms` selection APIs.
+- Resolve selected MS rows through existing `casa-ms` selection APIs.
 - Detect whether `CORRECTED_DATA` must be created.
 - Resolve exact `gainfield` by FIELD_ID or exact FIELD.NAME.
 - Resolve `spwmap` and attach spectral-window grids needed by later execution.
@@ -42,7 +42,7 @@
 ## Dependencies
 
 - Wave 9 caltable summary/validation substrate.
-- Existing `casacore-ms` selection and typed-subtable APIs.
+- Existing `casa-ms` selection and typed-subtable APIs.
 
 ## Ordering constraints
 

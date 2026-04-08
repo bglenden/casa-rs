@@ -14,12 +14,12 @@ workspace = true
 [dependencies]
 arboard = "3"
 casa-calibration = { path = "../casa-calibration" }
-casacore-images = { path = "../casacore-images" }
-casacore-imagebrowser-protocol = { path = "../casacore-imagebrowser-protocol" }
-casacore-ms = { path = "../casacore-ms" }
-casacore-tablebrowser-protocol = { path = "../casacore-tablebrowser-protocol" }
-casacore-tables = { path = "../casacore-tables" }
-casacore-types = { path = "../casacore-types" }
+casa-images = { path = "../casa-images" }
+casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
+casa-ms = { path = "../casa-ms" }
+casars-tablebrowser-protocol = { path = "../casars-tablebrowser-protocol" }
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
 crossterm = "0.28"
 directories = "5"
 image = { version = "0.25", default-features = false, features = ["png"] }

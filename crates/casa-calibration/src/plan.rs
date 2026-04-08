@@ -16,12 +16,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::main_table::VisibilityDataColumn;
-use casacore_ms::selection::MsSelection;
-use casacore_ms::{MsError, MsSpectralWindow};
-use casacore_tables::{Table, TableError, TableOptions};
-use casacore_types::{ArrayValue, ScalarValue};
+use casa_ms::ms::MeasurementSet;
+use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::selection::MsSelection;
+use casa_ms::{MsError, MsSpectralWindow};
+use casa_tables::{Table, TableError, TableOptions};
+use casa_types::{ArrayValue, ScalarValue};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

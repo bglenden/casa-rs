@@ -37,10 +37,10 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/table.rs`
-- `crates/casacore-tables/src/ref_table.rs`
-- `crates/casacore-tables/src/sorting.rs`
-- `crates/casacore-tables/src/indexing.rs`
+- `crates/casa-tables/src/table.rs`
+- `crates/casa-tables/src/ref_table.rs`
+- `crates/casa-tables/src/sorting.rs`
+- `crates/casa-tables/src/indexing.rs`
 
 ## Definition of Ready
 

@@ -36,9 +36,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/lock/mod.rs`
-- `crates/casacore-tables/src/lock/lock_file.rs`
-- `crates/casacore-tables/src/table.rs`
+- `crates/casa-tables/src/lock/mod.rs`
+- `crates/casa-tables/src/lock/lock_file.rs`
+- `crates/casa-tables/src/table.rs`
 
 ## Definition of Ready
 

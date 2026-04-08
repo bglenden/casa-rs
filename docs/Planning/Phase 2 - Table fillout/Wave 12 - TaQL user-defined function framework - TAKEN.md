@@ -33,8 +33,8 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/src/taql/functions.rs`
-- `crates/casacore-tables/src/taql/mod.rs`
+- `crates/casa-tables/src/taql/functions.rs`
+- `crates/casa-tables/src/taql/mod.rs`
 
 ## Definition of Ready
 

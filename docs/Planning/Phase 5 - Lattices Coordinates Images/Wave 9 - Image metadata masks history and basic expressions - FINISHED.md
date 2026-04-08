@@ -46,9 +46,9 @@
 
 ## Files likely touched
 
-- `crates/casacore-images/src/`
-- `crates/casacore-images/tests/`
-- `crates/casacore-types/src/`
+- `crates/casa-images/src/`
+- `crates/casa-images/tests/`
+- `crates/casa-types/src/`
 
 ## Definition of Ready
 

@@ -21,7 +21,7 @@
 ### Read path
 
 - Generate tiny CASA-produced calibration tables from `ngc5921.ms`.
-- Ensure `casacore-tables` can open those tables.
+- Ensure `casa-tables` can open those tables.
 - Add `casa-calibration` summary/validation APIs over the opened tables.
 
 ### Write path
@@ -37,7 +37,7 @@
 
 ## Dependencies
 
-- Existing `casacore-tables` storage stack.
+- Existing `casa-tables` storage stack.
 - Existing `CASA_RS_CASA_PYTHON` and `CASA_RS_TESTDATA_ROOT` conventions.
 
 ## Ordering constraints
@@ -46,7 +46,7 @@
 
 ## Files likely touched
 
-- `crates/casacore-tables/`
+- `crates/casa-tables/`
 - `crates/casa-calibration/`
 - `scripts/`
 - `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`

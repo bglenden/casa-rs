@@ -17,14 +17,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casacore_ms::MsError;
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::SubtableId;
-use casacore_ms::selection::MsSelection;
-use casacore_tables::{
+use casa_ms::MsError;
+use casa_ms::ms::MeasurementSet;
+use casa_ms::schema::SubtableId;
+use casa_ms::selection::MsSelection;
+use casa_tables::{
     ColumnSchema, DataManagerKind, Table, TableError, TableInfo, TableOptions, TableSchema,
 };
-use casacore_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -766,29 +766,21 @@ fn write_bandpass_caltable(
     prepare_output_root(&request.output_table)?;
 
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar(COL_TIME, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_FIELD_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA1, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA2, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_INTERVAL, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_SCAN_NUMBER, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_OBSERVATION_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ARRAY_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::array_variable(
-            COL_CPARAM,
-            casacore_types::PrimitiveType::Complex32,
-            Some(2),
-        ),
-        ColumnSchema::array_variable(
-            COL_PARAMERR,
-            casacore_types::PrimitiveType::Float32,
-            Some(2),
-        ),
-        ColumnSchema::array_variable(COL_FLAG, casacore_types::PrimitiveType::Bool, Some(2)),
-        ColumnSchema::array_variable(COL_SNR, casacore_types::PrimitiveType::Float32, Some(2)),
-        ColumnSchema::array_variable(COL_WEIGHT, casacore_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA1, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA2, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
+        ColumnSchema::array_variable(COL_CPARAM, casa_types::PrimitiveType::Complex32, Some(2)),
+        ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
+        ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid bandpass schema");
     let mut table = Table::with_schema(schema);
@@ -978,87 +970,67 @@ fn write_bpoly_caltable(
     let fitted_rows = fit_bpoly_rows(ms, rows, request.amplitude_degree, request.phase_degree)?;
 
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar(COL_TIME, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_FIELD_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA1, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("FEED1", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_INTERVAL, casacore_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_SCAN_NUMBER, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_OBSERVATION_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ARRAY_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("PROCESSOR_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("STATE_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("PHASE_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("PULSAR_BIN", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("PULSAR_GATE_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("FREQ_GROUP", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("FREQ_GROUP_NAME", casacore_types::PrimitiveType::String),
-        ColumnSchema::scalar("FIELD_NAME", casacore_types::PrimitiveType::String),
-        ColumnSchema::scalar("FIELD_CODE", casacore_types::PrimitiveType::String),
-        ColumnSchema::scalar("SOURCE_NAME", casacore_types::PrimitiveType::String),
-        ColumnSchema::scalar("SOURCE_CODE", casacore_types::PrimitiveType::String),
-        ColumnSchema::scalar("CALIBRATION_GROUP", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_CAL_DESC_ID, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("CAL_HISTORY_ID", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("GAIN", casacore_types::PrimitiveType::Complex32, Some(1)),
-        ColumnSchema::scalar("SIDEBAND_REF", casacore_types::PrimitiveType::Complex32),
-        ColumnSchema::array_variable("REF_ANT", casacore_types::PrimitiveType::Int32, Some(1)),
-        ColumnSchema::array_variable("REF_FEED", casacore_types::PrimitiveType::Int32, Some(1)),
-        ColumnSchema::array_variable(
-            "REF_RECEPTOR",
-            casacore_types::PrimitiveType::Int32,
-            Some(1),
-        ),
-        ColumnSchema::array_variable(
-            "REF_FREQUENCY",
-            casacore_types::PrimitiveType::Float64,
-            Some(1),
-        ),
-        ColumnSchema::scalar("MEAS_FREQ_REF", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable(
-            "REF_DIRECTION",
-            casacore_types::PrimitiveType::Float64,
-            Some(1),
-        ),
-        ColumnSchema::scalar("MEAS_DIR_REF", casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("TOTAL_SOLUTION_OK", casacore_types::PrimitiveType::Bool),
-        ColumnSchema::scalar("TOTAL_FIT", casacore_types::PrimitiveType::Float32),
-        ColumnSchema::scalar("TOTAL_FIT_WEIGHT", casacore_types::PrimitiveType::Float32),
-        ColumnSchema::array_variable("SOLUTION_OK", casacore_types::PrimitiveType::Bool, Some(1)),
-        ColumnSchema::array_variable("FIT", casacore_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable(
-            "FIT_WEIGHT",
-            casacore_types::PrimitiveType::Float32,
-            Some(1),
-        ),
-        ColumnSchema::array_variable(COL_FLAG, casacore_types::PrimitiveType::Bool, Some(1)),
-        ColumnSchema::array_variable(
-            COL_PARAMERR,
-            casacore_types::PrimitiveType::Float32,
-            Some(1),
-        ),
-        ColumnSchema::array_variable(COL_SNR, casacore_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable(COL_WEIGHT, casacore_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::scalar("POLY_TYPE", casacore_types::PrimitiveType::String),
-        ColumnSchema::scalar("POLY_MODE", casacore_types::PrimitiveType::String),
-        ColumnSchema::scalar(COL_SCALE_FACTOR, casacore_types::PrimitiveType::Complex32),
-        ColumnSchema::scalar(COL_N_POLY_AMP, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_N_POLY_PHASE, casacore_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_PHASE_UNITS, casacore_types::PrimitiveType::String),
+        ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA1, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("FEED1", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("PROCESSOR_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("STATE_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("PHASE_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("PULSAR_BIN", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("PULSAR_GATE_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("FREQ_GROUP", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("FREQ_GROUP_NAME", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("FIELD_NAME", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("FIELD_CODE", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("SOURCE_NAME", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("SOURCE_CODE", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("CALIBRATION_GROUP", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_CAL_DESC_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("CAL_HISTORY_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::array_variable("GAIN", casa_types::PrimitiveType::Complex32, Some(1)),
+        ColumnSchema::scalar("SIDEBAND_REF", casa_types::PrimitiveType::Complex32),
+        ColumnSchema::array_variable("REF_ANT", casa_types::PrimitiveType::Int32, Some(1)),
+        ColumnSchema::array_variable("REF_FEED", casa_types::PrimitiveType::Int32, Some(1)),
+        ColumnSchema::array_variable("REF_RECEPTOR", casa_types::PrimitiveType::Int32, Some(1)),
+        ColumnSchema::array_variable("REF_FREQUENCY", casa_types::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::scalar("MEAS_FREQ_REF", casa_types::PrimitiveType::Int32),
+        ColumnSchema::array_variable("REF_DIRECTION", casa_types::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::scalar("MEAS_DIR_REF", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("TOTAL_SOLUTION_OK", casa_types::PrimitiveType::Bool),
+        ColumnSchema::scalar("TOTAL_FIT", casa_types::PrimitiveType::Float32),
+        ColumnSchema::scalar("TOTAL_FIT_WEIGHT", casa_types::PrimitiveType::Float32),
+        ColumnSchema::array_variable("SOLUTION_OK", casa_types::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::array_variable("FIT", casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("FIT_WEIGHT", casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::scalar("POLY_TYPE", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("POLY_MODE", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar(COL_SCALE_FACTOR, casa_types::PrimitiveType::Complex32),
+        ColumnSchema::scalar(COL_N_POLY_AMP, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_N_POLY_PHASE, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_PHASE_UNITS, casa_types::PrimitiveType::String),
         ColumnSchema::array_variable(
             COL_VALID_DOMAIN,
-            casacore_types::PrimitiveType::Float64,
+            casa_types::PrimitiveType::Float64,
             Some(1),
         ),
         ColumnSchema::array_variable(
             COL_POLY_COEFF_AMP,
-            casacore_types::PrimitiveType::Float64,
+            casa_types::PrimitiveType::Float64,
             Some(4),
         ),
         ColumnSchema::array_variable(
             COL_POLY_COEFF_PHASE,
-            casacore_types::PrimitiveType::Float64,
+            casa_types::PrimitiveType::Float64,
             Some(4),
         ),
     ])
@@ -1619,10 +1591,10 @@ fn write_bpoly_cal_desc_subtable(
     rows: &[BPolySolutionRow],
 ) -> Result<(), BandpassSolveError> {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("NUM_RECEPTORS", casacore_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("NUM_RECEPTORS", casa_types::PrimitiveType::Int32),
         ColumnSchema::array_variable(
             "SPECTRAL_WINDOW_ID",
-            casacore_types::PrimitiveType::Int32,
+            casa_types::PrimitiveType::Int32,
             Some(1),
         ),
     ])

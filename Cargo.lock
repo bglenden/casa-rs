@@ -422,13 +422,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "casa-aipsio"
+version = "0.10.6"
+dependencies = [
+ "casa-types",
+ "ndarray",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "casa-calibration"
 version = "0.10.6"
 dependencies = [
- "casacore-ms",
- "casacore-tables",
- "casacore-test-support",
- "casacore-types",
+ "casa-ms",
+ "casa-tables",
+ "casa-test-support",
+ "casa-types",
  "ndarray",
  "serde",
  "serde_json",
@@ -437,42 +446,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "casacore-aipsio"
+name = "casa-coordinates"
 version = "0.10.6"
 dependencies = [
- "casacore-types",
+ "casa-types",
  "ndarray",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "casacore-coordinates"
+name = "casa-images"
 version = "0.10.6"
 dependencies = [
- "casacore-types",
- "ndarray",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "casacore-imagebrowser-protocol"
-version = "0.10.6"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "casacore-images"
-version = "0.10.6"
-dependencies = [
- "casacore-coordinates",
- "casacore-imagebrowser-protocol",
- "casacore-lattices",
- "casacore-tables",
- "casacore-test-support",
- "casacore-types",
+ "casa-coordinates",
+ "casa-lattices",
+ "casa-tables",
+ "casa-test-support",
+ "casa-types",
+ "casars-imagebrowser-protocol",
  "ndarray",
  "serde",
  "serde_json",
@@ -481,11 +472,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "casacore-lattices"
+name = "casa-lattices"
 version = "0.10.6"
 dependencies = [
- "casacore-tables",
- "casacore-types",
+ "casa-tables",
+ "casa-types",
  "crossbeam-channel",
  "ndarray",
  "ndarray-stats",
@@ -497,7 +488,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "casacore-measures-data"
+name = "casa-measures-data"
 version = "0.10.6"
 dependencies = [
  "serde",
@@ -506,21 +497,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "casacore-measures-tools"
+name = "casa-measures-tools"
 version = "0.10.6"
 dependencies = [
- "casacore-measures-data",
- "casacore-tables",
- "casacore-types",
+ "casa-measures-data",
+ "casa-tables",
+ "casa-types",
 ]
 
 [[package]]
-name = "casacore-ms"
+name = "casa-ms"
 version = "0.10.6"
 dependencies = [
- "casacore-tables",
- "casacore-test-support",
- "casacore-types",
+ "casa-tables",
+ "casa-test-support",
+ "casa-types",
  "flate2",
  "image",
  "ndarray",
@@ -535,21 +526,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "casacore-tablebrowser-protocol"
+name = "casa-tables"
 version = "0.10.6"
 dependencies = [
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "casacore-tables"
-version = "0.10.6"
-dependencies = [
- "casacore-aipsio",
- "casacore-tablebrowser-protocol",
- "casacore-types",
+ "casa-aipsio",
+ "casa-types",
+ "casars-tablebrowser-protocol",
  "criterion",
  "flate2",
  "libc",
@@ -564,16 +546,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "casacore-test-support"
+name = "casa-test-support"
 version = "0.10.6"
 dependencies = [
- "casacore-aipsio",
- "casacore-coordinates",
- "casacore-images",
- "casacore-lattices",
- "casacore-measures-data",
- "casacore-tables",
- "casacore-types",
+ "casa-aipsio",
+ "casa-coordinates",
+ "casa-images",
+ "casa-lattices",
+ "casa-measures-data",
+ "casa-tables",
+ "casa-types",
  "cc",
  "libc",
  "ndarray",
@@ -584,10 +566,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "casacore-types"
+name = "casa-types"
 version = "0.10.6"
 dependencies = [
- "casacore-measures-data",
+ "casa-measures-data",
  "criterion",
  "ndarray",
  "num-complex",
@@ -600,12 +582,12 @@ version = "0.10.6"
 dependencies = [
  "arboard",
  "casa-calibration",
- "casacore-imagebrowser-protocol",
- "casacore-images",
- "casacore-ms",
- "casacore-tablebrowser-protocol",
- "casacore-tables",
- "casacore-types",
+ "casa-images",
+ "casa-ms",
+ "casa-tables",
+ "casa-types",
+ "casars-imagebrowser-protocol",
+ "casars-tablebrowser-protocol",
  "crossterm 0.28.1",
  "directories",
  "flate2",
@@ -623,6 +605,24 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "toml",
+]
+
+[[package]]
+name = "casars-imagebrowser-protocol"
+version = "0.10.6"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "casars-tablebrowser-protocol"
+version = "0.10.6"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

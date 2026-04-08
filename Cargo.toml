@@ -3,18 +3,18 @@ resolver = "2"
 members = [
     "crates/casars",
     "crates/casa-calibration",
-    "crates/casacore-imagebrowser-protocol",
-    "crates/casacore-tablebrowser-protocol",
-    "crates/casacore-types",
-    "crates/casacore-aipsio",
-    "crates/casacore-measures-tools",
-    "crates/casacore-tables",
-    "crates/casacore-lattices",
-    "crates/casacore-coordinates",
-    "crates/casacore-images",
-    "crates/casacore-measures-data",
-    "crates/casacore-test-support",
-    "crates/casacore-ms",
+    "crates/casars-imagebrowser-protocol",
+    "crates/casars-tablebrowser-protocol",
+    "crates/casa-types",
+    "crates/casa-aipsio",
+    "crates/casa-measures-tools",
+    "crates/casa-tables",
+    "crates/casa-lattices",
+    "crates/casa-coordinates",
+    "crates/casa-images",
+    "crates/casa-measures-data",
+    "crates/casa-test-support",
+    "crates/casa-ms",
     "crates/ratatui-graphics",
 ]
 
@@ -39,17 +39,17 @@ thiserror = "2.0"
 # their key dependencies so perf comparisons are apples-to-apples.
 [profile.test.package.sofars]
 opt-level = 2
-[profile.test.package.casacore-types]
+[profile.test.package.casa-types]
 opt-level = 2
-[profile.test.package.casacore-tables]
+[profile.test.package.casa-tables]
 opt-level = 2
-[profile.test.package.casacore-aipsio]
+[profile.test.package.casa-aipsio]
 opt-level = 2
-[profile.test.package.casacore-ms]
+[profile.test.package.casa-ms]
 opt-level = 2
 [profile.test.package.casa-calibration]
 opt-level = 2
-[profile.test.package.casacore-test-support]
+[profile.test.package.casa-test-support]
 opt-level = 2
 [profile.test.package.ndarray]
 opt-level = 2

@@ -8,10 +8,10 @@ use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, ApplyTableSelection, GainFieldSelector,
     execute_apply_from_path,
 };
-use casacore_ms::ms::MeasurementSet;
-use casacore_ms::schema::main_table::VisibilityDataColumn;
-use casacore_ms::selection::MsSelection;
-use casacore_types::ArrayValue;
+use casa_ms::ms::MeasurementSet;
+use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::selection::MsSelection;
+use casa_types::ArrayValue;
 
 #[test]
 fn execute_apply_trial_does_not_mutate_measurement_set() {
@@ -27,8 +27,8 @@ fn execute_apply_trial_does_not_mutate_measurement_set() {
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(4.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -38,8 +38,8 @@ fn execute_apply_trial_does_not_mutate_measurement_set() {
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(5.0, 0.0),
-                    casacore_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -78,8 +78,8 @@ fn execute_apply_creates_corrected_data_and_writes_corrected_visibilities() {
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(4.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -89,8 +89,8 @@ fn execute_apply_creates_corrected_data_and_writes_corrected_visibilities() {
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(5.0, 0.0),
-                    casacore_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -121,13 +121,10 @@ fn execute_apply_creates_corrected_data_and_writes_corrected_visibilities() {
         panic!("expected Complex32 corrected data");
     };
 
-    assert_eq!(corrected[[0, 0]], casacore_types::Complex32::new(0.1, 0.0));
-    assert_eq!(
-        corrected[[1, 0]],
-        casacore_types::Complex32::new(0.0, 0.025)
-    );
-    assert_eq!(corrected[[0, 1]], casacore_types::Complex32::new(0.2, 0.0));
-    assert_eq!(corrected[[1, 1]], casacore_types::Complex32::new(0.0, 0.05));
+    assert_eq!(corrected[[0, 0]], casa_types::Complex32::new(0.1, 0.0));
+    assert_eq!(corrected[[1, 0]], casa_types::Complex32::new(0.0, 0.025));
+    assert_eq!(corrected[[0, 1]], casa_types::Complex32::new(0.2, 0.0));
+    assert_eq!(corrected[[1, 1]], casa_types::Complex32::new(0.0, 0.05));
 }
 
 #[test]
@@ -180,8 +177,8 @@ fn execute_apply_k_jones_delay_table_corrects_frequency_dependent_phase() {
         panic!("expected Complex32 corrected data");
     };
 
-    assert_eq!(corrected[[0, 0]], casacore_types::Complex32::new(1.0, 0.0));
-    assert_eq!(corrected[[1, 0]], casacore_types::Complex32::new(0.0, 1.0));
+    assert_eq!(corrected[[0, 0]], casa_types::Complex32::new(1.0, 0.0));
+    assert_eq!(corrected[[1, 0]], casa_types::Complex32::new(0.0, 1.0));
     assert!((corrected[[0, 1]].re - 0.0).abs() < 1.0e-6);
     assert!((corrected[[0, 1]].im + 2.0).abs() < 1.0e-6);
     assert!((corrected[[1, 1]].re - 2.0).abs() < 1.0e-6);
@@ -202,7 +199,7 @@ fn execute_apply_bpoly_table_expands_channelized_bandpass() {
                 field_id: 0,
                 spectral_window_id: 0,
                 antenna_id: 0,
-                scale_factor: casacore_types::Complex32::new(amp_scale, 0.0),
+                scale_factor: casa_types::Complex32::new(amp_scale, 0.0),
                 valid_domain_hz: [1.0e9, 1.001e9],
                 amp_coefficients: vec![vec![0.0, amp_slope], vec![0.0, amp_slope]],
                 phase_coefficients: vec![vec![0.0], vec![0.0]],
@@ -213,7 +210,7 @@ fn execute_apply_bpoly_table_expands_channelized_bandpass() {
                 field_id: 0,
                 spectral_window_id: 0,
                 antenna_id: 1,
-                scale_factor: casacore_types::Complex32::new(1.0, 0.0),
+                scale_factor: casa_types::Complex32::new(1.0, 0.0),
                 valid_domain_hz: [1.0e9, 1.001e9],
                 amp_coefficients: vec![vec![0.0, 0.0], vec![0.0, 0.0]],
                 phase_coefficients: vec![vec![0.0], vec![0.0]],
@@ -266,8 +263,8 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(1.0, 0.0),
-                    casacore_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -277,8 +274,8 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(1.0, 0.0),
-                    casacore_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -288,8 +285,8 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(4.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -299,8 +296,8 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(5.0, 0.0),
-                    casacore_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -337,13 +334,10 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
         panic!("expected Complex32 corrected data");
     };
 
-    assert_eq!(corrected[[0, 0]], casacore_types::Complex32::new(0.1, 0.0));
-    assert_eq!(
-        corrected[[1, 0]],
-        casacore_types::Complex32::new(0.0, 0.025)
-    );
-    assert_eq!(corrected[[0, 1]], casacore_types::Complex32::new(0.2, 0.0));
-    assert_eq!(corrected[[1, 1]], casacore_types::Complex32::new(0.0, 0.05));
+    assert_eq!(corrected[[0, 0]], casa_types::Complex32::new(0.1, 0.0));
+    assert_eq!(corrected[[1, 0]], casa_types::Complex32::new(0.0, 0.025));
+    assert_eq!(corrected[[0, 1]], casa_types::Complex32::new(0.2, 0.0));
+    assert_eq!(corrected[[1, 1]], casa_types::Complex32::new(0.0, 0.05));
 }
 
 #[test]
@@ -359,8 +353,8 @@ fn execute_apply_calflag_marks_samples_when_solution_is_missing() {
             spectral_window_id: 0,
             antenna_id: 0,
             gains: vec![
-                casacore_types::Complex32::new(2.0, 0.0),
-                casacore_types::Complex32::new(4.0, 0.0),
+                casa_types::Complex32::new(2.0, 0.0),
+                casa_types::Complex32::new(4.0, 0.0),
             ],
             flags: vec![false, false],
         }],
@@ -404,8 +398,8 @@ fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(4.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -415,8 +409,8 @@ fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(5.0, 0.0),
-                    casacore_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -463,8 +457,8 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(4.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -474,8 +468,8 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(5.0, 0.0),
-                    casacore_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -535,8 +529,8 @@ fn execute_apply_respects_per_table_applicability_selection() {
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(1.0, 0.0),
-                    casacore_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
+                    casa_types::Complex32::new(1.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -546,8 +540,8 @@ fn execute_apply_respects_per_table_applicability_selection() {
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(4.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -563,8 +557,8 @@ fn execute_apply_respects_per_table_applicability_selection() {
                 spectral_window_id: 1,
                 antenna_id: 0,
                 gains: vec![
-                    casacore_types::Complex32::new(2.0, 0.0),
-                    casacore_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -574,8 +568,8 @@ fn execute_apply_respects_per_table_applicability_selection() {
                 spectral_window_id: 1,
                 antenna_id: 1,
                 gains: vec![
-                    casacore_types::Complex32::new(10.0, 0.0),
-                    casacore_types::Complex32::new(20.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(20.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -631,6 +625,6 @@ fn execute_apply_respects_per_table_applicability_selection() {
         panic!("expected complex corrected row 1");
     };
 
-    assert_eq!(row0[[0, 0]], casacore_types::Complex32::new(0.5, 0.0));
-    assert_eq!(row1[[0, 0]], casacore_types::Complex32::new(0.05, 0.0));
+    assert_eq!(row0[[0, 0]], casa_types::Complex32::new(0.5, 0.0));
+    assert_eq!(row1[[0, 0]], casa_types::Complex32::new(0.05, 0.0));
 }

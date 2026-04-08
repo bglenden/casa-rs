@@ -5,11 +5,11 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casacore_ms::msexplore::cli::{
+use casa_ms::msexplore::cli::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiInjectedArgument,
     UiManagedOutputSchema, UiValueKind,
 };
-use casacore_ms::selection::MsSelection;
+use casa_ms::selection::MsSelection;
 
 use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyInterpolationMode, ApplyMode, ApplyPlan,
@@ -2892,7 +2892,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use casacore_ms::msexplore::cli::UiValueKind;
+    use casa_ms::ui_schema::UiValueKind;
     use tempfile::TempDir;
 
     use super::{CliAction, Command, OutputFormat, command_schema, parse_args};
