@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["UiActionKind","UiArgumentParser","UiValueKind"],"struct":["UiArgumentSchema","UiCommandSchema","UiInjectedArgument","UiManagedOutputSchema"]};

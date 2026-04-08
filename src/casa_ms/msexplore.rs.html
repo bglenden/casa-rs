@@ -7046,7 +7046,7 @@
 <a href=#7046 id=7046 data-nosnippet>7046</a><span class="kw">fn </span>padded_range(min: f64, max: f64) -&gt; (f64, f64) {
 <a href=#7047 id=7047 data-nosnippet>7047</a>    <span class="kw">let </span>span = (max - min).abs();
 <a href=#7048 id=7048 data-nosnippet>7048</a>    <span class="kw">let </span>padding = <span class="kw">if </span>span == <span class="number">0.0 </span>{
-<a href=#7049 id=7049 data-nosnippet>7049</a>        min.abs().max(<span class="number">1.0</span>) * <span class="number">0.05
+<a href=#7049 id=7049 data-nosnippet>7049</a>        min.abs().max(max.abs()).max(<span class="number">1.0</span>) * <span class="number">1e-6
 <a href=#7050 id=7050 data-nosnippet>7050</a>    </span>} <span class="kw">else </span>{
 <a href=#7051 id=7051 data-nosnippet>7051</a>        span * <span class="number">0.05
 <a href=#7052 id=7052 data-nosnippet>7052</a>    </span>};
@@ -8127,5 +8127,19 @@
 <a href=#8127 id=8127 data-nosnippet>8127</a>
 <a href=#8128 id=8128 data-nosnippet>8128</a>        <span class="macro">assert_eq!</span>(text_style.color.rgb, rgb(theme.axis).to_backend_color().rgb);
 <a href=#8129 id=8129 data-nosnippet>8129</a>    }
-<a href=#8130 id=8130 data-nosnippet>8130</a>}
+<a href=#8130 id=8130 data-nosnippet>8130</a>
+<a href=#8131 id=8131 data-nosnippet>8131</a>    <span class="attr">#[test]
+<a href=#8132 id=8132 data-nosnippet>8132</a>    </span><span class="kw">fn </span>zero_span_large_time_axis_uses_local_padding() {
+<a href=#8133 id=8133 data-nosnippet>8133</a>        <span class="kw">let </span>value = <span class="number">4_304_481_700.0</span>;
+<a href=#8134 id=8134 data-nosnippet>8134</a>        <span class="kw">let </span>(min, max) = padded_range(value, value);
+<a href=#8135 id=8135 data-nosnippet>8135</a>
+<a href=#8136 id=8136 data-nosnippet>8136</a>        <span class="macro">assert!</span>(min &lt; value);
+<a href=#8137 id=8137 data-nosnippet>8137</a>        <span class="macro">assert!</span>(max &gt; value);
+<a href=#8138 id=8138 data-nosnippet>8138</a>        <span class="macro">assert!</span>(
+<a href=#8139 id=8139 data-nosnippet>8139</a>            (max - min) &lt; <span class="number">20_000.0</span>,
+<a href=#8140 id=8140 data-nosnippet>8140</a>            <span class="string">"unexpectedly wide zero-span padding: {}"</span>,
+<a href=#8141 id=8141 data-nosnippet>8141</a>            max - min
+<a href=#8142 id=8142 data-nosnippet>8142</a>        );
+<a href=#8143 id=8143 data-nosnippet>8143</a>    }
+<a href=#8144 id=8144 data-nosnippet>8144</a>}
 </code></pre></div></section></main></body></html>

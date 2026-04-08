@@ -112,109 +112,117 @@
 <a href=#112 id=112 data-nosnippet>112</a>    selector_popup_list_area(area)
 <a href=#113 id=113 data-nosnippet>113</a>}
 <a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>browser_mode_selector_rect(
-<a href=#116 id=116 data-nosnippet>116</a>    form_inner: Rect,
-<a href=#117 id=117 data-nosnippet>117</a>    form_rows_len: usize,
-<a href=#118 id=118 data-nosnippet>118</a>    app: <span class="kw-2">&amp;</span>AppState,
-<a href=#119 id=119 data-nosnippet>119</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Rect&gt; {
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">if </span>!(app.browser_is_active() &amp;&amp; app.browser_uses_parameter_pane()) {
-<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#122 id=122 data-nosnippet>122</a>    }
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">let </span>rows_height = form_rows_len.min(form_inner.height <span class="kw">as </span>usize) <span class="kw">as </span>u16;
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">let </span>gap = u16::from(rows_height &gt; <span class="number">0</span>);
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span>summary_area = Rect {
-<a href=#126 id=126 data-nosnippet>126</a>        x: form_inner.x,
-<a href=#127 id=127 data-nosnippet>127</a>        y: form_inner.y.saturating_add(rows_height).saturating_add(gap),
-<a href=#128 id=128 data-nosnippet>128</a>        width: form_inner.width,
-<a href=#129 id=129 data-nosnippet>129</a>        height: form_inner
-<a href=#130 id=130 data-nosnippet>130</a>            .height
-<a href=#131 id=131 data-nosnippet>131</a>            .saturating_sub(rows_height.saturating_add(gap)),
-<a href=#132 id=132 data-nosnippet>132</a>    };
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">if </span>summary_area.height == <span class="number">0 </span>{
-<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#135 id=135 data-nosnippet>135</a>    }
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="prelude-val">Some</span>(Rect {
-<a href=#137 id=137 data-nosnippet>137</a>        x: summary_area.x,
-<a href=#138 id=138 data-nosnippet>138</a>        y: summary_area.y,
-<a href=#139 id=139 data-nosnippet>139</a>        width: summary_area.width,
-<a href=#140 id=140 data-nosnippet>140</a>        height: <span class="number">1</span>,
-<a href=#141 id=141 data-nosnippet>141</a>    })
-<a href=#142 id=142 data-nosnippet>142</a>}
-<a href=#143 id=143 data-nosnippet>143</a>
-<a href=#144 id=144 data-nosnippet>144</a><span class="kw">fn </span>selector_popup_area(anchor: <span class="prelude-ty">Option</span>&lt;Rect&gt;, bounds: Rect, item_count: usize) -&gt; Rect {
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span>width = bounds.width.clamp(<span class="number">1</span>, <span class="number">24</span>);
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>content_height = item_count.min(<span class="number">8</span>) <span class="kw">as </span>u16;
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">let </span>height = content_height
-<a href=#148 id=148 data-nosnippet>148</a>        .saturating_add(<span class="number">3</span>)
-<a href=#149 id=149 data-nosnippet>149</a>        .clamp(<span class="number">5</span>, bounds.height.max(<span class="number">1</span>));
-<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(anchor) = anchor <span class="kw">else </span>{
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">return </span>centered_rect(width, height, bounds);
-<a href=#152 id=152 data-nosnippet>152</a>    };
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">let </span><span class="kw-2">mut </span>x = anchor.x;
-<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">if </span>x.saturating_add(width) &gt; bounds.x.saturating_add(bounds.width) {
-<a href=#155 id=155 data-nosnippet>155</a>        x = bounds.x.saturating_add(bounds.width.saturating_sub(width));
-<a href=#156 id=156 data-nosnippet>156</a>    }
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">let </span>below_y = anchor.y.saturating_add(anchor.height);
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">let </span>above_y = anchor.y.saturating_sub(height);
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">let </span>y = <span class="kw">if </span>below_y.saturating_add(height) &lt;= bounds.y.saturating_add(bounds.height) {
-<a href=#160 id=160 data-nosnippet>160</a>        below_y
-<a href=#161 id=161 data-nosnippet>161</a>    } <span class="kw">else if </span>anchor.y &gt;= bounds.y.saturating_add(height) {
-<a href=#162 id=162 data-nosnippet>162</a>        above_y
-<a href=#163 id=163 data-nosnippet>163</a>    } <span class="kw">else </span>{
-<a href=#164 id=164 data-nosnippet>164</a>        bounds.y
-<a href=#165 id=165 data-nosnippet>165</a>    };
-<a href=#166 id=166 data-nosnippet>166</a>    Rect {
-<a href=#167 id=167 data-nosnippet>167</a>        x,
-<a href=#168 id=168 data-nosnippet>168</a>        y,
-<a href=#169 id=169 data-nosnippet>169</a>        width,
-<a href=#170 id=170 data-nosnippet>170</a>        height,
-<a href=#171 id=171 data-nosnippet>171</a>    }
-<a href=#172 id=172 data-nosnippet>172</a>}
-<a href=#173 id=173 data-nosnippet>173</a>
-<a href=#174 id=174 data-nosnippet>174</a><span class="kw">fn </span>selector_popup_list_area(area: Rect) -&gt; Rect {
-<a href=#175 id=175 data-nosnippet>175</a>    Rect {
-<a href=#176 id=176 data-nosnippet>176</a>        x: area.x.saturating_add(<span class="number">1</span>),
-<a href=#177 id=177 data-nosnippet>177</a>        y: area.y.saturating_add(<span class="number">1</span>),
-<a href=#178 id=178 data-nosnippet>178</a>        width: area.width.saturating_sub(<span class="number">2</span>),
-<a href=#179 id=179 data-nosnippet>179</a>        height: area.height.saturating_sub(<span class="number">3</span>),
-<a href=#180 id=180 data-nosnippet>180</a>    }
-<a href=#181 id=181 data-nosnippet>181</a>}
-<a href=#182 id=182 data-nosnippet>182</a>
-<a href=#183 id=183 data-nosnippet>183</a><span class="kw">fn </span>centered_rect(width: u16, height: u16, area: Rect) -&gt; Rect {
-<a href=#184 id=184 data-nosnippet>184</a>    <span class="kw">let </span>popup_width = width.min(area.width);
-<a href=#185 id=185 data-nosnippet>185</a>    <span class="kw">let </span>popup_height = height.min(area.height);
-<a href=#186 id=186 data-nosnippet>186</a>    Rect {
-<a href=#187 id=187 data-nosnippet>187</a>        x: area.x + area.width.saturating_sub(popup_width) / <span class="number">2</span>,
-<a href=#188 id=188 data-nosnippet>188</a>        y: area.y + area.height.saturating_sub(popup_height) / <span class="number">2</span>,
-<a href=#189 id=189 data-nosnippet>189</a>        width: popup_width,
-<a href=#190 id=190 data-nosnippet>190</a>        height: popup_height,
-<a href=#191 id=191 data-nosnippet>191</a>    }
-<a href=#192 id=192 data-nosnippet>192</a>}
-<a href=#193 id=193 data-nosnippet>193</a>
-<a href=#194 id=194 data-nosnippet>194</a><span class="attr">#[cfg(test)]
-<a href=#195 id=195 data-nosnippet>195</a></span><span class="kw">mod </span>tests {
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#197 id=197 data-nosnippet>197</a>
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="attr">#[test]
-<a href=#199 id=199 data-nosnippet>199</a>    </span><span class="kw">fn </span>selector_popup_area_anchors_below_when_there_is_room() {
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>bounds = Rect::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">40</span>, <span class="number">20</span>);
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>anchor = Rect::new(<span class="number">5</span>, <span class="number">3</span>, <span class="number">12</span>, <span class="number">1</span>);
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span>area = selector_popup_area(<span class="prelude-val">Some</span>(anchor), bounds, <span class="number">3</span>);
-<a href=#203 id=203 data-nosnippet>203</a>        <span class="macro">assert_eq!</span>(area.x, anchor.x);
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="macro">assert_eq!</span>(area.y, anchor.y + anchor.height);
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="macro">assert_eq!</span>(area.width, <span class="number">24</span>);
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="macro">assert_eq!</span>(area.height, <span class="number">6</span>);
-<a href=#207 id=207 data-nosnippet>207</a>    }
-<a href=#208 id=208 data-nosnippet>208</a>
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="attr">#[test]
-<a href=#210 id=210 data-nosnippet>210</a>    </span><span class="kw">fn </span>selector_popup_area_clamps_to_bounds_and_prefers_above_when_needed() {
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>bounds = Rect::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">10</span>, <span class="number">6</span>);
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>anchor = Rect::new(<span class="number">8</span>, <span class="number">5</span>, <span class="number">2</span>, <span class="number">1</span>);
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>area = selector_popup_area(<span class="prelude-val">Some</span>(anchor), bounds, <span class="number">8</span>);
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="macro">assert_eq!</span>(area.width, <span class="number">10</span>);
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="macro">assert_eq!</span>(area.height, <span class="number">6</span>);
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="macro">assert_eq!</span>(area.x, <span class="number">0</span>);
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="macro">assert_eq!</span>(area.y, <span class="number">0</span>);
-<a href=#218 id=218 data-nosnippet>218</a>    }
-<a href=#219 id=219 data-nosnippet>219</a>}
+<a href=#115 id=115 data-nosnippet>115</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>choice_picker_area(anchor: <span class="prelude-ty">Option</span>&lt;Rect&gt;, bounds: Rect, item_count: usize) -&gt; Rect {
+<a href=#116 id=116 data-nosnippet>116</a>    selector_popup_area(anchor, bounds, item_count)
+<a href=#117 id=117 data-nosnippet>117</a>}
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>choice_picker_list_area(area: Rect) -&gt; Rect {
+<a href=#120 id=120 data-nosnippet>120</a>    selector_popup_list_area(area)
+<a href=#121 id=121 data-nosnippet>121</a>}
+<a href=#122 id=122 data-nosnippet>122</a>
+<a href=#123 id=123 data-nosnippet>123</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>browser_mode_selector_rect(
+<a href=#124 id=124 data-nosnippet>124</a>    form_inner: Rect,
+<a href=#125 id=125 data-nosnippet>125</a>    form_rows_len: usize,
+<a href=#126 id=126 data-nosnippet>126</a>    app: <span class="kw-2">&amp;</span>AppState,
+<a href=#127 id=127 data-nosnippet>127</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Rect&gt; {
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="kw">if </span>!(app.browser_is_active() &amp;&amp; app.browser_uses_parameter_pane()) {
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#130 id=130 data-nosnippet>130</a>    }
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">let </span>rows_height = form_rows_len.min(form_inner.height <span class="kw">as </span>usize) <span class="kw">as </span>u16;
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">let </span>gap = u16::from(rows_height &gt; <span class="number">0</span>);
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>summary_area = Rect {
+<a href=#134 id=134 data-nosnippet>134</a>        x: form_inner.x,
+<a href=#135 id=135 data-nosnippet>135</a>        y: form_inner.y.saturating_add(rows_height).saturating_add(gap),
+<a href=#136 id=136 data-nosnippet>136</a>        width: form_inner.width,
+<a href=#137 id=137 data-nosnippet>137</a>        height: form_inner
+<a href=#138 id=138 data-nosnippet>138</a>            .height
+<a href=#139 id=139 data-nosnippet>139</a>            .saturating_sub(rows_height.saturating_add(gap)),
+<a href=#140 id=140 data-nosnippet>140</a>    };
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">if </span>summary_area.height == <span class="number">0 </span>{
+<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#143 id=143 data-nosnippet>143</a>    }
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="prelude-val">Some</span>(Rect {
+<a href=#145 id=145 data-nosnippet>145</a>        x: summary_area.x,
+<a href=#146 id=146 data-nosnippet>146</a>        y: summary_area.y,
+<a href=#147 id=147 data-nosnippet>147</a>        width: summary_area.width,
+<a href=#148 id=148 data-nosnippet>148</a>        height: <span class="number">1</span>,
+<a href=#149 id=149 data-nosnippet>149</a>    })
+<a href=#150 id=150 data-nosnippet>150</a>}
+<a href=#151 id=151 data-nosnippet>151</a>
+<a href=#152 id=152 data-nosnippet>152</a><span class="kw">fn </span>selector_popup_area(anchor: <span class="prelude-ty">Option</span>&lt;Rect&gt;, bounds: Rect, item_count: usize) -&gt; Rect {
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">let </span>width = bounds.width.clamp(<span class="number">1</span>, <span class="number">24</span>);
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span>content_height = item_count.min(<span class="number">8</span>) <span class="kw">as </span>u16;
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">let </span>height = content_height
+<a href=#156 id=156 data-nosnippet>156</a>        .saturating_add(<span class="number">3</span>)
+<a href=#157 id=157 data-nosnippet>157</a>        .clamp(<span class="number">5</span>, bounds.height.max(<span class="number">1</span>));
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(anchor) = anchor <span class="kw">else </span>{
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">return </span>centered_rect(width, height, bounds);
+<a href=#160 id=160 data-nosnippet>160</a>    };
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">let </span><span class="kw-2">mut </span>x = anchor.x;
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="kw">if </span>x.saturating_add(width) &gt; bounds.x.saturating_add(bounds.width) {
+<a href=#163 id=163 data-nosnippet>163</a>        x = bounds.x.saturating_add(bounds.width.saturating_sub(width));
+<a href=#164 id=164 data-nosnippet>164</a>    }
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span>below_y = anchor.y.saturating_add(anchor.height);
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>above_y = anchor.y.saturating_sub(height);
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">let </span>y = <span class="kw">if </span>below_y.saturating_add(height) &lt;= bounds.y.saturating_add(bounds.height) {
+<a href=#168 id=168 data-nosnippet>168</a>        below_y
+<a href=#169 id=169 data-nosnippet>169</a>    } <span class="kw">else if </span>anchor.y &gt;= bounds.y.saturating_add(height) {
+<a href=#170 id=170 data-nosnippet>170</a>        above_y
+<a href=#171 id=171 data-nosnippet>171</a>    } <span class="kw">else </span>{
+<a href=#172 id=172 data-nosnippet>172</a>        bounds.y
+<a href=#173 id=173 data-nosnippet>173</a>    };
+<a href=#174 id=174 data-nosnippet>174</a>    Rect {
+<a href=#175 id=175 data-nosnippet>175</a>        x,
+<a href=#176 id=176 data-nosnippet>176</a>        y,
+<a href=#177 id=177 data-nosnippet>177</a>        width,
+<a href=#178 id=178 data-nosnippet>178</a>        height,
+<a href=#179 id=179 data-nosnippet>179</a>    }
+<a href=#180 id=180 data-nosnippet>180</a>}
+<a href=#181 id=181 data-nosnippet>181</a>
+<a href=#182 id=182 data-nosnippet>182</a><span class="kw">fn </span>selector_popup_list_area(area: Rect) -&gt; Rect {
+<a href=#183 id=183 data-nosnippet>183</a>    Rect {
+<a href=#184 id=184 data-nosnippet>184</a>        x: area.x.saturating_add(<span class="number">1</span>),
+<a href=#185 id=185 data-nosnippet>185</a>        y: area.y.saturating_add(<span class="number">1</span>),
+<a href=#186 id=186 data-nosnippet>186</a>        width: area.width.saturating_sub(<span class="number">2</span>),
+<a href=#187 id=187 data-nosnippet>187</a>        height: area.height.saturating_sub(<span class="number">3</span>),
+<a href=#188 id=188 data-nosnippet>188</a>    }
+<a href=#189 id=189 data-nosnippet>189</a>}
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a><span class="kw">fn </span>centered_rect(width: u16, height: u16, area: Rect) -&gt; Rect {
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span>popup_width = width.min(area.width);
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>popup_height = height.min(area.height);
+<a href=#194 id=194 data-nosnippet>194</a>    Rect {
+<a href=#195 id=195 data-nosnippet>195</a>        x: area.x + area.width.saturating_sub(popup_width) / <span class="number">2</span>,
+<a href=#196 id=196 data-nosnippet>196</a>        y: area.y + area.height.saturating_sub(popup_height) / <span class="number">2</span>,
+<a href=#197 id=197 data-nosnippet>197</a>        width: popup_width,
+<a href=#198 id=198 data-nosnippet>198</a>        height: popup_height,
+<a href=#199 id=199 data-nosnippet>199</a>    }
+<a href=#200 id=200 data-nosnippet>200</a>}
+<a href=#201 id=201 data-nosnippet>201</a>
+<a href=#202 id=202 data-nosnippet>202</a><span class="attr">#[cfg(test)]
+<a href=#203 id=203 data-nosnippet>203</a></span><span class="kw">mod </span>tests {
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#205 id=205 data-nosnippet>205</a>
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="attr">#[test]
+<a href=#207 id=207 data-nosnippet>207</a>    </span><span class="kw">fn </span>selector_popup_area_anchors_below_when_there_is_room() {
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>bounds = Rect::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">40</span>, <span class="number">20</span>);
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>anchor = Rect::new(<span class="number">5</span>, <span class="number">3</span>, <span class="number">12</span>, <span class="number">1</span>);
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>area = selector_popup_area(<span class="prelude-val">Some</span>(anchor), bounds, <span class="number">3</span>);
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="macro">assert_eq!</span>(area.x, anchor.x);
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="macro">assert_eq!</span>(area.y, anchor.y + anchor.height);
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="macro">assert_eq!</span>(area.width, <span class="number">24</span>);
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="macro">assert_eq!</span>(area.height, <span class="number">6</span>);
+<a href=#215 id=215 data-nosnippet>215</a>    }
+<a href=#216 id=216 data-nosnippet>216</a>
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="attr">#[test]
+<a href=#218 id=218 data-nosnippet>218</a>    </span><span class="kw">fn </span>selector_popup_area_clamps_to_bounds_and_prefers_above_when_needed() {
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span>bounds = Rect::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">10</span>, <span class="number">6</span>);
+<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span>anchor = Rect::new(<span class="number">8</span>, <span class="number">5</span>, <span class="number">2</span>, <span class="number">1</span>);
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>area = selector_popup_area(<span class="prelude-val">Some</span>(anchor), bounds, <span class="number">8</span>);
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="macro">assert_eq!</span>(area.width, <span class="number">10</span>);
+<a href=#223 id=223 data-nosnippet>223</a>        <span class="macro">assert_eq!</span>(area.height, <span class="number">6</span>);
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="macro">assert_eq!</span>(area.x, <span class="number">0</span>);
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="macro">assert_eq!</span>(area.y, <span class="number">0</span>);
+<a href=#226 id=226 data-nosnippet>226</a>    }
+<a href=#227 id=227 data-nosnippet>227</a>}
 </code></pre></div></section></main></body></html>
