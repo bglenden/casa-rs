@@ -198,6 +198,24 @@ testing of the shell-family model and the calibration workflow, with the fast
 suite (`fmt`, `clippy`, `casa-calibration` lib tests, `casars` lib tests, and
 the real-fixture smoke harness) all green at this checkpoint.
 
+### 12.8 `casars` documentation system and application manuals
+
+**Status:** IMPLEMENT
+
+The shell-family migration now needs a stable documentation system rather than
+scattered wave notes and ad hoc walkthroughs. Build out a durable `casars`
+documentation set covering:
+
+- a framework-level architecture and app-authoring guide
+- a docs index that points users and contributors at the right references
+- per-application user manuals for shipped apps (`msexplore`, `tablebrowser`,
+  `imexplore`, `calibrate`)
+- future online/public documentation structure rather than repo-only guides
+
+This work should remove stale temporary notes, keep top-level entry points like
+`README.md` current, and make the expected workflow for both users and app
+authors discoverable without reading `app.rs` or old wave files.
+
 ---
 
 ## Deferred To Later Phases

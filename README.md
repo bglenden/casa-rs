@@ -1,25 +1,47 @@
 # casa-rs
 
-Rust foundations for casacore-compatible persistent data structures.
+Rust foundations for casacore-compatible persistent data structures, with a
+growing terminal UI for practical CASA-style workflows.
 
 This README is for API users. Contributor/developer policy is in `AGENTS.md`.
 
-## API Documentation
+## Documentation
 
-[**Browse the API docs**](https://bglenden.github.io/casa-rs/)
+- API docs: [bglenden.github.io/casa-rs](https://bglenden.github.io/casa-rs/)
+- docs index: [`docs/README.md`](docs/README.md)
+- `casars` framework guide:
+  [`docs/casars-tui-framework.md`](docs/casars-tui-framework.md)
+- `casars calibrate` user guide:
+  [`docs/casars-calibrate-user-guide.md`](docs/casars-calibrate-user-guide.md)
+
+## API Documentation
 
 Public API crates:
 
 - `casacore-types`: scalar/array/record value model.
-- `casacore-tables`: table-facing API crate (current facade is intentionally small).
+- `casacore-tables`: table persistence and schema-facing APIs.
+- `casacore-ms`: MeasurementSet summary, selection, and plotting support.
+- `casacore-images`: image, mask, region, and image-browser support.
 
-`casacore-aipsio` is primarily an internal implementation crate used by table internals.
+Internal or protocol-facing crates include:
+
+- `casars`: ratatui terminal application shell and workflow UI
+- `casa-calibration`: calibration workflows used by the `calibrate` app
+- `casacore-aipsio`: AipsIO framing and compatibility helpers
+- `casacore-tablebrowser-protocol`: table browser session protocol
+- `casacore-imagebrowser-protocol`: image browser session protocol
 
 ## Current User-Facing Capabilities
 
-- Scalars including complex and string values.
-- N-dimensional arrays via `ndarray`-backed `ArrayValue`.
-- Records (`name -> value` fields) with recursive value support.
+- casacore-compatible scalar, array, and record value model
+- table persistence and typed schema helpers
+- MeasurementSet summaries, selection, and plotting primitives
+- calibration solve/apply/stats/inspection workflows through `casa-calibration`
+- image browsing and region/mask workflows through `casacore-images`
+- `casars`, a framework-owned shell family for terminal applications:
+  - `InspectShell`
+  - `BrowserShell`
+  - `WorkflowShell`
 
 ## Casacore C++ Module Coverage
 
@@ -32,21 +54,21 @@ Status legend:
 |---|---|---|
 | `casa` | Partial / Available now | Core value model (`casacore-types`) exists; broader `casa` utility surface is not a parity target. |
 | `tables` | Available now + Planned | Core table persistence APIs exist; closeout parity tracked in [Phase 2](docs/Planning/Phase%202%20-%20Table%20fillout/README.md). |
-| `measures` | Planned | Scoped in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
-| `meas` (TaQL UDF) | Planned (core subset) | Core subset in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md); full catalog deferred. |
-| `ms` | Planned | Typed MeasurementSet workflows in [Phase 4](docs/Planning/Phase%204%20-%20MeasurementSet%20and%20Derived%20Calibration%20Workflows/README.md). |
-| `derivedmscal` | Planned (core subset) | Core derived quantities in [Phase 4](docs/Planning/Phase%204%20-%20MeasurementSet%20and%20Derived%20Calibration%20Workflows/README.md); full parity deferred. |
-| `coordinates` | Planned | Coordinate core in Phase 3; broader parity in [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
-| `lattices` | Planned | Scoped in [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
-| `images` | Planned | Scoped in [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
+| `measures` | Available now + Planned | Bundled EOP data and coordinate conversion support exist; broader parity tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
+| `meas` (TaQL UDF) | Partial / Available now | Core subset exists; broader catalog tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
+| `ms` | Available now + Planned | Typed MeasurementSet summaries, selection, plotting, and calibration workflows exist; closeout tracked in [Phase 4](docs/Planning/Phase%204%20-%20MeasurementSet%20and%20Derived%20Calibration%20Workflows/README.md). |
+| `derivedmscal` | Partial / Available now | Core solve/apply/stats/inspection workflows exist through `casa-calibration`; remaining parity tracked in [Phase 4](docs/Planning/Phase%204%20-%20MeasurementSet%20and%20Derived%20Calibration%20Workflows/README.md). |
+| `coordinates` | Available now + Planned | Coordinate-system foundations exist; broader parity tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md) and [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
+| `lattices` | Available now + Planned | Core lattice abstractions and storage backends exist; further closeout tracked in [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
+| `images` | Available now + Planned | Image, mask, region, and browser workflows exist; further closeout tracked in [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
 | `fits` | Deferred/Not planned (full parity) | No full casacore `fits` parity phase; targeted FITS/WCS interop only. |
 | `msfits` | Deferred | Deferred in planning; depends on broader FITS and MS parity. |
 | `scimath`, `scimath_f` | Not planned | Prefer Rust community math/fitting/statistics crates when needed. |
 | `python`, `python3` | Deferred until needed | No current parity target for casacore Python converters/bindings. |
 | `mirlib` | Not planned | Out of scope for this Rust implementation. |
 
-Phase progress snapshot by wave file status (2026-03-04): Phase 2 `1/24`,
-Phase 3 `0/8`, Phase 4 `0/8`, Phase 5 `0/10` finished.
+Phase progress is tracked in the phase-specific `docs/Planning/Phase */`
+directories rather than this README, because the wave counts change frequently.
 
 ## Quick Start
 
@@ -58,8 +80,8 @@ cargo test --workspace
 
 ## Terminal Launcher
 
-`casars` is a ratatui-based terminal launcher for supported `casa-rs` command
-line applications.
+`casars` is the framework-owned ratatui shell family for supported `casa-rs`
+applications.
 
 Run it from the workspace with:
 
@@ -67,15 +89,20 @@ Run it from the workspace with:
 cargo run -p casars
 ```
 
-Current v1 coverage:
+Current shipped apps:
 
-- `msexplore` with a schema-driven parameter pane
-- collapsible parameter sections and sticky UI theme/split preferences
-- structured MeasurementSet summary rendering with tabbed result views
-- common MeasurementSet plotting in `msexplore` (UV coverage, metadata, and raw visibility views)
-- raw stdout/stderr views for troubleshooting
-- mouse support for focus, clicks, wheel scrolling, and divider dragging
-- cancel support while a command is running
+- `msexplore` via `InspectShell`
+- `tablebrowser` via `BrowserShell`
+- `imexplore` via `BrowserShell`
+- `calibrate` via `WorkflowShell`
+
+The framework guide for adding new apps lives at:
+
+- [`docs/casars-tui-framework.md`](docs/casars-tui-framework.md)
+
+The current `calibrate` operator guide lives at:
+
+- [`docs/casars-calibrate-user-guide.md`](docs/casars-calibrate-user-guide.md)
 
 Plot text rendering is platform-dependent today. On macOS, `casars` uses
 Plotters' system-font (`ttf`) path so charts pick up real platform fonts. On
@@ -84,16 +111,16 @@ does not depend on Linux `fontconfig` just to build the launcher and its plots.
 That keeps CI portable, but chart text metrics and font appearance may differ
 slightly across platforms.
 
-Default keys:
+Common keys:
 
 - `Tab`: switch focus between the parameter and result panes
-- `Up` / `Down`: move through parameter rows
-- `Enter` / `Space`: toggle a section, edit a text field, or toggle a boolean field
-- `h` / `l` or `Left` / `Right`: switch result tabs
-- `j` / `k` or `PgUp` / `PgDn`: scroll the active result view
-- `r`: run the selected application
-- `a`: show or hide advanced parameters
-- `t`: toggle between `dense_ansi` and `rich_panel` themes and persist the choice
+- `Shift-Tab`: move focus backward
+- `Enter`: activate the selected row or open a picker
+- `[` / `]`: switch result tabs
+- `j` / `k` or arrow keys: move through lists and rows
+- `r`: run the selected stage or action
+- `a`: show or hide advanced fields where supported
+- `t`: toggle between `dense_ansi` and `rich_panel` themes
 - `x`: cancel the running command
 - `q`: quit
 
@@ -104,11 +131,10 @@ Mouse interactions:
 - wheel scroll: scroll the pane under the pointer
 - drag the center divider: resize the parameter/result split and persist the ratio
 
-Launcher-integrated commands should expose `--ui-schema` so `casars` can build
-the parameter form from machine-readable metadata emitted by the executable
-itself. The intended convention is that argv parsing, `--help`, and
-`--ui-schema` all come from the same internal command schema so they stay in
-sync.
+Launcher-integrated commands still expose `--ui-schema`, but new apps should
+not treat a raw schema dump as their primary UX. The shell-family conventions in
+`docs/casars-tui-framework.md` are the required contract for new `casars`
+applications.
 
 ## Minimal Example (`casacore-types`)
 

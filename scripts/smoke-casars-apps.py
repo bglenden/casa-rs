@@ -233,6 +233,14 @@ def build_cases(root: pathlib.Path, ms_path: pathlib.Path, image_path: pathlib.P
     return cases
 
 
+def ensure_casars_built(root: pathlib.Path) -> None:
+    subprocess.run(
+        ["cargo", "build", "-q", "-p", "casars"],
+        cwd=root,
+        check=True,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -246,6 +254,7 @@ def main() -> int:
     root = repo_root()
     ms_path = resolve_shared_ms(root)
     image_path = resolve_shared_image() if args.app in {"imexplore", "all"} else None
+    ensure_casars_built(root)
     cases = build_cases(root, ms_path, image_path)
     if args.app != "all":
         cases = [case for case in cases if case.name == args.app]

@@ -159,7 +159,7 @@ end.
 
 The app intentionally follows the `WorkflowShell` conventions documented in:
 
-- [`docs/casars-tui-framework.md`](/Users/brianglendenning/.codex/worktrees/f027/casa-rs/docs/casars-tui-framework.md)
+- [`docs/casars-tui-framework.md`](casars-tui-framework.md)
 
 That means:
 
