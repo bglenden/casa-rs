@@ -1,9 +1,11 @@
 # casa-rs
 
-Rust foundations for casacore-compatible persistent data structures, with a
-growing terminal UI for practical CASA-style workflows.
+casa-rs is a native Rust implementation of casacore-compatible persistent data
+and related workflows. The workspace now includes both reusable `casa-*`
+libraries and terminal applications built on top of them.
 
-This README is for API users. Contributor/developer policy is in `AGENTS.md`.
+This README is for users of the repo's libraries and applications.
+Contributor/developer policy is in `AGENTS.md`.
 
 ## Documentation
 
@@ -14,39 +16,34 @@ This README is for API users. Contributor/developer policy is in `AGENTS.md`.
 - `casars calibrate` user guide:
   [`docs/casars-calibrate-user-guide.md`](docs/casars-calibrate-user-guide.md)
 
-## API Documentation
+## Current Status
 
-Public API crates:
+Library crates:
 
-- `casa-types`: scalar/array/record value model.
-- `casa-tables`: table persistence and schema-facing APIs.
-- `casa-ms`: MeasurementSet summary, selection, and plotting support.
-- `casa-images`: image, mask, region, and image-browser support.
+- `casa-types`: scalar/array/record values plus quanta and measures foundations.
+- `casa-tables`: table persistence, storage, and schema-facing APIs.
+- `casa-ms`: MeasurementSet summaries, selection, and plotting support.
+- `casa-lattices`: N-dimensional lattice abstractions and storage backends.
+- `casa-coordinates`: coordinate-system support for astronomical images.
+- `casa-images`: images, masks, regions, and image-browser support.
 
-Internal or protocol-facing crates include:
+Applications:
 
-- `casars`: ratatui terminal application shell and workflow UI
-- `casa-calibration`: calibration workflows used by the `calibrate` app
-- `casa-aipsio`: AipsIO framing and compatibility helpers
-- `casars-tablebrowser-protocol`: table browser session protocol
-- `casars-imagebrowser-protocol`: image browser session protocol
+- `casars`: ratatui shell for interactive `casa-rs` applications.
+- `msexplore`: MeasurementSet inspection in `InspectShell`.
+- `tablebrowser`: generic table browsing in `BrowserShell`.
+- `imexplore`: image browsing plus region/mask workflows in `BrowserShell`.
+- `calibrate`: calibration solve/apply/stats/inspection workflows in `WorkflowShell`.
+
+Supporting internal crates include `casa-calibration`, `casa-aipsio`,
+`casa-measures-data`, `casa-measures-tools`, `casa-test-support`,
+`casars-tablebrowser-protocol`, and `casars-imagebrowser-protocol`.
 
 Naming:
+
 - `casa-*` crates are reusable libraries.
 - `casars-*` crates are app/runtime protocol crates for the terminal application layer.
 - The repo implements casacore-compatible behavior in native Rust; it is not a Rust wrapper around casacore C++.
-
-## Current User-Facing Capabilities
-
-- casacore-compatible scalar, array, and record value model
-- table persistence and typed schema helpers
-- MeasurementSet summaries, selection, and plotting primitives
-- calibration solve/apply/stats/inspection workflows through `casa-calibration`
-- image browsing and region/mask workflows through `casa-images`
-- `casars`, a framework-owned shell family for terminal applications:
-  - `InspectShell`
-  - `BrowserShell`
-  - `WorkflowShell`
 
 ## Casacore C++ Module Coverage
 
