@@ -48,29 +48,32 @@ Naming:
 ## Casacore C++ Module Coverage
 
 Status legend:
-- `Available now`: implemented and usable in this repo today.
-- `Planned`: explicitly scoped in an existing phase plan.
+- `Available now`: substantial, usable implementation exists in this repo today.
+- `Partial / Available now`: a real subset exists and is usable today, but broad
+  module-wide parity is not claimed.
 - `Deferred/Not planned`: intentionally out of current scope.
 
 | casacore-c++ module | casa-rs status | Notes |
 |---|---|---|
-| `casa` | Partial / Available now | Core value model (`casa-types`) exists; broader `casa` utility surface is not a parity target. |
-| `tables` | Available now + Planned | Core table persistence APIs exist; closeout parity tracked in [Phase 2](docs/Planning/Phase%202%20-%20Table%20fillout/README.md). |
-| `measures` | Available now + Planned | Bundled EOP data and coordinate conversion support exist; broader parity tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
-| `meas` (TaQL UDF) | Partial / Available now | Core subset exists; broader catalog tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md). |
-| `ms` | Available now + Planned | Typed MeasurementSet summaries, selection, plotting, and calibration workflows exist; closeout tracked in [Phase 4](docs/Planning/Phase%204%20-%20MeasurementSet%20and%20Derived%20Calibration%20Workflows/README.md). |
-| `derivedmscal` | Partial / Available now | Core solve/apply/stats/inspection workflows exist through `casa-calibration`; remaining parity tracked in [Phase 4](docs/Planning/Phase%204%20-%20MeasurementSet%20and%20Derived%20Calibration%20Workflows/README.md). |
-| `coordinates` | Available now + Planned | Coordinate-system foundations exist; broader parity tracked in [Phase 3](docs/Planning/Phase%203%20-%20Quanta%20Measures%20Coordinates/README.md) and [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
-| `lattices` | Available now + Planned | Core lattice abstractions and storage backends exist; further closeout tracked in [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
-| `images` | Available now + Planned | Image, mask, region, and browser workflows exist; further closeout tracked in [Phase 5](docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/README.md). |
-| `fits` | Deferred/Not planned (full parity) | No full casacore `fits` parity phase; targeted FITS/WCS interop only. |
+| `casa` | Partial / Available now | `casa-types` covers the core scalar/array/record value model plus quanta/measures foundations. Broader `casa` utility parity is not a target. |
+| `tables` | Available now | `casa-tables` provides persistent tables, data managers/storage backends, schema/mutation APIs, a TaQL engine subset, and `tablebrowser`. |
+| `measures` | Available now | `casa-types`, `casa-measures-data`, and `casa-coordinates` provide units/quanta, typed measures, bundled EOP data, and frame-aware coordinate conversions. |
+| `meas` (TaQL UDF) | Partial / Available now | The TaQL measure-UDF subset is implemented and exercised today; it does not claim the full upstream catalog. |
+| `ms` | Available now | `casa-ms` provides typed MeasurementSet APIs, summaries, selection/grouping, derived columns, plotting support, and `msexplore`. |
+| `derivedmscal` | Available now | `casa-calibration` and `calibrate` cover apply, gaincal, bandpass, fluxscale, stats, callib, and diagnostic inspection workflows. |
+| `coordinates` | Available now | `casa-coordinates` implements `CoordinateSystem` and core coordinate types used by images, measures, and FITS/WCS interop. |
+| `lattices` | Available now | `casa-lattices` provides lattice abstractions, paging/storage, traversal, regions, masks, and statistics. |
+| `images` | Available now | `casa-images` provides persistent images, masks, regions, subimages, lazy expressions, image-browser sessions, and `imexplore`. |
+| `fits` | Partial / Available now | Targeted FITS/WCS header and coordinate interoperability exists in `casa-coordinates`, but there is no full casacore `fits` module parity target. |
 | `msfits` | Deferred | Deferred in planning; depends on broader FITS and MS parity. |
-| `scimath`, `scimath_f` | Not planned | Prefer Rust community math/fitting/statistics crates when needed. |
+| `scimath`, `scimath_f` | Deferred/Not planned | Prefer Rust community math/fitting/statistics crates when needed rather than mirroring the casacore module surface. |
 | `python`, `python3` | Deferred until needed | No current parity target for casacore Python converters/bindings. |
-| `mirlib` | Not planned | Out of scope for this Rust implementation. |
+| `mirlib` | Deferred/Not planned | Out of scope for this Rust implementation. |
 
-Phase progress is tracked in the phase-specific `docs/Planning/Phase */`
-directories rather than this README, because the wave counts change frequently.
+Detailed phase and backlog tracking still lives in the phase-specific
+`docs/Planning/Phase */` directories. This README table is the current
+high-level coverage summary of the implementation that exists in the repo
+today.
 
 ## Quick Start
 
