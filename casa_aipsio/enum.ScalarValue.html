@@ -19,7 +19,7 @@ C++ <code>ScalarColumn&lt;T&gt;</code>.</p>
 on-disk encoding. Use <a href="enum.ScalarValue.html#method.primitive_type" title="method casa_aipsio::ScalarValue::primitive_type"><code>ScalarValue::primitive_type</code></a> or
 <a href="enum.ScalarValue.html#method.type_tag" title="method casa_aipsio::ScalarValue::type_tag"><code>ScalarValue::type_tag</code></a> to inspect it without pattern-matching.</p>
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_types::{ScalarValue, PrimitiveType};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_values::{PrimitiveType, ScalarValue};
 
 <span class="kw">let </span>v = ScalarValue::Float64(<span class="number">2.718</span>);
 <span class="macro">assert_eq!</span>(v.primitive_type(), PrimitiveType::Float64);</code></pre></div></div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Bool" class="variant"><a href="#variant.Bool" class="anchor">§</a><h3 class="code-header">Bool(<a class="primitive" href="https://doc.rust-lang.org/1.94.1/std/primitive.bool.html">bool</a>)</h3></section><div class="docblock"><p>Boolean scalar (<code>Bool</code> in C++ casacore).</p>

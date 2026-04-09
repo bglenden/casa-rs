@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ColumnData","TableReadError"],"struct":["PlainTable"],"type":["Float64ArrayCell"]};

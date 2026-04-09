@@ -3,8 +3,8 @@
 layout. This module provides <code>to_record</code> / <code>from_record</code> functions that
 produce and consume <a href="../../struct.RecordValue.html" title="struct casa_types::RecordValue"><code>RecordValue</code></a> in the same format, ensuring
 interoperability with C++ tables.</p>
-<p>Deferred: Phase 3 backlog item 11.2 tracks splitting the shared
-<code>RecordValue</code> / <code>Value</code> data model out of the table layer so
+<p>Deferred: GitHub issue #13 tracks splitting the shared <code>RecordValue</code> /
+<code>Value</code> data model out of the table layer so
 <code>casa-types</code> no longer depends on table-storage details here.</p>
 <h3 id="mepoch-record-format"><a class="doc-anchor" href="#mepoch-record-format">§</a>MEpoch record format</h3><div class="example-wrap"><pre class="language-text"><code>type:  &quot;epoch&quot;
 refer: &quot;UTC&quot;          (EpochRef::as_str())

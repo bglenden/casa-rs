@@ -9,7 +9,7 @@
 <p>Fields are stored in insertion order. Lookup by name is O(n); for typical
 casacore keyword sets this is not a performance concern.</p>
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_types::{RecordValue, RecordField, ScalarValue, Value};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_values::{RecordField, RecordValue, ScalarValue, Value};
 
 <span class="kw">let </span><span class="kw-2">mut </span>record = RecordValue::default();
 record.push(RecordField::new(<span class="string">"freq"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">1.4e9</span>))));
@@ -40,7 +40,7 @@ returned.</p>
 Otherwise a new <a href="struct.RecordField.html" title="struct casa_aipsio::RecordField"><code>RecordField</code></a> is appended. This matches the semantics
 of C++ <code>TableRecord::define</code>.</p>
 <h5 id="examples-1"><a class="doc-anchor" href="#examples-1">§</a>Examples</h5>
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_types::{RecordValue, ScalarValue, Value};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_values::{RecordValue, ScalarValue, Value};
 
 <span class="kw">let </span><span class="kw-2">mut </span>record = RecordValue::default();
 record.upsert(<span class="string">"n"</span>, Value::Scalar(ScalarValue::Int32(<span class="number">1</span>)));

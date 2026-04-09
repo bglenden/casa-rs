@@ -12,7 +12,7 @@ references between tables.</p>
 <p><code>From</code> implementations allow <code>ScalarValue</code>, <code>ArrayValue</code>, and <code>RecordValue</code>
 to be converted into <code>Value</code> with <code>.into()</code>.</p>
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_types::{Value, ScalarValue, ValueKind};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_values::{ScalarValue, Value, ValueKind};
 
 <span class="kw">let </span>v: Value = ScalarValue::Int32(<span class="number">7</span>).into();
 <span class="macro">assert_eq!</span>(v.kind(), ValueKind::Scalar);

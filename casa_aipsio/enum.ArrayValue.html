@@ -24,7 +24,7 @@ without unwrapping the variant.</p>
 1-D <code>ArrayValue</code> from a <code>Vec</code>. For higher-dimensional arrays, construct an
 <a href="https://docs.rs/ndarray/0.15/ndarray/aliases/type.ArrayD.html" title="type ndarray::aliases::ArrayD"><code>ArrayD</code></a> directly and wrap it in the appropriate variant.</p>
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_types::{ArrayValue, PrimitiveType};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_values::{ArrayValue, PrimitiveType};
 
 <span class="kw">let </span>arr = ArrayValue::from_f64_vec(<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>]);
 <span class="macro">assert_eq!</span>(arr.primitive_type(), PrimitiveType::Float64);
@@ -58,7 +58,7 @@ Delegates to <a href="https://docs.rs/ndarray/0.15/ndarray/struct.ArrayBase.html
 <a href="https://docs.rs/ndarray/0.15/ndarray/struct.ArrayBase.html#method.from_vec" title="associated function ndarray::ArrayBase::from_vec"><code>ndarray::Array1::from_vec</code></a> followed by <code>.into_dyn()</code>. The resulting
 array has shape <code>[values.len()]</code>.</p>
 <h5 id="examples-1"><a class="doc-anchor" href="#examples-1">§</a>Examples</h5>
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_types::ArrayValue;
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_values::ArrayValue;
 
 <span class="kw">let </span>arr = ArrayValue::from_bool_vec(<span class="macro">vec!</span>[<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>]);
 <span class="macro">assert_eq!</span>(arr.shape(), <span class="kw-2">&amp;</span>[<span class="number">3</span>]);</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.from_u8_vec" class="method"><h4 class="code-header">pub fn <a href="#method.from_u8_vec" class="fn">from_u8_vec</a>(values: <a class="struct" href="https://doc.rust-lang.org/1.94.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.94.1/std/primitive.u8.html">u8</a>&gt;) -&gt; <a class="enum" href="enum.ArrayValue.html" title="enum casa_aipsio::ArrayValue">ArrayValue</a></h4></section></summary><div class="docblock"><p>Constructs a 1-D <a href="enum.ArrayValue.html#variant.UInt8" title="variant casa_aipsio::ArrayValue::UInt8"><code>ArrayValue::UInt8</code></a> from a <code>Vec&lt;u8&gt;</code>.</p>

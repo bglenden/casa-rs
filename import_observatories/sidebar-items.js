@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["default_output_path","main","print_help","run"]};

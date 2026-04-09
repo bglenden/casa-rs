@@ -113,7 +113,7 @@
 <a href=#113 id=113 data-nosnippet>113</a>        ExprValue::Complex(c) =&gt; Value::Scalar(ScalarValue::Complex64(<span class="kw-2">*</span>c)),
 <a href=#114 id=114 data-nosnippet>114</a>        ExprValue::String(s) =&gt; Value::Scalar(ScalarValue::String(s.clone())),
 <a href=#115 id=115 data-nosnippet>115</a>        ExprValue::DateTime(v) =&gt; Value::Scalar(ScalarValue::Float64(<span class="kw-2">*</span>v)),
-<a href=#116 id=116 data-nosnippet>116</a>        ExprValue::Array(<span class="kw">_</span>) =&gt; Value::Scalar(ScalarValue::Bool(<span class="bool-val">false</span>)), <span class="comment">// Deferred: Phase 2 backlog item 26.4.
+<a href=#116 id=116 data-nosnippet>116</a>        ExprValue::Array(<span class="kw">_</span>) =&gt; Value::Scalar(ScalarValue::Bool(<span class="bool-val">false</span>)), <span class="comment">// Deferred: GitHub issue #9.
 <a href=#117 id=117 data-nosnippet>117</a>        </span>ExprValue::Regex { pattern, .. } =&gt; Value::Scalar(ScalarValue::String(pattern.clone())),
 <a href=#118 id=118 data-nosnippet>118</a>        ExprValue::Null =&gt; Value::Scalar(ScalarValue::Bool(<span class="bool-val">false</span>)),
 <a href=#119 id=119 data-nosnippet>119</a>    }

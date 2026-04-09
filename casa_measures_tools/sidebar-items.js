@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["import_observatories_table","observatories_table_candidates","write_observatories_snapshot"]};
+window.SIDEBAR_ITEMS = {"constant":["PACKAGED_SNAPSHOT_PATHS"],"fn":["create_packaged_snapshot","runtime_root_candidates","validate_runtime_root"]};

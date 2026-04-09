@@ -36,7 +36,7 @@ to the set of native C++ casacore types: <code>Bool</code>, <code>uChar</code>, 
 All other primitive types have a fixed serialised size; those sizes match the
 widths used by the C++ casacore AipsIO format.</p>
 <h5 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h5>
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_types::PrimitiveType;
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_values::PrimitiveType;
 
 <span class="macro">assert_eq!</span>(PrimitiveType::Float64.fixed_width_bytes(), <span class="prelude-val">Some</span>(<span class="number">8</span>));
 <span class="macro">assert_eq!</span>(PrimitiveType::Complex64.fixed_width_bytes(), <span class="prelude-val">Some</span>(<span class="number">16</span>));
