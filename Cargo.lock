@@ -423,7 +423,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "casa-aipsio"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-types",
  "ndarray",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "casa-calibration"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-ms",
  "casa-tables",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "casa-coordinates"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-types",
  "ndarray",
@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "casa-images"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-coordinates",
  "casa-lattices",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "casa-lattices"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-tables",
  "casa-types",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "casa-measures-data"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -498,7 +498,7 @@ dependencies = [
 
 [[package]]
 name = "casa-measures-tools"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-measures-data",
  "casa-tables",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "casa-ms"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-tables",
  "casa-test-support",
@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "casa-tables"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-aipsio",
  "casa-types",
@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "casa-test-support"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-aipsio",
  "casa-coordinates",
@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "casa-types"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "casa-measures-data",
  "criterion",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "casars"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "arboard",
  "casa-calibration",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "casars-imagebrowser-protocol"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "schemars",
  "serde",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "casars-tablebrowser-protocol"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "schemars",
  "serde",
@@ -3132,7 +3132,7 @@ dependencies = [
 
 [[package]]
 name = "ratatui-graphics"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "base64-simd",
