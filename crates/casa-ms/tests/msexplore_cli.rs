@@ -1453,6 +1453,85 @@ fn msexplore_azimuth_vs_elevation_uses_geometry_axes_on_both_sides() {
     );
 }
 
+#[test]
+fn msexplore_remaining_preset_families_build_payloads_and_render_images() {
+    let temp = tempdir().expect("tempdir");
+    let standard_ms_path = create_msexplore_fixture_ms(temp.path());
+    let geometry_ms_path = create_msexplore_geometry_fixture_ms(temp.path());
+    let standard_ms = MeasurementSet::open(&standard_ms_path).expect("open standard fixture");
+    let geometry_ms = MeasurementSet::open(&geometry_ms_path).expect("open geometry fixture");
+
+    let standard_cases = [
+        MsPlotPreset::UvCoverage,
+        MsPlotPreset::AntennaLayout,
+        MsPlotPreset::ScanTimeline,
+        MsPlotPreset::SpectralWindowCoverage,
+        MsPlotPreset::PhaseVsChannel,
+        MsPlotPreset::AmplitudeVsFrequency,
+        MsPlotPreset::PhaseVsFrequency,
+        MsPlotPreset::PhaseVsVelocity,
+        MsPlotPreset::RealVsImaginary,
+    ];
+    for preset in standard_cases {
+        let payload = build_msexplore_plot_payload(
+            &standard_ms,
+            &MsSelectionSpec::default(),
+            &MsPlotSpec::from_preset(preset),
+        )
+        .unwrap_or_else(|error| panic!("build payload for {}: {error}", preset.as_str()));
+
+        match preset {
+            MsPlotPreset::UvCoverage
+            | MsPlotPreset::AntennaLayout
+            | MsPlotPreset::ScanTimeline
+            | MsPlotPreset::SpectralWindowCoverage => {
+                assert!(
+                    matches!(payload, MsPlotPayload::ListObs(_)),
+                    "expected listobs payload for {}",
+                    preset.as_str()
+                );
+            }
+            _ => {
+                assert!(
+                    matches!(payload, MsPlotPayload::Scatter(_)),
+                    "expected scatter payload for {}",
+                    preset.as_str()
+                );
+            }
+        }
+
+        let image =
+            render_msexplore_plot_image(&payload, MeasurementSetPlotTheme::light(), 960, 640)
+                .unwrap_or_else(|error| panic!("render image for {}: {error}", preset.as_str()));
+        assert_eq!(image.width(), 960);
+        assert_eq!(image.height(), 640);
+    }
+
+    let geometry_cases = [
+        MsPlotPreset::AzimuthVsTime,
+        MsPlotPreset::ParallacticAngleVsTime,
+    ];
+    for preset in geometry_cases {
+        let payload = build_msexplore_plot_payload(
+            &geometry_ms,
+            &MsSelectionSpec::default(),
+            &MsPlotSpec::from_preset(preset),
+        )
+        .unwrap_or_else(|error| panic!("build payload for {}: {error}", preset.as_str()));
+        assert!(
+            matches!(payload, MsPlotPayload::Scatter(_)),
+            "expected scatter payload for {}",
+            preset.as_str()
+        );
+
+        let image =
+            render_msexplore_plot_image(&payload, MeasurementSetPlotTheme::light(), 960, 640)
+                .unwrap_or_else(|error| panic!("render image for {}: {error}", preset.as_str()));
+        assert_eq!(image.width(), 960);
+        assert_eq!(image.height(), 640);
+    }
+}
+
 fn normalize_signed_degrees(angle_degrees: f64) -> f64 {
     let wrapped = (angle_degrees + 180.0).rem_euclid(360.0) - 180.0;
     if wrapped == -180.0 { 180.0 } else { wrapped }

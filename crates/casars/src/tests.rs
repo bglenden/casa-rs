@@ -38,13 +38,16 @@ use casars_tablebrowser_protocol::{
     BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as ProtocolBrowserView,
     BrowserViewport,
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use flate2::read::GzDecoder;
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::Rect;
 use ratatui_graphics::{
-    KittyAnimationControl, KittyAnimationGap, ProtocolType, TerminalCapabilities,
+    KittyAnimationControl, KittyAnimationGap, KittyLayerManager, KittyStoredImageStore,
+    ProtocolType, TerminalCapabilities,
 };
 use tar::Archive;
 use tempfile::tempdir;
@@ -1861,6 +1864,275 @@ fn disabled_overlay_runtime_helpers_are_safe_noops() {
         .expect("noop animation control");
 }
 
+#[cfg(unix)]
+#[test]
+fn software_direct_overlay_refresh_caches_frames_and_clears_when_movie_stops() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 0/1".to_string(),
+                    "Value: 1".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 2,
+                    pixel: 0,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 1/1".to_string(),
+                    "Value: 2".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 1],
+                    pixel_axes: vec![],
+                    value: 2.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 1,
+                    length: 2,
+                    pixel: 1,
+                }),
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.set_text_value_and_apply("fps", "8");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+
+    let (_, frame0) = wait_for_direct_movie_frame(&mut app, 120, 28);
+    let mut store = KittyStoredImageStore::with_starting_ids(
+        crate::KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE,
+        crate::KITTY_MOVIE_OVERLAY_ID_BASE,
+    )
+    .expect("software image store");
+    let slot = store.allocate_slot().expect("software slot");
+    let mut overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::SoftwareDirect,
+        manager: None,
+        software_store: Some(store),
+        software_slot: Some(slot),
+        handle: None,
+        software_images: Vec::new(),
+        active_movie_key: None,
+        active_axis: None,
+        active_axis_index: None,
+        active_canvas: None,
+        uploaded_axis_indices: Vec::new(),
+        seen_axis_indices: Vec::new(),
+        active_fps: 0.0,
+        seeding_started_at: None,
+        looping_started_at: None,
+        looping: false,
+    };
+    let mut backend = CrosstermBackend::new(io::stdout());
+
+    overlay
+        .refresh_software_frame(&mut backend, &mut app, Some(frame0))
+        .expect("show first software frame");
+    assert!(app.image_movie_direct_overlay_active());
+    assert_eq!(overlay.active_axis_index, Some(0));
+    assert_eq!(overlay.software_images.len(), 2);
+    let first_image = overlay.software_images[0];
+    assert!(first_image.is_some());
+
+    let (_, frame0_again) = wait_for_direct_movie_frame(&mut app, 120, 28);
+    overlay
+        .refresh_software_frame(&mut backend, &mut app, Some(frame0_again))
+        .expect("reuse cached software frame");
+    assert_eq!(overlay.software_images[0], first_image);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('_'), KeyModifiers::ALT));
+    for ch in [
+        'G', 'i', '=', '1', '0', '0', '1', '0', '0', '1', ',', 'p', '=', '1', '0', '0', '0', '0',
+        '0', '0', ';', 'E', 'N', 'O', 'E', 'N', 'T', ':', ' ', 'i', 'm', 'a', 'g', 'e', ' ', 'n',
+        'o', 't', ' ', 'f', 'o', 'u', 'n', 'd',
+    ] {
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::ALT));
+    assert!(app.kitty_movie_store_invalidated_for_test());
+
+    app.sync_image_non_display_axis_index(2, 1);
+    let (_, frame1) = wait_for_direct_movie_frame(&mut app, 120, 28);
+    overlay
+        .refresh_software_frame(&mut backend, &mut app, Some(frame1))
+        .expect("show second software frame");
+    assert_eq!(overlay.active_axis_index, Some(1));
+    assert!(overlay.software_images[1].is_some());
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    overlay
+        .refresh_software_frame(&mut backend, &mut app, None)
+        .expect("clear software overlay after movie stop");
+    assert!(!app.image_movie_direct_overlay_active());
+    assert_eq!(overlay.active_movie_key, None);
+    assert!(overlay.software_images.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn kitty_animation_overlay_refresh_seeds_and_enters_looping_mode() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 0/1".to_string(),
+                    "Value: 1".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 2,
+                    pixel: 0,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 1/1".to_string(),
+                    "Value: 2".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 1],
+                    pixel_axes: vec![],
+                    value: 2.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 1,
+                    length: 2,
+                    pixel: 1,
+                }),
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.set_text_value_and_apply("fps", "5");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+
+    let mut manager = KittyLayerManager::with_starting_ids(
+        crate::KITTY_MOVIE_OVERLAY_ID_BASE,
+        crate::KITTY_MOVIE_OVERLAY_ID_BASE,
+    )
+    .expect("kitty layer manager");
+    let handle = manager.allocate().expect("kitty layer handle");
+    let mut overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::KittyAnimation,
+        manager: Some(manager),
+        software_store: None,
+        software_slot: None,
+        handle: Some(handle),
+        software_images: Vec::new(),
+        active_movie_key: None,
+        active_axis: None,
+        active_axis_index: None,
+        active_canvas: None,
+        uploaded_axis_indices: Vec::new(),
+        seen_axis_indices: Vec::new(),
+        active_fps: 0.0,
+        seeding_started_at: None,
+        looping_started_at: None,
+        looping: false,
+    };
+    let mut backend = CrosstermBackend::new(io::stdout());
+
+    let (_, frame0) = wait_for_direct_movie_frame(&mut app, 120, 28);
+    overlay
+        .refresh_for_frame(&mut backend, &mut app, frame0)
+        .expect("seed first animation frame");
+    assert_eq!(overlay.uploaded_axis_indices, vec![0]);
+    assert!(!overlay.looping);
+
+    app.sync_image_non_display_axis_index(2, 1);
+    let (_, frame1) = wait_for_direct_movie_frame(&mut app, 120, 28);
+    overlay
+        .refresh_for_frame(&mut backend, &mut app, frame1)
+        .expect("seed second animation frame");
+    assert_eq!(overlay.uploaded_axis_indices, vec![0, 1]);
+    assert!(overlay.looping);
+    assert!(app.image_movie_terminal_looping_active());
+
+    app.set_text_value_and_apply("fps", "9");
+    overlay
+        .refresh_looping_only(&mut backend, &mut app)
+        .expect("retime looping animation");
+    assert_eq!(overlay.active_fps, 9.0);
+}
+
 #[test]
 fn launcher_entrypoints_reject_invalid_requests_before_terminal_setup() {
     let error = run_with_app(Some("missing-app")).expect_err("missing app should fail");
@@ -1869,6 +2141,79 @@ fn launcher_entrypoints_reject_invalid_requests_before_terminal_setup() {
     let error = run_with_cli_args([std::ffi::OsString::from("--bogus")])
         .expect_err("bad cli option should fail");
     assert!(format!("{error}").contains("unknown casars option"));
+}
+
+#[test]
+fn launcher_entrypoints_render_print_only_help_without_terminal_setup() {
+    run_with_cli_args([std::ffi::OsString::from("--help")]).expect("launcher help");
+    run_with_cli_args([
+        std::ffi::OsString::from("msexplore"),
+        std::ffi::OsString::from("--help"),
+    ])
+    .expect("app help");
+    run_with_cli_args([
+        std::ffi::OsString::from("--app"),
+        std::ffi::OsString::from("msexplore"),
+        std::ffi::OsString::from("--help"),
+    ])
+    .expect("explicit app help");
+}
+
+#[test]
+fn runtime_event_handles_paste_and_launcher_shortcuts() {
+    let (_temp, mut app) = test_app();
+    let area = Rect::new(0, 0, 100, 30);
+    let layout = ui::compute_layout(area, &app);
+    let terminal = Terminal::new(CrosstermBackend::new(io::stdout())).expect("terminal");
+    let mut terminal = crate::TerminalGuard {
+        terminal,
+        active: false,
+    };
+    let mut overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::Disabled,
+        manager: None,
+        software_store: None,
+        software_slot: None,
+        handle: None,
+        software_images: vec![None],
+        active_movie_key: Some(17),
+        active_axis: Some(0),
+        active_axis_index: Some(1),
+        active_canvas: Some(area),
+        uploaded_axis_indices: vec![1, 2],
+        seen_axis_indices: vec![true, true],
+        active_fps: 2.0,
+        seeding_started_at: Some(Instant::now()),
+        looping_started_at: Some(Instant::now()),
+        looping: true,
+    };
+    let mut last_tick = Instant::now();
+
+    let outcome = crate::handle_runtime_event(
+        &mut terminal,
+        &mut app,
+        &layout,
+        &mut overlay,
+        &mut last_tick,
+        Event::Paste("/tmp/pasted.ms\n".to_string()),
+    )
+    .expect("paste event");
+    assert!(outcome.is_none());
+    assert_eq!(
+        app.field_text_for_test("ms_path").as_deref(),
+        Some("/tmp/pasted.ms")
+    );
+
+    let outcome = crate::handle_runtime_event(
+        &mut terminal,
+        &mut app,
+        &layout,
+        &mut overlay,
+        &mut last_tick,
+        Event::Key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)),
+    )
+    .expect("launcher event");
+    assert!(matches!(outcome, Some(crate::RunOutcome::Launcher)));
 }
 
 #[test]
@@ -8697,6 +9042,162 @@ fn render_app(app: &AppState, width: u16, height: u16) -> String {
     rendered
 }
 
+#[cfg(unix)]
+#[test]
+fn overlay_refresh_dispatches_runtime_modes() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 0/1".to_string(),
+                    "Value: 1".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 0],
+                    pixel_axes: vec![],
+                    value: 1.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 0,
+                    length: 2,
+                    pixel: 0,
+                }),
+            ),
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                "Image ready",
+                vec!["raster".to_string()],
+                vec![
+                    "View: Plane".to_string(),
+                    "Hidden axis Frequency (2): 1/1".to_string(),
+                    "Value: 2".to_string(),
+                ],
+                Some(ImageBrowserProbe {
+                    pixel_indices: vec![0, 0, 1],
+                    pixel_axes: vec![],
+                    value: 2.0,
+                    masked: false,
+                    finite: true,
+                    world_axes: vec![],
+                }),
+                Some(ImageNonDisplayAxisState {
+                    axis: 2,
+                    label: "Frequency".to_string(),
+                    index: 1,
+                    length: 2,
+                    pixel: 1,
+                }),
+            ),
+        ],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.set_text_value_and_apply("fps", "6");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+
+    let (layout, frame0) = wait_for_direct_movie_frame(&mut app, 120, 28);
+    let mut store = KittyStoredImageStore::with_starting_ids(
+        crate::KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE,
+        crate::KITTY_MOVIE_OVERLAY_ID_BASE,
+    )
+    .expect("software image store");
+    let slot = store.allocate_slot().expect("software slot");
+    let terminal = Terminal::new(CrosstermBackend::new(io::stdout())).expect("terminal");
+    let mut terminal = terminal;
+    let mut software_overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::SoftwareDirect,
+        manager: None,
+        software_store: Some(store),
+        software_slot: Some(slot),
+        handle: None,
+        software_images: Vec::new(),
+        active_movie_key: Some(frame0.movie_key),
+        active_axis: Some(frame0.axis),
+        active_axis_index: None,
+        active_canvas: Some(frame0.canvas),
+        uploaded_axis_indices: Vec::new(),
+        seen_axis_indices: Vec::new(),
+        active_fps: 0.0,
+        seeding_started_at: None,
+        looping_started_at: None,
+        looping: false,
+    };
+
+    software_overlay
+        .refresh(&mut terminal, &mut app, &layout)
+        .expect("software refresh");
+    assert!(app.image_movie_direct_overlay_active());
+    assert_eq!(software_overlay.active_axis_index, Some(0));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    software_overlay
+        .refresh(&mut terminal, &mut app, &layout)
+        .expect("software clear after movie stop");
+    assert_eq!(software_overlay.active_movie_key, None);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    let mut manager = KittyLayerManager::with_starting_ids(
+        crate::KITTY_MOVIE_OVERLAY_ID_BASE,
+        crate::KITTY_MOVIE_OVERLAY_ID_BASE,
+    )
+    .expect("kitty layer manager");
+    let handle = manager.allocate().expect("kitty layer handle");
+    let mut animation_overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::KittyAnimation,
+        manager: Some(manager),
+        software_store: None,
+        software_slot: None,
+        handle: Some(handle),
+        software_images: Vec::new(),
+        active_movie_key: Some(frame0.movie_key),
+        active_axis: Some(frame0.axis),
+        active_axis_index: Some(0),
+        active_canvas: Some(frame0.canvas),
+        uploaded_axis_indices: vec![0, 1],
+        seen_axis_indices: vec![true, true],
+        active_fps: 6.0,
+        seeding_started_at: Some(Instant::now()),
+        looping_started_at: Some(Instant::now()),
+        looping: true,
+    };
+    app.set_image_movie_terminal_looping(true);
+    app.set_image_movie_direct_overlay(true);
+    app.set_text_value_and_apply("fps", "9");
+    animation_overlay
+        .refresh(&mut terminal, &mut app, &layout)
+        .expect("looping refresh");
+    assert_eq!(animation_overlay.active_fps, 9.0);
+
+    app.set_image_movie_terminal_looping(false);
+    animation_overlay
+        .refresh(&mut terminal, &mut app, &layout)
+        .expect("clear stale looping overlay");
+    assert_eq!(animation_overlay.active_movie_key, None);
+    assert!(!animation_overlay.looping);
+}
+
 fn wait_for_plot_render(app: &mut AppState, width: u16, height: u16, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
@@ -9084,6 +9585,27 @@ fn read_perf_events(path: &Path) -> Vec<serde_json::Value> {
         .filter(|line| !line.trim().is_empty())
         .map(|line| serde_json::from_str(line).expect("decode perf json event"))
         .collect()
+}
+
+fn wait_for_direct_movie_frame(
+    app: &mut AppState,
+    width: u16,
+    height: u16,
+) -> (crate::ui::UiLayout, crate::app::ImageDirectMovieFrame) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        app.prepare_graphics_for_test(width, height);
+        app.on_tick();
+        let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, width, height), app);
+        if let Some(frame) = app.current_direct_image_movie_frame(&layout) {
+            return (layout, frame);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for direct movie frame"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[cfg(unix)]
