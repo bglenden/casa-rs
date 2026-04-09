@@ -1,10 +1,10 @@
 [package]
-name = "casa-aipsio"
+name = "casa-values"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "AipsIO binary serialization codec (internal)"
+description = "Generic CASA scalar/array/record value model (internal)"
 repository.workspace = true
 publish = false
 
@@ -12,6 +12,5 @@ publish = false
 workspace = true
 
 [dependencies]
-casa-values = { path = "../casa-values" }
 ndarray.workspace = true
-thiserror.workspace = true
+num-complex.workspace = true

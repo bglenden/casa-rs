@@ -425,7 +425,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 name = "casa-aipsio"
 version = "0.13.0"
 dependencies = [
- "casa-types",
+ "casa-values",
  "ndarray",
  "thiserror 2.0.18",
 ]
@@ -491,6 +491,7 @@ dependencies = [
 name = "casa-measures-data"
 version = "0.13.0"
 dependencies = [
+ "casa-table-read",
  "flate2",
  "serde",
  "serde_json",
@@ -528,6 +529,13 @@ dependencies = [
  "serde_json",
  "tar",
  "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "casa-table-read"
+version = "0.13.0"
+dependencies = [
  "thiserror 2.0.18",
 ]
 
@@ -576,11 +584,18 @@ name = "casa-types"
 version = "0.13.0"
 dependencies = [
  "casa-measures-data",
+ "casa-values",
  "criterion",
- "ndarray",
- "num-complex",
  "sofars",
  "time",
+]
+
+[[package]]
+name = "casa-values"
+version = "0.13.0"
+dependencies = [
+ "ndarray",
+ "num-complex",
 ]
 
 [[package]]

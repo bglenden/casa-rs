@@ -115,7 +115,11 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 
 - Public API surface: `casa-types` and `casa-tables`.
 - Internal implementation crates:
+  - `casa-values` (`publish = false`)
   - `casa-aipsio` (`publish = false`)
+  - `casa-table-read` (`publish = false`)
   - `casa-test-support` (`publish = false`)
-- `casa-tables` keeps codec/storage helpers crate-internal.
+- `casa-values` owns the generic scalar/array/record model below measures/quanta.
+- `casa-table-read` owns the minimal read-only CASA table loader shared by runtime data loaders.
+- `casa-tables` keeps the broader codec/storage/write path crate-internal.
 - `casa-aipsio` provides full AipsIO-style framing + `tAipsIO` parity demo/tests.

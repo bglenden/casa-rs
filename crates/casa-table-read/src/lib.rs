@@ -46,6 +46,9 @@ pub enum ColumnData {
     ArrayFloat64 { values: Vec<f64>, shape: Vec<i32> },
 }
 
+/// Decoded shape and values for one `double` array cell stored indirectly.
+pub type Float64ArrayCell = (Vec<i32>, Vec<f64>);
+
 /// A decoded plain table with a subset of supported column types.
 #[derive(Debug, Clone)]
 pub struct PlainTable {

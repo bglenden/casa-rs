@@ -14,11 +14,11 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use casa_table_read::{PlainTable, TableReadError};
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use tar::Archive;
 
-mod casacore_table;
 mod interp;
 mod observatory;
 mod parser;
@@ -26,7 +26,6 @@ mod parser;
 #[cfg(feature = "update")]
 pub mod update;
 
-use casacore_table::{PlainTable, TableReadError};
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
 
 const DEFAULT_MEASURES_ENV: &str = "CASA_RS_MEASURESPATH";
@@ -692,8 +691,8 @@ fn load_standard_igrf() -> Result<IgrfTable, MeasuresDataError> {
     let mut secular_variation = Vec::new();
     let mut nmax = 0usize;
 
-    for row in 0..table.row_count() {
-        years.push(decimal_year_from_mjd(mjd[row]));
+    for (row, mjd_value) in mjd.iter().copied().enumerate().take(table.row_count()) {
+        years.push(decimal_year_from_mjd(mjd_value));
         let coeffs = table.array_f64_cell("COEF", row)?.to_vec();
         nmax = solve_igrf_nmax(coeffs.len())?;
         coeffs_by_year.push(coeffs);
@@ -790,7 +789,7 @@ fn mjd_from_calendar(year: i32, month: u32, day: u32) -> Option<f64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    let a = ((14 - month as i32) / 12) as i32;
+    let a = (14 - month as i32) / 12;
     let y = year + 4800 - a;
     let m = month as i32 + 12 * a - 3;
     let jdn = day as i32 + ((153 * m + 2) / 5) + 365 * y + y / 4 - y / 100 + y / 400 - 32045;

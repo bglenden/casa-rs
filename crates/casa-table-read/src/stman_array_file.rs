@@ -9,7 +9,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use super::TableReadError;
+use super::{Float64ArrayCell, TableReadError};
 
 #[derive(Debug)]
 pub struct StManArrayFileReader {
@@ -35,7 +35,7 @@ impl StManArrayFileReader {
     pub fn read_f64_array_at(
         &mut self,
         offset: i64,
-    ) -> Result<Option<(Vec<i32>, Vec<f64>)>, TableReadError> {
+    ) -> Result<Option<Float64ArrayCell>, TableReadError> {
         if offset == 0 {
             return Ok(None);
         }
