@@ -16,6 +16,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
+use casa_types::quanta::Quantity;
 use casa_types::{RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 
@@ -35,6 +36,7 @@ pub enum ExprValue {
     Bool(bool),
     Int(i64),
     Float(f64),
+    Quantity(Quantity),
     Complex(Complex64),
     String(String),
     /// Modified Julian Date stored as fractional days (MJD = JD − 2_400_000.5).
@@ -69,6 +71,9 @@ impl PartialEq for ExprValue {
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Int(a), Self::Int(b)) => a == b,
             (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::Quantity(a), Self::Quantity(b)) => {
+                a.unit().conformant(b.unit()) && a.get_si_value() == b.get_si_value()
+            }
             (Self::Complex(a), Self::Complex(b)) => a == b,
             (Self::String(a), Self::String(b)) => a == b,
             (Self::DateTime(a), Self::DateTime(b)) => a == b,
@@ -106,6 +111,7 @@ impl fmt::Display for ExprValue {
             Self::Bool(b) => write!(f, "{b}"),
             Self::Int(n) => write!(f, "{n}"),
             Self::Float(v) => write!(f, "{v}"),
+            Self::Quantity(q) => write!(f, "{q}"),
             Self::Complex(c) => write!(f, "({} + {}i)", c.re, c.im),
             Self::String(s) => write!(f, "{s}"),
             Self::DateTime(mjd) => write!(f, "MJD({mjd})"),
@@ -132,6 +138,7 @@ impl ExprValue {
             Self::Bool(_) => "Bool",
             Self::Int(_) => "Int",
             Self::Float(_) => "Float",
+            Self::Quantity(_) => "Quantity",
             Self::Complex(_) => "Complex",
             Self::String(_) => "String",
             Self::DateTime(_) => "DateTime",
@@ -282,6 +289,18 @@ impl ExprValue {
             (ExprValue::Bool(a), ExprValue::Bool(b)) => return Ok(a.cmp(b)),
             (ExprValue::Int(a), ExprValue::Int(b)) => return Ok(a.cmp(b)),
             (ExprValue::Float(a), ExprValue::Float(b)) => return Ok(a.total_cmp(b)),
+            (ExprValue::Quantity(a), ExprValue::Quantity(b)) => {
+                if !a.unit().conformant(b.unit()) {
+                    return Err(TaqlError::TypeError {
+                        message: format!(
+                            "cannot compare Quantity {} with Quantity {}",
+                            a.unit().name(),
+                            b.unit().name()
+                        ),
+                    });
+                }
+                return Ok(a.get_si_value().total_cmp(&b.get_si_value()));
+            }
             (ExprValue::String(a), ExprValue::String(b)) => return Ok(a.cmp(b)),
             (ExprValue::DateTime(a), ExprValue::DateTime(b)) => return Ok(a.total_cmp(b)),
             _ => {}
@@ -665,6 +684,9 @@ fn eval_literal(lit: &Literal) -> ExprValue {
     match lit {
         Literal::Int(n) => ExprValue::Int(*n),
         Literal::Float(v) => ExprValue::Float(*v),
+        Literal::Quantity { value, unit } => {
+            ExprValue::Quantity(Quantity::new(*value, unit).expect("parser validates units"))
+        }
         Literal::String(s) => ExprValue::String(s.clone()),
         Literal::Bool(b) => ExprValue::Bool(*b),
         Literal::Complex(c) => ExprValue::Complex(*c),
@@ -695,6 +717,10 @@ fn eval_unary(op: UnaryOp, val: ExprValue) -> Result<ExprValue, TaqlError> {
         UnaryOp::Negate => match val {
             ExprValue::Int(n) => Ok(ExprValue::Int(-n)),
             ExprValue::Float(v) => Ok(ExprValue::Float(-v)),
+            ExprValue::Quantity(q) => Ok(ExprValue::Quantity(Quantity::with_unit(
+                -q.value(),
+                q.unit().clone(),
+            ))),
             ExprValue::Complex(c) => Ok(ExprValue::Complex(-c)),
             other => Err(TaqlError::TypeError {
                 message: format!("cannot negate {}", other.type_name()),
@@ -1573,6 +1599,15 @@ mod tests {
             eval_expr(&Expr::Literal(Literal::Null), &ctx).unwrap(),
             ExprValue::Null
         );
+        let quantity = eval_expr(
+            &Expr::Literal(Literal::Quantity {
+                value: 2.0,
+                unit: "rad".to_string(),
+            }),
+            &ctx,
+        )
+        .unwrap();
+        assert!(matches!(quantity, ExprValue::Quantity(_)));
     }
 
     #[test]
@@ -1603,6 +1638,22 @@ mod tests {
             operand: Box::new(Expr::Literal(Literal::Int(5))),
         };
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), ExprValue::Int(-5));
+
+        let expr = Expr::Unary {
+            op: UnaryOp::Negate,
+            operand: Box::new(Expr::Literal(Literal::Quantity {
+                value: 5.0,
+                unit: "nT".to_string(),
+            })),
+        };
+        let result = eval_expr(&expr, &ctx).unwrap();
+        match result {
+            ExprValue::Quantity(q) => {
+                assert!((q.value() + 5.0).abs() < 1e-12);
+                assert_eq!(q.unit().name(), "nT");
+            }
+            other => panic!("expected Quantity, got {other:?}"),
+        }
     }
 
     #[test]

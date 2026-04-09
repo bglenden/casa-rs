@@ -24,6 +24,14 @@
 //! | `meas.doppler` / `meas.redshift` | Doppler convention conversion |
 //! | `meas.radvel` / `meas.radialvelocity` | Radial velocity conversion |
 //! | `meas.hadec` / `meas.azel` / `meas.app` | Direction shortcut conversions |
+//! | `meas.riset` / `meas.riseset` | Rise/set UTC datetimes for a source |
+//! | `meas.em` / `meas.earthmagnetic` / `meas.emxyz` | Earth-magnetic vector conversion |
+//! | `meas.emang` / `meas.emangles` | Earth-magnetic conversion as angles |
+//! | `meas.emlen` / `meas.emlength` | Earth-magnetic conversion as field strength |
+//! | `meas.igrf` / `meas.igrfxyz` | IGRF model field vector |
+//! | `meas.igrfang` / `meas.igrfangles` | IGRF model field as angles |
+//! | `meas.igrflen` / `meas.igrflength` | IGRF model field strength |
+//! | `meas.igrflos` / `meas.igrflong` | IGRF line-of-sight and point-longitude helpers |
 //! | `meas.j2000` | Shortcut: direction → J2000 |
 //! | `meas.galactic` | Shortcut: direction → GALACTIC |
 //! | `meas.b1950` | Shortcut: direction → B1950 |
@@ -37,20 +45,21 @@
 
 use std::str::FromStr;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::direction::{DirectionRef, MDirection, rise_set_times_from_name};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
+use casa_types::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic, calculate_igrf};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::position::{MPosition, PositionRef};
 use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_types::quanta::{Quantity, Unit};
 
 use super::error::TaqlError;
 use super::eval::ExprValue;
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
-const MEAS_HELP_URL: &str =
-    "See also section 'Special Measures functions' at http://casacore.github.io/casacore-notes/199.html";
+const MEAS_HELP_URL: &str = "See also section 'Special Measures functions' at http://casacore.github.io/casacore-notes/199.html";
 
 /// Dispatch a `meas.*` function call.
 ///
@@ -63,6 +72,15 @@ pub(crate) fn call_meas_function(name: &str, args: &[ExprValue]) -> Result<ExprV
         "help" => meas_help(args, name),
         "dir" | "direction" => meas_dir(args, name),
         "dircos" | "directioncosine" => meas_dircos(args, name),
+        "riset" | "riseset" => meas_riseset(args, name),
+        "em" | "earthmagnetic" | "emxyz" => meas_earthmag(args, EarthMagneticOutput::Xyz, name),
+        "emang" | "emangles" => meas_earthmag(args, EarthMagneticOutput::Angles, name),
+        "emlen" | "emlength" => meas_earthmag(args, EarthMagneticOutput::Length, name),
+        "igrf" | "igrfxyz" => meas_igrf(args, IgrfOutput::Xyz, name),
+        "igrfang" | "igrfangles" => meas_igrf(args, IgrfOutput::Angles, name),
+        "igrflen" | "igrflength" => meas_igrf(args, IgrfOutput::Length, name),
+        "igrflos" => meas_igrf(args, IgrfOutput::Los, name),
+        "igrflong" => meas_igrf(args, IgrfOutput::Long, name),
         "pos" | "position" => meas_pos(args, name),
         "itrfxyz" => meas_pos_extract(args, PositionRef::ITRF, PositionOutput::Xyz, name),
         "itrfll" | "itrflonlat" => {
@@ -107,6 +125,22 @@ enum PositionOutput {
     LonLat,
     Height,
     LonLatHeight,
+}
+
+#[derive(Clone, Copy)]
+enum EarthMagneticOutput {
+    Xyz,
+    Angles,
+    Length,
+}
+
+#[derive(Clone, Copy)]
+enum IgrfOutput {
+    Xyz,
+    Angles,
+    Length,
+    Los,
+    Long,
 }
 
 fn meas_help(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
@@ -241,22 +275,24 @@ fn help_direction(show_types: bool) -> String {
   MEAS.DIRCOS (type, direction [,epoch, position])\n\
        as DIR returning 3 direction cosines instead of 2 angles\n\
        DIRECTIONCOSINE is a synonym for DIRCOS\n\
-  MEAS.RISET (direction, epoch, position)        not yet implemented in Rust TaQL\n\
+  MEAS.RISET (direction, epoch, position)        rise and set UTC datetimes\n\
        RISESET is a synonym for RISET",
     );
     if show_types {
         out.push_str(
             "\n\nKnown source directions (names are case-insensitive):\n\
-  All sources in the bundled/runtime measures sources catalog\n\
+  Built-in source names resolved by the Rust measures layer\n\
   SUN   MOON  MERCURY  VENUS  MARS  JUPITER  SATURN  URANUS  NEPTUNE  PLUTO\n\
   CasA  CygA  HerA     HydA   PerA  TauA     VirA\n\
+  ZENITH returns the local zenith in AZEL.\n\
  In function RISET type SUN can have a suffix -XX where XX can be (default -UR):\n\
    C    center touches horizon             CR  center with refraction\n\
    U    upper edge touches horizon         UR  upper edge with refraction\n\
    L    lower edge touches horizon         LR  lower edge with refraction\n\
    CT   civil twilight darkness (-6 deg)   NT  nautical twilight darkness (-12)\n\
    AT   amateur astronomy twilight (-15)   ST  scientific astronomy twilight (-18)\n\
- The first 6 suffixes can also be used with MOON.\n\n",
+ The first 6 suffixes can also be used with MOON.\n\
+ External measures source-catalog names remain deferred in Rust.\n\n",
         );
         let direction_types: Vec<&str> = DirectionRef::ALL.iter().map(|r| r.as_str()).collect();
         append_known_types(&mut out, "Known direction types:", &direction_types);
@@ -267,26 +303,34 @@ fn help_direction(show_types: bool) -> String {
 fn help_earth_magnetic(show_types: bool) -> String {
     let mut out = String::from(
         "EarthMagnetic conversion functions:\n\
-  MEAS.EM (type, em, epoch, position)            planned, not yet implemented in Rust TaQL\n\
+  MEAS.EM (type, em, epoch, position)            convert em value to given type as xyz\n\
        EARTHMAGNETIC and EMXYZ are synonyms for EM\n\
-  MEAS.EMANG (type, em, epoch, position)         planned, not yet implemented in Rust TaQL\n\
+  MEAS.EMANG (type, em, epoch, position)         convert and return as angles\n\
        EMANGLES is a synonym for EMANG\n\
-  MEAS.EMLEN (type, em, epoch, position)         planned, not yet implemented in Rust TaQL\n\
+  MEAS.EMLEN (type, em, epoch, position)         convert and return as flux density\n\
        EMLENGTH is a synonym for EMLEN\n\
   MEAS.IGRF (type, height, direction, epoch, position)\n\
-       planned, not yet implemented in Rust TaQL\n\
+       IGRF model value\n\
        IGRFXYZ is a synonym for IGRF\n\
-  MEAS.IGRFANG (t, h, d, e, p)                   planned, not yet implemented in Rust TaQL\n\
+  MEAS.IGRFANG (t, h, d, e, p)                   IGRF model angles in ITRF\n\
        IGRFANGLES is a synonym for IGRFANG\n\
-  MEAS.IGRFLEN (t, h, d, e, p)                   planned, not yet implemented in Rust TaQL\n\
+  MEAS.IGRFLEN (t, h, d, e, p)                   IGRF model flux density\n\
        IGRFLENGTH is a synonym for IGRFLEN\n\
-  MEAS.IGRFLOS (h, d, e, p)                      planned, not yet implemented in Rust TaQL\n\
-  MEAS.IGRFLONG (h, d, e, p)                     planned, not yet implemented in Rust TaQL",
+  MEAS.IGRFLOS (h, d, e, p)                      IGRF value along line-of-sight\n\
+  MEAS.IGRFLONG (h, d, e, p)                     longitude of calculation point",
     );
     if show_types {
+        out.push_str("\n\nKnown EarthMagnetic types:\n");
+        let earthmag_types: Vec<&str> = EarthMagneticRef::ALL
+            .iter()
+            .filter(|r| **r != EarthMagneticRef::IGRF)
+            .map(|r| r.as_str())
+            .collect();
+        append_known_types(&mut out, "Known EarthMagnetic types:", &earthmag_types);
         out.push_str(
-            "\n\nEarth-magnetic and IGRF helpers remain deferred in the Rust measures layer.\n\
-Their names are listed here for CASA/casacore discoverability, but they do not evaluate yet.",
+            "\n\nExplicit EarthMagnetic values can be given as numeric XYZ vectors or as\n\
+angle, angle, length scalars when TaQL quantities provide units (for example 0.3rad,\n\
+-0.2rad, 50000nT). Compound units should use quoted quantity syntax such as 1 'km/s'.",
         );
     }
     out
@@ -396,20 +440,18 @@ fn any_null(args: &[ExprValue]) -> bool {
 ///
 /// `extra` is the slice of optional arguments after the required ones.
 /// The interpretation depends on the calling function:
-/// - For direction/frequency/radvel: `[epoch, px, py, pz]`
-fn build_frame_with_epoch_pos(extra: &[ExprValue]) -> Result<MeasFrame, TaqlError> {
+/// - For direction UDFs: `[epoch, position]`
+/// - For numeric helpers: `[epoch, px, py, pz]`
+fn build_frame_with_epoch_pos(extra: &[ExprValue], fn_name: &str) -> Result<MeasFrame, TaqlError> {
     let mut frame = MeasFrame::new();
     if !extra.is_empty() {
-        let epoch_mjd = extra[0].to_float()?;
+        let epoch_mjd = expr_to_mjd_days(&extra[0], fn_name)?;
         frame = frame
             .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
             .with_bundled_eop();
     }
-    if extra.len() >= 4 {
-        let px = extra[1].to_float()?;
-        let py = extra[2].to_float()?;
-        let pz = extra[3].to_float()?;
-        frame = frame.with_position(MPosition::new_itrf(px, py, pz));
+    if extra.len() > 1 {
+        frame = frame.with_position(parse_position_input(&extra[1..], fn_name)?);
     }
     Ok(frame)
 }
@@ -420,23 +462,79 @@ fn build_frame_with_epoch_pos(extra: &[ExprValue]) -> Result<MeasFrame, TaqlErro
 fn build_frame_with_dir_epoch_pos(extra: &[ExprValue]) -> Result<MeasFrame, TaqlError> {
     let mut frame = MeasFrame::new();
     if extra.len() >= 2 {
-        let lon = extra[0].to_float()?;
-        let lat = extra[1].to_float()?;
+        let lon = expr_to_angle_rad(&extra[0], "meas frame direction")?;
+        let lat = expr_to_angle_rad(&extra[1], "meas frame direction")?;
         frame = frame.with_direction(MDirection::from_angles(lon, lat, DirectionRef::J2000));
     }
     if extra.len() >= 3 {
-        let epoch_mjd = extra[2].to_float()?;
+        let epoch_mjd = expr_to_mjd_days(&extra[2], "meas frame epoch")?;
         frame = frame
             .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
             .with_bundled_eop();
     }
-    if extra.len() >= 6 {
-        let px = extra[3].to_float()?;
-        let py = extra[4].to_float()?;
-        let pz = extra[5].to_float()?;
-        frame = frame.with_position(MPosition::new_itrf(px, py, pz));
+    if extra.len() > 3 {
+        frame = frame.with_position(parse_position_input(&extra[3..], "meas frame")?);
     }
     Ok(frame)
+}
+
+fn expr_as_quantity(
+    value: &ExprValue,
+    default_unit: &str,
+    fn_name: &str,
+) -> Result<Quantity, TaqlError> {
+    match value {
+        ExprValue::Quantity(q) => Ok(q.clone()),
+        _ => Quantity::new(value.to_float()?, default_unit).map_err(|e| TaqlError::TypeError {
+            message: format!("{fn_name}: {e}"),
+        }),
+    }
+}
+
+fn expr_to_unit_value(
+    value: &ExprValue,
+    default_unit: &str,
+    target_unit: &str,
+    what: &str,
+    fn_name: &str,
+) -> Result<f64, TaqlError> {
+    let quantity = expr_as_quantity(value, default_unit, fn_name)?;
+    let target = Unit::new(target_unit).map_err(|e| TaqlError::TypeError {
+        message: format!("{fn_name}: {e}"),
+    })?;
+    quantity
+        .convert(&target)
+        .map(|converted| converted.value())
+        .map_err(|_| TaqlError::TypeError {
+            message: format!(
+                "{fn_name}: expected {what} with units conformant to {target_unit}, got {}",
+                quantity.unit().name()
+            ),
+        })
+}
+
+fn expr_to_angle_rad(value: &ExprValue, fn_name: &str) -> Result<f64, TaqlError> {
+    expr_to_unit_value(value, "rad", "rad", "angle", fn_name)
+}
+
+fn expr_to_length_m(value: &ExprValue, fn_name: &str) -> Result<f64, TaqlError> {
+    expr_to_unit_value(value, "m", "m", "length", fn_name)
+}
+
+fn expr_to_flux_nt(value: &ExprValue, fn_name: &str) -> Result<f64, TaqlError> {
+    expr_to_unit_value(value, "nT", "nT", "flux density", fn_name)
+}
+
+fn expr_to_frequency_hz(value: &ExprValue, fn_name: &str) -> Result<f64, TaqlError> {
+    expr_to_unit_value(value, "Hz", "Hz", "frequency", fn_name)
+}
+
+fn expr_to_radial_velocity_ms(value: &ExprValue, fn_name: &str) -> Result<f64, TaqlError> {
+    expr_to_unit_value(value, "m/s", "m/s", "radial velocity", fn_name)
+}
+
+fn expr_to_mjd_days(value: &ExprValue, fn_name: &str) -> Result<f64, TaqlError> {
+    expr_to_unit_value(value, "d", "d", "epoch", fn_name)
 }
 
 fn parse_position_input(args: &[ExprValue], fn_name: &str) -> Result<MPosition, TaqlError> {
@@ -448,18 +546,23 @@ fn parse_position_input(args: &[ExprValue], fn_name: &str) -> Result<MPosition, 
             })
         }
         [x, y, z] => Ok(MPosition::new_itrf(
-            x.to_float()?,
-            y.to_float()?,
-            z.to_float()?,
+            expr_to_length_m(x, fn_name)?,
+            expr_to_length_m(y, fn_name)?,
+            expr_to_length_m(z, fn_name)?,
         )),
         [x, y, z, src_ref] => {
             let src: PositionRef = parse_ref(src_ref, fn_name)?;
-            let x = x.to_float()?;
-            let y = y.to_float()?;
-            let z = z.to_float()?;
             Ok(match src {
-                PositionRef::ITRF => MPosition::new_itrf(x, y, z),
-                PositionRef::WGS84 => MPosition::new_wgs84(x, y, z),
+                PositionRef::ITRF => MPosition::new_itrf(
+                    expr_to_length_m(x, fn_name)?,
+                    expr_to_length_m(y, fn_name)?,
+                    expr_to_length_m(z, fn_name)?,
+                ),
+                PositionRef::WGS84 => MPosition::new_wgs84(
+                    expr_to_angle_rad(x, fn_name)?,
+                    expr_to_angle_rad(y, fn_name)?,
+                    expr_to_length_m(z, fn_name)?,
+                ),
             })
         }
         _ => Err(TaqlError::ArgumentCount {
@@ -475,7 +578,20 @@ fn parse_doppler_input(
     ref_arg: Option<&ExprValue>,
     fn_name: &str,
 ) -> Result<MDoppler, TaqlError> {
-    let value = value_arg.to_float()?;
+    let value = match value_arg {
+        ExprValue::Quantity(q) => {
+            let target = Unit::new("m/s").expect("valid unit");
+            q.convert(&target)
+                .map(|converted| converted.value())
+                .map_err(|_| TaqlError::TypeError {
+                    message: format!(
+                        "{fn_name}: quantity doppler input must be a radial velocity, got {}",
+                        q.unit().name()
+                    ),
+                })?
+        }
+        _ => value_arg.to_float()?,
+    };
     let refer = if let Some(arg) = ref_arg {
         parse_ref::<DopplerRef>(arg, fn_name)?
     } else {
@@ -490,9 +606,231 @@ fn parse_radvel_input(
     fn_name: &str,
 ) -> Result<MRadialVelocity, TaqlError> {
     Ok(MRadialVelocity::new(
-        value_arg.to_float()?,
+        expr_to_radial_velocity_ms(value_arg, fn_name)?,
         parse_ref::<RadialVelocityRef>(ref_arg, fn_name)?,
     ))
+}
+
+enum ParsedDirectionInput {
+    Named(String),
+    Angles {
+        lon: f64,
+        lat: f64,
+        refer: DirectionRef,
+    },
+    Cosines {
+        xyz: [f64; 3],
+        refer: DirectionRef,
+    },
+}
+
+impl ParsedDirectionInput {
+    fn materialize(&self, frame: &MeasFrame) -> Result<MDirection, TaqlError> {
+        match self {
+            Self::Named(name) => {
+                MDirection::from_source_name(name, frame).map_err(|e| TaqlError::TypeError {
+                    message: e.to_string(),
+                })
+            }
+            Self::Angles { lon, lat, refer } => Ok(MDirection::from_angles(*lon, *lat, *refer)),
+            Self::Cosines { xyz, refer } => Ok(MDirection::from_cosines(*xyz, *refer)),
+        }
+    }
+}
+
+fn parse_direction_input(
+    args: &[ExprValue],
+    fn_name: &str,
+) -> Result<(ParsedDirectionInput, usize), TaqlError> {
+    let Some(first) = args.first() else {
+        return Err(TaqlError::ArgumentCount {
+            name: fn_name.to_string(),
+            expected: "direction argument".to_string(),
+            got: 0,
+        });
+    };
+
+    if let ExprValue::String(name) = first {
+        return Ok((ParsedDirectionInput::Named(name.clone()), 1));
+    }
+
+    if let ExprValue::Array(arr) = first {
+        let vals = extract_float_array(arr, fn_name)?;
+        let refer = if args.len() > 1 && matches!(args[1], ExprValue::String(_)) {
+            parse_ref(&args[1], fn_name)?
+        } else {
+            DirectionRef::J2000
+        };
+        return match vals.as_slice() {
+            [lon, lat] => Ok((
+                ParsedDirectionInput::Angles {
+                    lon: *lon,
+                    lat: *lat,
+                    refer,
+                },
+                if args.len() > 1 && matches!(args[1], ExprValue::String(_)) {
+                    2
+                } else {
+                    1
+                },
+            )),
+            [x, y, z] => Ok((
+                ParsedDirectionInput::Cosines {
+                    xyz: [*x, *y, *z],
+                    refer,
+                },
+                if args.len() > 1 && matches!(args[1], ExprValue::String(_)) {
+                    2
+                } else {
+                    1
+                },
+            )),
+            _ => Err(TaqlError::TypeError {
+                message: format!("{fn_name}: direction array must contain 2 or 3 values"),
+            }),
+        };
+    }
+
+    if args.len() < 2 {
+        return Err(TaqlError::ArgumentCount {
+            name: fn_name.to_string(),
+            expected: "2..3 direction scalars".to_string(),
+            got: args.len(),
+        });
+    }
+    let lon = expr_to_angle_rad(&args[0], fn_name)?;
+    let lat = expr_to_angle_rad(&args[1], fn_name)?;
+    let refer = if args.len() > 2 && matches!(args[2], ExprValue::String(_)) {
+        parse_ref(&args[2], fn_name)?
+    } else {
+        DirectionRef::J2000
+    };
+    Ok((
+        ParsedDirectionInput::Angles { lon, lat, refer },
+        if args.len() > 2 && matches!(args[2], ExprValue::String(_)) {
+            3
+        } else {
+            2
+        },
+    ))
+}
+
+fn parse_earthmag_xyz_input(
+    args: &[ExprValue],
+    fn_name: &str,
+) -> Result<(EarthMagneticParsedInput, EarthMagneticRef, usize), TaqlError> {
+    if args.is_empty() {
+        return Err(TaqlError::ArgumentCount {
+            name: fn_name.to_string(),
+            expected: "earth-magnetic vector".to_string(),
+            got: 0,
+        });
+    }
+
+    let (parsed, consumed) = match &args[0] {
+        ExprValue::Array(arr) => {
+            let vals = extract_float_array(arr, fn_name)?;
+            match vals.as_slice() {
+                [x, y, z] => (EarthMagneticParsedInput::Xyz([*x, *y, *z]), 1),
+                _ => {
+                    return Err(TaqlError::TypeError {
+                        message: format!(
+                            "{fn_name}: earth-magnetic vector array must contain 3 values"
+                        ),
+                    });
+                }
+            }
+        }
+        _ => {
+            if args.len() < 3 {
+                return Err(TaqlError::ArgumentCount {
+                    name: fn_name.to_string(),
+                    expected: "3 vector scalars".to_string(),
+                    got: args.len(),
+                });
+            }
+            parse_earthmag_scalars(args, fn_name)?
+        }
+    };
+
+    let src = if args.len() > consumed && matches!(args[consumed], ExprValue::String(_)) {
+        parse_ref(&args[consumed], fn_name)?
+    } else {
+        EarthMagneticRef::ITRF
+    };
+    Ok((
+        parsed,
+        src,
+        consumed
+            + if args.len() > consumed && matches!(args[consumed], ExprValue::String(_)) {
+                1
+            } else {
+                0
+            },
+    ))
+}
+
+enum EarthMagneticParsedInput {
+    Xyz([f64; 3]),
+    Angles {
+        lon_rad: f64,
+        lat_rad: f64,
+        length_nt: f64,
+    },
+}
+
+fn parse_earthmag_scalars(
+    args: &[ExprValue],
+    fn_name: &str,
+) -> Result<(EarthMagneticParsedInput, usize), TaqlError> {
+    let mode = match &args[0] {
+        ExprValue::Quantity(q) => {
+            let flux = Unit::new("T").expect("valid unit");
+            let angle = Unit::new("rad").expect("valid unit");
+            if q.unit().conformant(&flux) {
+                Some(true)
+            } else if q.unit().conformant(&angle) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    let parsed = match mode {
+        Some(true) => EarthMagneticParsedInput::Xyz([
+            expr_to_flux_nt(&args[0], fn_name)?,
+            expr_to_flux_nt(&args[1], fn_name)?,
+            expr_to_flux_nt(&args[2], fn_name)?,
+        ]),
+        Some(false) => EarthMagneticParsedInput::Angles {
+            lon_rad: expr_to_angle_rad(&args[0], fn_name)?,
+            lat_rad: expr_to_angle_rad(&args[1], fn_name)?,
+            length_nt: expr_to_flux_nt(&args[2], fn_name)?,
+        },
+        None => EarthMagneticParsedInput::Xyz([
+            args[0].to_float()?,
+            args[1].to_float()?,
+            args[2].to_float()?,
+        ]),
+    };
+
+    Ok((parsed, 3))
+}
+
+fn extract_float_array(
+    arr: &super::eval::ArrayValue,
+    fn_name: &str,
+) -> Result<Vec<f64>, TaqlError> {
+    arr.data
+        .iter()
+        .map(|value| {
+            value.to_float().map_err(|_| TaqlError::TypeError {
+                message: format!("{fn_name}: expected numeric array values"),
+            })
+        })
+        .collect()
 }
 
 fn casacore_mvposition_length(length_m: f64) -> f64 {
@@ -546,7 +884,7 @@ fn meas_epoch(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError>
         return Ok(ExprValue::Null);
     }
     let target: EpochRef = parse_ref(&args[0], fn_name)?;
-    let mjd = args[1].to_float()?;
+    let mjd = expr_to_mjd_days(&args[1], fn_name)?;
     let src: EpochRef = if args.len() == 3 {
         parse_ref(&args[2], fn_name)?
     } else {
@@ -581,7 +919,7 @@ fn meas_last(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
-    let mjd = args[0].to_float()?;
+    let mjd = expr_to_mjd_days(&args[0], fn_name)?;
     let position = parse_position_input(&args[1..], fn_name)?;
     let epoch = MEpoch::from_mjd(mjd, EpochRef::UTC);
     let frame = MeasFrame::new()
@@ -611,20 +949,35 @@ fn meas_last(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
 ///
 /// `Array([lon, lat])` — direction in the target frame (radians).
 fn meas_dir(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
-    check_arity_range(fn_name, args, 3, 8)?;
+    check_arity_range(fn_name, args, 2, 8)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
     let target: DirectionRef = parse_ref(&args[0], fn_name)?;
-    let lon = args[1].to_float()?;
-    let lat = args[2].to_float()?;
+    if let ExprValue::String(name) = &args[1] {
+        let frame = if args.len() > 2 {
+            build_frame_with_epoch_pos(&args[2..], fn_name)?
+        } else {
+            MeasFrame::new()
+        };
+        let dir =
+            MDirection::from_source_name(name, &frame).map_err(|e| measure_err(fn_name, e))?;
+        let converted = dir
+            .convert_to(target, &frame)
+            .map_err(|e| measure_err(fn_name, e))?;
+        return Ok(make_dir_result(&converted));
+    }
+
+    check_arity_range(fn_name, args, 3, 8)?;
+    let lon = expr_to_angle_rad(&args[1], fn_name)?;
+    let lat = expr_to_angle_rad(&args[2], fn_name)?;
     let src: DirectionRef = if args.len() >= 4 {
         parse_ref(&args[3], fn_name)?
     } else {
         DirectionRef::J2000
     };
     let frame = if args.len() > 4 {
-        build_frame_with_epoch_pos(&args[4..])?
+        build_frame_with_epoch_pos(&args[4..], fn_name)?
     } else {
         MeasFrame::new()
     };
@@ -638,20 +991,35 @@ fn meas_dir(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
 /// `meas.dircos(target_ref, lon, lat [, src_ref [, epoch, px, py, pz]])`
 /// returns direction cosines in the target frame.
 fn meas_dircos(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
-    check_arity_range(fn_name, args, 3, 8)?;
+    check_arity_range(fn_name, args, 2, 8)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
     let target: DirectionRef = parse_ref(&args[0], fn_name)?;
-    let lon = args[1].to_float()?;
-    let lat = args[2].to_float()?;
+    if let ExprValue::String(name) = &args[1] {
+        let frame = if args.len() > 2 {
+            build_frame_with_epoch_pos(&args[2..], fn_name)?
+        } else {
+            MeasFrame::new()
+        };
+        let dir =
+            MDirection::from_source_name(name, &frame).map_err(|e| measure_err(fn_name, e))?;
+        let converted = dir
+            .convert_to(target, &frame)
+            .map_err(|e| measure_err(fn_name, e))?;
+        return Ok(make_array_result(&converted.cosines()));
+    }
+
+    check_arity_range(fn_name, args, 3, 8)?;
+    let lon = expr_to_angle_rad(&args[1], fn_name)?;
+    let lat = expr_to_angle_rad(&args[2], fn_name)?;
     let src: DirectionRef = if args.len() >= 4 {
         parse_ref(&args[3], fn_name)?
     } else {
         DirectionRef::J2000
     };
     let frame = if args.len() > 4 {
-        build_frame_with_epoch_pos(&args[4..])?
+        build_frame_with_epoch_pos(&args[4..], fn_name)?
     } else {
         MeasFrame::new()
     };
@@ -668,21 +1036,36 @@ fn meas_dir_shortcut(
     target_name: &str,
     fn_name: &str,
 ) -> Result<ExprValue, TaqlError> {
-    check_arity_range(fn_name, args, 2, 7)?;
+    check_arity_range(fn_name, args, 1, 7)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
     let target: DirectionRef =
         DirectionRef::from_str(target_name).expect("hardcoded target must parse");
-    let lon = args[0].to_float()?;
-    let lat = args[1].to_float()?;
+    if let Some(ExprValue::String(name)) = args.first() {
+        let frame = if args.len() > 1 {
+            build_frame_with_epoch_pos(&args[1..], fn_name)?
+        } else {
+            MeasFrame::new()
+        };
+        let dir =
+            MDirection::from_source_name(name, &frame).map_err(|e| measure_err(fn_name, e))?;
+        let converted = dir
+            .convert_to(target, &frame)
+            .map_err(|e| measure_err(fn_name, e))?;
+        return Ok(make_dir_result(&converted));
+    }
+
+    check_arity_range(fn_name, args, 2, 7)?;
+    let lon = expr_to_angle_rad(&args[0], fn_name)?;
+    let lat = expr_to_angle_rad(&args[1], fn_name)?;
     let src: DirectionRef = if args.len() >= 3 {
         parse_ref(&args[2], fn_name)?
     } else {
         DirectionRef::J2000
     };
     let frame = if args.len() > 3 {
-        build_frame_with_epoch_pos(&args[3..])?
+        build_frame_with_epoch_pos(&args[3..], fn_name)?
     } else {
         MeasFrame::new()
     };
@@ -691,6 +1074,189 @@ fn meas_dir_shortcut(
         .convert_to(target, &frame)
         .map_err(|e| measure_err(fn_name, e))?;
     Ok(make_dir_result(&converted))
+}
+
+/// `meas.riset(direction, epoch, position)` / `meas.riseset(...)` — rise and
+/// set UTC datetimes for a source.
+fn meas_riseset(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+    if any_null(args) {
+        return Ok(ExprValue::Null);
+    }
+    if args.len() < 2 {
+        return Err(TaqlError::ArgumentCount {
+            name: fn_name.to_string(),
+            expected: "2..8".to_string(),
+            got: args.len(),
+        });
+    }
+
+    let riseset = if let ExprValue::String(name) = &args[0] {
+        let frame = build_frame_with_epoch_pos(&args[1..], fn_name)?;
+        rise_set_times_from_name(name, &frame).map_err(|e| measure_err(fn_name, e))?
+    } else {
+        if args.len() < 3 {
+            return Err(TaqlError::ArgumentCount {
+                name: fn_name.to_string(),
+                expected: "3..8".to_string(),
+                got: args.len(),
+            });
+        }
+        let lon = expr_to_angle_rad(&args[0], fn_name)?;
+        let lat = expr_to_angle_rad(&args[1], fn_name)?;
+        let (src, tail_start) = if args.len() >= 4 && matches!(args[2], ExprValue::String(_)) {
+            (parse_ref(&args[2], fn_name)?, 3)
+        } else {
+            (DirectionRef::J2000, 2)
+        };
+        let frame = build_frame_with_epoch_pos(&args[tail_start..], fn_name)?;
+        let dir = MDirection::from_angles(lon, lat, src);
+        dir.rise_set_times(&frame)
+            .map_err(|e| measure_err(fn_name, e))?
+    };
+
+    Ok(make_datetime_array_result(&[
+        riseset.rise_mjd,
+        riseset.set_mjd,
+    ]))
+}
+
+/// `meas.em*` — explicit Earth-magnetic vector conversion.
+///
+/// Explicit Earth-magnetic inputs follow casacore's unit-driven split between
+/// XYZ flux-density triples and angle/angle/length triples when TaQL quantity
+/// literals carry units.
+fn meas_earthmag(
+    args: &[ExprValue],
+    output: EarthMagneticOutput,
+    fn_name: &str,
+) -> Result<ExprValue, TaqlError> {
+    check_arity_range(fn_name, args, 1, 9)?;
+    if any_null(args) {
+        return Ok(ExprValue::Null);
+    }
+
+    let (target, start) = if let Some(ExprValue::String(value)) = args.first() {
+        match EarthMagneticRef::from_str(value) {
+            Ok(target) => {
+                if target == EarthMagneticRef::IGRF {
+                    return Err(TaqlError::TypeError {
+                        message: format!(
+                            "{fn_name}: IGRF cannot be used as an explicit target; use meas.igrf*"
+                        ),
+                    });
+                }
+                (target, 1)
+            }
+            Err(_) => (EarthMagneticRef::ITRF, 0),
+        }
+    } else {
+        (EarthMagneticRef::ITRF, 0)
+    };
+
+    let (parsed, src, consumed) = parse_earthmag_xyz_input(&args[start..], fn_name)?;
+    if src == EarthMagneticRef::IGRF {
+        return Err(TaqlError::TypeError {
+            message: format!(
+                "{fn_name}: source EarthMagnetic reference cannot be IGRF; use meas.igrf*"
+            ),
+        });
+    }
+
+    let frame = if args.len() > start + consumed {
+        build_frame_with_epoch_pos(&args[start + consumed..], fn_name)?
+    } else {
+        MeasFrame::new()
+    };
+    let field = match parsed {
+        EarthMagneticParsedInput::Xyz(xyz) => {
+            MEarthMagnetic::from_xyz_nt(xyz[0], xyz[1], xyz[2], src)
+        }
+        EarthMagneticParsedInput::Angles {
+            lon_rad,
+            lat_rad,
+            length_nt,
+        } => MEarthMagnetic::from_angles(lon_rad, lat_rad, length_nt, src),
+    };
+    let converted = field
+        .convert_to(target, &frame)
+        .map_err(|e| measure_err(fn_name, e))?;
+    Ok(make_earthmag_result(&converted, output))
+}
+
+/// `meas.igrf*` — IGRF model helpers.
+fn meas_igrf(
+    args: &[ExprValue],
+    output: IgrfOutput,
+    fn_name: &str,
+) -> Result<ExprValue, TaqlError> {
+    check_arity_range(fn_name, args, 2, 8)?;
+    if any_null(args) {
+        return Ok(ExprValue::Null);
+    }
+
+    let (target, start) = match output {
+        IgrfOutput::Los | IgrfOutput::Long => {
+            if let Some(ExprValue::String(value)) = args.first() {
+                if EarthMagneticRef::from_str(value).is_ok() {
+                    (EarthMagneticRef::ITRF, 1)
+                } else {
+                    (EarthMagneticRef::ITRF, 0)
+                }
+            } else {
+                (EarthMagneticRef::ITRF, 0)
+            }
+        }
+        _ => {
+            if let Some(ExprValue::String(value)) = args.first() {
+                match EarthMagneticRef::from_str(value) {
+                    Ok(target) => {
+                        if target == EarthMagneticRef::IGRF {
+                            return Err(TaqlError::TypeError {
+                                message: format!(
+                                    "{fn_name}: IGRF cannot be used as an output frame"
+                                ),
+                            });
+                        }
+                        (target, 1)
+                    }
+                    Err(_) => (EarthMagneticRef::ITRF, 0),
+                }
+            } else {
+                (EarthMagneticRef::ITRF, 0)
+            }
+        }
+    };
+
+    let height_m = expr_to_length_m(&args[start], fn_name)?;
+    let (direction_input, consumed) = parse_direction_input(&args[start + 1..], fn_name)?;
+    let frame = if args.len() > start + 1 + consumed {
+        build_frame_with_epoch_pos(&args[start + 1 + consumed..], fn_name)?
+    } else {
+        MeasFrame::new()
+    };
+    let direction = direction_input.materialize(&frame)?;
+    let sample =
+        calculate_igrf(height_m, &direction, &frame).map_err(|e| measure_err(fn_name, e))?;
+
+    match output {
+        IgrfOutput::Los => Ok(ExprValue::Float(sample.los_field_nt)),
+        IgrfOutput::Long => Ok(ExprValue::Float(sample.longitude_rad)),
+        _ => {
+            let field = sample
+                .field
+                .convert_to(target, &frame)
+                .map_err(|e| measure_err(fn_name, e))?;
+            Ok(make_earthmag_result(
+                &field,
+                match output {
+                    IgrfOutput::Xyz => EarthMagneticOutput::Xyz,
+                    IgrfOutput::Angles => EarthMagneticOutput::Angles,
+                    IgrfOutput::Length => EarthMagneticOutput::Length,
+                    IgrfOutput::Los | IgrfOutput::Long => unreachable!(),
+                },
+            ))
+        }
+    }
 }
 
 /// `meas.pos(target_ref, x, y, z [, src_ref])` — position conversion.
@@ -790,7 +1356,7 @@ fn meas_freq(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
         return Ok(ExprValue::Null);
     }
     let target: FrequencyRef = parse_ref(&args[0], fn_name)?;
-    let hz = args[1].to_float()?;
+    let hz = expr_to_frequency_hz(&args[1], fn_name)?;
     let src: FrequencyRef = if args.len() >= 3 {
         parse_ref(&args[2], fn_name)?
     } else {
@@ -831,7 +1397,7 @@ fn meas_rest(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
-    let hz = args[0].to_float()?;
+    let hz = expr_to_frequency_hz(&args[0], fn_name)?;
     let src: FrequencyRef = parse_ref(&args[1], fn_name)?;
     if src == FrequencyRef::REST {
         return Err(TaqlError::TypeError {
@@ -876,7 +1442,7 @@ fn meas_shift(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError>
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
-    let hz = args[0].to_float()?;
+    let hz = expr_to_frequency_hz(&args[0], fn_name)?;
     let _src: FrequencyRef = parse_ref(&args[1], fn_name)?;
     let doppler = parse_doppler_input(&args[2], args.get(3), fn_name)?;
     Ok(ExprValue::Float(doppler.shift_frequency_hz(hz)))
@@ -937,7 +1503,7 @@ fn meas_radvel(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError
         return Ok(ExprValue::Null);
     }
     let target: RadialVelocityRef = parse_ref(&args[0], fn_name)?;
-    let ms = args[1].to_float()?;
+    let ms = expr_to_radial_velocity_ms(&args[1], fn_name)?;
     let src: RadialVelocityRef = if args.len() >= 3 {
         parse_ref(&args[2], fn_name)?
     } else {
@@ -960,6 +1526,17 @@ fn make_dir_result(dir: &MDirection) -> ExprValue {
     make_array2_result(dir.longitude_rad(), dir.latitude_rad())
 }
 
+fn make_earthmag_result(field: &MEarthMagnetic, output: EarthMagneticOutput) -> ExprValue {
+    match output {
+        EarthMagneticOutput::Xyz => make_array_result(&field.xyz_nt()),
+        EarthMagneticOutput::Angles => {
+            let (lon, lat) = field.angles_rad();
+            make_array2_result(lon, lat)
+        }
+        EarthMagneticOutput::Length => ExprValue::Float(field.length_nt()),
+    }
+}
+
 fn make_array2_result(v0: f64, v1: f64) -> ExprValue {
     make_array_result(&[v0, v1])
 }
@@ -971,14 +1548,37 @@ fn make_array_result(values: &[f64]) -> ExprValue {
     })
 }
 
+fn make_datetime_array_result(values: &[f64]) -> ExprValue {
+    ExprValue::Array(super::eval::ArrayValue {
+        shape: vec![values.len()],
+        data: values.iter().copied().map(ExprValue::DateTime).collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_types::quanta::Quantity;
     fn s(val: &str) -> ExprValue {
         ExprValue::String(val.to_string())
     }
     fn f(val: f64) -> ExprValue {
         ExprValue::Float(val)
+    }
+    fn q(val: f64, unit: &str) -> ExprValue {
+        ExprValue::Quantity(Quantity::new(val, unit).unwrap())
+    }
+    fn extract_datetime_array(val: &ExprValue) -> [f64; 2] {
+        match val {
+            ExprValue::Array(arr) => {
+                assert_eq!(arr.shape, vec![2]);
+                match (&arr.data[0], &arr.data[1]) {
+                    (ExprValue::DateTime(a), ExprValue::DateTime(b)) => [*a, *b],
+                    other => panic!("expected DateTime pair, got {other:?}"),
+                }
+            }
+            other => panic!("expected Array, got {other:?}"),
+        }
     }
 
     // ── Epoch ────────────────────────────────────────────────────────
@@ -1153,6 +1753,222 @@ mod tests {
         let _ = extract_dir(&call_meas_function("meas.app", args).unwrap());
         let _ = extract_dir(&call_meas_function("meas.hadec", args).unwrap());
         let _ = extract_dir(&call_meas_function("meas.azel", args).unwrap());
+    }
+
+    #[test]
+    fn help_without_topic_lists_sections() {
+        let result = call_meas_function("meas.help", &[]).unwrap();
+        let text = match result {
+            ExprValue::String(text) => text,
+            other => panic!("expected String, got {other:?}"),
+        };
+        assert!(text.contains("Position conversion functions:"));
+        assert!(text.contains("Frequency conversion functions:"));
+        assert!(text.contains("Doppler conversion functions:"));
+        assert!(text.contains("MEAS.RISET"));
+        assert!(text.contains(MEAS_HELP_URL));
+    }
+
+    #[test]
+    fn help_frequency_topic_includes_rest_and_shift_aliases() {
+        let result = call_meas_function("meas.help", &[s("freq")]).unwrap();
+        let text = match result {
+            ExprValue::String(text) => text,
+            other => panic!("expected String, got {other:?}"),
+        };
+        assert!(text.contains("MEAS.FREQ"));
+        assert!(text.contains("MEAS.REST"));
+        assert!(text.contains("MEAS.SHIFTFREQ"));
+        assert!(text.contains("Known frequency types:"));
+    }
+
+    #[test]
+    fn help_earthmag_topic_mentions_quantity_support() {
+        let result = call_meas_function("meas.help", &[s("em")]).unwrap();
+        let text = match result {
+            ExprValue::String(text) => text,
+            other => panic!("expected String, got {other:?}"),
+        };
+        assert!(text.contains("MEAS.EM"));
+        assert!(text.contains("MEAS.IGRF"));
+        assert!(text.contains("Known EarthMagnetic types:"));
+        assert!(text.contains("angle, angle, length scalars"));
+        assert!(text.contains("1 'km/s'"));
+    }
+
+    #[test]
+    fn help_unknown_topic_reports_error_text() {
+        let result = call_meas_function("meas.help", &[s("bogus")]).unwrap();
+        let text = match result {
+            ExprValue::String(text) => text,
+            other => panic!("expected String, got {other:?}"),
+        };
+        assert!(text.contains("bogus is an unknown meas subtype"));
+        assert!(!text.contains(MEAS_HELP_URL));
+    }
+
+    #[test]
+    fn named_direction_sources_work_in_shortcuts() {
+        let result = call_meas_function("meas.j2000", &[s("CasA")]).unwrap();
+        let (lon, lat) = extract_dir(&result);
+        assert!((lon - 6.123_487_680_622_104).abs() < 1e-12);
+        assert!((lat - 1.026_515_399_560_464_8).abs() < 1e-12);
+
+        let zenith = call_meas_function("meas.azel", &[s("ZENITH")]).unwrap();
+        let (az, el) = extract_dir(&zenith);
+        assert!(az.abs() < 1e-12);
+        assert!((el - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn riseset_returns_datetime_pair_for_named_source() {
+        let result =
+            call_meas_function("meas.riseset", &[s("CasA"), f(55418.55), s("WSRT")]).unwrap();
+        let [rise, set] = extract_datetime_array(&result);
+        assert!(rise >= 55418.0);
+        assert!(set > rise);
+    }
+
+    #[test]
+    fn earthmag_xyz_and_length_outputs_work() {
+        let pos = MPosition::new_wgs84(-1.878_283_2, 0.595_370_3, 2124.0)
+            .convert_to(PositionRef::ITRF)
+            .unwrap();
+        let [px, py, pz] = pos.values();
+
+        let xyz = call_meas_function(
+            "meas.emxyz",
+            &[
+                s("APP"),
+                f(-8.460_923_183_69e-9),
+                f(-8.036_417_537_78e-10),
+                f(5.269_434_391_97e-9),
+                s("B1950"),
+                f(51544.5),
+                f(px),
+                f(py),
+                f(pz),
+            ],
+        )
+        .unwrap();
+        assert!(extract_array3(&xyz).iter().all(|v| v.is_finite()));
+
+        let length = call_meas_function(
+            "meas.emlen",
+            &[
+                s("APP"),
+                f(-8.460_923_183_69e-9),
+                f(-8.036_417_537_78e-10),
+                f(5.269_434_391_97e-9),
+                s("B1950"),
+                f(51544.5),
+                f(px),
+                f(py),
+                f(pz),
+            ],
+        )
+        .unwrap();
+        let length = match length {
+            ExprValue::Float(v) => v,
+            other => panic!("expected Float, got {other:?}"),
+        };
+        assert!(length.is_finite());
+        assert!(length > 0.0);
+    }
+
+    #[test]
+    fn earthmag_angle_quantity_scalars_round_trip() {
+        let angles = call_meas_function(
+            "meas.emang",
+            &[q(0.3, "rad"), q(-0.2, "rad"), q(5.0e4, "nT")],
+        )
+        .unwrap();
+        let length = call_meas_function(
+            "meas.emlen",
+            &[q(0.3, "rad"), q(-0.2, "rad"), q(5.0e4, "nT")],
+        )
+        .unwrap();
+
+        let arr = match angles {
+            ExprValue::Array(arr) => arr,
+            other => panic!("expected angle array, got {other:?}"),
+        };
+        assert_eq!(arr.shape, vec![2]);
+        let lon = arr.data[0].to_float().unwrap();
+        let lat = arr.data[1].to_float().unwrap();
+        assert!((lon - 0.3).abs() < 1e-12);
+        assert!((lat + 0.2).abs() < 1e-12);
+        match length {
+            ExprValue::Float(v) => assert!((v - 5.0e4).abs() < 1e-9),
+            other => panic!("expected length float, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn igrf_outputs_work_for_zenith() {
+        let xyz = call_meas_function(
+            "meas.igrfxyz",
+            &[
+                f(0.0),
+                f(0.0),
+                f(std::f64::consts::FRAC_PI_2),
+                s("AZEL"),
+                f(51544.5),
+                s("VLA"),
+            ],
+        )
+        .unwrap();
+        assert!(extract_array3(&xyz).iter().all(|v| v.is_finite()));
+
+        let angles = call_meas_function(
+            "meas.igrfang",
+            &[
+                f(0.0),
+                f(0.0),
+                f(std::f64::consts::FRAC_PI_2),
+                s("AZEL"),
+                f(51544.5),
+                s("VLA"),
+            ],
+        )
+        .unwrap();
+        assert!(extract_array2(&angles).iter().all(|v| v.is_finite()));
+
+        let los = call_meas_function(
+            "meas.igrflos",
+            &[
+                f(0.0),
+                f(0.0),
+                f(std::f64::consts::FRAC_PI_2),
+                s("AZEL"),
+                f(51544.5),
+                s("VLA"),
+            ],
+        )
+        .unwrap();
+        let los = match los {
+            ExprValue::Float(v) => v,
+            other => panic!("expected Float, got {other:?}"),
+        };
+        assert!(los.is_finite());
+
+        let long = call_meas_function(
+            "meas.igrflong",
+            &[
+                f(0.0),
+                f(0.0),
+                f(std::f64::consts::FRAC_PI_2),
+                s("AZEL"),
+                f(51544.5),
+                s("VLA"),
+            ],
+        )
+        .unwrap();
+        let long = match long {
+            ExprValue::Float(v) => v,
+            other => panic!("expected Float, got {other:?}"),
+        };
+        assert!(long.is_finite());
     }
 
     #[test]

@@ -109,6 +109,7 @@ fn expr_value_to_value(val: &ExprValue) -> Value {
         ExprValue::Bool(b) => Value::Scalar(ScalarValue::Bool(*b)),
         ExprValue::Int(n) => Value::Scalar(ScalarValue::Int64(*n)),
         ExprValue::Float(v) => Value::Scalar(ScalarValue::Float64(*v)),
+        ExprValue::Quantity(q) => Value::Scalar(ScalarValue::Float64(q.value())),
         ExprValue::Complex(c) => Value::Scalar(ScalarValue::Complex64(*c)),
         ExprValue::String(s) => Value::Scalar(ScalarValue::String(s.clone())),
         ExprValue::DateTime(v) => Value::Scalar(ScalarValue::Float64(*v)),
@@ -251,5 +252,81 @@ mod tests {
 
         let result = engine.materialize(&ctx, &[(0, &entry)], &mut rows);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn quantity_expression_materializes_as_numeric_scalar() {
+        let engine = VirtualTaQLColumnEngine;
+        let desc = make_col_desc("speed", "1 'km/s'");
+        let entry = make_plain_col_entry(0);
+        let mut rows = vec![RecordValue::default()];
+        let ctx = VirtualContext {
+            col_descs: &[desc],
+            rows: &rows.clone(),
+            table_path: Path::new("/tmp/test"),
+            nrrow: 1,
+        };
+
+        engine.materialize(&ctx, &[(0, &entry)], &mut rows).unwrap();
+        assert_eq!(
+            rows[0].get("speed"),
+            Some(&Value::Scalar(ScalarValue::Float64(1.0)))
+        );
+    }
+
+    #[test]
+    fn parse_and_eval_errors_are_reported() {
+        let engine = VirtualTaQLColumnEngine;
+        let entry = make_plain_col_entry(0);
+        let mut rows = vec![RecordValue::default()];
+
+        let parse_desc = make_col_desc("bad_parse", "flux +");
+        let parse_ctx = VirtualContext {
+            col_descs: &[parse_desc],
+            rows: &rows.clone(),
+            table_path: Path::new("/tmp/test"),
+            nrrow: 1,
+        };
+        assert!(
+            engine
+                .materialize(&parse_ctx, &[(0, &entry)], &mut rows)
+                .is_err()
+        );
+
+        let eval_desc = make_col_desc("bad_eval", "missing_col + 1");
+        let eval_ctx = VirtualContext {
+            col_descs: &[eval_desc],
+            rows: &rows.clone(),
+            table_path: Path::new("/tmp/test"),
+            nrrow: 1,
+        };
+        assert!(
+            engine
+                .materialize(&eval_ctx, &[(0, &entry)], &mut rows)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn expr_value_conversion_handles_quantity_and_fallback_cases() {
+        let quantity = expr_value_to_value(&ExprValue::Quantity(
+            casa_types::quanta::Quantity::new(2.5, "rad").unwrap(),
+        ));
+        assert_eq!(quantity, Value::Scalar(ScalarValue::Float64(2.5)));
+
+        let regex = expr_value_to_value(&ExprValue::Regex {
+            pattern: "a.*".to_string(),
+            flags: "i".to_string(),
+        });
+        assert_eq!(regex, Value::Scalar(ScalarValue::String("a.*".to_string())));
+
+        let array = expr_value_to_value(&ExprValue::Array(crate::taql::eval::ArrayValue {
+            shape: vec![2],
+            data: vec![ExprValue::Float(1.0), ExprValue::Float(2.0)],
+        }));
+        assert_eq!(array, Value::Scalar(ScalarValue::Bool(false)));
+
+        let null = expr_value_to_value(&ExprValue::Null);
+        assert_eq!(null, Value::Scalar(ScalarValue::Bool(false)));
     }
 }

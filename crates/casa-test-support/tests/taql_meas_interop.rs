@@ -13,12 +13,15 @@ use casa_tables::taql::ast::IndexStyle;
 use casa_tables::taql::eval::{EvalContext, ExprValue};
 use casa_tables::taql::functions::call_function;
 use casa_test_support::measures_interop::{
-    cpp_direction_convert, cpp_doppler_convert, cpp_eop_query, cpp_epoch_convert,
-    cpp_epoch_convert_with_frame, cpp_frequency_convert, cpp_frequency_convert_with_rv,
-    cpp_frequency_rest_with_doppler, cpp_frequency_shift_with_doppler, cpp_position_convert,
-    cpp_position_to_record, cpp_position_to_wgs_xyz, cpp_radvel_convert,
+    cpp_direction_convert, cpp_doppler_convert, cpp_earthmag_convert_angles, cpp_eop_query,
+    cpp_epoch_convert, cpp_epoch_convert_with_frame, cpp_frequency_convert,
+    cpp_frequency_convert_with_rv, cpp_frequency_rest_with_doppler,
+    cpp_frequency_shift_with_doppler, cpp_igrf_value, cpp_named_direction_convert,
+    cpp_position_convert, cpp_position_to_record, cpp_position_to_wgs_xyz, cpp_radvel_convert,
+    cpp_riseset,
 };
 use casa_types::RecordValue;
+use casa_types::quanta::Quantity;
 
 const J2000_MJD: f64 = 51544.5;
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -37,6 +40,9 @@ fn s(val: &str) -> ExprValue {
 }
 fn fl(val: f64) -> ExprValue {
     ExprValue::Float(val)
+}
+fn q(val: f64, unit: &str) -> ExprValue {
+    ExprValue::Quantity(Quantity::new(val, unit).unwrap())
 }
 
 fn eval_meas(name: &str, args: &[ExprValue]) -> ExprValue {
@@ -89,6 +95,19 @@ fn extract_array3(val: &ExprValue) -> [f64; 3] {
                 extract_float(&arr.data[1]),
                 extract_float(&arr.data[2]),
             ]
+        }
+        other => panic!("expected Array, got {other:?}"),
+    }
+}
+
+fn extract_datetime_pair(val: &ExprValue) -> (f64, f64) {
+    match val {
+        ExprValue::Array(arr) => {
+            assert_eq!(arr.shape, vec![2]);
+            match (&arr.data[0], &arr.data[1]) {
+                (ExprValue::DateTime(a), ExprValue::DateTime(b)) => (*a, *b),
+                other => panic!("expected DateTime pair, got {other:?}"),
+            }
         }
         other => panic!("expected Array, got {other:?}"),
     }
@@ -339,6 +358,202 @@ fn itrfd_shortcut_matches_cpp() {
     assert!(
         close_angle(rust_lon, cpp_lon, 1e-6) && close(rust_lat, cpp_lat, 1e-6),
         "dir J2000→ITRF: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
+    );
+}
+
+#[test]
+fn named_source_fixed_direction_matches_cpp() {
+    let rust_result = eval_meas("meas.j2000", &[s("CasA")]);
+    let (rust_lon, rust_lat) = extract_dir(&rust_result);
+
+    let (cpp_lon, cpp_lat) =
+        cpp_named_direction_convert("CasA", "J2000", 0.0, 0.0, 0.0, 0.0).unwrap();
+
+    assert!(
+        close_angle(rust_lon, cpp_lon, 1e-12) && close(rust_lat, cpp_lat, 1e-12),
+        "dir CasA→J2000: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
+    );
+}
+
+#[test]
+fn named_source_sun_direction_matches_cpp() {
+    let rust_result = eval_meas("meas.dir", &[s("ITRF"), s("SUN"), fl(J2000_MJD), s("VLA")]);
+    let (rust_lon, rust_lat) = extract_dir(&rust_result);
+
+    let (cpp_lon, cpp_lat) =
+        cpp_named_direction_convert("SUN", "ITRF", J2000_MJD, VLA_LON, VLA_LAT, VLA_H).unwrap();
+
+    assert!(
+        close_angle(rust_lon, cpp_lon, 5e-4) && close(rust_lat, cpp_lat, 5e-4),
+        "dir SUN→ITRF: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
+    );
+}
+
+#[test]
+fn riseset_fixed_source_matches_cpp() {
+    let rust_result = eval_meas("meas.riseset", &[s("CasA"), fl(J2000_MJD), s("VLA")]);
+    let (rust_rise, rust_set) = extract_datetime_pair(&rust_result);
+
+    let (cpp_rise, cpp_set) = cpp_riseset("CasA", J2000_MJD, VLA_LON, VLA_LAT, VLA_H).unwrap();
+
+    let rise_diff_s = (rust_rise - cpp_rise).abs() * SECONDS_PER_DAY;
+    let set_diff_s = (rust_set - cpp_set).abs() * SECONDS_PER_DAY;
+    assert!(
+        rise_diff_s < 0.5 && set_diff_s < 0.5,
+        "riseset CasA: Rust=({rust_rise},{rust_set}), C++=({cpp_rise},{cpp_set}), diff=({rise_diff_s}s,{set_diff_s}s)"
+    );
+}
+
+#[test]
+fn riseset_sun_matches_cpp_with_reasonable_tolerance() {
+    let rust_result = eval_meas("meas.riseset", &[s("SUN"), fl(J2000_MJD), s("VLA")]);
+    let (rust_rise, rust_set) = extract_datetime_pair(&rust_result);
+
+    let (cpp_rise, cpp_set) = cpp_riseset("SUN", J2000_MJD, VLA_LON, VLA_LAT, VLA_H).unwrap();
+
+    let rise_diff_s = (rust_rise - cpp_rise).abs() * SECONDS_PER_DAY;
+    let set_diff_s = (rust_set - cpp_set).abs() * SECONDS_PER_DAY;
+    assert!(
+        rise_diff_s < 300.0 && set_diff_s < 300.0,
+        "riseset SUN: Rust=({rust_rise},{rust_set}), C++=({cpp_rise},{cpp_set}), diff=({rise_diff_s}s,{set_diff_s}s)"
+    );
+}
+
+// ── EarthMagnetic: Rust meas.em* / meas.igrf* vs C++ EarthMagnetic ──
+
+#[test]
+fn igrfxyz_matches_cpp() {
+    let rust_result = eval_meas(
+        "meas.igrfxyz",
+        &[
+            fl(0.0),
+            fl(0.0),
+            fl(std::f64::consts::FRAC_PI_2),
+            s("AZEL"),
+            fl(J2000_MJD),
+            s("VLA"),
+        ],
+    );
+    let rust_xyz = extract_array3(&rust_result);
+
+    let cpp_xyz = cpp_igrf_value(
+        "xyz",
+        Some("ITRF"),
+        0.0,
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+        "AZEL",
+        J2000_MJD,
+        VLA_LON,
+        VLA_LAT,
+        VLA_H,
+    )
+    .unwrap();
+
+    for i in 0..3 {
+        assert!(
+            close(rust_xyz[i], cpp_xyz[i], 75.0),
+            "igrfxyz[{i}]: Rust={}, C++={}",
+            rust_xyz[i],
+            cpp_xyz[i]
+        );
+    }
+}
+
+#[test]
+fn igrflos_matches_cpp() {
+    let rust_result = eval_meas(
+        "meas.igrflos",
+        &[
+            fl(0.0),
+            fl(0.0),
+            fl(std::f64::consts::FRAC_PI_2),
+            s("AZEL"),
+            fl(J2000_MJD),
+            s("VLA"),
+        ],
+    );
+    let rust_value = extract_float(&rust_result);
+
+    let cpp_value = cpp_igrf_value(
+        "los",
+        None,
+        0.0,
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+        "AZEL",
+        J2000_MJD,
+        VLA_LON,
+        VLA_LAT,
+        VLA_H,
+    )
+    .unwrap()[0];
+
+    assert!(
+        close(rust_value, cpp_value, 50.0),
+        "igrflos: Rust={rust_value}, C++={cpp_value}"
+    );
+}
+
+#[test]
+fn igrflong_matches_cpp() {
+    let rust_result = eval_meas(
+        "meas.igrflong",
+        &[
+            fl(0.0),
+            fl(0.0),
+            fl(std::f64::consts::FRAC_PI_2),
+            s("AZEL"),
+            fl(J2000_MJD),
+            s("VLA"),
+        ],
+    );
+    let rust_value = extract_float(&rust_result);
+
+    let cpp_value = cpp_igrf_value(
+        "long",
+        None,
+        0.0,
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+        "AZEL",
+        J2000_MJD,
+        VLA_LON,
+        VLA_LAT,
+        VLA_H,
+    )
+    .unwrap()[0];
+
+    assert!(
+        close_angle(rust_value, cpp_value, 2e-5),
+        "igrflong: Rust={rust_value}, C++={cpp_value}"
+    );
+}
+
+#[test]
+fn emang_quantity_scalars_match_cpp() {
+    let rust_result = eval_meas(
+        "meas.emang",
+        &[
+            s("J2000"),
+            q(0.35, "rad"),
+            q(-0.1, "rad"),
+            q(48_000.0, "nT"),
+            s("ITRF"),
+            fl(J2000_MJD),
+            s("VLA"),
+        ],
+    );
+    let (rust_lon, rust_lat) = extract_dir(&rust_result);
+
+    let (cpp_lon, cpp_lat) = cpp_earthmag_convert_angles(
+        0.35, -0.1, 48_000.0, "ITRF", "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
+    )
+    .unwrap();
+
+    assert!(
+        close_angle(rust_lon, cpp_lon, 1e-7) && close(rust_lat, cpp_lat, 1e-7),
+        "emang quantity scalars: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
     );
 }
 

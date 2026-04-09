@@ -15,6 +15,7 @@ casa-measures-data = { path = "../casa-measures-data" }
 ndarray.workspace = true
 num-complex.workspace = true
 sofars.workspace = true
+time = "0.3"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -104,6 +104,95 @@ unsafe extern "C" {
         lat_out: *mut f64,
     ) -> i32;
 
+    fn measures_shim_named_direction_convert(
+        source_name: *const std::ffi::c_char,
+        ref_out: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        lon_out: *mut f64,
+        lat_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_riseset(
+        source_name: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        rise_out: *mut f64,
+        set_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_earthmag_convert_xyz(
+        x_in: f64,
+        y_in: f64,
+        z_in: f64,
+        ref_in: *const std::ffi::c_char,
+        ref_out: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        x_out: *mut f64,
+        y_out: *mut f64,
+        z_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_earthmag_convert_angles(
+        lon_in: f64,
+        lat_in: f64,
+        length_nt: f64,
+        ref_in: *const std::ffi::c_char,
+        ref_out: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        lon_out: *mut f64,
+        lat_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_igrf_xyz(
+        ref_out: *const std::ffi::c_char,
+        height_m: f64,
+        dir_lon: f64,
+        dir_lat: f64,
+        dir_ref: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        x_out: *mut f64,
+        y_out: *mut f64,
+        z_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_igrf_los(
+        height_m: f64,
+        dir_lon: f64,
+        dir_lat: f64,
+        dir_ref: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        value_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_igrf_long(
+        height_m: f64,
+        dir_lon: f64,
+        dir_lat: f64,
+        dir_ref: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        value_out: *mut f64,
+    ) -> i32;
+
     fn measures_shim_bench_direction_convert(
         lon_start: f64,
         lat: f64,
@@ -540,6 +629,244 @@ pub fn cpp_direction_convert(
         Ok((lon_out, lat_out))
     } else {
         Err(format!("C++ direction_convert failed: rc={rc}"))
+    }
+}
+
+/// Convert a named source direction to a target frame using C++ casacore.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_named_direction_convert(
+    source_name: &str,
+    ref_out: &str,
+    epoch_mjd: f64,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<(f64, f64), String> {
+    let c_name = CString::new(source_name).unwrap();
+    let c_out = CString::new(ref_out).unwrap();
+    let mut lon_out: f64 = 0.0;
+    let mut lat_out: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_named_direction_convert(
+            c_name.as_ptr(),
+            c_out.as_ptr(),
+            epoch_mjd,
+            obs_lon,
+            obs_lat,
+            obs_h,
+            &mut lon_out,
+            &mut lat_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok((lon_out, lat_out))
+    } else {
+        Err(format!("C++ named_direction_convert failed: rc={rc}"))
+    }
+}
+
+/// Compute rise and set UTC MJDs for a named source using C++ casacore.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_riseset(
+    source_name: &str,
+    epoch_mjd: f64,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<(f64, f64), String> {
+    let c_name = CString::new(source_name).unwrap();
+    let mut rise_out: f64 = 0.0;
+    let mut set_out: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_riseset(
+            c_name.as_ptr(),
+            epoch_mjd,
+            obs_lon,
+            obs_lat,
+            obs_h,
+            &mut rise_out,
+            &mut set_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok((rise_out, set_out))
+    } else {
+        Err(format!("C++ riseset failed: rc={rc}"))
+    }
+}
+
+/// Convert an explicit Earth-magnetic vector between frames using C++ casacore.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_earthmag_convert_xyz(
+    xyz_in: [f64; 3],
+    ref_in: &str,
+    ref_out: &str,
+    epoch_mjd: f64,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<[f64; 3], String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let c_out = CString::new(ref_out).unwrap();
+    let mut xyz_out = [0.0f64; 3];
+
+    let rc = unsafe {
+        measures_shim_earthmag_convert_xyz(
+            xyz_in[0],
+            xyz_in[1],
+            xyz_in[2],
+            c_in.as_ptr(),
+            c_out.as_ptr(),
+            epoch_mjd,
+            obs_lon,
+            obs_lat,
+            obs_h,
+            &mut xyz_out[0],
+            &mut xyz_out[1],
+            &mut xyz_out[2],
+        )
+    };
+
+    if rc == 0 {
+        Ok(xyz_out)
+    } else {
+        Err(format!("C++ earthmag_convert_xyz failed: rc={rc}"))
+    }
+}
+
+/// Convert an explicit Earth-magnetic angle/length value between frames using C++ casacore.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_earthmag_convert_angles(
+    lon_in: f64,
+    lat_in: f64,
+    length_nt: f64,
+    ref_in: &str,
+    ref_out: &str,
+    epoch_mjd: f64,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<(f64, f64), String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let c_out = CString::new(ref_out).unwrap();
+    let mut lon_out = 0.0f64;
+    let mut lat_out = 0.0f64;
+
+    let rc = unsafe {
+        measures_shim_earthmag_convert_angles(
+            lon_in,
+            lat_in,
+            length_nt,
+            c_in.as_ptr(),
+            c_out.as_ptr(),
+            epoch_mjd,
+            obs_lon,
+            obs_lat,
+            obs_h,
+            &mut lon_out,
+            &mut lat_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok((lon_out, lat_out))
+    } else {
+        Err(format!("C++ earthmag_convert_angles failed: rc={rc}"))
+    }
+}
+
+/// Evaluate an IGRF helper using C++ casacore.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_igrf_value(
+    mode: &str,
+    ref_out: Option<&str>,
+    height_m: f64,
+    dir_lon: f64,
+    dir_lat: f64,
+    dir_ref: &str,
+    epoch_mjd: f64,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<Vec<f64>, String> {
+    let c_dir_ref = CString::new(dir_ref).unwrap();
+
+    match mode {
+        "xyz" => {
+            let c_out = CString::new(ref_out.unwrap_or("ITRF")).unwrap();
+            let mut xyz_out = [0.0f64; 3];
+            let rc = unsafe {
+                measures_shim_igrf_xyz(
+                    c_out.as_ptr(),
+                    height_m,
+                    dir_lon,
+                    dir_lat,
+                    c_dir_ref.as_ptr(),
+                    epoch_mjd,
+                    obs_lon,
+                    obs_lat,
+                    obs_h,
+                    &mut xyz_out[0],
+                    &mut xyz_out[1],
+                    &mut xyz_out[2],
+                )
+            };
+            if rc == 0 {
+                Ok(xyz_out.to_vec())
+            } else {
+                Err(format!("C++ igrf_xyz failed: rc={rc}"))
+            }
+        }
+        "los" => {
+            let mut value_out = 0.0f64;
+            let rc = unsafe {
+                measures_shim_igrf_los(
+                    height_m,
+                    dir_lon,
+                    dir_lat,
+                    c_dir_ref.as_ptr(),
+                    epoch_mjd,
+                    obs_lon,
+                    obs_lat,
+                    obs_h,
+                    &mut value_out,
+                )
+            };
+            if rc == 0 {
+                Ok(vec![value_out])
+            } else {
+                Err(format!("C++ igrf_los failed: rc={rc}"))
+            }
+        }
+        "long" => {
+            let mut value_out = 0.0f64;
+            let rc = unsafe {
+                measures_shim_igrf_long(
+                    height_m,
+                    dir_lon,
+                    dir_lat,
+                    c_dir_ref.as_ptr(),
+                    epoch_mjd,
+                    obs_lon,
+                    obs_lat,
+                    obs_h,
+                    &mut value_out,
+                )
+            };
+            if rc == 0 {
+                Ok(vec![value_out])
+            } else {
+                Err(format!("C++ igrf_long failed: rc={rc}"))
+            }
+        }
+        other => Err(format!("unknown IGRF mode: {other}")),
     }
 }
 

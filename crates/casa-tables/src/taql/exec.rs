@@ -705,6 +705,7 @@ fn execute_alter_table(
                 ExprValue::Bool(b) => Value::Scalar(ScalarValue::Bool(b)),
                 ExprValue::Int(n) => Value::Scalar(ScalarValue::Int64(n)),
                 ExprValue::Float(v) => Value::Scalar(ScalarValue::Float64(v)),
+                ExprValue::Quantity(q) => Value::Scalar(ScalarValue::Float64(q.value())),
                 ExprValue::String(s) => Value::Scalar(ScalarValue::String(s)),
                 _ => {
                     return Err(TaqlError::TypeError {
@@ -928,6 +929,10 @@ impl PartialEq for ExprValueKey {
             (ExprValue::Bool(a), ExprValue::Bool(b)) => a == b,
             (ExprValue::Int(a), ExprValue::Int(b)) => a == b,
             (ExprValue::Float(a), ExprValue::Float(b)) => a.to_bits() == b.to_bits(),
+            (ExprValue::Quantity(a), ExprValue::Quantity(b)) => {
+                a.unit().conformant(b.unit())
+                    && a.get_si_value().to_bits() == b.get_si_value().to_bits()
+            }
             (ExprValue::Complex(a), ExprValue::Complex(b)) => {
                 a.re.to_bits() == b.re.to_bits() && a.im.to_bits() == b.im.to_bits()
             }
@@ -947,6 +952,10 @@ impl std::hash::Hash for ExprValueKey {
             ExprValue::Bool(b) => b.hash(state),
             ExprValue::Int(n) => n.hash(state),
             ExprValue::Float(v) => v.to_bits().hash(state),
+            ExprValue::Quantity(q) => {
+                q.unit().name().hash(state);
+                q.get_si_value().to_bits().hash(state);
+            }
             ExprValue::Complex(c) => {
                 c.re.to_bits().hash(state);
                 c.im.to_bits().hash(state);
@@ -1069,6 +1078,10 @@ fn expr_value_to_literal(val: &ExprValue) -> Literal {
         ExprValue::Bool(b) => Literal::Bool(*b),
         ExprValue::Int(n) => Literal::Int(*n),
         ExprValue::Float(v) => Literal::Float(*v),
+        ExprValue::Quantity(q) => Literal::Quantity {
+            value: q.value(),
+            unit: q.unit().name().to_string(),
+        },
         ExprValue::Complex(c) => Literal::Complex(*c),
         ExprValue::String(s) => Literal::String(s.clone()),
         ExprValue::DateTime(v) => Literal::Float(*v),
@@ -1267,7 +1280,13 @@ fn expr_value_to_table_value(
                     (PrimitiveType::Float32, ExprValue::Float(v)) => {
                         ScalarValue::Float32(*v as f32)
                     }
+                    (PrimitiveType::Float32, ExprValue::Quantity(q)) => {
+                        ScalarValue::Float32(q.value() as f32)
+                    }
                     (PrimitiveType::Float64, ExprValue::Float(v)) => ScalarValue::Float64(*v),
+                    (PrimitiveType::Float64, ExprValue::Quantity(q)) => {
+                        ScalarValue::Float64(q.value())
+                    }
                     (PrimitiveType::Float64, ExprValue::Int(n)) => ScalarValue::Float64(*n as f64),
                     (PrimitiveType::String, ExprValue::String(s)) => ScalarValue::String(s.clone()),
                     (PrimitiveType::Int32, ExprValue::Float(v)) => ScalarValue::Int32(*v as i32),
@@ -1286,6 +1305,7 @@ fn expr_value_to_value_untyped(val: &ExprValue) -> Value {
         ExprValue::Bool(b) => Value::Scalar(ScalarValue::Bool(*b)),
         ExprValue::Int(n) => Value::Scalar(ScalarValue::Int64(*n)),
         ExprValue::Float(v) => Value::Scalar(ScalarValue::Float64(*v)),
+        ExprValue::Quantity(q) => Value::Scalar(ScalarValue::Float64(q.value())),
         ExprValue::Complex(c) => Value::Scalar(ScalarValue::Complex64(*c)),
         ExprValue::String(s) => Value::Scalar(ScalarValue::String(s.clone())),
         ExprValue::DateTime(v) => Value::Scalar(ScalarValue::Float64(*v)),
@@ -1337,12 +1357,13 @@ fn expr_array_to_value(arr: &super::eval::ArrayValue) -> Value {
                 ArrayD::from_shape_vec(shape, data).unwrap_or_default(),
             ))
         }
-        ExprValue::Float(_) | ExprValue::DateTime(_) => {
+        ExprValue::Float(_) | ExprValue::Quantity(_) | ExprValue::DateTime(_) => {
             let data: Vec<f64> = arr
                 .data
                 .iter()
                 .map(|e| match e {
                     ExprValue::Float(v) | ExprValue::DateTime(v) => *v,
+                    ExprValue::Quantity(q) => q.value(),
                     ExprValue::Int(n) => *n as f64,
                     _ => 0.0,
                 })
@@ -2075,5 +2096,53 @@ mod tests {
         let displayed = stmt.to_string();
         let reparsed = crate::taql::parse(&displayed).unwrap();
         assert!(matches!(reparsed, Statement::Select(_)));
+    }
+
+    #[test]
+    fn alter_set_keyword_accepts_quantity_and_rejects_non_scalar() {
+        let mut table = test_table();
+        let stmt = crate::taql::parse("ALTER TABLE SET KEYWORD speed = 1 'km/s'").unwrap();
+        let result = execute(&stmt, &mut table).unwrap();
+        assert!(matches!(result, TaqlResult::Update { rows_affected: 0 }));
+        assert_eq!(
+            table.keywords().get("speed"),
+            Some(&Value::Scalar(ScalarValue::Float64(1.0)))
+        );
+
+        let stmt = crate::taql::parse("ALTER TABLE SET KEYWORD arr = meas.j2000(0, 0)").unwrap();
+        assert!(execute(&stmt, &mut table).is_err());
+    }
+
+    #[test]
+    fn expr_value_materialization_handles_quantities() {
+        let quantity = ExprValue::Quantity(casa_types::quanta::Quantity::new(2.5, "rad").unwrap());
+        assert!(matches!(
+            expr_value_to_literal(&quantity),
+            Literal::Quantity { value, ref unit }
+                if (value - 2.5).abs() < 1e-12 && unit == "rad"
+        ));
+        assert_eq!(
+            expr_value_to_value_untyped(&quantity),
+            Value::Scalar(ScalarValue::Float64(2.5))
+        );
+    }
+
+    #[test]
+    fn parse_data_type_accepts_aliases() {
+        assert_eq!(parse_data_type("BOOLEAN").unwrap(), PrimitiveType::Bool);
+        assert_eq!(parse_data_type("short").unwrap(), PrimitiveType::Int16);
+        assert_eq!(parse_data_type("integer").unwrap(), PrimitiveType::Int32);
+        assert_eq!(parse_data_type("long").unwrap(), PrimitiveType::Int64);
+        assert_eq!(parse_data_type("float").unwrap(), PrimitiveType::Float32);
+        assert_eq!(parse_data_type("double").unwrap(), PrimitiveType::Float64);
+        assert_eq!(
+            parse_data_type("complex").unwrap(),
+            PrimitiveType::Complex32
+        );
+        assert_eq!(
+            parse_data_type("dcomplex").unwrap(),
+            PrimitiveType::Complex64
+        );
+        assert_eq!(parse_data_type("text").unwrap(), PrimitiveType::String);
     }
 }

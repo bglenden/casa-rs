@@ -71,7 +71,7 @@ use std::sync::LazyLock;
 use crate::quanta::MvAngle;
 use crate::quanta::{Quantity, Unit};
 
-use super::epoch::EpochRef;
+use super::epoch::{EpochRef, MEpoch};
 use super::error::MeasureError;
 use super::frame::{IauModel, MeasFrame};
 
@@ -431,6 +431,63 @@ impl MDirection {
             refer: target,
         })
     }
+
+    /// Resolves a casacore/CASA source name into a direction.
+    ///
+    /// This mirrors C++ `MDirection::makeMDirection`, supporting the built-in
+    /// fixed calibrators (`CasA`, `CygA`, etc.), `ZENITH`, and the moving
+    /// solar-system names that casacore exposes through TaQL `meas.*`
+    /// direction UDFs.
+    ///
+    /// Moving bodies require an epoch in `frame`; fixed sources do not.
+    pub fn from_source_name(source_name: &str, frame: &MeasFrame) -> Result<Self, MeasureError> {
+        resolve_named_direction(&parse_named_direction(source_name)?, frame)
+    }
+
+    /// Computes the rise and set UTC MJDs for this source.
+    ///
+    /// The frame must contain:
+    /// - an epoch, used as the day-selection seed, and
+    /// - an observatory position.
+    ///
+    /// This matches the TaQL `meas.riset` / `meas.riseset` scalar algorithm in
+    /// C++ `DirectionEngine::calcRiseSet`, including its noon-based initial
+    /// guess and the sidereal-day wrap adjustment.
+    pub fn rise_set_times(&self, frame: &MeasFrame) -> Result<RiseSetTimes, MeasureError> {
+        calc_rise_set(
+            &|_trial_frame| Ok(self.clone()),
+            default_rise_set_horizon_rad(&NamedDirectionKind::Fixed(self.clone())),
+            frame,
+        )
+    }
+}
+
+/// Rise and set UTC MJDs returned by [`MDirection::rise_set_times`] and
+/// [`rise_set_times_from_name`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RiseSetTimes {
+    /// UTC MJD at which the source rises on the selected UTC day.
+    pub rise_mjd: f64,
+    /// UTC MJD at which the source sets on the selected UTC day.
+    pub set_mjd: f64,
+}
+
+/// Computes the rise and set UTC MJDs for a source name.
+///
+/// This is the TaQL-facing named-source counterpart to
+/// [`MDirection::rise_set_times`]. It accepts the same source-name spellings
+/// and SUN/MOON suffixes that C++ `DirectionEngine::handleNames` uses for
+/// `meas.riset` / `meas.riseset`.
+pub fn rise_set_times_from_name(
+    source_name: &str,
+    frame: &MeasFrame,
+) -> Result<RiseSetTimes, MeasureError> {
+    let parsed = parse_named_direction(source_name)?;
+    calc_rise_set(
+        &|trial_frame| resolve_named_direction(&parsed, trial_frame),
+        parsed.rise_set_horizon_rad,
+        frame,
+    )
 }
 
 /// Formats a right-ascension value in radians as `hh:mm:ss[.f...]`.
@@ -497,6 +554,372 @@ impl fmt::Display for MDirection {
             lat.to_degrees()
         )
     }
+}
+
+#[derive(Debug, Clone)]
+enum NamedDirectionKind {
+    Fixed(MDirection),
+    SolarSystem(SolarSystemBody),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SolarSystemBody {
+    Mercury,
+    Venus,
+    Mars,
+    Jupiter,
+    Saturn,
+    Uranus,
+    Neptune,
+    Pluto,
+    Sun,
+    Moon,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedNamedDirection {
+    kind: NamedDirectionKind,
+    rise_set_horizon_rad: f64,
+}
+
+fn parse_named_direction(source_name: &str) -> Result<ParsedNamedDirection, MeasureError> {
+    let original = source_name.trim();
+    let upper = original.to_ascii_uppercase();
+    if upper.is_empty() {
+        return Err(MeasureError::UnknownSourceName {
+            input: source_name.to_string(),
+        });
+    }
+
+    if upper == "ZENITH" {
+        return Ok(ParsedNamedDirection {
+            kind: NamedDirectionKind::Fixed(MDirection::from_angles(
+                0.0,
+                std::f64::consts::FRAC_PI_2,
+                DirectionRef::AZEL,
+            )),
+            rise_set_horizon_rad: 0.0,
+        });
+    }
+
+    if let Some(parsed) = parse_solar_system_name(original, &upper)? {
+        return Ok(parsed);
+    }
+
+    let fixed = match upper.as_str() {
+        "CASA" => Some((6.123_487_680_622_104, 1.026_515_399_560_464_8)),
+        "CYGA" => Some((5.233_686_575_770_755, 0.710_940_958_218_079_1)),
+        "TAUA" => Some((1.459_674_849_373_091_3, 0.384_225_023_359_212_94)),
+        "VIRA" => Some((3.276_086_511_413_598, 0.216_265_895_335_673_78)),
+        "HERA" => Some((4.411_908_733_038_216, 0.087_135_562_905_816_9)),
+        "HYDA" => Some((2.435_146_6, -0.211_107_06)),
+        "PERA" => Some((0.871_803_63, 0.724_515_80)),
+        _ => None,
+    };
+
+    if let Some((lon_rad, lat_rad)) = fixed {
+        return Ok(ParsedNamedDirection {
+            kind: NamedDirectionKind::Fixed(MDirection::from_angles(
+                lon_rad,
+                lat_rad,
+                DirectionRef::J2000,
+            )),
+            rise_set_horizon_rad: 0.0,
+        });
+    }
+
+    Err(MeasureError::UnknownSourceName {
+        input: source_name.to_string(),
+    })
+}
+
+fn parse_solar_system_name(
+    original: &str,
+    upper: &str,
+) -> Result<Option<ParsedNamedDirection>, MeasureError> {
+    const DEG_TO_RAD: f64 = std::f64::consts::PI / 180.0;
+
+    let parse_horizon = |input: &str, ext: &str, is_sun: bool| -> Result<f64, MeasureError> {
+        let value_deg = match ext {
+            "" => -0.833,
+            "-C" => 0.0,
+            "-U" => -0.25,
+            "-L" => 0.25,
+            "-CR" => -0.583,
+            "-UR" => -0.833,
+            "-LR" => -0.333,
+            "-CT" if is_sun => -6.0,
+            "-NT" if is_sun => -12.0,
+            "-AT" if is_sun => -15.0,
+            "-ST" if is_sun => -18.0,
+            _ => {
+                let reason = if is_sun {
+                    "use -C, -U, -L, -CR, -UR, -LR, -CT, -NT, -AT, or -ST"
+                } else {
+                    "use -C, -U, -L, -CR, -UR, or -LR"
+                };
+                return Err(MeasureError::InvalidSourceName {
+                    input: input.to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        };
+        Ok(value_deg * DEG_TO_RAD)
+    };
+
+    macro_rules! simple_body {
+        ($name:literal, $body:expr) => {
+            if upper == $name {
+                return Ok(Some(ParsedNamedDirection {
+                    kind: NamedDirectionKind::SolarSystem($body),
+                    rise_set_horizon_rad: 0.0,
+                }));
+            }
+        };
+    }
+
+    if let Some(ext) = upper.strip_prefix("SUN") {
+        return Ok(Some(ParsedNamedDirection {
+            kind: NamedDirectionKind::SolarSystem(SolarSystemBody::Sun),
+            rise_set_horizon_rad: parse_horizon(original, ext, true)?,
+        }));
+    }
+    if let Some(ext) = upper.strip_prefix("MOON") {
+        return Ok(Some(ParsedNamedDirection {
+            kind: NamedDirectionKind::SolarSystem(SolarSystemBody::Moon),
+            rise_set_horizon_rad: parse_horizon(original, ext, false)?,
+        }));
+    }
+
+    simple_body!("MERCURY", SolarSystemBody::Mercury);
+    simple_body!("VENUS", SolarSystemBody::Venus);
+    simple_body!("MARS", SolarSystemBody::Mars);
+    simple_body!("JUPITER", SolarSystemBody::Jupiter);
+    simple_body!("SATURN", SolarSystemBody::Saturn);
+    simple_body!("URANUS", SolarSystemBody::Uranus);
+    simple_body!("NEPTUNE", SolarSystemBody::Neptune);
+    simple_body!("PLUTO", SolarSystemBody::Pluto);
+
+    Ok(None)
+}
+
+fn default_rise_set_horizon_rad(kind: &NamedDirectionKind) -> f64 {
+    match kind {
+        NamedDirectionKind::Fixed(_) => 0.0,
+        NamedDirectionKind::SolarSystem(SolarSystemBody::Sun)
+        | NamedDirectionKind::SolarSystem(SolarSystemBody::Moon) => -0.833_f64.to_radians(),
+        NamedDirectionKind::SolarSystem(_) => 0.0,
+    }
+}
+
+fn resolve_named_direction(
+    parsed: &ParsedNamedDirection,
+    frame: &MeasFrame,
+) -> Result<MDirection, MeasureError> {
+    match &parsed.kind {
+        NamedDirectionKind::Fixed(direction) => Ok(direction.clone()),
+        NamedDirectionKind::SolarSystem(body) => resolve_solar_system_body(*body, frame),
+    }
+}
+
+fn resolve_solar_system_body(
+    body: SolarSystemBody,
+    frame: &MeasFrame,
+) -> Result<MDirection, MeasureError> {
+    let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+        what: "epoch (for moving source name)",
+    })?;
+    let tt = epoch.convert_to(EpochRef::TT, frame)?;
+    let (tt1, tt2) = tt.value().as_jd_pair();
+    let direction = match body {
+        SolarSystemBody::Sun => {
+            let (earth_helio, _) =
+                sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
+            [-earth_helio[0][0], -earth_helio[0][1], -earth_helio[0][2]]
+        }
+        SolarSystemBody::Moon => {
+            let moon = sofars::eph::moon98(tt1, tt2);
+            moon[0]
+        }
+        SolarSystemBody::Mercury
+        | SolarSystemBody::Venus
+        | SolarSystemBody::Mars
+        | SolarSystemBody::Jupiter
+        | SolarSystemBody::Saturn
+        | SolarSystemBody::Uranus
+        | SolarSystemBody::Neptune => {
+            let planet_index = match body {
+                SolarSystemBody::Mercury => 1,
+                SolarSystemBody::Venus => 2,
+                SolarSystemBody::Mars => 4,
+                SolarSystemBody::Jupiter => 5,
+                SolarSystemBody::Saturn => 6,
+                SolarSystemBody::Uranus => 7,
+                SolarSystemBody::Neptune => 8,
+                _ => unreachable!(),
+            };
+            let (planet, _status) = sofars::eph::plan94(tt1, tt2, planet_index)
+                .map_err(|code| MeasureError::SofarsError { code })?;
+            let (earth_helio, _) =
+                sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
+            [
+                planet[0][0] - earth_helio[0][0],
+                planet[0][1] - earth_helio[0][1],
+                planet[0][2] - earth_helio[0][2],
+            ]
+        }
+        SolarSystemBody::Pluto => {
+            return Err(MeasureError::NotYetImplemented {
+                route: "moving source name PLUTO".to_string(),
+            });
+        }
+    };
+
+    Ok(MDirection::from_cosines(direction, DirectionRef::ICRS))
+}
+
+fn calc_rise_set(
+    resolver: &dyn Fn(&MeasFrame) -> Result<MDirection, MeasureError>,
+    horizon_rad: f64,
+    frame: &MeasFrame,
+) -> Result<RiseSetTimes, MeasureError> {
+    let position = frame.position().ok_or(MeasureError::MissingFrameData {
+        what: "position (for rise/set)",
+    })?;
+    let epoch_utc = frame
+        .epoch()
+        .ok_or(MeasureError::MissingFrameData {
+            what: "epoch (for rise/set)",
+        })?
+        .convert_to(EpochRef::UTC, frame)?;
+    let start = (epoch_utc.value().as_mjd() + 1.0e-6).floor();
+    let latitude = position.latitude_rad();
+
+    let mut rise = 0.0;
+    let mut set = 0.0;
+    let above_below = fill_rise_set(
+        start + 0.5,
+        latitude,
+        horizon_rad,
+        start,
+        frame,
+        resolver,
+        Some(&mut rise),
+        Some(&mut set),
+    )?;
+
+    if above_below > 0 {
+        return Ok(RiseSetTimes {
+            rise_mjd: start + 1.0,
+            set_mjd: start,
+        });
+    }
+    if above_below < 0 {
+        return Ok(RiseSetTimes {
+            rise_mjd: start,
+            set_mjd: start + 1.0,
+        });
+    }
+
+    if rise < start {
+        rise += 1.0 - 236.0 / 86_400.0;
+    }
+    if set < start {
+        set += 1.0 - 236.0 / 86_400.0;
+    }
+    if set < rise {
+        set += 1.0;
+    }
+
+    for _ in 0..2 {
+        fill_rise_set(
+            rise,
+            latitude,
+            horizon_rad,
+            start,
+            frame,
+            resolver,
+            Some(&mut rise),
+            None,
+        )?;
+        if rise < start {
+            rise += 1.0 - 236.0 / 86_400.0;
+        }
+
+        fill_rise_set(
+            set,
+            latitude,
+            horizon_rad,
+            start,
+            frame,
+            resolver,
+            None,
+            Some(&mut set),
+        )?;
+        if set < start {
+            set += 1.0 - 236.0 / 86_400.0;
+        }
+        if set < rise {
+            set += 1.0;
+        }
+    }
+
+    Ok(RiseSetTimes {
+        rise_mjd: rise,
+        set_mjd: set,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_rise_set(
+    trial_epoch_mjd: f64,
+    latitude_rad: f64,
+    horizon_rad: f64,
+    start_day_mjd: f64,
+    base_frame: &MeasFrame,
+    resolver: &dyn Fn(&MeasFrame) -> Result<MDirection, MeasureError>,
+    rise_out: Option<&mut f64>,
+    set_out: Option<&mut f64>,
+) -> Result<i32, MeasureError> {
+    let trial_frame = base_frame
+        .clone()
+        .with_epoch(MEpoch::from_mjd(trial_epoch_mjd, EpochRef::UTC));
+    let direction = resolver(&trial_frame)?;
+    let hadec = direction.convert_to(DirectionRef::HADEC, &trial_frame)?;
+    let dec = hadec.latitude_rad();
+    let ct =
+        (horizon_rad.sin() - dec.sin() * latitude_rad.sin()) / (dec.cos() * latitude_rad.cos());
+    if ct >= 1.0 {
+        return Ok(1);
+    }
+    if ct <= -1.0 {
+        return Ok(-1);
+    }
+
+    let ct = ct.acos();
+    let app = direction.convert_to(DirectionRef::APP, &trial_frame)?;
+    let norm_ra = sofars::vm::anp(app.longitude_rad());
+
+    if let Some(rise) = rise_out {
+        *rise = last_angle_to_utc_mjd(start_day_mjd, norm_ra - ct, &trial_frame)?;
+    }
+    if let Some(set) = set_out {
+        *set = last_angle_to_utc_mjd(start_day_mjd, norm_ra + ct, &trial_frame)?;
+    }
+    Ok(0)
+}
+
+fn last_angle_to_utc_mjd(
+    start_day_mjd: f64,
+    last_angle_rad: f64,
+    frame: &MeasFrame,
+) -> Result<f64, MeasureError> {
+    let last_mjd = start_day_mjd + last_angle_rad / std::f64::consts::TAU;
+    let last_epoch = MEpoch::from_mjd(last_mjd, EpochRef::LAST);
+    Ok(last_epoch
+        .convert_to(EpochRef::UTC, frame)?
+        .value()
+        .as_mjd())
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,6 +1853,7 @@ mod tests {
     use super::*;
 
     use crate::measures::epoch::MEpoch;
+    use crate::measures::position::MPosition;
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
@@ -1650,5 +2074,138 @@ mod tests {
         assert_eq!(DirectionRef::from_casacore_code(5), None);
         assert_eq!(DirectionRef::from_casacore_code(6), None);
         assert_eq!(DirectionRef::from_casacore_code(7), None);
+    }
+
+    #[test]
+    fn source_name_casa_matches_builtin_j2000_position() {
+        let direction = MDirection::from_source_name("CasA", &MeasFrame::new()).unwrap();
+        assert_eq!(direction.refer(), DirectionRef::J2000);
+        let (lon, lat) = direction.as_angles();
+        assert!(close(lon, 6.123_487_680_622_104, 1e-15));
+        assert!(close(lat, 1.026_515_399_560_464_8, 1e-15));
+    }
+
+    #[test]
+    fn source_name_zenith_is_local_up() {
+        let direction = MDirection::from_source_name("ZENITH", &MeasFrame::new()).unwrap();
+        assert_eq!(direction.refer(), DirectionRef::AZEL);
+        let (lon, lat) = direction.as_angles();
+        assert!(close(lon, 0.0, 1e-15));
+        assert!(close(lat, std::f64::consts::FRAC_PI_2, 1e-15));
+    }
+
+    #[test]
+    fn source_name_sun_requires_epoch() {
+        let err = MDirection::from_source_name("SUN", &MeasFrame::new()).unwrap_err();
+        assert!(matches!(err, MeasureError::MissingFrameData { .. }));
+    }
+
+    #[test]
+    fn source_name_rejects_invalid_sun_suffix() {
+        let err = rise_set_times_from_name("SUN-XYZ", &MeasFrame::new()).unwrap_err();
+        assert!(matches!(err, MeasureError::InvalidSourceName { .. }));
+    }
+
+    #[test]
+    fn source_name_parser_covers_supported_suffixes_and_empty_input() {
+        let sun = parse_named_direction("SUN-CT").unwrap();
+        assert!(matches!(
+            sun.kind,
+            NamedDirectionKind::SolarSystem(SolarSystemBody::Sun)
+        ));
+        assert!(close(
+            sun.rise_set_horizon_rad,
+            (-6.0_f64).to_radians(),
+            1e-15
+        ));
+
+        let moon = parse_named_direction("MOON-LR").unwrap();
+        assert!(matches!(
+            moon.kind,
+            NamedDirectionKind::SolarSystem(SolarSystemBody::Moon)
+        ));
+        assert!(close(
+            moon.rise_set_horizon_rad,
+            (-0.333_f64).to_radians(),
+            1e-15
+        ));
+
+        let mercury = parse_named_direction("MERCURY").unwrap();
+        assert!(matches!(
+            mercury.kind,
+            NamedDirectionKind::SolarSystem(SolarSystemBody::Mercury)
+        ));
+
+        assert!(matches!(
+            parse_named_direction(""),
+            Err(MeasureError::UnknownSourceName { .. })
+        ));
+    }
+
+    #[test]
+    fn fixed_source_rise_set_returns_ordered_times() {
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(55418.55, EpochRef::UTC))
+            .with_position(MPosition::from_observatory_name("WSRT").unwrap())
+            .with_bundled_eop();
+
+        let riseset = rise_set_times_from_name("CasA", &frame).unwrap();
+        assert!(riseset.rise_mjd >= 55418.0);
+        assert!(riseset.set_mjd > riseset.rise_mjd);
+    }
+
+    #[test]
+    fn moving_source_direction_is_finite_with_frame() {
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(55418.55, EpochRef::UTC))
+            .with_position(MPosition::from_observatory_name("WSRT").unwrap())
+            .with_bundled_eop();
+
+        let direction = MDirection::from_source_name("SUN", &frame).unwrap();
+        let (lon, lat) = direction.as_angles();
+        assert!(lon.is_finite());
+        assert!(lat.is_finite());
+    }
+
+    #[test]
+    fn moving_planet_names_and_pluto_error_are_exercised() {
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(55418.55, EpochRef::UTC))
+            .with_position(MPosition::from_observatory_name("WSRT").unwrap())
+            .with_bundled_eop();
+
+        for body in [
+            "MERCURY", "VENUS", "MARS", "JUPITER", "SATURN", "URANUS", "NEPTUNE",
+        ] {
+            let direction = MDirection::from_source_name(body, &frame).unwrap();
+            let (lon, lat) = direction.as_angles();
+            assert!(lon.is_finite(), "{body}");
+            assert!(lat.is_finite(), "{body}");
+        }
+
+        let err = MDirection::from_source_name("PLUTO", &frame).unwrap_err();
+        assert!(matches!(err, MeasureError::NotYetImplemented { .. }));
+    }
+
+    #[test]
+    fn rise_set_method_and_to_j2000_cover_additional_branches() {
+        let source = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        assert!(matches!(
+            source.rise_set_times(&MeasFrame::new()),
+            Err(MeasureError::MissingFrameData { .. })
+        ));
+
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(55418.55, EpochRef::UTC))
+            .with_position(MPosition::from_observatory_name("WSRT").unwrap())
+            .with_bundled_eop();
+        let rise_set = source.rise_set_times(&frame).unwrap();
+        assert!(rise_set.set_mjd > rise_set.rise_mjd);
+
+        let j2000 = source.to_j2000(&frame).unwrap();
+        assert_eq!(j2000, source.cosines());
+        let displayed = source.to_string();
+        assert!(displayed.contains("Direction J2000"));
+        assert!(displayed.contains("lon="));
     }
 }
