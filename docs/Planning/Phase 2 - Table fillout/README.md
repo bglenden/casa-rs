@@ -5,7 +5,7 @@ file when rules conflict.
 
 ## Purpose
 
-Close remaining Tables interoperability gaps from `BACKLOG.md` using small,
+Close remaining Tables interoperability gaps from GitHub issues using small,
 auditable waves.
 
 ## Status source of truth
@@ -17,9 +17,9 @@ Wave file names are the only status source of truth:
 
 ## Wave lifecycle
 
-1. Choose one backlog item (or one tightly coupled pair).
+1. Choose one GitHub issue (or one tightly coupled issue pair).
 2. Create `Wave N - <name>.md` from `WAVE_TEMPLATE.md`.
-3. Copy detail from `BACKLOG.md`, then remove moved item(s) from backlog.
+3. Copy the issue scope into the wave file and link the issue number/title.
 4. Pass the wave's Definition of Ready checklist before coding.
 5. On implementation start, append ` - TAKEN` to the filename.
 6. At closeout, fill `Results` and `Lessons learned`, then append ` - FINISHED`.

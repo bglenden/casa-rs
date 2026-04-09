@@ -43,10 +43,11 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 
 ## Backlog Tracking
 
-- Canonical backlog tracking lives in the phase-specific `docs/Planning/Phase */BACKLOG.md` files.
-- When deferring work, add or update the numbered backlog item there first.
+- Canonical backlog tracking lives in GitHub issues, not local `BACKLOG.md` files.
+- Use GitHub issue titles and bodies as the source of truth for deferred work.
+- Legacy phase backlog files may remain temporarily in areas that have not been migrated yet; do not add new items to them.
 - Do not introduce new backlog-style `TODO` / `FIXME` / `XXX` / `HACK` comments as the source of truth.
-- If a local code comment is still useful, keep it brief and reference the backlog item instead.
+- If a local code comment is still useful, keep it brief and reference the GitHub issue instead.
 
 ## Merge Policy
 
