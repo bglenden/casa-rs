@@ -26,6 +26,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use casa_measures_data::SpectralLineCatalog;
+
 use super::epoch::EpochRef;
 use super::error::MeasureError;
 use super::frame::MeasFrame;
@@ -197,6 +199,20 @@ impl MFrequency {
         Self { hz, refer }
     }
 
+    /// Resolves a casacore/CASA spectral-line name into a rest frequency.
+    ///
+    /// This mirrors C++ `MeasTable::Line`, using the runtime
+    /// `ephemerides/Lines` table bundled with or discovered by
+    /// `casa-measures-data`.
+    pub fn from_line_name(line_name: &str) -> Result<Self, MeasureError> {
+        let entry = SpectralLineCatalog::bundled()
+            .get(line_name)
+            .ok_or_else(|| MeasureError::UnknownLineName {
+                input: line_name.to_string(),
+            })?;
+        Ok(Self::new(entry.frequency_hz(), FrequencyRef::REST))
+    }
+
     /// Returns the frequency in Hz.
     pub fn hz(&self) -> f64 {
         self.hz
@@ -309,69 +325,76 @@ pub(super) fn compute_beta(velocity_ms: &[f64; 3], dir_j2000: &[f64; 3]) -> f64 
 
 /// Get direction in J2000 from the frame.
 pub(super) fn get_direction_j2000(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
-    let dir = frame.direction().ok_or(MeasureError::MissingFrameData {
-        what: "direction (for velocity projection)",
-    })?;
-    dir.to_j2000(frame)
+    frame.cached_direction_j2000(|| {
+        let dir = frame.direction().ok_or(MeasureError::MissingFrameData {
+            what: "direction (for velocity projection)",
+        })?;
+        dir.to_j2000(frame)
+    })
 }
 
 /// Get Earth's barycentric velocity in m/s (J2000).
 pub(super) fn earth_velocity_ms(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
-    let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
-        what: "epoch (for Earth orbital velocity)",
-    })?;
-    let tt = if epoch.refer() == EpochRef::TT {
-        epoch.clone()
-    } else {
-        epoch.convert_to(EpochRef::TT, frame)?
-    };
-    let (tt1, tt2) = tt.value().as_jd_pair();
-    let (_pvh, pvb) = sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
-    // pvb[1] is Earth barycentric velocity in AU/day → convert to m/s
-    let au_to_m = 149_597_870_700.0_f64;
-    let day_to_s = 86400.0;
-    Ok([
-        pvb[1][0] * au_to_m / day_to_s,
-        pvb[1][1] * au_to_m / day_to_s,
-        pvb[1][2] * au_to_m / day_to_s,
-    ])
+    frame.cached_earth_velocity_ms(|| {
+        let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+            what: "epoch (for Earth orbital velocity)",
+        })?;
+        let tt = if epoch.refer() == EpochRef::TT {
+            epoch.clone()
+        } else {
+            epoch.convert_to(EpochRef::TT, frame)?
+        };
+        let (tt1, tt2) = tt.value().as_jd_pair();
+        let (_pvh, pvb) =
+            sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
+        // pvb[1] is Earth barycentric velocity in AU/day → convert to m/s
+        let au_to_m = 149_597_870_700.0_f64;
+        let day_to_s = 86400.0;
+        Ok([
+            pvb[1][0] * au_to_m / day_to_s,
+            pvb[1][1] * au_to_m / day_to_s,
+            pvb[1][2] * au_to_m / day_to_s,
+        ])
+    })
 }
 
 /// Get observatory velocity in m/s (J2000) from Earth rotation.
 pub(super) fn observatory_velocity_ms(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
-    let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-        what: "position (for diurnal velocity)",
-    })?;
-    let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
-        what: "epoch (for Earth rotation angle)",
-    })?;
+    frame.cached_observatory_velocity_ms(|| {
+        let pos = frame.position().ok_or(MeasureError::MissingFrameData {
+            what: "position (for diurnal velocity)",
+        })?;
+        let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+            what: "epoch (for Earth rotation angle)",
+        })?;
 
-    // Get ITRF coordinates
-    let itrf = pos.as_itrf();
+        // Get ITRF coordinates
+        let itrf = pos.as_itrf();
 
-    // Earth angular velocity (rad/s)
-    const OMEGA: f64 = 7.292_115e-5;
+        // Earth angular velocity (rad/s)
+        const OMEGA: f64 = 7.292_115e-5;
 
-    // Velocity in ITRF: v = omega cross r = [-omega*y, omega*x, 0]
-    let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
+        // Velocity in ITRF: v = omega cross r = [-omega*y, omega*x, 0]
+        let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
 
-    // Rotate to J2000 using ERA (simplified — ignores precession/nutation)
-    let ut1 = if epoch.refer() == EpochRef::UT1 {
-        epoch.clone()
-    } else {
-        epoch.convert_to(EpochRef::UT1, frame)?
-    };
-    let (ut_a, ut_b) = ut1.value().as_jd_pair();
-    let era = sofars::erst::era00(ut_a, ut_b);
+        // Rotate to J2000 using ERA (simplified — ignores precession/nutation)
+        let ut1 = if epoch.refer() == EpochRef::UT1 {
+            epoch.clone()
+        } else {
+            epoch.convert_to(EpochRef::UT1, frame)?
+        };
+        let (ut_a, ut_b) = ut1.value().as_jd_pair();
+        let era = sofars::erst::era00(ut_a, ut_b);
 
-    // Rotate velocity from ITRF to J2000 by -ERA around z
-    let mut r = [[0.0; 3]; 3];
-    sofars::vm::ir(&mut r);
-    sofars::vm::rz(-era, &mut r);
-    let mut v_j2000 = [0.0; 3];
-    sofars::vm::rxp(&r, &v_itrf, &mut v_j2000);
+        // Rotate velocity from ITRF to J2000 by -ERA around z
+        let mut r = [[0.0; 3]; 3];
+        sofars::vm::ir(&mut r);
+        sofars::vm::rz(-era, &mut r);
+        let mut v_j2000 = [0.0; 3];
+        sofars::vm::rxp(&r, &v_itrf, &mut v_j2000);
 
-    Ok(v_j2000)
+        Ok(v_j2000)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +655,19 @@ mod tests {
         let frame = MeasFrame::new().with_direction(dir);
         let result = f.convert_to(FrequencyRef::LSRK, &frame);
         assert!(matches!(result, Err(MeasureError::MissingFrameData { .. })));
+    }
+
+    #[test]
+    fn line_name_hi_resolves_from_runtime_catalog() {
+        let f = MFrequency::from_line_name("HI").unwrap();
+        assert_eq!(f.refer(), FrequencyRef::REST);
+        assert!((f.hz() - 1.420_405_752e9).abs() < 5.0e3);
+    }
+
+    #[test]
+    fn line_name_unknown_is_rejected() {
+        let error = MFrequency::from_line_name("NOT_A_REAL_LINE").unwrap_err();
+        assert!(matches!(error, MeasureError::UnknownLineName { .. }));
     }
 
     #[test]

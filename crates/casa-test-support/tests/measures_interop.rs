@@ -6,7 +6,7 @@ use casa_test_support::measures_interop::{
     cpp_direction_convert, cpp_direction_convert_iau2000a, cpp_doppler_convert, cpp_earth_velocity,
     cpp_eop_query, cpp_epoch_convert, cpp_epoch_convert_with_frame, cpp_epoch_to_record,
     cpp_frequency_convert, cpp_frequency_convert_with_rv, cpp_iau2000_precession_matrix,
-    cpp_position_convert, cpp_position_to_record, cpp_radvel_convert,
+    cpp_line_frequency, cpp_position_convert, cpp_position_to_record, cpp_radvel_convert,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
@@ -250,6 +250,18 @@ fn rc_doppler_beta_to_radio() {
         "Rust={}, C++={}",
         rust_radio.value(),
         cpp_radio
+    );
+}
+
+#[test]
+fn rc_catalog_line_hi_matches_cpp() {
+    let rust_line = MFrequency::from_line_name("HI").unwrap();
+    let cpp_line_hz = cpp_line_frequency("HI").unwrap();
+    assert!(
+        close(rust_line.hz(), cpp_line_hz, 1.0e-3),
+        "HI rest frequency: Rust={}, C++={}",
+        rust_line.hz(),
+        cpp_line_hz
     );
 }
 
@@ -2151,6 +2163,55 @@ fn eop_rv_bary_to_topo() {
     );
 }
 
+#[test]
+fn accepted_direction_divergence_routes_are_bounded() {
+    fn target_ref(name: &str) -> DirectionRef {
+        match name {
+            "APP" => DirectionRef::APP,
+            "HADEC" => DirectionRef::HADEC,
+            "AZEL" => DirectionRef::AZEL,
+            "ITRF" => DirectionRef::ITRF,
+            _ => unreachable!("unexpected route"),
+        }
+    }
+
+    let source = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+    let cases = [
+        ("IAU1976/1980", IauModel::Iau1976_1980, 0.01_f64),
+        ("IAU2006/2000A", IauModel::Iau2006_2000A, 0.03_f64),
+    ];
+    let routes = ["APP", "HADEC", "AZEL", "ITRF"];
+
+    for (model_name, model, max_sep_arcsec) in cases {
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
+            .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
+            .with_bundled_eop()
+            .with_iau_model(model);
+
+        for route in routes {
+            let rust_value = source.convert_to(target_ref(route), &frame).unwrap();
+            let (rust_lon, rust_lat) = rust_value.as_angles();
+            let (cpp_lon, cpp_lat) = match model {
+                IauModel::Iau1976_1980 => cpp_direction_convert(
+                    1.0, 0.5, "J2000", route, J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
+                ),
+                IauModel::Iau2006_2000A => cpp_direction_convert_iau2000a(
+                    1.0, 0.5, "J2000", route, J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
+                ),
+            }
+            .unwrap();
+
+            let sep = sep_arcsec(rust_lon, rust_lat, cpp_lon, cpp_lat);
+            eprintln!("{model_name} J2000->{route}: sep={sep:.6} arcsec");
+            assert!(
+                sep <= max_sep_arcsec,
+                "{model_name} J2000->{route}: sep={sep:.6} arcsec exceeds {max_sep_arcsec:.6}"
+            );
+        }
+    }
+}
+
 // --- Full pipeline integration test ---
 
 #[test]
@@ -2259,11 +2320,13 @@ fn diag_direction_chain_steps() {
 // polynomial series and internal decompositions. For IAU 2000A, the
 // precession/nutation matrices agree perfectly (verified in
 // diag_iau2000a_chain_steps: JMEAN and JTRUE match to 0.000"),
-// but the apparent-place (APP) step diverges by ~16 mas due to
-// differences in the aberration/deflection computations (Stumpff vs
-// VSOP87 velocity series, plus casacore applies full Sun gravitational
-// deflection that SOFA's ab() omits). This is direction-dependent and
-// larger than the ~1.5 mas deviation for IAU 1976/1980.
+// but the apparent-place (APP) step diverges by ~16 mas. Upstream
+// casacore PR #1464 records the same missing-frame-bias hypothesis for
+// casacore's shared IAU2000 JNAT<->APP helper, but that PR is not
+// independent confirmation because it was derived from the same line of
+// investigation. Until that lands upstream, keep the current residual
+// explicitly bounded here. The smaller ~1.5 mas residual still remains
+// from the expected aberration/deflection and velocity-series differences.
 //
 // Tolerance: 1e-7 rad ≈ 20 mas. See misc/casacore_vs_sofa_deviation.cpp
 // for a standalone C++ test quantifying this, and the corresponding

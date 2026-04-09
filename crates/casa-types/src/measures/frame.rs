@@ -8,12 +8,13 @@
 //! It mirrors C++ `MeasFrame` but stores only the subset of fields relevant to
 //! MEpoch, MPosition, MDirection, and MFrequency conversions.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use casa_measures_data::EopTable;
 
 use super::direction::MDirection;
 use super::epoch::MEpoch;
+use super::error::MeasureError;
 use super::position::MPosition;
 use super::radial_velocity::MRadialVelocity;
 
@@ -89,6 +90,32 @@ pub struct MeasFrame {
     dut1_seconds: Option<f64>,
     eop_table: Option<Arc<EopTable>>,
     iau_model: IauModel,
+    cache: FrameCache,
+}
+
+/// Reusable derived state for repeated conversions against the same frame.
+///
+/// Casacore keeps comparable intermediate state inside its conversion engine.
+/// We keep the public builder immutable and hide the reusable state behind
+/// interior mutability so repeated conversions can reuse the same epoch/frame
+/// derivatives without recomputing them on every call.
+#[derive(Debug, Default)]
+struct FrameCache {
+    tt_jd: Mutex<Option<(f64, f64)>>,
+    ut1_jd: Mutex<Option<(f64, f64)>>,
+    gast: Mutex<Option<f64>>,
+    precession: Mutex<Option<[[f64; 3]; 3]>>,
+    nutation: Mutex<Option<[[f64; 3]; 3]>>,
+    earth_velocity_au_per_day: Mutex<Option<([f64; 3], f64)>>,
+    earth_velocity_ms: Mutex<Option<[f64; 3]>>,
+    observatory_velocity_ms: Mutex<Option<[f64; 3]>>,
+    direction_j2000: Mutex<Option<[f64; 3]>>,
+}
+
+impl Clone for FrameCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 impl MeasFrame {
@@ -102,6 +129,7 @@ impl MeasFrame {
             dut1_seconds: None,
             eop_table: None,
             iau_model: IauModel::default(),
+            cache: FrameCache::default(),
         }
     }
 
@@ -249,6 +277,120 @@ impl MeasFrame {
         let eop = self.eop_table.as_ref()?;
         let vals = eop.interpolate(mjd)?;
         Some((vals.x_arcsec, vals.y_arcsec))
+    }
+
+    pub(crate) fn cached_tt_jd<F>(&self, compute: F) -> Result<(f64, f64), MeasureError>
+    where
+        F: FnOnce() -> Result<(f64, f64), MeasureError>,
+    {
+        if let Some(value) = *self.cache.tt_jd.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.tt_jd.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_ut1_jd<F>(&self, compute: F) -> Result<(f64, f64), MeasureError>
+    where
+        F: FnOnce() -> Result<(f64, f64), MeasureError>,
+    {
+        if let Some(value) = *self.cache.ut1_jd.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.ut1_jd.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_gast<F>(&self, compute: F) -> Result<f64, MeasureError>
+    where
+        F: FnOnce() -> Result<f64, MeasureError>,
+    {
+        if let Some(value) = *self.cache.gast.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.gast.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_precession<F>(&self, compute: F) -> Result<[[f64; 3]; 3], MeasureError>
+    where
+        F: FnOnce() -> Result<[[f64; 3]; 3], MeasureError>,
+    {
+        if let Some(value) = *self.cache.precession.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.precession.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_nutation<F>(&self, compute: F) -> Result<[[f64; 3]; 3], MeasureError>
+    where
+        F: FnOnce() -> Result<[[f64; 3]; 3], MeasureError>,
+    {
+        if let Some(value) = *self.cache.nutation.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.nutation.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_earth_velocity_au_per_day<F>(
+        &self,
+        compute: F,
+    ) -> Result<([f64; 3], f64), MeasureError>
+    where
+        F: FnOnce() -> Result<([f64; 3], f64), MeasureError>,
+    {
+        if let Some(value) = *self.cache.earth_velocity_au_per_day.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.earth_velocity_au_per_day.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_earth_velocity_ms<F>(&self, compute: F) -> Result<[f64; 3], MeasureError>
+    where
+        F: FnOnce() -> Result<[f64; 3], MeasureError>,
+    {
+        if let Some(value) = *self.cache.earth_velocity_ms.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.earth_velocity_ms.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_observatory_velocity_ms<F>(
+        &self,
+        compute: F,
+    ) -> Result<[f64; 3], MeasureError>
+    where
+        F: FnOnce() -> Result<[f64; 3], MeasureError>,
+    {
+        if let Some(value) = *self.cache.observatory_velocity_ms.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.observatory_velocity_ms.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_direction_j2000<F>(&self, compute: F) -> Result<[f64; 3], MeasureError>
+    where
+        F: FnOnce() -> Result<[f64; 3], MeasureError>,
+    {
+        if let Some(value) = *self.cache.direction_j2000.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.direction_j2000.lock().unwrap() = Some(value);
+        Ok(value)
     }
 }
 
