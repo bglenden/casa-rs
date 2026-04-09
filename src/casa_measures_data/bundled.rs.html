@@ -15,17 +15,27 @@
 <a href=#15 id=15 data-nosnippet>15</a>
 <a href=#16 id=16 data-nosnippet>16</a><span class="doccomment">/// The bundled finals2000A.data file, included at compile time.
 <a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">const </span>BUNDLED_DATA: <span class="kw-2">&amp;</span>str = <span class="macro">include_str!</span>(<span class="string">"../data/finals2000A.data"</span>);
-<a href=#18 id=18 data-nosnippet>18</a>
-<a href=#19 id=19 data-nosnippet>19</a><span class="doccomment">/// Lazily-parsed bundled EOP table.
-<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">static </span>BUNDLED_TABLE: LazyLock&lt;EopTable&gt; = LazyLock::new(|| {
-<a href=#21 id=21 data-nosnippet>21</a>    EopTable::from_finals2000a(BUNDLED_DATA).expect(<span class="string">"bundled finals2000A.data must be valid"</span>)
-<a href=#22 id=22 data-nosnippet>22</a>});
-<a href=#23 id=23 data-nosnippet>23</a>
-<a href=#24 id=24 data-nosnippet>24</a><span class="doccomment">/// Returns a reference to the bundled EOP table.
-<a href=#25 id=25 data-nosnippet>25</a>///
-<a href=#26 id=26 data-nosnippet>26</a>/// The table is parsed on first access and cached for the lifetime of the
-<a href=#27 id=27 data-nosnippet>27</a>/// process. This is an O(1) operation after the first call.
-<a href=#28 id=28 data-nosnippet>28</a></span><span class="kw">pub fn </span>bundled_eop_table() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>EopTable {
-<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw-2">&amp;</span>BUNDLED_TABLE
-<a href=#30 id=30 data-nosnippet>30</a>}
+<a href=#18 id=18 data-nosnippet>18</a><span class="doccomment">/// The bundled IGRF12 coefficient source file, included at compile time.
+<a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">const </span>BUNDLED_IGRF12_DATA: <span class="kw-2">&amp;</span>str = <span class="macro">include_str!</span>(<span class="string">"../data/igrf12coeffs.txt"</span>);
+<a href=#20 id=20 data-nosnippet>20</a>
+<a href=#21 id=21 data-nosnippet>21</a><span class="doccomment">/// Lazily-parsed bundled EOP table.
+<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">static </span>BUNDLED_TABLE: LazyLock&lt;EopTable&gt; = LazyLock::new(|| {
+<a href=#23 id=23 data-nosnippet>23</a>    EopTable::from_finals2000a(BUNDLED_DATA).expect(<span class="string">"bundled finals2000A.data must be valid"</span>)
+<a href=#24 id=24 data-nosnippet>24</a>});
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="doccomment">/// Returns a reference to the bundled EOP table.
+<a href=#27 id=27 data-nosnippet>27</a>///
+<a href=#28 id=28 data-nosnippet>28</a>/// The table is parsed on first access and cached for the lifetime of the
+<a href=#29 id=29 data-nosnippet>29</a>/// process. This is an O(1) operation after the first call.
+<a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">pub fn </span>bundled_eop_table() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>EopTable {
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw-2">&amp;</span>BUNDLED_TABLE
+<a href=#32 id=32 data-nosnippet>32</a>}
+<a href=#33 id=33 data-nosnippet>33</a>
+<a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// Returns the bundled IGRF12 coefficient source text.
+<a href=#35 id=35 data-nosnippet>35</a>///
+<a href=#36 id=36 data-nosnippet>36</a>/// This is the same NOAA/IAGA `igrf12coeffs.txt` input format referenced by
+<a href=#37 id=37 data-nosnippet>37</a>/// casacore's `measuresdata` tool for its `geodetic/IGRF` table snapshot.
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub fn </span>bundled_igrf12_coefficients() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+<a href=#39 id=39 data-nosnippet>39</a>    BUNDLED_IGRF12_DATA
+<a href=#40 id=40 data-nosnippet>40</a>}
 </code></pre></div></section></main></body></html>
