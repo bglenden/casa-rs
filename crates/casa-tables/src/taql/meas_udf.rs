@@ -448,7 +448,7 @@ fn build_frame_with_epoch_pos(extra: &[ExprValue], fn_name: &str) -> Result<Meas
         let epoch_mjd = expr_to_mjd_days(&extra[0], fn_name)?;
         frame = frame
             .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
-            .with_bundled_eop();
+            .with_standard_eop();
     }
     if extra.len() > 1 {
         frame = frame.with_position(parse_position_input(&extra[1..], fn_name)?);
@@ -470,7 +470,7 @@ fn build_frame_with_dir_epoch_pos(extra: &[ExprValue]) -> Result<MeasFrame, Taql
         let epoch_mjd = expr_to_mjd_days(&extra[2], "meas frame epoch")?;
         frame = frame
             .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
-            .with_bundled_eop();
+            .with_standard_eop();
     }
     if extra.len() > 3 {
         frame = frame.with_position(parse_position_input(&extra[3..], "meas frame")?);
@@ -924,7 +924,7 @@ fn meas_last(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
     let epoch = MEpoch::from_mjd(mjd, EpochRef::UTC);
     let frame = MeasFrame::new()
         .with_position(position)
-        .with_bundled_eop()
+        .with_standard_eop()
         .with_epoch(epoch.clone());
     let converted = epoch
         .convert_to(EpochRef::LAST, &frame)
@@ -1633,7 +1633,7 @@ mod tests {
                 52.8_f64.to_radians(),
                 10.0,
             ))
-            .with_bundled_eop();
+            .with_standard_eop();
         let expected = epoch
             .convert_to(EpochRef::LAST, &frame)
             .unwrap()

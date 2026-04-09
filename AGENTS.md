@@ -33,6 +33,14 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - C++-dependent tests must skip cleanly when `pkg-config casacore` is missing.
 - Shared CASA dataset root defaults to `../casatestdata`.
 - Override the shared dataset root with `CASA_RS_TESTDATA_ROOT`.
+- Canonical measures runtime data lives in a CASA-compatible table tree rooted
+  at `~/.casa/data`.
+- Override the measures runtime root with `CASA_RS_MEASURESPATH`.
+- `CASA_RS_DATA` is a deprecated compatibility alias; do not introduce new
+  code or docs that prefer it over `CASA_RS_MEASURESPATH`.
+- Reuse upstream CASA/casaconfig tables and bundle layouts for measures data;
+  do not introduce new embedded/raw measures assets when the CASA-table runtime
+  model can be used instead.
 - Do not treat `/private/tmp` as the canonical home for shared CASA datasets.
 - Small bundled real-MS CI fixtures live in `crates/casa-ms/tests/fixtures/`.
 - If C++ has a demo for a supported module, provide a Rust equivalent demo.
@@ -88,6 +96,9 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - Use `scripts/release.sh <version> --full` to additionally run
   `scripts/test-slow.sh` and CI-like coverage.
 - Use `scripts/release.sh <version> --push` to push the release commit and tag.
+- If measures/runtime changes land near a release, refresh or verify the
+  packaged CASA-table snapshot in `crates/casa-measures-data/data/` and keep
+  `casa-measures-runtime.provenance.json` aligned with it.
 - When asking for a release, say something like `use the release script to cut
   and push release 0.3.1` or `use the release script to cut the next patch
   release` rather than `tag as 0.3.1`.

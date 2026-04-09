@@ -491,8 +491,12 @@ dependencies = [
 name = "casa-measures-data"
 version = "0.13.0"
 dependencies = [
+ "flate2",
  "serde",
  "serde_json",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
  "ureq",
 ]
 
@@ -501,8 +505,10 @@ name = "casa-measures-tools"
 version = "0.13.0"
 dependencies = [
  "casa-measures-data",
- "casa-tables",
- "casa-types",
+ "flate2",
+ "serde_json",
+ "tar",
+ "time",
 ]
 
 [[package]]

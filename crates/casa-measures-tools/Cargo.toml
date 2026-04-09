@@ -13,9 +13,11 @@ workspace = true
 
 [dependencies]
 casa-measures-data = { path = "../casa-measures-data" }
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
+flate2 = "1"
+serde_json = "1"
+tar = "0.4"
+time = { version = "0.3", features = ["formatting"] }
 
 [[bin]]
-name = "import_observatories"
-path = "src/bin/import_observatories.rs"
+name = "package_snapshot"
+path = "src/bin/package_snapshot.rs"

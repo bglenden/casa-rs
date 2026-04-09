@@ -15,6 +15,12 @@ workspace = true
 update = ["dep:ureq"]
 
 [dependencies]
+flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tar = "0.4"
+thiserror.workspace = true
 ureq = { version = "3", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

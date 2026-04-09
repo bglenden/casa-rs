@@ -1,117 +1,298 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Download and safe-update mechanism for IERS EOP data.
+//! Download and install CASA-compatible measures runtime bundles.
 //!
-//! This module is gated behind the `"update"` cargo feature and provides
-//! functions to download the latest finals2000A.data from IERS/USNO,
-//! validate it, and safely swap it into place.
+//! This module is gated behind the `"update"` cargo feature and mirrors the
+//! current CASA/casaconfig model:
+//!
+//! - fetch a `casarundata` tarball from the NRAO data site
+//! - fetch the latest `WSRT_Measures_*.ztar` from an ASTRON/NRAO measures site
+//! - overlay the measures update on top of the base tree
+//! - preserve the base `geodetic/Observatories` table, matching CASA's default
+//!   `measures_update` behavior
 
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{EopError, EopSummary, EopTable};
+use flate2::read::GzDecoder;
+use tar::Archive;
 
-/// Default download URL for finals2000A.data.
-///
-/// The USNO mirror is used as the primary source since it provides the
-/// standard fixed-column ASCII format directly.
-pub const DEFAULT_URL: &str = "https://maia.usno.navy.mil/ser7/finals2000A.data";
+use super::{MeasuresDataError, SnapshotProvenance};
 
-/// Alternative download URL (IERS Data Center).
-pub const IERS_URL: &str = "https://datacenter.iers.org/data/latestVersion/finals2000A.data";
+/// Default `casarundata` site used by CASA.
+pub const DEFAULT_CASARUNDATA_SITE: &str = "https://go.nrao.edu/casarundata/";
 
-/// Result of a download-and-install operation.
-#[derive(Debug)]
-pub enum UpdateResult {
-    /// New data was installed (path, summary).
-    Updated(PathBuf, EopSummary),
-    /// Downloaded data is the same as the existing file; no update needed.
-    AlreadyCurrent(EopSummary),
+/// Default measures sites tried in order when looking for `WSRT_Measures_*`.
+pub const DEFAULT_MEASURES_SITES: &[&str] =
+    &["https://www.astron.nl/iers/", "https://go.nrao.edu/iers/"];
+
+/// Provenance filename written into refreshed runtime trees.
+pub const PROVENANCE_FILENAME: &str = "casa-rs-measures-provenance.json";
+
+/// Result of a measures refresh operation.
+#[derive(Debug, Clone)]
+pub struct RefreshResult {
+    /// Installed runtime root.
+    pub path: PathBuf,
+    /// `casarundata` archive used for the refresh.
+    pub casarundata_version: String,
+    /// Measures overlay archive used for the refresh.
+    pub measures_version: String,
+    /// Measures site that supplied the overlay archive.
+    pub measures_site: String,
 }
 
-/// Download the latest finals2000A.data to a destination directory.
-///
-/// The file is first written to `finals2000A.data.new` in `dest_dir`,
-/// then validated. If the downloaded data's last MJD matches the existing
-/// file's last MJD, the download is discarded and [`UpdateResult::AlreadyCurrent`]
-/// is returned. Otherwise, the existing file (if any) is renamed to
-/// `finals2000A.data.bak` and the new file takes its place.
-///
-/// # Errors
-///
-/// Returns an error if the download fails, the data is invalid, or
-/// filesystem operations fail.
-pub fn download_and_install(dest_dir: &Path) -> Result<UpdateResult, EopError> {
-    fs::create_dir_all(dest_dir)
-        .map_err(|e| EopError::IoError(format!("creating {}: {e}", dest_dir.display())))?;
+/// Download the latest CASA-compatible runtime bundles and install them at `dest_root`.
+pub fn refresh_measures_path(dest_root: &Path) -> Result<RefreshResult, MeasuresDataError> {
+    refresh_measures_path_with_sites(dest_root, DEFAULT_CASARUNDATA_SITE, DEFAULT_MEASURES_SITES)
+}
 
-    let final_path = dest_dir.join("finals2000A.data");
-    let new_path = dest_dir.join("finals2000A.data.new");
-    let bak_path = dest_dir.join("finals2000A.data.bak");
+fn refresh_measures_path_with_sites(
+    dest_root: &Path,
+    casarundata_site: &str,
+    measures_sites: &[&str],
+) -> Result<RefreshResult, MeasuresDataError> {
+    let casarundata_version = latest_archive_name(casarundata_site, "casarundata-", ".tar.gz")?;
+    let casarundata_url = join_url(casarundata_site, &casarundata_version);
 
-    // Download
-    let content = download_from_url(DEFAULT_URL).or_else(|_| download_from_url(IERS_URL))?;
+    let (measures_site, measures_version) = measures_sites
+        .iter()
+        .find_map(|site| {
+            latest_archive_name(site, "WSRT_Measures_", ".ztar")
+                .ok()
+                .map(|version| ((*site).to_string(), version))
+        })
+        .ok_or_else(|| {
+            MeasuresDataError::Bootstrap(format!(
+                "unable to find a WSRT_Measures archive in configured sites: {}",
+                measures_sites.join(", ")
+            ))
+        })?;
+    let measures_url = join_url(&measures_site, &measures_version);
 
-    // Validate the downloaded content
-    let table = match EopTable::from_finals2000a(&content) {
-        Ok(t) => t,
-        Err(e) => {
-            return Err(EopError::ParseError(format!(
-                "downloaded data failed validation: {e}"
-            )));
+    let parent = dest_root.parent().ok_or_else(|| {
+        MeasuresDataError::Bootstrap(format!(
+            "destination {} has no parent directory",
+            dest_root.display()
+        ))
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        MeasuresDataError::Bootstrap(format!("creating {}: {error}", parent.display()))
+    })?;
+
+    let staging_root = unique_sibling_path(dest_root, ".casa-rs-measures-staging");
+    let backup_root = unique_sibling_path(dest_root, ".casa-rs-measures-backup");
+    if staging_root.exists() {
+        let _ = fs::remove_dir_all(&staging_root);
+    }
+    fs::create_dir_all(&staging_root).map_err(|error| {
+        MeasuresDataError::Bootstrap(format!("creating {}: {error}", staging_root.display()))
+    })?;
+
+    let casarundata = download_bytes(&casarundata_url)?;
+    extract_gzip_tar(&casarundata, &staging_root)?;
+
+    let observatories_backup = unique_sibling_path(dest_root, ".casa-rs-observatories-backup");
+    let observatories = staging_root.join("geodetic/Observatories");
+    if observatories.is_dir() {
+        copy_tree(&observatories, &observatories_backup)?;
+    }
+
+    let measures = download_bytes(&measures_url)?;
+    extract_gzip_tar(&measures, &staging_root)?;
+
+    if observatories_backup.is_dir() {
+        if observatories.exists() {
+            fs::remove_dir_all(&observatories).map_err(|error| {
+                MeasuresDataError::Bootstrap(format!(
+                    "removing {} before restore: {error}",
+                    observatories.display()
+                ))
+            })?;
         }
-    };
+        copy_tree(&observatories_backup, &observatories)?;
+        fs::remove_dir_all(&observatories_backup).map_err(|error| {
+            MeasuresDataError::Bootstrap(format!(
+                "removing {}: {error}",
+                observatories_backup.display()
+            ))
+        })?;
+    }
 
-    let summary = table.summary();
-
-    // Require at least 1000 entries
-    if summary.num_entries < 1000 {
-        return Err(EopError::ParseError(format!(
-            "downloaded data has only {} entries (expected >1000)",
-            summary.num_entries
+    if !super::measures_tree_complete(&staging_root) {
+        return Err(MeasuresDataError::Bootstrap(format!(
+            "downloaded runtime tree at {} is missing required measures tables",
+            staging_root.display()
         )));
     }
 
-    // Check if existing file already has the same data
-    if final_path.exists() {
-        if let Ok(existing) = EopTable::from_file(&final_path) {
-            let (_, existing_end) = existing.mjd_range();
-            if (existing_end - summary.mjd_end).abs() < 0.5 {
-                return Ok(UpdateResult::AlreadyCurrent(summary));
-            }
-        }
+    let provenance = SnapshotProvenance {
+        generated_at_utc: format!("{:?}", std::time::SystemTime::now()),
+        casarundata_version: casarundata_version.clone(),
+        measures_version: measures_version.clone(),
+        measures_site: measures_site.clone(),
+        included_paths: vec![
+            "readme.txt".to_string(),
+            "geodetic".to_string(),
+            "ephemerides".to_string(),
+        ],
+    };
+    let provenance_json = serde_json::to_string_pretty(&provenance).map_err(|error| {
+        MeasuresDataError::Bootstrap(format!("serializing provenance: {error}"))
+    })?;
+    fs::write(staging_root.join(PROVENANCE_FILENAME), provenance_json).map_err(|error| {
+        MeasuresDataError::Bootstrap(format!(
+            "writing {}: {error}",
+            staging_root.join(PROVENANCE_FILENAME).display()
+        ))
+    })?;
+
+    if backup_root.exists() {
+        let _ = fs::remove_dir_all(&backup_root);
+    }
+    if dest_root.exists() {
+        fs::rename(dest_root, &backup_root).map_err(|error| {
+            MeasuresDataError::Bootstrap(format!(
+                "moving existing {} aside: {error}",
+                dest_root.display()
+            ))
+        })?;
+    }
+    fs::rename(&staging_root, dest_root).map_err(|error| {
+        MeasuresDataError::Bootstrap(format!(
+            "installing refreshed runtime at {}: {error}",
+            dest_root.display()
+        ))
+    })?;
+    if backup_root.exists() {
+        fs::remove_dir_all(&backup_root).map_err(|error| {
+            MeasuresDataError::Bootstrap(format!(
+                "removing backup {}: {error}",
+                backup_root.display()
+            ))
+        })?;
     }
 
-    // Write to .new
-    fs::write(&new_path, &content)
-        .map_err(|e| EopError::IoError(format!("writing {}: {e}", new_path.display())))?;
-
-    // Safe swap
-    if final_path.exists() {
-        let _ = fs::remove_file(&bak_path); // remove old backup if present
-        fs::rename(&final_path, &bak_path)
-            .map_err(|e| EopError::IoError(format!("backing up old data: {e}")))?;
-    }
-    fs::rename(&new_path, &final_path)
-        .map_err(|e| EopError::IoError(format!("installing new data: {e}")))?;
-
-    Ok(UpdateResult::Updated(final_path, summary))
+    Ok(RefreshResult {
+        path: dest_root.to_path_buf(),
+        casarundata_version,
+        measures_version,
+        measures_site,
+    })
 }
 
-/// Download content from a URL as a string.
-fn download_from_url(url: &str) -> Result<String, EopError> {
-    let body = ureq::get(url)
+fn latest_archive_name(
+    site_url: &str,
+    prefix: &str,
+    suffix: &str,
+) -> Result<String, MeasuresDataError> {
+    let index = download_text(site_url)?;
+    let mut candidates = Vec::new();
+    let mut search_start = 0usize;
+
+    while let Some(found) = index[search_start..].find(prefix) {
+        let start = search_start + found;
+        let remainder = &index[start..];
+        let Some(end_rel) = remainder.find(suffix) else {
+            break;
+        };
+        let end = start + end_rel + suffix.len();
+        let candidate = &index[start..end];
+        if candidate
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+        {
+            candidates.push(candidate.to_string());
+        }
+        search_start = end;
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates.pop().ok_or_else(|| {
+        MeasuresDataError::Bootstrap(format!(
+            "no archive matching {prefix}*{suffix} found at {site_url}"
+        ))
+    })
+}
+
+fn download_text(url: &str) -> Result<String, MeasuresDataError> {
+    ureq::get(url)
         .call()
-        .map_err(|e| EopError::IoError(format!("downloading {url}: {e}")))?
+        .map_err(|error| MeasuresDataError::Bootstrap(format!("downloading {url}: {error}")))?
         .into_body()
         .read_to_string()
-        .map_err(|e| EopError::IoError(format!("reading response from {url}: {e}")))?;
-    Ok(body)
+        .map_err(|error| MeasuresDataError::Bootstrap(format!("reading {url}: {error}")))
 }
 
-/// Validate an existing finals2000A.data file.
-///
-/// Parses the file and returns a summary if valid.
-pub fn validate(path: &Path) -> Result<EopSummary, EopError> {
-    let table = EopTable::from_file(path)?;
-    Ok(table.summary())
+fn download_bytes(url: &str) -> Result<Vec<u8>, MeasuresDataError> {
+    ureq::get(url)
+        .call()
+        .map_err(|error| MeasuresDataError::Bootstrap(format!("downloading {url}: {error}")))?
+        .into_body()
+        .read_to_vec()
+        .map_err(|error| MeasuresDataError::Bootstrap(format!("reading {url}: {error}")))
+}
+
+fn extract_gzip_tar(bytes: &[u8], dest_root: &Path) -> Result<(), MeasuresDataError> {
+    let decoder = GzDecoder::new(bytes);
+    let mut archive = Archive::new(decoder);
+    archive.unpack(dest_root).map_err(|error| {
+        MeasuresDataError::Bootstrap(format!(
+            "extracting archive into {}: {error}",
+            dest_root.display()
+        ))
+    })
+}
+
+fn join_url(base: &str, name: &str) -> String {
+    if base.ends_with('/') {
+        format!("{base}{name}")
+    } else {
+        format!("{base}/{name}")
+    }
+}
+
+fn unique_sibling_path(dest_root: &Path, prefix: &str) -> PathBuf {
+    let parent = dest_root.parent().unwrap_or_else(|| Path::new("."));
+    let mut name = OsString::from(prefix);
+    name.push(format!(
+        "-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    parent.join(name)
+}
+
+fn copy_tree(src: &Path, dest: &Path) -> Result<(), MeasuresDataError> {
+    if src.is_dir() {
+        fs::create_dir_all(dest).map_err(|error| {
+            MeasuresDataError::Bootstrap(format!("creating {}: {error}", dest.display()))
+        })?;
+        for entry in fs::read_dir(src).map_err(|error| {
+            MeasuresDataError::Bootstrap(format!("reading {}: {error}", src.display()))
+        })? {
+            let entry = entry.map_err(|error| {
+                MeasuresDataError::Bootstrap(format!("reading {}: {error}", src.display()))
+            })?;
+            copy_tree(&entry.path(), &dest.join(entry.file_name()))?;
+        }
+    } else {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                MeasuresDataError::Bootstrap(format!("creating {}: {error}", parent.display()))
+            })?;
+        }
+        fs::copy(src, dest).map_err(|error| {
+            MeasuresDataError::Bootstrap(format!(
+                "copying {} -> {}: {error}",
+                src.display(),
+                dest.display()
+            ))
+        })?;
+    }
+    Ok(())
 }

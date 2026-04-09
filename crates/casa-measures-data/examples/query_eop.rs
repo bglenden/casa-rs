@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Query EOP values for a given MJD.
+//! Query EOP values for a given MJD from the standard runtime tree.
 //!
 //! Usage: cargo run --example query_eop -p casa-measures-data -- [MJD]
 //!
@@ -11,9 +11,10 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(51544.5);
 
-    let eop = casa_measures_data::EopTable::bundled();
+    let (eop, source) = casa_measures_data::load_eop();
     let summary = eop.summary();
     println!("{summary}");
+    println!("source: {source}");
     println!();
 
     match eop.interpolate(mjd) {

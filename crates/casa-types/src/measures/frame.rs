@@ -67,7 +67,7 @@ pub enum IauModel {
 /// # EOP data
 ///
 /// Attach an IERS EOP table via [`with_eop`](MeasFrame::with_eop) or
-/// [`with_bundled_eop`](MeasFrame::with_bundled_eop) to enable automatic
+/// [`with_standard_eop`](MeasFrame::with_standard_eop) to enable automatic
 /// dUT1 and polar-motion lookup. Explicit [`with_dut1`](MeasFrame::with_dut1)
 /// values take priority over EOP table lookups.
 ///
@@ -77,7 +77,7 @@ pub enum IauModel {
 /// use casa_types::measures::{MeasFrame, MEpoch, EpochRef, MjdHighPrec};
 ///
 /// let frame = MeasFrame::new()
-///     .with_bundled_eop()
+///     .with_standard_eop()
 ///     .with_dut1(0.3);  // explicit override takes priority
 /// ```
 #[derive(Debug, Clone)]
@@ -167,14 +167,19 @@ impl MeasFrame {
         self
     }
 
-    /// Attaches the bundled IERS EOP data (convenience method).
+    /// Attaches the standard CASA-table-backed IERS EOP data.
     ///
     /// Equivalent to `self.with_eop(Arc::new(EopTable::bundled().clone()))`,
-    /// but uses a shared static reference internally.
-    pub fn with_bundled_eop(self) -> Self {
+    /// but uses the standard runtime loader internally.
+    pub fn with_standard_eop(self) -> Self {
         // Clone the bundled table into an Arc so the frame owns it.
-        // The actual parse is done only once (LazyLock in bundled.rs).
+        // The actual runtime load is done only once.
         self.with_eop(Arc::new(EopTable::bundled().clone()))
+    }
+
+    /// Compatibility alias for [`with_standard_eop`](Self::with_standard_eop).
+    pub fn with_bundled_eop(self) -> Self {
+        self.with_standard_eop()
     }
 
     /// Returns the reference epoch, if set.

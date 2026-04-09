@@ -171,7 +171,7 @@ impl MsCalEngine {
         Ok(MeasFrame::new()
             .with_epoch(epoch)
             .with_position(position)
-            .with_bundled_eop())
+            .with_standard_eop())
     }
 
     /// Build a MeasFrame for the given time and explicit position.
@@ -184,7 +184,7 @@ impl MsCalEngine {
         Ok(MeasFrame::new()
             .with_epoch(epoch)
             .with_position(position)
-            .with_bundled_eop())
+            .with_standard_eop())
     }
 
     /// Build a spectral-conversion frame using the observatory position and field direction.
