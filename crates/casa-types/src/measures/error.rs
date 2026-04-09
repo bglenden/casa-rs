@@ -40,6 +40,11 @@ pub enum MeasureError {
         /// The original source-name input.
         input: String,
     },
+    /// An unknown spectral-line name was encountered.
+    UnknownLineName {
+        /// The original spectral-line input.
+        input: String,
+    },
     /// A unit does not match the expected dimension for a measure value.
     NonConformantUnit {
         /// The expected dimension (e.g. "time", "length").
@@ -86,6 +91,9 @@ impl fmt::Display for MeasureError {
             }
             Self::UnknownSourceName { input } => {
                 write!(f, "unknown source name: {input:?}")
+            }
+            Self::UnknownLineName { input } => {
+                write!(f, "unknown spectral line name: {input:?}")
             }
             Self::NonConformantUnit { expected, got } => {
                 write!(f, "non-conformant unit: expected {expected}, got {got:?}")
@@ -140,6 +148,12 @@ mod tests {
                     input: "NotARealSource".to_string(),
                 },
                 "unknown source name: \"NotARealSource\"",
+            ),
+            (
+                MeasureError::UnknownLineName {
+                    input: "NotARealLine".to_string(),
+                },
+                "unknown spectral line name: \"NotARealLine\"",
             ),
             (
                 MeasureError::NonConformantUnit {

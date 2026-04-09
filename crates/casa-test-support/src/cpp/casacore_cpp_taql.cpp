@@ -3,6 +3,7 @@
 // and execute TaQL queries via casacore's tableCommand().
 #include "casacore_cpp_common.h"
 
+#include <casacore/meas/MeasUDF/Register.h>
 #include <casacore/tables/TaQL/TableParse.h>
 #include <casacore/tables/TaQL/TaQLResult.h>
 #include <casacore/tables/Tables/TableColumn.h>
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <sstream>
 #include <iomanip>
+#include <mutex>
 #include <vector>
 
 static casacore_shim::TerminateGuard g_terminate_guard_taql;
@@ -21,6 +23,8 @@ static casacore_shim::TerminateGuard g_terminate_guard_taql;
 namespace {
 
 using namespace casacore;
+
+std::once_flag g_meas_udf_register_once;
 
 // ── Simple fixture (50 rows) ──
 // Schema: id(Int32), name(String), ra(Double), dec(Double), flux(Double),
@@ -304,6 +308,7 @@ void query_impl(const std::string& table_path,
                 uint64_t& out_nrow,
                 uint64_t& out_ncol,
                 uint64_t& out_elapsed_ns) {
+    std::call_once(g_meas_udf_register_once, []() { register_meas(); });
     Table tab(table_path, Table::Old);
 
     // Replace $1 with the temp table

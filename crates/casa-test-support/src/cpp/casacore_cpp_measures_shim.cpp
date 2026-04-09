@@ -562,6 +562,22 @@ int measures_shim_riseset(
     }
 }
 
+int measures_shim_line_frequency(
+    const char* line_name,
+    double* freq_out_hz)
+{
+    try {
+        MFrequency line;
+        if (!MeasTable::Line(line, String(line_name))) {
+            return 1;
+        }
+        *freq_out_hz = line.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
 int measures_shim_earthmag_convert_xyz(
     double x_in, double y_in, double z_in,
     const char* ref_in, const char* ref_out,

@@ -376,6 +376,20 @@ fn named_source_fixed_direction_matches_cpp() {
 }
 
 #[test]
+fn named_source_catalog_direction_matches_cpp() {
+    let rust_result = eval_meas("meas.j2000", &[s("0002-478")]);
+    let (rust_lon, rust_lat) = extract_dir(&rust_result);
+
+    let (cpp_lon, cpp_lat) =
+        cpp_named_direction_convert("0002-478", "J2000", 0.0, 0.0, 0.0, 0.0).unwrap();
+
+    assert!(
+        close_angle(rust_lon, cpp_lon, 1e-11) && close(rust_lat, cpp_lat, 1e-11),
+        "dir 0002-478→J2000: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
+    );
+}
+
+#[test]
 fn named_source_sun_direction_matches_cpp() {
     let rust_result = eval_meas("meas.dir", &[s("ITRF"), s("SUN"), fl(J2000_MJD), s("VLA")]);
     let (rust_lon, rust_lat) = extract_dir(&rust_result);

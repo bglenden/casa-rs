@@ -125,6 +125,11 @@ unsafe extern "C" {
         set_out: *mut f64,
     ) -> i32;
 
+    fn measures_shim_line_frequency(
+        line_name: *const std::ffi::c_char,
+        freq_out_hz: *mut f64,
+    ) -> i32;
+
     fn measures_shim_earthmag_convert_xyz(
         x_in: f64,
         y_in: f64,
@@ -696,6 +701,21 @@ pub fn cpp_riseset(
         Ok((rise_out, set_out))
     } else {
         Err(format!("C++ riseset failed: rc={rc}"))
+    }
+}
+
+/// Resolve a named spectral line to its rest frequency using C++ casacore.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_line_frequency(line_name: &str) -> Result<f64, String> {
+    let c_name = CString::new(line_name).unwrap();
+    let mut freq_out_hz = 0.0;
+
+    let rc = unsafe { measures_shim_line_frequency(c_name.as_ptr(), &mut freq_out_hz) };
+
+    if rc == 0 {
+        Ok(freq_out_hz)
+    } else {
+        Err(format!("C++ line_frequency failed: rc={rc}"))
     }
 }
 

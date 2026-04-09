@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Performance comparison: Rust measures vs C++ casacore.
+//!
+//! The historical Phase 3 slow routes were:
+//! `UTC -> TAI`, `TT -> TDB`, `UT1 -> GAST`, `J2000 -> ITRF`, and `BARY -> GEO`.
+//! These benchmarks keep those paths reproducible in-tree. The named slow-route
+//! tests below now enforce a `<= 2x` regression threshold; if they fail, treat
+//! it as a frame-state reuse regression rather than an accepted algorithmic gap.
 #![cfg(has_casacore_cpp)]
 
 use casa_test_support::measures_interop::{
@@ -16,7 +22,7 @@ const J2000_MJD: f64 = 51544.5;
 const COUNT: i32 = 10_000;
 const ITERATIONS: i32 = 1;
 
-fn bench_epoch(ref_in: EpochRef, ref_out: EpochRef) {
+fn bench_epoch(ref_in: EpochRef, ref_out: EpochRef) -> f64 {
     let frame = MeasFrame::new();
     let ref_in_str = ref_in.as_str();
     let ref_out_str = ref_out.as_str();
@@ -44,6 +50,7 @@ fn bench_epoch(ref_in: EpochRef, ref_out: EpochRef) {
     if ratio > 2.0 {
         eprintln!("WARNING: Rust is >2x slower than C++ for {ref_in_str}→{ref_out_str}");
     }
+    ratio
 }
 
 fn bench_position(ref_in: PositionRef, ref_out: PositionRef) {
@@ -98,7 +105,11 @@ fn bench_position(ref_in: PositionRef, ref_out: PositionRef) {
 
 #[test]
 fn perf_epoch_utc_to_tai() {
-    bench_epoch(EpochRef::UTC, EpochRef::TAI);
+    let ratio = bench_epoch(EpochRef::UTC, EpochRef::TAI);
+    assert!(
+        ratio <= 2.0,
+        "UTC->TAI ratio {ratio:.2}x exceeds 2.0x threshold"
+    );
 }
 
 #[test]
@@ -108,7 +119,11 @@ fn perf_epoch_utc_to_tt() {
 
 #[test]
 fn perf_epoch_tt_to_tdb() {
-    bench_epoch(EpochRef::TT, EpochRef::TDB);
+    let ratio = bench_epoch(EpochRef::TT, EpochRef::TDB);
+    assert!(
+        ratio <= 2.0,
+        "TT->TDB ratio {ratio:.2}x exceeds 2.0x threshold"
+    );
 }
 
 #[test]
@@ -207,7 +222,7 @@ fn perf_doppler_beta_to_gamma() {
 // Direction perf tests
 // ---------------------------------------------------------------------------
 
-fn bench_direction(ref_in: DirectionRef, ref_out: DirectionRef, epoch_mjd: f64) {
+fn bench_direction(ref_in: DirectionRef, ref_out: DirectionRef, epoch_mjd: f64) -> f64 {
     let ref_in_str = ref_in.as_str();
     let ref_out_str = ref_out.as_str();
 
@@ -262,6 +277,7 @@ fn bench_direction(ref_in: DirectionRef, ref_out: DirectionRef, epoch_mjd: f64) 
     if ratio > 2.0 {
         eprintln!("WARNING: Rust is >2x slower than C++ for Direction {ref_in_str}→{ref_out_str}");
     }
+    ratio
 }
 
 #[test]
@@ -337,7 +353,7 @@ fn perf_frequency_bary_to_lgroup() {
 // Wave 5: Radial velocity perf tests
 // ---------------------------------------------------------------------------
 
-fn bench_radvel(ref_in: RadialVelocityRef, ref_out: RadialVelocityRef) {
+fn bench_radvel(ref_in: RadialVelocityRef, ref_out: RadialVelocityRef) -> f64 {
     let ref_in_str = ref_in.as_str();
     let ref_out_str = ref_out.as_str();
     let dir_lon = 0.185_948_8;
@@ -380,6 +396,7 @@ fn bench_radvel(ref_in: RadialVelocityRef, ref_out: RadialVelocityRef) {
     if ratio > 2.0 {
         eprintln!("WARNING: Rust is >2x slower than C++ for RadVel {ref_in_str}→{ref_out_str}");
     }
+    ratio
 }
 
 #[test]
@@ -389,7 +406,11 @@ fn perf_radvel_lsrk_to_bary() {
 
 #[test]
 fn perf_radvel_bary_to_geo() {
-    bench_radvel(RadialVelocityRef::BARY, RadialVelocityRef::GEO);
+    let ratio = bench_radvel(RadialVelocityRef::BARY, RadialVelocityRef::GEO);
+    assert!(
+        ratio <= 2.0,
+        "BARY->GEO ratio {ratio:.2}x exceeds 2.0x threshold"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -403,7 +424,11 @@ fn perf_direction_j2000_to_b1950() {
 
 #[test]
 fn perf_direction_j2000_to_itrf() {
-    bench_direction(DirectionRef::J2000, DirectionRef::ITRF, J2000_MJD);
+    let ratio = bench_direction(DirectionRef::J2000, DirectionRef::ITRF, J2000_MJD);
+    assert!(
+        ratio <= 2.0,
+        "J2000->ITRF ratio {ratio:.2}x exceeds 2.0x threshold"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -454,4 +479,8 @@ fn perf_epoch_ut1_to_gast() {
     if ratio > 2.0 {
         eprintln!("WARNING: Rust is >2x slower than C++ for Epoch UT1→GAST");
     }
+    assert!(
+        ratio <= 2.0,
+        "UT1->GAST ratio {ratio:.2}x exceeds 2.0x threshold"
+    );
 }

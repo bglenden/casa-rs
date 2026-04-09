@@ -22,11 +22,15 @@ use tar::Archive;
 mod interp;
 mod observatory;
 mod parser;
+mod source;
+mod spectral_line;
 
 #[cfg(feature = "update")]
 pub mod update;
 
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
+pub use source::{SourceCatalog, SourceEntry};
+pub use spectral_line::{SpectralLineCatalog, SpectralLineEntry};
 
 const DEFAULT_MEASURES_ENV: &str = "CASA_RS_MEASURESPATH";
 const LEGACY_MEASURES_ENV: &str = "CASA_RS_DATA";
@@ -385,6 +389,9 @@ static STANDARD_MEASURES_ROOT: OnceLock<Result<(PathBuf, &'static str), String>>
 static STANDARD_EOP: OnceLock<Result<(EopTable, &'static str), String>> = OnceLock::new();
 static STANDARD_OBSERVATORIES: OnceLock<Result<(ObservatoryCatalog, &'static str), String>> =
     OnceLock::new();
+static STANDARD_SOURCES: OnceLock<Result<(SourceCatalog, &'static str), String>> = OnceLock::new();
+static STANDARD_SPECTRAL_LINES: OnceLock<Result<(SpectralLineCatalog, &'static str), String>> =
+    OnceLock::new();
 static STANDARD_TAI_UTC: OnceLock<Result<TaiUtcTable, String>> = OnceLock::new();
 static STANDARD_IGRF: OnceLock<Result<IgrfTable, String>> = OnceLock::new();
 static PACKAGED_PROVENANCE: OnceLock<Result<SnapshotProvenance, String>> = OnceLock::new();
@@ -455,6 +462,39 @@ pub fn try_load_observatories()
 pub fn load_observatories() -> (&'static ObservatoryCatalog, &'static str) {
     try_load_observatories()
         .unwrap_or_else(|error| panic!("failed to load standard observatory runtime: {error}"))
+}
+
+/// Load the standard runtime source catalog.
+pub fn try_load_sources() -> Result<(&'static SourceCatalog, &'static str), MeasuresDataError> {
+    match STANDARD_SOURCES
+        .get_or_init(|| load_standard_sources().map_err(|error| error.to_string()))
+    {
+        Ok((catalog, source)) => Ok((catalog, *source)),
+        Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
+    }
+}
+
+/// Infallible compatibility wrapper for callers that expect a standard catalog.
+pub fn load_sources() -> (&'static SourceCatalog, &'static str) {
+    try_load_sources()
+        .unwrap_or_else(|error| panic!("failed to load standard source runtime: {error}"))
+}
+
+/// Load the standard runtime spectral-line catalog.
+pub fn try_load_spectral_lines()
+-> Result<(&'static SpectralLineCatalog, &'static str), MeasuresDataError> {
+    match STANDARD_SPECTRAL_LINES
+        .get_or_init(|| load_standard_spectral_lines().map_err(|error| error.to_string()))
+    {
+        Ok((catalog, source)) => Ok((catalog, *source)),
+        Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
+    }
+}
+
+/// Infallible compatibility wrapper for callers that expect a standard catalog.
+pub fn load_spectral_lines() -> (&'static SpectralLineCatalog, &'static str) {
+    try_load_spectral_lines()
+        .unwrap_or_else(|error| panic!("failed to load standard spectral-line runtime: {error}"))
 }
 
 /// Compute `TAI-UTC` in seconds from the standard `geodetic/TAI_UTC` table.
@@ -663,6 +703,59 @@ fn load_standard_observatories() -> Result<(ObservatoryCatalog, &'static str), M
     Ok((ObservatoryCatalog::from_entries(entries), source))
 }
 
+fn load_standard_sources() -> Result<(SourceCatalog, &'static str), MeasuresDataError> {
+    let (root, source) = standard_measures_path()?;
+    let table = PlainTable::open(&root.join("ephemerides/Sources"))?;
+    let mjd = table.scalar_f64("MJD")?;
+    let name = table.scalar_string("Name")?;
+    let direction_type = table.scalar_string("Type")?;
+    let longitude_deg = table.scalar_f64("Long")?;
+    let latitude_deg = table.scalar_f64("Lat")?;
+    let source_col = table.scalar_string("Source")?;
+    let comment = table.scalar_string("Comment")?;
+
+    let mut entries = Vec::with_capacity(table.row_count());
+    for row in 0..table.row_count() {
+        entries.push(SourceEntry {
+            mjd: mjd[row],
+            name: name[row].clone(),
+            direction_type: direction_type[row].clone(),
+            longitude_deg: longitude_deg[row],
+            latitude_deg: latitude_deg[row],
+            source: source_col[row].clone(),
+            comment: comment[row].clone(),
+        });
+    }
+
+    Ok((SourceCatalog::from_entries(entries), source))
+}
+
+fn load_standard_spectral_lines() -> Result<(SpectralLineCatalog, &'static str), MeasuresDataError>
+{
+    let (root, source) = standard_measures_path()?;
+    let table = PlainTable::open(&root.join("ephemerides/Lines"))?;
+    let mjd = table.scalar_f64("MJD")?;
+    let name = table.scalar_string("Name")?;
+    let frequency_type = table.scalar_string("Type")?;
+    let frequency_ghz = table.scalar_f64("Freq")?;
+    let source_col = table.scalar_string("Source")?;
+    let comment = table.scalar_string("Comment")?;
+
+    let mut entries = Vec::with_capacity(table.row_count());
+    for row in 0..table.row_count() {
+        entries.push(SpectralLineEntry {
+            mjd: mjd[row],
+            name: name[row].clone(),
+            frequency_type: frequency_type[row].clone(),
+            frequency_ghz: frequency_ghz[row],
+            source: source_col[row].clone(),
+            comment: comment[row].clone(),
+        });
+    }
+
+    Ok((SpectralLineCatalog::from_entries(entries), source))
+}
+
 fn load_standard_tai_utc() -> Result<TaiUtcTable, MeasuresDataError> {
     let (root, _source) = standard_measures_path()?;
     let table = PlainTable::open(&root.join("geodetic/TAI_UTC"))?;
@@ -828,6 +921,27 @@ mod tests {
         let (catalog, source) = try_load_observatories().expect("observatories");
         assert!(catalog.entries().len() > 40);
         assert!(catalog.get("ALMA").is_some());
+        assert!(!source.is_empty());
+    }
+
+    #[test]
+    fn standard_source_catalog_loads() {
+        let (catalog, source) = try_load_sources().expect("sources");
+        assert!(catalog.entries().len() > 100);
+        let source_0002 = catalog.get("0002-478").expect("catalog source");
+        assert_eq!(source_0002.direction_type, "ICRS");
+        assert!((source_0002.longitude_rad() - 0.020_046_3).abs() < 1.0e-6);
+        assert!((source_0002.latitude_rad() - (-0.830_872)).abs() < 1.0e-6);
+        assert!(!source.is_empty());
+    }
+
+    #[test]
+    fn standard_spectral_line_catalog_loads() {
+        let (catalog, source) = try_load_spectral_lines().expect("lines");
+        assert!(catalog.entries().len() >= 18);
+        let hi = catalog.get("HI").expect("HI line");
+        assert_eq!(hi.frequency_type, "REST");
+        assert!((hi.frequency_hz() - 1.420_405_752e9).abs() < 5.0e3);
         assert!(!source.is_empty());
     }
 

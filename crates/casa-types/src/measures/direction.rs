@@ -20,12 +20,22 @@
 //! This Rust implementation uses [`sofars`] (a Rust port of SOFA) instead of
 //! transliterating casacore's bespoke algorithms. Both implement the same IAU
 //! standards but with different polynomial series and internal decompositions.
-//! Measured deviations in J2000 → APP direction conversions:
+//! Accepted casacore-vs-SOFA divergence on the apparent-place branch:
 //!
 //! | IAU model | Typical deviation | Main contributors |
 //! |-----------|-------------------|-------------------|
 //! | 1976/1980 | ~1.5 mas | Sun deflection, velocity series |
 //! | 2000A | ~16 mas | Precession/nutation parameterization |
+//!
+//! The affected conversion paths are the ones that pass through apparent place:
+//! - `J2000 -> APP`
+//! - `J2000 -> HADEC`
+//! - `J2000 -> AZEL`
+//! - `J2000 -> ITRF`
+//!
+//! `HADEC`, `AZEL`, and `ITRF` inherit the same mismatch because their
+//! implementations transit the apparent-place branch before applying local
+//! sidereal-time, horizon, or terrestrial rotations.
 //!
 //! The IAU 1976/1980 deviation is dominated by:
 //! - **Sun gravitational deflection**: C++ casacore applies full light deflection
@@ -39,14 +49,17 @@
 //! Casacore uses (ζA, zA, θA) Euler angles with frame bias baked into the
 //! constant terms; SOFA uses (ψA, ωA, χA) Lieske 1977 angles with IAU 2000
 //! corrections from `pr00` and separate frame bias via `bi00`.
+//! Upstream casacore PR `#1464` records the same working hypothesis for the
+//! IAU2000 `JNAT <-> APP` helper: a missing `frameBias00()` step in the shared
+//! combined precession/nutation path. That PR is useful background, but not
+//! independent confirmation. If that fix lands upstream, the IAU2000A residual
+//! should collapse from ~16 mas to the same ~1.5 mas class as the older
+//! IAU 1976/1980 path.
 //!
 //! A test program comparing casacore and ERFA (SOFA) side-by-side is in
-//! `misc/casacore_vs_sofa_deviation.cpp`. An issue has been filed with the
-//! casacore C++ maintainers to clarify whether this is expected.
-//!
-//! Deferred: GitHub issue #14 tracks the remaining casacore vs SOFA deviation
-//! audit, including whether to match casacore exactly or document the
-//! expected divergence more explicitly.
+//! `misc/casacore_vs_sofa_deviation.cpp`. The Rust project treats the current
+//! mismatch as an accepted, regression-tested divergence rather than
+//! re-implementing casacore's bespoke pre-SOFA algorithms byte-for-byte.
 //!
 //! # Implemented routes
 //!
@@ -67,6 +80,8 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
+
+use casa_measures_data::SourceCatalog;
 
 use crate::quanta::MvAngle;
 use crate::quanta::{Quantity, Unit};
@@ -604,6 +619,26 @@ fn parse_named_direction(source_name: &str) -> Result<ParsedNamedDirection, Meas
 
     if let Some(parsed) = parse_solar_system_name(original, &upper)? {
         return Ok(parsed);
+    }
+
+    if let Some(entry) = SourceCatalog::bundled().get(original) {
+        let refer = DirectionRef::from_str(&entry.direction_type).map_err(|_| {
+            MeasureError::InvalidSourceName {
+                input: source_name.to_string(),
+                reason: format!(
+                    "unsupported direction type {:?} in ephemerides/Sources",
+                    entry.direction_type
+                ),
+            }
+        })?;
+        return Ok(ParsedNamedDirection {
+            kind: NamedDirectionKind::Fixed(MDirection::from_angles(
+                entry.longitude_rad(),
+                entry.latitude_rad(),
+                refer,
+            )),
+            rise_set_horizon_rad: 0.0,
+        });
     }
 
     let fixed = match upper.as_str() {
@@ -1404,7 +1439,7 @@ impl ConvCtx {
         if let Some(v) = *self.tt_jd.borrow() {
             return Ok(v);
         }
-        let v = compute_tt_jd(frame)?;
+        let v = frame.cached_tt_jd(|| compute_tt_jd(frame))?;
         *self.tt_jd.borrow_mut() = Some(v);
         Ok(v)
     }
@@ -1413,7 +1448,7 @@ impl ConvCtx {
         if let Some(v) = *self.ut1_jd.borrow() {
             return Ok(v);
         }
-        let v = compute_ut1_jd(frame)?;
+        let v = frame.cached_ut1_jd(|| compute_ut1_jd(frame))?;
         *self.ut1_jd.borrow_mut() = Some(v);
         Ok(v)
     }
@@ -1422,7 +1457,7 @@ impl ConvCtx {
         if let Some(v) = *self.gast.borrow() {
             return Ok(v);
         }
-        let v = compute_gast(frame, self)?;
+        let v = frame.cached_gast(|| compute_gast(frame, self))?;
         *self.gast.borrow_mut() = Some(v);
         Ok(v)
     }
@@ -1431,11 +1466,13 @@ impl ConvCtx {
         if let Some(v) = *self.precession.borrow() {
             return Ok(v);
         }
-        let (tt1, tt2) = self.get_tt_jd(frame)?;
-        let v = match frame.iau_model() {
-            IauModel::Iau1976_1980 => sofars::pnp::pmat76(tt1, tt2),
-            IauModel::Iau2006_2000A => sofars::pnp::pmat00(tt1, tt2),
-        };
+        let v = frame.cached_precession(|| {
+            let (tt1, tt2) = self.get_tt_jd(frame)?;
+            Ok(match frame.iau_model() {
+                IauModel::Iau1976_1980 => sofars::pnp::pmat76(tt1, tt2),
+                IauModel::Iau2006_2000A => sofars::pnp::pmat00(tt1, tt2),
+            })
+        })?;
         *self.precession.borrow_mut() = Some(v);
         Ok(v)
     }
@@ -1444,11 +1481,13 @@ impl ConvCtx {
         if let Some(v) = *self.nutation.borrow() {
             return Ok(v);
         }
-        let (tt1, tt2) = self.get_tt_jd(frame)?;
-        let v = match frame.iau_model() {
-            IauModel::Iau1976_1980 => sofars::pnp::nutm80(tt1, tt2),
-            IauModel::Iau2006_2000A => sofars::pnp::num00a(tt1, tt2),
-        };
+        let v = frame.cached_nutation(|| {
+            let (tt1, tt2) = self.get_tt_jd(frame)?;
+            Ok(match frame.iau_model() {
+                IauModel::Iau1976_1980 => sofars::pnp::nutm80(tt1, tt2),
+                IauModel::Iau2006_2000A => sofars::pnp::num00a(tt1, tt2),
+            })
+        })?;
         *self.nutation.borrow_mut() = Some(v);
         Ok(v)
     }
@@ -1457,11 +1496,13 @@ impl ConvCtx {
         if let Some(v) = *self.earth_vel.borrow() {
             return Ok(v);
         }
-        let (tt1, tt2) = self.get_tt_jd(frame)?;
-        let (pvh, pvb) =
-            sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
-        let sun_dist = sofars::vm::pm(pvh[0]);
-        let v = (pvb[1], sun_dist);
+        let v = frame.cached_earth_velocity_au_per_day(|| {
+            let (tt1, tt2) = self.get_tt_jd(frame)?;
+            let (pvh, pvb) =
+                sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
+            let sun_dist = sofars::vm::pm(pvh[0]);
+            Ok((pvb[1], sun_dist))
+        })?;
         *self.earth_vel.borrow_mut() = Some(v);
         Ok(v)
     }
@@ -2083,6 +2124,15 @@ mod tests {
         let (lon, lat) = direction.as_angles();
         assert!(close(lon, 6.123_487_680_622_104, 1e-15));
         assert!(close(lat, 1.026_515_399_560_464_8, 1e-15));
+    }
+
+    #[test]
+    fn source_name_catalog_entry_uses_runtime_sources_table() {
+        let direction = MDirection::from_source_name("0002-478", &MeasFrame::new()).unwrap();
+        assert_eq!(direction.refer(), DirectionRef::ICRS);
+        let (lon, lat) = direction.as_angles();
+        assert!(close(lon, 0.020_046_3, 1e-6));
+        assert!(close(lat, -0.830_872, 1e-6));
     }
 
     #[test]
