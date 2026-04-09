@@ -1,0 +1,17 @@
+{
+  "generated_at_utc": "2026-04-09T16:32:00Z",
+  "casarundata_version": "casarundata-2026.02.19-1.tar.gz",
+  "measures_version": "WSRT_Measures_20260408-160001.ztar",
+  "measures_site": "https://www.astron.nl/iers/",
+  "included_paths": [
+    "readme.txt",
+    "geodetic",
+    "ephemerides/DE200",
+    "ephemerides/DE405",
+    "ephemerides/VGEO",
+    "ephemerides/VTOP",
+    "ephemerides/JPL-Horizons",
+    "ephemerides/Sources",
+    "ephemerides/Lines"
+  ]
+}

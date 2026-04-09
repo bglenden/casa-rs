@@ -12,6 +12,6 @@ publish = false
 workspace = true
 
 [dependencies]
-casa-types = { path = "../casa-types" }
+casa-values = { path = "../casa-values" }
 ndarray.workspace = true
 thiserror.workspace = true

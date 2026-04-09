@@ -1,0 +1,15 @@
+[package]
+name = "casa-table-read"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Minimal read-only CASA table reader (internal)"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true

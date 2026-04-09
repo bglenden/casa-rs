@@ -36,7 +36,7 @@
 
 use std::io::{Read, Write};
 
-pub use casa_types::{
+pub use casa_values::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
     TypeTag, Value, ValueKind, ValueRank,
 };

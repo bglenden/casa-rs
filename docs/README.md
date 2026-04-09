@@ -15,16 +15,16 @@ This directory holds stable project documentation.
 
 ## Planning
 
-Phase plans and backlogs live under:
+Phase plans live under:
 
 - `docs/Planning/Phase 2 - Table fillout/`
 - `docs/Planning/Phase 3 - Quanta Measures Coordinates/`
 - `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`
 - `docs/Planning/Phase 5 - Lattices Coordinates Images/`
 
-The canonical backlog for `casars calibrate` and MeasurementSet workflow work is:
-
-- [`Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/BACKLOG.md`](Planning/Phase%204%20-%20MeasurementSet%20and%20Derived%20Calibration%20Workflows/BACKLOG.md)
+Canonical backlog tracking for the migrated non-imaging phases now lives in GitHub issues.
+Use the issue tracker for active deferred work, and treat the planning directories as
+process/history docs rather than the live backlog.
 
 ## Documentation conventions
 

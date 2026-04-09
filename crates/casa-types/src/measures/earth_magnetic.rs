@@ -16,9 +16,7 @@
 
 use std::fmt;
 use std::str::FromStr;
-use std::sync::OnceLock;
 
-use casa_measures_data::bundled_igrf12_coefficients;
 use time::Month;
 
 use super::direction::{DirectionRef, MDirection};
@@ -417,11 +415,13 @@ fn igrf_field_xyz(
 ) -> Result<([f64; 3], f64), MeasureError> {
     let spherical = position.as_spherical();
     let date = epoch_to_igrf_date(epoch, frame)?;
-    let coeffs = igrf12_coefficients_for_date(date)?;
-    Ok((
-        earth_field_xyz_itrf(spherical, &coeffs, igrf12_data().nmax),
-        spherical.0,
-    ))
+    let decimal_year = decimal_day_of_year(date);
+    let (coeffs, nmax) = casa_measures_data::igrf_coefficients_for_decimal_year(decimal_year)
+        .map_err(|error| MeasureError::ModelError {
+            model: "IGRF",
+            reason: error.to_string(),
+        })?;
+    Ok((earth_field_xyz_itrf(spherical, &coeffs, nmax), spherical.0))
 }
 
 fn epoch_to_igrf_date(epoch: &MEpoch, frame: &MeasFrame) -> Result<time::Date, MeasureError> {
@@ -447,119 +447,15 @@ fn norm(v: [f64; 3]) -> f64 {
     dot(v, v).sqrt()
 }
 
-struct Igrf12Data {
-    years: Vec<f64>,
-    coeffs_by_year: Vec<Vec<f64>>,
-    secular_variation: Vec<f64>,
-    nmax: usize,
-}
-
-fn igrf12_data() -> &'static Igrf12Data {
-    static DATA: OnceLock<Igrf12Data> = OnceLock::new();
-    DATA.get_or_init(|| parse_igrf12_coefficients(bundled_igrf12_coefficients()))
-}
-
-fn parse_igrf12_coefficients(input: &str) -> Igrf12Data {
-    let mut years = Vec::new();
-    let mut coeffs_by_year: Vec<Vec<f64>> = Vec::new();
-    let mut secular_variation = vec![0.0];
-    let mut nmax = 0usize;
-
-    for line in input.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if trimmed.starts_with("g/h ") {
-            let header: Vec<&str> = trimmed.split_whitespace().collect();
-            years = header[3..header.len() - 1]
-                .iter()
-                .map(|value| {
-                    value
-                        .parse::<f64>()
-                        .expect("bundled igrf12coeffs.txt year header must parse")
-                })
-                .collect();
-            coeffs_by_year = years.iter().map(|_| vec![0.0]).collect();
-            continue;
-        }
-
-        let fields: Vec<&str> = trimmed.split_whitespace().collect();
-        if fields.len() < 4 || fields[1].parse::<usize>().is_err() {
-            continue;
-        }
-
-        let degree = fields[1]
-            .parse::<usize>()
-            .expect("bundled igrf12coeffs.txt degree must parse");
-        nmax = nmax.max(degree);
-        for (idx, coeffs) in coeffs_by_year.iter_mut().enumerate() {
-            coeffs.push(
-                fields[idx + 3]
-                    .parse::<f64>()
-                    .expect("bundled igrf12coeffs.txt coefficient must parse"),
-            );
-        }
-        secular_variation.push(
-            fields
-                .last()
-                .expect("bundled igrf12coeffs.txt SV column must exist")
-                .parse::<f64>()
-                .expect("bundled igrf12coeffs.txt SV coefficient must parse"),
-        );
-    }
-
-    assert!(
-        !years.is_empty()
-            && coeffs_by_year
-                .iter()
-                .all(|c| c.len() == secular_variation.len()),
-        "bundled igrf12coeffs.txt must contain consistent coefficients"
-    );
-
-    Igrf12Data {
-        years,
-        coeffs_by_year,
-        secular_variation,
-        nmax,
-    }
-}
-
+#[cfg(test)]
 fn igrf12_coefficients_for_date(date: time::Date) -> Result<Vec<f64>, MeasureError> {
-    let data = igrf12_data();
-    let date = decimal_day_of_year(date);
-    let min_year = *data.years.first().expect("IGRF12 years must not be empty");
-    let max_year = data.years.last().copied().unwrap_or(min_year) + 5.0;
-    if date < min_year || date > max_year {
-        return Err(MeasureError::ModelError {
+    let decimal_year = decimal_day_of_year(date);
+    let (coeffs, _nmax) = casa_measures_data::igrf_coefficients_for_decimal_year(decimal_year)
+        .map_err(|error| MeasureError::ModelError {
             model: "IGRF",
-            reason: format!("date must be between {min_year:.0}-01-01 and {max_year:.0}-12-31"),
-        });
-    }
-
-    Ok(
-        if date >= *data.years.last().expect("IGRF12 years must not be empty") {
-            extrapolate_coefficients(
-                date,
-                *data.years.last().expect("IGRF12 years must not be empty"),
-                &data.coeffs_by_year[data.coeffs_by_year.len() - 1],
-                &data.secular_variation,
-            )
-        } else {
-            let upper = data
-                .years
-                .iter()
-                .position(|year| *year > date)
-                .expect("date below last year must have an upper interval");
-            interpolate_coefficients(
-                date,
-                data.years[upper - 1],
-                &data.coeffs_by_year[upper - 1],
-                data.years[upper],
-                &data.coeffs_by_year[upper],
-            )
-        },
-    )
+            reason: error.to_string(),
+        })?;
+    Ok(coeffs)
 }
 
 fn decimal_day_of_year(date: time::Date) -> f64 {
@@ -578,29 +474,6 @@ fn decimal_day_of_year(date: time::Date) -> f64 {
         day_in_year += leap_year;
     }
     f64::from(year) + (f64::from(day_in_year) / (365.0 + f64::from(leap_year)))
-}
-
-fn extrapolate_coefficients(date: f64, base_year: f64, main: &[f64], sv: &[f64]) -> Vec<f64> {
-    let factor = date - base_year;
-    main.iter()
-        .zip(sv.iter())
-        .map(|(main_coeff, sv_coeff)| main_coeff + factor * sv_coeff)
-        .collect()
-}
-
-fn interpolate_coefficients(
-    date: f64,
-    year1: f64,
-    coeffs1: &[f64],
-    year2: f64,
-    coeffs2: &[f64],
-) -> Vec<f64> {
-    let factor = (date - year1) / (year2 - year1);
-    coeffs1
-        .iter()
-        .zip(coeffs2.iter())
-        .map(|(lhs, rhs)| lhs + factor * (rhs - lhs))
-        .collect()
 }
 
 fn earth_field_xyz_itrf(spherical: (f64, f64, f64), gh: &[f64], nmax: usize) -> [f64; 3] {
@@ -665,13 +538,13 @@ fn earth_field_xyz_itrf(spherical: (f64, f64, f64), gh: &[f64], nmax: usize) -> 
             }
         }
 
-        let one = gh[l + 1] * rr;
+        let one = gh[l] * rr;
         if m == -1 {
             x += one * q[k];
             z -= one * p[k];
             l += 1;
         } else {
-            let two = gh[l + 2] * rr;
+            let two = gh[l + 1] * rr;
             let mu = m as usize;
             let three = one * cl[mu] + two * sl[mu];
             x += three * q[k];
@@ -697,7 +570,7 @@ fn earth_field_xyz_itrf(spherical: (f64, f64, f64), gh: &[f64], nmax: usize) -> 
 mod tests {
     use super::{
         EarthMagneticRef, MEarthMagnetic, calculate_igrf, decimal_day_of_year,
-        igrf12_coefficients_for_date, parse_igrf12_coefficients,
+        igrf12_coefficients_for_date,
     };
     use crate::measures::direction::{DirectionRef, MDirection};
     use crate::measures::error::MeasureError;
@@ -829,11 +702,6 @@ mod tests {
         let leap = Date::from_calendar_date(2016, Month::March, 1).unwrap();
         let non_leap = Date::from_calendar_date(2015, Month::March, 1).unwrap();
         assert!(decimal_day_of_year(leap) > decimal_day_of_year(non_leap));
-
-        let parsed = parse_igrf12_coefficients(casa_measures_data::bundled_igrf12_coefficients());
-        assert!(!parsed.years.is_empty());
-        assert!(parsed.nmax > 0);
-        assert_eq!(parsed.coeffs_by_year.len(), parsed.years.len());
 
         let interpolated =
             igrf12_coefficients_for_date(Date::from_calendar_date(2012, Month::June, 30).unwrap())

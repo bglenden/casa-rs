@@ -33,6 +33,14 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - C++-dependent tests must skip cleanly when `pkg-config casacore` is missing.
 - Shared CASA dataset root defaults to `../casatestdata`.
 - Override the shared dataset root with `CASA_RS_TESTDATA_ROOT`.
+- Canonical measures runtime data lives in a CASA-compatible table tree rooted
+  at `~/.casa/data`.
+- Override the measures runtime root with `CASA_RS_MEASURESPATH`.
+- `CASA_RS_DATA` is a deprecated compatibility alias; do not introduce new
+  code or docs that prefer it over `CASA_RS_MEASURESPATH`.
+- Reuse upstream CASA/casaconfig tables and bundle layouts for measures data;
+  do not introduce new embedded/raw measures assets when the CASA-table runtime
+  model can be used instead.
 - Do not treat `/private/tmp` as the canonical home for shared CASA datasets.
 - Small bundled real-MS CI fixtures live in `crates/casa-ms/tests/fixtures/`.
 - If C++ has a demo for a supported module, provide a Rust equivalent demo.
@@ -43,10 +51,11 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 
 ## Backlog Tracking
 
-- Canonical backlog tracking lives in the phase-specific `docs/Planning/Phase */BACKLOG.md` files.
-- When deferring work, add or update the numbered backlog item there first.
+- Canonical backlog tracking lives in GitHub issues, not local `BACKLOG.md` files.
+- Use GitHub issue titles and bodies as the source of truth for deferred work.
+- Legacy phase backlog files may remain temporarily in areas that have not been migrated yet; do not add new items to them.
 - Do not introduce new backlog-style `TODO` / `FIXME` / `XXX` / `HACK` comments as the source of truth.
-- If a local code comment is still useful, keep it brief and reference the backlog item instead.
+- If a local code comment is still useful, keep it brief and reference the GitHub issue instead.
 
 ## Merge Policy
 
@@ -87,6 +96,9 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - Use `scripts/release.sh <version> --full` to additionally run
   `scripts/test-slow.sh` and CI-like coverage.
 - Use `scripts/release.sh <version> --push` to push the release commit and tag.
+- If measures/runtime changes land near a release, refresh or verify the
+  packaged CASA-table snapshot in `crates/casa-measures-data/data/` and keep
+  `casa-measures-runtime.provenance.json` aligned with it.
 - When asking for a release, say something like `use the release script to cut
   and push release 0.3.1` or `use the release script to cut the next patch
   release` rather than `tag as 0.3.1`.
@@ -103,7 +115,11 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 
 - Public API surface: `casa-types` and `casa-tables`.
 - Internal implementation crates:
+  - `casa-values` (`publish = false`)
   - `casa-aipsio` (`publish = false`)
+  - `casa-table-read` (`publish = false`)
   - `casa-test-support` (`publish = false`)
-- `casa-tables` keeps codec/storage helpers crate-internal.
+- `casa-values` owns the generic scalar/array/record model below measures/quanta.
+- `casa-table-read` owns the minimal read-only CASA table loader shared by runtime data loaders.
+- `casa-tables` keeps the broader codec/storage/write path crate-internal.
 - `casa-aipsio` provides full AipsIO-style framing + `tAipsIO` parity demo/tests.

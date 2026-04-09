@@ -44,8 +44,8 @@
 //! `misc/casacore_vs_sofa_deviation.cpp`. An issue has been filed with the
 //! casacore C++ maintainers to clarify whether this is expected.
 //!
-//! Deferred: Phase 3 backlog item 11.3 tracks the remaining casacore vs SOFA
-//! deviation audit, including whether to match casacore exactly or document the
+//! Deferred: GitHub issue #14 tracks the remaining casacore vs SOFA deviation
+//! audit, including whether to match casacore exactly or document the
 //! expected divergence more explicitly.
 //!
 //! # Implemented routes

@@ -11,9 +11,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+casa-values = { path = "../casa-values" }
 casa-measures-data = { path = "../casa-measures-data" }
-ndarray.workspace = true
-num-complex.workspace = true
 sofars.workspace = true
 time = "0.3"
 

@@ -10,9 +10,10 @@
 //!   to C++ `MEpoch`.
 //!
 //! Conversions between reference frames use the IAU SOFA algorithms via the
-//! [`sofars`] crate. The conversion engine finds the shortest path through a
-//! routing graph (matching C++ `MCEpoch::ToRef_p`) and applies each hop
-//! sequentially.
+//! [`sofars`] crate where appropriate, plus the standard CASA `geodetic/TAI_UTC`
+//! table for UTC↔TAI conversion parity. The conversion engine finds the
+//! shortest path through a routing graph (matching C++ `MCEpoch::ToRef_p`) and
+//! applies each hop sequentially.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -614,15 +615,25 @@ fn apply_hop(
     match (from_ref, to_ref) {
         // UTC → TAI
         (UTC, TAI) => {
-            let (r1, r2) =
-                sofars::ts::utctai(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })?;
-            Ok(MjdHighPrec::from_jd_pair(r1, r2))
+            let tai_minus_utc =
+                casa_measures_data::tai_minus_utc_seconds(value.as_mjd()).map_err(|error| {
+                    MeasureError::ModelError {
+                        model: "TAI_UTC",
+                        reason: error.to_string(),
+                    }
+                })?;
+            Ok(value + tai_minus_utc / SECONDS_PER_DAY)
         }
         // TAI → UTC
         (TAI, UTC) => {
-            let (r1, r2) =
-                sofars::ts::taiutc(jd1, jd2).map_err(|code| MeasureError::SofarsError { code })?;
-            Ok(MjdHighPrec::from_jd_pair(r1, r2))
+            let utc_mjd =
+                casa_measures_data::utc_from_tai_mjd(value.as_mjd()).map_err(|error| {
+                    MeasureError::ModelError {
+                        model: "TAI_UTC",
+                        reason: error.to_string(),
+                    }
+                })?;
+            Ok(MjdHighPrec::from_mjd(utc_mjd))
         }
         // TAI → TT
         (TAI, TT) => {

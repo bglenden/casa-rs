@@ -1,29 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Observatory catalog data derived from casacore `geodetic/Observatories`.
-//!
-//! The checked-in bundled snapshot is a Rust-native JSON export generated from
-//! the installed casacore-data table via:
-//!
-//! ```text
-//! cargo run -p casa-measures-tools --bin import_observatories -- \
-//!   --input /path/to/geodetic/Observatories \
-//!   --output crates/casa-measures-data/data/observatories.json
-//! ```
-//!
-//! Runtime code reads only the Rust-native snapshot, never the raw casacore
-//! table files.
+//! Observatory catalog data loaded from casacore `geodetic/Observatories`.
 
 use std::collections::HashMap;
-use std::path::Path;
-
-use serde::{Deserialize, Serialize};
-
-use super::bundled_observatory_catalog;
 
 /// A single observatory row from casacore `geodetic/Observatories`.
-///
-/// All columns from the source table are preserved in the bundled snapshot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ObservatoryEntry {
     /// Table `MJD` column.
     pub mjd: f64,
@@ -51,18 +32,7 @@ pub struct ObservatoryEntry {
     pub antenna_responses: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ObservatorySnapshot {
-    schema_version: u32,
-    entries: Vec<ObservatoryEntry>,
-}
-
 /// In-memory catalog of observatory metadata.
-///
-/// The bundled source of truth is
-/// `crates/casa-measures-data/data/observatories.json`, generated from the
-/// installed casacore-data `geodetic/Observatories` table by the internal
-/// importer tool.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservatoryCatalog {
     entries: Vec<ObservatoryEntry>,
@@ -70,9 +40,6 @@ pub struct ObservatoryCatalog {
 }
 
 impl ObservatoryCatalog {
-    /// Snapshot schema version.
-    pub const SCHEMA_VERSION: u32 = 1;
-
     /// Build a catalog from explicitly provided entries.
     pub fn from_entries(entries: Vec<ObservatoryEntry>) -> Self {
         let by_name = entries
@@ -85,39 +52,9 @@ impl ObservatoryCatalog {
         Self { entries, by_name }
     }
 
-    /// Parse a catalog from a JSON snapshot string.
-    pub fn from_json_str(content: &str) -> Result<Self, String> {
-        let snapshot: ObservatorySnapshot =
-            serde_json::from_str(content).map_err(|error| error.to_string())?;
-        if snapshot.schema_version != Self::SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported observatory snapshot schema version {}; expected {}",
-                snapshot.schema_version,
-                Self::SCHEMA_VERSION
-            ));
-        }
-        Ok(Self::from_entries(snapshot.entries))
-    }
-
-    /// Load a catalog from a JSON snapshot file.
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|error| format!("{}: {error}", path.as_ref().display()))?;
-        Self::from_json_str(&content)
-    }
-
-    /// Serialize the catalog into a stable pretty-printed JSON snapshot.
-    pub fn to_json_pretty(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(&ObservatorySnapshot {
-            schema_version: Self::SCHEMA_VERSION,
-            entries: self.entries.clone(),
-        })
-        .map_err(|error| error.to_string())
-    }
-
-    /// Return the bundled catalog.
+    /// Return the packaged/runtime standard catalog.
     pub fn bundled() -> &'static Self {
-        bundled_observatory_catalog()
+        crate::load_observatories().0
     }
 
     /// Iterate over the catalog entries in source order.

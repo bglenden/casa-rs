@@ -57,7 +57,7 @@ Status legend:
 |---|---|---|
 | `casa` | Partial / Available now | `casa-types` covers the core scalar/array/record value model plus quanta/measures foundations. Broader `casa` utility parity is not a target. |
 | `tables` | Available now | `casa-tables` provides persistent tables, data managers/storage backends, schema/mutation APIs, a broad TaQL engine for practical table workflows, and `tablebrowser`. |
-| `measures` | Available now | `casa-types`, `casa-measures-data`, and `casa-coordinates` provide units/quanta, typed measures, bundled EOP data, and frame-aware coordinate conversions. |
+| `measures` | Available now | `casa-types`, `casa-measures-data`, and `casa-coordinates` provide units/quanta, typed measures, CASA-table-backed runtime data, and frame-aware coordinate conversions. |
 | `meas` (TaQL UDF) | Available now | The TaQL `meas.*` UDF surface now covers the upstream conversion families and helper aliases used by current CASA-compatible workflows, including sidereal-time extraction, rise/set evaluation, earth-magnetic/IGRF helpers, and `meas.help`. The remaining gap is full external `ephemerides/Sources` parity for non-built-in source names. |
 | `ms` | Available now | `casa-ms` provides typed MeasurementSet APIs, summaries, selection/grouping, derived columns, plotting support, and `msexplore`. |
 | `derivedmscal` | Available now | `casa-calibration` and `calibrate` cover apply, gaincal, bandpass, fluxscale, stats, callib, and diagnostic inspection workflows. |
@@ -175,76 +175,82 @@ Demo source lives in each crate's `examples/` directory. The demo logic
 is in a `demo` module within the crate, so `cargo doc` renders it alongside
 the API docs.
 
-## IERS Earth Orientation Parameter Data
+## Measures Runtime
 
-casa-rs bundles a snapshot of the IERS `finals2000A.data` file for automatic
-dUT1 and polar motion lookup during coordinate conversions. This data is
-compiled into the binary so no external files or network access are needed
-at runtime.
+casa-rs now uses a CASA-table-backed runtime tree for measures data instead of
+embedded raw text snapshots.
 
-### How it works
+The runtime policy is:
 
-When you create a `MeasFrame` with `.with_bundled_eop()`, the bundled EOP
-table is used automatically for UT1↔UTC conversions and polar motion in
-celestial-to-terrestrial coordinate transforms.
+1. `$CASA_RS_MEASURESPATH` if set
+2. deprecated `$CASA_RS_DATA` compatibility alias
+3. `~/.casa/data`
 
-The runtime search order for EOP data (via `load_eop()`) is:
+At the default location, casa-rs prefers an existing CASA/casaconfig-populated
+tree and reuses it as-is. If `~/.casa/data` is missing or incomplete, casa-rs
+bootstraps it from the packaged fallback snapshot shipped in
+`crates/casa-measures-data/data/`.
 
-1. `$CASA_RS_DATA/finals2000A.data` — environment variable override
-2. `~/.casa-rs/data/finals2000A.data` — user-local data directory
-3. Bundled snapshot (always available)
+The standard runtime currently loads:
 
-### Updating EOP data
+- `geodetic/IERSeop2000`
+- `geodetic/IERSpredict2000`
+- `geodetic/TAI_UTC`
+- `geodetic/Observatories`
+- `geodetic/IGRF`
+- `ephemerides/DE200`
+- `ephemerides/DE405`
+- `ephemerides/VGEO`
+- `ephemerides/VTOP`
+- `ephemerides/JPL-Horizons`
+- `ephemerides/Sources`
+- `ephemerides/Lines`
 
-The bundled snapshot should be refreshed periodically (the
-`bundled_data_not_stale` test will fail when the data is older than 6 months).
+`MeasFrame::with_standard_eop()` is the canonical convenience for attaching the
+runtime EOP tables. `with_bundled_eop()` remains as a compatibility alias.
 
-**Command-line update** — download the latest data to `~/.casa-rs/data/`:
+### Refreshing a runtime tree
 
-```bash
-cargo run --example update_eop -p casa-measures-data --features update
-```
-
-Or specify a custom directory:
-
-```bash
-cargo run --example update_eop -p casa-measures-data --features update -- --data-dir /path/to/data
-```
-
-**Programmatic update:**
-
-```rust
-use casa_measures_data::update::{download_and_install, UpdateResult};
-use std::path::Path;
-
-match download_and_install(Path::new("/path/to/data"))? {
-    UpdateResult::Updated(path, summary) => println!("Updated: {}", path.display()),
-    UpdateResult::AlreadyCurrent(summary) => println!("Already current"),
-}
-```
-
-**Refreshing the bundled snapshot** (for maintainers preparing a release):
+To populate or refresh a custom measures path from the upstream CASA bundle
+sources:
 
 ```bash
-# Download latest to a temp directory
-cargo run --example update_eop -p casa-measures-data --features update -- --data-dir /tmp/eop
-
-# Copy into the crate's data directory and commit
-cp /tmp/eop/finals2000A.data crates/casa-measures-data/data/finals2000A.data
-git add crates/casa-measures-data/data/finals2000A.data
-git commit -m "data: refresh bundled IERS EOP snapshot"
+cargo run --example update_measures -p casa-measures-data --features update
 ```
+
+Or target a custom directory explicitly:
+
+```bash
+cargo run --example update_measures -p casa-measures-data --features update -- --data-dir /path/to/.casa/data
+```
+
+This downloads the latest `casarundata` tarball plus the latest
+`WSRT_Measures_*.ztar`, overlays them CASA-style, and preserves the base
+`geodetic/Observatories` table by default.
+
+### Refreshing the packaged fallback snapshot
+
+For maintainers preparing a release, first refresh or verify a local
+`~/.casa/data` tree, then rebuild the packaged fallback archive and provenance:
+
+```bash
+cargo run -p casa-measures-tools --bin package_snapshot -- --input ~/.casa/data
+```
+
+That updates:
+
+- `crates/casa-measures-data/data/casa-measures-runtime.tar.gz`
+- `crates/casa-measures-data/data/casa-measures-runtime.provenance.json`
 
 ### Release checklist
 
-The bundled data staleness test runs automatically with `cargo test --workspace`:
+The packaged snapshot freshness test runs in the default measures-data test set:
 
 ```bash
-cargo test -p casa-measures-data bundled_data_not_stale
+cargo test -p casa-measures-data packaged_snapshot_not_stale
 ```
 
-This test fails when the bundled data's last measured entry is older than
-180 days. If it fails during a release, refresh the bundled snapshot before
+If it fails during release prep, rebuild the packaged snapshot before
 publishing.
 
 ## Git Hooks

@@ -6,8 +6,8 @@
 //! produce and consume [`RecordValue`] in the same format, ensuring
 //! interoperability with C++ tables.
 //!
-//! Deferred: Phase 3 backlog item 11.2 tracks splitting the shared
-//! `RecordValue` / `Value` data model out of the table layer so
+//! Deferred: GitHub issue #13 tracks splitting the shared `RecordValue` /
+//! `Value` data model out of the table layer so
 //! `casa-types` no longer depends on table-storage details here.
 //!
 //! ## MEpoch record format
