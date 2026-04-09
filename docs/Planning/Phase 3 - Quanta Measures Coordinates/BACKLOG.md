@@ -71,8 +71,29 @@ sequenced after typed MS APIs.
 
 **Status:** DEFER
 
-**Reason:** Core subset is enough for Phase 3 validation; full catalog can be
-expanded incrementally after UDF framework stabilizes.
+**Reason:** The Phase 3 subset now covers the core measure conversions plus
+the higher-value TaQL helpers added in the current waves: sidereal-time
+extraction (`meas.last`, `meas.lst`), direction cosine output
+(`meas.dircos`, `meas.directioncosine`), common direction aliases
+(`meas.hadec`, `meas.azel`, `meas.app`, `meas.apparent`, `meas.ecl`,
+`meas.gal`, `meas.sgal`, `meas.supergal`, `meas.supergalactic`,
+`meas.itrfd`, `meas.itrfdir`, `meas.itrfdirection`), ITRF/WGS position
+extractors (`meas.itrfxyz`, `meas.itrfll`, `meas.itrflonlat`,
+`meas.itrfh`, `meas.itrfheight`, `meas.itrfllh`, `meas.wgs`,
+`meas.wgsxyz`, `meas.wgsll`, `meas.wgslonlat`, `meas.wgsh`,
+`meas.wgsheight`, `meas.wgsllh`), and rest/shift frequency helpers
+(`meas.rest`, `meas.restfreq`, `meas.restfrequency`, `meas.shift`,
+`meas.shiftfreq`, `meas.shiftfrequency`). Named-direction inputs are now
+supported for the built-in calibrator names, `ZENITH`, and the main
+solar-system bodies used by casacore TaQL, and `meas.riset` /
+`meas.riseset` now evaluate in Rust TaQL. The earth-magnetic / IGRF helper
+family is also implemented in the Rust measures layer with bundled IGRF12
+coefficients aligned to casacore's measures-data source, including TaQL
+quantity-driven explicit `meas.em*` inputs that distinguish XYZ vectors from
+angle/length forms the same way casacore does. Full external
+`ephemerides/Sources` catalog parity for non-built-in source names still
+remains outstanding. The non-numeric `meas.help` introspection entry point is
+now available in the Rust TaQL layer for UI/discoverability use.
 
 ---
 
@@ -136,3 +157,17 @@ once there is a clear API consumer for them.
 **Reason:** The Rust-native observatory importer is implemented, but the rest of
 the measures-data tree still needs a periodic parity audit and refresh workflow
 so future bundled snapshots stay aligned with upstream casacore-data.
+
+---
+
+### 11.8 Repo-Controlled Refresh Path For Leap-Second and Geomagnetic Sources
+
+**Status:** DEFER
+
+**Reason:** The current Rust measures stack mixes three update stories:
+bundled EOP snapshots with an explicit repo-local updater, leap-second data
+embedded inside the `sofars` dependency, and geomagnetic coefficients embedded
+inside the `igrf` dependency. Add a first-class `casa-*` refresh workflow so
+maintainers can intentionally update and validate these sources from the repo
+itself, record provenance/version dates, and keep bundled measures data aligned
+with current IERS/IAGA releases without relying on ad hoc dependency bumps.

@@ -14,6 +14,9 @@
 //!   `casa::MPosition`.
 //! - [`MDirection`](direction::MDirection) — a sky direction in J2000, GALACTIC,
 //!   etc., equivalent to C++ `casa::MDirection`.
+//! - [`MEarthMagnetic`](earth_magnetic::MEarthMagnetic) — an Earth magnetic
+//!   field vector tagged with a reference frame, equivalent to C++
+//!   `casa::MEarthMagnetic`.
 //! - [`MFrequency`](frequency::MFrequency) — a spectral frequency in LSRK,
 //!   BARY, TOPO, etc., equivalent to C++ `casa::MFrequency`.
 //! - [`MDoppler`](doppler::MDoppler) — a Doppler shift in RADIO, Z, BETA, etc.,
@@ -44,6 +47,7 @@
 
 pub mod direction;
 pub mod doppler;
+pub mod earth_magnetic;
 pub mod epoch;
 pub mod error;
 pub mod frame;
@@ -53,6 +57,7 @@ pub mod radial_velocity;
 pub mod record;
 
 // Re-exports for convenience.
+pub use earth_magnetic::{EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate_igrf};
 pub use epoch::{EpochRef, MEpoch, MjdHighPrec};
 pub use error::MeasureError;
 pub use frame::{IauModel, MeasFrame};

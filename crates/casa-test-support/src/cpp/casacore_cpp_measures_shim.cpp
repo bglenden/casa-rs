@@ -12,6 +12,9 @@
 #include <casacore/measures/Measures/MCEpoch.h>
 #include <casacore/measures/Measures/MCPosition.h>
 #include <casacore/measures/Measures/MDirection.h>
+#include <casacore/measures/Measures/MEarthMagnetic.h>
+#include <casacore/measures/Measures/EarthMagneticMachine.h>
+#include <casacore/measures/Measures/MCEarthMagnetic.h>
 #include <casacore/measures/Measures/MFrequency.h>
 #include <casacore/measures/Measures/MDoppler.h>
 #include <casacore/measures/Measures/MRadialVelocity.h>
@@ -20,9 +23,11 @@
 #include <casacore/measures/Measures/MCDoppler.h>
 #include <casacore/measures/Measures/MCRadialVelocity.h>
 #include <casacore/casa/Quanta/MVDirection.h>
+#include <casacore/casa/Quanta/MVAngle.h>
 #include <casacore/casa/Quanta/MVFrequency.h>
 #include <casacore/casa/Quanta/MVDoppler.h>
 #include <casacore/casa/Quanta/MVEpoch.h>
+#include <casacore/casa/Quanta/MVTime.h>
 #include <casacore/casa/Quanta/MVPosition.h>
 #include <casacore/casa/Quanta/Quantum.h>
 #include <casacore/measures/Measures/MeasTable.h>
@@ -57,6 +62,14 @@ static MDirection::Types parse_direction_ref(const char* ref_str) {
     return tp;
 }
 
+static MEarthMagnetic::Types parse_earthmag_ref(const char* ref_str) {
+    MEarthMagnetic::Types tp;
+    if (!MEarthMagnetic::getType(tp, String(ref_str))) {
+        throw std::runtime_error(String("Unknown EarthMagnetic ref: ") + ref_str);
+    }
+    return tp;
+}
+
 static MFrequency::Types parse_frequency_ref(const char* ref_str) {
     MFrequency::Types tp;
     if (!MFrequency::getType(tp, String(ref_str))) {
@@ -71,6 +84,161 @@ static MDoppler::Types parse_doppler_ref(const char* ref_str) {
         throw std::runtime_error(String("Unknown doppler ref: ") + ref_str);
     }
     return tp;
+}
+
+static MeasFrame build_frame(
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h)
+{
+    MeasFrame frame;
+    if (epoch_mjd != 0.0) {
+        MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UTC);
+        frame.set(epoch);
+    }
+    if (obs_lon != 0.0 || obs_lat != 0.0 || obs_h != 0.0) {
+        MPosition obs(MVPosition(Quantity(obs_h, "m"),
+                                  Quantity(obs_lon, "rad"),
+                                  Quantity(obs_lat, "rad")),
+                      MPosition::WGS84);
+        frame.set(obs);
+    }
+    return frame;
+}
+
+static std::pair<String, double> parse_named_source(const char* source_name) {
+    String name(source_name);
+    String upper(name);
+    upper.upcase();
+    double h = 0.0;
+
+    if (upper.substr(0,3) == "SUN") {
+        String ext(upper.substr(3));
+        name = "SUN";
+        h = -0.833;
+        if (!ext.empty()) {
+            if (ext == "-C") {
+                h = 0.0;
+            } else if (ext == "-U") {
+                h = -0.25;
+            } else if (ext == "-L") {
+                h = 0.25;
+            } else if (ext == "-CR") {
+                h = -0.583;
+            } else if (ext == "-UR") {
+                h = -0.833;
+            } else if (ext == "-LR") {
+                h = -0.333;
+            } else if (ext == "-CT") {
+                h = -6.0;
+            } else if (ext == "-NT") {
+                h = -12.0;
+            } else if (ext == "-AT") {
+                h = -15.0;
+            } else if (ext == "-ST") {
+                h = -18.0;
+            } else {
+                throw std::runtime_error("invalid SUN type");
+            }
+        }
+    } else if (upper.substr(0,4) == "MOON") {
+        String ext(upper.substr(4));
+        name = "MOON";
+        h = -0.833;
+        if (!ext.empty()) {
+            if (ext == "-C") {
+                h = 0.0;
+            } else if (ext == "-U") {
+                h = -0.25;
+            } else if (ext == "-L") {
+                h = 0.25;
+            } else if (ext == "-CR") {
+                h = -0.583;
+            } else if (ext == "-UR") {
+                h = -0.833;
+            } else if (ext == "-LR") {
+                h = -0.333;
+            } else {
+                throw std::runtime_error("invalid MOON type");
+            }
+        }
+    }
+
+    return {name, h * M_PI / 180.0};
+}
+
+static int fill_riseset(
+    double epoch_mjd,
+    const MDirection& dir,
+    double lat,
+    double h,
+    const MEpoch& off,
+    const MPosition& pos,
+    double* rise,
+    double* set)
+{
+    MeasFrame frame;
+    frame.set(MEpoch(Quantity(epoch_mjd, "d"), MEpoch::UTC));
+    frame.set(pos);
+
+    MDirection::Ref hadec_ref(MDirection::HADEC, frame);
+    MDirection hd = MDirection::Convert(MDirection::HADEC, hadec_ref)(dir);
+    double dec = hd.getValue().get()[1];
+    double ct = (sin(h) - sin(dec) * sin(lat)) / (cos(dec) * cos(lat));
+    if (ct >= 1.0) {
+        return 1;
+    }
+    if (ct <= -1.0) {
+        return -1;
+    }
+
+    ct = acos(ct);
+    MDirection::Ref app_ref(MDirection::APP, frame);
+    MDirection app = MDirection::Convert(MDirection::APP, app_ref)(dir);
+    double normra = MVAngle(app.getValue().get()[0])(0).radian();
+    MEpoch::Ref last_ref(MEpoch::LAST, frame, off);
+
+    if (rise) {
+        Quantity tq = MVTime(Quantity(normra - ct, "rad")).get();
+        MEpoch tr = MEpoch::Convert(MEpoch(tq, last_ref), MEpoch::UTC)();
+        *rise = tr.getValue().get();
+    }
+    if (set) {
+        Quantity tq = MVTime(Quantity(normra + ct, "rad")).get();
+        MEpoch ts = MEpoch::Convert(MEpoch(tq, last_ref), MEpoch::UTC)();
+        *set = ts.getValue().get();
+    }
+    return 0;
+}
+
+static void calc_riseset(
+    const MDirection& dir,
+    const MPosition& pos,
+    const MEpoch& epoch,
+    double h,
+    double& rise,
+    double& set)
+{
+    double lat = pos.getValue().get()[2];
+    double start = floor(epoch.getValue().get() + 0.000001);
+    MEpoch off = MEpoch(Quantity(start, "d"), MEpoch::Types(MEpoch::UTC | MEpoch::RAZE));
+    int ab = fill_riseset(start + 0.5, dir, lat, h, off, pos, &rise, &set);
+    if (ab > 0) {
+        set = start;
+        rise = set + 1.0;
+    } else if (ab < 0) {
+        rise = start;
+        set = rise + 1.0;
+    } else {
+        if (rise < start) rise += 1.0 - 236.0 / 86400.0;
+        if (set < start) set += 1.0 - 236.0 / 86400.0;
+        if (set < rise) set += 1.0;
+        for (int i = 0; i < 2; ++i) {
+            fill_riseset(rise, dir, lat, h, off, pos, &rise, nullptr);
+            if (rise < start) rise += 1.0 - 236.0 / 86400.0;
+            fill_riseset(set, dir, lat, h, off, pos, nullptr, &set);
+            if (set < start) set += 1.0 - 236.0 / 86400.0;
+            if (set < rise) set += 1.0;
+        }
+    }
 }
 
 extern "C" {
@@ -162,6 +330,33 @@ int measures_shim_position_to_record(
         *lon_out = mv.getLong();
         *lat_out = mv.getLat();
         *radius_out = mv.getLength().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_position_to_wgs_xyz(
+    double v0, double v1, double v2,
+    const char* ref_in,
+    double* out0, double* out1, double* out2)
+{
+    try {
+        auto tp_in = parse_position_ref(ref_in);
+
+        MVPosition mv;
+        if (tp_in == MPosition::ITRF) {
+            mv = MVPosition(v0, v1, v2);
+        } else {
+            mv = MVPosition(Quantity(v2, "m"), Quantity(v0, "rad"), Quantity(v1, "rad"));
+        }
+
+        MPosition pos(mv, tp_in);
+        MPosition result = MPosition::Convert(pos, MPosition::WGS84)();
+        Vector<Double> xyz = result.getValue().getValue();
+        *out0 = xyz(0);
+        *out1 = xyz(1);
+        *out2 = xyz(2);
         return 0;
     } catch (...) {
         return -1;
@@ -314,25 +509,180 @@ int measures_shim_direction_convert(
         auto tp_out = parse_direction_ref(ref_out);
 
         MDirection dir(MVDirection(Quantity(lon_in, "rad"), Quantity(lat_in, "rad")), tp_in);
-
-        MeasFrame frame;
-        if (epoch_mjd != 0.0) {
-            MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UTC);
-            frame.set(epoch);
-        }
-        if (obs_lon != 0.0 || obs_lat != 0.0 || obs_h != 0.0) {
-            MPosition obs(MVPosition(Quantity(obs_h, "m"),
-                                      Quantity(obs_lon, "rad"),
-                                      Quantity(obs_lat, "rad")),
-                          MPosition::WGS84);
-            frame.set(obs);
-        }
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
 
         MDirection::Ref ref_target(tp_out, frame);
         MDirection result = MDirection::Convert(dir, ref_target)();
 
         *lon_out = result.getValue().getLong();
         *lat_out = result.getValue().getLat();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_named_direction_convert(
+    const char* source_name, const char* ref_out,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* lon_out, double* lat_out)
+{
+    try {
+        auto tp_out = parse_direction_ref(ref_out);
+        auto [base_name, _h] = parse_named_source(source_name);
+        MDirection dir = MDirection::makeMDirection(base_name);
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
+        MDirection::Ref ref_target(tp_out, frame);
+        MDirection result = MDirection::Convert(dir, ref_target)();
+        *lon_out = result.getValue().getLong();
+        *lat_out = result.getValue().getLat();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_riseset(
+    const char* source_name,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* rise_out, double* set_out)
+{
+    try {
+        auto [base_name, h] = parse_named_source(source_name);
+        MDirection dir = MDirection::makeMDirection(base_name);
+        MPosition pos(MVPosition(Quantity(obs_h, "m"),
+                                 Quantity(obs_lon, "rad"),
+                                 Quantity(obs_lat, "rad")),
+                      MPosition::WGS84);
+        MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UTC);
+        calc_riseset(dir, pos, epoch, h, *rise_out, *set_out);
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_earthmag_convert_xyz(
+    double x_in, double y_in, double z_in,
+    const char* ref_in, const char* ref_out,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* x_out, double* y_out, double* z_out)
+{
+    try {
+        auto tp_in = parse_earthmag_ref(ref_in);
+        auto tp_out = parse_earthmag_ref(ref_out);
+        if (tp_in == MEarthMagnetic::IGRF || tp_out == MEarthMagnetic::IGRF) {
+            throw std::runtime_error("IGRF cannot be used for explicit EarthMagnetic conversion");
+        }
+
+        MVEarthMagnetic mv(x_in, y_in, z_in);
+        MEarthMagnetic field(mv, tp_in);
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
+        MEarthMagnetic::Ref ref_target(tp_out, frame);
+        MEarthMagnetic result = MEarthMagnetic::Convert(field, ref_target)();
+        Vector<Double> xyz = result.getValue().getValue();
+        *x_out = xyz(0);
+        *y_out = xyz(1);
+        *z_out = xyz(2);
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_earthmag_convert_angles(
+    double lon_in, double lat_in, double length_nt,
+    const char* ref_in, const char* ref_out,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* lon_out, double* lat_out)
+{
+    try {
+        auto tp_in = parse_earthmag_ref(ref_in);
+        auto tp_out = parse_earthmag_ref(ref_out);
+
+        MEarthMagnetic input(
+            MVEarthMagnetic(
+                Quantity(length_nt, "nT"),
+                Quantity(lon_in, "rad"),
+                Quantity(lat_in, "rad")),
+            tp_in);
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
+        MEarthMagnetic::Ref ref_target(tp_out, frame);
+        MEarthMagnetic result = MEarthMagnetic::Convert(input, ref_target)();
+        Vector<double> vec = result.getValue().getAngle().getValue();
+        *lon_out = vec[0];
+        *lat_out = vec[1];
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_igrf_xyz(
+    const char* ref_out,
+    double height_m,
+    double dir_lon, double dir_lat, const char* dir_ref,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* x_out, double* y_out, double* z_out)
+{
+    try {
+        auto tp_out = parse_earthmag_ref(ref_out);
+        if (tp_out == MEarthMagnetic::IGRF) {
+            throw std::runtime_error("IGRF cannot be used as output reference");
+        }
+        auto dir_tp = parse_direction_ref(dir_ref);
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
+        MDirection::Ref dir_ref_in(dir_tp, frame);
+        MDirection dir(MVDirection(Quantity(dir_lon, "rad"), Quantity(dir_lat, "rad")), dir_ref_in);
+        EarthMagneticMachine machine(dir_ref_in, Quantum<Double>(height_m, "m"), frame);
+        machine.calculate(dir.getValue());
+        MEarthMagnetic field(machine.getField(), MEarthMagnetic::ITRF);
+        MEarthMagnetic::Ref ref_target(tp_out, frame);
+        MEarthMagnetic result = MEarthMagnetic::Convert(field, ref_target)();
+        Vector<Double> xyz = result.getValue().getValue();
+        *x_out = xyz(0);
+        *y_out = xyz(1);
+        *z_out = xyz(2);
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_igrf_los(
+    double height_m,
+    double dir_lon, double dir_lat, const char* dir_ref,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* value_out)
+{
+    try {
+        auto dir_tp = parse_direction_ref(dir_ref);
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
+        MDirection::Ref dir_ref_in(dir_tp, frame);
+        MDirection dir(MVDirection(Quantity(dir_lon, "rad"), Quantity(dir_lat, "rad")), dir_ref_in);
+        EarthMagneticMachine machine(dir_ref_in, Quantum<Double>(height_m, "m"), frame);
+        machine.calculate(dir.getValue());
+        *value_out = machine.getLOSField();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_igrf_long(
+    double height_m,
+    double dir_lon, double dir_lat, const char* dir_ref,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* value_out)
+{
+    try {
+        auto dir_tp = parse_direction_ref(dir_ref);
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
+        MDirection::Ref dir_ref_in(dir_tp, frame);
+        MDirection dir(MVDirection(Quantity(dir_lon, "rad"), Quantity(dir_lat, "rad")), dir_ref_in);
+        EarthMagneticMachine machine(dir_ref_in, Quantum<Double>(height_m, "m"), frame);
+        machine.calculate(dir.getValue());
+        *value_out = machine.getLong();
         return 0;
     } catch (...) {
         return -1;
@@ -349,18 +699,7 @@ int measures_shim_bench_direction_convert(
         auto tp_in = parse_direction_ref(ref_in);
         auto tp_out = parse_direction_ref(ref_out);
 
-        MeasFrame frame;
-        if (epoch_mjd != 0.0) {
-            MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UTC);
-            frame.set(epoch);
-        }
-        if (obs_lon != 0.0 || obs_lat != 0.0 || obs_h != 0.0) {
-            MPosition obs(MVPosition(Quantity(obs_h, "m"),
-                                      Quantity(obs_lon, "rad"),
-                                      Quantity(obs_lat, "rad")),
-                          MPosition::WGS84);
-            frame.set(obs);
-        }
+        MeasFrame frame = build_frame(epoch_mjd, obs_lon, obs_lat, obs_h);
 
         MDirection::Ref ref_target(tp_out, frame);
 
@@ -644,6 +983,46 @@ int measures_shim_frequency_convert_with_rv(
         MFrequency::Ref ref_target(tp_out, frame);
         MFrequency result = MFrequency::Convert(freq, ref_target)();
 
+        *freq_out = result.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_frequency_rest_with_doppler(
+    double freq_hz, const char* ref_in,
+    double doppler_value, const char* doppler_ref,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_doppler = parse_doppler_ref(doppler_ref);
+
+        MFrequency freq(MVFrequency(Quantity(freq_hz, "Hz")), tp_in);
+        MDoppler doppler(MVDoppler(doppler_value), tp_doppler);
+
+        MFrequency result = freq.toRest(doppler);
+        *freq_out = result.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_frequency_shift_with_doppler(
+    double freq_hz, const char* ref_in,
+    double doppler_value, const char* doppler_ref,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_doppler = parse_doppler_ref(doppler_ref);
+
+        MFrequency freq(MVFrequency(Quantity(freq_hz, "Hz")), tp_in);
+        MDoppler doppler(MVDoppler(doppler_value), tp_doppler);
+
+        MFrequency result = MFrequency::fromDoppler(doppler, freq.getValue());
         *freq_out = result.getValue().getValue();
         return 0;
     } catch (...) {

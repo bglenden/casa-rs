@@ -12,6 +12,7 @@
 
 use std::fmt;
 
+use casa_types::quanta::Unit;
 use num_complex::Complex64;
 
 /// Index style for array subscripts.
@@ -420,6 +421,10 @@ pub enum Literal {
     Int(i64),
     /// Floating-point value.
     Float(f64),
+    /// Quantity literal with a numeric value and unit string.
+    ///
+    /// Parsed from TaQL forms like `2rad`, `200km`, or `1 'km/s'`.
+    Quantity { value: f64, unit: String },
     /// String value.
     String(String),
     /// Boolean value.
@@ -1023,6 +1028,21 @@ impl fmt::Display for Literal {
                     write!(f, "{v}")
                 }
             }
+            Self::Quantity { value, unit } => {
+                let numeric = if value.fract() == 0.0 && value.is_finite() {
+                    format!("{value:.1}")
+                } else {
+                    value.to_string()
+                };
+                if Unit::new(unit)
+                    .map(|u| u.name().contains('/'))
+                    .unwrap_or(false)
+                {
+                    write!(f, "{numeric} '{unit}'")
+                } else {
+                    write!(f, "{numeric}{unit}")
+                }
+            }
             Self::String(s) => write!(f, "'{s}'"),
             Self::Bool(b) => {
                 if *b {
@@ -1211,5 +1231,52 @@ mod tests {
             let parsed = aggregate_from_name(&displayed);
             assert_eq!(parsed, Some(func), "roundtrip failed for {displayed}");
         }
+    }
+
+    #[test]
+    fn statement_display_covers_non_select_variants() {
+        let statements = [
+            "CALC meas.help('freq')",
+            "ALTER TABLE ADD COLUMN field STRING",
+            "ALTER TABLE DROP COLUMN field",
+            "ALTER TABLE RENAME COLUMN old TO new",
+            "ALTER TABLE ADD ROW 3",
+            "ALTER TABLE SET KEYWORD source = 'VLA'",
+            "UPDATE mytab SET flux = 2.0 WHERE id = 1 LIMIT 1",
+            "INSERT INTO mytab (id, flux) VALUES (1, 2.0), (2, 3.0)",
+            "DELETE FROM mytab WHERE id = 1 LIMIT 1",
+            "COUNT SELECT * WHERE id > 0",
+            "CREATE TABLE scratch (id INT32, name STRING)",
+            "DROP TABLE scratch",
+        ];
+
+        for sql in statements {
+            let statement = crate::taql::parse(sql).unwrap();
+            let displayed = statement.to_string();
+            assert!(
+                !displayed.is_empty(),
+                "display output should not be empty for {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn select_display_covers_clauses_and_aliases() {
+        let statement = crate::taql::parse(
+            "USING STYLE PYTHON SELECT DISTINCT t.id AS source_id, SUM(t.flux) \
+             FROM t AS t LEFT JOIN t AS t2 ON t.id = t2.id WHERE t.id > 0 \
+             GROUP BY t.id HAVING SUM(t.flux) > 1 ORDER BY source_id DESC \
+             LIMIT 2 OFFSET 1 GIVING output AS MEMORY",
+        )
+        .unwrap();
+        let displayed = statement.to_string();
+        assert!(displayed.contains("USING STYLE PYTHON SELECT DISTINCT"));
+        assert!(displayed.contains("LEFT JOIN"));
+        assert!(displayed.contains("GROUP BY"));
+        assert!(displayed.contains("HAVING"));
+        assert!(displayed.contains("ORDER BY"));
+        assert!(displayed.contains("LIMIT 2"));
+        assert!(displayed.contains("OFFSET 1"));
+        assert!(displayed.contains("GIVING output AS MEMORY"));
     }
 }

@@ -15,6 +15,8 @@ use super::EopTable;
 
 /// The bundled finals2000A.data file, included at compile time.
 const BUNDLED_DATA: &str = include_str!("../data/finals2000A.data");
+/// The bundled IGRF12 coefficient source file, included at compile time.
+const BUNDLED_IGRF12_DATA: &str = include_str!("../data/igrf12coeffs.txt");
 
 /// Lazily-parsed bundled EOP table.
 static BUNDLED_TABLE: LazyLock<EopTable> = LazyLock::new(|| {
@@ -27,4 +29,12 @@ static BUNDLED_TABLE: LazyLock<EopTable> = LazyLock::new(|| {
 /// process. This is an O(1) operation after the first call.
 pub fn bundled_eop_table() -> &'static EopTable {
     &BUNDLED_TABLE
+}
+
+/// Returns the bundled IGRF12 coefficient source text.
+///
+/// This is the same NOAA/IAGA `igrf12coeffs.txt` input format referenced by
+/// casacore's `measuresdata` tool for its `geodetic/IGRF` table snapshot.
+pub fn bundled_igrf12_coefficients() -> &'static str {
+    BUNDLED_IGRF12_DATA
 }

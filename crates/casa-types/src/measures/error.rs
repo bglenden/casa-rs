@@ -28,12 +28,31 @@ pub enum MeasureError {
         /// Human-readable reason for the failure.
         reason: String,
     },
+    /// A known source name was malformed.
+    InvalidSourceName {
+        /// The original source-name input.
+        input: String,
+        /// Human-readable reason for the failure.
+        reason: String,
+    },
+    /// An unknown source name was encountered.
+    UnknownSourceName {
+        /// The original source-name input.
+        input: String,
+    },
     /// A unit does not match the expected dimension for a measure value.
     NonConformantUnit {
         /// The expected dimension (e.g. "time", "length").
         expected: &'static str,
         /// The unit string that was provided.
         got: String,
+    },
+    /// A model-based calculation failed.
+    ModelError {
+        /// Name of the underlying model or calculator.
+        model: &'static str,
+        /// Human-readable reason for the failure.
+        reason: String,
     },
     /// The requested conversion route is not yet implemented.
     ///
@@ -62,8 +81,17 @@ impl fmt::Display for MeasureError {
             Self::InvalidRecord { reason } => {
                 write!(f, "invalid measure record: {reason}")
             }
+            Self::InvalidSourceName { input, reason } => {
+                write!(f, "invalid source name {input:?}: {reason}")
+            }
+            Self::UnknownSourceName { input } => {
+                write!(f, "unknown source name: {input:?}")
+            }
             Self::NonConformantUnit { expected, got } => {
                 write!(f, "non-conformant unit: expected {expected}, got {got:?}")
+            }
+            Self::ModelError { model, reason } => {
+                write!(f, "{model} model error: {reason}")
             }
             Self::NotYetImplemented { route } => {
                 write!(f, "conversion not yet implemented: {route}")
@@ -101,11 +129,31 @@ mod tests {
                 "invalid measure record: missing value",
             ),
             (
+                MeasureError::InvalidSourceName {
+                    input: "SUN-BAD".to_string(),
+                    reason: "unsupported suffix".to_string(),
+                },
+                "invalid source name \"SUN-BAD\": unsupported suffix",
+            ),
+            (
+                MeasureError::UnknownSourceName {
+                    input: "NotARealSource".to_string(),
+                },
+                "unknown source name: \"NotARealSource\"",
+            ),
+            (
                 MeasureError::NonConformantUnit {
                     expected: "time",
                     got: "m".to_string(),
                 },
                 "non-conformant unit: expected time, got \"m\"",
+            ),
+            (
+                MeasureError::ModelError {
+                    model: "IGRF",
+                    reason: "date is out of range".to_string(),
+                },
+                "IGRF model error: date is out of range",
             ),
             (
                 MeasureError::NotYetImplemented {

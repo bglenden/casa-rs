@@ -21,6 +21,8 @@
 //!
 //! `TaQLNodeDer.cc` — `TaQLNode::parse()`, `TaQLMultiNode`, etc.
 
+use casa_types::quanta::Unit;
+
 use super::ast::*;
 use super::error::TaqlError;
 use super::lexer::Lexer;
@@ -752,7 +754,14 @@ impl<'src> Parser<'src> {
                 let n: i64 = s.parse().map_err(|_| {
                     TaqlError::parse(self.lexer.position(span.start), "invalid integer literal")
                 })?;
-                Ok(Expr::Literal(Literal::Int(n)))
+                if let Some(unit) = self.parse_optional_quantity_unit()? {
+                    Ok(Expr::Literal(Literal::Quantity {
+                        value: n as f64,
+                        unit,
+                    }))
+                } else {
+                    Ok(Expr::Literal(Literal::Int(n)))
+                }
             }
             Some(Token::FloatLiteral) => {
                 let (_, span) = self.lexer.next_token().unwrap();
@@ -760,7 +769,11 @@ impl<'src> Parser<'src> {
                 let v: f64 = s.parse().map_err(|_| {
                     TaqlError::parse(self.lexer.position(span.start), "invalid float literal")
                 })?;
-                Ok(Expr::Literal(Literal::Float(v)))
+                if let Some(unit) = self.parse_optional_quantity_unit()? {
+                    Ok(Expr::Literal(Literal::Quantity { value: v, unit }))
+                } else {
+                    Ok(Expr::Literal(Literal::Float(v)))
+                }
             }
             Some(Token::StringLiteral) => {
                 let (_, span) = self.lexer.next_token().unwrap();
@@ -880,6 +893,31 @@ impl<'src> Parser<'src> {
             func,
             arg: Box::new(arg),
         })
+    }
+
+    fn parse_optional_quantity_unit(&mut self) -> Result<Option<String>, TaqlError> {
+        let Some(token) = self.lexer.peek().cloned() else {
+            return Ok(None);
+        };
+        let (unit, start) = match token {
+            Token::Ident => {
+                let (_, span) = self.lexer.next_token().unwrap();
+                (self.lexer.slice(&span).to_string(), span.start)
+            }
+            Token::StringLiteral => {
+                let (_, span) = self.lexer.next_token().unwrap();
+                let raw = self.lexer.slice(&span);
+                (raw[1..raw.len() - 1].to_string(), span.start)
+            }
+            _ => return Ok(None),
+        };
+        Unit::new(&unit).map_err(|_| {
+            TaqlError::parse(
+                self.lexer.position(start),
+                format!("invalid unit literal '{unit}'"),
+            )
+        })?;
+        Ok(Some(unit))
     }
 
     /// Parse an identifier expression: column reference or function call.
@@ -2339,6 +2377,44 @@ mod tests {
                 ));
             }
             _ => panic!("expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn quantity_suffix_literal_parses_in_meas_call() {
+        let stmt = parse("CALC meas.igrf(200km, 'SUN', 51544.5, 'VLA')");
+        match stmt {
+            Statement::Calc(calc) => match calc.expr {
+                Expr::FunctionCall { name, args } => {
+                    assert_eq!(name, "meas.igrf");
+                    assert!(matches!(
+                        &args[0],
+                        Expr::Literal(Literal::Quantity { value, unit })
+                            if (*value - 200.0).abs() < 1e-12 && unit == "km"
+                    ));
+                }
+                other => panic!("expected function call, got {other:?}"),
+            },
+            other => panic!("expected CALC, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quantity_string_literal_parses_in_meas_call() {
+        let stmt = parse("CALC meas.radvel('BARY', 1 'km/s')");
+        match stmt {
+            Statement::Calc(calc) => match calc.expr {
+                Expr::FunctionCall { name, args } => {
+                    assert_eq!(name, "meas.radvel");
+                    assert!(matches!(
+                        &args[1],
+                        Expr::Literal(Literal::Quantity { value, unit })
+                            if (*value - 1.0).abs() < 1e-12 && unit == "km/s"
+                    ));
+                }
+                other => panic!("expected function call, got {other:?}"),
+            },
+            other => panic!("expected CALC, got {other:?}"),
         }
     }
 }

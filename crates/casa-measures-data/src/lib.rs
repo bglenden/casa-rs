@@ -6,6 +6,8 @@
 //! - IERS Earth Orientation Parameter (EOP) data from `finals2000A.data`
 //! - An observatory catalog derived from casacore's `geodetic/Observatories`
 //!   table
+//! - The bundled NOAA/IAGA `igrf12coeffs.txt` coefficient source used for
+//!   casacore-compatible geomagnetic calculations
 //!
 //! # Features
 //!
@@ -48,7 +50,7 @@ mod parser;
 #[cfg(feature = "update")]
 pub mod update;
 
-pub use bundled::bundled_eop_table;
+pub use bundled::{bundled_eop_table, bundled_igrf12_coefficients};
 pub use bundled_observatories::bundled_observatory_catalog;
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
 
