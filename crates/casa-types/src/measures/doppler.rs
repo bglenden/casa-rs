@@ -173,6 +173,33 @@ impl MDoppler {
         self.refer
     }
 
+    /// Returns the frequency ratio `f / f0` represented by this Doppler value.
+    ///
+    /// This is the common hub quantity used by casacore when converting between
+    /// Doppler conventions and when shifting frequencies with
+    /// `MFrequency::fromDoppler` / `MFrequency::toRest`.
+    pub fn as_frequency_ratio(&self) -> f64 {
+        to_ratio(self.value, self.refer)
+    }
+
+    /// Applies this Doppler shift to a rest frequency in Hz.
+    ///
+    /// This matches the casacore `MFrequency::fromDoppler` convention:
+    /// the supplied frequency is treated as the rest frequency `f0`, and the
+    /// returned value is the shifted frequency `f = ratio * f0`.
+    pub fn shift_frequency_hz(&self, rest_hz: f64) -> f64 {
+        rest_hz * self.as_frequency_ratio()
+    }
+
+    /// Recovers the rest frequency in Hz from an observed frequency.
+    ///
+    /// This matches the casacore `MFrequency::toRest` convention:
+    /// the supplied frequency is treated as the shifted/observed frequency `f`,
+    /// and the returned value is the rest frequency `f0 = f / ratio`.
+    pub fn rest_frequency_hz(&self, observed_hz: f64) -> f64 {
+        observed_hz / self.as_frequency_ratio()
+    }
+
     /// Converts this Doppler measure to a different convention.
     ///
     /// The `frame` parameter is unused (Doppler conversions are pure algebra)
@@ -258,6 +285,14 @@ mod tests {
             "RELATIVISTIC".parse::<DopplerRef>().unwrap(),
             DopplerRef::BETA
         );
+    }
+
+    #[test]
+    fn radio_frequency_ratio_and_shift_helpers() {
+        let doppler = MDoppler::new(0.5, DopplerRef::RADIO);
+        assert!((doppler.as_frequency_ratio() - 0.5).abs() < 1e-12);
+        assert!((doppler.shift_frequency_hz(1.0e9) - 5.0e8).abs() < 1e-3);
+        assert!((doppler.rest_frequency_hz(5.0e8) - 1.0e9).abs() < 1e-3);
     }
 
     #[test]

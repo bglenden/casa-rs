@@ -54,6 +54,16 @@ unsafe extern "C" {
         radius_out: *mut f64,
     ) -> i32;
 
+    fn measures_shim_position_to_wgs_xyz(
+        v0: f64,
+        v1: f64,
+        v2: f64,
+        ref_in: *const std::ffi::c_char,
+        out0: *mut f64,
+        out1: *mut f64,
+        out2: *mut f64,
+    ) -> i32;
+
     fn measures_shim_bench_position_convert(
         x_start: f64,
         y: f64,
@@ -181,6 +191,22 @@ unsafe extern "C" {
         obs_h: f64,
         rv_ms: f64,
         rv_ref: *const std::ffi::c_char,
+        freq_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_frequency_rest_with_doppler(
+        freq_hz: f64,
+        ref_in: *const std::ffi::c_char,
+        doppler_value: f64,
+        doppler_ref: *const std::ffi::c_char,
+        freq_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_frequency_shift_with_doppler(
+        freq_hz: f64,
+        ref_in: *const std::ffi::c_char,
+        doppler_value: f64,
+        doppler_ref: *const std::ffi::c_char,
         freq_out: *mut f64,
     ) -> i32;
 
@@ -327,6 +353,38 @@ pub fn cpp_position_to_record(x: f64, y: f64, z: f64) -> Result<(f64, f64, f64),
         Ok((lon, lat, radius))
     } else {
         Err(format!("C++ position_to_record failed: rc={rc}"))
+    }
+}
+
+/// Convert a position to casacore's raw WGS84 XYZ TaQL representation.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_position_to_wgs_xyz(
+    v0: f64,
+    v1: f64,
+    v2: f64,
+    ref_in: &str,
+) -> Result<(f64, f64, f64), String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let mut out0: f64 = 0.0;
+    let mut out1: f64 = 0.0;
+    let mut out2: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_position_to_wgs_xyz(
+            v0,
+            v1,
+            v2,
+            c_in.as_ptr(),
+            &mut out0,
+            &mut out1,
+            &mut out2,
+        )
+    };
+
+    if rc == 0 {
+        Ok((out0, out1, out2))
+    } else {
+        Err(format!("C++ position_to_wgs_xyz failed: rc={rc}"))
     }
 }
 
@@ -835,6 +893,64 @@ pub fn cpp_frequency_convert_with_rv(
         Ok(freq_out)
     } else {
         Err(format!("C++ frequency_convert_with_rv failed: rc={rc}"))
+    }
+}
+
+/// Convert an observed frequency to a rest frequency using a Doppler value.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_frequency_rest_with_doppler(
+    freq_hz: f64,
+    ref_in: &str,
+    doppler_value: f64,
+    doppler_ref: &str,
+) -> Result<f64, String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let c_doppler = CString::new(doppler_ref).unwrap();
+    let mut freq_out: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_frequency_rest_with_doppler(
+            freq_hz,
+            c_in.as_ptr(),
+            doppler_value,
+            c_doppler.as_ptr(),
+            &mut freq_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok(freq_out)
+    } else {
+        Err(format!("C++ frequency_rest_with_doppler failed: rc={rc}"))
+    }
+}
+
+/// Shift a rest frequency using a Doppler value.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_frequency_shift_with_doppler(
+    freq_hz: f64,
+    ref_in: &str,
+    doppler_value: f64,
+    doppler_ref: &str,
+) -> Result<f64, String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let c_doppler = CString::new(doppler_ref).unwrap();
+    let mut freq_out: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_frequency_shift_with_doppler(
+            freq_hz,
+            c_in.as_ptr(),
+            doppler_value,
+            c_doppler.as_ptr(),
+            &mut freq_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok(freq_out)
+    } else {
+        Err(format!("C++ frequency_shift_with_doppler failed: rc={rc}"))
     }
 }
 

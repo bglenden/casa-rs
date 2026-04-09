@@ -13,8 +13,10 @@ use casa_tables::taql::ast::IndexStyle;
 use casa_tables::taql::eval::{EvalContext, ExprValue};
 use casa_tables::taql::functions::call_function;
 use casa_test_support::measures_interop::{
-    cpp_direction_convert, cpp_doppler_convert, cpp_epoch_convert, cpp_frequency_convert,
-    cpp_position_convert, cpp_radvel_convert,
+    cpp_direction_convert, cpp_doppler_convert, cpp_eop_query, cpp_epoch_convert,
+    cpp_epoch_convert_with_frame, cpp_frequency_convert, cpp_frequency_convert_with_rv,
+    cpp_frequency_rest_with_doppler, cpp_frequency_shift_with_doppler, cpp_position_convert,
+    cpp_position_to_record, cpp_position_to_wgs_xyz, cpp_radvel_convert,
 };
 use casa_types::RecordValue;
 
@@ -65,6 +67,20 @@ fn extract_dir(val: &ExprValue) -> (f64, f64) {
 }
 
 fn extract_pos(val: &ExprValue) -> [f64; 3] {
+    match val {
+        ExprValue::Array(arr) => {
+            assert_eq!(arr.shape, vec![3]);
+            [
+                extract_float(&arr.data[0]),
+                extract_float(&arr.data[1]),
+                extract_float(&arr.data[2]),
+            ]
+        }
+        other => panic!("expected Array, got {other:?}"),
+    }
+}
+
+fn extract_array3(val: &ExprValue) -> [f64; 3] {
     match val {
         ExprValue::Array(arr) => {
             assert_eq!(arr.shape, vec![3]);
@@ -138,6 +154,38 @@ fn epoch_utc_to_tdb() {
     );
 }
 
+#[test]
+fn epoch_last_with_position() {
+    let vla_itrf = extract_pos(&eval_meas(
+        "meas.pos",
+        &[s("ITRF"), fl(VLA_LON), fl(VLA_LAT), fl(VLA_H), s("WGS84")],
+    ));
+
+    let rust_result = eval_meas(
+        "meas.last",
+        &[
+            fl(J2000_MJD),
+            fl(vla_itrf[0]),
+            fl(vla_itrf[1]),
+            fl(vla_itrf[2]),
+            s("ITRF"),
+        ],
+    );
+    let rust_mjd = extract_float(&rust_result);
+
+    let (dut1, _, _) = cpp_eop_query(J2000_MJD).unwrap();
+    let cpp_last =
+        cpp_epoch_convert_with_frame(J2000_MJD, "UTC", "LAST", VLA_LON, VLA_LAT, VLA_H, dut1)
+            .unwrap();
+    let cpp_seconds = cpp_last.fract() * SECONDS_PER_DAY;
+
+    let diff_s = (rust_mjd - cpp_seconds).abs();
+    assert!(
+        diff_s < 1e-4,
+        "epoch UTC→LAST: Rust={rust_mjd}, C++={cpp_seconds}, diff={diff_s}s"
+    );
+}
+
 // ── Direction: Rust meas.dir vs C++ direction_convert ──
 
 #[test]
@@ -188,6 +236,112 @@ fn dir_j2000_to_b1950() {
     );
 }
 
+#[test]
+fn dircos_app_matches_cpp_angles() {
+    let vla_itrf = extract_pos(&eval_meas(
+        "meas.pos",
+        &[s("ITRF"), fl(VLA_LON), fl(VLA_LAT), fl(VLA_H), s("WGS84")],
+    ));
+
+    let rust_result = eval_meas(
+        "meas.dircos",
+        &[
+            s("APP"),
+            fl(M31_LON),
+            fl(M31_LAT),
+            s("J2000"),
+            fl(J2000_MJD),
+            fl(vla_itrf[0]),
+            fl(vla_itrf[1]),
+            fl(vla_itrf[2]),
+        ],
+    );
+    let rust_cos = extract_array3(&rust_result);
+
+    let (cpp_lon, cpp_lat) = cpp_direction_convert(
+        M31_LON, M31_LAT, "J2000", "APP", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
+    )
+    .unwrap();
+    let cpp_cos = [
+        cpp_lon.cos() * cpp_lat.cos(),
+        cpp_lon.sin() * cpp_lat.cos(),
+        cpp_lat.sin(),
+    ];
+
+    for i in 0..3 {
+        assert!(
+            close(rust_cos[i], cpp_cos[i], 1e-6),
+            "dircos APP[{i}]: Rust={}, C++={}",
+            rust_cos[i],
+            cpp_cos[i]
+        );
+    }
+}
+
+#[test]
+fn azel_shortcut_matches_cpp() {
+    let vla_itrf = extract_pos(&eval_meas(
+        "meas.pos",
+        &[s("ITRF"), fl(VLA_LON), fl(VLA_LAT), fl(VLA_H), s("WGS84")],
+    ));
+
+    let rust_result = eval_meas(
+        "meas.azel",
+        &[
+            fl(M31_LON),
+            fl(M31_LAT),
+            s("J2000"),
+            fl(J2000_MJD),
+            fl(vla_itrf[0]),
+            fl(vla_itrf[1]),
+            fl(vla_itrf[2]),
+        ],
+    );
+    let (rust_lon, rust_lat) = extract_dir(&rust_result);
+
+    let (cpp_lon, cpp_lat) = cpp_direction_convert(
+        M31_LON, M31_LAT, "J2000", "AZEL", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
+    )
+    .unwrap();
+
+    assert!(
+        close_angle(rust_lon, cpp_lon, 1e-5) && close(rust_lat, cpp_lat, 1e-5),
+        "dir J2000→AZEL: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
+    );
+}
+
+#[test]
+fn itrfd_shortcut_matches_cpp() {
+    let vla_itrf = extract_pos(&eval_meas(
+        "meas.pos",
+        &[s("ITRF"), fl(VLA_LON), fl(VLA_LAT), fl(VLA_H), s("WGS84")],
+    ));
+
+    let rust_result = eval_meas(
+        "meas.itrfd",
+        &[
+            fl(M31_LON),
+            fl(M31_LAT),
+            s("J2000"),
+            fl(J2000_MJD),
+            fl(vla_itrf[0]),
+            fl(vla_itrf[1]),
+            fl(vla_itrf[2]),
+        ],
+    );
+    let (rust_lon, rust_lat) = extract_dir(&rust_result);
+
+    let (cpp_lon, cpp_lat) = cpp_direction_convert(
+        M31_LON, M31_LAT, "J2000", "ITRF", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
+    )
+    .unwrap();
+
+    assert!(
+        close_angle(rust_lon, cpp_lon, 1e-6) && close(rust_lat, cpp_lat, 1e-6),
+        "dir J2000→ITRF: Rust=({rust_lon},{rust_lat}), C++=({cpp_lon},{cpp_lat})"
+    );
+}
+
 // ── Position: Rust meas.pos vs C++ position_convert ──
 
 #[test]
@@ -229,6 +383,71 @@ fn pos_itrf_to_wgs84() {
         assert!(
             close(rust_vals[i], cpp_arr[i], tol),
             "pos ITRF→WGS84[{i}]: Rust={}, C++={}",
+            rust_vals[i],
+            cpp_arr[i]
+        );
+    }
+}
+
+#[test]
+fn pos_itrfllh_matches_cpp_record() {
+    let rust_result = eval_meas(
+        "meas.itrfllh",
+        &[fl(VLA_LON), fl(VLA_LAT), fl(VLA_H), s("WGS84")],
+    );
+    let rust_vals = extract_pos(&rust_result);
+
+    let cpp_itrf = cpp_position_convert(VLA_LON, VLA_LAT, VLA_H, "WGS84", "ITRF").unwrap();
+    let cpp_vals = cpp_position_to_record(cpp_itrf.0, cpp_itrf.1, cpp_itrf.2).unwrap();
+    let cpp_arr = [cpp_vals.0, cpp_vals.1, cpp_vals.2];
+
+    for i in 0..3 {
+        let tol = if i < 2 { 1e-8 } else { 1e-3 };
+        assert!(
+            close(rust_vals[i], cpp_arr[i], tol),
+            "pos ITRFLLH[{i}]: Rust={}, C++={}",
+            rust_vals[i],
+            cpp_arr[i]
+        );
+    }
+}
+
+#[test]
+fn pos_wgsllh_matches_cpp() {
+    let x = -1601185.0_f64;
+    let y = -5041977.0_f64;
+    let z = 3554876.0_f64;
+
+    let rust_result = eval_meas("meas.wgsllh", &[fl(x), fl(y), fl(z), s("ITRF")]);
+    let rust_vals = extract_pos(&rust_result);
+
+    let cpp_vals = cpp_position_convert(x, y, z, "ITRF", "WGS84").unwrap();
+    let cpp_arr = [cpp_vals.0, cpp_vals.1, cpp_vals.2];
+
+    for i in 0..3 {
+        let tol = if i < 2 { 1e-8 } else { 1.0 };
+        assert!(
+            close(rust_vals[i], cpp_arr[i], tol),
+            "pos WGSLLH[{i}]: Rust={}, C++={}",
+            rust_vals[i],
+            cpp_arr[i]
+        );
+    }
+}
+
+#[test]
+fn pos_wgsxyz_matches_cpp_raw_value() {
+    let rust_vals = extract_pos(&eval_meas(
+        "meas.wgsxyz",
+        &[fl(VLA_LON), fl(VLA_LAT), fl(VLA_H), s("WGS84")],
+    ));
+    let cpp_vals = cpp_position_to_wgs_xyz(VLA_LON, VLA_LAT, VLA_H, "WGS84").unwrap();
+    let cpp_arr = [cpp_vals.0, cpp_vals.1, cpp_vals.2];
+
+    for i in 0..3 {
+        assert!(
+            close(rust_vals[i], cpp_arr[i], 1e-8),
+            "pos WGSXYZ[{i}]: Rust={}, C++={}",
             rust_vals[i],
             cpp_arr[i]
         );
@@ -300,6 +519,54 @@ fn freq_lsrk_to_bary() {
         rel_diff < 1e-6,
         "freq LSRK→BARY: Rust={rust_hz}, C++={cpp_hz}, rel_diff={rel_diff}"
     );
+}
+
+#[test]
+fn freq_lsrk_to_rest_with_radvel() {
+    let rust_result = eval_meas(
+        "meas.freq",
+        &[
+            s("REST"),
+            fl(1.4e9),
+            s("LSRK"),
+            fl(50_000.0),
+            s("LSRK"),
+            fl(M31_LON),
+            fl(M31_LAT),
+            fl(J2000_MJD),
+        ],
+    );
+    let rust_hz = extract_float(&rust_result);
+
+    let cpp_hz = cpp_frequency_convert_with_rv(
+        1.4e9, "LSRK", "REST", M31_LON, M31_LAT, "J2000", J2000_MJD, 0.0, 0.0, 0.0, 50_000.0,
+        "LSRK",
+    )
+    .unwrap();
+
+    let rel_diff = (rust_hz - cpp_hz).abs() / cpp_hz;
+    assert!(
+        rel_diff < 1e-6,
+        "freq LSRK→REST: Rust={rust_hz}, C++={cpp_hz}, rel_diff={rel_diff}"
+    );
+}
+
+#[test]
+fn rest_with_doppler_matches_cpp() {
+    let rust_result = eval_meas("meas.rest", &[fl(1.0e9), s("LSRK"), fl(0.5), s("RADIO")]);
+    let rust_hz = extract_float(&rust_result);
+
+    let cpp_hz = cpp_frequency_rest_with_doppler(1.0e9, "LSRK", 0.5, "RADIO").unwrap();
+    assert!(close(rust_hz, cpp_hz, 1e-6));
+}
+
+#[test]
+fn shift_with_doppler_matches_cpp() {
+    let rust_result = eval_meas("meas.shift", &[fl(1.0e9), s("LSRK"), fl(0.5), s("RADIO")]);
+    let rust_hz = extract_float(&rust_result);
+
+    let cpp_hz = cpp_frequency_shift_with_doppler(1.0e9, "LSRK", 0.5, "RADIO").unwrap();
+    assert!(close(rust_hz, cpp_hz, 1e-6));
 }
 
 // ── Radial velocity: Rust meas.radvel vs C++ radvel_convert ──

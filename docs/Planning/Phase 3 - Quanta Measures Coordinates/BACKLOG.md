@@ -71,8 +71,22 @@ sequenced after typed MS APIs.
 
 **Status:** DEFER
 
-**Reason:** Core subset is enough for Phase 3 validation; full catalog can be
-expanded incrementally after UDF framework stabilizes.
+**Reason:** The Phase 3 subset now covers the core measure conversions plus
+the higher-value TaQL helpers added in the current waves: sidereal-time
+extraction (`meas.last`, `meas.lst`), direction cosine output
+(`meas.dircos`, `meas.directioncosine`), common direction aliases
+(`meas.hadec`, `meas.azel`, `meas.app`, `meas.apparent`, `meas.ecl`,
+`meas.gal`, `meas.sgal`, `meas.supergal`, `meas.supergalactic`,
+`meas.itrfd`, `meas.itrfdir`, `meas.itrfdirection`), ITRF/WGS position
+extractors (`meas.itrfxyz`, `meas.itrfll`, `meas.itrflonlat`,
+`meas.itrfh`, `meas.itrfheight`, `meas.itrfllh`, `meas.wgs`,
+`meas.wgsxyz`, `meas.wgsll`, `meas.wgslonlat`, `meas.wgsh`,
+`meas.wgsheight`, `meas.wgsllh`), and rest/shift frequency helpers
+(`meas.rest`, `meas.restfreq`, `meas.restfrequency`, `meas.shift`,
+`meas.shiftfreq`, `meas.shiftfrequency`). The remaining upstream surface
+still needs incremental follow-up, especially `meas.rise` / `meas.riseset`,
+the earth-magnetic / IGRF helper family, and the non-essential `meas.help`
+introspection entry point.
 
 ---
 

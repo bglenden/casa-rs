@@ -168,6 +168,33 @@ int measures_shim_position_to_record(
     }
 }
 
+int measures_shim_position_to_wgs_xyz(
+    double v0, double v1, double v2,
+    const char* ref_in,
+    double* out0, double* out1, double* out2)
+{
+    try {
+        auto tp_in = parse_position_ref(ref_in);
+
+        MVPosition mv;
+        if (tp_in == MPosition::ITRF) {
+            mv = MVPosition(v0, v1, v2);
+        } else {
+            mv = MVPosition(Quantity(v2, "m"), Quantity(v0, "rad"), Quantity(v1, "rad"));
+        }
+
+        MPosition pos(mv, tp_in);
+        MPosition result = MPosition::Convert(pos, MPosition::WGS84)();
+        Vector<Double> xyz = result.getValue().getValue();
+        *out0 = xyz(0);
+        *out1 = xyz(1);
+        *out2 = xyz(2);
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
 int measures_shim_bench_position_convert(
     double x_start, double y, double z,
     int count, const char* ref_in, const char* ref_out,
@@ -644,6 +671,46 @@ int measures_shim_frequency_convert_with_rv(
         MFrequency::Ref ref_target(tp_out, frame);
         MFrequency result = MFrequency::Convert(freq, ref_target)();
 
+        *freq_out = result.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_frequency_rest_with_doppler(
+    double freq_hz, const char* ref_in,
+    double doppler_value, const char* doppler_ref,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_doppler = parse_doppler_ref(doppler_ref);
+
+        MFrequency freq(MVFrequency(Quantity(freq_hz, "Hz")), tp_in);
+        MDoppler doppler(MVDoppler(doppler_value), tp_doppler);
+
+        MFrequency result = freq.toRest(doppler);
+        *freq_out = result.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_frequency_shift_with_doppler(
+    double freq_hz, const char* ref_in,
+    double doppler_value, const char* doppler_ref,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_doppler = parse_doppler_ref(doppler_ref);
+
+        MFrequency freq(MVFrequency(Quantity(freq_hz, "Hz")), tp_in);
+        MDoppler doppler(MVDoppler(doppler_value), tp_doppler);
+
+        MFrequency result = MFrequency::fromDoppler(doppler, freq.getValue());
         *freq_out = result.getValue().getValue();
         return 0;
     } catch (...) {
