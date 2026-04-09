@@ -56,9 +56,9 @@ Status legend:
 | casacore-c++ module | casa-rs status | Notes |
 |---|---|---|
 | `casa` | Partial / Available now | `casa-types` covers the core scalar/array/record value model plus quanta/measures foundations. Broader `casa` utility parity is not a target. |
-| `tables` | Available now | `casa-tables` provides persistent tables, data managers/storage backends, schema/mutation APIs, a TaQL engine subset, and `tablebrowser`. |
+| `tables` | Available now | `casa-tables` provides persistent tables, data managers/storage backends, schema/mutation APIs, a broad TaQL engine for practical table workflows, and `tablebrowser`. |
 | `measures` | Available now | `casa-types`, `casa-measures-data`, and `casa-coordinates` provide units/quanta, typed measures, bundled EOP data, and frame-aware coordinate conversions. |
-| `meas` (TaQL UDF) | Partial / Available now | The TaQL measure-UDF subset is implemented and exercised today; it does not claim the full upstream catalog. |
+| `meas` (TaQL UDF) | Partial / Available now | The TaQL `meas.*` UDF surface is implemented for a practical subset and exercised today, but it does not claim the full upstream catalog. |
 | `ms` | Available now | `casa-ms` provides typed MeasurementSet APIs, summaries, selection/grouping, derived columns, plotting support, and `msexplore`. |
 | `derivedmscal` | Available now | `casa-calibration` and `calibrate` cover apply, gaincal, bandpass, fluxscale, stats, callib, and diagnostic inspection workflows. |
 | `coordinates` | Available now | `casa-coordinates` implements `CoordinateSystem` and core coordinate types used by images, measures, and FITS/WCS interop. |
