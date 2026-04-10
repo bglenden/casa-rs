@@ -4,8 +4,10 @@
 //! Verifies that Rust `Image` and C++ `PagedImage<Float>` produce identical
 //! on-disk formats and can read each other's images.
 
+use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
 use casa_images::{Image, OpenedImageView, PagedImage};
 use casa_test_support::{CppUnsupportedRegionKind, cpp_backend_available, discover_casa_python};
+use casa_types::measures::direction::DirectionRef;
 use casa_types::{Complex32, Complex64};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use std::process::Command;
@@ -43,6 +45,18 @@ fn ramp_data_complex64(shape: &[usize]) -> Vec<Complex64> {
     (0..n)
         .map(|i| Complex64::new(i as f64 * 0.5, -(i as f64) * 0.125))
         .collect()
+}
+
+fn direction_coords() -> CoordinateSystem {
+    let mut coords = CoordinateSystem::new();
+    coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [0.0, std::f64::consts::FRAC_PI_4],
+        [-1.0e-4, 1.0e-4],
+        [8.0, 8.0],
+    )));
+    coords
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +270,36 @@ fn metadata_units_rust_to_cpp() {
 
     let units = casa_test_support::cpp_read_image_units(&path).unwrap();
     assert_eq!(units, "Jy/beam");
+}
+
+#[test]
+fn rc_rust_direction_image_cpp_read_2d() {
+    if !cpp_backend_available() {
+        eprintln!("skipping rc_rust_direction_image_cpp_read_2d: C++ casacore not available");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rc_direction.image");
+    let shape = vec![16usize, 16usize];
+    let data = ramp_data(&shape);
+
+    {
+        let mut img = Image::create(shape.clone(), direction_coords(), &path).unwrap();
+        let arr = ramp_array(&shape);
+        img.put_slice(&arr, &[0, 0]).unwrap();
+        img.set_units("Jy/beam").unwrap();
+        img.save().unwrap();
+    }
+
+    let cpp_shape = casa_test_support::cpp_read_image_shape(&path).unwrap();
+    assert_eq!(cpp_shape, vec![16, 16]);
+    let cpp_data = casa_test_support::cpp_read_image_data(&path, data.len()).unwrap();
+    assert_eq!(cpp_data, data);
+    assert_eq!(
+        casa_test_support::cpp_read_image_units(&path).unwrap(),
+        "Jy/beam"
+    );
 }
 
 #[test]

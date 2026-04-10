@@ -606,14 +606,12 @@ impl Coordinate for DirectionCoordinate {
             "projection",
             Value::Scalar(ScalarValue::String(self.projection.name().into())),
         );
-        if !self.projection.parameters().is_empty() {
-            rec.upsert(
-                "projection_parameters",
-                Value::Array(ArrayValue::from_f64_vec(
-                    self.projection.parameters().to_vec(),
-                )),
-            );
-        }
+        rec.upsert(
+            "projection_parameters",
+            Value::Array(ArrayValue::from_f64_vec(
+                self.projection.parameters().to_vec(),
+            )),
+        );
         rec.upsert(
             "crval",
             Value::Array(ArrayValue::from_f64_vec(self.crval.to_vec())),
@@ -896,6 +894,10 @@ mod tests {
         assert_eq!(
             rec.get("conversionSystem"),
             Some(&Value::Scalar(ScalarValue::String("J2000".into())))
+        );
+        assert_eq!(
+            rec.get("projection_parameters"),
+            Some(&Value::Array(ArrayValue::from_f64_vec(Vec::new())))
         );
         assert_eq!(
             rec.get("units"),
