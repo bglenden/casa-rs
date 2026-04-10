@@ -5556,7 +5556,7 @@ tclean(
     deconvolver=os.environ["CASA_DECONVOLVER"],
     scales=[] if os.environ["CASA_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_SCALES"].split(",")],
     imsize=int(os.environ["CASA_IMSIZE"]),
-    cell=f'{{os.environ["CASA_CELL_ARCSEC"]}}arcsec',
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
     niter=int(os.environ["CASA_NITER"]),
     robust=float(os.environ["CASA_ROBUST"]),
     gain=0.1,

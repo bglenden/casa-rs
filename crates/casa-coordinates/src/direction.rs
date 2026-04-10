@@ -562,14 +562,12 @@ impl Coordinate for DirectionCoordinate {
             "projection",
             Value::Scalar(ScalarValue::String(self.projection.name().into())),
         );
-        if !self.projection.parameters().is_empty() {
-            rec.upsert(
-                "projection_parameters",
-                Value::Array(casa_types::ArrayValue::from_f64_vec(
-                    self.projection.parameters().to_vec(),
-                )),
-            );
-        }
+        rec.upsert(
+            "projection_parameters",
+            Value::Array(casa_types::ArrayValue::from_f64_vec(
+                serialized_projection_parameters(&self.projection),
+            )),
+        );
         rec.upsert(
             "crval",
             Value::Array(casa_types::ArrayValue::from_f64_vec(self.crval.to_vec())),
@@ -606,14 +604,12 @@ impl Coordinate for DirectionCoordinate {
             "projection",
             Value::Scalar(ScalarValue::String(self.projection.name().into())),
         );
-        if !self.projection.parameters().is_empty() {
-            rec.upsert(
-                "projection_parameters",
-                Value::Array(ArrayValue::from_f64_vec(
-                    self.projection.parameters().to_vec(),
-                )),
-            );
-        }
+        rec.upsert(
+            "projection_parameters",
+            Value::Array(ArrayValue::from_f64_vec(serialized_projection_parameters(
+                &self.projection,
+            ))),
+        );
         rec.upsert(
             "crval",
             Value::Array(ArrayValue::from_f64_vec(self.crval.to_vec())),
@@ -658,6 +654,14 @@ impl Coordinate for DirectionCoordinate {
 
     fn clone_box(&self) -> Box<dyn Coordinate> {
         Box::new(self.clone())
+    }
+}
+
+fn serialized_projection_parameters(projection: &Projection) -> Vec<f64> {
+    if projection.parameters().is_empty() {
+        vec![0.0, 0.0]
+    } else {
+        projection.parameters().to_vec()
     }
 }
 
@@ -903,6 +907,10 @@ mod tests {
                 "rad".into(),
                 "rad".into()
             ])))
+        );
+        assert_eq!(
+            rec.get("projection_parameters"),
+            Some(&Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])))
         );
         assert_eq!(
             rec.get("longpole"),
