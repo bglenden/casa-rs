@@ -468,9 +468,9 @@ fn fit_gaussian_beam_casa_seeded(
 
     for _ in 0..50 {
         let (mut normal, gradient) = casa_normal_equations(samples, params)?;
-        for axis in 0..3 {
-            let damping = normal[axis][axis].abs().max(1.0e-12) * lambda;
-            normal[axis][axis] += damping;
+        for (axis, row) in normal.iter_mut().enumerate() {
+            let damping = row[axis].abs().max(1.0e-12) * lambda;
+            row[axis] += damping;
         }
         let rhs = gradient.map(|value| -value);
         let delta = solve_3x3(normal, rhs)?;
@@ -565,8 +565,10 @@ fn casa_normal_equations(
     }
 
     for row in 0..3 {
-        for col in 0..row {
-            normal[row][col] = normal[col][row];
+        let (previous_rows, current_and_later) = normal.split_at_mut(row);
+        let current_row = &mut current_and_later[0];
+        for (col, source_row) in previous_rows.iter().enumerate() {
+            current_row[col] = source_row[row];
         }
     }
     Some((normal, gradient))
@@ -680,10 +682,11 @@ fn solve_3x3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Option<[f64; 3]> {
             b.swap(best_row, pivot);
         }
         let pivot_value = a[pivot][pivot];
-        for col in pivot..3 {
-            a[pivot][col] /= pivot_value;
+        for value in &mut a[pivot][pivot..] {
+            *value /= pivot_value;
         }
         b[pivot] /= pivot_value;
+        let pivot_row = a[pivot];
         for row in 0..3 {
             if row == pivot {
                 continue;
@@ -692,8 +695,8 @@ fn solve_3x3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Option<[f64; 3]> {
             if factor.abs() <= 1.0e-18 {
                 continue;
             }
-            for col in pivot..3 {
-                a[row][col] -= factor * a[pivot][col];
+            for (value, pivot_value) in a[row][pivot..].iter_mut().zip(pivot_row[pivot..].iter()) {
+                *value -= factor * *pivot_value;
             }
             b[row] -= factor * b[pivot];
         }

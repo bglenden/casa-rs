@@ -55,10 +55,13 @@ impl StandardGridder {
         ];
         let oversampling = 100usize;
         let mut kernel_table = vec![0.0f32; oversampling * (GRIDDER_SUPPORT + 1)];
-        for index in 0..(oversampling * GRIDDER_SUPPORT) {
+        for (index, kernel) in kernel_table
+            .iter_mut()
+            .enumerate()
+            .take(oversampling * GRIDDER_SUPPORT)
+        {
             let distance = index as f64 / (GRIDDER_SUPPORT as f64 * oversampling as f64);
-            kernel_table[index] =
-                spheroidal_kernel(distance * GRIDDER_SUPPORT as f64, GRIDDER_SUPPORT as f64);
+            *kernel = spheroidal_kernel(distance * GRIDDER_SUPPORT as f64, GRIDDER_SUPPORT as f64);
         }
         let correction_x = build_correction_axis(grid_shape[0]);
         let correction_y = build_correction_axis(grid_shape[1]);

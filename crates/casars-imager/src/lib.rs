@@ -1040,7 +1040,7 @@ fn allowed_ddids(
             ));
         }
         if let Some(spw) = selected_spw
-            && !ddid_info[ddid as usize].is_some_and(|(row_spw, _)| row_spw == spw as usize)
+            && ddid_info[ddid as usize].is_none_or(|(row_spw, _)| row_spw != spw as usize)
         {
             return Err(format!("DATA_DESC_ID {ddid} does not map to SPW {spw}"));
         }
@@ -1406,6 +1406,7 @@ impl PreparedSelection {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn accumulate_row(
         &mut self,
         row: usize,
@@ -1917,6 +1918,7 @@ fn write_products(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_single_product(
     path: &Path,
     data: &Array4<f32>,
@@ -2308,13 +2310,11 @@ fn merge_mask_image(mask: &mut Array2<bool>, path: &Path) -> Result<(), String> 
             }
             Ok(())
         }
-        _ => {
-            return Err(format!(
-                "--mask-image {} has shape {:?}, expected [{nx}, {ny}] or [{nx}, {ny}, 1, 1]",
-                path.display(),
-                shape
-            ));
-        }
+        _ => Err(format!(
+            "--mask-image {} has shape {:?}, expected [{nx}, {ny}] or [{nx}, {ny}, 1, 1]",
+            path.display(),
+            shape
+        )),
     }
 }
 
@@ -3746,7 +3746,7 @@ mod tests {
             return;
         };
 
-        let ms = MeasurementSet::open(&ms_path.clone()).unwrap();
+        let ms = MeasurementSet::open(ms_path.clone()).unwrap();
         let config = descend_f14_cube_config(ms_path);
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
@@ -3782,7 +3782,7 @@ mod tests {
             return;
         };
 
-        let ms = MeasurementSet::open(&ms_path.clone()).unwrap();
+        let ms = MeasurementSet::open(ms_path.clone()).unwrap();
         let config = descend_f14_cube_config(ms_path);
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
@@ -3941,7 +3941,7 @@ mod tests {
             return;
         };
 
-        let ms = MeasurementSet::open(&ms_path.clone()).unwrap();
+        let ms = MeasurementSet::open(ms_path.clone()).unwrap();
         let config = refim_point_cube11_config(ms_path);
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
@@ -4033,7 +4033,7 @@ mod tests {
             return;
         };
 
-        let ms = MeasurementSet::open(&ms_path.clone()).unwrap();
+        let ms = MeasurementSet::open(ms_path.clone()).unwrap();
         let config = refim_point_cube18_config(ms_path);
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
@@ -4081,7 +4081,7 @@ mod tests {
             return;
         };
 
-        let ms = MeasurementSet::open(&ms_path.clone()).unwrap();
+        let ms = MeasurementSet::open(ms_path.clone()).unwrap();
         let config = refim_point_cube20_config(ms_path);
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
@@ -4125,7 +4125,7 @@ mod tests {
             return;
         };
 
-        let ms = MeasurementSet::open(&ms_path.clone()).unwrap();
+        let ms = MeasurementSet::open(ms_path.clone()).unwrap();
         let config = refim_point_cube13_config(ms_path);
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
@@ -4137,7 +4137,7 @@ mod tests {
             .iter()
             .map(|channel| channel.channel_frequency_hz)
             .collect::<Vec<_>>();
-        let expected_frequencies_hz = vec![
+        let expected_frequencies_hz = [
             1.253_244_052_817_556_9e9,
             1.176_783_981_410_044_4e9,
             1.109_124_277_594_536_8e9,
@@ -4213,7 +4213,7 @@ mod tests {
             return;
         };
 
-        let ms = MeasurementSet::open(&ms_path.clone()).unwrap();
+        let ms = MeasurementSet::open(ms_path.clone()).unwrap();
         let config = refim_point_cube13_config(ms_path);
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {

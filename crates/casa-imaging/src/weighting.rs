@@ -113,8 +113,8 @@ fn apply_optional_uv_taper(
                 batch.weight[index] = 0.0;
                 continue;
             }
-            let u = batch.u_lambda[index] as f64;
-            let v = batch.v_lambda[index] as f64;
+            let u = batch.u_lambda[index];
+            let v = batch.v_lambda[index];
             let ru = cos_pa * u + sin_pa * v;
             let rv = -sin_pa * u + cos_pa * v;
             let filter = (-major_coeff * ru * ru - minor_coeff * rv * rv).exp() as f32;

@@ -9,7 +9,14 @@
 #include <casacore/casa/BasicSL/Complex.h>
 #include <casacore/lattices/LatticeMath/LatticeFFT.h>
 #include <casacore/lattices/Lattices/ArrayLattice.h>
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #include <casacore/scimath/Mathematics/ConvolveGridder.h>
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 using casacore_shim::make_error;
 static casacore_shim::TerminateGuard g_terminate_guard_gridder;

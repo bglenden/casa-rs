@@ -383,6 +383,11 @@ impl ParallelHandBatch {
         self.first_visibility.len()
     }
 
+    /// Returns whether the batch contains no logical paired samples.
+    pub fn is_empty(&self) -> bool {
+        self.first_visibility.is_empty()
+    }
+
     pub(crate) fn validate(&self) -> Result<(), ImagingError> {
         let expected = self.len();
         for (label, len) in [

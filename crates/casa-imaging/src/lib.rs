@@ -1105,6 +1105,7 @@ fn casa_multiscale_reported_updates(
         )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_cotton_schwab_controller(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
@@ -1157,6 +1158,7 @@ fn run_cotton_schwab_controller(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_hogbom_cotton_schwab(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
@@ -1277,6 +1279,7 @@ fn run_hogbom_cotton_schwab(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_hogbom_minor_cycle(
     request: &ImagingRequest,
     psf_state: &PsfState,
@@ -1329,6 +1332,7 @@ fn run_hogbom_minor_cycle(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_clark_minor_cycle(
     request: &ImagingRequest,
     psf: &Array2<f32>,
@@ -1457,6 +1461,7 @@ fn run_clark_minor_cycle(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_multiscale_minor_cycle(
     request: &ImagingRequest,
     psf: &Array2<f32>,
@@ -1600,6 +1605,7 @@ struct ClarkActivePixel {
     value: f32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_clark_cotton_schwab(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
@@ -1725,6 +1731,7 @@ fn run_clark_cotton_schwab(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_multiscale_cotton_schwab(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
@@ -2062,7 +2069,7 @@ fn multiscale_spheroidal(nu: f32) -> f32 {
             [
                 8.203343e-2,
                 -3.644705e-1,
-                6.278660e-1,
+                6.278_66e-1,
                 -5.335581e-1,
                 2.312756e-1,
             ],
@@ -3081,6 +3088,7 @@ fn expand_scalar(value: f32) -> Array4<f32> {
 }
 
 #[cfg(test)]
+#[allow(clippy::excessive_precision, clippy::useless_vec)]
 mod tests {
     use ndarray::{Array2, s};
     use num_complex::Complex32;

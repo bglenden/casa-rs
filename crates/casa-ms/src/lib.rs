@@ -58,7 +58,7 @@ pub mod selection_helpers;
 pub mod selection_syntax;
 pub mod spectral_selection;
 pub mod subtables;
-mod ui_schema;
+pub mod ui_schema;
 pub mod validate;
 
 #[cfg(test)]

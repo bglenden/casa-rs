@@ -882,12 +882,12 @@ impl ParallacticAngleState {
             .lookup_receptor0_angle(antenna_id, feed_id, data_spw_id, time_seconds)
             .unwrap_or(0.0);
         self.engine
-            .feed_parallactic_angle(
+            .parallactic_angle(
                 time_seconds,
                 usize::try_from(field_id).unwrap_or(usize::MAX),
                 usize::try_from(antenna_id).unwrap_or(usize::MAX),
-                receptor0_angle,
             )
+            .map(|parallactic_angle| parallactic_angle + receptor0_angle)
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: "<measurement-set derived parallactic angle>".to_string(),
                 source,
@@ -2192,5 +2192,40 @@ mod tests {
 
         assert_eq!(state.lookup_receptor0_angle(0, 0, 3, 20.0), Some(0.5));
         assert_eq!(state.lookup_receptor0_angle(0, 0, 2, 20.0), Some(0.25));
+    }
+
+    #[test]
+    fn feed_parallactic_angle_adds_receptor0_angle() {
+        let time_seconds = 59000.5 * 86400.0;
+        let state = ParallacticAngleState {
+            engine: MsCalEngine::from_parts(
+                vec![
+                    MPosition::new_itrf(-1_601_185.4, -5_041_977.5, 3_554_875.9),
+                    MPosition::new_itrf(-1_601_085.4, -5_041_977.5, 3_554_875.9),
+                ],
+                vec![MDirection::from_angles(
+                    0.0,
+                    std::f64::consts::FRAC_PI_4,
+                    DirectionRef::J2000,
+                )],
+                MPosition::new_itrf(-1_601_185.4, -5_041_977.5, 3_554_875.9),
+            ),
+            feed_rows: HashMap::from([(
+                (0, 0),
+                vec![FeedAngleRow {
+                    spectral_window_id: -1,
+                    time_seconds,
+                    interval_seconds: 0.0,
+                    receptor0_angle_rad: 0.25,
+                }],
+            )]),
+        };
+
+        let base = state.engine.parallactic_angle(time_seconds, 0, 0).unwrap();
+        let feed = state
+            .feed_parallactic_angle(time_seconds, 0, 0, 0, 1)
+            .unwrap();
+
+        assert!((feed - (base + 0.25)).abs() < 1.0e-12);
     }
 }

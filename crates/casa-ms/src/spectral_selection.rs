@@ -20,37 +20,27 @@ use crate::error::{MsError, MsResult};
 use crate::selection_syntax::ChannelSelection;
 
 /// Spectral interpolation policy for cube imaging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CubeInterpolation {
     /// Nearest-neighbour interpolation.
     Nearest,
     /// Linear interpolation.
+    #[default]
     Linear,
     /// Cubic interpolation.
     Cubic,
 }
 
-impl Default for CubeInterpolation {
-    fn default() -> Self {
-        Self::Linear
-    }
-}
-
 /// CASA spectral-cube mode for the shared cube-axis builder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CubeSpecMode {
     /// CASA `specmode='cube'`: build the output axis in the requested frame and
     /// apply runtime frequency-frame conversion while assigning rows.
+    #[default]
     Cube,
     /// CASA `specmode='cubedata'`: keep the output axis in the native data
     /// frame and skip runtime frequency-frame conversion.
     Cubedata,
-}
-
-impl Default for CubeSpecMode {
-    fn default() -> Self {
-        Self::Cube
-    }
 }
 
 /// Typed cube-axis value corresponding to CASA `start` / `width`.
@@ -352,6 +342,7 @@ pub fn resolve_channel_selector_selection(
 
 impl CubeSpectralSetup {
     /// Build a CASA-style output cube axis.
+    #[allow(clippy::too_many_arguments)]
     pub fn for_casa_cube_axis(
         source_freq_ref: FrequencyRef,
         all_source_frequencies_hz: &[f64],
@@ -524,6 +515,7 @@ impl CubeSpectralSetup {
     /// `start`/`width` as channel numbers. Output channels are defined on the
     /// full SPW channel axis; any SPW channel selector affects which input data
     /// are available, not the output channel locations themselves.
+    #[allow(clippy::too_many_arguments)]
     pub fn for_casa_cube_channel_axis(
         source_freq_ref: FrequencyRef,
         all_source_frequencies_hz: &[f64],
@@ -1245,7 +1237,7 @@ fn convert_frequency_to_frame_with_frame(
     }
     let frame = frame.expect("frame required for cross-frame frequency conversion");
     MFrequency::new(frequency_hz, source_freq_ref)
-        .convert_to(target_freq_ref, &frame)
+        .convert_to(target_freq_ref, frame)
         .map(|frequency| frequency.hz())
         .map_err(|error| {
             MsError::VersionError(format!(

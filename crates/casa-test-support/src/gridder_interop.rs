@@ -230,6 +230,7 @@ pub fn cpp_convolve_gridder_correction_row_2d(
 }
 
 /// Make a corrected dirty image with C++ casacore `ConvolveGridder` + `LatticeFFT`.
+#[allow(clippy::too_many_arguments)]
 pub fn cpp_convolve_gridder_make_dirty_image_2d(
     grid_shape: [usize; 2],
     image_shape: [usize; 2],
