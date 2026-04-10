@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["parse_numeric_id_selector","parse_spw_selector"],"struct":["ChannelSelection","ChannelSelectionSegment","SpwSelector"]};

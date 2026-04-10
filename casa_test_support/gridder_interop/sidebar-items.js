@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cpp_convolve_gridder_correction_row_2d","cpp_convolve_gridder_grid_unit_sample_2d","cpp_convolve_gridder_make_dirty_image_2d"],"struct":["GridderImage2d","GridderSampleCell","GridderSamplePatch"]};

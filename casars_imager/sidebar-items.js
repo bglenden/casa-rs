@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SpectralMode"],"fn":["run_from_config","run_with_cli_args"],"struct":["ChannelRunSummary","CliConfig","FrontendStageTimings","RunSummary"]};

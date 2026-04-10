@@ -882,12 +882,12 @@
 <a href=#882 id=882 data-nosnippet>882</a>            </span>.lookup_receptor0_angle(antenna_id, feed_id, data_spw_id, time_seconds)
 <a href=#883 id=883 data-nosnippet>883</a>            .unwrap_or(<span class="number">0.0</span>);
 <a href=#884 id=884 data-nosnippet>884</a>        <span class="self">self</span>.engine
-<a href=#885 id=885 data-nosnippet>885</a>            .feed_parallactic_angle(
+<a href=#885 id=885 data-nosnippet>885</a>            .parallactic_angle(
 <a href=#886 id=886 data-nosnippet>886</a>                time_seconds,
 <a href=#887 id=887 data-nosnippet>887</a>                usize::try_from(field_id).unwrap_or(usize::MAX),
 <a href=#888 id=888 data-nosnippet>888</a>                usize::try_from(antenna_id).unwrap_or(usize::MAX),
-<a href=#889 id=889 data-nosnippet>889</a>                receptor0_angle,
-<a href=#890 id=890 data-nosnippet>890</a>            )
+<a href=#889 id=889 data-nosnippet>889</a>            )
+<a href=#890 id=890 data-nosnippet>890</a>            .map(|parallactic_angle| parallactic_angle + receptor0_angle)
 <a href=#891 id=891 data-nosnippet>891</a>            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
 <a href=#892 id=892 data-nosnippet>892</a>                path: <span class="string">"&lt;measurement-set derived parallactic angle&gt;"</span>.to_string(),
 <a href=#893 id=893 data-nosnippet>893</a>                source,
@@ -2193,5 +2193,40 @@
 <a href=#2193 id=2193 data-nosnippet>2193</a>        <span class="macro">assert_eq!</span>(state.lookup_receptor0_angle(<span class="number">0</span>, <span class="number">0</span>, <span class="number">3</span>, <span class="number">20.0</span>), <span class="prelude-val">Some</span>(<span class="number">0.5</span>));
 <a href=#2194 id=2194 data-nosnippet>2194</a>        <span class="macro">assert_eq!</span>(state.lookup_receptor0_angle(<span class="number">0</span>, <span class="number">0</span>, <span class="number">2</span>, <span class="number">20.0</span>), <span class="prelude-val">Some</span>(<span class="number">0.25</span>));
 <a href=#2195 id=2195 data-nosnippet>2195</a>    }
-<a href=#2196 id=2196 data-nosnippet>2196</a>}
+<a href=#2196 id=2196 data-nosnippet>2196</a>
+<a href=#2197 id=2197 data-nosnippet>2197</a>    <span class="attr">#[test]
+<a href=#2198 id=2198 data-nosnippet>2198</a>    </span><span class="kw">fn </span>feed_parallactic_angle_adds_receptor0_angle() {
+<a href=#2199 id=2199 data-nosnippet>2199</a>        <span class="kw">let </span>time_seconds = <span class="number">59000.5 </span>* <span class="number">86400.0</span>;
+<a href=#2200 id=2200 data-nosnippet>2200</a>        <span class="kw">let </span>state = ParallacticAngleState {
+<a href=#2201 id=2201 data-nosnippet>2201</a>            engine: MsCalEngine::from_parts(
+<a href=#2202 id=2202 data-nosnippet>2202</a>                <span class="macro">vec!</span>[
+<a href=#2203 id=2203 data-nosnippet>2203</a>                    MPosition::new_itrf(-<span class="number">1_601_185.4</span>, -<span class="number">5_041_977.5</span>, <span class="number">3_554_875.9</span>),
+<a href=#2204 id=2204 data-nosnippet>2204</a>                    MPosition::new_itrf(-<span class="number">1_601_085.4</span>, -<span class="number">5_041_977.5</span>, <span class="number">3_554_875.9</span>),
+<a href=#2205 id=2205 data-nosnippet>2205</a>                ],
+<a href=#2206 id=2206 data-nosnippet>2206</a>                <span class="macro">vec!</span>[MDirection::from_angles(
+<a href=#2207 id=2207 data-nosnippet>2207</a>                    <span class="number">0.0</span>,
+<a href=#2208 id=2208 data-nosnippet>2208</a>                    std::f64::consts::FRAC_PI_4,
+<a href=#2209 id=2209 data-nosnippet>2209</a>                    DirectionRef::J2000,
+<a href=#2210 id=2210 data-nosnippet>2210</a>                )],
+<a href=#2211 id=2211 data-nosnippet>2211</a>                MPosition::new_itrf(-<span class="number">1_601_185.4</span>, -<span class="number">5_041_977.5</span>, <span class="number">3_554_875.9</span>),
+<a href=#2212 id=2212 data-nosnippet>2212</a>            ),
+<a href=#2213 id=2213 data-nosnippet>2213</a>            feed_rows: HashMap::from([(
+<a href=#2214 id=2214 data-nosnippet>2214</a>                (<span class="number">0</span>, <span class="number">0</span>),
+<a href=#2215 id=2215 data-nosnippet>2215</a>                <span class="macro">vec!</span>[FeedAngleRow {
+<a href=#2216 id=2216 data-nosnippet>2216</a>                    spectral_window_id: -<span class="number">1</span>,
+<a href=#2217 id=2217 data-nosnippet>2217</a>                    time_seconds,
+<a href=#2218 id=2218 data-nosnippet>2218</a>                    interval_seconds: <span class="number">0.0</span>,
+<a href=#2219 id=2219 data-nosnippet>2219</a>                    receptor0_angle_rad: <span class="number">0.25</span>,
+<a href=#2220 id=2220 data-nosnippet>2220</a>                }],
+<a href=#2221 id=2221 data-nosnippet>2221</a>            )]),
+<a href=#2222 id=2222 data-nosnippet>2222</a>        };
+<a href=#2223 id=2223 data-nosnippet>2223</a>
+<a href=#2224 id=2224 data-nosnippet>2224</a>        <span class="kw">let </span>base = state.engine.parallactic_angle(time_seconds, <span class="number">0</span>, <span class="number">0</span>).unwrap();
+<a href=#2225 id=2225 data-nosnippet>2225</a>        <span class="kw">let </span>feed = state
+<a href=#2226 id=2226 data-nosnippet>2226</a>            .feed_parallactic_angle(time_seconds, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>)
+<a href=#2227 id=2227 data-nosnippet>2227</a>            .unwrap();
+<a href=#2228 id=2228 data-nosnippet>2228</a>
+<a href=#2229 id=2229 data-nosnippet>2229</a>        <span class="macro">assert!</span>((feed - (base + <span class="number">0.25</span>)).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#2230 id=2230 data-nosnippet>2230</a>    }
+<a href=#2231 id=2231 data-nosnippet>2231</a>}
 </code></pre></div></section></main></body></html>
