@@ -55,6 +55,43 @@ scope.
 **Reason:** Depends on complete coordinate and image-math expansion beyond
 Phase 5 core.
 
+### 11.5 CASA-compatible synthesis imaging continuation roadmap
+
+**Status:** DEFER
+
+**Reason:** A large checkpoint of the imaging work is now implemented outside
+Phase 5 closeout scope: MFS and cube imaging exist in `casa-imaging` /
+`casars-imager`, the Cotton-Schwab-style controller is in place, and
+`hogbom`, `clark`, and `multiscale` all have source-backed CASA parity on a
+substantial subset of MFS and cube cases. The current checkpoint status and
+remaining follow-up work are recorded in
+`Wave 16 - Synthesis imaging continuation (Cotton-Schwab, Clark, multiscale).md`.
+
+### 11.6 Full CASA `specmode='cube'` Doppler/frame semantics
+
+**Status:** DEFER
+
+**Reason:** The current checkpoint already supports channelized dirty cubes,
+cube CLEAN for `hogbom`, `clark`, and `multiscale`, real spectral-axis product
+persistence, variable `FIELD.PHASE_DIR` reference conversion, and source-backed
+parity on `sim_data_VLA_jet.ms`, `refim_Cband.G37line.ms`,
+`refim_eptwochan.ms`, selected `refim_point.ms` `test_cube_*` cases, and the
+full `refim_point_descendingfreqs.ms` channel-order suite. The remaining cube
+work is narrower and more honest than the original broad “cube support”
+placeholder:
+
+- widen authoritative `test_cube_*` coverage beyond the current green subset
+- finish non-default interpolation/frame combinations
+- move the remaining scalar spectral/doppler helper formulas in `casa-ms`
+  behind measures-backed reusable APIs
+- close the still-open source-backed cube Hogbom `nsigma` oracle on
+  `refim_point_withline.ms`
+
+Note that `refim_point.ms` `test_cube_4` and `test_cube_13` are not treated as
+authoritative parity targets here because CASA leaves their assertions
+commented out and `test_cube_13` is explicitly marked upstream as
+"not quite properly working, investigating".
+
 ---
 
 ### 12.1 First-Class Masked-Lattice Traversal
@@ -232,3 +269,19 @@ update with the movie. The intended optimization direction is therefore to split
 the spectrum into a reusable base plot plus lightweight per-frame overlays or
 selection-state updates, so the spectrum can stay live during movie playback
 without dragging plane FPS back down.
+
+### 12.15 Variable `FIELD.PHASE_DIR` Measure-Reference Conversion For Imaging
+
+**Status:** DEFER
+
+**Reason:** The current `casars-imager` selection/adaptation path intentionally
+rejects MeasurementSets whose `FIELD.PHASE_DIR` uses per-row or variable
+measure references via `PhaseDir_Ref`. That keeps the first standard-gridder
+imaging wave honest for fixed-frame J2000-style cases, but it blocks parity on
+some real ALMA/VLA subsets that otherwise fit the single-field MFS envelope.
+
+The next adapter/coordinates wave should add explicit direction-frame
+conversion for variable `FIELD.PHASE_DIR` references before those datasets are
+promoted into the default CASA parity suite. This follow-on should be tracked
+alongside the Wave 16 synthesis-imaging continuation work rather than handled as
+an ad hoc test exception.

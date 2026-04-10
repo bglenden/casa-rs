@@ -1,0 +1,37 @@
+[package]
+name = "casars-imager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "MeasurementSet-backed CASA-compatible imaging application"
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+slow-tests = []
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+casa-images = { path = "../casa-images" }
+casa-imaging = { path = "../casa-imaging" }
+casa-ms = { path = "../casa-ms" }
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+casa-test-support = { path = "../casa-test-support" }
+serde_json = "1"
+tempfile = "3"
+
+[[bin]]
+name = "casars-imager"
+path = "src/main.rs"

@@ -1,0 +1,23 @@
+[package]
+name = "casa-imaging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Pure imaging kernels and CLEAN orchestration for CASA-compatible imaging"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-images = { path = "../casa-images" }
+casa-lattices = { path = "../casa-lattices" }
+libm = "0.2"
+ndarray.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+casa-test-support = { path = "../casa-test-support" }

@@ -118,6 +118,50 @@ impl GaussianBeam {
             position_angle: read_quantity(rec, "positionangle")?,
         })
     }
+
+    /// Computes the Gaussian beam that would need to convolve `other` to
+    /// produce `self`, following casacore `GaussianDeconvolver::deconvolve()`.
+    ///
+    /// Returns `Ok(None)` when the two beams are effectively the same size.
+    pub fn deconvolving_beam(self, other: Self) -> Result<Option<Self>, ImageError> {
+        if self.is_null() || other.is_null() {
+            return Err(ImageError::InvalidMetadata(
+                "cannot deconvolve null beams".to_string(),
+            ));
+        }
+        let lhs = covariance_matrix(self);
+        let rhs = covariance_matrix(other);
+        let delta = [
+            [lhs[0][0] - rhs[0][0], lhs[0][1] - rhs[0][1]],
+            [lhs[1][0] - rhs[1][0], lhs[1][1] - rhs[1][1]],
+        ];
+        let trace = delta[0][0] + delta[1][1];
+        let determinant = delta[0][0] * delta[1][1] - delta[0][1] * delta[1][0];
+        let discriminant = ((trace * trace) / 4.0 - determinant).max(0.0).sqrt();
+        let lambda_major = trace / 2.0 + discriminant;
+        let lambda_minor = trace / 2.0 - discriminant;
+        if lambda_major <= 1.0e-24 && lambda_minor <= 1.0e-24 {
+            return Ok(None);
+        }
+        if lambda_minor < -1.0e-12 || lambda_major < -1.0e-12 {
+            return Err(ImageError::InvalidMetadata(
+                "target beam is smaller than the source beam".to_string(),
+            ));
+        }
+        let lambda_major = lambda_major.max(0.0);
+        let lambda_minor = lambda_minor.max(0.0);
+        let x_axis_angle =
+            if delta[0][1].abs() <= 1.0e-18 && (delta[0][0] - delta[1][1]).abs() <= 1.0e-18 {
+                0.0
+            } else {
+                0.5 * (2.0 * delta[0][1]).atan2(delta[0][0] - delta[1][1])
+            };
+        Ok(Some(beam_from_x_axis_rad(
+            lambda_major.sqrt(),
+            lambda_minor.sqrt(),
+            x_axis_angle,
+        )))
+    }
 }
 
 fn angle_value_in(radians: f64, unit: &str) -> Result<f64, ImageError> {
@@ -393,6 +437,33 @@ impl ImageBeamSet {
         Some(beams[beams.len() / 2])
     }
 
+    /// Returns CASA's minimum-area common enclosing beam for this beam set.
+    ///
+    /// This ports the `CasaImageBeamSet::getCommonBeam()` algorithm used by
+    /// CASA image analysis and synthesis restoration when
+    /// `restoringbeam='common'`.
+    pub fn common_beam(&self) -> Result<GaussianBeam, ImageError> {
+        if self.is_empty() {
+            return Err(ImageError::InvalidMetadata(
+                "cannot determine a common beam for an empty beam set".to_string(),
+            ));
+        }
+        let non_null: Vec<GaussianBeam> = self
+            .iter_beams()
+            .copied()
+            .filter(|beam| !beam.is_null())
+            .collect();
+        if non_null.is_empty() {
+            return Err(ImageError::InvalidMetadata(
+                "cannot determine a common beam because all beams are null".to_string(),
+            ));
+        }
+        if non_null.iter().all(|beam| *beam == non_null[0]) {
+            return Ok(non_null[0]);
+        }
+        common_beam_recursive(&non_null)
+    }
+
     fn iter_beams(&self) -> impl Iterator<Item = &GaussianBeam> {
         self.beams.iter().flat_map(|row| row.iter())
     }
@@ -423,14 +494,8 @@ impl ImageBeamSet {
 
     /// Deserializes a beam set from the casacore `ImageBeamSet::fromRecord()` layout.
     pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
-        let mut nchan = match rec.get("nChannels") {
-            Some(Value::Scalar(ScalarValue::Int32(n))) => (*n).max(1) as usize,
-            _ => 1,
-        };
-        let mut nstokes = match rec.get("nStokes") {
-            Some(Value::Scalar(ScalarValue::Int32(n))) => (*n).max(1) as usize,
-            _ => 1,
-        };
+        let mut nchan = read_record_usize(rec, "nChannels").unwrap_or(1).max(1);
+        let mut nstokes = read_record_usize(rec, "nStokes").unwrap_or(1).max(1);
         if nchan == 0 {
             nchan = 1;
         }
@@ -466,10 +531,246 @@ impl ImageBeamSet {
     }
 }
 
+fn read_record_usize(rec: &RecordValue, key: &str) -> Option<usize> {
+    match rec.get(key) {
+        Some(Value::Scalar(ScalarValue::UInt8(value))) => Some(usize::from(*value)),
+        Some(Value::Scalar(ScalarValue::UInt16(value))) => Some(usize::from(*value)),
+        Some(Value::Scalar(ScalarValue::UInt32(value))) => usize::try_from(*value).ok(),
+        Some(Value::Scalar(ScalarValue::Int16(value))) => usize::try_from(*value).ok(),
+        Some(Value::Scalar(ScalarValue::Int32(value))) => usize::try_from(*value).ok(),
+        Some(Value::Scalar(ScalarValue::Int64(value))) => usize::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
 impl Default for ImageBeamSet {
     fn default() -> Self {
         Self::empty()
     }
+}
+
+fn common_beam_recursive(beams: &[GaussianBeam]) -> Result<GaussianBeam, ImageError> {
+    let (max_index, &max_beam) = beams
+        .iter()
+        .enumerate()
+        .max_by(|(_, lhs), (_, rhs)| lhs.area().partial_cmp(&rhs.area()).unwrap())
+        .ok_or_else(|| ImageError::InvalidMetadata("beam set is empty".to_string()))?;
+
+    let mut problem_beam = None;
+    for (index, beam) in beams.iter().copied().enumerate() {
+        if index != max_index && !beam.is_null() && !beam_encloses(max_beam, beam) {
+            problem_beam = Some(beam);
+        }
+    }
+    let Some(problem_beam) = problem_beam else {
+        return Ok(max_beam);
+    };
+
+    let t_b1 = normalize_beam_position_angle(problem_beam.position_angle)
+        - normalize_beam_position_angle(max_beam.position_angle);
+    if (normalize_angle_pi(t_b1).abs() - std::f64::consts::FRAC_PI_2).abs() <= 1.0e-12 {
+        let max_has_major = max_beam.major_in("arcsec")? >= problem_beam.major_in("arcsec")?;
+        let major_arcsec = if max_has_major {
+            max_beam.major_in("arcsec")?
+        } else {
+            problem_beam.major_in("arcsec")?
+        };
+        let minor_arcsec = if max_has_major {
+            problem_beam.major_in("arcsec")?
+        } else {
+            max_beam.major_in("arcsec")?
+        };
+        let pa = if max_has_major {
+            max_beam.position_angle
+        } else {
+            problem_beam.position_angle
+        };
+        return Ok(GaussianBeam::new(
+            arcsec_to_rad(major_arcsec),
+            arcsec_to_rad(minor_arcsec),
+            normalize_beam_position_angle(pa),
+        ));
+    }
+
+    let a_a1 = max_beam.major_in("arcsec")?;
+    let b_a1 = max_beam.minor_in("arcsec")?;
+    let a_b1 = problem_beam.major_in("arcsec")?;
+    let b_b1 = problem_beam.minor_in("arcsec")?;
+
+    let a_a2 = (a_a1 * b_a1).sqrt();
+    let p = a_a2 / a_a1;
+    let q = a_a2 / b_a1;
+
+    let (a_b2, _b_b2, t_b2) = transform_ellipse_by_scaling(a_b1, b_b1, t_b1, p, q);
+    let (mut a_c, mut b_c, t_c1) = transform_ellipse_by_scaling(a_b2, a_a2, t_b2, 1.0 / p, 1.0 / q);
+    let t_c = t_c1 + normalize_beam_position_angle(max_beam.position_angle);
+
+    let mut enclosing = GaussianBeam::new(
+        arcsec_to_rad(a_c),
+        arcsec_to_rad(b_c),
+        normalize_beam_position_angle(t_c),
+    );
+    while !(beam_encloses(enclosing, max_beam) && beam_encloses(enclosing, problem_beam)) {
+        a_c *= 1.001;
+        b_c *= 1.001;
+        enclosing = GaussianBeam::new(
+            arcsec_to_rad(a_c),
+            arcsec_to_rad(b_c),
+            normalize_beam_position_angle(t_c),
+        );
+    }
+
+    let mut new_beams = beams.to_vec();
+    new_beams[max_index] = enclosing;
+    common_beam_recursive(&new_beams)
+}
+
+fn beam_from_x_axis_rad(major_rad: f64, minor_rad: f64, x_axis_angle_rad: f64) -> GaussianBeam {
+    GaussianBeam::new(
+        major_rad,
+        minor_rad,
+        normalize_beam_position_angle(x_axis_angle_rad - std::f64::consts::FRAC_PI_2),
+    )
+}
+
+fn normalize_beam_position_angle(angle: f64) -> f64 {
+    let mut wrapped = normalize_angle_pi(angle);
+    if wrapped <= -std::f64::consts::FRAC_PI_2 {
+        wrapped += std::f64::consts::PI;
+    } else if wrapped > std::f64::consts::FRAC_PI_2 {
+        wrapped -= std::f64::consts::PI;
+    }
+    wrapped
+}
+
+fn normalize_angle_pi(angle: f64) -> f64 {
+    let mut wrapped = angle.rem_euclid(2.0 * std::f64::consts::PI);
+    if wrapped > std::f64::consts::PI {
+        wrapped -= 2.0 * std::f64::consts::PI;
+    }
+    wrapped
+}
+
+fn x_axis_angle_rad(beam: GaussianBeam) -> f64 {
+    normalize_beam_position_angle(beam.position_angle) + std::f64::consts::FRAC_PI_2
+}
+
+fn beam_encloses(enclosing: GaussianBeam, other: GaussianBeam) -> bool {
+    // Match CASA `GaussianDeconvolver::deconvolve()`: a candidate enclosing
+    // beam is only accepted if deconvolution succeeds and does not collapse to
+    // the "point source" branch. `CasaImageBeamSet::getCommonBeam()` treats the
+    // point-source result as failure and grows the common beam slightly.
+    let major_source = enclosing.major;
+    let minor_source = enclosing.minor;
+    let theta_source = normalize_beam_position_angle(enclosing.position_angle);
+    let major_beam = other.major;
+    let minor_beam = other.minor;
+    let theta_beam = normalize_beam_position_angle(other.position_angle);
+
+    let alpha = (major_source * theta_source.cos()).powi(2)
+        + (minor_source * theta_source.sin()).powi(2)
+        - (major_beam * theta_beam.cos()).powi(2)
+        - (minor_beam * theta_beam.sin()).powi(2);
+    let beta = (major_source * theta_source.sin()).powi(2)
+        + (minor_source * theta_source.cos()).powi(2)
+        - (major_beam * theta_beam.sin()).powi(2)
+        - (minor_beam * theta_beam.cos()).powi(2);
+    let gamma = 2.0
+        * (((minor_source * minor_source) - (major_source * major_source))
+            * theta_source.sin()
+            * theta_source.cos()
+            - ((minor_beam * minor_beam) - (major_beam * major_beam))
+                * theta_beam.sin()
+                * theta_beam.cos());
+
+    let s = alpha + beta;
+    let t = ((alpha - beta).powi(2) + gamma.powi(2)).sqrt();
+    alpha >= 0.0 && beta >= 0.0 && s >= t
+}
+
+fn covariance_matrix(beam: GaussianBeam) -> [[f64; 2]; 2] {
+    let angle = x_axis_angle_rad(beam);
+    let cos = angle.cos();
+    let sin = angle.sin();
+    let major2 = beam.major * beam.major;
+    let minor2 = beam.minor * beam.minor;
+    [
+        [
+            cos * cos * major2 + sin * sin * minor2,
+            cos * sin * (major2 - minor2),
+        ],
+        [
+            cos * sin * (major2 - minor2),
+            sin * sin * major2 + cos * cos * minor2,
+        ],
+    ]
+}
+
+fn transform_ellipse_by_scaling(
+    major: f64,
+    minor: f64,
+    pa: f64,
+    x_scale_factor: f64,
+    y_scale_factor: f64,
+) -> (f64, f64, f64) {
+    let my_cos = pa.cos();
+    let my_sin = pa.sin();
+    let cos2 = my_cos * my_cos;
+    let sin2 = my_sin * my_sin;
+    let major2 = major * major;
+    let minor2 = minor * minor;
+    let a = cos2 / major2 + sin2 / minor2;
+    let b = -2.0 * my_cos * my_sin * (1.0 / major2 - 1.0 / minor2);
+    let c = sin2 / major2 + cos2 / minor2;
+
+    let xs = x_scale_factor * x_scale_factor;
+    let ys = y_scale_factor * y_scale_factor;
+
+    let r = a / xs;
+    let s = b * b / (4.0 * xs * ys);
+    let t = c / ys;
+
+    let u = r - t;
+    let f1 = u * u + 4.0 * s;
+    let f2 = f1.sqrt() * u.abs();
+
+    let j1 = (f2 + f1) / f1 / 2.0;
+    let j2 = (-f2 + f1) / f1 / 2.0;
+
+    let k1 = (j1 * r + j1 * t - t) / (2.0 * j1 - 1.0);
+    let k2 = (j2 * r + j2 * t - t) / (2.0 * j2 - 1.0);
+
+    let c1 = (1.0 / k1).sqrt();
+    let c2 = (1.0 / k2).sqrt();
+
+    if (c1 - c2).abs() <= 1.0e-12 {
+        return (k1.sqrt(), k1.sqrt(), 0.0);
+    }
+    if c1 > c2 {
+        (
+            c1,
+            c2,
+            if pa >= 0.0 {
+                j1.sqrt().acos()
+            } else {
+                -j1.sqrt().acos()
+            },
+        )
+    } else {
+        (
+            c2,
+            c1,
+            if pa >= 0.0 {
+                j2.sqrt().acos()
+            } else {
+                -j2.sqrt().acos()
+            },
+        )
+    }
+}
+
+fn arcsec_to_rad(arcsec: f64) -> f64 {
+    arcsec * std::f64::consts::PI / (180.0 * 3600.0)
 }
 
 fn count_to_pair(nchan: usize, _nstokes: usize, count: usize) -> Option<(usize, usize)> {
@@ -483,6 +784,14 @@ fn count_to_pair(nchan: usize, _nstokes: usize, count: usize) -> Option<(usize, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn beam_arcsec(major: f64, minor: f64, pa_deg: f64) -> GaussianBeam {
+        GaussianBeam::new(
+            arcsec_to_rad(major),
+            arcsec_to_rad(minor),
+            pa_deg.to_radians(),
+        )
+    }
 
     #[test]
     fn gaussian_beam_area() {
@@ -598,6 +907,19 @@ mod tests {
     }
 
     #[test]
+    fn beam_set_record_accepts_non_int32_shape_fields() {
+        let beam = beam_arcsec(3.0, 2.0, -10.0);
+        let mut record = RecordValue::default();
+        record.upsert("nChannels", Value::Scalar(ScalarValue::Int64(2)));
+        record.upsert("nStokes", Value::Scalar(ScalarValue::UInt32(1)));
+        record.upsert("*0", Value::Record(beam.to_record()));
+        record.upsert("*1", Value::Record(beam.to_record()));
+        let beam_set = ImageBeamSet::from_record(&record).unwrap();
+        assert_eq!(beam_set.shape(), (2, 1));
+        assert_eq!(beam_set.size(), 2);
+    }
+
+    #[test]
     fn aliases_default_and_error_paths_work() {
         let beam = GaussianBeam::new(1.0, 0.5, 0.25);
         assert!(!beam.is_null());
@@ -659,5 +981,69 @@ mod tests {
             ImageBeamSet::from_record(&missing),
             Err(ImageError::InvalidMetadata(msg)) if msg.contains("missing beam record")
         ));
+    }
+
+    #[test]
+    fn common_beam_returns_existing_largest_beam_when_it_encloses_others() {
+        let set = ImageBeamSet::from_grid(vec![vec![
+            beam_arcsec(4.0, 2.0, 0.0),
+            beam_arcsec(1.5, 1.0, 90.0),
+        ]]);
+        let common = set.common_beam().unwrap();
+        assert!((common.major_in("arcsec").unwrap() - 4.0).abs() < 1.0e-10);
+        assert!((common.minor_in("arcsec").unwrap() - 2.0).abs() < 1.0e-10);
+        assert!((common.position_angle_in("deg").unwrap() - 0.0).abs() < 1.0e-10);
+    }
+
+    #[test]
+    fn common_beam_handles_right_angle_case_like_casa() {
+        let set = ImageBeamSet::from_grid(vec![vec![
+            beam_arcsec(4.0, 2.0, 0.0),
+            beam_arcsec(4.0, 2.0, 90.0),
+        ]]);
+        let common = set.common_beam().unwrap();
+        assert!((common.major_in("arcsec").unwrap() - 4.0).abs() < 1.0e-10);
+        assert!((common.minor_in("arcsec").unwrap() - 4.0).abs() < 1.0e-10);
+    }
+
+    #[test]
+    fn common_beam_matches_casa_two_beam_reference_case() {
+        let set = ImageBeamSet::from_grid(vec![vec![
+            beam_arcsec(4.0, 2.0, 0.0),
+            beam_arcsec(4.0, 2.0, 60.0),
+        ]]);
+        let common = set.common_beam().unwrap();
+        assert!((common.position_angle_in("deg").unwrap() - 30.0).abs() < 1.0e-6);
+        assert!(common.major_in("arcsec").unwrap() < 4.6);
+        assert!(common.minor_in("arcsec").unwrap() < 3.4);
+    }
+
+    #[test]
+    fn deconvolving_beam_returns_none_for_identical_beams() {
+        let beam = beam_arcsec(4.0, 2.0, 30.0);
+        assert_eq!(beam.deconvolving_beam(beam).unwrap(), None);
+    }
+
+    #[test]
+    fn deconvolving_beam_round_trips_covariance_difference() {
+        let source = beam_arcsec(4.0, 2.5, 10.0);
+        let target = beam_arcsec(5.0, 3.5, 25.0);
+        let delta = target.deconvolving_beam(source).unwrap().unwrap();
+        let recombined = [
+            [
+                covariance_matrix(source)[0][0] + covariance_matrix(delta)[0][0],
+                covariance_matrix(source)[0][1] + covariance_matrix(delta)[0][1],
+            ],
+            [
+                covariance_matrix(source)[1][0] + covariance_matrix(delta)[1][0],
+                covariance_matrix(source)[1][1] + covariance_matrix(delta)[1][1],
+            ],
+        ];
+        let expected = covariance_matrix(target);
+        for row in 0..2 {
+            for col in 0..2 {
+                assert!((recombined[row][col] - expected[row][col]).abs() < 1.0e-12);
+            }
+        }
     }
 }

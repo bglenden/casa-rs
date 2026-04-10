@@ -183,8 +183,8 @@ impl SpectralCoordinate {
         let frequency_ref = if let Some(name) =
             get_optional_string(rec, "frequency_ref").or_else(|| get_optional_string(rec, "system"))
         {
-            FrequencyRef::from_str(&name).map_err(|err| {
-                CoordinateError::InvalidRecord(format!("invalid spectral frequency_ref: {err}"))
+            parse_frequency_ref_name(&name).ok_or_else(|| {
+                CoordinateError::InvalidRecord(format!("invalid spectral frequency_ref: {name}"))
             })?
         } else if let Some(code) = get_optional_i32(rec, "frequency_ref") {
             FrequencyRef::from_casacore_code(code).ok_or_else(|| {
@@ -251,6 +251,20 @@ impl SpectralCoordinate {
         }
         Ok(coord)
     }
+}
+
+fn parse_frequency_ref_name(name: &str) -> Option<FrequencyRef> {
+    FrequencyRef::from_str(name).ok().or_else(|| {
+        if name.eq_ignore_ascii_case("Undefined") {
+            // CASA `specmode='cubedata'` serializes the spectral coordinate with
+            // `system="Undefined"` while still writing a valid frequency axis.
+            // Treat that form as a native-frequency axis so the coordinate is
+            // preserved on reopen instead of being dropped entirely.
+            Some(FrequencyRef::TOPO)
+        } else {
+            None
+        }
+    })
 }
 
 impl Coordinate for SpectralCoordinate {
@@ -452,6 +466,96 @@ impl Coordinate for SpectralCoordinate {
                 conversion_record.upsert("position", Value::Record(position_to_record(position)));
                 conversion_record.upsert("epoch", Value::Record(epoch_to_record(epoch)));
                 rec.upsert("conversion", Value::Record(conversion_record));
+            }
+        }
+
+        rec
+    }
+
+    fn to_casa_record(&self) -> RecordValue {
+        let mut rec = RecordValue::default();
+        rec.upsert("version", Value::Scalar(ScalarValue::Int32(2)));
+        rec.upsert(
+            "system",
+            Value::Scalar(ScalarValue::String(self.frequency_ref.as_str().into())),
+        );
+        rec.upsert(
+            "restfreq",
+            Value::Scalar(ScalarValue::Float64(self.rest_frequency)),
+        );
+        rec.upsert(
+            "restfreqs",
+            Value::Array(ArrayValue::from_f64_vec(vec![self.rest_frequency])),
+        );
+        rec.upsert("velType", Value::Scalar(ScalarValue::Int32(0)));
+        rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
+        rec.upsert("velUnit", Value::Scalar(ScalarValue::String("km/s".into())));
+        rec.upsert("waveUnit", Value::Scalar(ScalarValue::String("mm".into())));
+        rec.upsert(
+            "formatUnit",
+            Value::Scalar(ScalarValue::String(String::new())),
+        );
+        rec.upsert(
+            "unit",
+            Value::Scalar(ScalarValue::String(self.unit.clone())),
+        );
+        rec.upsert(
+            "name",
+            Value::Scalar(ScalarValue::String(self.name.clone())),
+        );
+
+        match &self.mapping {
+            SpectralMapping::Linear {
+                crval,
+                cdelt,
+                crpix,
+            } => {
+                let mut wcs = RecordValue::default();
+                wcs.upsert("crval", Value::Scalar(ScalarValue::Float64(*crval)));
+                wcs.upsert("crpix", Value::Scalar(ScalarValue::Float64(*crpix)));
+                wcs.upsert("cdelt", Value::Scalar(ScalarValue::Float64(*cdelt)));
+                wcs.upsert("pc", Value::Scalar(ScalarValue::Float64(1.0)));
+                wcs.upsert("ctype", Value::Scalar(ScalarValue::String("FREQ".into())));
+                rec.upsert("wcs", Value::Record(wcs));
+            }
+            SpectralMapping::Tabular {
+                pixel_values,
+                world_values,
+                crval,
+                cdelt,
+                crpix,
+            } => {
+                let mut tabular = RecordValue::default();
+                tabular.upsert(
+                    "crval",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crval])),
+                );
+                tabular.upsert(
+                    "cdelt",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt])),
+                );
+                tabular.upsert(
+                    "crpix",
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crpix])),
+                );
+                tabular.upsert("pc", Value::Array(ArrayValue::from_f64_vec(vec![1.0])));
+                tabular.upsert(
+                    "axes",
+                    Value::Array(ArrayValue::from_string_vec(vec![self.name.clone()])),
+                );
+                tabular.upsert(
+                    "units",
+                    Value::Array(ArrayValue::from_string_vec(vec![self.unit.clone()])),
+                );
+                tabular.upsert(
+                    "pixelvalues",
+                    Value::Array(ArrayValue::from_f64_vec(pixel_values.clone())),
+                );
+                tabular.upsert(
+                    "worldvalues",
+                    Value::Array(ArrayValue::from_f64_vec(world_values.clone())),
+                );
+                rec.upsert("tabular", Value::Record(tabular));
             }
         }
 
@@ -788,5 +892,47 @@ mod tests {
         assert!((world[0] - 1.41125e9).abs() < 1.0);
         let pixel = coord.to_pixel(&[1.41125e9]).unwrap();
         assert!((pixel[0] - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn from_record_accepts_casa_cubedata_undefined_system() {
+        let wcs = RecordValue::new(vec![
+            casa_types::RecordField::new(
+                "crval",
+                Value::Array(ArrayValue::from_f64_vec(vec![6.66740920955153e9])),
+            ),
+            casa_types::RecordField::new(
+                "crpix",
+                Value::Array(ArrayValue::from_f64_vec(vec![0.0])),
+            ),
+            casa_types::RecordField::new(
+                "cdelt",
+                Value::Array(ArrayValue::from_f64_vec(vec![976.5625])),
+            ),
+            casa_types::RecordField::new(
+                "ctype",
+                Value::Array(ArrayValue::from_string_vec(vec!["FREQ".into()])),
+            ),
+        ]);
+        let record = RecordValue::new(vec![
+            casa_types::RecordField::new(
+                "system",
+                Value::Scalar(ScalarValue::String("Undefined".into())),
+            ),
+            casa_types::RecordField::new(
+                "restfreq",
+                Value::Scalar(ScalarValue::Float64(6.668518e9)),
+            ),
+            casa_types::RecordField::new(
+                "name",
+                Value::Scalar(ScalarValue::String("Frequency".into())),
+            ),
+            casa_types::RecordField::new("unit", Value::Scalar(ScalarValue::String("Hz".into()))),
+            casa_types::RecordField::new("wcs", Value::Record(wcs)),
+        ]);
+
+        let coord = SpectralCoordinate::from_record(&record).unwrap();
+        assert_eq!(coord.frequency_ref(), FrequencyRef::TOPO);
+        assert_eq!(coord.axis_names(), vec!["Frequency"]);
     }
 }

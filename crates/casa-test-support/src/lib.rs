@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+pub mod gridder_interop;
 pub mod measures_interop;
 pub mod ms_interop;
 pub mod quanta_interop;
@@ -10,6 +11,7 @@ pub mod taql_interop;
 #[cfg(has_casacore_cpp)]
 use std::ffi::CStr;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 #[cfg(has_casacore_cpp)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 #[cfg(all(has_casacore_cpp, unix))]
@@ -131,6 +133,60 @@ pub fn casatestdata_path(relative: impl AsRef<Path>) -> Option<PathBuf> {
     casatestdata_root().map(|root| root.join(relative.as_ref()))
 }
 
+/// Resolved local CASA Python environment used by opt-in parity tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CasaPython {
+    /// Python interpreter path.
+    pub program: PathBuf,
+    /// Whether the environment exposes `plotms`.
+    pub plotms_available: bool,
+    /// Whether the environment exposes `tclean`.
+    pub tclean_available: bool,
+}
+
+/// Discover a CASA-capable Python interpreter.
+pub fn discover_casa_python() -> Option<CasaPython> {
+    casa_python_candidates()
+        .into_iter()
+        .find_map(probe_casa_python)
+}
+
+/// Resolve the local CASA source checkout used as an implementation reference.
+pub fn casa_source_root() -> Option<PathBuf> {
+    existing_path_from_candidates([
+        std::env::var_os("CASA_RS_CASA_ROOT").map(PathBuf::from),
+        std::env::var_os("CASA_ROOT").map(PathBuf::from),
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("SoftwareProjects").join("casa")),
+    ])
+}
+
+/// Resolve the local casacore source checkout used as an implementation reference.
+pub fn casacore_source_root() -> Option<PathBuf> {
+    existing_path_from_candidates([
+        std::env::var_os("CASA_RS_CASACORE_ROOT").map(PathBuf::from),
+        std::env::var_os("CASACORE_ROOT").map(PathBuf::from),
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("SoftwareProjects").join("casacore")),
+    ])
+}
+
+/// Return `git rev-parse HEAD` for a local source tree when available.
+pub fn git_head_commit(path: &Path) -> Option<String> {
+    Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|stdout| stdout.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn casatestdata_root_candidates() -> Vec<PathBuf> {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -149,6 +205,84 @@ fn casatestdata_root_candidates() -> Vec<PathBuf> {
 
 fn normalize_existing_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn casa_python_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for key in ["CASA_RS_CASA_PYTHON", "CASA_PYTHON"] {
+        if let Some(value) = std::env::var_os(key) {
+            candidates.push(PathBuf::from(value));
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(
+            PathBuf::from(home)
+                .join("SoftwareProjects")
+                .join("casa-build")
+                .join("venv")
+                .join("bin")
+                .join("python"),
+        );
+    }
+    candidates.push(PathBuf::from("python3"));
+    candidates.push(PathBuf::from("python"));
+    dedup_paths(candidates)
+}
+
+fn probe_casa_python(program: PathBuf) -> Option<CasaPython> {
+    if !python_can_import(&program, "casatasks") {
+        return None;
+    }
+    Some(CasaPython {
+        plotms_available: python_has_callable(&program, "plotms"),
+        tclean_available: python_has_callable(&program, "tclean"),
+        program,
+    })
+}
+
+fn python_can_import(program: &Path, module: &str) -> bool {
+    Command::new(program)
+        .arg("-c")
+        .arg(format!("import {module}"))
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn python_has_callable(program: &Path, attribute: &str) -> bool {
+    let script = if attribute == "plotms" {
+        "import importlib.util\nimport casatasks\nok = hasattr(casatasks, 'plotms') or importlib.util.find_spec('casaplotms') is not None\nprint('1' if ok else '0')\n".to_string()
+    } else {
+        format!(
+            "import casatasks\nok = hasattr(casatasks, {attribute:?})\nprint('1' if ok else '0')\n"
+        )
+    };
+    Command::new(program)
+        .arg("-c")
+        .arg(script)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "1")
+}
+
+fn existing_path_from_candidates<const N: usize>(
+    candidates: [Option<PathBuf>; N],
+) -> Option<PathBuf> {
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|path| path.exists())
+        .map(|path| normalize_existing_path(&path))
+}
+
+fn dedup_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.iter().any(|candidate| candidate == &path) {
+            unique.push(path);
+        }
+    }
+    unique
 }
 
 #[derive(Debug, Error)]

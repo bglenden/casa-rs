@@ -5,9 +5,10 @@
 //! on-disk formats and can read each other's images.
 
 use casa_images::{Image, OpenedImageView, PagedImage};
-use casa_test_support::{CppUnsupportedRegionKind, cpp_backend_available};
+use casa_test_support::{CppUnsupportedRegionKind, cpp_backend_available, discover_casa_python};
 use casa_types::{Complex32, Complex64};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use std::process::Command;
 
 /// Helper: generate ramp data for a given shape (flat Fortran-order sequence).
 ///
@@ -145,6 +146,60 @@ fn cr_cpp_write_rust_read_3d() {
     let got = img.get().unwrap();
     let got_flat: Vec<f32> = got.as_slice_memory_order().unwrap().to_vec();
     assert_eq!(got_flat, data);
+}
+
+#[test]
+fn cr_casa_python_write_rust_read_4d_degenerate_cube() {
+    let Some(casa) = discover_casa_python() else {
+        eprintln!(
+            "skipping cr_casa_python_write_rust_read_4d_degenerate_cube: CASA python unavailable"
+        );
+        return;
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cr_cube_4d.image");
+    let shape = vec![8usize, 6, 1, 5];
+    let script = r#"
+import os
+import numpy as np
+from casatools import image
+
+shape = (8, 6, 1, 5)
+pixels = np.zeros(shape, dtype=np.float32)
+for chan in range(shape[3]):
+    for y in range(shape[1]):
+        for x in range(shape[0]):
+            pixels[x, y, 0, chan] = x + 10 * y + 1000 * chan
+
+ia = image()
+ia.fromarray(outfile=os.environ["CASA_IMAGE"], pixels=pixels)
+ia.done()
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_IMAGE", &path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let img = Image::open(&path).unwrap();
+    assert_eq!(img.shape(), &shape);
+
+    let got = img.get().unwrap();
+    for chan in 0..shape[3] {
+        for y in 0..shape[1] {
+            for x in 0..shape[0] {
+                let expected = x as f32 + 10.0 * y as f32 + 1000.0 * chan as f32;
+                assert_eq!(got[[x, y, 0, chan]], expected);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

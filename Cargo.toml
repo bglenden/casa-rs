@@ -2,18 +2,17 @@
 resolver = "2"
 members = [
     "crates/casars",
-    "crates/casa-calibration",
+    "crates/casars-imager",
     "crates/casars-imagebrowser-protocol",
     "crates/casars-tablebrowser-protocol",
-    "crates/casa-values",
     "crates/casa-types",
     "crates/casa-aipsio",
-    "crates/casa-table-read",
     "crates/casa-measures-tools",
     "crates/casa-tables",
     "crates/casa-lattices",
     "crates/casa-coordinates",
     "crates/casa-images",
+    "crates/casa-imaging",
     "crates/casa-measures-data",
     "crates/casa-test-support",
     "crates/casa-ms",
@@ -21,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.13.0"
+version = "0.11.1"
 edition = "2024"
 license = "LGPL-3.0-or-later"
 rust-version = "1.85"
@@ -32,6 +31,7 @@ repository = "https://github.com/bglenden/casa-rs"
 ndarray = "0.17"
 num-complex = "0.4"
 ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false, features = ["panel", "plotters", "kitty"] }
+rustfft = "6.4"
 sofars = "0.6"
 thiserror = "2.0"
 
@@ -49,13 +49,15 @@ opt-level = 2
 opt-level = 2
 [profile.test.package.casa-ms]
 opt-level = 2
-[profile.test.package.casa-calibration]
+[profile.test.package.casa-imaging]
 opt-level = 2
 [profile.test.package.casa-test-support]
 opt-level = 2
 [profile.test.package.ndarray]
 opt-level = 2
 [profile.test.package.num-complex]
+opt-level = 2
+[profile.test.package.rustfft]
 opt-level = 2
 
 [workspace.lints.rust]

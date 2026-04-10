@@ -8,15 +8,17 @@
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
+use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::ArrayValue;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
+use casa_types::{ArrayValue, ScalarValue};
 
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
+use crate::subtables::SubTable;
 
 /// Engine for computing derived quantities from MS metadata.
 ///
@@ -39,28 +41,14 @@ use crate::ms::MeasurementSet;
 pub struct MsCalEngine {
     /// Antenna positions in ITRF.
     antenna_positions: Vec<MPosition>,
-    /// Mount family for each antenna, matching the practical CASA
-    /// `MSDerivedValues::parAngle()` cases.
-    antenna_mount_types: Vec<AntennaMountType>,
+    /// Whether each antenna uses an alt-az mount.
+    antenna_mount_alt_az: Vec<bool>,
     /// Field phase directions (constant term, J2000).
     field_directions: Vec<MDirection>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AntennaMountType {
-    AltAz,
-    Equatorial,
-    Orbiting,
-    XY,
-    NasmythRight,
-    NasmythLeft,
-    BwgRight,
-    BwgLeft,
-    Other,
 }
 
 impl MsCalEngine {
@@ -73,39 +61,30 @@ impl MsCalEngine {
         let ant = ms.antenna()?;
         let n_ant = ant.row_count();
         let mut antenna_positions = Vec::with_capacity(n_ant);
-        let mut antenna_mount_types = Vec::with_capacity(n_ant);
+        let mut antenna_mount_alt_az = Vec::with_capacity(n_ant);
         for row in 0..n_ant {
             let pos = ant.position(row)?;
             antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
             let mount = ant.mount(row)?;
-            antenna_mount_types.push(AntennaMountType::from_mount_string(&mount));
+            antenna_mount_alt_az.push(mount.to_ascii_lowercase().starts_with("alt-az"));
         }
 
+        let observatory_position = resolve_observatory_position(ms, &antenna_positions);
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
         for row in 0..n_field {
-            let dir = field.phase_dir(row)?;
-            // phase_dir returns Float64 array [2, nPoly+1]; take constant term.
-            let (ra, dec) = phase_dir_constant(dir)?;
-            field_directions.push(MDirection::from_angles(ra, dec, DirectionRef::J2000));
+            field_directions.push(resolve_field_phase_direction_j2000_with_observatory(
+                ms,
+                row,
+                &observatory_position,
+            )?);
         }
-
-        let observatory_position = ms
-            .observation()
-            .ok()
-            .and_then(|observation| {
-                (0..observation.row_count())
-                    .find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
-            })
-            .and_then(|name| MPosition::from_observatory_name(&name))
-            .or_else(|| antenna_positions.first().cloned())
-            .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0));
         let time_reference = detect_time_reference(ms);
 
         Ok(Self {
             antenna_positions,
-            antenna_mount_types,
+            antenna_mount_alt_az,
             field_directions,
             observatory_position,
             time_reference,
@@ -119,26 +98,7 @@ impl MsCalEngine {
         observatory_position: MPosition,
     ) -> Self {
         Self {
-            antenna_mount_types: vec![AntennaMountType::AltAz; antenna_positions.len()],
-            antenna_positions,
-            field_directions,
-            observatory_position,
-            time_reference: EpochRef::UTC,
-        }
-    }
-
-    /// Create an engine with explicit mount metadata (useful for testing).
-    pub fn from_parts_with_mounts(
-        antenna_positions: Vec<MPosition>,
-        antenna_mounts: Vec<String>,
-        field_directions: Vec<MDirection>,
-        observatory_position: MPosition,
-    ) -> Self {
-        Self {
-            antenna_mount_types: antenna_mounts
-                .into_iter()
-                .map(|mount| AntennaMountType::from_mount_string(&mount))
-                .collect(),
+            antenna_mount_alt_az: vec![true; antenna_positions.len()],
             antenna_positions,
             field_directions,
             observatory_position,
@@ -171,7 +131,7 @@ impl MsCalEngine {
         Ok(MeasFrame::new()
             .with_epoch(epoch)
             .with_position(position)
-            .with_standard_eop())
+            .with_bundled_eop())
     }
 
     /// Build a MeasFrame for the given time and explicit position.
@@ -184,7 +144,7 @@ impl MsCalEngine {
         Ok(MeasFrame::new()
             .with_epoch(epoch)
             .with_position(position)
-            .with_standard_eop())
+            .with_bundled_eop())
     }
 
     /// Build a spectral-conversion frame using the observatory position and field direction.
@@ -211,6 +171,11 @@ impl MsCalEngine {
                 max: self.field_directions.len(),
                 context: "field_id".to_string(),
             })
+    }
+
+    /// Returns the cached FIELD phase direction in J2000 for `field_id`.
+    pub fn field_direction_j2000(&self, field_id: usize) -> MsResult<&MDirection> {
+        self.field_dir(field_id)
     }
 
     /// Compute the hour angle (radians) for a given time, field, and antenna.
@@ -241,50 +206,17 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<f64> {
-        let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let source = self.field_dir(field_id)?;
-        let mount = self.antenna_mount_type(antenna_id)?;
-
-        match mount {
-            AntennaMountType::AltAz => base_parallactic_angle(&frame, source),
-            AntennaMountType::NasmythRight => {
-                let (_, elevation) = azel_angles(source, &frame)?;
-                Ok(base_parallactic_angle(&frame, source)? + elevation)
-            }
-            AntennaMountType::NasmythLeft => {
-                let (_, elevation) = azel_angles(source, &frame)?;
-                Ok(base_parallactic_angle(&frame, source)? - elevation)
-            }
-            AntennaMountType::BwgRight => {
-                let (azimuth, elevation) = azel_angles(source, &frame)?;
-                Ok(base_parallactic_angle(&frame, source)? + elevation - azimuth)
-            }
-            AntennaMountType::BwgLeft => {
-                let (azimuth, elevation) = azel_angles(source, &frame)?;
-                Ok(base_parallactic_angle(&frame, source)? - elevation + azimuth)
-            }
-            AntennaMountType::XY => {
-                let source_hadec = source.convert_to(DirectionRef::HADEC, &frame)?;
-                let ha = source_hadec.longitude_rad();
-                let dec = source_hadec.latitude_rad();
-                Ok((-ha.cos()).atan2(-ha.sin() * dec.sin()))
-            }
-            AntennaMountType::Equatorial | AntennaMountType::Orbiting | AntennaMountType::Other => {
-                Ok(0.0)
-            }
+        if !self.antenna_is_alt_az(antenna_id)? {
+            return Ok(0.0);
         }
-    }
-
-    /// Compute CASA-style feed parallactic angle for receptor 0 by adding
-    /// `FEED::RECEPTOR_ANGLE[0]` to the mount-aware nominal parallactic angle.
-    pub fn feed_parallactic_angle(
-        &self,
-        time_mjd_sec: f64,
-        field_id: usize,
-        antenna_id: usize,
-        receptor0_angle_rad: f64,
-    ) -> MsResult<f64> {
-        Ok(self.parallactic_angle(time_mjd_sec, field_id, antenna_id)? + receptor0_angle_rad)
+        let frame = self.make_frame(time_mjd_sec, antenna_id)?;
+        let source_azel = self
+            .field_dir(field_id)?
+            .convert_to(DirectionRef::AZEL, &frame)?;
+        let pole_azel =
+            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
+                .convert_to(DirectionRef::AZEL, &frame)?;
+        Ok(spherical_position_angle(&source_azel, &pole_azel))
     }
 
     /// Compute the array-fiducial hour angle (radians) using the observatory position.
@@ -460,53 +392,48 @@ impl MsCalEngine {
         self.time_reference
     }
 
-    fn antenna_mount_type(&self, antenna_id: usize) -> MsResult<AntennaMountType> {
-        self.antenna_mount_types
+    fn antenna_is_alt_az(&self, antenna_id: usize) -> MsResult<bool> {
+        self.antenna_mount_alt_az
             .get(antenna_id)
             .copied()
             .ok_or_else(|| MsError::InvalidIndex {
                 index: antenna_id,
-                max: self.antenna_mount_types.len(),
+                max: self.antenna_mount_alt_az.len(),
                 context: "antenna_id".to_string(),
             })
     }
 }
 
-impl AntennaMountType {
-    fn from_mount_string(mount: &str) -> Self {
-        match mount.to_ascii_lowercase().as_str() {
-            "" | "alt-az" | "alt-az+rotator" => Self::AltAz,
-            "equatorial" => Self::Equatorial,
-            "orbiting" => Self::Orbiting,
-            "x-y" => Self::XY,
-            "alt-az+nasmyth-r" => Self::NasmythRight,
-            "alt-az+nasmyth-l" => Self::NasmythLeft,
-            "alt-az+bwg-r" => Self::BwgRight,
-            "alt-az+bwg-l" => Self::BwgLeft,
-            _ => Self::Other,
-        }
+/// Resolve the constant term of `FIELD.PHASE_DIR` at `field_id` into J2000.
+///
+/// This handles fixed and row-varying direction references, using the field
+/// row's own `TIME` origin and the array observatory position when a dynamic
+/// reference frame requires a conversion context.
+pub fn resolve_field_phase_direction_j2000(
+    ms: &MeasurementSet,
+    field_id: usize,
+) -> MsResult<MDirection> {
+    let ant = ms.antenna()?;
+    let mut antenna_positions = Vec::with_capacity(ant.row_count());
+    for row in 0..ant.row_count() {
+        let pos = ant.position(row)?;
+        antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
     }
-}
-
-fn base_parallactic_angle(frame: &MeasFrame, source: &MDirection) -> MsResult<f64> {
-    let source_azel = source.convert_to(DirectionRef::AZEL, frame)?;
-    let pole_azel = MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-        .convert_to(DirectionRef::AZEL, frame)?;
-    Ok(spherical_position_angle(&source_azel, &pole_azel))
-}
-
-fn azel_angles(source: &MDirection, frame: &MeasFrame) -> MsResult<(f64, f64)> {
-    let source_azel = source.convert_to(DirectionRef::AZEL, frame)?;
-    Ok((source_azel.longitude_rad(), source_azel.latitude_rad()))
+    let observatory_position = resolve_observatory_position(ms, &antenna_positions);
+    resolve_field_phase_direction_j2000_with_observatory(ms, field_id, &observatory_position)
 }
 
 fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
-    let Some(desc) = TableMeasDesc::reconstruct(ms.main_table(), "TIME") else {
-        return EpochRef::UTC;
+    detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC)
+}
+
+fn detect_epoch_reference(table: &Table, column: &str, default: EpochRef) -> EpochRef {
+    let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
+        return default;
     };
     match desc.ref_desc() {
-        MeasRefDesc::Fixed { refer } => refer.parse::<EpochRef>().unwrap_or(EpochRef::UTC),
-        MeasRefDesc::VariableInt { .. } | MeasRefDesc::VariableString { .. } => EpochRef::UTC,
+        MeasRefDesc::Fixed { refer } => refer.parse::<EpochRef>().unwrap_or(default),
+        MeasRefDesc::VariableInt { .. } | MeasRefDesc::VariableString { .. } => default,
     }
 }
 
@@ -533,6 +460,108 @@ fn phase_dir_constant(dir: &ArrayValue) -> MsResult<(f64, f64)> {
     }
 }
 
+fn resolve_observatory_position(ms: &MeasurementSet, antenna_positions: &[MPosition]) -> MPosition {
+    ms.observation()
+        .ok()
+        .and_then(|observation| {
+            (0..observation.row_count())
+                .find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
+        })
+        .and_then(|name| MPosition::from_observatory_name(&name))
+        .or_else(|| antenna_positions.first().cloned())
+        .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
+}
+
+fn resolve_field_phase_direction_j2000_with_observatory(
+    ms: &MeasurementSet,
+    field_id: usize,
+    observatory_position: &MPosition,
+) -> MsResult<MDirection> {
+    let field = ms.field()?;
+    let raw = field.phase_dir(field_id)?;
+    let (lon, lat) = phase_dir_constant(raw)?;
+    let source_ref = resolve_direction_reference(field.table(), "PHASE_DIR", field_id)?;
+    let dir = MDirection::from_angles(lon, lat, source_ref);
+    if source_ref == DirectionRef::J2000 {
+        return Ok(dir);
+    }
+    let epoch_ref = detect_epoch_reference(field.table(), "TIME", EpochRef::UTC);
+    let epoch = MEpoch::from_mjd(field.time(field_id)? / 86400.0, epoch_ref);
+    let frame = MeasFrame::new()
+        .with_epoch(epoch)
+        .with_position(observatory_position.clone())
+        .with_bundled_eop();
+    Ok(dir.convert_to(DirectionRef::J2000, &frame)?)
+}
+
+fn resolve_direction_reference(table: &Table, column: &str, row: usize) -> MsResult<DirectionRef> {
+    let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
+        return Ok(DirectionRef::J2000);
+    };
+    let refer = resolve_reference_string(table, &desc, row)?;
+    refer
+        .parse::<DirectionRef>()
+        .map_err(|_| MsError::ColumnTypeMismatch {
+            column: column.to_string(),
+            table: "FIELD".to_string(),
+            expected: "a supported direction reference".to_string(),
+            found: refer,
+        })
+}
+
+fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> MsResult<String> {
+    match desc.ref_desc() {
+        MeasRefDesc::Fixed { refer } => Ok(refer.clone()),
+        MeasRefDesc::VariableInt {
+            ref_column,
+            tab_ref_types,
+            tab_ref_codes,
+        } => {
+            let code = match table.get_scalar_cell(row, ref_column)? {
+                ScalarValue::Int32(value) => *value,
+                ScalarValue::Int64(value) => *value as i32,
+                ScalarValue::UInt32(value) => *value as i32,
+                other => {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: ref_column.clone(),
+                        table: "FIELD".to_string(),
+                        expected: "Int scalar".to_string(),
+                        found: format!("{other:?}"),
+                    });
+                }
+            };
+            for (index, candidate) in tab_ref_codes.iter().enumerate() {
+                if *candidate == code {
+                    return tab_ref_types.get(index).cloned().ok_or_else(|| {
+                        MsError::ColumnTypeMismatch {
+                            column: desc.column_name().to_string(),
+                            table: "FIELD".to_string(),
+                            expected: "TabRefTypes index in bounds".to_string(),
+                            found: format!("missing entry for TabRefCodes[{index}]"),
+                        }
+                    });
+                }
+            }
+            Err(MsError::InvalidMeasureCode {
+                table: "FIELD".to_string(),
+                column: ref_column.clone(),
+                code,
+            })
+        }
+        MeasRefDesc::VariableString { ref_column } => {
+            match table.get_scalar_cell(row, ref_column)? {
+                ScalarValue::String(value) => Ok(value.clone()),
+                other => Err(MsError::ColumnTypeMismatch {
+                    column: ref_column.clone(),
+                    table: "FIELD".to_string(),
+                    expected: "String scalar".to_string(),
+                    found: format!("{other:?}"),
+                }),
+            }
+        }
+    }
+}
+
 fn spherical_position_angle(origin: &MDirection, target: &MDirection) -> f64 {
     let (origin_lon, origin_lat) = origin.as_angles();
     let (target_lon, target_lat) = target.as_angles();
@@ -549,8 +578,10 @@ mod tests {
     use crate::builder::MeasurementSetBuilder;
     use crate::schema;
     use crate::test_helpers::default_value_for_def;
+    use casa_tables::ColumnSchema;
+    use casa_tables::table_measures::default_direction_ref_map;
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::{ArrayD, ShapeBuilder};
 
     /// VLA approximate ITRF position.
@@ -567,6 +598,49 @@ mod tests {
         let dir = MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_4, DirectionRef::J2000);
 
         MsCalEngine::from_parts(vec![pos0.clone(), pos1], vec![dir], pos0)
+    }
+
+    fn add_vla_antenna(ms: &mut MeasurementSet) {
+        ms.antenna_mut()
+            .unwrap()
+            .add_antenna(
+                "VLA01",
+                "N01",
+                "GROUND-BASED",
+                "ALT-AZ",
+                [VLA_X, VLA_Y, VLA_Z],
+                [0.0; 3],
+                25.0,
+            )
+            .unwrap();
+    }
+
+    fn add_field_with_direction(ms: &mut MeasurementSet, direction: MDirection, time_mjd_sec: f64) {
+        let (lon, lat) = direction.as_angles();
+        let phase_dir = ArrayValue::Float64(
+            ArrayD::from_shape_vec(ndarray::IxDyn(&[2, 1]).f(), vec![lon, lat]).unwrap(),
+        );
+        let field_fields: Vec<RecordField> = schema::field::REQUIRED_COLUMNS
+            .iter()
+            .map(|col| match col.name {
+                "NAME" => RecordField::new(
+                    col.name,
+                    Value::Scalar(ScalarValue::String("TEST".to_string())),
+                ),
+                "TIME" => {
+                    RecordField::new(col.name, Value::Scalar(ScalarValue::Float64(time_mjd_sec)))
+                }
+                "NUM_POLY" => RecordField::new(col.name, Value::Scalar(ScalarValue::Int32(0))),
+                "DELAY_DIR" | "PHASE_DIR" | "REFERENCE_DIR" => {
+                    RecordField::new(col.name, Value::Array(phase_dir.clone()))
+                }
+                _ => RecordField::new(col.name, default_value_for_def(col)),
+            })
+            .collect();
+        ms.subtable_mut(schema::SubtableId::Field)
+            .unwrap()
+            .add_row(RecordValue::new(field_fields))
+            .unwrap();
     }
 
     #[test]
@@ -647,6 +721,70 @@ mod tests {
     }
 
     #[test]
+    fn resolve_field_phase_direction_converts_fixed_dynamic_reference_to_j2000() {
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        add_vla_antenna(&mut ms);
+
+        let time_mjd_sec = 59_000.5 * 86_400.0;
+        let j2000 = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(time_mjd_sec / 86_400.0, EpochRef::UTC))
+            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z))
+            .with_bundled_eop();
+        let azel = j2000.convert_to(DirectionRef::AZEL, &frame).unwrap();
+        add_field_with_direction(&mut ms, azel, time_mjd_sec);
+        TableMeasDesc::new_fixed("PHASE_DIR", MeasureType::Direction, "AZEL")
+            .write(ms.subtable_mut(schema::SubtableId::Field).unwrap())
+            .unwrap();
+
+        let recovered = resolve_field_phase_direction_j2000(&ms, 0).unwrap();
+        let (ra, dec) = recovered.as_angles();
+        assert!((ra - 1.0).abs() < 1e-9, "ra={ra}");
+        assert!((dec - 0.5).abs() < 1e-9, "dec={dec}");
+    }
+
+    #[test]
+    fn resolve_field_phase_direction_supports_variable_int_references() {
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        add_vla_antenna(&mut ms);
+
+        let time_mjd_sec = 59_000.5 * 86_400.0;
+        let j2000 = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(time_mjd_sec / 86_400.0, EpochRef::UTC))
+            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z))
+            .with_bundled_eop();
+        let azel = j2000.convert_to(DirectionRef::AZEL, &frame).unwrap();
+        add_field_with_direction(&mut ms, azel, time_mjd_sec);
+
+        let field = ms.subtable_mut(schema::SubtableId::Field).unwrap();
+        field
+            .add_column(
+                ColumnSchema::scalar("PhaseDir_Ref", PrimitiveType::Int32),
+                Some(Value::Scalar(ScalarValue::Int32(
+                    DirectionRef::AZEL.casacore_code(),
+                ))),
+            )
+            .unwrap();
+        let (types, codes) = default_direction_ref_map();
+        TableMeasDesc::new_variable_int(
+            "PHASE_DIR",
+            MeasureType::Direction,
+            "PhaseDir_Ref",
+            types,
+            codes,
+        )
+        .unwrap()
+        .write(field)
+        .unwrap();
+
+        let recovered = resolve_field_phase_direction_j2000(&ms, 0).unwrap();
+        let (ra, dec) = recovered.as_angles();
+        assert!((ra - 1.0).abs() < 1e-9, "ra={ra}");
+        assert!((dec - 0.5).abs() < 1e-9, "dec={dec}");
+    }
+
+    #[test]
     fn hour_angle_is_finite() {
         let engine = make_engine();
         // MJD 59000 noon UTC
@@ -677,54 +815,6 @@ mod tests {
         let time = 59000.5 * 86400.0;
         let pa = engine.parallactic_angle_observatory(time, 0).unwrap();
         assert!(pa.is_finite(), "observatory PA should be finite, got {pa}");
-    }
-
-    #[test]
-    fn equatorial_mount_has_zero_parallactic_angle() {
-        let pos = MPosition::from_observatory_name("VLA").unwrap();
-        let dir = MDirection::from_angles(0.25, 0.5, DirectionRef::J2000);
-        let engine = MsCalEngine::from_parts_with_mounts(
-            vec![pos.clone()],
-            vec!["EQUATORIAL".to_string()],
-            vec![dir],
-            pos,
-        );
-        let pa = engine.parallactic_angle(59000.5 * 86400.0, 0, 0).unwrap();
-        assert!(pa.abs() < 1e-12, "equatorial PA should be zero, got {pa}");
-    }
-
-    #[test]
-    fn bwg_mount_differs_from_plain_altaz() {
-        let pos = MPosition::from_observatory_name("VLA").unwrap();
-        let dir = MDirection::from_angles(0.25, 0.5, DirectionRef::J2000);
-        let altaz = MsCalEngine::from_parts_with_mounts(
-            vec![pos.clone()],
-            vec!["ALT-AZ".to_string()],
-            vec![dir.clone()],
-            pos.clone(),
-        );
-        let bwg = MsCalEngine::from_parts_with_mounts(
-            vec![pos.clone()],
-            vec!["ALT-AZ+BWG-R".to_string()],
-            vec![dir],
-            pos,
-        );
-        let time = 59000.5 * 86400.0;
-        let altaz_pa = altaz.parallactic_angle(time, 0, 0).unwrap();
-        let bwg_pa = bwg.parallactic_angle(time, 0, 0).unwrap();
-        assert!(
-            (altaz_pa - bwg_pa).abs() > 1e-6,
-            "BWG PA should differ from plain ALT-AZ, altaz={altaz_pa}, bwg={bwg_pa}"
-        );
-    }
-
-    #[test]
-    fn feed_parallactic_angle_adds_receptor0_angle() {
-        let engine = make_engine();
-        let time = 59000.5 * 86400.0;
-        let nominal = engine.parallactic_angle(time, 0, 0).unwrap();
-        let feed_pa = engine.feed_parallactic_angle(time, 0, 0, 0.125).unwrap();
-        assert!((feed_pa - (nominal + 0.125)).abs() < 1e-12);
     }
 
     #[test]

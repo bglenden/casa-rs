@@ -55,8 +55,10 @@ pub mod plot;
 pub mod schema;
 pub mod selection;
 pub mod selection_helpers;
+pub mod selection_syntax;
+pub mod spectral_selection;
 pub mod subtables;
-pub mod ui_schema;
+mod ui_schema;
 pub mod validate;
 
 #[cfg(test)]
@@ -98,6 +100,15 @@ pub use plot::{
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
+pub use selection_syntax::{
+    ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
+    parse_spw_selector,
+};
+pub use spectral_selection::{
+    CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
+    CubeSpectralSetup, ResolvedChannelSelection, resolve_channel_selector_selection,
+    resolve_contiguous_channel_selection,
+};
 pub use subtables::{
     MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
     MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,

@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::columns::uvw_column::UvwColumn;
 use crate::selection::MsSelection;
+use crate::selection_syntax::parse_numeric_id_selector;
 use crate::subtables::{SubTable, get_f64, get_i32, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
 
@@ -1820,16 +1821,16 @@ pub(crate) fn selection_from_options(
     }
 
     if let Some(spw) = options.spw.as_deref() {
-        selection = selection.spw(&parse_numeric_selector(spw, "spw")?);
+        selection = selection.spw(&parse_numeric_id_selector(spw, "spw")?);
     }
     if let Some(scan) = options.scan.as_deref() {
-        selection = selection.scan(&parse_numeric_selector(scan, "scan")?);
+        selection = selection.scan(&parse_numeric_id_selector(scan, "scan")?);
     }
     if let Some(observation) = options.observation.as_deref() {
-        selection = selection.observation(&parse_numeric_selector(observation, "observation")?);
+        selection = selection.observation(&parse_numeric_id_selector(observation, "observation")?);
     }
     if let Some(array) = options.array.as_deref() {
-        selection = selection.array(&parse_numeric_selector(array, "array")?);
+        selection = selection.array(&parse_numeric_id_selector(array, "array")?);
     }
     if let Some(antenna) = options.antenna.as_deref() {
         selection = apply_antenna_selector(ms, selection, antenna)?;
@@ -2772,27 +2773,6 @@ fn collect_used_ids(table: &Table, rows: &[usize], column: &str) -> MsResult<BTr
         }
     }
     Ok(ids)
-}
-
-fn parse_numeric_selector(value: &str, label: &str) -> MsResult<Vec<i32>> {
-    let mut values = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            values.extend(start..=end);
-            continue;
-        }
-        let parsed = part.parse::<i32>().map_err(|_| {
-            MsError::VersionError(format!(
-                "{label} selector {part:?} is not a supported numeric id or range"
-            ))
-        })?;
-        values.push(parsed);
-    }
-    Ok(dedup_i32(values))
 }
 
 fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
