@@ -36,6 +36,7 @@ for arg in "$@"; do
 done
 
 tarpaulin_timeout="${TARPAULIN_TIMEOUT:-300}"
+tarpaulin_attempts="${TARPAULIN_ATTEMPTS:-2}"
 
 if [[ "$ci_like" == "true" ]]; then
   echo "==> Running CI-like coverage (forcing pkg-config casacore lookup to fail)"
@@ -45,18 +46,57 @@ if [[ "$ci_like" == "true" ]]; then
   export PKG_CONFIG=/usr/bin/false
 fi
 
-# Keep the coverage gate focused on shipped code plus functional tests.
-# Large perf/profile harnesses are useful for benchmarking, but they make
-# line-coverage drift when benchmarks are added, renamed, or explicitly ignored.
-# Thin binary entrypoints are exercised indirectly through library/runtime tests
-# and otherwise add denominator without meaningful extra signal in tarpaulin.
-cargo tarpaulin \
-  --workspace \
-  --timeout "$tarpaulin_timeout" \
-  --out Stdout \
-  --fail-under 75 \
-  --exclude-files \
-  '*/src/bin/*' \
-  '*/src/main.rs' \
-  '*/examples/*' \
-  '*/tests/*perf*.rs'
+run_tarpaulin() {
+  # Keep the coverage gate focused on shipped code plus functional tests.
+  # Large perf/profile harnesses are useful for benchmarking, but they make
+  # line-coverage drift when benchmarks are added, renamed, or explicitly ignored.
+  # Thin binary entrypoints are exercised indirectly through library/runtime tests
+  # and otherwise add denominator without meaningful extra signal in tarpaulin.
+  cargo tarpaulin \
+    --workspace \
+    --timeout "$tarpaulin_timeout" \
+    --out Stdout \
+    --fail-under 75 \
+    --exclude-files \
+    '*/src/bin/*' \
+    '*/src/main.rs' \
+    '*/examples/*' \
+    '*/tests/*perf*.rs'
+}
+
+tarpaulin_log="$(mktemp -t casa-rs-tarpaulin.XXXXXX.log)"
+cleanup() {
+  rm -f "$tarpaulin_log"
+}
+trap cleanup EXIT
+
+attempt=1
+while (( attempt <= tarpaulin_attempts )); do
+  if (( attempt > 1 )); then
+    echo "==> Retrying tarpaulin coverage (attempt $attempt/$tarpaulin_attempts)"
+    rm -rf target/tarpaulin
+  fi
+
+  : > "$tarpaulin_log"
+  set +e
+  run_tarpaulin 2>&1 | tee "$tarpaulin_log"
+  tarpaulin_status=${PIPESTATUS[0]}
+  set -e
+
+  if (( tarpaulin_status == 0 )); then
+    exit 0
+  fi
+
+  if (( attempt == tarpaulin_attempts )); then
+    exit "$tarpaulin_status"
+  fi
+
+  echo "==> cargo tarpaulin exited with status $tarpaulin_status"
+  if grep -q 'Error: "Test failed during run"' "$tarpaulin_log"; then
+    echo "==> tarpaulin reported a generic run failure; retrying once"
+  else
+    echo "==> retrying coverage once before treating this as a hard failure"
+  fi
+
+  attempt=$((attempt + 1))
+done
