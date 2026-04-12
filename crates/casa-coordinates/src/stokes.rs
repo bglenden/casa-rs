@@ -301,7 +301,10 @@ impl Coordinate for StokesCoordinate {
         );
         rec.upsert(
             "pc",
-            Value::Array(casa_types::ArrayValue::from_f64_vec(vec![1.0])),
+            Value::Array(casa_types::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[1, 1]), vec![1.0])
+                    .expect("1x1 stokes pc matrix"),
+            )),
         );
         rec
     }
@@ -428,7 +431,7 @@ mod tests {
         assert_eq!(
             rec.get("axes"),
             Some(&Value::Array(casa_types::ArrayValue::from_string_vec(
-                vec!["Stokes".to_string(),]
+                vec!["Stokes".to_string()]
             )))
         );
         assert_eq!(
@@ -446,6 +449,43 @@ mod tests {
         assert!(rec.get("crpix").is_some());
         assert!(rec.get("cdelt").is_some());
         assert!(rec.get("pc").is_some());
+    }
+
+    #[test]
+    fn casa_record_serialization_uses_legacy_fields() {
+        let coord = StokesCoordinate::new(vec![StokesType::I]);
+        let rec = coord.to_casa_record();
+
+        assert_eq!(
+            rec.get("axes"),
+            Some(&Value::Array(casa_types::ArrayValue::from_string_vec(
+                vec!["Stokes".into()]
+            )))
+        );
+        assert_eq!(
+            rec.get("stokes"),
+            Some(&Value::Array(casa_types::ArrayValue::from_string_vec(
+                vec!["I".into()]
+            )))
+        );
+        assert_eq!(
+            rec.get("crval"),
+            Some(&Value::Array(casa_types::ArrayValue::from_f64_vec(vec![
+                1.0
+            ])))
+        );
+        assert_eq!(
+            rec.get("crpix"),
+            Some(&Value::Array(casa_types::ArrayValue::from_f64_vec(vec![
+                0.0
+            ])))
+        );
+        assert_eq!(
+            rec.get("cdelt"),
+            Some(&Value::Array(casa_types::ArrayValue::from_f64_vec(vec![
+                1.0
+            ])))
+        );
     }
 
     #[test]

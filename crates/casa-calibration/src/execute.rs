@@ -2127,8 +2127,56 @@ fn get_f64_array(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_ms::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
+    use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
     use casa_types::measures::direction::{DirectionRef, MDirection};
     use casa_types::measures::position::MPosition;
+    use casa_types::{
+        ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    };
+    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+
+    fn row(fields: Vec<RecordField>) -> RecordValue {
+        RecordValue::new(fields)
+    }
+
+    fn scalar_table(fields: Vec<RecordField>) -> Table {
+        Table::from_rows_memory(vec![row(fields)])
+    }
+
+    fn default_main_value(column: &ColumnSchema) -> Value {
+        match column.column_type() {
+            ColumnType::Scalar => match column.data_type().unwrap_or(PrimitiveType::Int32) {
+                PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
+                PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
+                PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
+                PrimitiveType::String => Value::Scalar(ScalarValue::String(String::new())),
+                _ => Value::Scalar(ScalarValue::Float64(0.0)),
+            },
+            ColumnType::Record => Value::Record(RecordValue::new(vec![])),
+            ColumnType::Array(ArrayShapeContract::Fixed { shape }) => {
+                let total: usize = shape.iter().product();
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(shape.to_vec(), vec![0.0; total]).unwrap(),
+                ))
+            }
+            ColumnType::Array(ArrayShapeContract::Variable { ndim }) => {
+                let shape: Vec<usize> = vec![1; ndim.unwrap_or(1)];
+                let total: usize = shape.iter().product();
+                match column.data_type().unwrap_or(PrimitiveType::Float64) {
+                    PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
+                        ArrayD::from_shape_vec(shape, vec![false; total]).unwrap(),
+                    )),
+                    PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(shape, vec![1.0; total]).unwrap(),
+                    )),
+                    _ => Value::Array(ArrayValue::Float64(
+                        ArrayD::from_shape_vec(shape, vec![0.0; total]).unwrap(),
+                    )),
+                }
+            }
+        }
+    }
 
     #[test]
     fn circular_parang_gain_matches_expected_rr_rl_lr_ll_phases() {
@@ -2227,5 +2275,414 @@ mod tests {
             .unwrap();
 
         assert!((feed - (base + 0.25)).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn interpolate_time_linear_covers_complex_delay_and_error_cases() {
+        let path = Path::new("/tmp/interp.cal");
+        let complex_pair = [
+            CalibrationSolution {
+                time_seconds: 30.0,
+                grid: CalibrationGrid::Complex(GainGrid {
+                    receptor_count: 1,
+                    channel_count: 2,
+                    values: ArrayD::from_shape_vec(
+                        IxDyn(&[1, 2]).f(),
+                        vec![Complex32::new(5.0, 4.0), Complex32::new(7.0, 6.0)],
+                    )
+                    .unwrap(),
+                    flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![true, false]).unwrap(),
+                }),
+            },
+            CalibrationSolution {
+                time_seconds: 10.0,
+                grid: CalibrationGrid::Complex(GainGrid {
+                    receptor_count: 1,
+                    channel_count: 2,
+                    values: ArrayD::from_shape_vec(
+                        IxDyn(&[1, 2]).f(),
+                        vec![Complex32::new(1.0, 0.0), Complex32::new(3.0, 2.0)],
+                    )
+                    .unwrap(),
+                    flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false]).unwrap(),
+                }),
+            },
+        ];
+
+        match interpolate_time_linear(path, &complex_pair, 20.0).unwrap() {
+            CalibrationGrid::Complex(grid) => {
+                assert_eq!(grid.values[[0, 0]], Complex32::new(3.0, 2.0));
+                assert_eq!(grid.values[[0, 1]], Complex32::new(5.0, 4.0));
+                assert!(grid.flags[[0, 0]]);
+                assert!(!grid.flags[[0, 1]]);
+            }
+            CalibrationGrid::Delay(_) => panic!("expected complex interpolation"),
+        }
+
+        let delay_pair = [
+            CalibrationSolution {
+                time_seconds: 1.0,
+                grid: CalibrationGrid::Delay(DelayGrid {
+                    receptor_count: 1,
+                    channel_count: 2,
+                    values_ns: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![1.0_f32, 3.0])
+                        .unwrap(),
+                    flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, true]).unwrap(),
+                }),
+            },
+            CalibrationSolution {
+                time_seconds: 3.0,
+                grid: CalibrationGrid::Delay(DelayGrid {
+                    receptor_count: 1,
+                    channel_count: 2,
+                    values_ns: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![5.0_f32, 7.0])
+                        .unwrap(),
+                    flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![true, false]).unwrap(),
+                }),
+            },
+        ];
+        match interpolate_time_linear(path, &delay_pair, 2.0).unwrap() {
+            CalibrationGrid::Delay(grid) => {
+                assert_eq!(grid.values_ns[[0, 0]], 3.0);
+                assert_eq!(grid.values_ns[[0, 1]], 5.0);
+                assert!(grid.flags[[0, 0]]);
+                assert!(grid.flags[[0, 1]]);
+            }
+            CalibrationGrid::Complex(_) => panic!("expected delay interpolation"),
+        }
+
+        match interpolate_time_linear(
+            path,
+            &[CalibrationSolution {
+                time_seconds: 10.0,
+                grid: CalibrationGrid::Complex(GainGrid {
+                    receptor_count: 1,
+                    channel_count: 2,
+                    values: ArrayD::from_shape_vec(
+                        IxDyn(&[1, 2]).f(),
+                        vec![Complex32::new(1.0, 0.0), Complex32::new(3.0, 2.0)],
+                    )
+                    .unwrap(),
+                    flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false]).unwrap(),
+                }),
+            }],
+            0.0,
+        )
+        .unwrap()
+        {
+            CalibrationGrid::Complex(grid) => {
+                assert_eq!(grid.values[[0, 0]], Complex32::new(1.0, 0.0))
+            }
+            CalibrationGrid::Delay(_) => panic!("expected complex interpolation"),
+        }
+        match interpolate_time_linear(path, &[], 0.0) {
+            Ok(_) => panic!("expected empty interpolation to fail"),
+            Err(ApplyExecutionError::UnsupportedInterpolation { .. }) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
+        match interpolate_time_linear(
+            path,
+            &[
+                CalibrationSolution {
+                    time_seconds: 10.0,
+                    grid: CalibrationGrid::Complex(GainGrid {
+                        receptor_count: 1,
+                        channel_count: 2,
+                        values: ArrayD::from_shape_vec(
+                            IxDyn(&[1, 2]).f(),
+                            vec![Complex32::new(1.0, 0.0), Complex32::new(3.0, 2.0)],
+                        )
+                        .unwrap(),
+                        flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false])
+                            .unwrap(),
+                    }),
+                },
+                CalibrationSolution {
+                    time_seconds: 20.0,
+                    grid: CalibrationGrid::Delay(DelayGrid {
+                        receptor_count: 1,
+                        channel_count: 2,
+                        values_ns: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![1.0_f32, 2.0])
+                            .unwrap(),
+                        flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false])
+                            .unwrap(),
+                    }),
+                },
+            ],
+            15.0,
+        ) {
+            Ok(_) => panic!("expected mixed-family interpolation to fail"),
+            Err(ApplyExecutionError::UnsupportedInterpolation { .. }) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bpoly_helpers_and_typed_accessors_cover_branchy_paths() {
+        let path = Path::new("/tmp/bpoly.cal");
+        assert_eq!(
+            infer_bpoly_receptor_count(4, 2, 2, path, 0, "AMP").unwrap(),
+            2
+        );
+        assert_eq!(
+            infer_bpoly_receptor_count(0, 0, 0, path, 0, "AMP").unwrap(),
+            1
+        );
+        assert!(infer_bpoly_receptor_count(5, 2, 3, path, 0, "AMP").is_err());
+
+        assert_eq!(
+            split_bpoly_coefficients(vec![1.0, 2.0, 3.0, 4.0], 2, 2, path, 1, "AMP").unwrap(),
+            vec![vec![1.0, 2.0], vec![3.0, 4.0]]
+        );
+        assert!(split_bpoly_coefficients(vec![1.0, 2.0], 2, 2, path, 1, "AMP").is_err());
+
+        assert_eq!(legacy_bpoly_chebyshev_value(&[], 0.0, 1.0, 0.5), 0.0);
+        assert_eq!(legacy_bpoly_chebyshev_value(&[4.0], 0.0, 1.0, 0.5), 2.0);
+        assert!((legacy_bpoly_chebyshev_value(&[2.0, 1.0], 0.0, 10.0, 10.0) - 2.0).abs() < 1.0e-12);
+
+        let table = scalar_table(vec![
+            RecordField::new("FIELD_ID", Value::Scalar(ScalarValue::Int32(7))),
+            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(12.5))),
+            RecordField::new(
+                "SCALE_FACTOR",
+                Value::Scalar(ScalarValue::Complex64(Complex64::new(1.0, -2.0))),
+            ),
+            RecordField::new(
+                "PHASE_UNITS",
+                Value::Scalar(ScalarValue::String("DEG".to_string())),
+            ),
+            RecordField::new(
+                "F32S",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![5.0_f32, 6.0]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                "I32S",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![3_i32, 4]).unwrap(),
+                )),
+            ),
+        ]);
+        assert_eq!(get_i32(&table, 0, "FIELD_ID").unwrap(), 7);
+        assert_eq!(get_f64(&table, 0, "TIME").unwrap(), 12.5);
+        assert_eq!(
+            get_complex32(&table, 0, "SCALE_FACTOR").unwrap(),
+            Complex32::new(1.0, -2.0)
+        );
+        assert_eq!(get_string(&table, 0, "PHASE_UNITS").unwrap(), "DEG");
+        assert_eq!(
+            get_numeric_array(&table, 0, "I32S", path).unwrap(),
+            vec![3.0, 4.0]
+        );
+        assert_eq!(
+            get_f64_array(&table, 0, "F32S", path).unwrap(),
+            vec![5.0, 6.0]
+        );
+        assert!(matches!(
+            get_i32(&table, 0, "PHASE_UNITS").unwrap_err(),
+            ApplyExecutionError::UnsupportedParameterShape { .. }
+        ));
+
+        let cal_desc = Table::from_rows_memory(vec![
+            row(vec![
+                RecordField::new(
+                    "SPECTRAL_WINDOW_ID",
+                    Value::Array(ArrayValue::Int32(
+                        ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![9_i32]).unwrap(),
+                    )),
+                ),
+                RecordField::new("NUM_RECEPTORS", Value::Scalar(ScalarValue::Int32(2))),
+            ]),
+            row(vec![
+                RecordField::new(
+                    "SPECTRAL_WINDOW_ID",
+                    Value::Array(ArrayValue::Int32(
+                        ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![3_i32]).unwrap(),
+                    )),
+                ),
+                RecordField::new("NUM_RECEPTORS", Value::Scalar(ScalarValue::Int32(1))),
+            ]),
+        ]);
+        let entries = load_bpoly_cal_desc_map(path, &cal_desc).unwrap();
+        assert_eq!(entries.get(&0).unwrap().spw_id, 9);
+        assert_eq!(entries.get(&1).unwrap().receptor_count, 1);
+        let invalid_cal_desc = Table::from_rows_memory(vec![row(vec![
+            RecordField::new(
+                "SPECTRAL_WINDOW_ID",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![3_i32]).unwrap(),
+                )),
+            ),
+            RecordField::new("NUM_RECEPTORS", Value::Scalar(ScalarValue::Int32(-1))),
+        ])]);
+        assert!(load_bpoly_cal_desc_map(path, &invalid_cal_desc).is_err());
+
+        assert_eq!(median_f32(&[3.0, 1.0, 2.0]), 2.0);
+        assert_eq!(median_f32(&[4.0, 1.0, 3.0, 2.0]), 2.5);
+        assert_eq!(
+            expand_weight_to_spectrum(
+                &ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.5_f32, 2.5]).unwrap(),
+                2,
+            )
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+            vec![1.5, 1.5, 2.5, 2.5]
+        );
+        assert_eq!(stokes_name(5), "RR");
+        assert_eq!(stokes_name(99), "??");
+        assert_eq!(correlation_receptors(10), Some((0, 1)));
+        assert_eq!(correlation_receptors(42), None);
+    }
+
+    #[test]
+    fn sample_bpoly_row_and_corrected_data_column_cover_remaining_helpers() {
+        let bpoly = scalar_table(vec![
+            RecordField::new(
+                COL_SCALE_FACTOR,
+                Value::Scalar(ScalarValue::Complex32(Complex32::new(2.0, 0.0))),
+            ),
+            RecordField::new(
+                COL_VALID_DOMAIN,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.0_f64, 3.0]).unwrap(),
+                )),
+            ),
+            RecordField::new(COL_N_POLY_AMP, Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new(COL_N_POLY_PHASE, Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new(
+                COL_POLY_COEFF_AMP,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![0.0_f64, 0.0]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                COL_POLY_COEFF_PHASE,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![0.0_f64, 90.0]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                COL_PHASE_UNITS,
+                Value::Scalar(ScalarValue::String("DEG".to_string())),
+            ),
+        ]);
+        let plan = crate::plan::SpectralWindowPlan {
+            spw_id: 5,
+            num_chan: 3,
+            ref_frequency_hz: 1.2e9,
+            channel_frequencies_hz: vec![0.5, 1.5, 2.5],
+        };
+        assert_eq!(cal_spw_reference_frequency_hz(&plan), 1.5);
+        match sample_bpoly_row(
+            &bpoly,
+            0,
+            Path::new("/tmp/bpoly"),
+            &plan,
+            LegacyCalDescEntry {
+                spw_id: 5,
+                receptor_count: 2,
+            },
+        )
+        .unwrap()
+        {
+            CalibrationGrid::Complex(grid) => {
+                assert_eq!(grid.receptor_count, 2);
+                assert_eq!(grid.channel_count, 3);
+                assert_eq!(grid.values[[0, 0]], Complex32::new(1.0, 0.0));
+                assert!((grid.values[[0, 1]].norm() - 2.0).abs() < 1.0e-5);
+                assert_ne!(grid.values[[0, 1]], Complex32::new(1.0, 0.0));
+            }
+            CalibrationGrid::Delay(_) => panic!("expected complex BPOLY output"),
+        }
+
+        let bad_phase_units = scalar_table(vec![
+            RecordField::new(
+                COL_SCALE_FACTOR,
+                Value::Scalar(ScalarValue::Complex32(Complex32::new(2.0, 0.0))),
+            ),
+            RecordField::new(
+                COL_VALID_DOMAIN,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.0_f64, 3.0]).unwrap(),
+                )),
+            ),
+            RecordField::new(COL_N_POLY_AMP, Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new(COL_N_POLY_PHASE, Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new(
+                COL_POLY_COEFF_AMP,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![0.0_f64, 0.0]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                COL_POLY_COEFF_PHASE,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![0.0_f64, 90.0]).unwrap(),
+                )),
+            ),
+            RecordField::new(
+                COL_PHASE_UNITS,
+                Value::Scalar(ScalarValue::String("TURNS".to_string())),
+            ),
+        ]);
+        assert!(
+            sample_bpoly_row(
+                &bad_phase_units,
+                0,
+                Path::new("/tmp/bpoly"),
+                &plan,
+                LegacyCalDescEntry {
+                    spw_id: 5,
+                    receptor_count: 2,
+                },
+            )
+            .is_err()
+        );
+
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        let schema = ms.main_table().schema().unwrap().clone();
+        let fields = schema
+            .columns()
+            .iter()
+            .map(|column| {
+                if column.name() == VisibilityDataColumn::Data.name() {
+                    RecordField::new(
+                        column.name(),
+                        Value::Array(ArrayValue::Complex32(
+                            ArrayD::from_shape_vec(
+                                IxDyn(&[2, 1]).f(),
+                                vec![Complex32::new(1.0, 0.0), Complex32::new(0.0, 1.0)],
+                            )
+                            .unwrap(),
+                        )),
+                    )
+                } else {
+                    RecordField::new(column.name(), default_main_value(column))
+                }
+            })
+            .collect::<Vec<_>>();
+        ms.main_table_mut()
+            .add_row(RecordValue::new(fields))
+            .unwrap();
+
+        assert!(ensure_corrected_data_column(&mut ms).unwrap());
+        let corrected = ms
+            .main_table()
+            .get_array_cell(0, VisibilityDataColumn::CorrectedData.name())
+            .unwrap()
+            .clone();
+        assert_eq!(
+            corrected,
+            *ms.main_table()
+                .get_array_cell(0, VisibilityDataColumn::Data.name())
+                .unwrap()
+        );
+        assert!(!ensure_corrected_data_column(&mut ms).unwrap());
+        assert_eq!(display_ms_path(&ms), "<in-memory>");
     }
 }
