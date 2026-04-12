@@ -1525,6 +1525,153 @@ mod tests {
     }
 
     #[test]
+    fn parse_cube_axis_value_dimensionless_doppler_and_empty_input() {
+        assert_eq!(
+            CubeAxisValue::parse("0.25", DopplerRef::RADIO).unwrap(),
+            CubeAxisValue::Doppler {
+                value: 0.25,
+                convention: DopplerRef::RADIO,
+            }
+        );
+        assert!(CubeAxisValue::parse("", DopplerRef::RADIO).is_err());
+    }
+
+    #[test]
+    fn channel_edges_and_inferred_spacing_cover_boundary_cases() {
+        assert!(channel_edges_from_centers(&[]).is_err());
+        assert_eq!(channel_edges_from_centers(&[5.0]).unwrap(), vec![4.5, 5.5]);
+        assert_eq!(
+            channel_edges_from_centers(&[10.0, 20.0, 30.0]).unwrap(),
+            vec![5.0, 15.0, 25.0, 35.0]
+        );
+        assert_eq!(infer_native_spacing_hz(&[10.0, 15.0, 25.0]).unwrap(), 5.0);
+        assert!(infer_native_spacing_hz(&[10.0]).is_err());
+    }
+
+    #[test]
+    fn axis_mode_helpers_cover_native_interpolation_and_explicit_frames() {
+        let mut axis_config = CubeAxisConfig {
+            specmode: CubeSpecMode::Cube,
+            outframe: FrequencyRef::TOPO,
+            veltype: DopplerRef::Z,
+            interpolation: CubeInterpolation::Linear,
+            rest_frequency_hz: Some(1.25e9),
+            start: Some(CubeAxisValue::VelocityMs {
+                ms: 1.0,
+                frame: Some(FrequencyRef::BARY),
+            }),
+            width: Some(CubeAxisValue::VelocityMs {
+                ms: -2.0,
+                frame: Some(FrequencyRef::BARY),
+            }),
+        };
+        assert!(uses_optical_velocity_axis(&axis_config));
+        let native_axis_config = CubeAxisConfig {
+            start: None,
+            width: Some(CubeAxisValue::VelocityMs {
+                ms: -2.0,
+                frame: None,
+            }),
+            ..axis_config.clone()
+        };
+        assert!(uses_native_source_interpolation(&native_axis_config));
+        assert_eq!(
+            effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
+            FrequencyRef::BARY
+        );
+        assert_eq!(
+            cube_axis_explicit_frame(axis_config.start.as_ref()),
+            Some(FrequencyRef::BARY)
+        );
+        axis_config.width = Some(CubeAxisValue::FrequencyHz {
+            hz: 1.0,
+            frame: Some(FrequencyRef::LSRK),
+        });
+        let error = effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap_err();
+        assert!(error.to_string().contains("disagree"));
+        axis_config.specmode = CubeSpecMode::Cubedata;
+        assert_eq!(
+            effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
+            FrequencyRef::TOPO
+        );
+    }
+
+    #[test]
+    fn frequency_and_velocity_helpers_cover_error_and_identity_paths() {
+        assert!(matches!(
+            cube_axis_delta_hz_from_value(&CubeAxisValue::Channel(1), Some(1.25e9), DopplerRef::RADIO),
+            Err(MsError::VersionError(message)) if message.contains("channel width")
+        ));
+        assert_eq!(
+            cube_axis_delta_hz_from_value(
+                &CubeAxisValue::FrequencyHz {
+                    hz: 25.0,
+                    frame: None,
+                },
+                None,
+                DopplerRef::RADIO
+            )
+            .unwrap(),
+            25.0
+        );
+        assert_eq!(
+            optical_velocity_ms_from_axis_value(
+                &CubeAxisValue::VelocityMs {
+                    ms: 12.5,
+                    frame: None,
+                },
+                1.25e9
+            )
+            .unwrap(),
+            12.5
+        );
+        assert!(matches!(
+            optical_velocity_ms_from_axis_value(&CubeAxisValue::Channel(2), 1.25e9),
+            Err(MsError::VersionError(message)) if message.contains("optical velocity-like")
+        ));
+        assert!(
+            frequency_hz_from_vopt_ms(0.0, 1.25e9) - 1.25e9 < 1e-6
+        );
+        assert!((optical_velocity_ms_from_frequency_hz(1.25e9, 1.25e9)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn output_selection_helpers_cover_nearest_and_interpolation_cases() {
+        assert_eq!(nearest_channel_index(&[], 1.0), None);
+        assert_eq!(nearest_channel_index(&[10.0], 12.0), Some(0));
+        assert_eq!(nearest_channel_index(&[10.0, 20.0, 30.0], 19.0), Some(1));
+        assert_eq!(nearest_channel_index(&[10.0, 20.0, 30.0], 100.0), None);
+
+        let nearest = spectral_interpolation_contributions(
+            &[10.0, 20.0, 30.0],
+            &[10.0, 20.0, 30.0],
+            &[10.0, 10.0, 10.0],
+            CubeInterpolation::Nearest,
+            19.0,
+        );
+        assert_eq!(
+            nearest,
+            vec![CubeChannelContribution {
+                source_channel: 1,
+                source_frequency_hz: 20.0,
+                factor: 1.0,
+            }]
+        );
+
+        let linear = spectral_interpolation_contributions(
+            &[10.0, 20.0, 30.0],
+            &[10.0, 20.0, 30.0],
+            &[10.0, 10.0, 10.0],
+            CubeInterpolation::Linear,
+            15.0,
+        );
+        assert_eq!(linear.len(), 2);
+
+        let single = linear_channel_contributions(&[10.0], &[10.0], &[4.0], 11.0);
+        assert_eq!(single.len(), 1);
+    }
+
+    #[test]
     fn resolve_contiguous_channel_selection_defaults_to_full_spw() {
         let resolved = resolve_contiguous_channel_selection(&[1.0, 2.0, 3.0], None, None).unwrap();
         assert_eq!(

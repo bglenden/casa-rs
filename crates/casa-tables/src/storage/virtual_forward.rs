@@ -221,3 +221,237 @@ fn get_forward_table_name(keywords: &RecordValue, col_name: &str) -> Result<Stri
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::data_type::CasacoreDataType;
+    use crate::storage::table_control::ColumnDescContents;
+    use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    fn keyword_record(key: &str, value: Value) -> RecordValue {
+        let mut record = RecordValue::default();
+        record.upsert(key, value);
+        record
+    }
+
+    fn column_desc(
+        col_name: &str,
+        data_manager_group: &str,
+        keywords: RecordValue,
+    ) -> ColumnDescContents {
+        ColumnDescContents {
+            class_name: String::new(),
+            col_name: col_name.to_string(),
+            comment: String::new(),
+            data_manager_type: "ForwardColumnEngine".to_string(),
+            data_manager_group: data_manager_group.to_string(),
+            data_type: CasacoreDataType::TpInt,
+            option: 0,
+            nrdim: 0,
+            shape: Vec::new(),
+            max_length: 0,
+            keywords,
+            is_array: false,
+            primitive_type: Some(PrimitiveType::Int32),
+        }
+    }
+
+    #[test]
+    fn helper_functions_cover_keyword_and_row_index_variants() {
+        let string_kw = keyword_record(
+            "name",
+            Value::Scalar(ScalarValue::String("table".to_string())),
+        );
+        assert_eq!(
+            get_string_keyword(&string_kw, "name", "col").unwrap(),
+            "table".to_string()
+        );
+        assert!(matches!(
+            get_string_keyword(
+                &keyword_record("name", Value::Scalar(ScalarValue::Int32(1))),
+                "name",
+                "col"
+            ),
+            Err(StorageError::FormatMismatch(msg)) if msg.contains("not a string")
+        ));
+        assert!(matches!(
+            get_string_keyword(&RecordValue::default(), "name", "col"),
+            Err(StorageError::FormatMismatch(msg)) if msg.contains("missing keyword")
+        ));
+
+        let forward_kw = keyword_record(
+            FORWARD_TABLE_KEYWORD,
+            Value::Scalar(ScalarValue::String("ref".to_string())),
+        );
+        assert_eq!(
+            get_forward_table_name(&forward_kw, "col").unwrap(),
+            "ref".to_string()
+        );
+        assert!(matches!(
+            get_forward_table_name(
+                &keyword_record(FORWARD_TABLE_KEYWORD, Value::Scalar(ScalarValue::Int32(1))),
+                "col"
+            ),
+            Err(StorageError::FormatMismatch(msg)) if msg.contains("is not a string")
+        ));
+        assert!(matches!(
+            get_forward_table_name(&RecordValue::default(), "col"),
+            Err(StorageError::FormatMismatch(msg)) if msg.contains("missing keyword")
+        ));
+
+        let row = RecordValue::new(vec![
+            RecordField::new("u32", Value::Scalar(ScalarValue::UInt32(3))),
+            RecordField::new("i32", Value::Scalar(ScalarValue::Int32(4))),
+            RecordField::new("i64", Value::Scalar(ScalarValue::Int64(5))),
+            RecordField::new("u16", Value::Scalar(ScalarValue::UInt16(6))),
+            RecordField::new(
+                "bad",
+                Value::Scalar(ScalarValue::String("not-an-index".to_string())),
+            ),
+        ]);
+        assert_eq!(get_row_index(&row, "u32"), Some(3));
+        assert_eq!(get_row_index(&row, "i32"), Some(4));
+        assert_eq!(get_row_index(&row, "i64"), Some(5));
+        assert_eq!(get_row_index(&row, "u16"), Some(6));
+        assert_eq!(get_row_index(&row, "bad"), None);
+        assert_eq!(get_row_index(&row, "missing"), None);
+
+        let ctx_descs = [column_desc(
+            "value",
+            "dm",
+            keyword_record(
+                "dm_ForwardColumn_RowName",
+                Value::Scalar(ScalarValue::String("row_index".to_string())),
+            ),
+        )];
+        let ctx = VirtualContext {
+            col_descs: &ctx_descs,
+            rows: &[],
+            table_path: Path::new("/tmp"),
+            nrrow: 0,
+        };
+        assert_eq!(
+            get_row_column_name(&ctx, "dm_ForwardColumn_RowName", "dm").unwrap(),
+            "row_index".to_string()
+        );
+
+        let ctx_missing_descs = [column_desc("value", "dm", RecordValue::default())];
+        let ctx_missing = VirtualContext {
+            col_descs: &ctx_missing_descs,
+            rows: &[],
+            table_path: Path::new("/tmp"),
+            nrrow: 0,
+        };
+        assert!(matches!(
+            get_row_column_name(&ctx_missing, "dm_ForwardColumn_RowName", "dm"),
+            Err(StorageError::FormatMismatch(msg)) if msg.contains("cannot find row column name keyword")
+        ));
+    }
+
+    #[test]
+    fn forward_engine_reports_missing_reference_table() {
+        let dir = tempdir().unwrap();
+
+        let col_descs = [column_desc(
+            "value",
+            "dm",
+            keyword_record(FORWARD_TABLE_KEYWORD, Value::Scalar(ScalarValue::String("ref".to_string()))),
+        )];
+        let ctx = VirtualContext {
+            col_descs: &col_descs,
+            rows: &[],
+            table_path: dir.path(),
+            nrrow: 2,
+        };
+        let entry = PlainColumnEntry {
+            original_name: "value".to_string(),
+            dm_seq_nr: 0,
+            is_array: false,
+        };
+        let mut rows = vec![RecordValue::default(), RecordValue::default()];
+
+        assert!(matches!(
+            ForwardColumnEngine.materialize(&ctx, &[(0, &entry)], &mut rows),
+            Err(StorageError::MissingPath(_))
+        ));
+    }
+
+    #[test]
+    fn indexed_forward_engine_reports_missing_reference_table() {
+        let dir = tempdir().unwrap();
+
+        let col_descs = [column_desc(
+            "value",
+            "dm",
+            keyword_record(FORWARD_TABLE_KEYWORD, Value::Scalar(ScalarValue::String("ref".to_string()))),
+        )];
+        let mut first_keywords = col_descs[0].keywords.clone();
+        first_keywords.upsert(
+            "dm_ForwardColumn_RowName",
+            Value::Scalar(ScalarValue::String("row_index".to_string())),
+        );
+        let col_descs = [ColumnDescContents {
+            keywords: first_keywords,
+            ..col_descs[0].clone()
+        }];
+        let ctx = VirtualContext {
+            col_descs: &col_descs,
+            rows: &[
+                RecordValue::new(vec![RecordField::new(
+                    "row_index",
+                    Value::Scalar(ScalarValue::UInt32(0)),
+                )]),
+                RecordValue::default(),
+            ],
+            table_path: dir.path(),
+            nrrow: 2,
+        };
+        let entry = PlainColumnEntry {
+            original_name: "value".to_string(),
+            dm_seq_nr: 0,
+            is_array: false,
+        };
+        let mut rows = vec![RecordValue::default(), RecordValue::default()];
+
+        assert!(matches!(
+            ForwardColumnIndexedRowEngine.materialize(&ctx, &[(0, &entry)], &mut rows),
+            Err(StorageError::MissingPath(_))
+        ));
+    }
+
+    #[test]
+    fn indexed_forward_engine_requires_row_column_name_keyword() {
+        let dir = tempdir().unwrap();
+        let col_descs = [column_desc(
+            "value",
+            "dm",
+            keyword_record(
+                FORWARD_TABLE_KEYWORD,
+                Value::Scalar(ScalarValue::String("ref".to_string())),
+            ),
+        )];
+        let ctx = VirtualContext {
+            col_descs: &col_descs,
+            rows: &[],
+            table_path: dir.path(),
+            nrrow: 0,
+        };
+        let entry = PlainColumnEntry {
+            original_name: "value".to_string(),
+            dm_seq_nr: 0,
+            is_array: false,
+        };
+        let mut rows = Vec::new();
+
+        let error = ForwardColumnIndexedRowEngine
+            .materialize(&ctx, &[(0, &entry)], &mut rows)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            StorageError::FormatMismatch(msg) if msg.contains("cannot find row column name keyword")
+        ));
+    }
+}

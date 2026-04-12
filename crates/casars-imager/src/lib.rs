@@ -3188,6 +3188,140 @@ mod tests {
     }
 
     #[test]
+    fn parser_helpers_cover_modes_numeric_selectors_and_units() {
+        assert_eq!(
+            parse_data_column("data").unwrap(),
+            VisibilityDataColumn::Data
+        );
+        assert_eq!(
+            parse_data_column("corrected").unwrap(),
+            VisibilityDataColumn::CorrectedData
+        );
+        assert_eq!(
+            parse_data_column("model").unwrap(),
+            VisibilityDataColumn::ModelData
+        );
+        assert!(parse_data_column("unsupported").is_err());
+
+        assert_eq!(parse_single_numeric_selector("7", "field").unwrap(), 7);
+        let multi = parse_single_numeric_selector("0,2~4", "spw").unwrap_err();
+        assert!(multi.contains("multiple ids"));
+
+        assert_eq!(
+            parse_cube_interpolation("nearest").unwrap(),
+            CubeInterpolation::Nearest
+        );
+        assert_eq!(
+            parse_cube_interpolation("linear").unwrap(),
+            CubeInterpolation::Linear
+        );
+        assert_eq!(
+            parse_cube_interpolation("cubic").unwrap(),
+            CubeInterpolation::Cubic
+        );
+        assert!(parse_cube_interpolation("spline").is_err());
+
+        assert_eq!(parse_spectral_mode("mfs").unwrap(), SpectralMode::Mfs);
+        assert_eq!(parse_spectral_mode("cube").unwrap(), SpectralMode::Cube);
+        assert_eq!(parse_spectral_mode("cubedata").unwrap(), SpectralMode::Cubedata);
+        assert!(parse_spectral_mode("other").is_err());
+
+        assert_eq!(parse_weighting_mode("natural", 0.0).unwrap(), WeightingMode::Natural);
+        assert_eq!(parse_weighting_mode("uniform", 0.0).unwrap(), WeightingMode::Uniform);
+        assert_eq!(
+            parse_weighting_mode("briggs", 0.5).unwrap(),
+            WeightingMode::Briggs { robust: 0.5 }
+        );
+        assert!(parse_weighting_mode("invalid", 0.0).is_err());
+
+        assert_eq!(parse_deconvolver("hogbom").unwrap(), Deconvolver::Hogbom);
+        assert_eq!(parse_deconvolver("clark").unwrap(), Deconvolver::Clark);
+        assert_eq!(parse_deconvolver("multiscale").unwrap(), Deconvolver::Multiscale);
+        assert!(parse_deconvolver("other").is_err());
+
+        assert_eq!(parse_multiscale_scales("").unwrap(), Vec::<f32>::new());
+        assert_eq!(
+            parse_multiscale_scales("0,5,15").unwrap(),
+            vec![0.0, 5.0, 15.0]
+        );
+        assert!(parse_multiscale_scales("1,-1").is_err());
+
+        assert_eq!(parse_w_term_mode("none").unwrap(), WTermMode::None);
+        assert_eq!(parse_w_term_mode("2d").unwrap(), WTermMode::None);
+        assert_eq!(parse_w_term_mode("direct").unwrap(), WTermMode::Direct);
+        assert!(parse_w_term_mode("wproj").is_err());
+
+        assert_eq!(parse_mask_box("1,2,3,4").unwrap(), [1, 2, 3, 4]);
+        assert!(parse_mask_box("1,2,3").is_err());
+        assert!(parse_mask_box("1,2,three,4").is_err());
+
+        assert_eq!(
+            parse_uv_taper_size("10arcsec").unwrap(),
+            casa_imaging::UvTaperSize::ImageFwhmRad(10.0 * arcsec_to_rad())
+        );
+        assert_eq!(
+            parse_uv_taper_size("20lambda").unwrap(),
+            casa_imaging::UvTaperSize::BaselineHwhmLambda(20.0)
+        );
+        assert!(parse_uv_taper_size("10degrees").is_err());
+
+        let single = parse_uv_taper("10arcsec").unwrap();
+        assert_eq!(single.major, casa_imaging::UvTaperSize::ImageFwhmRad(10.0 * arcsec_to_rad()));
+        assert_eq!(single.minor, single.major);
+        assert_eq!(single.position_angle_rad, 0.0);
+        let pair = parse_uv_taper("10arcsec,20lambda").unwrap();
+        assert_eq!(pair.major, casa_imaging::UvTaperSize::ImageFwhmRad(10.0 * arcsec_to_rad()));
+        assert_eq!(pair.minor, casa_imaging::UvTaperSize::BaselineHwhmLambda(20.0));
+        let triplet = parse_uv_taper("10arcsec,20lambda,30deg").unwrap();
+        assert!((triplet.position_angle_rad - 30.0 * degrees_to_rad()).abs() < 1e-12);
+        assert!(parse_uv_taper("10arcsec,20lambda,30deg,40deg").is_err());
+
+        assert!(help_text().contains("--specmode"));
+        assert!(help_text().contains("--uvtaper"));
+    }
+
+    #[test]
+    fn resolve_data_column_prefers_corrected_data_when_available() {
+        let corrected_ms = casa_ms::MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::CorrectedData),
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_data_column(&corrected_ms, None).unwrap(),
+            VisibilityDataColumn::CorrectedData
+        );
+
+        let data_ms = casa_ms::MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_data_column(&data_ms, None).unwrap(),
+            VisibilityDataColumn::Data
+        );
+        assert_eq!(
+            resolve_data_column(&data_ms, Some("model")).unwrap(),
+            VisibilityDataColumn::ModelData
+        );
+        assert!(resolve_data_column(&data_ms, Some("unsupported")).is_err());
+    }
+
+    #[test]
+    fn clean_mask_rejects_invalid_boxes_and_mask_images() {
+        assert!(build_clean_mask(4, &[[2, 1, 1, 0]], None).is_err());
+        assert!(build_clean_mask(4, &[[0, 0, 4, 0]], None).is_err());
+
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("mask.im");
+        let coords = CoordinateSystem::default();
+        let mut image = PagedImage::<f32>::create(vec![2, 3, 1, 1], coords, &path).unwrap();
+        image.save().unwrap();
+
+        let error = build_clean_mask(4, &[], Some(&path)).unwrap_err();
+        assert!(error.contains("expected [4, 4]") || error.contains("expected [4, 4, 1, 1]"));
+    }
+
+    #[test]
     fn clean_mask_unions_boxes_and_mask_image() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("mask.im");

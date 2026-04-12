@@ -372,3 +372,58 @@ fn take_cpp_error(error: *mut std::ffi::c_char) -> String {
     unsafe { cpp_table_free_error(error) };
     message
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn no_cpp_backend_reports_unavailable_for_all_helpers() {
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+        if cfg!(has_casacore_cpp) {
+            cpp_ms_write_basic_fixture(path).unwrap();
+            assert!(cpp_ms_verify_basic_fixture(path).is_ok());
+            assert!(cpp_ms_bench_create_open(path, 4).is_ok());
+            assert!(cpp_ms_digest_manifest(path).is_ok());
+            assert!(cpp_ms_table_row_digest(path, "MAIN", 0).is_ok());
+            assert!(cpp_ms_table_row_field_manifest(path, "MAIN", 0).is_ok());
+            assert!(cpp_ms_bench_main_rows(path).is_ok());
+            assert!(cpp_ms_bench_open_main_rows(path).is_ok());
+        } else {
+            assert_eq!(
+                cpp_ms_write_basic_fixture(path),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_ms_verify_basic_fixture(path),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_ms_bench_create_open(path, 4),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_ms_digest_manifest(path),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_ms_table_row_digest(path, "MAIN", 0),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_ms_table_row_field_manifest(path, "MAIN", 0),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_ms_bench_main_rows(path),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_ms_bench_open_main_rows(path),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+        }
+    }
+}

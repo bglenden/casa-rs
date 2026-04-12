@@ -162,3 +162,155 @@ fn read_manifest_value(path: &Path, key: &str) -> Option<String> {
         (found_key.trim() == key).then(|| value.trim().to_string())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tar::Archive;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()))
+    }
+
+    fn write_runtime_root(
+        root: &Path,
+        include_all_required_files: bool,
+        include_horizon_file: bool,
+    ) {
+        write_file(&root.join("readme.txt"), "version: 1.2.3\n");
+        write_file(
+            &root.join("geodetic/readme.txt"),
+            "version: 4.5.6\nsite: TEST_SITE\n",
+        );
+
+        for relative in REQUIRED_RELATIVE_PATHS {
+            if include_all_required_files || *relative != "ephemerides/Sources/table.dat" {
+                write_file(&root.join(relative), "table");
+            }
+        }
+
+        if include_horizon_file {
+            write_file(
+                &root.join("ephemerides/JPL-Horizons/nested/keep.txt"),
+                "kept",
+            );
+            write_file(&root.join("geodetic/table.lock"), "skip");
+            write_file(&root.join("ephemerides/DE405/data_update.lock"), "skip");
+        }
+    }
+
+    #[test]
+    fn runtime_root_candidates_include_env_and_home_fallbacks() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let tmp = temp_root("casa-measures-tools-root-candidates");
+        fs::create_dir_all(&tmp).unwrap();
+        let measures = tmp.join("measures");
+        let legacy = tmp.join("legacy");
+        let home = tmp.join("home");
+
+        let old_measures = std::env::var_os("CASA_RS_MEASURESPATH");
+        let old_legacy = std::env::var_os("CASA_RS_DATA");
+        let old_home = std::env::var_os("HOME");
+
+        unsafe {
+            std::env::set_var("CASA_RS_MEASURESPATH", &measures);
+            std::env::set_var("CASA_RS_DATA", &legacy);
+            std::env::set_var("HOME", &home);
+        }
+
+        let candidates = runtime_root_candidates();
+        assert_eq!(candidates, vec![measures.clone(), legacy.clone(), home.join(".casa/data")]);
+
+        unsafe {
+            match old_measures {
+                Some(value) => std::env::set_var("CASA_RS_MEASURESPATH", value),
+                None => std::env::remove_var("CASA_RS_MEASURESPATH"),
+            }
+            match old_legacy {
+                Some(value) => std::env::set_var("CASA_RS_DATA", value),
+                None => std::env::remove_var("CASA_RS_DATA"),
+            }
+            match old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn validate_runtime_root_reports_missing_required_files() {
+        let root = temp_root("casa-measures-tools-missing-file");
+        fs::create_dir_all(&root).unwrap();
+        write_runtime_root(&root, false, false);
+
+        let error = validate_runtime_root(&root).unwrap_err();
+        assert!(
+            error.contains("missing required file"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn validate_runtime_root_reports_empty_required_directories() {
+        let root = temp_root("casa-measures-tools-empty-dir");
+        fs::create_dir_all(&root).unwrap();
+        write_runtime_root(&root, true, false);
+
+        let error = validate_runtime_root(&root).unwrap_err();
+        assert!(
+            error.contains("missing or empty"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn create_packaged_snapshot_writes_archive_and_provenance() {
+        let root = temp_root("casa-measures-tools-snapshot");
+        fs::create_dir_all(&root).unwrap();
+        write_runtime_root(&root, true, true);
+
+        let archive_path = root.join("snapshot.tar.gz");
+        let provenance_path = root.join("snapshot.provenance.json");
+        create_packaged_snapshot(&root, &archive_path, &provenance_path).unwrap();
+
+        let archive_file = fs::File::open(&archive_path).unwrap();
+        let mut archive = Archive::new(GzDecoder::new(archive_file));
+        let mut names = Vec::new();
+        for entry in archive.entries().unwrap() {
+            let entry = entry.unwrap();
+            names.push(entry.path().unwrap().to_string_lossy().to_string());
+        }
+
+        assert!(names.contains(&"readme.txt".to_string()));
+        assert!(names.contains(&"geodetic/readme.txt".to_string()));
+        assert!(names.contains(&"ephemerides/JPL-Horizons/nested/keep.txt".to_string()));
+        assert!(!names.iter().any(|name| name.ends_with("table.lock")));
+        assert!(!names.iter().any(|name| name.ends_with("data_update.lock")));
+
+        let provenance: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&provenance_path).unwrap()).unwrap();
+        assert_eq!(provenance["casarundata_version"], "1.2.3");
+        assert_eq!(provenance["measures_version"], "4.5.6");
+        assert_eq!(provenance["measures_site"], "TEST_SITE");
+        assert_eq!(provenance["included_paths"].as_array().unwrap().len(), PACKAGED_SNAPSHOT_PATHS.len());
+    }
+}

@@ -307,4 +307,41 @@ mod tests {
         assert!(uvw[1].is_finite());
         assert!(uvw[2].is_finite());
     }
+
+    #[test]
+    fn derived_accessors_cover_all_public_wrappers() {
+        let ms = make_ms_with_row();
+        let engine = MsCalEngine::new(&ms).unwrap();
+        let derived = DerivedColumns::new(ms.main_table(), engine);
+
+        assert!(derived.ha1(0).unwrap().is_finite());
+        assert!(derived.ha2(0).unwrap().is_finite());
+        assert!(derived.ha(0).unwrap().is_finite());
+        assert!(derived.pa1(0).unwrap().is_finite());
+        assert!(derived.pa2(0).unwrap().is_finite());
+        assert!(derived.azel1(0).unwrap().0.is_finite());
+        assert!(derived.azel2(0).unwrap().0.is_finite());
+        assert!(derived.azel(0).unwrap().0.is_finite());
+        assert!(derived.last1(0).unwrap().is_finite());
+        assert!(derived.last2(0).unwrap().is_finite());
+        assert!(derived.last(0).unwrap().is_finite());
+        assert!(derived.uvw_j2000(0).unwrap()[0].is_finite());
+        assert!(derived.hadec1(0).unwrap().0.is_finite());
+        assert!(derived.hadec2(0).unwrap().0.is_finite());
+    }
+
+    #[test]
+    fn derived_accessors_reject_out_of_bounds_rows() {
+        let ms = make_ms_with_row();
+        let engine = MsCalEngine::new(&ms).unwrap();
+        let derived = DerivedColumns::new(ms.main_table(), engine);
+
+        assert!(derived.ha1(1).is_err());
+        assert!(derived.ha2(1).is_err());
+        assert!(derived.pa1(1).is_err());
+        assert!(derived.azel(1).is_err());
+        assert!(derived.last(1).is_err());
+        assert!(derived.uvw_j2000(1).is_err());
+        assert!(derived.hadec2(1).is_err());
+    }
 }
