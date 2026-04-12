@@ -11,8 +11,10 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-lattices = { path = "../casa-lattices" }
+casa-types = { path = "../casa-types" }
 libm = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true

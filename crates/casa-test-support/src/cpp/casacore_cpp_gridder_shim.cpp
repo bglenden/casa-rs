@@ -263,3 +263,216 @@ extern "C" int cpp_convolve_gridder_make_dirty_image_2d(
         return 1;
     }
 }
+
+extern "C" int cpp_convolve_gridder_predict_visibility_2d(
+    int grid_nx,
+    int grid_ny,
+    int image_nx,
+    int image_ny,
+    double scale_x,
+    double scale_y,
+    double offset_x,
+    double offset_y,
+    double u,
+    double v,
+    const float* model_image_out,
+    float* predicted_re_out,
+    float* predicted_im_out,
+    char** out_error
+) {
+    try {
+        if (!model_image_out || !predicted_re_out || !predicted_im_out) {
+            if (out_error) *out_error = make_error("invalid predict-visibility buffers");
+            return 1;
+        }
+
+        casacore::IPosition shape(2, grid_nx, grid_ny);
+        casacore::Vector<double> scale(2);
+        scale(0) = scale_x;
+        scale(1) = scale_y;
+        casacore::Vector<double> offset(2);
+        offset(0) = offset_x;
+        offset(1) = offset_y;
+        casacore::ConvolveGridder<double, casacore::Complex> gridder(shape, scale, offset, "SF");
+
+        const int blc_x = (grid_nx - image_nx + ((grid_nx % 2) == 0 ? 1 : 0)) / 2;
+        const int blc_y = (grid_ny - image_ny + ((grid_ny % 2) == 0 ? 1 : 0)) / 2;
+
+        casacore::Array<casacore::Complex> model_grid(shape);
+        model_grid.set(casacore::Complex(0.0f, 0.0f));
+        casacore::Vector<casacore::Complex> correction(grid_nx);
+        for (int y = 0; y < image_ny; ++y) {
+            const int grid_y = blc_y + y;
+            gridder.correctX1D(correction, grid_y);
+            for (int x = 0; x < image_nx; ++x) {
+                const int grid_x = blc_x + x;
+                const float correction_value = correction(grid_x).real();
+                if (std::abs(correction_value) <= 1.0e-6f) {
+                    continue;
+                }
+                model_grid(casacore::IPosition(2, grid_x, grid_y)) = casacore::Complex(
+                    model_image_out[x * image_ny + y] * correction_value,
+                    0.0f
+                );
+            }
+        }
+
+        casacore::ArrayLattice<casacore::Complex> model_lattice(model_grid);
+        casacore::LatticeFFT::cfft2d(model_lattice, true);
+
+        casacore::Vector<double> position(2);
+        position(0) = u;
+        position(1) = v;
+        casacore::Complex predicted(0.0f, 0.0f);
+        if (!gridder.degrid(model_grid, position, predicted)) {
+            if (out_error) *out_error = make_error("predict-visibility sample is off grid");
+            return 2;
+        }
+        *predicted_re_out = predicted.real();
+        *predicted_im_out = predicted.imag();
+        return 0;
+    } catch (const std::exception& err) {
+        if (out_error) *out_error = make_error(err.what());
+        return 1;
+    } catch (...) {
+        if (out_error) *out_error = make_error("unknown C++ exception");
+        return 1;
+    }
+}
+
+extern "C" int cpp_convolve_gridder_make_model_residual_image_2d(
+    int grid_nx,
+    int grid_ny,
+    int image_nx,
+    int image_ny,
+    double scale_x,
+    double scale_y,
+    double offset_x,
+    double offset_y,
+    const double* u_out,
+    const double* v_out,
+    const float* vis_re_out,
+    const float* vis_im_out,
+    const float* weight_out,
+    const uint8_t* gridable_out,
+    const float* model_image_out,
+    int nsamples,
+    float* image_out,
+    int max_image_len,
+    char** out_error
+) {
+    try {
+        if (
+            !u_out || !v_out || !vis_re_out || !vis_im_out || !weight_out || !gridable_out
+            || !model_image_out || !image_out || nsamples < 0 || max_image_len < image_nx * image_ny
+        ) {
+            if (out_error) *out_error = make_error("invalid residual-image buffers");
+            return 1;
+        }
+
+        casacore::IPosition shape(2, grid_nx, grid_ny);
+        casacore::Vector<double> scale(2);
+        scale(0) = scale_x;
+        scale(1) = scale_y;
+        casacore::Vector<double> offset(2);
+        offset(0) = offset_x;
+        offset(1) = offset_y;
+        casacore::ConvolveGridder<double, casacore::Complex> gridder(shape, scale, offset, "SF");
+
+        const int blc_x = (grid_nx - image_nx + ((grid_nx % 2) == 0 ? 1 : 0)) / 2;
+        const int blc_y = (grid_ny - image_ny + ((grid_ny % 2) == 0 ? 1 : 0)) / 2;
+
+        casacore::Array<casacore::Complex> model_grid(shape);
+        model_grid.set(casacore::Complex(0.0f, 0.0f));
+        casacore::Vector<casacore::Complex> correction(grid_nx);
+        for (int y = 0; y < image_ny; ++y) {
+            const int grid_y = blc_y + y;
+            gridder.correctX1D(correction, grid_y);
+            for (int x = 0; x < image_nx; ++x) {
+                const int grid_x = blc_x + x;
+                const float correction_value = correction(grid_x).real();
+                if (std::abs(correction_value) <= 1.0e-6f) {
+                    continue;
+                }
+                model_grid(casacore::IPosition(2, grid_x, grid_y)) = casacore::Complex(
+                    model_image_out[x * image_ny + y] * correction_value,
+                    0.0f
+                );
+            }
+        }
+
+        casacore::ArrayLattice<casacore::Complex> model_lattice(model_grid);
+        casacore::LatticeFFT::cfft2d(model_lattice, true);
+
+        casacore::Array<casacore::Complex> residual_grid(shape);
+        residual_grid.set(casacore::Complex(0.0f, 0.0f));
+        double normalization_sumwt = 0.0;
+        for (int index = 0; index < nsamples; ++index) {
+            if (!gridable_out[index]) {
+                continue;
+            }
+            const float weight = weight_out[index];
+            const float vis_re = vis_re_out[index];
+            const float vis_im = vis_im_out[index];
+            if (
+                !std::isfinite(weight) || weight <= 0.0f || !std::isfinite(vis_re)
+                || !std::isfinite(vis_im)
+            ) {
+                continue;
+            }
+            casacore::Vector<double> positive(2);
+            positive(0) = u_out[index];
+            positive(1) = -v_out[index];
+            casacore::Vector<double> negative(2);
+            negative(0) = -u_out[index];
+            negative(1) = v_out[index];
+            casacore::Complex predicted(0.0f, 0.0f);
+            if (!gridder.degrid(model_grid, positive, predicted)) {
+                continue;
+            }
+            const casacore::Complex sample(vis_re, vis_im);
+            const casacore::Complex residual = (sample - predicted) * weight;
+            if (!gridder.grid(residual_grid, positive, residual)) {
+                continue;
+            }
+            if (!gridder.grid(residual_grid, negative, conj(residual))) {
+                continue;
+            }
+            normalization_sumwt += 2.0 * weight;
+        }
+
+        if (!(normalization_sumwt > 0.0) || !std::isfinite(normalization_sumwt)) {
+            if (out_error) *out_error = make_error("no usable samples for residual-image shim");
+            return 2;
+        }
+
+        casacore::ArrayLattice<casacore::Complex> residual_lattice(residual_grid);
+        casacore::LatticeFFT::cfft2d(residual_lattice, false);
+
+        for (int y = 0; y < grid_ny; ++y) {
+            gridder.correctX1D(correction, y);
+            for (int x = 0; x < grid_nx; ++x) {
+                residual_grid(casacore::IPosition(2, x, y)) /= correction(x);
+                residual_grid(casacore::IPosition(2, x, y)) *= static_cast<float>(
+                    (static_cast<double>(grid_nx) * static_cast<double>(grid_ny))
+                    / normalization_sumwt
+                );
+            }
+        }
+
+        int out_index = 0;
+        for (int x = 0; x < image_nx; ++x) {
+            for (int y = 0; y < image_ny; ++y) {
+                image_out[out_index++] =
+                    real(residual_grid(casacore::IPosition(2, blc_x + x, blc_y + y)));
+            }
+        }
+        return 0;
+    } catch (const std::exception& err) {
+        if (out_error) *out_error = make_error(err.what());
+        return 1;
+    } catch (...) {
+        if (out_error) *out_error = make_error("unknown C++ exception");
+        return 1;
+    }
+}

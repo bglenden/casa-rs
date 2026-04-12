@@ -475,9 +475,11 @@ dependencies = [
 name = "casa-imaging"
 version = "0.11.3"
 dependencies = [
+ "casa-coordinates",
  "casa-images",
  "casa-lattices",
  "casa-test-support",
+ "casa-types",
  "libm",
  "ndarray",
  "num-complex",
@@ -582,6 +584,7 @@ dependencies = [
  "casa-images",
  "casa-lattices",
  "casa-measures-data",
+ "casa-ms",
  "casa-tables",
  "casa-types",
  "cc",
@@ -663,10 +666,13 @@ dependencies = [
  "casa-tables",
  "casa-test-support",
  "casa-types",
+ "flate2",
  "image",
  "ndarray",
  "num-complex",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
 ]

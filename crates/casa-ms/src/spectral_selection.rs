@@ -138,6 +138,31 @@ impl CubeAxisValue {
     }
 }
 
+/// Parse a CASA-style rest frequency quantity into Hz.
+///
+/// This accepts explicit frequency units such as `1.25GHz`. Bare numeric values
+/// follow CASA task semantics and are interpreted as MHz.
+pub fn parse_rest_frequency_hz(value: &str) -> MsResult<f64> {
+    let quantity = value.trim().parse::<Quantity>().map_err(|error| {
+        MsError::VersionError(format!("invalid rest frequency {value:?}: {error}"))
+    })?;
+    let hz = if quantity.unit().name().is_empty() {
+        quantity.value() * 1.0e6
+    } else {
+        quantity
+            .get_value_in(&Unit::new("Hz").expect("built-in Hz unit must parse"))
+            .map_err(|error| {
+                MsError::VersionError(format!("convert rest frequency {value:?} to Hz: {error}"))
+            })?
+    };
+    if hz <= 0.0 || !hz.is_finite() {
+        return Err(MsError::VersionError(format!(
+            "rest frequency must resolve to a positive finite Hz value, got {hz}"
+        )));
+    }
+    Ok(hz)
+}
+
 /// CASA-style cube-axis construction options.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CubeAxisConfig {
@@ -193,8 +218,14 @@ pub struct CubeSpectralSetup {
     /// Whether interpolation should use native source-channel frequencies
     /// rather than source frequencies converted into the output frame.
     pub interpolation_uses_native_source_frequencies: bool,
+    /// Reference row time used to define the output cube spectral frame.
+    pub output_frame_reference_time_mjd_sec: f64,
+    /// Field id used to define the output cube spectral frame.
+    pub output_frame_field_id: usize,
     /// Output cube channel frequencies in `output_freq_ref`.
     pub output_channel_frequencies_hz: Vec<f64>,
+    /// Output cube channel widths in `output_freq_ref`.
+    pub output_channel_widths_hz: Vec<f64>,
 }
 
 /// One source-spectral contribution into an output cube plane.
@@ -208,7 +239,26 @@ pub struct CubeChannelContribution {
     pub factor: f32,
 }
 
+/// All spectral interpolation products needed for one prepared cube row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CubeRowSpectralContributions {
+    /// Source-channel contributions into each output cube plane for this row.
+    pub output_channel_contributions: Vec<Vec<CubeChannelContribution>>,
+    /// Output-model channel contributions used while degridding each selected
+    /// source channel for this row.
+    pub source_channel_model_contributions: Vec<Vec<CubeChannelContribution>>,
+}
+
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
+
+fn ensure_supported_interpolation(interpolation: CubeInterpolation) -> MsResult<()> {
+    match interpolation {
+        CubeInterpolation::Nearest | CubeInterpolation::Linear => Ok(()),
+        CubeInterpolation::Cubic => Err(MsError::VersionError(
+            "cube interpolation 'cubic' is not implemented; use 'nearest' or 'linear'".to_string(),
+        )),
+    }
+}
 
 fn channel_edges_from_centers(all_source_frequencies_hz: &[f64]) -> MsResult<Vec<f64>> {
     if all_source_frequencies_hz.is_empty() {
@@ -233,6 +283,14 @@ fn channel_edges_from_centers(all_source_frequencies_hz: &[f64]) -> MsResult<Vec
     Ok(edges)
 }
 
+fn channel_widths_from_centers(channel_frequencies_hz: &[f64]) -> MsResult<Vec<f64>> {
+    let edges = channel_edges_from_centers(channel_frequencies_hz)?;
+    Ok(edges
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .collect())
+}
+
 fn channel_mode_output_centers(
     all_source_frequencies_hz: &[f64],
     all_source_channel_widths_hz: &[f64],
@@ -255,6 +313,230 @@ fn channel_mode_output_centers(
             all_source_channel_widths_hz.len()
         )));
     }
+    if all_source_frequencies_hz.first() <= all_source_frequencies_hz.last() {
+        return channel_mode_output_centers_simple(
+            all_source_frequencies_hz,
+            all_source_channel_widths_hz,
+            start_channel,
+            width_channels,
+            nchan,
+        );
+    }
+
+    let mut trans_freq_hz = all_source_frequencies_hz.to_vec();
+    let mut trans_width_hz = all_source_channel_widths_hz
+        .iter()
+        .map(|width_hz| width_hz.abs())
+        .collect::<Vec<_>>();
+    let mut start = start_channel;
+    let mut start_is_end = width_channels < 0;
+
+    if trans_freq_hz.first() > trans_freq_hz.last() {
+        trans_freq_hz.reverse();
+        trans_width_hz.reverse();
+        start = nchannels - 1 - start;
+        start_is_end = !start_is_end;
+    }
+
+    if start < 0 || start >= nchannels {
+        return Err(MsError::VersionError(format!(
+            "cube channel start {start_channel} is outside the SPW with {nchannels} channels"
+        )));
+    }
+
+    let requested_nchan = i32::try_from(nchan)
+        .map_err(|_| MsError::VersionError("cube channel count exceeds i32".to_string()))?;
+    let mut bandwidth_channels = requested_nchan;
+    let mut center_channel = start;
+    if start_is_end {
+        center_channel -= bandwidth_channels / 2;
+    } else {
+        center_channel += bandwidth_channels / 2;
+    }
+
+    if center_channel - bandwidth_channels / 2 < 0 {
+        bandwidth_channels = 2 * center_channel + 1;
+    }
+    if nchannels < center_channel + bandwidth_channels / 2 {
+        bandwidth_channels = 2 * (nchannels - center_channel);
+    }
+
+    let requested_width_channels = width_channels.abs();
+    let channel_width = if requested_width_channels < 1 {
+        1
+    } else if requested_width_channels > bandwidth_channels {
+        bandwidth_channels
+    } else {
+        requested_width_channels
+    };
+    bandwidth_channels = requested_nchan * channel_width;
+
+    let bandwidth_lower_end_channel = center_channel - bandwidth_channels / 2;
+    let bandwidth_upper_end_channel = bandwidth_lower_end_channel + bandwidth_channels - 1;
+
+    if channel_width == bandwidth_channels {
+        let low = usize::try_from(bandwidth_lower_end_channel)
+            .expect("validated lower single-channel bound");
+        let high = usize::try_from(bandwidth_upper_end_channel)
+            .expect("validated upper single-channel bound");
+        return Ok(vec![
+            0.5 * ((trans_freq_hz[low] - trans_width_hz[low] / 2.0)
+                + (trans_freq_hz[high] + trans_width_hz[high] / 2.0)),
+        ]);
+    }
+
+    let mut lower_bounds_hz = Vec::new();
+    let mut upper_bounds_hz = Vec::new();
+    let channel_ratio = bandwidth_channels / channel_width;
+    let start_channel_index = if channel_ratio % 2 != 0 {
+        center_channel - channel_width / 2
+    } else {
+        center_channel
+    };
+
+    let mut lower_indices_up = Vec::new();
+    let mut upper_indices_up = Vec::new();
+    let mut index = start_channel_index;
+    while index <= bandwidth_upper_end_channel {
+        lower_indices_up.push(index);
+        upper_indices_up.push((index + channel_width - 1).min(bandwidth_upper_end_channel));
+        index += channel_width;
+    }
+
+    let mut lower_indices_down = Vec::new();
+    let mut upper_indices_down = Vec::new();
+    let mut index = start_channel_index - 1;
+    while index >= bandwidth_lower_end_channel {
+        upper_indices_down.push(index);
+        lower_indices_down.push((index - channel_width + 1).max(bandwidth_lower_end_channel));
+        index -= channel_width;
+    }
+
+    for reverse_index in (0..lower_indices_down.len()).rev() {
+        let low = usize::try_from(lower_indices_down[reverse_index])
+            .expect("validated lower descending bound");
+        let high = usize::try_from(upper_indices_down[reverse_index])
+            .expect("validated upper descending bound");
+        lower_bounds_hz.push(trans_freq_hz[low] - trans_width_hz[low] / 2.0);
+        upper_bounds_hz.push(trans_freq_hz[high] + trans_width_hz[high] / 2.0);
+    }
+    for index in 0..lower_indices_up.len() {
+        let low =
+            usize::try_from(lower_indices_up[index]).expect("validated lower ascending bound");
+        let high =
+            usize::try_from(upper_indices_up[index]).expect("validated upper ascending bound");
+        lower_bounds_hz.push(trans_freq_hz[low] - trans_width_hz[low] / 2.0);
+        upper_bounds_hz.push(trans_freq_hz[high] + trans_width_hz[high] / 2.0);
+    }
+
+    Ok(lower_bounds_hz
+        .into_iter()
+        .zip(upper_bounds_hz)
+        .map(|(low_hz, high_hz)| 0.5 * (low_hz + high_hz))
+        .collect())
+}
+
+fn casa_regridding_input_widths(
+    source_frequencies_hz: &[f64],
+    source_channel_widths_hz: &[f64],
+) -> MsResult<Vec<f64>> {
+    if source_frequencies_hz.len() != source_channel_widths_hz.len() {
+        return Err(MsError::VersionError(format!(
+            "CASA regridding widths require matching frequency/width arrays, got {} and {}",
+            source_frequencies_hz.len(),
+            source_channel_widths_hz.len()
+        )));
+    }
+    match source_frequencies_hz.len() {
+        0 => Err(MsError::VersionError(
+            "cannot build CASA regridding widths from an empty SPW".to_string(),
+        )),
+        _ => Ok(source_channel_widths_hz
+            .iter()
+            .map(|width_hz| width_hz.abs())
+            .collect()),
+    }
+}
+
+fn casa_transformed_channel_mode_output_centers(
+    transformed_source_frequencies_hz: &[f64],
+    transformed_source_channel_widths_hz: &[f64],
+    start_channel: i32,
+    width_channels: i32,
+    nchan: usize,
+) -> MsResult<Vec<f64>> {
+    if width_channels == 0 {
+        return Err(MsError::VersionError(
+            "cube channel width must not be zero".to_string(),
+        ));
+    }
+    if transformed_source_frequencies_hz.len() != transformed_source_channel_widths_hz.len() {
+        return Err(MsError::VersionError(format!(
+            "CASA transformed cube axis requires matching frequency/width arrays, got {} and {}",
+            transformed_source_frequencies_hz.len(),
+            transformed_source_channel_widths_hz.len()
+        )));
+    }
+    if transformed_source_frequencies_hz.is_empty() {
+        return Err(MsError::VersionError(
+            "cannot build CASA transformed cube axis from an empty SPW".to_string(),
+        ));
+    }
+
+    let nchannels = i32::try_from(transformed_source_frequencies_hz.len()).map_err(|_| {
+        MsError::VersionError("spectral window channel count exceeds i32".to_string())
+    })?;
+    let mut transformed_frequencies_hz = transformed_source_frequencies_hz.to_vec();
+    let mut transformed_widths_hz = transformed_source_channel_widths_hz
+        .iter()
+        .map(|width_hz| width_hz.abs())
+        .collect::<Vec<_>>();
+    let mut first_channel = start_channel;
+    let mut start_is_end = width_channels < 0;
+    let descending = transformed_frequencies_hz.first() > transformed_frequencies_hz.last();
+
+    if descending {
+        transformed_frequencies_hz.reverse();
+        transformed_widths_hz.reverse();
+        first_channel = nchannels - 1 - first_channel;
+        start_is_end = !start_is_end;
+    }
+
+    if first_channel < 0 || first_channel >= nchannels {
+        return Err(MsError::VersionError(format!(
+            "cube channel start {start_channel} is outside the SPW with {nchannels} channels"
+        )));
+    }
+
+    let output_channel_width_hz =
+        transformed_widths_hz[0] * f64::from(width_channels.unsigned_abs());
+    let output_bandwidth_hz = output_channel_width_hz * nchan as f64;
+    let first_channel = usize::try_from(first_channel).expect("validated channel index");
+    let start_edge_hz = if start_is_end {
+        transformed_frequencies_hz[first_channel] + transformed_widths_hz[first_channel] / 2.0
+            - output_bandwidth_hz
+    } else {
+        transformed_frequencies_hz[first_channel] - transformed_widths_hz[first_channel] / 2.0
+    };
+    let mut centers_hz = (0..nchan)
+        .map(|index| start_edge_hz + (index as f64 + 0.5) * output_channel_width_hz)
+        .collect::<Vec<_>>();
+    if descending ^ (width_channels < 0) {
+        centers_hz.reverse();
+    }
+    Ok(centers_hz)
+}
+
+fn channel_mode_output_centers_simple(
+    all_source_frequencies_hz: &[f64],
+    all_source_channel_widths_hz: &[f64],
+    start_channel: i32,
+    width_channels: i32,
+    nchan: usize,
+) -> MsResult<Vec<f64>> {
+    let nchannels = i32::try_from(all_source_frequencies_hz.len()).map_err(|_| {
+        MsError::VersionError("spectral window channel count exceeds i32".to_string())
+    })?;
     let mut centers = Vec::with_capacity(nchan);
     for offset in 0..nchan {
         let offset = i32::try_from(offset)
@@ -354,6 +636,7 @@ impl CubeSpectralSetup {
         time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
     ) -> MsResult<(Self, ResolvedChannelSelection)> {
+        ensure_supported_interpolation(axis_config.interpolation)?;
         let channel_mode = axis_config.start.is_none() && axis_config.width.is_none()
             || matches!(axis_config.start, Some(CubeAxisValue::Channel(_)))
                 && axis_config.width.is_none()
@@ -431,6 +714,11 @@ impl CubeSpectralSetup {
                 interpolation_uses_native_source_frequencies: uses_native_source_interpolation(
                     axis_config,
                 ),
+                output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
+                output_frame_field_id: field_id,
+                output_channel_widths_hz: channel_widths_from_centers(
+                    &output_channel_frequencies_hz,
+                )?,
                 output_channel_frequencies_hz,
             };
             let support = cube_source_channel_support(
@@ -496,6 +784,9 @@ impl CubeSpectralSetup {
             interpolation_uses_native_source_frequencies: uses_native_source_interpolation(
                 axis_config,
             ),
+            output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
+            output_frame_field_id: field_id,
+            output_channel_widths_hz: channel_widths_from_centers(&output_channel_frequencies_hz)?,
             output_channel_frequencies_hz,
         };
         let support = cube_source_channel_support(
@@ -527,6 +818,7 @@ impl CubeSpectralSetup {
         time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
     ) -> MsResult<(Self, ResolvedChannelSelection)> {
+        ensure_supported_interpolation(axis_config.interpolation)?;
         if nchan == 0 {
             return Err(MsError::VersionError(
                 "cube output channel count must be positive".to_string(),
@@ -588,15 +880,19 @@ impl CubeSpectralSetup {
                         )
                     })
                     .collect::<MsResult<Vec<_>>>()?;
+                let regridding_input_widths_hz = casa_regridding_input_widths(
+                    all_source_frequencies_hz,
+                    all_source_channel_widths_hz,
+                )?;
                 let source_channel_widths_in_output_frame =
                     convert_channel_widths_to_frame_with_frame(
                         source_freq_ref,
                         output_freq_ref,
                         all_source_frequencies_hz,
-                        all_source_channel_widths_hz,
+                        &regridding_input_widths_hz,
                         &frame,
                     )?;
-                channel_mode_output_centers(
+                casa_transformed_channel_mode_output_centers(
                     &source_frequencies_in_output_frame,
                     &source_channel_widths_in_output_frame,
                     start_channel,
@@ -611,6 +907,9 @@ impl CubeSpectralSetup {
             interpolation_uses_native_source_frequencies: uses_native_source_interpolation(
                 axis_config,
             ),
+            output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
+            output_frame_field_id: field_id,
+            output_channel_widths_hz: channel_widths_from_centers(&output_channel_frequencies_hz)?,
             output_channel_frequencies_hz,
         };
         let support = cube_source_channel_support(
@@ -624,16 +923,17 @@ impl CubeSpectralSetup {
         Ok((setup, support))
     }
 
-    /// Build output-channel interpolation contributions for one row, reusing
-    /// the per-row spectral frame conversion state.
-    pub fn row_output_channel_contributions_batch(
+    /// Build all per-row spectral interpolation products needed by cube
+    /// preparation and major-cycle prediction.
+    pub fn row_spectral_contributions(
         &self,
         source_frequencies_hz: &[f64],
         source_channel_widths_hz: &[f64],
         row_time_mjd_sec: f64,
-        field_id: usize,
+        row_field_id: usize,
         derived_engine: &MsCalEngine,
-    ) -> MsResult<Vec<Vec<CubeChannelContribution>>> {
+    ) -> MsResult<CubeRowSpectralContributions> {
+        ensure_supported_interpolation(self.interpolation)?;
         if source_channel_widths_hz.len() != source_frequencies_hz.len() {
             return Err(MsError::VersionError(format!(
                 "row cube interpolation requires matching frequency/width arrays, got {} and {}",
@@ -641,32 +941,22 @@ impl CubeSpectralSetup {
                 source_channel_widths_hz.len()
             )));
         }
+        let (source_spectral_frame, output_spectral_frame) =
+            self.row_and_output_spectral_frames(row_time_mjd_sec, row_field_id, derived_engine)?;
         let source_frequencies_for_interpolation =
             if self.interpolation_uses_native_source_frequencies {
                 source_frequencies_hz.to_vec()
             } else {
-                let spectral_frame = if self.source_freq_ref == self.output_freq_ref {
-                    None
-                } else {
-                    Some(
-                        derived_engine
-                            .spectral_frame_observatory(row_time_mjd_sec, field_id)
-                            .map_err(|error| {
-                                MsError::VersionError(format!(
-                                    "build spectral frame for field {field_id}: {error}"
-                                ))
-                            })?,
-                    )
-                };
                 source_frequencies_hz
                     .iter()
                     .copied()
                     .map(|source_frequency_hz| {
-                        convert_frequency_to_frame_with_frame(
+                        convert_frequency_to_frame_with_frames(
                             self.source_freq_ref,
                             self.output_freq_ref,
                             source_frequency_hz,
-                            spectral_frame.as_ref(),
+                            source_spectral_frame.as_ref(),
+                            output_spectral_frame.as_ref(),
                         )
                     })
                     .collect::<MsResult<Vec<_>>>()?
@@ -675,44 +965,181 @@ impl CubeSpectralSetup {
             if self.interpolation_uses_native_source_frequencies {
                 source_channel_widths_hz.to_vec()
             } else {
-                let spectral_frame = if self.source_freq_ref == self.output_freq_ref {
-                    None
-                } else {
-                    Some(
-                        derived_engine
-                            .spectral_frame_observatory(row_time_mjd_sec, field_id)
-                            .map_err(|error| {
-                                MsError::VersionError(format!(
-                                    "build spectral frame for field {field_id}: {error}"
-                                ))
-                            })?,
-                    )
-                };
-                match spectral_frame.as_ref() {
-                    Some(frame) => convert_channel_widths_to_frame_with_frame(
-                        self.source_freq_ref,
-                        self.output_freq_ref,
-                        source_frequencies_hz,
-                        source_channel_widths_hz,
-                        frame,
-                    )?,
-                    None => source_channel_widths_hz.to_vec(),
+                match (
+                    source_spectral_frame.as_ref(),
+                    output_spectral_frame.as_ref(),
+                ) {
+                    (Some(source_frame), Some(output_frame)) => {
+                        convert_channel_widths_to_frame_with_frames(
+                            self.source_freq_ref,
+                            self.output_freq_ref,
+                            source_frequencies_hz,
+                            source_channel_widths_hz,
+                            source_frame,
+                            output_frame,
+                        )?
+                    }
+                    (None, None) => source_channel_widths_hz.to_vec(),
+                    _ => unreachable!("source and output spectral frames are paired"),
                 }
             };
-        Ok(self
-            .output_channel_frequencies_hz
-            .iter()
-            .copied()
-            .map(|output_frequency_hz| {
-                spectral_interpolation_contributions(
-                    source_frequencies_hz,
-                    &source_frequencies_for_interpolation,
-                    &source_channel_widths_for_interpolation,
-                    self.interpolation,
-                    output_frequency_hz,
+        let output_frequencies_for_interpolation =
+            if self.interpolation_uses_native_source_frequencies {
+                match (
+                    source_spectral_frame.as_ref(),
+                    output_spectral_frame.as_ref(),
+                ) {
+                    (Some(source_frame), Some(output_frame)) => self
+                        .output_channel_frequencies_hz
+                        .iter()
+                        .copied()
+                        .map(|output_frequency_hz| {
+                            convert_frequency_to_frame_with_frames(
+                                self.output_freq_ref,
+                                self.source_freq_ref,
+                                output_frequency_hz,
+                                Some(output_frame),
+                                Some(source_frame),
+                            )
+                        })
+                        .collect::<MsResult<Vec<_>>>()?,
+                    (None, None) => self.output_channel_frequencies_hz.clone(),
+                    _ => unreachable!("source and output spectral frames are paired"),
+                }
+            } else {
+                self.output_channel_frequencies_hz.clone()
+            };
+        let output_channel_widths_for_interpolation =
+            if self.interpolation_uses_native_source_frequencies {
+                match (
+                    source_spectral_frame.as_ref(),
+                    output_spectral_frame.as_ref(),
+                ) {
+                    (Some(source_frame), Some(output_frame)) => {
+                        convert_channel_widths_to_frame_with_frames(
+                            self.output_freq_ref,
+                            self.source_freq_ref,
+                            &self.output_channel_frequencies_hz,
+                            &self.output_channel_widths_hz,
+                            output_frame,
+                            source_frame,
+                        )?
+                    }
+                    (None, None) => self.output_channel_widths_hz.clone(),
+                    _ => unreachable!("source and output spectral frames are paired"),
+                }
+            } else {
+                self.output_channel_widths_hz.clone()
+            };
+        let output_channel_contributions = build_output_channel_contributions(
+            source_frequencies_hz,
+            &source_frequencies_for_interpolation,
+            &source_channel_widths_for_interpolation,
+            &output_frequencies_for_interpolation,
+            self.interpolation,
+        );
+        let source_channel_model_contributions = source_frequencies_for_interpolation
+            .into_iter()
+            .map(|source_frequency_hz| match self.interpolation {
+                CubeInterpolation::Nearest => nearest_channel_index(
+                    &output_frequencies_for_interpolation,
+                    source_frequency_hz,
                 )
+                .map(|index| {
+                    vec![CubeChannelContribution {
+                        source_channel: index,
+                        source_frequency_hz: self.output_channel_frequencies_hz[index],
+                        factor: 1.0,
+                    }]
+                })
+                .unwrap_or_default(),
+                CubeInterpolation::Linear | CubeInterpolation::Cubic => {
+                    linear_channel_model_contributions(
+                        &self.output_channel_frequencies_hz,
+                        &output_frequencies_for_interpolation,
+                        &output_channel_widths_for_interpolation,
+                        source_frequency_hz,
+                    )
+                }
             })
-            .collect())
+            .collect();
+        Ok(CubeRowSpectralContributions {
+            output_channel_contributions,
+            source_channel_model_contributions,
+        })
+    }
+
+    /// Build output-channel interpolation contributions for one row, reusing
+    /// the per-row spectral frame conversion state.
+    pub fn row_output_channel_contributions_batch(
+        &self,
+        source_frequencies_hz: &[f64],
+        source_channel_widths_hz: &[f64],
+        row_time_mjd_sec: f64,
+        row_field_id: usize,
+        derived_engine: &MsCalEngine,
+    ) -> MsResult<Vec<Vec<CubeChannelContribution>>> {
+        self.row_spectral_contributions(
+            source_frequencies_hz,
+            source_channel_widths_hz,
+            row_time_mjd_sec,
+            row_field_id,
+            derived_engine,
+        )
+        .map(|contributions| contributions.output_channel_contributions)
+    }
+
+    /// Build per-source-channel model interpolation contributions for one row.
+    ///
+    /// Each returned entry corresponds to one selected source channel and
+    /// contains the output-model channels that CASA-style cube degridding would
+    /// interpolate between when predicting at that source-channel frequency.
+    pub fn row_source_channel_model_contributions_batch(
+        &self,
+        source_frequencies_hz: &[f64],
+        source_channel_widths_hz: &[f64],
+        row_time_mjd_sec: f64,
+        row_field_id: usize,
+        derived_engine: &MsCalEngine,
+    ) -> MsResult<Vec<Vec<CubeChannelContribution>>> {
+        self.row_spectral_contributions(
+            source_frequencies_hz,
+            source_channel_widths_hz,
+            row_time_mjd_sec,
+            row_field_id,
+            derived_engine,
+        )
+        .map(|contributions| contributions.source_channel_model_contributions)
+    }
+
+    fn row_and_output_spectral_frames(
+        &self,
+        row_time_mjd_sec: f64,
+        row_field_id: usize,
+        derived_engine: &MsCalEngine,
+    ) -> MsResult<(Option<MeasFrame>, Option<MeasFrame>)> {
+        if self.source_freq_ref == self.output_freq_ref {
+            return Ok((None, None));
+        }
+        let source_spectral_frame = derived_engine
+            .spectral_frame_observatory(row_time_mjd_sec, row_field_id)
+            .map_err(|error| {
+                MsError::VersionError(format!(
+                    "build source spectral frame for field {row_field_id}: {error}"
+                ))
+            })?;
+        let output_spectral_frame = derived_engine
+            .spectral_frame_observatory(
+                self.output_frame_reference_time_mjd_sec,
+                self.output_frame_field_id,
+            )
+            .map_err(|error| {
+                MsError::VersionError(format!(
+                    "build output spectral frame for field {}: {error}",
+                    self.output_frame_field_id
+                ))
+            })?;
+        Ok((Some(source_spectral_frame), Some(output_spectral_frame)))
     }
 }
 
@@ -1200,7 +1627,9 @@ fn snap_default_frequency_like_start_to_source_grid(
         .unwrap_or(start_frequency_hz)
 }
 
-fn convert_frequency_to_frame(
+/// Convert one scalar frequency between spectral frames using the MeasurementSet
+/// observatory frame for the given row time and field.
+pub fn convert_frequency_to_frame(
     source_freq_ref: FrequencyRef,
     target_freq_ref: FrequencyRef,
     frequency_hz: f64,
@@ -1226,22 +1655,72 @@ fn convert_frequency_to_frame(
     )
 }
 
-fn convert_frequency_to_frame_with_frame(
+/// Convert one scalar frequency between spectral frames using a caller-provided
+/// measures frame.
+///
+/// If the source and target references are identical, the input frequency is
+/// returned unchanged and the frame is ignored.
+pub fn convert_frequency_to_frame_with_frame(
     source_freq_ref: FrequencyRef,
     target_freq_ref: FrequencyRef,
     frequency_hz: f64,
     frame: Option<&MeasFrame>,
 ) -> MsResult<f64> {
+    convert_frequency_to_frame_with_frames(
+        source_freq_ref,
+        target_freq_ref,
+        frequency_hz,
+        frame,
+        frame,
+    )
+}
+
+fn convert_frequency_to_frame_with_frames(
+    source_freq_ref: FrequencyRef,
+    target_freq_ref: FrequencyRef,
+    frequency_hz: f64,
+    source_frame: Option<&MeasFrame>,
+    target_frame: Option<&MeasFrame>,
+) -> MsResult<f64> {
     if source_freq_ref == target_freq_ref {
         return Ok(frequency_hz);
     }
-    let frame = frame.expect("frame required for cross-frame frequency conversion");
-    MFrequency::new(frequency_hz, source_freq_ref)
-        .convert_to(target_freq_ref, frame)
-        .map(|frequency| frequency.hz())
+    let source_frame = source_frame.expect("source frame required for cross-frame conversion");
+    let target_frame = target_frame.expect("target frame required for cross-frame conversion");
+    let mut current_frequency_hz = frequency_hz;
+    let mut current_ref = source_freq_ref;
+    for next_ref in direct_frequency_hop_path(source_freq_ref, target_freq_ref)? {
+        let hop_frame = if direct_frequency_hop_uses_target_frame(current_ref, next_ref) {
+            target_frame
+        } else {
+            source_frame
+        };
+        current_frequency_hz = MFrequency::new(current_frequency_hz, current_ref)
+            .convert_to(next_ref, hop_frame)
+            .map(|frequency| frequency.hz())
+            .map_err(|error| {
+                MsError::VersionError(format!(
+                    "convert frequency {current_frequency_hz} Hz from {current_ref} to {next_ref}: {error}"
+                ))
+            })?;
+        current_ref = next_ref;
+    }
+    Ok(current_frequency_hz)
+}
+
+/// Convert one scalar frequency into a doppler velocity in m/s using the given
+/// rest frequency and velocity definition.
+pub fn velocity_ms_from_frequency_hz(
+    frequency_hz: f64,
+    rest_frequency_hz: f64,
+    doppler_ref: DopplerRef,
+) -> MsResult<f64> {
+    MDoppler::new(frequency_hz / rest_frequency_hz, DopplerRef::RATIO)
+        .convert_to(doppler_ref, &MeasFrame::new())
+        .map(|doppler| doppler.value() * SPEED_OF_LIGHT_M_S)
         .map_err(|error| {
             MsError::VersionError(format!(
-                "convert frequency {frequency_hz} Hz from {source_freq_ref} to {target_freq_ref}: {error}"
+                "convert frequency {frequency_hz} Hz to {doppler_ref} velocity: {error}"
             ))
         })
 }
@@ -1252,6 +1731,24 @@ fn convert_channel_widths_to_frame_with_frame(
     source_channel_frequencies_hz: &[f64],
     source_channel_widths_hz: &[f64],
     frame: &MeasFrame,
+) -> MsResult<Vec<f64>> {
+    convert_channel_widths_to_frame_with_frames(
+        source_freq_ref,
+        target_freq_ref,
+        source_channel_frequencies_hz,
+        source_channel_widths_hz,
+        frame,
+        frame,
+    )
+}
+
+fn convert_channel_widths_to_frame_with_frames(
+    source_freq_ref: FrequencyRef,
+    target_freq_ref: FrequencyRef,
+    source_channel_frequencies_hz: &[f64],
+    source_channel_widths_hz: &[f64],
+    source_frame: &MeasFrame,
+    target_frame: &MeasFrame,
 ) -> MsResult<Vec<f64>> {
     if source_channel_frequencies_hz.len() != source_channel_widths_hz.len() {
         return Err(MsError::VersionError(format!(
@@ -1272,21 +1769,96 @@ fn convert_channel_widths_to_frame_with_frame(
         .zip(source_channel_widths_hz.iter().copied())
         .map(|(frequency_hz, width_hz)| {
             let half_width_hz = width_hz.abs() / 2.0;
-            let upper_hz = convert_frequency_to_frame_with_frame(
+            let upper_hz = convert_frequency_to_frame_with_frames(
                 source_freq_ref,
                 target_freq_ref,
                 frequency_hz + half_width_hz,
-                Some(frame),
+                Some(source_frame),
+                Some(target_frame),
             )?;
-            let lower_hz = convert_frequency_to_frame_with_frame(
+            let lower_hz = convert_frequency_to_frame_with_frames(
                 source_freq_ref,
                 target_freq_ref,
                 frequency_hz - half_width_hz,
-                Some(frame),
+                Some(source_frame),
+                Some(target_frame),
             )?;
             Ok((upper_hz - lower_hz).abs())
         })
         .collect()
+}
+
+const DIRECT_FREQUENCY_HOP_EDGES: &[(FrequencyRef, FrequencyRef)] = &[
+    (FrequencyRef::REST, FrequencyRef::LSRK),
+    (FrequencyRef::LSRK, FrequencyRef::BARY),
+    (FrequencyRef::LSRD, FrequencyRef::BARY),
+    (FrequencyRef::LSRD, FrequencyRef::GALACTO),
+    (FrequencyRef::BARY, FrequencyRef::LGROUP),
+    (FrequencyRef::BARY, FrequencyRef::CMB),
+    (FrequencyRef::BARY, FrequencyRef::GEO),
+    (FrequencyRef::GEO, FrequencyRef::TOPO),
+];
+
+fn direct_frequency_hop_path(
+    source_freq_ref: FrequencyRef,
+    target_freq_ref: FrequencyRef,
+) -> MsResult<Vec<FrequencyRef>> {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    if source_freq_ref == target_freq_ref {
+        return Ok(Vec::new());
+    }
+
+    let mut queue = VecDeque::from([source_freq_ref]);
+    let mut visited = HashSet::from([source_freq_ref]);
+    let mut parent = HashMap::<FrequencyRef, FrequencyRef>::new();
+
+    while let Some(current) = queue.pop_front() {
+        for &(left, right) in DIRECT_FREQUENCY_HOP_EDGES {
+            let next = if left == current {
+                right
+            } else if right == current {
+                left
+            } else {
+                continue;
+            };
+            if !visited.insert(next) {
+                continue;
+            }
+            parent.insert(next, current);
+            if next == target_freq_ref {
+                let mut path = Vec::new();
+                let mut cursor = target_freq_ref;
+                while cursor != source_freq_ref {
+                    path.push(cursor);
+                    cursor = *parent
+                        .get(&cursor)
+                        .expect("BFS parent must exist for visited node");
+                }
+                path.reverse();
+                return Ok(path);
+            }
+            queue.push_back(next);
+        }
+    }
+
+    Err(MsError::VersionError(format!(
+        "no direct-hop route found from {source_freq_ref} to {target_freq_ref}"
+    )))
+}
+
+fn direct_frequency_hop_uses_target_frame(from: FrequencyRef, to: FrequencyRef) -> bool {
+    matches!(
+        (from, to),
+        (FrequencyRef::LSRK, FrequencyRef::REST)
+            | (FrequencyRef::BARY, FrequencyRef::LSRK)
+            | (FrequencyRef::BARY, FrequencyRef::LSRD)
+            | (FrequencyRef::LSRD, FrequencyRef::GALACTO)
+            | (FrequencyRef::BARY, FrequencyRef::LGROUP)
+            | (FrequencyRef::BARY, FrequencyRef::CMB)
+            | (FrequencyRef::BARY, FrequencyRef::GEO)
+            | (FrequencyRef::GEO, FrequencyRef::TOPO)
+    )
 }
 
 fn nearest_channel_index(channel_frequencies_hz: &[f64], frequency_hz: f64) -> Option<usize> {
@@ -1347,11 +1919,64 @@ fn spectral_interpolation_contributions(
     }
 }
 
+fn build_output_channel_contributions(
+    native_source_channel_frequencies_hz: &[f64],
+    source_frequencies_for_interpolation: &[f64],
+    source_channel_widths_for_interpolation: &[f64],
+    output_frequencies_for_interpolation: &[f64],
+    interpolation: CubeInterpolation,
+) -> Vec<Vec<CubeChannelContribution>> {
+    output_frequencies_for_interpolation
+        .iter()
+        .copied()
+        .map(|output_frequency_hz| {
+            spectral_interpolation_contributions(
+                native_source_channel_frequencies_hz,
+                source_frequencies_for_interpolation,
+                source_channel_widths_for_interpolation,
+                interpolation,
+                output_frequency_hz,
+            )
+        })
+        .collect()
+}
+
 fn linear_channel_contributions(
     native_source_channel_frequencies_hz: &[f64],
     source_channel_frequencies_hz: &[f64],
     source_channel_widths_hz: &[f64],
     frequency_hz: f64,
+) -> Vec<CubeChannelContribution> {
+    linear_channel_contributions_impl(
+        native_source_channel_frequencies_hz,
+        source_channel_frequencies_hz,
+        source_channel_widths_hz,
+        frequency_hz,
+        false,
+    )
+}
+
+fn linear_channel_model_contributions(
+    native_source_channel_frequencies_hz: &[f64],
+    source_channel_frequencies_hz: &[f64],
+    source_channel_widths_hz: &[f64],
+    frequency_hz: f64,
+) -> Vec<CubeChannelContribution> {
+    linear_channel_contributions_impl(
+        native_source_channel_frequencies_hz,
+        source_channel_frequencies_hz,
+        source_channel_widths_hz,
+        frequency_hz,
+        true,
+    )
+}
+
+fn linear_channel_contributions_impl(
+    native_source_channel_frequencies_hz: &[f64],
+    source_channel_frequencies_hz: &[f64],
+    source_channel_widths_hz: &[f64],
+    frequency_hz: f64,
+    clip_to_edge_channel: bool,
 ) -> Vec<CubeChannelContribution> {
     let nchan = source_channel_frequencies_hz.len();
     if nchan == 0 {
@@ -1405,6 +2030,49 @@ fn linear_channel_contributions(
     }
 
     let ascending = source_channel_frequencies_hz[nchan - 1] >= source_channel_frequencies_hz[0];
+    let first_center_hz = source_channel_frequencies_hz[0];
+    let last_index = nchan - 1;
+    let last_center_hz = source_channel_frequencies_hz[last_index];
+    if clip_to_edge_channel {
+        if ascending {
+            let first_outer_edge_hz = first_center_hz - source_channel_widths_hz[0].abs() / 2.0;
+            let last_outer_edge_hz =
+                last_center_hz + source_channel_widths_hz[last_index].abs() / 2.0;
+            if first_outer_edge_hz <= frequency_hz && frequency_hz < first_center_hz {
+                return vec![CubeChannelContribution {
+                    source_channel: 0,
+                    source_frequency_hz: native_source_channel_frequencies_hz[0],
+                    factor: 1.0,
+                }];
+            }
+            if last_center_hz < frequency_hz && frequency_hz <= last_outer_edge_hz {
+                return vec![CubeChannelContribution {
+                    source_channel: last_index,
+                    source_frequency_hz: native_source_channel_frequencies_hz[last_index],
+                    factor: 1.0,
+                }];
+            }
+        } else {
+            let first_outer_edge_hz = first_center_hz + source_channel_widths_hz[0].abs() / 2.0;
+            let last_outer_edge_hz =
+                last_center_hz - source_channel_widths_hz[last_index].abs() / 2.0;
+            if first_center_hz < frequency_hz && frequency_hz <= first_outer_edge_hz {
+                return vec![CubeChannelContribution {
+                    source_channel: 0,
+                    source_frequency_hz: native_source_channel_frequencies_hz[0],
+                    factor: 1.0,
+                }];
+            }
+            if last_outer_edge_hz <= frequency_hz && frequency_hz < last_center_hz {
+                return vec![CubeChannelContribution {
+                    source_channel: last_index,
+                    source_frequency_hz: native_source_channel_frequencies_hz[last_index],
+                    factor: 1.0,
+                }];
+            }
+        }
+    }
+
     let interval = if ascending {
         source_channel_frequencies_hz
             .windows(2)
@@ -1629,9 +2297,7 @@ mod tests {
             optical_velocity_ms_from_axis_value(&CubeAxisValue::Channel(2), 1.25e9),
             Err(MsError::VersionError(message)) if message.contains("optical velocity-like")
         ));
-        assert!(
-            frequency_hz_from_vopt_ms(0.0, 1.25e9) - 1.25e9 < 1e-6
-        );
+        assert!(frequency_hz_from_vopt_ms(0.0, 1.25e9) - 1.25e9 < 1e-6);
         assert!((optical_velocity_ms_from_frequency_hz(1.25e9, 1.25e9)).abs() < 1e-6);
     }
 
@@ -1669,6 +2335,21 @@ mod tests {
 
         let single = linear_channel_contributions(&[10.0], &[10.0], &[4.0], 11.0);
         assert_eq!(single.len(), 1);
+    }
+
+    #[test]
+    fn parse_rest_frequency_supports_bare_mhz_and_frequency_units() {
+        assert_eq!(
+            parse_rest_frequency_hz("1420.405752").unwrap(),
+            1.420405752e9
+        );
+        assert_eq!(parse_rest_frequency_hz("1.25GHz").unwrap(), 1.25e9);
+    }
+
+    #[test]
+    fn velocity_ms_from_frequency_matches_radio_definition() {
+        let velocity_ms = velocity_ms_from_frequency_hz(1.2e9, 1.25e9, DopplerRef::RADIO).unwrap();
+        assert!((velocity_ms - 11_991_698.32).abs() < 1.0);
     }
 
     #[test]
@@ -1776,6 +2457,37 @@ mod tests {
     }
 
     #[test]
+    fn output_channel_contributions_use_transformed_query_frequencies() {
+        let contributions = build_output_channel_contributions(
+            &[100.0, 200.0, 300.0],
+            &[100.0, 200.0, 300.0],
+            &[100.0, 100.0, 100.0],
+            &[100.0, 200.0, 300.0],
+            CubeInterpolation::Linear,
+        );
+        assert_eq!(
+            contributions,
+            vec![
+                vec![CubeChannelContribution {
+                    source_channel: 0,
+                    source_frequency_hz: 100.0,
+                    factor: 1.0,
+                }],
+                vec![CubeChannelContribution {
+                    source_channel: 1,
+                    source_frequency_hz: 200.0,
+                    factor: 1.0,
+                }],
+                vec![CubeChannelContribution {
+                    source_channel: 2,
+                    source_frequency_hz: 300.0,
+                    factor: 1.0,
+                }],
+            ]
+        );
+    }
+
+    #[test]
     fn linear_contributions_clip_below_lowest_source_channel_edge() {
         let contributions = linear_channel_contributions(
             &[1.0e9, 1.05e9, 1.10e9],
@@ -1827,6 +2539,42 @@ mod tests {
     }
 
     #[test]
+    fn linear_model_contributions_clip_below_first_channel_center_within_edge() {
+        let contributions = linear_channel_model_contributions(
+            &[1.0e9, 1.05e9, 1.10e9],
+            &[1.0e9, 1.05e9, 1.10e9],
+            &[5.0e7, 5.0e7, 5.0e7],
+            0.999_988_750_387e9,
+        );
+        assert_eq!(
+            contributions,
+            vec![CubeChannelContribution {
+                source_channel: 0,
+                source_frequency_hz: 1.0e9,
+                factor: 1.0,
+            }]
+        );
+    }
+
+    #[test]
+    fn linear_model_contributions_clip_above_highest_channel_center_within_edge() {
+        let contributions = linear_channel_model_contributions(
+            &[1.0e9, 1.05e9, 1.10e9],
+            &[1.0e9, 1.05e9, 1.10e9],
+            &[5.0e7, 5.0e7, 5.0e7],
+            1.100_011_249_613e9,
+        );
+        assert_eq!(
+            contributions,
+            vec![CubeChannelContribution {
+                source_channel: 2,
+                source_frequency_hz: 1.10e9,
+                factor: 1.0,
+            }]
+        );
+    }
+
+    #[test]
     fn channel_mode_output_centers_shift_for_multi_channel_width() {
         let all: Vec<_> = (0..20).map(|index| 1.0e9 + index as f64 * 50.0e6).collect();
         let widths = vec![50.0e6; all.len()];
@@ -1840,6 +2588,48 @@ mod tests {
         let widths = vec![50.0e6; all.len()];
         let centers = channel_mode_output_centers(&all, &widths, 9, -2, 2).unwrap();
         assert_eq!(centers, vec![1.425e9, 1.325e9]);
+    }
+
+    #[test]
+    fn casa_transformed_channel_mode_output_centers_use_uniform_output_spacing() {
+        let centers = casa_transformed_channel_mode_output_centers(
+            &[10.0, 11.0, 12.001, 13.003],
+            &[1.0, 1.001, 1.002, 1.003],
+            1,
+            1,
+            3,
+        )
+        .unwrap();
+        assert_eq!(centers, vec![10.9995, 11.9995, 12.9995]);
+    }
+
+    #[test]
+    fn casa_transformed_channel_mode_output_centers_support_negative_width() {
+        let centers = casa_transformed_channel_mode_output_centers(
+            &[1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.20e9],
+            &[5.0e7; 5],
+            3,
+            -1,
+            3,
+        )
+        .unwrap();
+        assert_eq!(centers, vec![1.15e9, 1.10e9, 1.05e9]);
+    }
+
+    #[test]
+    fn casa_regridding_input_widths_preserve_single_channel_width() {
+        let widths_hz = casa_regridding_input_widths(&[1.420_405_752e9], &[2.5e6]).unwrap();
+        assert_eq!(widths_hz, vec![2.5e6]);
+    }
+
+    #[test]
+    fn casa_regridding_input_widths_preserve_measured_channel_widths() {
+        let widths_hz = casa_regridding_input_widths(
+            &[1.0e9, 1.000_001e9, 1.000_002e9],
+            &[900.0, -950.0, 975.0],
+        )
+        .unwrap();
+        assert_eq!(widths_hz, vec![900.0, 950.0, 975.0]);
     }
 
     #[test]
@@ -1970,5 +2760,77 @@ mod tests {
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
             FrequencyRef::TOPO
         );
+    }
+
+    #[test]
+    fn cubic_interpolation_is_rejected_until_implemented() {
+        let error = ensure_supported_interpolation(CubeInterpolation::Cubic).unwrap_err();
+        assert!(error.to_string().contains("not implemented"));
+    }
+
+    #[test]
+    fn asymmetric_frame_conversion_matches_manual_direct_hops() {
+        let source_frame = MeasFrame::new()
+            .with_epoch(casa_types::measures::epoch::MEpoch::from_mjd(
+                59_000.0,
+                casa_types::measures::epoch::EpochRef::UTC,
+            ))
+            .with_position(casa_types::measures::position::MPosition::new_itrf(
+                -1_601_185.4,
+                -5_041_977.5,
+                3_554_875.9,
+            ))
+            .with_direction(casa_types::measures::direction::MDirection::from_angles(
+                1.0,
+                0.5,
+                casa_types::measures::direction::DirectionRef::J2000,
+            ))
+            .with_bundled_eop();
+        let target_frame = MeasFrame::new()
+            .with_epoch(casa_types::measures::epoch::MEpoch::from_mjd(
+                59_001.0,
+                casa_types::measures::epoch::EpochRef::UTC,
+            ))
+            .with_position(casa_types::measures::position::MPosition::new_itrf(
+                -1_601_185.4,
+                -5_041_977.5,
+                3_554_875.9,
+            ))
+            .with_direction(casa_types::measures::direction::MDirection::from_angles(
+                1.1,
+                0.55,
+                casa_types::measures::direction::DirectionRef::J2000,
+            ))
+            .with_bundled_eop();
+        let frequency_hz = 6.667_582_296e9;
+
+        let converted = convert_frequency_to_frame_with_frames(
+            FrequencyRef::TOPO,
+            FrequencyRef::LSRK,
+            frequency_hz,
+            Some(&source_frame),
+            Some(&target_frame),
+        )
+        .unwrap();
+
+        let manual = MFrequency::new(frequency_hz, FrequencyRef::TOPO)
+            .convert_to(FrequencyRef::GEO, &source_frame)
+            .unwrap()
+            .convert_to(FrequencyRef::BARY, &source_frame)
+            .unwrap()
+            .convert_to(FrequencyRef::LSRK, &target_frame)
+            .unwrap()
+            .hz();
+
+        let source_only = convert_frequency_to_frame_with_frame(
+            FrequencyRef::TOPO,
+            FrequencyRef::LSRK,
+            frequency_hz,
+            Some(&source_frame),
+        )
+        .unwrap();
+
+        assert!((converted - manual).abs() < 1.0e-6);
+        assert!((converted - source_only).abs() > 1.0e-6);
     }
 }

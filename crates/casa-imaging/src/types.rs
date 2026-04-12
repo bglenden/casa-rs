@@ -21,11 +21,17 @@ pub enum AxisKind {
     Frequency,
 }
 
-/// Supported scalar imaging planes for the first imaging wave.
+/// Supported scalar imaging planes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaneStokes {
     /// Strict Stokes I derived from paired unflagged parallel hands.
     I,
+    /// Stokes Q derived from the appropriate paired correlations.
+    Q,
+    /// Stokes U derived from the appropriate paired correlations.
+    U,
+    /// Stokes V derived from the appropriate paired correlations.
+    V,
     /// Explicit `XX` imaging without Stokes collapse.
     XX,
     /// Explicit `YY` imaging without Stokes collapse.
@@ -41,6 +47,9 @@ impl PlaneStokes {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::I => "I",
+            Self::Q => "Q",
+            Self::U => "U",
+            Self::V => "V",
             Self::XX => "XX",
             Self::YY => "YY",
             Self::RR => "RR",
@@ -74,6 +83,156 @@ impl WeightingMode {
                 "Briggs robust must be finite and in the interval [-2, 2]".to_string(),
             )),
         }
+    }
+}
+
+/// Imaging gridder family used for one MFS plane.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GridderMode {
+    /// CASA `gridder='standard'`.
+    Standard,
+    /// CASA `gridder='mosaic'` for homogeneous primary-beam aware imaging.
+    Mosaic(MosaicGridderConfig),
+}
+
+/// One homogeneous primary-beam model usable by the mosaic dirty gridder.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PrimaryBeamModel {
+    /// Circular Airy voltage pattern with optional central blockage.
+    Airy {
+        /// Dish diameter in meters.
+        dish_diameter_m: f64,
+        /// Central blockage diameter in meters.
+        blockage_diameter_m: f64,
+    },
+    /// CASA `PBMath1DEVLA` common L-band primary-beam voltage model.
+    EvlaLBandCommon,
+}
+
+impl PrimaryBeamModel {
+    fn validate(self) -> Result<(), ImagingError> {
+        match self {
+            Self::Airy {
+                dish_diameter_m,
+                blockage_diameter_m,
+            } => {
+                if !(dish_diameter_m.is_finite() && dish_diameter_m > 0.0) {
+                    return Err(ImagingError::InvalidRequest(
+                        "primary-beam dish diameter must be finite and > 0 m".to_string(),
+                    ));
+                }
+                if !(blockage_diameter_m.is_finite() && blockage_diameter_m >= 0.0) {
+                    return Err(ImagingError::InvalidRequest(
+                        "primary-beam blockage diameter must be finite and >= 0 m".to_string(),
+                    ));
+                }
+                if blockage_diameter_m >= dish_diameter_m {
+                    return Err(ImagingError::InvalidRequest(
+                        "primary-beam blockage diameter must be smaller than the dish diameter"
+                            .to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            Self::EvlaLBandCommon => Ok(()),
+        }
+    }
+}
+
+/// Per-sample metadata aligned with one scalar visibility batch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibilityMetadataBatch {
+    /// World frequency in Hz associated with each scalar sample.
+    pub sample_frequency_hz: Vec<f64>,
+    /// CASA-style PB/conv-function frequency bucket in Hz for each scalar
+    /// sample.
+    pub beam_frequency_hz: Vec<f64>,
+    /// Beam-center direction `[ra, dec]` in radians for each sample.
+    ///
+    /// For the current `gridder='mosaic'` parity path this follows the row's
+    /// FIELD phase center because the source-of-truth runs use
+    /// `usepointing=False`.
+    pub pointing_direction_rad: Vec<[f64; 2]>,
+}
+
+impl VisibilityMetadataBatch {
+    pub(crate) fn validate_len(&self, expected: usize) -> Result<(), ImagingError> {
+        for (label, len) in [
+            ("sample_frequency_hz", self.sample_frequency_hz.len()),
+            ("beam_frequency_hz", self.beam_frequency_hz.len()),
+            ("pointing_direction_rad", self.pointing_direction_rad.len()),
+        ] {
+            if len != expected {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "visibility metadata batch length mismatch: visibility={expected}, {label}={len}"
+                )));
+            }
+        }
+        for frequency_hz in &self.sample_frequency_hz {
+            if !(frequency_hz.is_finite() && *frequency_hz > 0.0) {
+                return Err(ImagingError::InvalidRequest(
+                    "visibility metadata frequencies must be finite positive Hz".to_string(),
+                ));
+            }
+        }
+        for frequency_hz in &self.beam_frequency_hz {
+            if !(frequency_hz.is_finite() && *frequency_hz > 0.0) {
+                return Err(ImagingError::InvalidRequest(
+                    "visibility metadata beam frequencies must be finite positive Hz".to_string(),
+                ));
+            }
+        }
+        for direction in &self.pointing_direction_rad {
+            if !(direction[0].is_finite() && direction[1].is_finite()) {
+                return Err(ImagingError::InvalidRequest(
+                    "visibility metadata pointing directions must be finite radians".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Additional request state needed by the mosaic dirty gridder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MosaicGridderConfig {
+    /// Image phase-center direction `[ra, dec]` in radians.
+    pub phase_center_direction_rad: [f64; 2],
+    /// Homogeneous primary-beam model shared by the selected data.
+    pub primary_beam_model: PrimaryBeamModel,
+    /// Minimum normalized primary-beam response allowed during flat-noise
+    /// normalization.
+    pub pb_limit: f32,
+    /// Per-batch metadata aligned with [`ImagingRequest::visibility_batches`].
+    pub metadata_batches: Vec<VisibilityMetadataBatch>,
+}
+
+impl MosaicGridderConfig {
+    fn validate(&self, visibility_batches: &[VisibilityBatch]) -> Result<(), ImagingError> {
+        if !(self.phase_center_direction_rad[0].is_finite()
+            && self.phase_center_direction_rad[1].is_finite())
+        {
+            return Err(ImagingError::InvalidRequest(
+                "mosaic phase-center direction must be finite radians".to_string(),
+            ));
+        }
+        self.primary_beam_model.validate()?;
+        if !(self.pb_limit.is_finite() && self.pb_limit > 0.0) {
+            return Err(ImagingError::InvalidRequest(
+                "mosaic pb_limit must be finite and > 0".to_string(),
+            ));
+        }
+        if self.metadata_batches.len() != visibility_batches.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "mosaic metadata batch count {} does not match visibility batch count {}",
+                self.metadata_batches.len(),
+                visibility_batches.len()
+            )));
+        }
+        for (batch, metadata) in visibility_batches.iter().zip(self.metadata_batches.iter()) {
+            metadata.validate_len(batch.len())?;
+        }
+        Ok(())
     }
 }
 
@@ -171,17 +330,37 @@ pub enum CompatibilityMode {
     CasaStandardMfs,
 }
 
-/// One spectral plane of a dirty-imaging cube request.
+/// One output-model channel contribution used during cube degridding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CubeModelChannelContribution {
+    /// Output-model channel used while degridding this sample.
+    pub model_channel_index: usize,
+    /// Linear interpolation factor applied to that model channel.
+    pub factor: f32,
+}
+
+/// Per-sample cube-model interpolation state aligned with one visibility batch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CubeModelInterpolationBatch {
+    /// Model-channel contributions for each scalar sample in the paired
+    /// visibility batch.
+    pub sample_contributions: Vec<Vec<CubeModelChannelContribution>>,
+}
+
+/// One spectral plane of a cube-imaging request.
 ///
 /// Each entry carries the already-selected scalar visibility batches for one
-/// output spectral plane along with the world frequency that should be written
-/// into the resulting cube metadata.
+/// output spectral plane, along with the cube-model interpolation state needed
+/// by the CASA-style major cycle when predicting visibilities for that plane.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CubeChannelRequest {
     /// World frequency in Hz for this output spectral plane.
     pub channel_frequency_hz: f64,
     /// Chunked scalar visibility samples for this spectral plane.
     pub visibility_batches: Vec<VisibilityBatch>,
+    /// Per-sample model-channel interpolation state used during cube
+    /// prediction and residual refresh.
+    pub model_interpolation_batches: Vec<CubeModelInterpolationBatch>,
 }
 
 impl CubeChannelRequest {
@@ -196,8 +375,38 @@ impl CubeChannelRequest {
                 "each cube channel requires at least one visibility batch".to_string(),
             ));
         }
-        for batch in &self.visibility_batches {
+        if self.model_interpolation_batches.len() != self.visibility_batches.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "cube model interpolation batch count {} does not match visibility batch count {}",
+                self.model_interpolation_batches.len(),
+                self.visibility_batches.len()
+            )));
+        }
+        for (batch_index, (batch, interpolation)) in self
+            .visibility_batches
+            .iter()
+            .zip(self.model_interpolation_batches.iter())
+            .enumerate()
+        {
             batch.validate()?;
+            if interpolation.sample_contributions.len() != batch.len() {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "cube model interpolation batch {batch_index} length {} does not match visibility batch length {}",
+                    interpolation.sample_contributions.len(),
+                    batch.len()
+                )));
+            }
+            for (sample_index, sample_contributions) in
+                interpolation.sample_contributions.iter().enumerate()
+            {
+                for contribution in sample_contributions {
+                    if !(contribution.factor.is_finite() && contribution.factor >= 0.0) {
+                        return Err(ImagingError::InvalidRequest(format!(
+                            "cube model interpolation factor at batch {batch_index} sample {sample_index} must be finite and >= 0"
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -212,6 +421,11 @@ impl CubeChannelRequest {
 pub enum Deconvolver {
     /// Point-component Hogbom minor cycle.
     Hogbom,
+    /// Multi-term multi-frequency synthesis minor cycle.
+    ///
+    /// This solver is only valid for `specmode='mfs'` requests that also
+    /// provide an explicit Taylor-term count via [`MtmfsRequest`].
+    Mtmfs,
     /// Clark point-source minor cycle.
     ///
     /// This variant is reserved for the next wave and currently returns
@@ -231,6 +445,12 @@ pub enum WTermMode {
     None,
     /// Slow but direct per-sample `w`-term correction in the Fourier sum.
     Direct,
+    /// `wproject`-style non-coplanar correction request.
+    ///
+    /// The first Rust implementation routes this through the same exact
+    /// per-sample backend as [`Self::Direct`] so higher-level parity work can
+    /// land before the faster approximate kernel.
+    WProject,
 }
 
 /// Two-dimensional image geometry for the MFS image plane.
@@ -479,10 +699,12 @@ impl ParallelHandBatch {
 pub struct CleanConfig {
     /// Maximum number of reported minor-cycle iterations.
     ///
-    /// Under [`CompatibilityMode::CasaStandardMfs`], this follows CASA
-    /// `SDAlgorithmHogbomClean` / `hclean` iteration accounting, where a single
-    /// Hogbom minor-cycle call can commit up to one extra component update
-    /// while still reporting `iterdone == niter`.
+    /// casa-rs treats this as a hard cap on committed Hogbom updates.
+    ///
+    /// This intentionally diverges from a known CASA
+    /// `SDAlgorithmHogbomClean` / `hclean` off-by-one bug where a single
+    /// Hogbom minor-cycle call can sometimes commit one extra component while
+    /// still reporting `iterdone == niter`.
     pub niter: usize,
     /// Loop gain applied to each selected component.
     pub gain: f32,
@@ -603,6 +825,8 @@ pub struct ImagingRequest {
     pub geometry: ImageGeometry,
     /// Chunked scalar visibility samples to grid and deconvolve.
     pub visibility_batches: Vec<VisibilityBatch>,
+    /// Requested gridder family and any additional gridder-specific metadata.
+    pub gridder_mode: GridderMode,
     /// Scalar imaging plane to produce.
     pub plane_stokes: PlaneStokes,
     /// Weighting policy used by the run.
@@ -632,6 +856,12 @@ pub struct ImagingRequest {
     pub clean_mask: Option<Array2<bool>>,
     /// Requested `w`-term handling mode.
     pub w_term_mode: WTermMode,
+    /// Optional explicit `wproject` plane budget.
+    ///
+    /// When set, [`WTermMode::WProject`] uses exactly this many planes instead
+    /// of the internal auto estimate. This matches CASA's `wprojplanes`
+    /// control. Ignored for other `w`-term modes.
+    pub w_project_planes: Option<usize>,
     /// Declared compatibility target for the run.
     pub compatibility: CompatibilityMode,
 }
@@ -640,6 +870,9 @@ impl ImagingRequest {
     pub(crate) fn validate(&self) -> Result<(), ImagingError> {
         self.geometry.validate()?;
         self.weighting.validate()?;
+        if let GridderMode::Mosaic(config) = &self.gridder_mode {
+            config.validate(&self.visibility_batches)?;
+        }
         if !(self.reffreq_hz.is_finite() && self.reffreq_hz > 0.0) {
             return Err(ImagingError::InvalidRequest(
                 "reffreq_hz must be a finite positive frequency".to_string(),
@@ -675,6 +908,11 @@ impl ImagingRequest {
                     (self.geometry.nx(), self.geometry.ny())
                 )));
             }
+        }
+        if matches!(self.w_project_planes, Some(0)) {
+            return Err(ImagingError::InvalidRequest(
+                "w_project_planes must be >= 1 when provided".to_string(),
+            ));
         }
         if self.visibility_batches.is_empty() {
             return Err(ImagingError::InvalidRequest(
@@ -735,6 +973,10 @@ pub struct CubeImagingRequest {
     pub psf_cutoff: f32,
     /// Requested `w`-term handling mode.
     pub w_term_mode: WTermMode,
+    /// Optional explicit `wproject` plane budget shared by every plane.
+    ///
+    /// Ignored unless [`Self::w_term_mode`] is [`WTermMode::WProject`].
+    pub w_project_planes: Option<usize>,
     /// Declared compatibility target for the run.
     pub compatibility: CompatibilityMode,
 }
@@ -772,6 +1014,11 @@ impl CubeImagingRequest {
                     (self.geometry.nx(), self.geometry.ny())
                 )));
             }
+        }
+        if matches!(self.w_project_planes, Some(0)) {
+            return Err(ImagingError::InvalidRequest(
+                "w_project_planes must be >= 1 when provided".to_string(),
+            ));
         }
         if self.channels.is_empty() {
             return Err(ImagingError::InvalidRequest(
@@ -855,9 +1102,11 @@ pub struct ImagingDiagnostics {
     pub major_cycles: usize,
     /// Number of Hogbom component updates executed.
     ///
-    /// Under [`CompatibilityMode::CasaStandardMfs`], this can exceed the
-    /// requested [`CleanConfig::niter`] because CASA's `hclean` kernel iterates
-    /// over an inclusive `siter..niter` range inside each minor-cycle call.
+    /// This is bounded by the requested [`CleanConfig::niter`].
+    ///
+    /// If CASA reports one more committed Hogbom component than this counter
+    /// would allow, treat that as the documented upstream off-by-one bug rather
+    /// than a casa-rs parity target.
     pub minor_iterations: usize,
     /// Final reason why the Hogbom controller stopped, if CLEAN was requested.
     pub clean_stop_reason: Option<CleanStopReason>,
@@ -883,6 +1132,9 @@ pub struct ImagingDiagnostics {
     pub beam_fit_cutoff_used: Option<f32>,
     /// Internal beam-fit search summary for the fitted PSF main lobe.
     pub beam_fit_debug: Option<BeamFitDebugSummary>,
+    /// Pre-normalization mosaic weight/sensitivity image when the mosaic dirty
+    /// path is active. `None` for non-mosaic runs.
+    pub mosaic_weight_image: Option<Array2<f32>>,
     /// Stage timings collected while building the products.
     pub stage_timings: ImagingStageTimings,
 }
@@ -939,6 +1191,8 @@ pub struct ImagingStageTimings {
     /// Controller bookkeeping time outside explicit minor-cycle solves and
     /// major-cycle residual refreshes.
     pub controller_overhead: Duration,
+    /// Time spent applying geometry-dependent imaging weights and tapers.
+    pub weighting: Duration,
     /// Time spent gridding PSF/sample weights.
     pub psf_grid: Duration,
     /// Time spent FFTing the PSF grid.
@@ -975,6 +1229,7 @@ impl Default for ImagingStageTimings {
     fn default() -> Self {
         Self {
             controller_overhead: Duration::ZERO,
+            weighting: Duration::ZERO,
             psf_grid: Duration::ZERO,
             psf_fft: Duration::ZERO,
             psf_normalize: Duration::ZERO,
@@ -1034,6 +1289,332 @@ pub struct ImagingResult {
     pub compatibility: CompatibilityMetadata,
 }
 
+/// Top-level request for CASA-style MTMFS imaging.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MtmfsRequest {
+    /// Requested image geometry for the MFS image plane.
+    pub geometry: ImageGeometry,
+    /// Chunked scalar visibility samples to grid and deconvolve.
+    pub visibility_batches: Vec<VisibilityBatch>,
+    /// Per-sample world frequency in Hz aligned with each visibility batch.
+    pub sample_frequency_batches_hz: Vec<Vec<f64>>,
+    /// Requested gridder family and any additional gridder-specific metadata.
+    pub gridder_mode: GridderMode,
+    /// Scalar imaging plane to produce.
+    pub plane_stokes: PlaneStokes,
+    /// Weighting policy used by the run.
+    pub weighting: WeightingMode,
+    /// Reference frequency in Hz for Taylor-basis evaluation and metadata.
+    pub reffreq_hz: f64,
+    /// Inclusive selected frequency range in Hz.
+    pub selected_frequency_range_hz: [f64; 2],
+    /// Number of Taylor terms to solve for.
+    pub nterms: usize,
+    /// Deconvolver-independent CLEAN and major/minor-cycle controls.
+    pub clean: CleanConfig,
+    /// Optional image-plane clean mask. `true` pixels are eligible for component picks.
+    pub clean_mask: Option<Array2<bool>>,
+    /// Declared compatibility target for the run.
+    pub compatibility: CompatibilityMode,
+}
+
+impl MtmfsRequest {
+    pub(crate) fn validate(&self) -> Result<(), ImagingError> {
+        self.geometry.validate()?;
+        self.weighting.validate()?;
+        if !(self.reffreq_hz.is_finite() && self.reffreq_hz > 0.0) {
+            return Err(ImagingError::InvalidRequest(
+                "reffreq_hz must be a finite positive frequency".to_string(),
+            ));
+        }
+        if !(self.selected_frequency_range_hz[0].is_finite()
+            && self.selected_frequency_range_hz[1].is_finite()
+            && self.selected_frequency_range_hz[0] > 0.0
+            && self.selected_frequency_range_hz[1] >= self.selected_frequency_range_hz[0])
+        {
+            return Err(ImagingError::InvalidRequest(
+                "selected_frequency_range_hz must be a finite ordered positive range".to_string(),
+            ));
+        }
+        if self.nterms == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS requires nterms >= 1".to_string(),
+            ));
+        }
+        self.clean.validate()?;
+        if let Some(mask) = &self.clean_mask {
+            if mask.dim() != (self.geometry.nx(), self.geometry.ny()) {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "clean mask shape {:?} does not match image shape {:?}",
+                    mask.dim(),
+                    (self.geometry.nx(), self.geometry.ny())
+                )));
+            }
+        }
+        if self.visibility_batches.is_empty() {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS requires at least one visibility batch".to_string(),
+            ));
+        }
+        if self.sample_frequency_batches_hz.len() != self.visibility_batches.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "sample_frequency_batches_hz count {} does not match visibility batch count {}",
+                self.sample_frequency_batches_hz.len(),
+                self.visibility_batches.len()
+            )));
+        }
+        for (batch_index, (batch, frequencies_hz)) in self
+            .visibility_batches
+            .iter()
+            .zip(self.sample_frequency_batches_hz.iter())
+            .enumerate()
+        {
+            batch.validate()?;
+            if frequencies_hz.len() != batch.len() {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "sample_frequency_batches_hz[{batch_index}] length {} does not match visibility batch length {}",
+                    frequencies_hz.len(),
+                    batch.len()
+                )));
+            }
+            for frequency_hz in frequencies_hz {
+                if !(frequency_hz.is_finite() && *frequency_hz > 0.0) {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "MTMFS sample frequency at batch {batch_index} must be finite and > 0 Hz"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Result of a CASA-style MTMFS run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MtmfsResult {
+    /// Normalized Taylor-term PSF images, with `2*nterms - 1` entries.
+    pub psf_terms: Vec<Array4<f32>>,
+    /// Final Taylor-term residual images, with `nterms` entries.
+    pub residual_terms: Vec<Array4<f32>>,
+    /// Taylor-term component model images, with `nterms` entries.
+    pub model_terms: Vec<Array4<f32>>,
+    /// Restored Taylor-term images, with `nterms` entries.
+    pub image_terms: Vec<Array4<f32>>,
+    /// CASA-style `sumwt` products, with `2*nterms - 1` entries.
+    pub sumwt_terms: Vec<Array4<f32>>,
+    /// Derived spectral-index image, when `nterms > 1`.
+    pub alpha: Option<Array4<f32>>,
+    /// Derived spectral-index error image, when `nterms > 1`.
+    pub alpha_error: Option<Array4<f32>>,
+    /// Restoring beam fitted from the zeroth-order PSF, when the fit succeeds.
+    pub beam: Option<BeamFit>,
+    /// Diagnostics collected while building the products.
+    pub diagnostics: ImagingDiagnostics,
+    /// Declared metadata contract for downstream persistence.
+    pub compatibility: CompatibilityMetadata,
+}
+
+/// One scalar sample after the weighting seam has produced a final imaging weight.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeightingSampleDiagnostics {
+    /// Zero-based input batch index.
+    pub batch_index: usize,
+    /// Zero-based sample index within the input batch.
+    pub sample_index: usize,
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Baseline `w` coordinate in wavelengths.
+    pub w_lambda: f64,
+    /// Input weight before weighting/taper transforms.
+    pub input_weight: f32,
+    /// Density value sampled for uniform/Briggs weighting, when applicable.
+    pub density_weight: Option<f32>,
+    /// Final imaging weight after weighting and taper transforms.
+    pub output_weight: f32,
+    /// CASA-style logical multiplicity factor used for reported `sumwt`.
+    pub sumwt_factor: f32,
+    /// Whether this sample remains eligible for final gridding.
+    pub gridable: bool,
+    /// Contribution of this sample to FFT normalization.
+    pub normalization_contribution: f32,
+    /// Contribution of this sample to CASA's persisted `.sumwt`.
+    pub reported_contribution: f32,
+}
+
+/// Explicit weighting-seam diagnostics for one dirty-imaging plane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeightingDiagnostics {
+    /// Weighting policy used by the run.
+    pub weighting: WeightingMode,
+    /// Density-sharing mode used for uniform/Briggs weighting.
+    pub weight_density_mode: WeightDensityMode,
+    /// Optional Gaussian UV taper applied after weighting.
+    pub uv_taper: Option<GaussianUvTaper>,
+    /// Per-sample weighting results in stable input order.
+    pub samples: Vec<WeightingSampleDiagnostics>,
+    /// Number of samples that contribute to gridding and normalization.
+    pub gridded_samples: usize,
+    /// Number of samples rejected before gridding or normalization.
+    pub skipped_samples: usize,
+    /// Sum of contributions used for FFT/image normalization.
+    pub normalization_sumwt: f32,
+    /// CASA-style sum of logical sample weights persisted in `.sumwt`.
+    pub reported_sumwt: f32,
+}
+
+/// One scalar sample after a major-cycle model prediction / residual refresh.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResidualSampleDiagnostics {
+    /// Zero-based input batch index.
+    pub batch_index: usize,
+    /// Zero-based sample index within the input batch.
+    pub sample_index: usize,
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Baseline `w` coordinate in wavelengths.
+    pub w_lambda: f64,
+    /// Observed visibility sample after preparation and weighting.
+    pub observed_visibility: Complex32,
+    /// Predicted visibility from the supplied model image.
+    pub predicted_visibility: Complex32,
+    /// Residual visibility `observed - predicted` before imaging-weight scaling.
+    pub residual_visibility: Complex32,
+    /// Final imaging weight applied to this sample.
+    pub weight: f32,
+    /// Whether this sample remains eligible for final gridding.
+    pub gridable: bool,
+}
+
+/// Explicit major-cycle residual-refresh diagnostics for one imaging plane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResidualRefreshDiagnostics {
+    /// Per-sample prediction / residual results in stable input order.
+    pub samples: Vec<ResidualSampleDiagnostics>,
+    /// Refreshed residual image in `(x, y)` order.
+    pub residual_image: Array2<f32>,
+    /// Sum of weighted-sample contributions used for normalization.
+    pub normalization_sumwt: f32,
+    /// CASA-style reported `sumwt` used for the persisted `.sumwt` product.
+    pub reported_sumwt: f32,
+    /// PSF peak used when normalizing the refreshed residual image.
+    pub psf_peak: f32,
+    /// Number of samples that contributed to the refreshed residual image.
+    pub gridded_samples: usize,
+    /// Number of samples rejected before gridding.
+    pub skipped_samples: usize,
+}
+
+/// One convolution-function plane in the current `wproject` CF plan.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WProjectKernelDiagnostics {
+    /// Zero-based plane index.
+    pub plane_index: usize,
+    /// Effective `w` value in wavelengths represented by this kernel plane.
+    pub w_lambda: f64,
+    /// Kernel support radius in grid cells.
+    pub support: usize,
+    /// Integral of the normalized kernel over its sampled support.
+    pub kernel_integral: f32,
+}
+
+/// One weighted sample after `wproject` sample planning.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WProjectSamplePlanDiagnostics {
+    /// Zero-based input batch index.
+    pub batch_index: usize,
+    /// Zero-based sample index within the input batch.
+    pub sample_index: usize,
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Baseline `w` coordinate in wavelengths.
+    pub w_lambda: f64,
+    /// Final imaging weight attached to the sample.
+    pub weight: f32,
+    /// CASA-style logical multiplicity factor used for reported `sumwt`.
+    pub sumwt_factor: f32,
+    /// Selected convolution-function plane index.
+    pub plane_index: usize,
+    /// Grid-center x location for the sample plan.
+    pub loc_x: isize,
+    /// Grid-center y location for the sample plan.
+    pub loc_y: isize,
+    /// Sub-grid x offset in oversampled kernel coordinates.
+    pub off_x: isize,
+    /// Sub-grid y offset in oversampled kernel coordinates.
+    pub off_y: isize,
+    /// Whether the kernel is conjugated for positive-`w` samples.
+    pub conjugate_kernel: bool,
+    /// Sample-local normalization gathered from the chosen kernel support.
+    pub normalization: f32,
+    /// Kernel support radius in grid cells for the selected plane.
+    pub support: usize,
+}
+
+/// Reason a weighted sample did not survive `wproject` planning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WProjectSkipReason {
+    /// Sample was marked non-gridable before `wproject` planning.
+    NotGridable,
+    /// Sample coordinates, visibility, weight, or `sumwt_factor` were invalid.
+    InvalidInput,
+    /// The planned support footprint would run outside the padded grid.
+    OutsideGrid,
+}
+
+/// One sample rejected before contributing to a `wproject` grid plan.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WProjectSkippedSampleDiagnostics {
+    /// Zero-based input batch index.
+    pub batch_index: usize,
+    /// Zero-based sample index within the input batch.
+    pub sample_index: usize,
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Baseline `w` coordinate in wavelengths.
+    pub w_lambda: f64,
+    /// Final imaging weight attached to the sample before rejection.
+    pub weight: f32,
+    /// CASA-style logical multiplicity factor attached before rejection.
+    pub sumwt_factor: f32,
+    /// Canonical rejection reason.
+    pub reason: WProjectSkipReason,
+}
+
+/// Explicit `wproject` planning diagnostics for one imaging plane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WProjectDiagnostics {
+    /// Optional explicit `wprojplanes` request from the caller.
+    pub requested_plane_count: Option<usize>,
+    /// Actual number of kernel planes in the current CF plan.
+    pub plane_count: usize,
+    /// Kernel oversampling factor.
+    pub sampling: usize,
+    /// CASA-style `w`-axis scale used to map samples to planes.
+    pub w_scale: f64,
+    /// Maximum absolute input `w` value seen during planning.
+    pub max_abs_w_lambda: f64,
+    /// One summary per kernel plane.
+    pub kernels: Vec<WProjectKernelDiagnostics>,
+    /// One planned sample in stable input order.
+    pub samples: Vec<WProjectSamplePlanDiagnostics>,
+    /// Samples rejected before gridding, with explicit reasons.
+    pub skipped_samples: Vec<WProjectSkippedSampleDiagnostics>,
+    /// Sum of weighted-sample contributions used for normalization.
+    pub normalization_sumwt: f32,
+    /// CASA-style reported `sumwt` used for the persisted `.sumwt` product.
+    pub reported_sumwt: f32,
+    /// Number of samples that contributed to the final `wproject` grid plan.
+    pub gridded_samples: usize,
+}
+
 /// Aggregate diagnostics for spectral-cube imaging.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CubeImagingDiagnostics {
@@ -1054,6 +1635,8 @@ pub struct CubeImagingDiagnostics {
     /// planes and therefore matches CASA's cube `iterdone` contract more
     /// closely than summing per-plane actual component updates.
     pub minor_iterations: usize,
+    /// Final reason why the cube controller stopped, if CLEAN was requested.
+    pub clean_stop_reason: Option<CleanStopReason>,
     /// Per-channel diagnostics in output spectral order.
     pub channel_diagnostics: Vec<ImagingDiagnostics>,
     /// Aggregate stage timings summed across channels, with `total`

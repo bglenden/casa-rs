@@ -22,14 +22,17 @@ casa-imaging = { path = "../casa-imaging" }
 casa-ms = { path = "../casa-ms" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
+flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray.workspace = true
 num-complex.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
 thiserror.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
-serde_json = "1"
 tempfile = "3"
 
 [[bin]]

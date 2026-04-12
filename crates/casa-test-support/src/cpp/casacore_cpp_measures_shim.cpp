@@ -791,6 +791,67 @@ int measures_shim_frequency_convert(
     }
 }
 
+int measures_shim_frequency_convert_between_frames(
+    double freq_hz, const char* ref_in, const char* ref_out,
+    double src_dir_lon, double src_dir_lat, const char* src_dir_ref,
+    double src_epoch_mjd, double src_obs_lon, double src_obs_lat, double src_obs_h,
+    double dst_dir_lon, double dst_dir_lat, const char* dst_dir_ref,
+    double dst_epoch_mjd, double dst_obs_lon, double dst_obs_lat, double dst_obs_h,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_out = parse_frequency_ref(ref_out);
+
+        MeasFrame source_frame;
+        if (src_epoch_mjd != 0.0) {
+            MEpoch epoch(MVEpoch(src_epoch_mjd), MEpoch::UTC);
+            source_frame.set(epoch);
+        }
+        if (src_obs_lon != 0.0 || src_obs_lat != 0.0 || src_obs_h != 0.0) {
+            MPosition obs(MVPosition(Quantity(src_obs_h, "m"),
+                                     Quantity(src_obs_lon, "rad"),
+                                     Quantity(src_obs_lat, "rad")),
+                          MPosition::WGS84);
+            source_frame.set(obs);
+        }
+        if (strlen(src_dir_ref) > 0) {
+            auto tp_dir = parse_direction_ref(src_dir_ref);
+            MDirection dir(MVDirection(Quantity(src_dir_lon, "rad"),
+                                       Quantity(src_dir_lat, "rad")), tp_dir);
+            source_frame.set(dir);
+        }
+
+        MeasFrame target_frame;
+        if (dst_epoch_mjd != 0.0) {
+            MEpoch epoch(MVEpoch(dst_epoch_mjd), MEpoch::UTC);
+            target_frame.set(epoch);
+        }
+        if (dst_obs_lon != 0.0 || dst_obs_lat != 0.0 || dst_obs_h != 0.0) {
+            MPosition obs(MVPosition(Quantity(dst_obs_h, "m"),
+                                     Quantity(dst_obs_lon, "rad"),
+                                     Quantity(dst_obs_lat, "rad")),
+                          MPosition::WGS84);
+            target_frame.set(obs);
+        }
+        if (strlen(dst_dir_ref) > 0) {
+            auto tp_dir = parse_direction_ref(dst_dir_ref);
+            MDirection dir(MVDirection(Quantity(dst_dir_lon, "rad"),
+                                       Quantity(dst_dir_lat, "rad")), tp_dir);
+            target_frame.set(dir);
+        }
+
+        MFrequency input(Quantity(freq_hz, "Hz"), MFrequency::Ref(tp_in, source_frame));
+        MFrequency::Ref target_ref(tp_out, target_frame);
+        MFrequency result = MFrequency::Convert(input, target_ref)();
+
+        *freq_out = result.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
 int measures_shim_bench_frequency_convert(
     double freq_start, int count,
     const char* ref_in, const char* ref_out,

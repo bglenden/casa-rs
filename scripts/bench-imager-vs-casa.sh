@@ -42,6 +42,7 @@ spw="${IMAGER_BENCH_SPW:-0}"
 channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
 channel_count="${IMAGER_BENCH_CHANNEL_COUNT:-1}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
+interpolation="${IMAGER_BENCH_INTERPOLATION:-linear}"
 imsize="${IMAGER_BENCH_IMSIZE:-128}"
 cell_arcsec="${IMAGER_BENCH_CELL_ARCSEC:-30}"
 minor_cycle_length="${IMAGER_BENCH_MINOR_CYCLE_LENGTH:-2}"
@@ -57,6 +58,7 @@ mode="${IMAGER_BENCH_MODE:-dirty}"
 niter="${IMAGER_BENCH_NITER:-4}"
 gain="${IMAGER_BENCH_GAIN:-0.1}"
 threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
+nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 
 if [[ "$wterm" != "none" ]]; then
@@ -69,8 +71,8 @@ if [[ "$specmode" != "mfs" && "$specmode" != "cube" ]]; then
   exit 2
 fi
 
-if [[ "$specmode" == "cube" && "$mode" != "dirty" ]]; then
-  echo "error: cube benchmarking currently only supports IMAGER_BENCH_MODE=dirty" >&2
+if [[ "$interpolation" != "nearest" && "$interpolation" != "linear" ]]; then
+  echo "error: IMAGER_BENCH_INTERPOLATION must be nearest or linear" >&2
   exit 2
 fi
 
@@ -97,7 +99,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode field=$field spw=$spw channel_start=$channel_start channel_count=$channel_count weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
+echo "mode=$mode specmode=$specmode field=$field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -123,6 +125,7 @@ for run in $(seq 1 "$repeats"); do
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
       --specmode "$specmode" \
+      --interpolation "$interpolation" \
       --datacolumn DATA \
       --weighting "$weighting" \
       --robust "$robust" \
@@ -131,6 +134,7 @@ for run in $(seq 1 "$repeats"); do
       --niter "$niter" \
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
+      --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
@@ -151,6 +155,7 @@ for run in $(seq 1 "$repeats"); do
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
       --specmode "$specmode" \
+      --interpolation "$interpolation" \
       --datacolumn DATA \
       --weighting "$weighting" \
       --robust "$robust" \
@@ -158,6 +163,7 @@ for run in $(seq 1 "$repeats"); do
       --niter "$niter" \
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
+      --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
@@ -184,6 +190,7 @@ if [[ -n "$scales" ]]; then
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
+    --interpolation "$interpolation" \
     --datacolumn DATA \
     --weighting "$weighting" \
     --robust "$robust" \
@@ -194,6 +201,7 @@ if [[ -n "$scales" ]]; then
     --niter "$niter" \
     --gain "$gain" \
     --threshold-jy "$threshold_jy" \
+    --nsigma "$nsigma" \
     --psfcutoff "$psfcutoff" \
     --minor-cycle-length "$minor_cycle_length" \
     --cyclefactor "$cyclefactor" \
@@ -212,6 +220,7 @@ else
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
+    --interpolation "$interpolation" \
     --datacolumn DATA \
     --weighting "$weighting" \
     --robust "$robust" \
@@ -221,6 +230,7 @@ else
     --niter "$niter" \
     --gain "$gain" \
     --threshold-jy "$threshold_jy" \
+    --nsigma "$nsigma" \
     --psfcutoff "$psfcutoff" \
     --minor-cycle-length "$minor_cycle_length" \
     --cyclefactor "$cyclefactor" \
@@ -252,6 +262,7 @@ cell_arcsec = os.environ["CASA_RS_BENCH_CELL_ARCSEC"]
 niter = int(os.environ["CASA_RS_BENCH_NITER"])
 gain = float(os.environ["CASA_RS_BENCH_GAIN"])
 threshold_jy = os.environ["CASA_RS_BENCH_THRESHOLD_JY"]
+nsigma = float(os.environ["CASA_RS_BENCH_NSIGMA"])
 psfcutoff = float(os.environ["CASA_RS_BENCH_PSFCUTOFF"])
 cycleniter = int(os.environ["CASA_RS_BENCH_MINOR_CYCLE_LENGTH"])
 cyclefactor = float(os.environ["CASA_RS_BENCH_CYCLEFACTOR"])
@@ -262,6 +273,7 @@ robust = float(os.environ["CASA_RS_BENCH_ROBUST"])
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
 specmode = os.environ["CASA_RS_BENCH_SPECMODE"]
+interpolation = os.environ["CASA_RS_BENCH_INTERPOLATION"]
 spw_selector = f"{spw}:{chan_start}" if chan_count == 1 else f"{spw}:{chan_start}~{chan_start + chan_count - 1}"
 times = []
 
@@ -287,6 +299,7 @@ with tempfile.TemporaryDirectory() as td:
             robust=robust,
             gain=gain,
             threshold=f"{threshold_jy}Jy",
+            nsigma=nsigma,
             cyclefactor=cyclefactor,
             minpsffraction=minpsffraction,
             maxpsffraction=maxpsffraction,
@@ -305,7 +318,7 @@ with tempfile.TemporaryDirectory() as td:
         if specmode == "cube":
             kwargs.update(
                 spw=str(spw),
-                interpolation="nearest",
+                interpolation=interpolation,
                 nchan=chan_count,
                 start=chan_start,
                 width=1,
@@ -337,11 +350,13 @@ CASA_RS_BENCH_SCALES="$scales" \
 CASA_RS_BENCH_NITER="$casa_niter" \
 CASA_RS_BENCH_GAIN="$gain" \
 CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
+CASA_RS_BENCH_NSIGMA="$nsigma" \
 CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
 CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
 CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
 CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
 CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
+CASA_RS_BENCH_INTERPOLATION="$interpolation" \
   "$CASA_RS_CASA_PYTHON" "$tmpdir/casa-imager-bench.py" | sed 's/^/  /'
 echo
 
@@ -362,9 +377,11 @@ CASA_RS_BENCH_SCALES="$scales" \
 CASA_RS_BENCH_NITER="$casa_niter" \
 CASA_RS_BENCH_GAIN="$gain" \
 CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
+CASA_RS_BENCH_NSIGMA="$nsigma" \
 CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
 CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
 CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
 CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
 CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
+CASA_RS_BENCH_INTERPOLATION="$interpolation" \
   "$CASA_RS_CASA_PYTHON" "$repo_root/tools/perf/imager/casa_phase_bench.py" | sed 's/^/  /'

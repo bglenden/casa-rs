@@ -272,6 +272,40 @@ impl Coordinate for StokesCoordinate {
         rec
     }
 
+    fn to_casa_record(&self) -> RecordValue {
+        let mut rec = RecordValue::default();
+        rec.upsert(
+            "axes",
+            Value::Array(casa_types::ArrayValue::from_string_vec(self.axis_names())),
+        );
+        rec.upsert(
+            "stokes",
+            Value::Array(casa_types::ArrayValue::from_string_vec(
+                self.stokes
+                    .iter()
+                    .map(|stokes| stokes.name().to_string())
+                    .collect(),
+            )),
+        );
+        rec.upsert(
+            "crval",
+            Value::Array(casa_types::ArrayValue::from_f64_vec(self.reference_value())),
+        );
+        rec.upsert(
+            "crpix",
+            Value::Array(casa_types::ArrayValue::from_f64_vec(self.reference_pixel())),
+        );
+        rec.upsert(
+            "cdelt",
+            Value::Array(casa_types::ArrayValue::from_f64_vec(self.increment())),
+        );
+        rec.upsert(
+            "pc",
+            Value::Array(casa_types::ArrayValue::from_f64_vec(vec![1.0])),
+        );
+        rec
+    }
+
     fn clone_box(&self) -> Box<dyn Coordinate> {
         Box::new(self.clone())
     }
@@ -385,6 +419,33 @@ mod tests {
         let rec = coord.to_record();
         assert!(rec.get("stokes").is_some());
         assert!(rec.get("coordinate_type").is_some());
+    }
+
+    #[test]
+    fn to_casa_record_matches_legacy_layout() {
+        let coord = make_iquv();
+        let rec = coord.to_casa_record();
+        assert_eq!(
+            rec.get("axes"),
+            Some(&Value::Array(casa_types::ArrayValue::from_string_vec(
+                vec!["Stokes".to_string(),]
+            )))
+        );
+        assert_eq!(
+            rec.get("stokes"),
+            Some(&Value::Array(casa_types::ArrayValue::from_string_vec(
+                vec![
+                    "I".to_string(),
+                    "Q".to_string(),
+                    "U".to_string(),
+                    "V".to_string(),
+                ]
+            )))
+        );
+        assert!(rec.get("crval").is_some());
+        assert!(rec.get("crpix").is_some());
+        assert!(rec.get("cdelt").is_some());
+        assert!(rec.get("pc").is_some());
     }
 
     #[test]

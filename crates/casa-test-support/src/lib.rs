@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 pub mod gridder_interop;
+pub mod hogbom_interop;
 pub mod measures_interop;
 pub mod ms_interop;
 pub mod quanta_interop;

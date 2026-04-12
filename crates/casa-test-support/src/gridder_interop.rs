@@ -38,6 +38,15 @@ pub struct GridderImage2d {
     pub pixels: Vec<f32>,
 }
 
+/// Result of degridding one visibility from a model image with C++ casacore.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridderPredictedVisibility {
+    /// Real part of the predicted visibility.
+    pub re: f32,
+    /// Imaginary part of the predicted visibility.
+    pub im: f32,
+}
+
 #[cfg(has_casacore_cpp)]
 unsafe extern "C" {
     #[link_name = "cpp_convolve_gridder_grid_unit_sample_2d"]
@@ -99,6 +108,47 @@ unsafe extern "C" {
         nsamples: i32,
         image_out: *mut f32,
         max_image_len: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    #[link_name = "cpp_convolve_gridder_make_model_residual_image_2d"]
+    fn ffi_cpp_convolve_gridder_make_model_residual_image_2d(
+        grid_nx: i32,
+        grid_ny: i32,
+        image_nx: i32,
+        image_ny: i32,
+        scale_x: f64,
+        scale_y: f64,
+        offset_x: f64,
+        offset_y: f64,
+        u_out: *const f64,
+        v_out: *const f64,
+        vis_re_out: *const f32,
+        vis_im_out: *const f32,
+        weight_out: *const f32,
+        gridable_out: *const u8,
+        model_image_out: *const f32,
+        nsamples: i32,
+        image_out: *mut f32,
+        max_image_len: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+
+    #[link_name = "cpp_convolve_gridder_predict_visibility_2d"]
+    fn ffi_cpp_convolve_gridder_predict_visibility_2d(
+        grid_nx: i32,
+        grid_ny: i32,
+        image_nx: i32,
+        image_ny: i32,
+        scale_x: f64,
+        scale_y: f64,
+        offset_x: f64,
+        offset_y: f64,
+        u: f64,
+        v: f64,
+        model_image_out: *const f32,
+        predicted_re_out: *mut f32,
+        predicted_im_out: *mut f32,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
 }
@@ -312,6 +362,176 @@ pub fn cpp_convolve_gridder_make_dirty_image_2d(
             visibility_im,
             weight,
             gridable,
+        );
+        Err("casacore C++ backend unavailable".to_string())
+    }
+}
+
+/// Make a corrected residual image from visibilities and a model image with
+/// C++ casacore `ConvolveGridder` + `LatticeFFT`.
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_convolve_gridder_make_model_residual_image_2d(
+    grid_shape: [usize; 2],
+    image_shape: [usize; 2],
+    scale: [f64; 2],
+    offset: [f64; 2],
+    u_lambda: &[f64],
+    v_lambda: &[f64],
+    visibility_re: &[f32],
+    visibility_im: &[f32],
+    weight: &[f32],
+    gridable: &[bool],
+    model_image: &[f32],
+) -> Result<GridderImage2d, String> {
+    let len = u_lambda.len();
+    if v_lambda.len() != len
+        || visibility_re.len() != len
+        || visibility_im.len() != len
+        || weight.len() != len
+        || gridable.len() != len
+    {
+        return Err("model-residual inputs must have matching visibility lengths".to_string());
+    }
+    if model_image.len() != image_shape[0] * image_shape[1] {
+        return Err(format!(
+            "model-residual image expects {} pixels, got {}",
+            image_shape[0] * image_shape[1],
+            model_image.len()
+        ));
+    }
+    #[cfg(has_casacore_cpp)]
+    {
+        let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
+        let gridable_bytes = gridable
+            .iter()
+            .map(|value| u8::from(*value))
+            .collect::<Vec<_>>();
+        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+        let rc = unsafe {
+            ffi_cpp_convolve_gridder_make_model_residual_image_2d(
+                grid_shape[0] as i32,
+                grid_shape[1] as i32,
+                image_shape[0] as i32,
+                image_shape[1] as i32,
+                scale[0],
+                scale[1],
+                offset[0],
+                offset[1],
+                u_lambda.as_ptr(),
+                v_lambda.as_ptr(),
+                visibility_re.as_ptr(),
+                visibility_im.as_ptr(),
+                weight.as_ptr(),
+                gridable_bytes.as_ptr(),
+                model_image.as_ptr(),
+                len as i32,
+                image.as_mut_ptr(),
+                image.len() as i32,
+                &mut error,
+            )
+        };
+        if rc != 0 {
+            let message = if error.is_null() {
+                "casacore model-residual gridder shim failed".to_string()
+            } else {
+                let message = unsafe { std::ffi::CStr::from_ptr(error) }
+                    .to_string_lossy()
+                    .to_string();
+                unsafe { cpp_table_free_error(error) };
+                message
+            };
+            return Err(message);
+        }
+        Ok(GridderImage2d {
+            image_shape,
+            pixels: image,
+        })
+    }
+    #[cfg(not(has_casacore_cpp))]
+    {
+        let _ = (
+            grid_shape,
+            image_shape,
+            scale,
+            offset,
+            u_lambda,
+            v_lambda,
+            visibility_re,
+            visibility_im,
+            weight,
+            gridable,
+            model_image,
+        );
+        Err("casacore C++ backend unavailable".to_string())
+    }
+}
+
+/// Predict one visibility from a model image with C++ casacore `ConvolveGridder`.
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_convolve_gridder_predict_visibility_2d(
+    grid_shape: [usize; 2],
+    image_shape: [usize; 2],
+    scale: [f64; 2],
+    offset: [f64; 2],
+    uv_lambda: [f64; 2],
+    model_image: &[f32],
+) -> Result<GridderPredictedVisibility, String> {
+    if model_image.len() != image_shape[0] * image_shape[1] {
+        return Err(format!(
+            "predict-visibility image expects {} pixels, got {}",
+            image_shape[0] * image_shape[1],
+            model_image.len()
+        ));
+    }
+    #[cfg(has_casacore_cpp)]
+    {
+        let mut predicted_re = 0.0f32;
+        let mut predicted_im = 0.0f32;
+        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+        let rc = unsafe {
+            ffi_cpp_convolve_gridder_predict_visibility_2d(
+                grid_shape[0] as i32,
+                grid_shape[1] as i32,
+                image_shape[0] as i32,
+                image_shape[1] as i32,
+                scale[0],
+                scale[1],
+                offset[0],
+                offset[1],
+                uv_lambda[0],
+                uv_lambda[1],
+                model_image.as_ptr(),
+                &mut predicted_re,
+                &mut predicted_im,
+                &mut error,
+            )
+        };
+        if rc != 0 {
+            let message = if error.is_null() {
+                "casacore predict-visibility gridder shim failed".to_string()
+            } else {
+                let message = unsafe { std::ffi::CStr::from_ptr(error) }
+                    .to_string_lossy()
+                    .to_string();
+                unsafe { cpp_table_free_error(error) };
+                message
+            };
+            return Err(message);
+        }
+        Ok(GridderPredictedVisibility {
+            re: predicted_re,
+            im: predicted_im,
+        })
+    }
+    #[cfg(not(has_casacore_cpp))]
+    {
+        let _ = (
+            grid_shape,
+            image_shape,
+            scale,
+            offset,
+            uv_lambda,
+            model_image,
         );
         Err("casacore C++ backend unavailable".to_string())
     }

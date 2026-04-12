@@ -45,6 +45,8 @@
 //! assert!((diff_s - 32.0).abs() < 0.01);
 //! ```
 
+mod casacore_aberration;
+
 pub mod direction;
 pub mod doppler;
 pub mod earth_magnetic;

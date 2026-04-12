@@ -17,7 +17,7 @@
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_aipsio::{AipsIo, ByteOrder};
 
@@ -31,6 +31,7 @@ use super::canonical::{
 };
 use super::data_type::CasacoreDataType;
 use super::stman_aipsio::ColumnRawData;
+use super::stman_array_file::StManArrayFileReader;
 use super::table_control::ColumnDescContents;
 
 const ISM_HEADER_SIZE: u64 = 512;
@@ -834,12 +835,17 @@ fn read_array_at(
 // Read entry point
 // ---------------------------------------------------------------------------
 
+pub(crate) enum IsmColumnResult {
+    Flat(ColumnRawData),
+    Indirect(Vec<Option<casa_types::Value>>),
+}
+
 pub(crate) fn read_ism_file(
     file_path: &Path,
     dm_blob: &[u8],
     col_descs: &[&ColumnDescContents],
     nrrow: usize,
-) -> Result<Vec<(String, ColumnRawData)>, StorageError> {
+) -> Result<Vec<(String, IsmColumnResult)>, StorageError> {
     let mut file = File::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
@@ -847,7 +853,7 @@ pub(crate) fn read_ism_file(
     let be = header.big_endian;
 
     // Pre-compute column info
-    let col_info: Vec<(CasacoreDataType, usize, bool)> = col_descs
+    let col_info: Vec<(CasacoreDataType, usize, bool, bool)> = col_descs
         .iter()
         .map(|c| {
             let scalar_dt =
@@ -861,14 +867,34 @@ pub(crate) fn read_ism_file(
                 scalar_dt,
                 nrelem,
                 c.is_array && c.nrdim > 0 && !c.shape.is_empty(),
+                c.is_array && (c.option & 1) == 0 && c.shape.is_empty(),
             ))
         })
         .collect::<Result<_, StorageError>>()?;
 
+    let mut array_reader = if col_descs.iter().any(|col_desc| {
+        col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty()
+    }) {
+        let array_path = PathBuf::from(format!("{}i", file_path.display()));
+        if !array_path.is_file() {
+            return Err(StorageError::MissingDataFile(array_path));
+        }
+        Some(StManArrayFileReader::open(&array_path, be)?)
+    } else {
+        None
+    };
+
     // Initialize column-major result vectors
     let ncol = col_descs.len();
-    let mut columns: Vec<Vec<casa_types::Value>> =
+    let mut flat_columns: Vec<Vec<casa_types::Value>> =
         (0..ncol).map(|_| Vec::with_capacity(nrrow)).collect();
+    let mut indirect_columns: Vec<Option<Vec<Option<casa_types::Value>>>> = col_descs
+        .iter()
+        .map(|col_desc| {
+            (col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty())
+                .then(|| Vec::with_capacity(nrrow))
+        })
+        .collect();
 
     // Iterate over bucket intervals from the ISMIndex
     let n_intervals = index.bucket_nrs.len();
@@ -891,12 +917,19 @@ pub(crate) fn read_ism_file(
 
         // For each column, expand the interval values
         for (col_idx, col_desc) in col_descs.iter().enumerate() {
-            let (dt, nrelem, is_fixed_array) = col_info[col_idx];
+            let (dt, nrelem, is_direct_fixed_array, is_indirect_array) = col_info[col_idx];
 
             if col_idx >= bucket.col_indices.len() {
                 // Column not in this bucket — fill with defaults
                 for _ in 0..rows_in_bucket {
-                    columns[col_idx].push(default_value(dt, is_fixed_array, col_desc));
+                    if is_indirect_array {
+                        indirect_columns[col_idx]
+                            .as_mut()
+                            .expect("indirect ISM column storage")
+                            .push(None);
+                    } else {
+                        flat_columns[col_idx].push(default_value(dt, false, col_desc));
+                    }
                 }
                 continue;
             }
@@ -908,27 +941,60 @@ pub(crate) fn read_ism_file(
                 let k = get_interval(col_index, rel_row as u32);
                 let data_offset = col_index.offsets[k] as usize;
 
-                let val = if is_fixed_array {
-                    read_array_at(&bucket.data, data_offset, dt, nrelem, &col_desc.shape, be)?
+                if is_indirect_array {
+                    let offset_value =
+                        read_scalar_at(&bucket.data, data_offset, CasacoreDataType::TpInt64, be)?;
+                    let offset = match offset_value {
+                        casa_types::Value::Scalar(casa_types::ScalarValue::Int64(value)) => value,
+                        other => {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "ISM indirect column '{}' expected Int64 offset, got {other:?}",
+                                col_desc.col_name
+                            )));
+                        }
+                    };
+                    let value = array_reader
+                        .as_mut()
+                        .expect("indirect ISM array reader")
+                        .read_array_at(offset, dt)?;
+                    indirect_columns[col_idx]
+                        .as_mut()
+                        .expect("indirect ISM column storage")
+                        .push(value);
                 } else {
-                    read_scalar_at(&bucket.data, data_offset, dt, be)?
-                };
-                columns[col_idx].push(val);
+                    let value = if is_direct_fixed_array {
+                        read_array_at(&bucket.data, data_offset, dt, nrelem, &col_desc.shape, be)?
+                    } else {
+                        read_scalar_at(&bucket.data, data_offset, dt, be)?
+                    };
+                    flat_columns[col_idx].push(value);
+                }
             }
         }
     }
 
-    // Convert Vec<Value> columns to ColumnRawData
+    // Convert per-column results into the shared storage-layer form.
     let mut result = Vec::with_capacity(ncol);
     for (col_idx, col_desc) in col_descs.iter().enumerate() {
-        let (dt, _nrelem, is_fixed_array) = col_info[col_idx];
-        let values = &columns[col_idx];
-        let raw = if is_fixed_array {
-            values_to_column_raw_array(values, dt, col_desc)?
+        let (dt, _nrelem, is_direct_fixed_array, is_indirect_array) = col_info[col_idx];
+        if is_indirect_array {
+            result.push((
+                col_desc.col_name.clone(),
+                IsmColumnResult::Indirect(
+                    indirect_columns[col_idx]
+                        .take()
+                        .expect("indirect ISM column storage"),
+                ),
+            ));
         } else {
-            values_to_column_raw_scalar(values, dt)?
-        };
-        result.push((col_desc.col_name.clone(), raw));
+            let values = &flat_columns[col_idx];
+            let raw = if is_direct_fixed_array {
+                values_to_column_raw_array(values, dt, col_desc)?
+            } else {
+                values_to_column_raw_scalar(values, dt)?
+            };
+            result.push((col_desc.col_name.clone(), IsmColumnResult::Flat(raw)));
+        }
     }
 
     Ok(result)

@@ -226,6 +226,27 @@ unsafe extern "C" {
         freq_out: *mut f64,
     ) -> i32;
 
+    fn measures_shim_frequency_convert_between_frames(
+        freq_hz: f64,
+        ref_in: *const std::ffi::c_char,
+        ref_out: *const std::ffi::c_char,
+        src_dir_lon: f64,
+        src_dir_lat: f64,
+        src_dir_ref: *const std::ffi::c_char,
+        src_epoch_mjd: f64,
+        src_obs_lon: f64,
+        src_obs_lat: f64,
+        src_obs_h: f64,
+        dst_dir_lon: f64,
+        dst_dir_lat: f64,
+        dst_dir_ref: *const std::ffi::c_char,
+        dst_epoch_mjd: f64,
+        dst_obs_lon: f64,
+        dst_obs_lat: f64,
+        dst_obs_h: f64,
+        freq_out: *mut f64,
+    ) -> i32;
+
     fn measures_shim_bench_frequency_convert(
         freq_start: f64,
         count: i32,
@@ -1055,6 +1076,67 @@ pub fn cpp_frequency_convert(
         Ok(freq_out)
     } else {
         Err(format!("C++ frequency_convert failed: rc={rc}"))
+    }
+}
+
+/// Convert a frequency between reference frames using distinct source and
+/// target measures frames in C++ casacore.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_frequency_convert_between_frames(
+    freq_hz: f64,
+    ref_in: &str,
+    ref_out: &str,
+    src_dir_lon: f64,
+    src_dir_lat: f64,
+    src_dir_ref: &str,
+    src_epoch_mjd: f64,
+    src_obs_lon: f64,
+    src_obs_lat: f64,
+    src_obs_h: f64,
+    dst_dir_lon: f64,
+    dst_dir_lat: f64,
+    dst_dir_ref: &str,
+    dst_epoch_mjd: f64,
+    dst_obs_lon: f64,
+    dst_obs_lat: f64,
+    dst_obs_h: f64,
+) -> Result<f64, String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let c_out = CString::new(ref_out).unwrap();
+    let c_src_dir = CString::new(src_dir_ref).unwrap();
+    let c_dst_dir = CString::new(dst_dir_ref).unwrap();
+    let mut freq_out: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_frequency_convert_between_frames(
+            freq_hz,
+            c_in.as_ptr(),
+            c_out.as_ptr(),
+            src_dir_lon,
+            src_dir_lat,
+            c_src_dir.as_ptr(),
+            src_epoch_mjd,
+            src_obs_lon,
+            src_obs_lat,
+            src_obs_h,
+            dst_dir_lon,
+            dst_dir_lat,
+            c_dst_dir.as_ptr(),
+            dst_epoch_mjd,
+            dst_obs_lon,
+            dst_obs_lat,
+            dst_obs_h,
+            &mut freq_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok(freq_out)
+    } else {
+        Err(format!(
+            "C++ frequency_convert_between_frames failed: rc={rc}"
+        ))
     }
 }
 

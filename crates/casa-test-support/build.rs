@@ -37,6 +37,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_table_complex_vararray.cpp");
     build.file("src/cpp/casacore_cpp_ms.cpp");
     build.file("src/cpp/casacore_cpp_image_shim.cpp");
+    build.file("src/cpp/casacore_cpp_hogbom_shim.cpp");
     build.file("src/cpp/casacore_cpp_lattice_stats.cpp");
     build.file("src/cpp/casacore_cpp_gridder_shim.cpp");
 

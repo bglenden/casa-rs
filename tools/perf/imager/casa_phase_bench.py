@@ -61,11 +61,13 @@ def main() -> None:
     niter = env_int("CASA_RS_BENCH_NITER")
     gain = env_float("CASA_RS_BENCH_GAIN")
     threshold_jy = env_str("CASA_RS_BENCH_THRESHOLD_JY")
+    nsigma = env_float("CASA_RS_BENCH_NSIGMA")
     psfcutoff = env_float("CASA_RS_BENCH_PSFCUTOFF")
     cycleniter = env_int("CASA_RS_BENCH_MINOR_CYCLE_LENGTH")
     cyclefactor = env_float("CASA_RS_BENCH_CYCLEFACTOR")
     minpsffraction = env_float("CASA_RS_BENCH_MIN_PSFFRACTION")
     maxpsffraction = env_float("CASA_RS_BENCH_MAX_PSFFRACTION")
+    interpolation = env_str("CASA_RS_BENCH_INTERPOLATION")
 
     scales = [] if scales_env == "" else [int(float(value)) for value in scales_env.split(",")]
     spw_selector = (
@@ -130,6 +132,7 @@ def main() -> None:
                     cycleniter=cycleniter,
                     loopgain=gain,
                     threshold=threshold,
+                    nsigma=nsigma,
                     cyclefactor=cyclefactor,
                     minpsffraction=minpsffraction,
                     maxpsffraction=maxpsffraction,
@@ -144,7 +147,12 @@ def main() -> None:
                     psfcutoff=psfcutoff,
                 )
                 if specmode == "cube":
-                    parameter_kwargs.update(nchan=chan_count, start=chan_start, width=1)
+                    parameter_kwargs.update(
+                        nchan=chan_count,
+                        start=chan_start,
+                        width=1,
+                        interpolation=interpolation,
+                    )
                 elapsed, param_list = timed(ImagerParameters, **parameter_kwargs)
                 per_stage["parameter_setup"] += elapsed
 

@@ -28,7 +28,7 @@ use thiserror::Error;
 use crate::schema::{SchemaError, TableSchema};
 
 use self::data_type::CasacoreDataType;
-use self::incremental_stman::{read_ism_file, write_ism_file};
+use self::incremental_stman::{IsmColumnResult, read_ism_file, write_ism_file};
 use self::standard_stman::{read_ssm_file, write_ssm_file};
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -1694,7 +1694,7 @@ fn load_ism_columns(
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
     rows: &mut [RecordValue],
-    _undefined_cells: &mut [HashSet<String>],
+    undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
 ) -> Result<(), StorageError> {
     let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
@@ -1704,7 +1704,7 @@ fn load_ism_columns(
 
     let ism_columns = read_ism_file(data_path, dm_blob, &col_descs, nrrow)?;
 
-    for (col_name, raw_data) in &ism_columns {
+    for (col_name, col_result) in &ism_columns {
         let col_desc = col_descs
             .iter()
             .find(|c| c.col_name == *col_name)
@@ -1714,9 +1714,29 @@ fn load_ism_columns(
                 ))
             })?;
 
-        for (row_idx, row) in rows.iter_mut().enumerate() {
-            let value = extract_row_value(raw_data, col_desc, row_idx, nrrow)?;
-            row.push(RecordField::new(col_name.clone(), value));
+        match col_result {
+            IsmColumnResult::Flat(raw_data) => {
+                for (row_idx, row) in rows.iter_mut().enumerate() {
+                    let value = extract_row_value(raw_data, col_desc, row_idx, nrrow)?;
+                    row.push(RecordField::new(col_name.clone(), value));
+                }
+            }
+            IsmColumnResult::Indirect(per_row) => {
+                for (row_idx, row) in rows.iter_mut().enumerate() {
+                    let value = match per_row.get(row_idx) {
+                        Some(Some(value)) => value.clone(),
+                        Some(None) | None => {
+                            let dt = CasacoreDataType::from_primitive_type(
+                                col_desc.require_primitive_type()?,
+                                false,
+                            );
+                            undefined_cells[row_idx].insert(col_desc.col_name.clone());
+                            make_undefined_array(dt, col_desc.nrdim.max(0) as usize)
+                        }
+                    };
+                    row.push(RecordField::new(col_name.clone(), value));
+                }
+            }
         }
     }
 

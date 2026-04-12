@@ -30,10 +30,9 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{MvAngle, MvTime, Quantity, Unit};
+use casa_types::quanta::{MvAngle, MvTime};
 use casa_types::{ArrayValue, Complex64, ScalarValue, Value};
 use image::{DynamicImage, ImageFormat, RgbImage};
 use ndarray::{Ix1, Ix2};
@@ -58,11 +57,13 @@ use crate::plot::{
     build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, export_listobs_plot,
 };
 use crate::schema::main_table::VisibilityDataColumn;
+use crate::spectral_selection::{
+    convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
+};
 use crate::subtables::SubTable;
 use crate::{MeasurementSet, MeasurementSetSummaryOptions, MeasurementSetSummaryOutputFormat};
 
 const EXPORT_DPI: f32 = 72.0;
-const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
 type BitmapArea<'a> = DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>;
 
@@ -5040,25 +5041,6 @@ fn parse_velocity_definition(value: &str) -> Result<DopplerRef, String> {
     }
 }
 
-fn parse_rest_frequency_hz(value: &str) -> Result<f64, String> {
-    let quantity = value
-        .trim()
-        .parse::<Quantity>()
-        .map_err(|error| format!("invalid restfreq {value:?}: {error}"))?;
-    if quantity.unit().name().is_empty() {
-        return Ok(quantity.value() * 1.0e6);
-    }
-    let hz = quantity
-        .get_value_in(&Unit::new("Hz").expect("Hz is a valid unit"))
-        .map_err(|error| format!("invalid restfreq {value:?}: {error}"))?;
-    if hz <= 0.0 || !hz.is_finite() {
-        return Err(format!(
-            "restfreq must resolve to a positive finite Hz value, got {hz}"
-        ));
-    }
-    Ok(hz)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn resolve_spectral_context(
     spec: &MsPlotSpec,
@@ -5115,16 +5097,18 @@ fn resolve_spectral_context(
         })?;
         let field_id = usize::try_from(field_id_value)
             .map_err(|_| format!("invalid FIELD_ID {field_id_value} for spectral transform"))?;
-        let frame = derived_engine
-            .spectral_frame_observatory(row_time_value, field_id)
-            .map_err(|error| error.to_string())?;
         source_channel_frequencies
             .iter()
             .map(|frequency| {
-                frequency
-                    .convert_to(target_ref, &frame)
-                    .map(|value| value.hz())
-                    .map_err(|error| error.to_string())
+                convert_frequency_to_frame(
+                    source_ref,
+                    target_ref,
+                    frequency.hz(),
+                    row_time_value,
+                    field_id,
+                    derived_engine,
+                )
+                .map_err(|error| error.to_string())
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -5135,7 +5119,8 @@ fn resolve_spectral_context(
         .restfreq
         .as_deref()
         .map(parse_rest_frequency_hz)
-        .transpose()?
+        .transpose()
+        .map_err(|error| error.to_string())?
         .unwrap_or(center_frequency_hz);
     let doppler_ref = parse_velocity_definition(&spec.transforms.veldef)?;
     Ok(Some(SpectralContext {
@@ -5219,13 +5204,15 @@ fn compute_axis_value(
             }
             let bin = &spectral_context.channel_frequencies_hz[channel_bin.start..channel_bin.end];
             let mean_frequency_hz = bin.iter().copied().sum::<f64>() / bin.len() as f64;
-            let doppler = MDoppler::new(
-                mean_frequency_hz / spectral_context.rest_frequency_hz,
-                DopplerRef::RATIO,
-            )
-            .convert_to(spectral_context.doppler_ref, &MeasFrame::new())
-            .map_err(|error| error.to_string())?;
-            Ok(Some(doppler.value() * SPEED_OF_LIGHT_KM_S))
+            Ok(Some(
+                velocity_ms_from_frequency_hz(
+                    mean_frequency_hz,
+                    spectral_context.rest_frequency_hz,
+                    spectral_context.doppler_ref,
+                )
+                .map_err(|error| error.to_string())?
+                    / 1000.0,
+            ))
         }
         MsAxis::Weight => Ok(Some(row_weight)),
         MsAxis::Sigma => Ok(Some(row_sigma)),

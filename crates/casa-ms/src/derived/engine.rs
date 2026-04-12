@@ -382,6 +382,70 @@ impl MsCalEngine {
         Ok([u, v, w])
     }
 
+    /// Reproject raw MS UVW coordinates from one field phase center to another.
+    ///
+    /// The input UVW is assumed to be stored in native MeasurementSet
+    /// convention for `source_field_id`. This applies the same
+    /// `FTMachine::rotateUVW()` / `fixvis` geometry transform CASA uses on
+    /// `MAIN.UVW` for a phase-center change between fixed J2000 field
+    /// directions and returns the corresponding geometric phase shift in
+    /// meters.
+    ///
+    /// Important: CASA has two distinct UVW-shift call paths. The imaging /
+    /// `fixvis` path operates directly on `MAIN.UVW`, while
+    /// `PhaseShiftingTVI` wraps a different sign convention. For imaging
+    /// parity we match the `FTMachine::rotateUVW()` behavior here.
+    pub fn reproject_raw_uvw_between_fields(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_field_id: usize,
+    ) -> MsResult<([f64; 3], f64)> {
+        if source_field_id == target_field_id {
+            return Ok((raw_uvw_m, 0.0));
+        }
+
+        let source_dir = self.field_dir(source_field_id)?;
+        let target_dir = self.field_dir(target_field_id)?;
+        // CASA's `FTMachine::rotateUVW()` drives `UVWMachine` directly on the
+        // stored MAIN.UVW row vector. Matching the imaging path therefore
+        // requires the target/source order opposite to the intuitive
+        // source->target helper naming used elsewhere.
+        let uvrot = uvw_rotation_matrix(target_dir, source_dir);
+        let imaging_uvw_m = row_vec3_mul_mat3(raw_uvw_m, uvrot);
+        let phrot = uvw_phase_rotation_vector(target_dir, source_dir);
+        let phase_shift_m = dot3(phrot, imaging_uvw_m);
+        Ok((imaging_uvw_m, phase_shift_m))
+    }
+
+    /// Reproject raw MS UVW coordinates from one field phase center to an
+    /// explicit fixed J2000 direction.
+    ///
+    /// This uses the same UVW/phase-rotation machinery as
+    /// [`Self::reproject_raw_uvw_between_fields`], but targets an explicit
+    /// direction instead of another FIELD row.
+    pub fn reproject_raw_uvw_to_direction(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction: &MDirection,
+    ) -> MsResult<([f64; 3], f64)> {
+        if target_direction.refer() != DirectionRef::J2000 {
+            return Err(MsError::ColumnTypeMismatch {
+                column: "PHASE_DIR".to_string(),
+                table: "FIELD".to_string(),
+                expected: "explicit target direction in J2000".to_string(),
+                found: target_direction.refer().as_str().to_string(),
+            });
+        }
+        let source_dir = self.field_dir(source_field_id)?;
+        let uvrot = uvw_rotation_matrix(target_direction, source_dir);
+        let imaging_uvw_m = row_vec3_mul_mat3(raw_uvw_m, uvrot);
+        let phrot = uvw_phase_rotation_vector(target_direction, source_dir);
+        let phase_shift_m = dot3(phrot, imaging_uvw_m);
+        Ok((imaging_uvw_m, phase_shift_m))
+    }
+
     /// The observatory position used by this engine.
     pub fn observatory_position(&self) -> &MPosition {
         &self.observatory_position
@@ -401,6 +465,120 @@ impl MsCalEngine {
                 max: self.antenna_mount_alt_az.len(),
                 context: "antenna_id".to_string(),
             })
+    }
+}
+
+fn uvw_rotation_matrix(
+    source_direction: &MDirection,
+    target_direction: &MDirection,
+) -> [[f64; 3]; 3] {
+    let (source_ra, source_dec) = source_direction.as_angles();
+    let (target_ra, target_dec) = target_direction.as_angles();
+    let rot1 = euler_rotation(&[
+        (-(std::f64::consts::FRAC_PI_2 - source_ra), Axis::Z),
+        (source_dec - std::f64::consts::FRAC_PI_2, Axis::X),
+    ]);
+    let rot2 = identity3();
+    let rot3 = euler_rotation(&[
+        (std::f64::consts::FRAC_PI_2 - target_dec, Axis::X),
+        (-(target_ra - std::f64::consts::FRAC_PI_2), Axis::Z),
+    ]);
+    let uvrot = mat3_mul_mat3(mat3_mul_mat3(rot3, rot2), rot1);
+    mat3_transpose(uvrot)
+}
+
+fn mat3_mul_vec3(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    [
+        matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
+        matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
+        matrix[2][0] * vector[0] + matrix[2][1] * vector[1] + matrix[2][2] * vector[2],
+    ]
+}
+
+fn row_vec3_mul_mat3(vector: [f64; 3], matrix: [[f64; 3]; 3]) -> [f64; 3] {
+    [
+        vector[0] * matrix[0][0] + vector[1] * matrix[1][0] + vector[2] * matrix[2][0],
+        vector[0] * matrix[0][1] + vector[1] * matrix[1][1] + vector[2] * matrix[2][1],
+        vector[0] * matrix[0][2] + vector[1] * matrix[1][2] + vector[2] * matrix[2][2],
+    ]
+}
+
+fn uvw_phase_rotation_vector(
+    source_direction: &MDirection,
+    target_direction: &MDirection,
+) -> [f64; 3] {
+    let (target_ra, target_dec) = target_direction.as_angles();
+    let rot3 = euler_rotation(&[
+        (std::f64::consts::FRAC_PI_2 - target_dec, Axis::X),
+        (-(target_ra - std::f64::consts::FRAC_PI_2), Axis::Z),
+    ]);
+    let target_cosines = target_direction.cosines();
+    let source_cosines = source_direction.cosines();
+    mat3_mul_vec3(
+        rot3,
+        [
+            target_cosines[0] - source_cosines[0],
+            target_cosines[1] - source_cosines[1],
+            target_cosines[2] - source_cosines[2],
+        ],
+    )
+}
+
+fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+}
+
+fn identity3() -> [[f64; 3]; 3] {
+    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+}
+
+fn mat3_mul_mat3(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut out = [[0.0; 3]; 3];
+    for row in 0..3 {
+        for col in 0..3 {
+            out[row][col] = left[row][0] * right[0][col]
+                + left[row][1] * right[1][col]
+                + left[row][2] * right[2][col];
+        }
+    }
+    out
+}
+
+fn mat3_transpose(matrix: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    [
+        [matrix[0][0], matrix[1][0], matrix[2][0]],
+        [matrix[0][1], matrix[1][1], matrix[2][1]],
+        [matrix[0][2], matrix[1][2], matrix[2][2]],
+    ]
+}
+
+#[derive(Clone, Copy)]
+enum Axis {
+    X,
+    Z,
+}
+
+fn euler_rotation(operations: &[(f64, Axis)]) -> [[f64; 3]; 3] {
+    let mut matrix = identity3();
+    for (angle, axis) in operations {
+        matrix = mat3_mul_mat3(matrix, axis_rotation(*angle, *axis));
+    }
+    matrix
+}
+
+fn axis_rotation(angle: f64, axis: Axis) -> [[f64; 3]; 3] {
+    let (sin_angle, cos_angle) = angle.sin_cos();
+    match axis {
+        Axis::X => [
+            [1.0, 0.0, 0.0],
+            [0.0, cos_angle, -sin_angle],
+            [0.0, sin_angle, cos_angle],
+        ],
+        Axis::Z => [
+            [cos_angle, -sin_angle, 0.0],
+            [sin_angle, cos_angle, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
     }
 }
 
@@ -782,6 +960,96 @@ mod tests {
         let (ra, dec) = recovered.as_angles();
         assert!((ra - 1.0).abs() < 1e-9, "ra={ra}");
         assert!((dec - 0.5).abs() < 1e-9, "dec={dec}");
+    }
+
+    #[test]
+    fn reproject_raw_uvw_matches_casa_fixvis_reference_values() {
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![
+                MDirection::from_angles(
+                    -1.058_214_942_099_811_3,
+                    0.702_211_407_924_268_5,
+                    DirectionRef::J2000,
+                ),
+                MDirection::from_angles(
+                    -1.058_214_942_099_811_3,
+                    0.706_574_731_054_254_4,
+                    DirectionRef::J2000,
+                ),
+            ],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+        );
+        let (uvw_m, phase_shift_m) = engine
+            .reproject_raw_uvw_between_fields([24.4234, -31.0309, 17.6013], 1, 0)
+            .unwrap();
+        // Reference values captured from CASA `fixvis`, which exercises the
+        // same `FTMachine::rotateUVW()` path used by standard imaging.
+        assert!((uvw_m[0] - 24.4234).abs() < 1.0e-12, "u={}", uvw_m[0]);
+        assert!(
+            (uvw_m[1] - -30.953_804_692_483_43).abs() < 1.0e-12,
+            "v={}",
+            uvw_m[1]
+        );
+        assert!(
+            (uvw_m[2] - 17.736_529_862_393_91).abs() < 1.0e-12,
+            "w={}",
+            uvw_m[2]
+        );
+        assert!(
+            (phase_shift_m - 0.135_229_862_393_907_52).abs() < 1.0e-12,
+            "phase_shift_m={phase_shift_m}"
+        );
+    }
+
+    #[test]
+    fn reproject_raw_uvw_matches_casa_fixvis_ra_offset_reference_values() {
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![
+                MDirection::from_angles(
+                    -1.058_214_942_099_811_3,
+                    0.702_211_407_924_268_5,
+                    DirectionRef::J2000,
+                ),
+                MDirection::from_angles(
+                    -1.053_851_618_969_825_7,
+                    0.702_211_407_924_268_5,
+                    DirectionRef::J2000,
+                ),
+            ],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+        );
+        let (uvw_m, phase_shift_m) = engine
+            .reproject_raw_uvw_between_fields(
+                [
+                    27.073_056_790_908_41,
+                    -29.672_968_936_171_65,
+                    15.993_460_382_965_498,
+                ],
+                1,
+                0,
+            )
+            .unwrap();
+        assert!(
+            (uvw_m[0] - 27.042_446_437_092_313).abs() < 1.0e-12,
+            "u={}",
+            uvw_m[0]
+        );
+        assert!(
+            (uvw_m[1] - -29.749_226_002_013_575).abs() < 1.0e-12,
+            "v={}",
+            uvw_m[1]
+        );
+        assert!(
+            (uvw_m[2] - 15.903_330_075_501_767).abs() < 1.0e-12,
+            "w={}",
+            uvw_m[2]
+        );
+        assert!(
+            (phase_shift_m - -0.090_130_307_463_740_37).abs() < 1.0e-12,
+            "phase_shift_m={phase_shift_m}"
+        );
     }
 
     #[test]

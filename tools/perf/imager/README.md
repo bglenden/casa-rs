@@ -34,6 +34,8 @@ scripts/bench-imager-vs-casa.sh /path/to.ms
   - number of repeated Rust/CASA wall-clock runs
 - `IMAGER_BENCH_MODE`
   - `dirty` or `clean`
+- `IMAGER_BENCH_INTERPOLATION`
+  - cube spectral interpolation mode: `nearest` or `linear`
 - `IMAGER_BENCH_FIELD`
 - `IMAGER_BENCH_SPW`
 - `IMAGER_BENCH_CHANNEL_START`
@@ -47,15 +49,45 @@ scripts/bench-imager-vs-casa.sh /path/to.ms
 - `IMAGER_BENCH_NITER`
 - `IMAGER_BENCH_GAIN`
 - `IMAGER_BENCH_THRESHOLD_JY`
+- `IMAGER_BENCH_NSIGMA`
 - `IMAGER_BENCH_PSFCUTOFF`
 - `IMAGER_BENCH_MINOR_CYCLE_LENGTH`
 - `IMAGER_BENCH_WTERM`
   - currently only `none` is supported in the Rust-vs-CASA benchmark script because the Rust-only `direct` mode has no matching `tclean` configuration in this harness
 
+The active Wave 8 clean cube gate can now be reproduced directly through the
+same harness by setting, for example:
+
+```sh
+BENCH_REPEATS=1 \
+IMAGER_BENCH_MODE=clean \
+IMAGER_BENCH_SPECMODE=cube \
+IMAGER_BENCH_FIELD=0 \
+IMAGER_BENCH_SPW=0 \
+IMAGER_BENCH_CHANNEL_START=0 \
+IMAGER_BENCH_CHANNEL_COUNT=20 \
+IMAGER_BENCH_INTERPOLATION=linear \
+IMAGER_BENCH_IMSIZE=100 \
+IMAGER_BENCH_CELL_ARCSEC=8.0 \
+IMAGER_BENCH_WEIGHTING=natural \
+IMAGER_BENCH_DECONVOLVER=hogbom \
+IMAGER_BENCH_NITER=1000000 \
+IMAGER_BENCH_GAIN=0.5 \
+IMAGER_BENCH_THRESHOLD_JY=0.000001 \
+IMAGER_BENCH_NSIGMA=10 \
+IMAGER_BENCH_PSFCUTOFF=0.35 \
+IMAGER_BENCH_MINOR_CYCLE_LENGTH=10 \
+IMAGER_BENCH_CYCLEFACTOR=1.0 \
+IMAGER_BENCH_MIN_PSFFRACTION=0.1 \
+IMAGER_BENCH_MAX_PSFFRACTION=0.8 \
+scripts/bench-imager-vs-casa.sh /Volumes/home/casatestdata/measurementset/vla/refim_point_withline.ms
+```
+
 ## Stage timing fields
 
 The Rust profiler reports medians for:
 
+- `weighting`
 - `psf_grid`
 - `psf_fft`
 - `psf_normalize`

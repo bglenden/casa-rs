@@ -5,6 +5,13 @@ use ndarray::{Array2, Axis};
 use num_complex::Complex32;
 use rustfft::FftPlanner;
 
+pub(crate) fn fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
+    let mut transformed = input.clone();
+    transform_axis(&mut transformed, Axis(0), false);
+    transform_axis(&mut transformed, Axis(1), false);
+    transformed
+}
+
 pub(crate) fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut shifted = ifftshift2(input);
     transform_axis(&mut shifted, Axis(0), false);

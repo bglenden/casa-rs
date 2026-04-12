@@ -108,7 +108,7 @@ struct FrameCache {
     nutation: Mutex<Option<[[f64; 3]; 3]>>,
     earth_velocity_au_per_day: Mutex<Option<([f64; 3], f64)>>,
     earth_velocity_ms: Mutex<Option<[f64; 3]>>,
-    observatory_velocity_ms: Mutex<Option<[f64; 3]>>,
+    direction_app: Mutex<Option<[f64; 3]>>,
     direction_j2000: Mutex<Option<[f64; 3]>>,
 }
 
@@ -366,21 +366,6 @@ impl MeasFrame {
         Ok(value)
     }
 
-    pub(crate) fn cached_observatory_velocity_ms<F>(
-        &self,
-        compute: F,
-    ) -> Result<[f64; 3], MeasureError>
-    where
-        F: FnOnce() -> Result<[f64; 3], MeasureError>,
-    {
-        if let Some(value) = *self.cache.observatory_velocity_ms.lock().unwrap() {
-            return Ok(value);
-        }
-        let value = compute()?;
-        *self.cache.observatory_velocity_ms.lock().unwrap() = Some(value);
-        Ok(value)
-    }
-
     pub(crate) fn cached_direction_j2000<F>(&self, compute: F) -> Result<[f64; 3], MeasureError>
     where
         F: FnOnce() -> Result<[f64; 3], MeasureError>,
@@ -390,6 +375,18 @@ impl MeasFrame {
         }
         let value = compute()?;
         *self.cache.direction_j2000.lock().unwrap() = Some(value);
+        Ok(value)
+    }
+
+    pub(crate) fn cached_direction_app<F>(&self, compute: F) -> Result<[f64; 3], MeasureError>
+    where
+        F: FnOnce() -> Result<[f64; 3], MeasureError>,
+    {
+        if let Some(value) = *self.cache.direction_app.lock().unwrap() {
+            return Ok(value);
+        }
+        let value = compute()?;
+        *self.cache.direction_app.lock().unwrap() = Some(value);
         Ok(value)
     }
 }

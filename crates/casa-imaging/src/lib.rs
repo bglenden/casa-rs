@@ -24,6 +24,8 @@
 //! - staged Hogbom major/minor-cycle CLEAN with explicit stop reasons
 //! - PSF-cutoff beam fitting with interpolation and retry semantics
 
+use std::collections::BTreeMap;
+
 mod beam;
 mod error;
 mod fft;
@@ -31,12 +33,18 @@ mod gridder;
 mod types;
 mod weighting;
 
-use std::time::{Duration, Instant};
+use std::{
+    env, fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
+use casa_coordinates::{Coordinate, DirectionCoordinate, Projection, ProjectionType};
 use casa_images::ImageBeamSet;
 use casa_lattices::array_madfm;
-use libm::erfc;
-use ndarray::{Array2, Array4, s};
+use casa_types::measures::direction::DirectionRef;
+use libm::{erfc, j1};
+use ndarray::{Array2, Array4, Zip, s};
 use num_complex::Complex32;
 
 use beam::{
@@ -44,17 +52,29 @@ use beam::{
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
 use fft::{centered_fft2, centered_ifft2};
-use gridder::StandardGridder;
-use weighting::{apply_weighting, apply_weighting_with_density_source};
+use gridder::{PlannedSample, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector};
+use weighting::{
+    apply_weighting, apply_weighting_with_density_source, trace_weighting_with_density_source,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CubePredictionLambdaMode {
+    OutputChannel,
+    ModelChannel,
+}
 
 pub use error::ImagingError;
 pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
     CompatibilityMode, CubeChannelRequest, CubeImagingDiagnostics, CubeImagingRequest,
-    CubeImagingResult, Deconvolver, GaussianUvTaper, ImageGeometry, ImagingDiagnostics,
-    ImagingRequest, ImagingResult, ImagingStageTimings, MinorCycleTrace, ParallelHandBatch,
-    PlaneStokes, PsfBeamFitResult, RestoringBeamMode, UvTaperSize, VisibilityBatch, WTermMode,
-    WeightDensityMode, WeightingMode,
+    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
+    GaussianUvTaper, GridderMode, ImageGeometry, ImagingDiagnostics, ImagingRequest, ImagingResult,
+    ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, MtmfsResult,
+    ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics,
+    ResidualSampleDiagnostics, RestoringBeamMode, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, WProjectDiagnostics, WProjectKernelDiagnostics,
+    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
+    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
 
 /// Fit a CASA-style restoring beam directly from a PSF image plane.
@@ -90,6 +110,495 @@ pub fn estimate_psf_sidelobe_from_psf(
     estimate_psf_sidelobe_level(psf, cell_size_rad, cutoff)
 }
 
+fn public_weighting_diagnostics(
+    weighting: WeightingMode,
+    weight_density_mode: WeightDensityMode,
+    uv_taper: Option<GaussianUvTaper>,
+    trace: weighting::WeightingTraceInternal,
+) -> WeightingDiagnostics {
+    WeightingDiagnostics {
+        weighting,
+        weight_density_mode,
+        uv_taper,
+        samples: trace
+            .samples
+            .into_iter()
+            .map(|sample| WeightingSampleDiagnostics {
+                batch_index: sample.batch_index,
+                sample_index: sample.sample_index,
+                u_lambda: sample.u_lambda,
+                v_lambda: sample.v_lambda,
+                w_lambda: sample.w_lambda,
+                input_weight: sample.input_weight,
+                density_weight: sample.density_weight,
+                output_weight: sample.output_weight,
+                sumwt_factor: sample.sumwt_factor,
+                gridable: sample.gridable,
+                normalization_contribution: sample.normalization_contribution,
+                reported_contribution: sample.reported_contribution,
+            })
+            .collect(),
+        gridded_samples: trace.gridded_samples,
+        skipped_samples: trace.skipped_samples,
+        normalization_sumwt: trace.normalization_sumwt,
+        reported_sumwt: trace.reported_sumwt,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ResidualSampleTraceInternal {
+    batch_index: usize,
+    sample_index: usize,
+    u_lambda: f64,
+    v_lambda: f64,
+    w_lambda: f64,
+    observed_visibility: Complex32,
+    predicted_visibility: Complex32,
+    residual_visibility: Complex32,
+    weight: f32,
+    gridable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ResidualRefreshTraceInternal {
+    samples: Vec<ResidualSampleTraceInternal>,
+    residual_image: Array2<f32>,
+    normalization_sumwt: f32,
+    reported_sumwt: f32,
+    psf_peak: f32,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+fn public_residual_refresh_diagnostics(
+    trace: ResidualRefreshTraceInternal,
+) -> ResidualRefreshDiagnostics {
+    ResidualRefreshDiagnostics {
+        samples: trace
+            .samples
+            .into_iter()
+            .map(|sample| ResidualSampleDiagnostics {
+                batch_index: sample.batch_index,
+                sample_index: sample.sample_index,
+                u_lambda: sample.u_lambda,
+                v_lambda: sample.v_lambda,
+                w_lambda: sample.w_lambda,
+                observed_visibility: sample.observed_visibility,
+                predicted_visibility: sample.predicted_visibility,
+                residual_visibility: sample.residual_visibility,
+                weight: sample.weight,
+                gridable: sample.gridable,
+            })
+            .collect(),
+        residual_image: trace.residual_image,
+        normalization_sumwt: trace.normalization_sumwt,
+        reported_sumwt: trace.reported_sumwt,
+        psf_peak: trace.psf_peak,
+        gridded_samples: trace.gridded_samples,
+        skipped_samples: trace.skipped_samples,
+    }
+}
+
+/// Trace the explicit weighting seam for one MFS imaging request.
+///
+/// This exposes the final imaging weight assigned to each scalar sample, along
+/// with the separate normalization and persisted-`sumwt` accumulators that the
+/// CASA-compatible dirty path uses downstream.
+pub fn trace_weighting(request: &ImagingRequest) -> Result<WeightingDiagnostics, ImagingError> {
+    request.validate()?;
+    let gridder = StandardGridder::new(request.geometry)?;
+    let trace = trace_weighting_with_density_source(
+        request.weighting,
+        WeightDensityMode::Combined,
+        None,
+        &request.visibility_batches,
+        &request.visibility_batches,
+        &gridder,
+    )?;
+    Ok(public_weighting_diagnostics(
+        request.weighting,
+        WeightDensityMode::Combined,
+        None,
+        trace,
+    ))
+}
+
+/// Trace the explicit weighting seam for every plane of a spectral-cube request.
+///
+/// The returned diagnostics stay in channel order and preserve the
+/// `perchanweightdensity` / taper settings that feed CASA-style cube dirty
+/// imaging.
+pub fn trace_cube_weighting(
+    request: &CubeImagingRequest,
+) -> Result<Vec<WeightingDiagnostics>, ImagingError> {
+    request.validate()?;
+    let combined_density_batches =
+        matches!(request.weight_density_mode, WeightDensityMode::Combined).then(|| {
+            request
+                .channels
+                .iter()
+                .flat_map(|channel| channel.visibility_batches.iter().cloned())
+                .collect::<Vec<_>>()
+        });
+    let mut diagnostics = Vec::with_capacity(request.channels.len());
+    for channel in &request.channels {
+        let plane_request = ImagingRequest {
+            geometry: request.geometry,
+            visibility_batches: channel.visibility_batches.clone(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: request.plane_stokes,
+            weighting: request.weighting,
+            reffreq_hz: channel.channel_frequency_hz,
+            selected_frequency_range_hz: [
+                channel.channel_frequency_hz,
+                channel.channel_frequency_hz,
+            ],
+            deconvolver: request.deconvolver,
+            multiscale_scales: request.multiscale_scales.clone(),
+            small_scale_bias: request.small_scale_bias,
+            clean: request.clean,
+            clean_mask: request.clean_mask.clone(),
+            w_term_mode: request.w_term_mode,
+            w_project_planes: request.w_project_planes,
+            compatibility: request.compatibility,
+        };
+        plane_request.validate()?;
+        let gridder = StandardGridder::new(plane_request.geometry)?;
+        let density_batches = match request.weight_density_mode {
+            WeightDensityMode::Combined => combined_density_batches
+                .as_deref()
+                .expect("combined cube density batches prepared"),
+            WeightDensityMode::PerPlane => &plane_request.visibility_batches,
+        };
+        let trace = trace_weighting_with_density_source(
+            plane_request.weighting,
+            request.weight_density_mode,
+            request.uv_taper,
+            &plane_request.visibility_batches,
+            density_batches,
+            &gridder,
+        )?;
+        diagnostics.push(public_weighting_diagnostics(
+            plane_request.weighting,
+            request.weight_density_mode,
+            request.uv_taper,
+            trace,
+        ));
+    }
+    Ok(diagnostics)
+}
+
+fn public_w_project_diagnostics(prepared: WProjectPreparedData) -> WProjectDiagnostics {
+    let kernels = (0..prepared.projector.plane_count())
+        .map(|plane_index| WProjectKernelDiagnostics {
+            plane_index,
+            w_lambda: prepared.projector.kernel_w_lambda(plane_index),
+            support: prepared.projector.kernel_support(plane_index),
+            kernel_integral: prepared.projector.kernel_integral(plane_index),
+        })
+        .collect();
+    let samples = prepared
+        .samples
+        .into_iter()
+        .map(|sample| WProjectSamplePlanDiagnostics {
+            batch_index: sample.batch_index,
+            sample_index: sample.sample_index,
+            u_lambda: sample.u_lambda,
+            v_lambda: sample.v_lambda,
+            w_lambda: sample.w_lambda,
+            weight: sample.weight,
+            sumwt_factor: sample.sumwt_factor,
+            plane_index: sample.positive_plan.plane_index,
+            loc_x: sample.positive_plan.loc_x,
+            loc_y: sample.positive_plan.loc_y,
+            off_x: sample.positive_plan.off_x,
+            off_y: sample.positive_plan.off_y,
+            conjugate_kernel: sample.positive_plan.conjugate_kernel,
+            normalization: sample.positive_plan.normalization,
+            support: prepared
+                .projector
+                .kernel_support(sample.positive_plan.plane_index),
+        })
+        .collect();
+    let skipped_samples = prepared
+        .skipped_samples
+        .into_iter()
+        .map(|sample| WProjectSkippedSampleDiagnostics {
+            batch_index: sample.batch_index,
+            sample_index: sample.sample_index,
+            u_lambda: sample.u_lambda,
+            v_lambda: sample.v_lambda,
+            w_lambda: sample.w_lambda,
+            weight: sample.weight,
+            sumwt_factor: sample.sumwt_factor,
+            reason: sample.reason,
+        })
+        .collect();
+    WProjectDiagnostics {
+        requested_plane_count: prepared.requested_plane_count,
+        plane_count: prepared.projector.plane_count(),
+        sampling: prepared.projector.sampling(),
+        w_scale: prepared.projector.w_scale(),
+        max_abs_w_lambda: prepared.max_abs_w_lambda,
+        kernels,
+        samples,
+        skipped_samples,
+        normalization_sumwt: prepared.normalization_sumwt,
+        reported_sumwt: prepared.reported_sumwt,
+        gridded_samples: prepared.gridded_samples,
+    }
+}
+
+/// Trace the explicit `wproject` CF/grid-planning seam for one imaging plane.
+pub fn trace_w_project_plan(request: &ImagingRequest) -> Result<WProjectDiagnostics, ImagingError> {
+    request.validate()?;
+    if request.w_term_mode != WTermMode::WProject {
+        return Err(ImagingError::InvalidRequest(
+            "trace_w_project_plan requires w_term_mode='wproject'".to_string(),
+        ));
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let weighted = apply_weighting(request, &gridder)?;
+    let prepared = prepare_w_project_data(
+        request.geometry,
+        &weighted,
+        &gridder,
+        request.w_project_planes,
+    )?;
+    Ok(public_w_project_diagnostics(prepared))
+}
+
+/// Trace the explicit `wproject` CF/grid-planning seam for one cube channel.
+pub fn trace_cube_channel_w_project_plan(
+    request: &CubeImagingRequest,
+    channel_index: usize,
+) -> Result<WProjectDiagnostics, ImagingError> {
+    request.validate()?;
+    if request.w_term_mode != WTermMode::WProject {
+        return Err(ImagingError::InvalidRequest(
+            "trace_cube_channel_w_project_plan requires w_term_mode='wproject'".to_string(),
+        ));
+    }
+    let Some(channel) = request.channels.get(channel_index) else {
+        return Err(ImagingError::InvalidRequest(format!(
+            "cube channel index {channel_index} is out of range for {} channels",
+            request.channels.len()
+        )));
+    };
+    let plane_request = ImagingRequest {
+        geometry: request.geometry,
+        visibility_batches: channel.visibility_batches.clone(),
+        gridder_mode: GridderMode::Standard,
+        plane_stokes: request.plane_stokes,
+        weighting: request.weighting,
+        reffreq_hz: channel.channel_frequency_hz,
+        selected_frequency_range_hz: [channel.channel_frequency_hz, channel.channel_frequency_hz],
+        deconvolver: request.deconvolver,
+        multiscale_scales: request.multiscale_scales.clone(),
+        small_scale_bias: request.small_scale_bias,
+        clean: request.clean,
+        clean_mask: request.clean_mask.clone(),
+        w_term_mode: request.w_term_mode,
+        w_project_planes: request.w_project_planes,
+        compatibility: request.compatibility,
+    };
+    trace_w_project_plan(&plane_request)
+}
+
+/// Trace the standard major-cycle residual-refresh seam for one imaging plane.
+///
+/// This applies the normal weighting/PSF path and then exposes the predicted
+/// visibilities, residual visibilities, and refreshed residual image for the
+/// supplied model. The current trace surface is limited to standard 2-D
+/// imaging (`w_term_mode = None`).
+pub fn trace_residual_refresh(
+    request: &ImagingRequest,
+    model: &Array2<f32>,
+) -> Result<ResidualRefreshDiagnostics, ImagingError> {
+    request.validate()?;
+    if model.dim()
+        != (
+            request.geometry.image_shape[0],
+            request.geometry.image_shape[1],
+        )
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "residual-refresh trace model shape {:?} does not match image geometry {:?}",
+            model.dim(),
+            request.geometry.image_shape,
+        )));
+    }
+    if request.w_term_mode != WTermMode::None {
+        return Err(ImagingError::Unsupported(
+            "trace_residual_refresh currently supports only standard 2-D imaging".to_string(),
+        ));
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let weighted_batches = apply_weighting(request, &gridder)?;
+    stage_timings.weighting += weighting_started.elapsed();
+    let psf_state = compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?;
+    let trace = compute_residual_trace_standard(
+        request.geometry,
+        &weighted_batches,
+        &gridder,
+        model,
+        &psf_state,
+        matches!(
+            request.deconvolver,
+            Deconvolver::Clark | Deconvolver::Multiscale
+        ),
+        &mut stage_timings,
+    )?;
+    Ok(public_residual_refresh_diagnostics(trace))
+}
+
+/// Trace the standard major-cycle residual-refresh seam for one cube plane.
+///
+/// Unlike [`trace_residual_refresh`], this uses the per-sample cube
+/// interpolation state carried by [`CubeChannelRequest`] so the predicted
+/// visibilities can draw from neighboring model planes in the same way CASA's
+/// cube major cycle does. The trace surface is currently limited to standard
+/// 2-D imaging (`w_term_mode = None`).
+pub fn trace_cube_channel_residual_refresh(
+    request: &CubeImagingRequest,
+    channel_index: usize,
+    model_planes: &[Array2<f32>],
+) -> Result<ResidualRefreshDiagnostics, ImagingError> {
+    trace_cube_channel_residual_refresh_with_mode(
+        request,
+        channel_index,
+        model_planes,
+        CubePredictionLambdaMode::OutputChannel,
+    )
+}
+
+/// Trace the cube residual-refresh seam while degridding each model
+/// contribution at its own model-plane frequency instead of the output-plane
+/// frequency.
+///
+/// This is a diagnostic helper for parity work on cube prediction semantics.
+pub fn trace_cube_channel_residual_refresh_model_channel_lambda(
+    request: &CubeImagingRequest,
+    channel_index: usize,
+    model_planes: &[Array2<f32>],
+) -> Result<ResidualRefreshDiagnostics, ImagingError> {
+    trace_cube_channel_residual_refresh_with_mode(
+        request,
+        channel_index,
+        model_planes,
+        CubePredictionLambdaMode::ModelChannel,
+    )
+}
+
+fn trace_cube_channel_residual_refresh_with_mode(
+    request: &CubeImagingRequest,
+    channel_index: usize,
+    model_planes: &[Array2<f32>],
+    prediction_lambda_mode: CubePredictionLambdaMode,
+) -> Result<ResidualRefreshDiagnostics, ImagingError> {
+    request.validate()?;
+    if request.w_term_mode != WTermMode::None {
+        return Err(ImagingError::Unsupported(
+            "trace_cube_channel_residual_refresh currently supports only standard 2-D imaging"
+                .to_string(),
+        ));
+    }
+    if model_planes.len() != request.channels.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "cube residual-refresh trace model plane count {} does not match request channel count {}",
+            model_planes.len(),
+            request.channels.len()
+        )));
+    }
+    let expected_shape = (
+        request.geometry.image_shape[0],
+        request.geometry.image_shape[1],
+    );
+    for (model_channel_index, model_plane) in model_planes.iter().enumerate() {
+        if model_plane.dim() != expected_shape {
+            return Err(ImagingError::InvalidRequest(format!(
+                "cube residual-refresh trace model plane {model_channel_index} shape {:?} does not match image geometry {:?}",
+                model_plane.dim(),
+                request.geometry.image_shape
+            )));
+        }
+    }
+    let Some(channel) = request.channels.get(channel_index) else {
+        return Err(ImagingError::InvalidRequest(format!(
+            "cube residual-refresh trace channel index {channel_index} is out of range for {} channels",
+            request.channels.len()
+        )));
+    };
+    let plane_request = ImagingRequest {
+        geometry: request.geometry,
+        visibility_batches: channel.visibility_batches.clone(),
+        gridder_mode: GridderMode::Standard,
+        plane_stokes: request.plane_stokes,
+        weighting: request.weighting,
+        reffreq_hz: channel.channel_frequency_hz,
+        selected_frequency_range_hz: [channel.channel_frequency_hz, channel.channel_frequency_hz],
+        deconvolver: request.deconvolver,
+        multiscale_scales: request.multiscale_scales.clone(),
+        small_scale_bias: request.small_scale_bias,
+        clean: request.clean,
+        clean_mask: request.clean_mask.clone(),
+        w_term_mode: request.w_term_mode,
+        w_project_planes: request.w_project_planes,
+        compatibility: request.compatibility,
+    };
+    plane_request.validate()?;
+    let gridder = StandardGridder::new(plane_request.geometry)?;
+    let combined_density_batches =
+        matches!(request.weight_density_mode, WeightDensityMode::Combined).then(|| {
+            request
+                .channels
+                .iter()
+                .flat_map(|cube_channel| cube_channel.visibility_batches.iter().cloned())
+                .collect::<Vec<_>>()
+        });
+    let density_batches = match request.weight_density_mode {
+        WeightDensityMode::Combined => combined_density_batches
+            .as_deref()
+            .expect("combined cube density batches prepared"),
+        WeightDensityMode::PerPlane => &plane_request.visibility_batches,
+    };
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let weighted_batches = apply_weighting_with_density_source(
+        plane_request.weighting,
+        request.weight_density_mode,
+        request.uv_taper,
+        &plane_request.visibility_batches,
+        density_batches,
+        &gridder,
+    )?;
+    stage_timings.weighting += weighting_started.elapsed();
+    let psf_state = compute_psf(
+        &plane_request,
+        &weighted_batches,
+        &gridder,
+        &mut stage_timings,
+    )?;
+    let trace = compute_residual_trace_cube_standard(
+        &weighted_batches,
+        &channel.model_interpolation_batches,
+        &gridder,
+        model_planes,
+        channel.channel_frequency_hz,
+        &request
+            .channels
+            .iter()
+            .map(|cube_channel| cube_channel.channel_frequency_hz)
+            .collect::<Vec<_>>(),
+        prediction_lambda_mode,
+        &psf_state,
+        &mut stage_timings,
+    )?;
+    Ok(public_residual_refresh_diagnostics(trace))
+}
+
 /// Run the concrete CASA-style MFS imaging pipeline for the supplied request.
 pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingError> {
     let total_started = Instant::now();
@@ -99,10 +608,20 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
             "only CASA standard MFS compatibility mode is implemented".to_string(),
         ));
     }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "deconvolver='mtmfs' requires the dedicated run_mtmfs() entrypoint".to_string(),
+        ));
+    }
+    if let GridderMode::Mosaic(config) = &request.gridder_mode {
+        return run_mosaic_dirty_imaging(request, config, total_started);
+    }
 
     let gridder = StandardGridder::new(request.geometry)?;
-    let weighted_batches = apply_weighting(request, &gridder)?;
     let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let weighted_batches = apply_weighting(request, &gridder)?;
+    stage_timings.weighting += weighting_started.elapsed();
     let psf_state = compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?;
     let [nx, ny] = request.geometry.image_shape;
     let mut model = Array2::<f32>::zeros((nx, ny));
@@ -217,6 +736,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
             beam_fit_attempts,
             beam_fit_cutoff_used,
             beam_fit_debug,
+            mosaic_weight_image: None,
             stage_timings,
         },
         compatibility: CompatibilityMetadata {
@@ -235,6 +755,890 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
             image_units: "Jy/beam".to_string(),
         },
     })
+}
+
+/// Run CASA-style MTMFS imaging on already-prepared MFS visibilities.
+///
+/// The current Rust implementation follows CASA's point-source MTMFS structure:
+/// Taylor-weighted dirty/PSF terms, a coupled Hessian solve in the minor
+/// cycle, Cotton-Schwab residual refreshes against the measured visibilities,
+/// and CASA-style `.tt*`, `.alpha`, and `.alpha.error` products.
+///
+/// This implementation intentionally does not reproduce CASA's historical
+/// Hogbom off-by-one bug. The requested `niter` remains a hard cap on
+/// committed model updates, even under `deconvolver='mtmfs'`.
+pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
+    let total_started = Instant::now();
+    request.validate()?;
+    if request.compatibility != CompatibilityMode::CasaStandardMfs {
+        return Err(ImagingError::Unsupported(
+            "only CASA standard MFS compatibility mode is implemented".to_string(),
+        ));
+    }
+    if !matches!(request.gridder_mode, GridderMode::Standard) {
+        return Err(ImagingError::Unsupported(
+            "MTMFS currently supports gridder='standard' only".to_string(),
+        ));
+    }
+
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let weighting_request = ImagingRequest {
+        geometry: request.geometry,
+        visibility_batches: request.visibility_batches.clone(),
+        gridder_mode: request.gridder_mode.clone(),
+        plane_stokes: request.plane_stokes,
+        weighting: request.weighting,
+        reffreq_hz: request.reffreq_hz,
+        selected_frequency_range_hz: request.selected_frequency_range_hz,
+        deconvolver: Deconvolver::Hogbom,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        clean: request.clean,
+        clean_mask: request.clean_mask.clone(),
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        compatibility: request.compatibility,
+    };
+    let weighted_batches = apply_weighting(&weighting_request, &gridder)?;
+    stage_timings.weighting += weighting_started.elapsed();
+
+    let psf_state =
+        compute_mtmfs_psf_terms(request, &weighted_batches, &gridder, &mut stage_timings)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let mut model_terms = vec![Array2::<f32>::zeros((nx, ny)); request.nterms];
+    let mut residual_terms = compute_mtmfs_residual_terms(
+        request,
+        &weighted_batches,
+        &gridder,
+        &model_terms,
+        &psf_state,
+        &mut stage_timings,
+    )?;
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &psf_state.psf_terms[0],
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref());
+    let mut warnings = Vec::new();
+
+    let hessian = mtmfs_hessian(&psf_state.psf_terms, request.nterms)?;
+    let inv_hessian = invert_small_matrix(&hessian)?;
+
+    let controller_started = Instant::now();
+    let mut reported_minor_iterations = 0usize;
+    let mut major_cycles = 0usize;
+    let mut clean_stop_reason = None::<CleanStopReason>;
+    let mut minor_cycle_traces = Vec::<MinorCycleTrace>::new();
+    let mut final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
+    let mut min_residual_peak_jy_per_beam = initial_peak;
+    let mut divergence_warned = false;
+    let mut residual_needs_refresh = false;
+
+    while reported_minor_iterations < request.clean.niter {
+        let Some((_, cycle_peak_value)) =
+            peak_location_masked(&residual_terms[0], request.clean_mask.as_ref())
+        else {
+            clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break;
+        };
+        let cycle_peak = cycle_peak_value.abs();
+        let cycle_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
+            &residual_terms[0],
+            request.clean_mask.as_ref(),
+            request.clean,
+        );
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            cycle_peak,
+            request.clean.threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+        let remaining_reported = request.clean.niter - reported_minor_iterations;
+        let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
+        let start_reported_iteration = reported_minor_iterations;
+        let cycle_threshold_jy_per_beam =
+            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+        let (outcome, probe) = run_mtmfs_minor_cycle(
+            request,
+            &psf_state.psf_terms,
+            &hessian,
+            &inv_hessian,
+            &mut model_terms,
+            &mut residual_terms,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+            &mut stage_timings,
+        );
+        minor_cycle_traces.push(make_minor_cycle_trace(
+            minor_cycle_traces.len(),
+            start_reported_iteration,
+            outcome,
+            cycle_peak,
+            &residual_terms[0],
+            &model_terms[0],
+            probe,
+        ));
+        reported_minor_iterations += outcome.reported_updates;
+        final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
+        if let Some(reason) = outcome.stop_reason {
+            clean_stop_reason = Some(reason);
+        }
+        if !outcome.updated_model {
+            break;
+        }
+        residual_needs_refresh = true;
+        let minor_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref());
+        update_divergence_state(
+            &mut warnings,
+            &mut min_residual_peak_jy_per_beam,
+            minor_peak,
+            &mut divergence_warned,
+        );
+        if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
+            clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+            break;
+        }
+        let refresh_started = Instant::now();
+        residual_terms = compute_mtmfs_residual_terms(
+            request,
+            &weighted_batches,
+            &gridder,
+            &model_terms,
+            &psf_state,
+            &mut stage_timings,
+        )?;
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        major_cycles += 1;
+        residual_needs_refresh = false;
+        let refreshed_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref());
+        let refreshed_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
+            &residual_terms[0],
+            request.clean_mask.as_ref(),
+            request.clean,
+        );
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            refreshed_peak,
+            request.clean.threshold_jy_per_beam,
+            refreshed_nsigma_threshold_jy_per_beam,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+    }
+    if request.clean.niter > 0 && clean_stop_reason.is_none() {
+        clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+    }
+    if residual_needs_refresh {
+        let refresh_started = Instant::now();
+        residual_terms = compute_mtmfs_residual_terms(
+            request,
+            &weighted_batches,
+            &gridder,
+            &model_terms,
+            &psf_state,
+            &mut stage_timings,
+        )?;
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+    }
+    let controller_elapsed = controller_started.elapsed();
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf_terms[0],
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let restore_started = Instant::now();
+    let principal_residual_terms = principal_solution_terms(&residual_terms, &inv_hessian);
+    let mut image_terms = Vec::with_capacity(request.nterms);
+    for (model_term, residual_term) in model_terms.iter().zip(principal_residual_terms.iter()) {
+        let restored_model = restore_model(model_term, request.geometry.cell_size_rad, beam);
+        image_terms.push(&restored_model + residual_term);
+    }
+    stage_timings.restore += restore_started.elapsed();
+
+    let max_abs_w_lambda = weighted_batches
+        .iter()
+        .flat_map(|batch| batch.w_lambda.iter())
+        .fold(0.0f64, |max_value, value| max_value.max(value.abs()));
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    warnings.extend(beam_warnings);
+    stage_timings.total = total_started.elapsed();
+
+    let (alpha, alpha_error) =
+        compute_mtmfs_alpha_products(&image_terms, &principal_residual_terms);
+
+    Ok(MtmfsResult {
+        psf_terms: psf_state.psf_terms.iter().map(expand_plane).collect(),
+        residual_terms: residual_terms.iter().map(expand_plane).collect(),
+        model_terms: model_terms.iter().map(expand_plane).collect(),
+        image_terms: image_terms.iter().map(expand_plane).collect(),
+        sumwt_terms: psf_state
+            .reported_sumwt_terms
+            .iter()
+            .copied()
+            .map(expand_scalar)
+            .collect(),
+        alpha: alpha.as_ref().map(expand_plane),
+        alpha_error: alpha_error.as_ref().map(expand_plane),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            major_cycles: casa_major_cycle_count(major_cycles, request.clean.niter),
+            minor_iterations: reported_minor_iterations,
+            clean_stop_reason,
+            minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual_terms[0],
+                request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+#[derive(Debug, Clone)]
+struct MosaicPointingGroup {
+    pointing_direction_rad: [f64; 2],
+    frequency_hz: f64,
+    batch: VisibilityBatch,
+}
+
+fn run_mosaic_dirty_imaging(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    total_started: Instant,
+) -> Result<ImagingResult, ImagingError> {
+    if request.clean.niter > 0 {
+        return Err(ImagingError::Unsupported(
+            "mosaic gridder currently supports dirty MFS imaging only".to_string(),
+        ));
+    }
+    if request.w_term_mode != WTermMode::None {
+        return Err(ImagingError::Unsupported(
+            "mosaic gridder currently supports only w_term_mode='none'".to_string(),
+        ));
+    }
+    if request.weighting != WeightingMode::Natural {
+        return Err(ImagingError::Unsupported(
+            "mosaic gridder currently supports natural weighting only".to_string(),
+        ));
+    }
+
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let weighted_batches = apply_weighting(request, &gridder)?;
+    stage_timings.weighting += weighting_started.elapsed();
+    let conv_sampling = mosaic_projector_sampling(request.geometry);
+    let groups = build_mosaic_pointing_groups(&weighted_batches, &config.metadata_batches)?;
+    if groups.is_empty() {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let [nx, ny] = request.geometry.image_shape;
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let model = Array2::<f32>::zeros((nx, ny));
+    let mut accumulated_residual_image = Array2::<f32>::zeros((nx, ny));
+    let mut accumulated_weight_image = Array2::<f32>::zeros((nx, ny));
+    let mut reported_sumwt = 0.0f32;
+    let mut normalization_sumwt = 0.0f32;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+
+    for group in groups {
+        // Keep the current center-in-image cull until issue #50 replaces it
+        // with a source-backed PB/image overlap test.
+        if !mosaic_pointing_center_within_image(
+            request.geometry,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+        ) {
+            if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+                eprintln!(
+                    "mosaic skipping group outside image footprint dir={:?} freq_hz={:.6e}",
+                    group.pointing_direction_rad, group.frequency_hz
+                );
+            }
+            continue;
+        }
+        let projector_started = Instant::now();
+        let projector = build_mosaic_projector(
+            request.geometry,
+            &gridder,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            config.primary_beam_model,
+            group.frequency_hz,
+            conv_sampling,
+            2,
+            true,
+        )?;
+        let weight_projector = build_mosaic_projector(
+            request.geometry,
+            &gridder,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            config.primary_beam_model,
+            group.frequency_hz,
+            conv_sampling,
+            1,
+            true,
+        )?;
+        let weight_plan = weight_projector.plan_sample(0.0, 0.0).ok_or_else(|| {
+            ImagingError::Normalization(
+                "mosaic weight projector failed to plan the centered kernel".to_string(),
+            )
+        })?;
+        let mut group_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut group_weight_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        stage_timings.psf_grid += projector_started.elapsed();
+        if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+            eprintln!(
+                "mosaic group dir={:?} freq_hz={:.6e} support={} sampling={} samples={}",
+                group.pointing_direction_rad,
+                group.frequency_hz,
+                projector.support(),
+                projector.sampling(),
+                group.batch.len()
+            );
+        }
+        let grid_started = Instant::now();
+        for sample_index in 0..group.batch.len() {
+            if !group.batch.gridable[sample_index] {
+                skipped_samples += 1;
+                continue;
+            }
+            let weight = group.batch.weight[sample_index];
+            let sumwt_factor = group.batch.sumwt_factor[sample_index];
+            let visibility = group.batch.visibility[sample_index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0
+                && visibility.re.is_finite()
+                && visibility.im.is_finite())
+            {
+                skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) = projector.plan_sample(
+                group.batch.u_lambda[sample_index],
+                group.batch.v_lambda[sample_index],
+            ) else {
+                skipped_samples += 1;
+                continue;
+            };
+            projector.grid_sample_planned(&mut psf_grid, &plan, Complex32::new(weight, 0.0));
+            projector.grid_sample_planned(&mut group_residual_grid, &plan, visibility * weight);
+            weight_projector.grid_sample_planned(
+                &mut group_weight_grid,
+                &weight_plan,
+                Complex32::new(weight, 0.0),
+            );
+            normalization_sumwt += 2.0 * weight * plan.normalization;
+            let reported = weight * sumwt_factor;
+            if plan.center_in_bounds {
+                reported_sumwt += reported;
+            }
+            gridded_samples += 1;
+        }
+        let raw_group_residual = centered_ifft2(&group_residual_grid);
+        let group_residual_image =
+            gridder.corrected_w_project_image_from_grid(&raw_group_residual, conv_sampling);
+        Zip::from(&mut accumulated_residual_image)
+            .and(&group_residual_image)
+            .for_each(|accumulated, residual_value| {
+                *accumulated += *residual_value;
+            });
+        let raw_group_weight = centered_ifft2(&group_weight_grid);
+        let group_weight_image =
+            gridder.corrected_w_project_image_from_grid(&raw_group_weight, conv_sampling);
+        Zip::from(&mut accumulated_weight_image)
+            .and(&group_weight_image)
+            .for_each(|accumulated, weight_value| {
+                *accumulated += *weight_value;
+            });
+        stage_timings.psf_grid += grid_started.elapsed();
+    }
+
+    if !(normalization_sumwt.is_finite() && normalization_sumwt > 0.0) {
+        return Err(ImagingError::Normalization(
+            "mosaic normalization sumwt is non-finite or zero".to_string(),
+        ));
+    }
+    if !(reported_sumwt.is_finite() && reported_sumwt > 0.0) {
+        return Err(ImagingError::Normalization(
+            "mosaic reported sumwt is non-finite or zero".to_string(),
+        ));
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2(&psf_grid);
+    stage_timings.psf_fft += fft_started.elapsed();
+
+    let normalize_started = Instant::now();
+    let mut accumulated_psf = gridder.corrected_w_project_image_from_grid(&raw_psf, conv_sampling);
+    let mut accumulated_residual = accumulated_residual_image;
+    let weight_image = accumulated_weight_image;
+    if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+        let pre_weight_peak = peak_abs_value(&accumulated_residual);
+        let pre_weight_peak_loc = peak_location_masked(&accumulated_residual, None);
+        eprintln!(
+            "mosaic pre-weight residual peak={pre_weight_peak:.9e} loc={pre_weight_peak_loc:?}"
+        );
+    }
+    if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+        let weight_peak = peak_abs_value(&weight_image);
+        let weight_peak_loc = peak_location_masked(&weight_image, None);
+        eprintln!("mosaic weight peak={weight_peak:.9e} loc={weight_peak_loc:?}");
+    }
+
+    let weight_peak = weight_image
+        .iter()
+        .copied()
+        .fold(0.0f32, |peak, value| peak.max(value));
+    if !(weight_peak.is_finite() && weight_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "mosaic weight peak is non-finite or zero".to_string(),
+        ));
+    }
+    let pb_limit_threshold = config.pb_limit.abs() * weight_peak;
+    for ((x, y), weight_value) in weight_image.indexed_iter() {
+        let sensitivity = weight_value.max(0.0);
+        if sensitivity > pb_limit_threshold {
+            accumulated_residual[(x, y)] /= sensitivity;
+            accumulated_psf[(x, y)] /= sensitivity;
+        } else {
+            accumulated_residual[(x, y)] = 0.0;
+            accumulated_psf[(x, y)] = 0.0;
+        }
+    }
+
+    let psf_peak = peak_abs_value(&accumulated_psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "mosaic PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    accumulated_residual.mapv_inplace(|value| value / psf_peak);
+    accumulated_psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += normalize_started.elapsed();
+    if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+        eprintln!(
+            "mosaic totals: gridded={gridded_samples} skipped={skipped_samples} normalization_sumwt={normalization_sumwt:.9e} reported_sumwt={reported_sumwt:.9e}"
+        );
+    }
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &accumulated_psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&accumulated_residual, request.clean_mask.as_ref());
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &accumulated_psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&accumulated_psf),
+        residual: expand_plane(&accumulated_residual),
+        model: expand_plane(&model),
+        image: expand_plane(&accumulated_residual),
+        sumwt: expand_scalar(reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples,
+            skipped_samples,
+            major_cycles: 0,
+            minor_iterations: 0,
+            clean_stop_reason: None,
+            minor_cycle_traces: Vec::new(),
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: initial_peak,
+            max_abs_w_lambda: request
+                .visibility_batches
+                .iter()
+                .flat_map(|batch| batch.w_lambda.iter())
+                .fold(0.0f64, |max_value, value| max_value.max(value.abs())),
+            fractional_bandwidth: (request.selected_frequency_range_hz[1]
+                - request.selected_frequency_range_hz[0])
+                / request.reffreq_hz,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: 0.0,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: Some(weight_image.clone()),
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+fn build_mosaic_pointing_groups(
+    batches: &[VisibilityBatch],
+    metadata_batches: &[VisibilityMetadataBatch],
+) -> Result<Vec<MosaicPointingGroup>, ImagingError> {
+    let mut grouped = BTreeMap::<(u64, u64, u64), MosaicPointingGroup>::new();
+    for (batch, metadata) in batches.iter().zip(metadata_batches.iter()) {
+        for sample_index in 0..batch.len() {
+            let pointing_direction_rad = metadata.pointing_direction_rad[sample_index];
+            let frequency_hz = metadata.beam_frequency_hz[sample_index];
+            let key = (
+                pointing_direction_rad[0].to_bits(),
+                pointing_direction_rad[1].to_bits(),
+                frequency_hz.to_bits(),
+            );
+            let entry = grouped.entry(key).or_insert_with(|| MosaicPointingGroup {
+                pointing_direction_rad,
+                frequency_hz,
+                batch: VisibilityBatch {
+                    u_lambda: Vec::new(),
+                    v_lambda: Vec::new(),
+                    w_lambda: Vec::new(),
+                    weight: Vec::new(),
+                    sumwt_factor: Vec::new(),
+                    gridable: Vec::new(),
+                    visibility: Vec::new(),
+                },
+            });
+            entry.batch.u_lambda.push(batch.u_lambda[sample_index]);
+            entry.batch.v_lambda.push(batch.v_lambda[sample_index]);
+            entry.batch.w_lambda.push(batch.w_lambda[sample_index]);
+            entry.batch.weight.push(batch.weight[sample_index]);
+            entry
+                .batch
+                .sumwt_factor
+                .push(batch.sumwt_factor[sample_index]);
+            entry.batch.gridable.push(batch.gridable[sample_index]);
+            entry.batch.visibility.push(batch.visibility[sample_index]);
+        }
+    }
+    Ok(grouped.into_values().collect())
+}
+
+fn build_mosaic_projector(
+    geometry: ImageGeometry,
+    gridder: &StandardGridder,
+    phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+    primary_beam_model: PrimaryBeamModel,
+    frequency_hz: f64,
+    conv_sampling: usize,
+    screen_power: u8,
+    apply_phase_gradient: bool,
+) -> Result<ScreenProjector, ImagingError> {
+    let projector = ScreenProjector::from_screen(geometry, gridder, conv_sampling, |l, m| {
+        let radius_rad = (l * l + m * m).sqrt();
+        let vp = voltage_pattern_value(primary_beam_model, radius_rad, frequency_hz);
+        let value = match screen_power {
+            1 => vp,
+            2 => vp * vp,
+            4 => {
+                let pb = vp * vp;
+                pb * pb
+            }
+            _ => unreachable!("unsupported mosaic screen power"),
+        };
+        Complex32::new(value, 0.0)
+    })?;
+    if !apply_phase_gradient {
+        return Ok(projector);
+    }
+    let pixel_offset =
+        mosaic_pointing_pixel_offset(geometry, phase_center_direction_rad, pointing_direction_rad)
+            .unwrap_or_else(|| {
+                let [delta_ra, delta_dec] =
+                    mosaic_pointing_offset_rad(phase_center_direction_rad, pointing_direction_rad);
+                [
+                    delta_ra / geometry.cell_size_rad[0].abs(),
+                    delta_dec / geometry.cell_size_rad[1].abs(),
+                ]
+            });
+    let phase_gradient_rad_per_sample = [
+        -pixel_offset[0] * std::f64::consts::TAU / (geometry.nx() as f64 * conv_sampling as f64),
+        -pixel_offset[1] * std::f64::consts::TAU / (geometry.ny() as f64 * conv_sampling as f64),
+    ];
+    Ok(projector.with_phase_gradient(phase_gradient_rad_per_sample))
+}
+
+fn mosaic_projector_sampling(geometry: ImageGeometry) -> usize {
+    let max_axis = geometry.nx().max(geometry.ny());
+    if max_axis < 50 {
+        100
+    } else {
+        ((5000.0 / max_axis as f64).ceil() as usize).max(10)
+    }
+}
+
+fn mosaic_pointing_center_within_image(
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+) -> bool {
+    let [pixel_x, pixel_y] = mosaic_pointing_pixel_position(
+        geometry,
+        phase_center_direction_rad,
+        pointing_direction_rad,
+    )
+    .unwrap_or_else(|| {
+        let [delta_ra, delta_dec] =
+            mosaic_pointing_offset_rad(phase_center_direction_rad, pointing_direction_rad);
+        [
+            geometry.nx() as f64 / 2.0 + delta_ra / geometry.cell_size_rad[0].abs(),
+            geometry.ny() as f64 / 2.0 + delta_dec / geometry.cell_size_rad[1].abs(),
+        ]
+    });
+    pixel_x >= 0.0
+        && pixel_x < geometry.nx() as f64
+        && pixel_y >= 0.0
+        && pixel_y < geometry.ny() as f64
+}
+
+fn mosaic_pointing_pixel_offset(
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+) -> Option<[f64; 2]> {
+    let [pixel_x, pixel_y] = mosaic_pointing_pixel_position(
+        geometry,
+        phase_center_direction_rad,
+        pointing_direction_rad,
+    )?;
+    Some([
+        pixel_x - geometry.nx() as f64 / 2.0,
+        pixel_y - geometry.ny() as f64 / 2.0,
+    ])
+}
+
+fn mosaic_pointing_pixel_position(
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+) -> Option<[f64; 2]> {
+    let coord = DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        phase_center_direction_rad,
+        [
+            -geometry.cell_size_rad[0].abs(),
+            geometry.cell_size_rad[1].abs(),
+        ],
+        [geometry.nx() as f64 / 2.0, geometry.ny() as f64 / 2.0],
+    );
+    let pixel = coord.to_pixel(&pointing_direction_rad).ok()?;
+    if pixel.len() != 2 || !(pixel[0].is_finite() && pixel[1].is_finite()) {
+        return None;
+    }
+    Some([pixel[0], pixel[1]])
+}
+
+fn mosaic_pointing_offset_rad(
+    phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+) -> [f64; 2] {
+    [
+        circular_angle_delta_rad(pointing_direction_rad[0] - phase_center_direction_rad[0])
+            * phase_center_direction_rad[1].cos(),
+        pointing_direction_rad[1] - phase_center_direction_rad[1],
+    ]
+}
+
+fn circular_angle_delta_rad(angle_rad: f64) -> f64 {
+    (angle_rad + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+}
+
+fn voltage_pattern_value(
+    primary_beam_model: PrimaryBeamModel,
+    radius_rad: f64,
+    frequency_hz: f64,
+) -> f32 {
+    match primary_beam_model {
+        PrimaryBeamModel::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+        } => airy_voltage_pattern(
+            radius_rad,
+            frequency_hz,
+            dish_diameter_m,
+            blockage_diameter_m,
+        ),
+        PrimaryBeamModel::EvlaLBandCommon => {
+            evla_l_band_common_voltage_pattern(radius_rad, frequency_hz)
+        }
+    }
+}
+
+fn airy_voltage_pattern(
+    radius_rad: f64,
+    frequency_hz: f64,
+    dish_diameter_m: f64,
+    blockage_diameter_m: f64,
+) -> f32 {
+    if !(radius_rad.is_finite()
+        && radius_rad >= 0.0
+        && frequency_hz.is_finite()
+        && frequency_hz > 0.0)
+    {
+        return 0.0;
+    }
+    let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
+    let x = radius_arcmin_ghz * 7.016 / (1.566 * 60.0) * dish_diameter_m / 24.5;
+    if x.abs() <= f64::EPSILON {
+        return 1.0;
+    }
+    if blockage_diameter_m <= 0.0 {
+        return (2.0 * j1(x) / x) as f32;
+    }
+    let area_ratio = (dish_diameter_m / blockage_diameter_m).powi(2);
+    let area_norm = area_ratio - 1.0;
+    let length_ratio = dish_diameter_m / blockage_diameter_m;
+    ((area_ratio * 2.0 * j1(x) / x - 2.0 * j1(x * length_ratio) / (x * length_ratio)) / area_norm)
+        as f32
+}
+
+fn evla_l_band_common_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
+    if !(radius_rad.is_finite()
+        && radius_rad >= 0.0
+        && frequency_hz.is_finite()
+        && frequency_hz > 0.0)
+    {
+        return 0.0;
+    }
+    // Mirror CASA PBMath1DEVLA::nearestVPArray() + PBMath1DPoly::fillPBArray()
+    // for the L-band common-PB model used by the current EVLA mosaic gates.
+    let clamped_frequency_hz = frequency_hz.clamp(1.040e9, 2.000e9);
+    let coefficients = nearest_evla_l_band_coefficients(clamped_frequency_hz * 1.0e-6);
+    let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
+    if radius_arcmin_ghz > 58.0 {
+        return 0.0;
+    }
+    let x2 = radius_arcmin_ghz * radius_arcmin_ghz;
+    let mut taper = 0.0f64;
+    let mut power = 1.0f64;
+    for coefficient in coefficients {
+        taper += coefficient * power;
+        power *= x2;
+    }
+    if taper <= 0.0 {
+        0.0
+    } else {
+        taper.sqrt() as f32
+    }
+}
+
+fn nearest_evla_l_band_coefficients(frequency_mhz: f64) -> [f64; 4] {
+    const EVLA_L_BAND_COEFFICIENTS: &[(f64, [f64; 4])] = &[
+        (1040.0, [1.000, -1.529e-3, 8.69e-7, -1.88e-10]),
+        (1104.0, [1.000, -1.486e-3, 8.15e-7, -1.68e-10]),
+        (1168.0, [1.000, -1.439e-3, 7.53e-7, -1.45e-10]),
+        (1232.0, [1.000, -1.450e-3, 7.87e-7, -1.63e-10]),
+        (1296.0, [1.000, -1.428e-3, 7.62e-7, -1.54e-10]),
+        (1360.0, [1.000, -1.449e-3, 8.02e-7, -1.74e-10]),
+        (1424.0, [1.000, -1.462e-3, 8.23e-7, -1.83e-10]),
+        (1488.0, [1.000, -1.455e-3, 7.92e-7, -1.63e-10]),
+        (1552.0, [1.000, -1.435e-3, 7.54e-7, -1.49e-10]),
+        (1680.0, [1.000, -1.443e-3, 7.74e-7, -1.57e-10]),
+        (1744.0, [1.000, -1.462e-3, 8.02e-7, -1.69e-10]),
+        (1808.0, [1.000, -1.488e-3, 8.38e-7, -1.83e-10]),
+        (1872.0, [1.000, -1.486e-3, 8.26e-7, -1.75e-10]),
+        (1936.0, [1.000, -1.459e-3, 7.93e-7, -1.62e-10]),
+        (2000.0, [1.000, -1.508e-3, 8.31e-7, -1.68e-10]),
+    ];
+    let mut best = EVLA_L_BAND_COEFFICIENTS[0].1;
+    let mut best_delta_mhz = f64::INFINITY;
+    for &(candidate_frequency_mhz, coefficients) in EVLA_L_BAND_COEFFICIENTS {
+        let delta_mhz = (frequency_mhz - candidate_frequency_mhz).abs();
+        if delta_mhz < best_delta_mhz {
+            best_delta_mhz = delta_mhz;
+            best = coefficients;
+        }
+    }
+    best
 }
 
 /// Run spectral-cube imaging for an ordered set of spectral planes.
@@ -287,6 +1691,7 @@ pub fn run_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Imagi
         let plane_request = ImagingRequest {
             geometry: request.geometry,
             visibility_batches: channel.visibility_batches.clone(),
+            gridder_mode: GridderMode::Standard,
             plane_stokes: request.plane_stokes,
             weighting: request.weighting,
             reffreq_hz: channel.channel_frequency_hz,
@@ -300,6 +1705,7 @@ pub fn run_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Imagi
             clean: request.clean,
             clean_mask: request.clean_mask.clone(),
             w_term_mode: request.w_term_mode,
+            w_project_planes: request.w_project_planes,
             compatibility: request.compatibility,
         };
         match run_imaging(&plane_request) {
@@ -359,6 +1765,7 @@ pub fn run_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Imagi
             skipped_samples,
             major_cycles: casa_major_cycle_count(0, request.clean.niter),
             minor_iterations: 0,
+            clean_stop_reason: None,
             channel_diagnostics,
             stage_timings,
         },
@@ -396,6 +1803,9 @@ pub fn run_dirty_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult,
 struct CubePlaneWork {
     request: ImagingRequest,
     weighted_batches: Vec<VisibilityBatch>,
+    residual_sample_plans: Vec<Vec<Option<PlannedSample>>>,
+    model_interpolation_batches: Vec<CubeModelInterpolationBatch>,
+    dependent_model_channels: Vec<bool>,
     gridder: StandardGridder,
     psf_state: PsfState,
     clark_psf_patch: Option<ClarkPsfPatch>,
@@ -411,6 +1821,8 @@ struct CubePlaneWork {
     clean_stop_reason: Option<CleanStopReason>,
     minor_cycle_traces: Vec<MinorCycleTrace>,
     final_cycle_threshold_jy_per_beam: f32,
+    cached_peak_residual_jy_per_beam: f32,
+    cached_nsigma_threshold_jy_per_beam: f32,
     min_residual_peak_jy_per_beam: f32,
     divergence_warned: bool,
     is_blank: bool,
@@ -444,6 +1856,21 @@ fn blank_psf_state(image_shape: [usize; 2]) -> PsfState {
     }
 }
 
+fn imaging_progress_enabled() -> bool {
+    env::var_os("CASA_RS_IMAGING_PROGRESS").is_some()
+}
+
+fn residual_metrics(
+    residual: &Array2<f32>,
+    clean_mask: Option<&Array2<bool>>,
+    clean: CleanConfig,
+) -> (f32, f32) {
+    (
+        peak_abs_value_masked(residual, clean_mask),
+        nsigma_threshold_jy_per_beam(residual, clean_mask, clean),
+    )
+}
+
 fn blank_plane_diagnostics(
     request: &ImagingRequest,
     warning: String,
@@ -471,6 +1898,7 @@ fn blank_plane_diagnostics(
         beam_fit_attempts: 0,
         beam_fit_cutoff_used: Some(request.clean.psf_cutoff),
         beam_fit_debug: None,
+        mosaic_weight_image: None,
         stage_timings: ImagingStageTimings::default(),
     }
 }
@@ -508,6 +1936,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
         let plane_request = ImagingRequest {
             geometry: request.geometry,
             visibility_batches: channel.visibility_batches.clone(),
+            gridder_mode: GridderMode::Standard,
             plane_stokes: request.plane_stokes,
             weighting: request.weighting,
             reffreq_hz: channel.channel_frequency_hz,
@@ -521,6 +1950,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             clean: request.clean,
             clean_mask: request.clean_mask.clone(),
             w_term_mode: request.w_term_mode,
+            w_project_planes: request.w_project_planes,
             compatibility: request.compatibility,
         };
         plane_request.validate()?;
@@ -532,6 +1962,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 .expect("combined cube density batches prepared"),
             WeightDensityMode::PerPlane => &plane_request.visibility_batches,
         };
+        let weighting_started = Instant::now();
         let weighted_batches = apply_weighting_with_density_source(
             plane_request.weighting,
             request.weight_density_mode,
@@ -540,7 +1971,18 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             density_batches,
             &gridder,
         )?;
-        let (psf_state, model, residual, multiscale_state, initial_peak, warnings, is_blank) =
+        plane_stage_timings.weighting += weighting_started.elapsed();
+        let residual_sample_plans =
+            build_standard_residual_sample_plans(&gridder, &weighted_batches);
+        let (
+            psf_state,
+            model,
+            residual,
+            multiscale_state,
+            initial_peak,
+            warnings,
+            is_blank,
+        ) =
             match compute_psf(
                 &plane_request,
                 &weighted_batches,
@@ -593,6 +2035,11 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 ),
                 Err(error) => return Err(error),
             };
+        let cached_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
+            &residual,
+            plane_request.clean_mask.as_ref(),
+            plane_request.clean,
+        );
         planes.push(CubePlaneWork {
             clark_psf_patch: matches!(plane_request.deconvolver, Deconvolver::Clark).then(|| {
                 build_clark_psf_patch(
@@ -608,8 +2055,16 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             ),
             min_residual_peak_jy_per_beam: initial_peak,
             final_cycle_threshold_jy_per_beam: plane_request.clean.threshold_jy_per_beam,
+            cached_peak_residual_jy_per_beam: initial_peak,
+            cached_nsigma_threshold_jy_per_beam,
             request: plane_request,
             weighted_batches,
+            residual_sample_plans,
+            model_interpolation_batches: channel.model_interpolation_batches.clone(),
+            dependent_model_channels: cube_model_dependency_mask(
+                nchan,
+                &channel.model_interpolation_batches,
+            ),
             gridder,
             psf_state,
             multiscale_state,
@@ -629,6 +2084,9 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
 
     let mut total_reported_minor_iterations = 0usize;
     let mut cube_major_cycle_blocks = 0usize;
+    let mut cube_clean_stop_reason = None::<CleanStopReason>;
+    let cube_minor_cycle_capture = cube_minor_cycle_capture_config();
+    let cube_clean_started = Instant::now();
     let cube_max_psf_sidelobe_level = planes
         .iter()
         .map(|plane| plane.max_psf_sidelobe_level)
@@ -636,24 +2094,22 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
     while total_reported_minor_iterations < request.clean.niter {
         let global_peak = planes
             .iter()
-            .filter_map(|plane| {
-                peak_location_masked(&plane.residual, plane.request.clean_mask.as_ref())
-                    .map(|(_, value)| value.abs())
-            })
+            .filter(|plane| !plane.is_blank)
+            .map(|plane| plane.cached_peak_residual_jy_per_beam)
             .fold(0.0f32, f32::max);
         let cube_nsigma_threshold_jy_per_beam = global_nsigma_threshold_jy_per_beam(
             &planes
                 .iter()
                 .filter(|plane| !plane.is_blank)
-                .map(|plane| (&plane.residual, plane.request.clean_mask.as_ref()))
+                .map(|plane| plane.cached_nsigma_threshold_jy_per_beam)
                 .collect::<Vec<_>>(),
-            request.clean,
         );
         if let Some(stop_reason) = tolerant_clean_stop_reason(
             global_peak,
             request.clean.threshold_jy_per_beam,
             cube_nsigma_threshold_jy_per_beam,
         ) {
+            cube_clean_stop_reason = Some(stop_reason);
             for plane in &mut planes {
                 plane.clean_stop_reason.get_or_insert(stop_reason);
             }
@@ -662,7 +2118,16 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
 
         let cube_cycle_threshold_jy_per_beam =
             compute_cycle_threshold(global_peak, cube_max_psf_sidelobe_level, request.clean);
+        let capture_model_cube = cube_minor_cycle_capture.as_ref().and_then(|capture| {
+            (capture.block_index == cube_major_cycle_blocks).then(|| {
+                planes
+                    .iter()
+                    .map(|plane| plane.model.clone())
+                    .collect::<Vec<_>>()
+            })
+        });
         let mut any_model_update = false;
+        let mut updated_model_channels = vec![false; planes.len()];
         let mut refresh_flags = vec![false; planes.len()];
         for (plane_index, plane) in planes.iter_mut().enumerate() {
             if plane.is_blank {
@@ -670,13 +2135,21 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             }
             let cycle_reported_niter = request.clean.minor_cycle_length;
             let start_reported_iteration = total_reported_minor_iterations;
-            let plane_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
+            let plane_nsigma_threshold_jy_per_beam = plane.cached_nsigma_threshold_jy_per_beam;
+            let start_peak_residual_jy_per_beam = plane.cached_peak_residual_jy_per_beam;
+            maybe_capture_cube_minor_cycle_state(
+                cube_minor_cycle_capture.as_ref(),
+                plane_index,
+                plane.minor_cycle_traces.len(),
+                cycle_reported_niter,
+                &plane.request,
+                &plane.psf_state.psf,
                 &plane.residual,
-                plane.request.clean_mask.as_ref(),
-                plane.request.clean,
+                &plane.model,
+                capture_model_cube.as_deref(),
+                cube_cycle_threshold_jy_per_beam,
+                plane_nsigma_threshold_jy_per_beam,
             );
-            let start_peak_residual_jy_per_beam =
-                peak_abs_value_masked(&plane.residual, plane.request.clean_mask.as_ref());
             let multiscale_probe = if plane.request.deconvolver == Deconvolver::Multiscale {
                 let scales = effective_multiscale_scales(&plane.request);
                 select_multiscale_candidate(
@@ -734,6 +2207,11 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                     plane_nsigma_threshold_jy_per_beam,
                     &mut plane.stage_timings,
                 ),
+                Deconvolver::Mtmfs => {
+                    return Err(ImagingError::Unsupported(
+                        "cube CLEAN does not support deconvolver='mtmfs'".to_string(),
+                    ));
+                }
             };
             let trace = make_minor_cycle_trace(
                 plane.minor_cycle_traces.len(),
@@ -755,7 +2233,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 continue;
             }
             any_model_update = true;
-            refresh_flags[plane_index] = true;
+            updated_model_channels[plane_index] = true;
             if matches!(
                 plane.request.deconvolver,
                 Deconvolver::Hogbom | Deconvolver::Multiscale
@@ -771,6 +2249,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             }
         }
         if !any_model_update {
+            cube_clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             for plane in &mut planes {
                 plane
                     .clean_stop_reason
@@ -778,8 +2257,10 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             }
             break;
         }
+        refresh_flags = cube_refresh_flags(&planes, &updated_model_channels);
         cube_major_cycle_blocks += 1;
         if total_reported_minor_iterations >= request.clean.niter {
+            cube_clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             for plane in &mut planes {
                 plane
                     .clean_stop_reason
@@ -787,21 +2268,54 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             }
             break;
         }
-        for (plane, should_refresh) in planes.iter_mut().zip(refresh_flags) {
+        let refreshed_planes = refresh_flags.iter().filter(|flag| **flag).count();
+        let mut cube_model_timings = ResidualComputationTimings::default();
+        let cube_model_grids = build_cube_model_grids(
+            &planes[0].gridder,
+            planes.iter().map(|plane| &plane.model),
+            &mut cube_model_timings,
+        );
+        let model_channel_frequencies_hz = planes
+            .iter()
+            .map(|plane| plane.request.reffreq_hz)
+            .collect::<Vec<_>>();
+        let mut cube_model_fft_accounted = false;
+        for (plane, should_refresh) in planes.iter_mut().zip(refresh_flags.iter().copied()) {
             if plane.is_blank || !should_refresh {
                 continue;
             }
             let refresh_started = Instant::now();
-            plane.residual = compute_residual(
-                &plane.request,
+            let mut residual_timings = ResidualComputationTimings::default();
+            if !cube_model_fft_accounted {
+                plane.stage_timings.model_fft += cube_model_timings.model_fft;
+                cube_model_fft_accounted = true;
+            }
+            plane.residual = compute_residual_trace_cube_standard_with_model_grids(
                 &plane.weighted_batches,
+                Some(&plane.residual_sample_plans),
+                &plane.model_interpolation_batches,
                 &plane.gridder,
-                &plane.model,
+                &cube_model_grids,
+                plane.request.reffreq_hz,
+                &model_channel_frequencies_hz,
+                CubePredictionLambdaMode::OutputChannel,
                 &plane.psf_state,
-                &mut plane.stage_timings,
-            )?;
+                false,
+                &mut residual_timings,
+            )?
+            .residual_image;
             plane.stage_timings.major_cycle_refresh += refresh_started.elapsed();
+            plane.stage_timings.residual_degrid_grid += residual_timings.degrid_grid;
+            plane.stage_timings.residual_fft += residual_timings.fft;
+            plane.stage_timings.residual_normalize += residual_timings.normalize;
             plane.major_cycles += 1;
+            let (refreshed_peak, refreshed_nsigma_threshold_jy_per_beam) = residual_metrics(
+                &plane.residual,
+                plane.request.clean_mask.as_ref(),
+                plane.request.clean,
+            );
+            plane.cached_peak_residual_jy_per_beam = refreshed_peak;
+            plane.cached_nsigma_threshold_jy_per_beam = refreshed_nsigma_threshold_jy_per_beam;
             if plane.request.deconvolver == Deconvolver::Multiscale {
                 let scales = effective_multiscale_scales(&plane.request);
                 plane.multiscale_state = Some(build_multiscale_state(
@@ -812,18 +2326,11 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 ));
             }
             if plane.request.deconvolver == Deconvolver::Clark {
-                let refreshed_peak =
-                    peak_abs_value_masked(&plane.residual, plane.request.clean_mask.as_ref());
                 update_divergence_state(
                     &mut plane.warnings,
                     &mut plane.min_residual_peak_jy_per_beam,
                     refreshed_peak,
                     &mut plane.divergence_warned,
-                );
-                let refreshed_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
-                    &plane.residual,
-                    plane.request.clean_mask.as_ref(),
-                    plane.request.clean,
                 );
                 if let Some(stop_reason) = tolerant_clean_stop_reason(
                     refreshed_peak,
@@ -836,24 +2343,56 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
         }
         let global_peak_after_refresh = planes
             .iter()
-            .filter_map(|plane| {
-                peak_location_masked(&plane.residual, plane.request.clean_mask.as_ref())
-                    .map(|(_, value)| value.abs())
-            })
+            .filter(|plane| !plane.is_blank)
+            .map(|plane| plane.cached_peak_residual_jy_per_beam)
             .fold(0.0f32, f32::max);
+        let dominant_channel = planes
+            .iter()
+            .enumerate()
+            .filter(|(_, plane)| !plane.is_blank)
+            .max_by(|(_, left), (_, right)| {
+                left.cached_peak_residual_jy_per_beam
+                    .partial_cmp(&right.cached_peak_residual_jy_per_beam)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(index, plane)| {
+                (
+                    index,
+                    plane.cached_peak_residual_jy_per_beam,
+                    plane.cached_nsigma_threshold_jy_per_beam,
+                )
+            });
         let cube_nsigma_threshold_after_refresh_jy_per_beam = global_nsigma_threshold_jy_per_beam(
             &planes
                 .iter()
                 .filter(|plane| !plane.is_blank)
-                .map(|plane| (&plane.residual, plane.request.clean_mask.as_ref()))
+                .map(|plane| plane.cached_nsigma_threshold_jy_per_beam)
                 .collect::<Vec<_>>(),
-            request.clean,
         );
+        if imaging_progress_enabled() {
+            let refreshed_channel_indices = refresh_flags
+                .iter()
+                .enumerate()
+                .filter_map(|(index, refreshed)| refreshed.then_some(index))
+                .collect::<Vec<_>>();
+            eprintln!(
+                "cube-clean block={} elapsed_s={:.3} reported_minor_iterations={} refreshed_planes={} refreshed_channels={:?} dominant_channel={:?} global_peak_jy_per_beam={:.9e} cube_nsigma_threshold_jy_per_beam={:.9e}",
+                cube_major_cycle_blocks,
+                cube_clean_started.elapsed().as_secs_f64(),
+                total_reported_minor_iterations,
+                refreshed_planes,
+                refreshed_channel_indices,
+                dominant_channel.map(|(index, peak, nsigma)| (index, peak, nsigma)),
+                global_peak_after_refresh,
+                cube_nsigma_threshold_after_refresh_jy_per_beam,
+            );
+        }
         if let Some(stop_reason) = tolerant_clean_stop_reason(
             global_peak_after_refresh,
             request.clean.threshold_jy_per_beam,
             cube_nsigma_threshold_after_refresh_jy_per_beam,
         ) {
+            cube_clean_stop_reason = Some(stop_reason);
             for plane in &mut planes {
                 plane.clean_stop_reason.get_or_insert(stop_reason);
             }
@@ -1004,6 +2543,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             beam_fit_attempts,
             beam_fit_cutoff_used,
             beam_fit_debug,
+            mosaic_weight_image: None,
             stage_timings: plane.stage_timings,
         });
     }
@@ -1031,6 +2571,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             skipped_samples,
             major_cycles: casa_major_cycle_count(cube_major_cycle_blocks, request.clean.niter),
             minor_iterations: total_reported_minor_iterations,
+            clean_stop_reason: cube_clean_stop_reason,
             channel_diagnostics,
             stage_timings,
         },
@@ -1059,6 +2600,131 @@ struct CottonSchwabState {
     clean_stop_reason: Option<CleanStopReason>,
     minor_cycle_traces: Vec<MinorCycleTrace>,
     final_cycle_threshold_jy_per_beam: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CubeMinorCycleCaptureConfig {
+    channel_index: usize,
+    block_index: usize,
+    directory: PathBuf,
+}
+
+fn cube_minor_cycle_capture_config() -> Option<CubeMinorCycleCaptureConfig> {
+    let channel_index = std::env::var("CASA_RS_CUBE_CAPTURE_CHANNEL")
+        .ok()?
+        .parse::<usize>()
+        .ok()?;
+    let block_index = std::env::var("CASA_RS_CUBE_CAPTURE_BLOCK")
+        .ok()?
+        .parse::<usize>()
+        .ok()?;
+    let directory = PathBuf::from(std::env::var_os("CASA_RS_CUBE_CAPTURE_DIR")?);
+    Some(CubeMinorCycleCaptureConfig {
+        channel_index,
+        block_index,
+        directory,
+    })
+}
+
+fn maybe_capture_cube_minor_cycle_state(
+    capture: Option<&CubeMinorCycleCaptureConfig>,
+    channel_index: usize,
+    block_index: usize,
+    cycle_reported_niter: usize,
+    request: &ImagingRequest,
+    psf: &Array2<f32>,
+    residual: &Array2<f32>,
+    model: &Array2<f32>,
+    model_cube: Option<&[Array2<f32>]>,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+) {
+    let Some(capture) = capture else {
+        return;
+    };
+    if capture.channel_index != channel_index || capture.block_index != block_index {
+        return;
+    }
+    if let Err(error) = write_cube_minor_cycle_capture(
+        capture,
+        cycle_reported_niter,
+        request,
+        psf,
+        residual,
+        model,
+        model_cube,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+    ) {
+        eprintln!(
+            "failed to capture cube minor-cycle state for channel={channel_index} block={block_index}: {error}"
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_cube_minor_cycle_capture(
+    capture: &CubeMinorCycleCaptureConfig,
+    cycle_reported_niter: usize,
+    request: &ImagingRequest,
+    psf: &Array2<f32>,
+    residual: &Array2<f32>,
+    model: &Array2<f32>,
+    model_cube: Option<&[Array2<f32>]>,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+) -> Result<(), std::io::Error> {
+    fs::create_dir_all(&capture.directory)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let channel_count = model_cube.map_or(0, |cube| cube.len());
+    let meta = format!(
+        concat!(
+            "channel_index={}\n",
+            "block_index={}\n",
+            "nx={}\n",
+            "ny={}\n",
+            "channel_count={}\n",
+            "gain={:.9e}\n",
+            "absolute_threshold_jy_per_beam={:.9e}\n",
+            "cycle_threshold_jy_per_beam={:.9e}\n",
+            "nsigma_threshold_jy_per_beam={:.9e}\n",
+            "cycle_reported_niter={}\n"
+        ),
+        capture.channel_index,
+        capture.block_index,
+        nx,
+        ny,
+        channel_count,
+        request.clean.gain,
+        request.clean.threshold_jy_per_beam,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        cycle_reported_niter,
+    );
+    fs::write(capture.directory.join("meta.txt"), meta)?;
+    write_capture_plane(&capture.directory.join("psf.txt"), psf)?;
+    write_capture_plane(&capture.directory.join("residual.txt"), residual)?;
+    write_capture_plane(&capture.directory.join("model.txt"), model)?;
+    if let Some(model_cube) = model_cube {
+        for (model_channel_index, model_plane) in model_cube.iter().enumerate() {
+            write_capture_plane(
+                &capture
+                    .directory
+                    .join(format!("model_channel_{model_channel_index}.txt")),
+                model_plane,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn write_capture_plane(path: &std::path::Path, plane: &Array2<f32>) -> Result<(), std::io::Error> {
+    let body = plane
+        .iter()
+        .map(|value| format!("{value:.9e}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(path, format!("{body}\n"))
 }
 
 fn image_center_value(image: &Array2<f32>) -> f32 {
@@ -1155,6 +2821,9 @@ fn run_cotton_schwab_controller(
             initial_peak,
             warnings,
         ),
+        Deconvolver::Mtmfs => Err(ImagingError::Unsupported(
+            "standard MFS CLEAN does not support deconvolver='mtmfs'; use run_mtmfs()".to_string(),
+        )),
     }
 }
 
@@ -1179,6 +2848,7 @@ fn run_hogbom_cotton_schwab(
     let mut final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
     let mut min_residual_peak_jy_per_beam = initial_peak;
     let mut divergence_warned = false;
+    let mut residual_needs_refresh = false;
 
     while reported_minor_iterations < request.clean.niter {
         let Some((_, cycle_peak_value)) =
@@ -1231,6 +2901,7 @@ fn run_hogbom_cotton_schwab(
         if !outcome.updated_model {
             break;
         }
+        residual_needs_refresh = true;
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
         update_divergence_state(
             warnings,
@@ -1253,6 +2924,7 @@ fn run_hogbom_cotton_schwab(
         )?;
         stage_timings.major_cycle_refresh += refresh_started.elapsed();
         major_cycles += 1;
+        residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
         let refreshed_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
@@ -1267,6 +2939,18 @@ fn run_hogbom_cotton_schwab(
     }
     if request.clean.niter > 0 && clean_stop_reason.is_none() {
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+    }
+    if residual_needs_refresh {
+        let refresh_started = Instant::now();
+        residual = compute_residual(
+            request,
+            weighted_batches,
+            gridder,
+            model,
+            psf_state,
+            stage_timings,
+        )?;
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
     }
 
     Ok(CottonSchwabState {
@@ -1291,7 +2975,7 @@ fn run_hogbom_minor_cycle(
     stage_timings: &mut ImagingStageTimings,
 ) -> HogbomMinorCycleOutcome {
     let cycle_component_budget =
-        casa_hogbom_component_budget(cycle_reported_niter, request.compatibility);
+        hogbom_component_budget(cycle_reported_niter, request.compatibility);
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
     let mut stop_reason = None;
@@ -1631,6 +3315,7 @@ fn run_clark_cotton_schwab(
     let mut final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
     let mut min_residual_peak_jy_per_beam = initial_peak;
     let mut divergence_warned = false;
+    let mut residual_needs_refresh = false;
 
     while reported_minor_iterations < request.clean.niter {
         let Some((_, cycle_peak_value)) =
@@ -1683,6 +3368,7 @@ fn run_clark_cotton_schwab(
         if !outcome.updated_model {
             break;
         }
+        residual_needs_refresh = true;
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
         update_divergence_state(
             warnings,
@@ -1705,6 +3391,7 @@ fn run_clark_cotton_schwab(
         )?;
         stage_timings.major_cycle_refresh += refresh_started.elapsed();
         major_cycles += 1;
+        residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
         let refreshed_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
@@ -1719,6 +3406,18 @@ fn run_clark_cotton_schwab(
     }
     if request.clean.niter > 0 && clean_stop_reason.is_none() {
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+    }
+    if residual_needs_refresh {
+        let refresh_started = Instant::now();
+        residual = compute_residual(
+            request,
+            weighted_batches,
+            gridder,
+            model,
+            psf_state,
+            stage_timings,
+        )?;
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
     }
 
     Ok(CottonSchwabState {
@@ -1755,6 +3454,7 @@ fn run_multiscale_cotton_schwab(
     let mut final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
     let mut min_residual_peak_jy_per_beam = initial_peak;
     let mut divergence_warned = false;
+    let mut residual_needs_refresh = false;
 
     while reported_minor_iterations < request.clean.niter {
         let Some(cycle_candidate) =
@@ -1860,6 +3560,7 @@ fn run_multiscale_cotton_schwab(
             break;
         }
         residual = multiscale_state.dirty_conv_scales[0].clone();
+        residual_needs_refresh = true;
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
         update_divergence_state(
             warnings,
@@ -1884,6 +3585,7 @@ fn run_multiscale_cotton_schwab(
         multiscale_state =
             build_multiscale_state(&residual, &psf_state.psf, &scales, request.small_scale_bias);
         major_cycles += 1;
+        residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
         let refreshed_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
@@ -1898,6 +3600,19 @@ fn run_multiscale_cotton_schwab(
     }
     if request.clean.niter > 0 && clean_stop_reason.is_none() {
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+    }
+    if residual_needs_refresh {
+        let refresh_started = Instant::now();
+        residual = compute_residual(
+            request,
+            weighted_batches,
+            gridder,
+            model,
+            psf_state,
+            stage_timings,
+        )?;
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        major_cycles += 1;
     }
 
     Ok(CottonSchwabState {
@@ -2224,18 +3939,15 @@ fn subtract_clark_component_from_active(
     }
 }
 
-fn casa_hogbom_component_budget(
-    reported_cycle_niter: usize,
-    compatibility: CompatibilityMode,
-) -> usize {
-    if reported_cycle_niter == 0 {
-        return 0;
-    }
+fn hogbom_component_budget(reported_cycle_niter: usize, compatibility: CompatibilityMode) -> usize {
     match compatibility {
-        // CASA's current `SDAlgorithmHogbomClean` path forwards `cycleniter`
-        // into the Fortran `hclean` kernel with `siter = 0`, and `hclean`
-        // iterates over the inclusive range `siter..niter`.
-        CompatibilityMode::CasaStandardMfs => reported_cycle_niter.saturating_add(1),
+        // Deliberate divergence from CASA's current Hogbom bug:
+        // CASA's `SDAlgorithmHogbomClean` / `hclean` path can commit one extra
+        // component when `siter = 0` meets the kernel's inclusive
+        // `siter..niter` loop, then clamp the reported `iterdone` back to the
+        // requested budget. We do not reproduce that behavior. In casa-rs,
+        // `niter` is a real cap on committed Hogbom updates.
+        CompatibilityMode::CasaStandardMfs => reported_cycle_niter,
     }
 }
 
@@ -2243,6 +3955,15 @@ struct PsfState {
     psf: Array2<f32>,
     normalization_sumwt: f32,
     reported_sumwt: f32,
+    psf_peak: f32,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+struct MtmfsPsfState {
+    psf_terms: Vec<Array2<f32>>,
+    normalization_sumwt: f32,
+    reported_sumwt_terms: Vec<f32>,
     psf_peak: f32,
     gridded_samples: usize,
     skipped_samples: usize,
@@ -2261,6 +3982,509 @@ struct ResidualComputationTimings {
     degrid_grid: Duration,
     fft: Duration,
     normalize: Duration,
+}
+
+fn mtmfs_taylor_weight(frequency_hz: f64, reffreq_hz: f64, order: usize) -> f32 {
+    if order == 0 {
+        return 1.0;
+    }
+    let scaled = (frequency_hz - reffreq_hz) / reffreq_hz;
+    scaled.powi(order as i32) as f32
+}
+
+fn compute_mtmfs_psf_terms(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<MtmfsPsfState, ImagingError> {
+    let term_count = 2 * request.nterms - 1;
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grids = (0..term_count)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let mut normalization_sumwt = 0.0f32;
+    let mut reported_sumwt_terms = vec![0.0f32; term_count];
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut timings = PsfComputationTimings::default();
+
+    let grid_started = Instant::now();
+    for (batch_index, batch) in batches.iter().enumerate() {
+        let frequencies_hz = request
+            .sample_frequency_batches_hz
+            .get(batch_index)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
+                ))
+            })?;
+        for index in 0..batch.len() {
+            if !batch.gridable[index] {
+                skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[index];
+            let sumwt_factor = batch.sumwt_factor[index];
+            let frequency_hz = frequencies_hz[index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0
+                && frequency_hz.is_finite()
+                && frequency_hz > 0.0)
+            {
+                skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) = gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            else {
+                skipped_samples += 1;
+                continue;
+            };
+            normalization_sumwt += 2.0 * weight;
+            for order in 0..term_count {
+                let factor = mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, order);
+                let psf_weight = Complex32::new(weight * factor, 0.0);
+                gridder.grid_sample_product_planned(
+                    &mut psf_grids[order],
+                    &plan.positive,
+                    psf_weight,
+                );
+                gridder.grid_sample_product_planned(
+                    &mut psf_grids[order],
+                    &plan.negative,
+                    psf_weight,
+                );
+                reported_sumwt_terms[order] += weight * factor * sumwt_factor;
+            }
+            gridded_samples += 1;
+        }
+    }
+    timings.grid = grid_started.elapsed();
+
+    if normalization_sumwt <= 0.0
+        || !reported_sumwt_terms[0].is_finite()
+        || reported_sumwt_terms[0] <= 0.0
+    {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_terms = psf_grids.iter().map(centered_ifft2).collect::<Vec<_>>();
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf_terms = raw_terms
+        .iter()
+        .map(|raw| {
+            let mut corrected = gridder.corrected_image_from_grid(raw);
+            corrected.mapv_inplace(|value| value / normalization_sumwt);
+            corrected
+        })
+        .collect::<Vec<_>>();
+    let psf_peak = peak_abs_value(&psf_terms[0]);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "MTMFS PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    for psf_term in &mut psf_terms {
+        psf_term.mapv_inplace(|value| value / psf_peak);
+    }
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok(MtmfsPsfState {
+        psf_terms,
+        normalization_sumwt,
+        reported_sumwt_terms,
+        psf_peak,
+        gridded_samples,
+        skipped_samples,
+    })
+}
+
+fn compute_mtmfs_residual_terms(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model_terms: &[Array2<f32>],
+    psf_state: &MtmfsPsfState,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Vec<Array2<f32>>, ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut residual_grids = (0..request.nterms)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let mut timings = ResidualComputationTimings::default();
+    let model_grids = if model_terms
+        .iter()
+        .any(|term| term.iter().any(|value| value.abs() > 0.0))
+    {
+        let model_fft_started = Instant::now();
+        let grids = model_terms
+            .iter()
+            .map(|model_term| centered_fft2(&gridder.apodize_model(model_term)))
+            .collect::<Vec<_>>();
+        timings.model_fft = model_fft_started.elapsed();
+        Some(grids)
+    } else {
+        None
+    };
+
+    let degrid_grid_started = Instant::now();
+    for (batch_index, batch) in batches.iter().enumerate() {
+        let frequencies_hz = request
+            .sample_frequency_batches_hz
+            .get(batch_index)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
+                ))
+            })?;
+        for index in 0..batch.len() {
+            let weight = batch.weight[index];
+            let observed_visibility = batch.visibility[index];
+            let frequency_hz = frequencies_hz[index];
+            let gridable = batch.gridable[index];
+            let planned_sample = if gridable
+                && weight.is_finite()
+                && weight > 0.0
+                && observed_visibility.re.is_finite()
+                && observed_visibility.im.is_finite()
+                && frequency_hz.is_finite()
+                && frequency_hz > 0.0
+            {
+                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            } else {
+                None
+            };
+            let Some(plan) = planned_sample.as_ref() else {
+                continue;
+            };
+            let predicted_visibility_terms = if let Some(model_grids) = model_grids.as_ref() {
+                model_grids
+                    .iter()
+                    .map(|grid| gridder.degrid_sample_product_planned(grid, &plan.positive))
+                    .collect::<Vec<_>>()
+            } else {
+                vec![Complex32::new(0.0, 0.0); request.nterms]
+            };
+            for residual_order in 0..request.nterms {
+                let observed_term = observed_visibility
+                    * mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, residual_order);
+                let mut predicted_term = Complex32::new(0.0, 0.0);
+                for model_order in 0..request.nterms {
+                    let factor = mtmfs_taylor_weight(
+                        frequency_hz,
+                        request.reffreq_hz,
+                        residual_order + model_order,
+                    );
+                    predicted_term += predicted_visibility_terms[model_order] * factor;
+                }
+                let residual_visibility = observed_term - predicted_term;
+                let residual = residual_visibility * weight;
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[residual_order],
+                    &plan.positive,
+                    residual,
+                );
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[residual_order],
+                    &plan.negative,
+                    residual.conj(),
+                );
+            }
+        }
+    }
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw_terms = residual_grids
+        .iter()
+        .map(centered_ifft2)
+        .collect::<Vec<_>>();
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let residual_terms = raw_terms
+        .iter()
+        .map(|raw| {
+            let mut image = gridder.corrected_image_from_grid(raw);
+            image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+            image
+        })
+        .collect::<Vec<_>>();
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    Ok(residual_terms)
+}
+
+fn mtmfs_hessian(psf_terms: &[Array2<f32>], nterms: usize) -> Result<Vec<Vec<f32>>, ImagingError> {
+    if psf_terms.len() < 2 * nterms - 1 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "MTMFS PSF stack length {} is smaller than required {}",
+            psf_terms.len(),
+            2 * nterms - 1
+        )));
+    }
+    let center = (psf_terms[0].dim().0 / 2, psf_terms[0].dim().1 / 2);
+    Ok((0..nterms)
+        .map(|row| {
+            (0..nterms)
+                .map(|col| psf_terms[row + col][center])
+                .collect::<Vec<_>>()
+        })
+        .collect())
+}
+
+fn invert_small_matrix(matrix: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, ImagingError> {
+    let n = matrix.len();
+    if n == 0 || matrix.iter().any(|row| row.len() != n) {
+        return Err(ImagingError::InvalidRequest(
+            "MTMFS Hessian must be a non-empty square matrix".to_string(),
+        ));
+    }
+    let mut augmented = vec![vec![0.0f64; 2 * n]; n];
+    for row in 0..n {
+        for col in 0..n {
+            augmented[row][col] = matrix[row][col] as f64;
+        }
+        augmented[row][n + row] = 1.0;
+    }
+    for pivot in 0..n {
+        let mut best_row = pivot;
+        let mut best_value = augmented[pivot][pivot].abs();
+        for row in (pivot + 1)..n {
+            let value = augmented[row][pivot].abs();
+            if value > best_value {
+                best_value = value;
+                best_row = row;
+            }
+        }
+        if !(best_value.is_finite() && best_value > 0.0) {
+            return Err(ImagingError::Unsupported(
+                "MTMFS Hessian is singular at the image center".to_string(),
+            ));
+        }
+        if best_row != pivot {
+            augmented.swap(best_row, pivot);
+        }
+        let pivot_value = augmented[pivot][pivot];
+        for col in 0..(2 * n) {
+            augmented[pivot][col] /= pivot_value;
+        }
+        for row in 0..n {
+            if row == pivot {
+                continue;
+            }
+            let factor = augmented[row][pivot];
+            if factor == 0.0 {
+                continue;
+            }
+            for col in 0..(2 * n) {
+                augmented[row][col] -= factor * augmented[pivot][col];
+            }
+        }
+    }
+    Ok((0..n)
+        .map(|row| {
+            (0..n)
+                .map(|col| augmented[row][n + col] as f32)
+                .collect::<Vec<_>>()
+        })
+        .collect())
+}
+
+fn solve_mtmfs_coefficients(rhs: &[f32], inv_hessian: &[Vec<f32>]) -> Vec<f32> {
+    inv_hessian
+        .iter()
+        .map(|row| {
+            row.iter()
+                .zip(rhs.iter())
+                .map(|(left, right)| *left * *right)
+                .sum()
+        })
+        .collect()
+}
+
+fn principal_solution_terms(
+    residual_terms: &[Array2<f32>],
+    inv_hessian: &[Vec<f32>],
+) -> Vec<Array2<f32>> {
+    let nterms = residual_terms.len();
+    let shape = residual_terms[0].raw_dim();
+    let mut principal_terms = (0..nterms)
+        .map(|_| Array2::<f32>::zeros(shape))
+        .collect::<Vec<_>>();
+    for x in 0..shape[0] {
+        for y in 0..shape[1] {
+            let rhs = residual_terms
+                .iter()
+                .map(|term| term[(x, y)])
+                .collect::<Vec<_>>();
+            let coeffs = solve_mtmfs_coefficients(&rhs, inv_hessian);
+            for (term, coeff) in coeffs.into_iter().enumerate() {
+                principal_terms[term][(x, y)] = coeff;
+            }
+        }
+    }
+    principal_terms
+}
+
+fn find_mtmfs_component(
+    residual_terms: &[Array2<f32>],
+    hessian: &[Vec<f32>],
+    inv_hessian: &[Vec<f32>],
+    clean_mask: Option<&Array2<bool>>,
+) -> Option<((usize, usize), Vec<f32>, f32)> {
+    let (nx, ny) = residual_terms.first()?.dim();
+    let mut best = None::<((usize, usize), Vec<f32>, f32)>;
+    let mut best_penalty = -1.0f32;
+    for x in 0..nx {
+        for y in 0..ny {
+            if clean_mask.is_some_and(|mask| !mask[(x, y)]) {
+                continue;
+            }
+            let rhs = residual_terms
+                .iter()
+                .map(|term| term[(x, y)])
+                .collect::<Vec<_>>();
+            let coeffs = solve_mtmfs_coefficients(&rhs, inv_hessian);
+            let mut penalty = 0.0f32;
+            for row in 0..coeffs.len() {
+                penalty += 2.0 * coeffs[row] * rhs[row];
+                for col in 0..coeffs.len() {
+                    penalty -= coeffs[row] * coeffs[col] * hessian[row][col];
+                }
+            }
+            let penalty_abs = penalty.abs();
+            if penalty_abs > best_penalty {
+                best_penalty = penalty_abs;
+                best = Some(((x, y), coeffs, penalty_abs));
+            }
+        }
+    }
+    best
+}
+
+fn run_mtmfs_minor_cycle(
+    request: &MtmfsRequest,
+    psf_terms: &[Array2<f32>],
+    hessian: &[Vec<f32>],
+    inv_hessian: &[Vec<f32>],
+    model_terms: &mut [Array2<f32>],
+    residual_terms: &mut [Array2<f32>],
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+) -> (HogbomMinorCycleOutcome, MinorCycleProbe) {
+    let cycle_component_budget =
+        hogbom_component_budget(cycle_reported_niter, request.compatibility);
+    let mut cycle_component_updates = 0usize;
+    let mut updated_model = false;
+    let mut stop_reason = None;
+    let mut probe = MinorCycleProbe::default();
+    let minor_started = Instant::now();
+    while cycle_component_updates < cycle_component_budget {
+        let peak_abs = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref());
+        if let Some(reason) = minor_cycle_stop_reason(
+            peak_abs,
+            request.clean.threshold_jy_per_beam,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+        ) {
+            stop_reason = Some(reason);
+            break;
+        }
+        let Some(((peak_x, peak_y), coeffs, candidate_strength)) = find_mtmfs_component(
+            residual_terms,
+            hessian,
+            inv_hessian,
+            request.clean_mask.as_ref(),
+        ) else {
+            stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break;
+        };
+        if cycle_component_updates == 0 {
+            probe = MinorCycleProbe {
+                initial_scale_pixels: Some(0.0),
+                initial_candidate_strength_jy_per_beam: Some(candidate_strength),
+                initial_candidate_position: Some([peak_x, peak_y]),
+            };
+        }
+        for (term_index, coefficient) in coeffs.iter().enumerate() {
+            let component = request.clean.gain * *coefficient;
+            model_terms[term_index][(peak_x, peak_y)] += component;
+        }
+        for residual_order in 0..request.nterms {
+            for model_order in 0..request.nterms {
+                let component = request.clean.gain * coeffs[model_order];
+                subtract_shifted_kernel(
+                    &mut residual_terms[residual_order],
+                    &psf_terms[residual_order + model_order],
+                    (peak_x, peak_y),
+                    component,
+                );
+            }
+        }
+        cycle_component_updates += 1;
+        updated_model = true;
+    }
+    let minor_elapsed = minor_started.elapsed();
+    stage_timings.minor_cycle += minor_elapsed;
+    stage_timings.minor_cycle_solve += minor_elapsed;
+    (
+        HogbomMinorCycleOutcome {
+            updated_model,
+            actual_updates: cycle_component_updates,
+            reported_updates: cycle_component_updates.min(cycle_reported_niter),
+            stop_reason,
+            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+        },
+        probe,
+    )
+}
+
+fn compute_mtmfs_alpha_products(
+    image_terms: &[Array2<f32>],
+    residual_terms: &[Array2<f32>],
+) -> (Option<Array2<f32>>, Option<Array2<f32>>) {
+    if image_terms.len() < 2 || residual_terms.len() < 2 {
+        return (None, None);
+    }
+    let tt0 = &image_terms[0];
+    let tt1 = &image_terms[1];
+    let residual0 = &residual_terms[0];
+    let residual1 = &residual_terms[1];
+    let specthreshold = peak_abs_value(residual0) / 10.0;
+    let (nx, ny) = tt0.dim();
+    let mut alpha = Array2::<f32>::zeros((nx, ny));
+    let mut alpha_error = Array2::<f32>::zeros((nx, ny));
+    for x in 0..nx {
+        for y in 0..ny {
+            let image0 = tt0[(x, y)];
+            if image0 <= specthreshold {
+                continue;
+            }
+            let image1 = tt1[(x, y)];
+            if image0 == 0.0 || image1 == 0.0 {
+                continue;
+            }
+            let alpha_value = image1 / image0;
+            alpha[(x, y)] = alpha_value;
+            let term0 = residual0[(x, y)] / image0;
+            let term1 = residual1[(x, y)] / image1;
+            alpha_error[(x, y)] = alpha_value.abs() * (term0 * term0 + term1 * term1).sqrt();
+        }
+    }
+    (Some(alpha), Some(alpha_error))
 }
 
 fn select_restored_cube_beams(
@@ -2302,8 +4526,20 @@ fn compute_psf(
     gridder: &StandardGridder,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<PsfState, ImagingError> {
-    if request.w_term_mode == WTermMode::Direct {
-        return compute_psf_direct(request.geometry, batches, stage_timings);
+    match request.w_term_mode {
+        WTermMode::Direct => {
+            return compute_psf_direct(request.geometry, batches, stage_timings);
+        }
+        WTermMode::WProject => {
+            return compute_psf_w_project(
+                request.geometry,
+                batches,
+                gridder,
+                request.w_project_planes,
+                stage_timings,
+            );
+        }
+        WTermMode::None => {}
     }
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex32>::zeros((nx, ny));
@@ -2336,18 +4572,8 @@ fn compute_psf(
                 continue;
             };
             let psf_weight = Complex32::new(weight, 0.0);
-            gridder.grid_sample_planned(
-                &mut psf_grid,
-                &plan.positive_x,
-                &plan.positive_y,
-                psf_weight,
-            );
-            gridder.grid_sample_planned(
-                &mut psf_grid,
-                &plan.negative_x,
-                &plan.negative_y,
-                psf_weight,
-            );
+            gridder.grid_sample_product_planned(&mut psf_grid, &plan.positive, psf_weight);
+            gridder.grid_sample_product_planned(&mut psf_grid, &plan.negative, psf_weight);
             normalization_sumwt += 2.0 * weight;
             reported_sumwt += weight * sumwt_factor;
             gridded_samples += 1;
@@ -2395,13 +4621,142 @@ fn compute_residual(
     psf_state: &PsfState,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
-    if request.w_term_mode == WTermMode::Direct {
-        return compute_residual_direct(request.geometry, batches, model, psf_state, stage_timings);
+    match request.w_term_mode {
+        WTermMode::Direct => {
+            return compute_residual_direct(
+                request.geometry,
+                batches,
+                model,
+                psf_state,
+                stage_timings,
+            );
+        }
+        WTermMode::WProject => {
+            return compute_residual_w_project(
+                request.geometry,
+                batches,
+                gridder,
+                model,
+                psf_state,
+                request.w_project_planes,
+                stage_timings,
+            );
+        }
+        WTermMode::None => {}
     }
+    compute_residual_standard(
+        request.geometry,
+        batches,
+        gridder,
+        model,
+        psf_state,
+        matches!(
+            request.deconvolver,
+            Deconvolver::Clark | Deconvolver::Multiscale
+        ),
+        stage_timings,
+    )
+}
+
+fn build_standard_residual_sample_plans(
+    gridder: &StandardGridder,
+    batches: &[VisibilityBatch],
+) -> Vec<Vec<Option<PlannedSample>>> {
+    batches
+        .iter()
+        .map(|batch| {
+            batch
+                .u_lambda
+                .iter()
+                .zip(batch.v_lambda.iter())
+                .zip(batch.weight.iter())
+                .zip(batch.visibility.iter())
+                .zip(batch.gridable.iter())
+                .map(
+                    |((((&u_lambda, &v_lambda), &weight), &visibility), &gridable)| {
+                        if gridable
+                            && weight.is_finite()
+                            && weight > 0.0
+                            && visibility.re.is_finite()
+                            && visibility.im.is_finite()
+                        {
+                            gridder.plan_sample(u_lambda, v_lambda)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .collect()
+        })
+        .collect()
+}
+
+fn compute_residual_standard(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    use_direct_point_predict: bool,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    Ok(compute_residual_standard_internal(
+        geometry,
+        batches,
+        gridder,
+        model,
+        psf_state,
+        use_direct_point_predict,
+        false,
+        stage_timings,
+    )?
+    .residual_image)
+}
+
+fn compute_residual_trace_standard(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    use_direct_point_predict: bool,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<ResidualRefreshTraceInternal, ImagingError> {
+    compute_residual_standard_internal(
+        geometry,
+        batches,
+        gridder,
+        model,
+        psf_state,
+        use_direct_point_predict,
+        true,
+        stage_timings,
+    )
+}
+
+fn compute_residual_standard_internal(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    use_direct_point_predict: bool,
+    capture_samples: bool,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<ResidualRefreshTraceInternal, ImagingError> {
     let [nx, ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex32>::zeros((nx, ny));
     let mut timings = ResidualComputationTimings::default();
-    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+    let mut samples = if capture_samples {
+        Vec::with_capacity(batches.iter().map(VisibilityBatch::len).sum())
+    } else {
+        Vec::new()
+    };
+    let direct_pixels = use_direct_point_predict.then(|| build_direct_pixel_coordinates(geometry));
+    let direct_components = direct_pixels
+        .as_ref()
+        .map(|pixels| build_direct_components(model, pixels, geometry.image_shape[1]));
+    let model_grid = if !use_direct_point_predict && model.iter().any(|value| value.abs() > 0.0) {
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
@@ -2411,39 +4766,66 @@ fn compute_residual(
     };
 
     let degrid_grid_started = Instant::now();
-    for batch in batches {
+    for (batch_index, batch) in batches.iter().enumerate() {
         for index in 0..batch.len() {
-            if !batch.gridable[index] {
-                continue;
-            }
             let weight = batch.weight[index];
-            let sample = batch.visibility[index];
-            if !(weight.is_finite()
+            let observed_visibility = batch.visibility[index];
+            let gridable = batch.gridable[index];
+            let planned_sample = if gridable
+                && weight.is_finite()
                 && weight > 0.0
-                && sample.re.is_finite()
-                && sample.im.is_finite())
+                && observed_visibility.re.is_finite()
+                && observed_visibility.im.is_finite()
             {
-                continue;
+                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            } else {
+                None
+            };
+            let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
+                if use_direct_point_predict {
+                    direct_components.as_ref().map_or_else(
+                        || Complex32::new(0.0, 0.0),
+                        |components| {
+                            direct_predict_visibility(
+                                components,
+                                batch.u_lambda[index],
+                                batch.v_lambda[index],
+                                0.0,
+                            )
+                        },
+                    )
+                } else {
+                    model_grid.as_ref().map_or_else(
+                        || Complex32::new(0.0, 0.0),
+                        |grid| gridder.degrid_sample_product_planned(grid, &plan.positive),
+                    )
+                }
+            } else {
+                Complex32::new(0.0, 0.0)
+            };
+            let residual_visibility = observed_visibility - predicted_visibility;
+            if capture_samples {
+                samples.push(ResidualSampleTraceInternal {
+                    batch_index,
+                    sample_index: index,
+                    u_lambda: batch.u_lambda[index],
+                    v_lambda: batch.v_lambda[index],
+                    w_lambda: batch.w_lambda[index],
+                    observed_visibility,
+                    predicted_visibility,
+                    residual_visibility,
+                    weight,
+                    gridable,
+                });
             }
-            let Some(plan) = gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
-            else {
+            let Some(plan) = planned_sample.as_ref() else {
                 continue;
             };
-            let predicted = model_grid.as_ref().map_or_else(
-                || Complex32::new(0.0, 0.0),
-                |grid| gridder.degrid_sample_planned(grid, &plan.positive_x, &plan.positive_y),
-            );
-            let residual = (sample - predicted) * weight;
-            gridder.grid_sample_planned(
+            let residual = residual_visibility * weight;
+            gridder.grid_sample_product_planned(&mut residual_grid, &plan.positive, residual);
+            gridder.grid_sample_product_planned(
                 &mut residual_grid,
-                &plan.positive_x,
-                &plan.positive_y,
-                residual,
-            );
-            gridder.grid_sample_planned(
-                &mut residual_grid,
-                &plan.negative_x,
-                &plan.negative_y,
+                &plan.negative,
                 residual.conj(),
             );
         }
@@ -2461,7 +4843,579 @@ fn compute_residual(
     stage_timings.residual_degrid_grid += timings.degrid_grid;
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
+    Ok(ResidualRefreshTraceInternal {
+        samples,
+        residual_image: image,
+        normalization_sumwt: psf_state.normalization_sumwt,
+        reported_sumwt: psf_state.reported_sumwt,
+        psf_peak: psf_state.psf_peak,
+        gridded_samples: psf_state.gridded_samples,
+        skipped_samples: psf_state.skipped_samples,
+    })
+}
+
+fn compute_residual_trace_cube_standard(
+    batches: &[VisibilityBatch],
+    model_interpolation_batches: &[CubeModelInterpolationBatch],
+    gridder: &StandardGridder,
+    model_planes: &[Array2<f32>],
+    output_channel_frequency_hz: f64,
+    model_channel_frequencies_hz: &[f64],
+    prediction_lambda_mode: CubePredictionLambdaMode,
+    psf_state: &PsfState,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<ResidualRefreshTraceInternal, ImagingError> {
+    let mut timings = ResidualComputationTimings::default();
+    let model_grids = build_cube_model_grids(gridder, model_planes.iter(), &mut timings);
+    let planned_batches = build_standard_residual_sample_plans(gridder, batches);
+    let trace = compute_residual_trace_cube_standard_with_model_grids(
+        batches,
+        Some(&planned_batches),
+        model_interpolation_batches,
+        gridder,
+        &model_grids,
+        output_channel_frequency_hz,
+        model_channel_frequencies_hz,
+        prediction_lambda_mode,
+        psf_state,
+        true,
+        &mut timings,
+    )?;
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    Ok(trace)
+}
+
+fn build_cube_model_grids<'a, I>(
+    gridder: &StandardGridder,
+    model_planes: I,
+    timings: &mut ResidualComputationTimings,
+) -> Vec<Option<Array2<Complex32>>>
+where
+    I: IntoIterator<Item = &'a Array2<f32>>,
+{
+    let model_planes = model_planes.into_iter();
+    let (lower_bound, _) = model_planes.size_hint();
+    let mut model_grids = Vec::with_capacity(lower_bound);
+    for model_plane in model_planes {
+        if model_plane.iter().any(|value| value.abs() > 0.0) {
+            let model_fft_started = Instant::now();
+            let transformed = centered_fft2(&gridder.apodize_model(model_plane));
+            timings.model_fft += model_fft_started.elapsed();
+            model_grids.push(Some(transformed));
+        } else {
+            model_grids.push(None);
+        }
+    }
+    model_grids
+}
+
+fn cube_model_dependency_mask(
+    nchan: usize,
+    model_interpolation_batches: &[CubeModelInterpolationBatch],
+) -> Vec<bool> {
+    let mut dependencies = vec![false; nchan];
+    for batch in model_interpolation_batches {
+        for sample_contributions in &batch.sample_contributions {
+            for contribution in sample_contributions {
+                if contribution.factor.is_finite()
+                    && contribution.factor > 0.0
+                    && contribution.model_channel_index < nchan
+                {
+                    dependencies[contribution.model_channel_index] = true;
+                }
+            }
+        }
+    }
+    dependencies
+}
+
+fn cube_refresh_flags(planes: &[CubePlaneWork], updated_model_channels: &[bool]) -> Vec<bool> {
+    planes
+        .iter()
+        .enumerate()
+        .map(|(plane_index, plane)| {
+            updated_model_channels
+                .get(plane_index)
+                .copied()
+                .unwrap_or(false)
+                || plane
+                    .dependent_model_channels
+                    .iter()
+                    .zip(updated_model_channels.iter())
+                    .any(|(depends_on_model, updated)| *depends_on_model && *updated)
+        })
+        .collect()
+}
+
+fn compute_residual_trace_cube_standard_with_model_grids(
+    batches: &[VisibilityBatch],
+    planned_batches: Option<&[Vec<Option<PlannedSample>>]>,
+    model_interpolation_batches: &[CubeModelInterpolationBatch],
+    gridder: &StandardGridder,
+    model_grids: &[Option<Array2<Complex32>>],
+    output_channel_frequency_hz: f64,
+    model_channel_frequencies_hz: &[f64],
+    prediction_lambda_mode: CubePredictionLambdaMode,
+    psf_state: &PsfState,
+    capture_samples: bool,
+    timings: &mut ResidualComputationTimings,
+) -> Result<ResidualRefreshTraceInternal, ImagingError> {
+    if model_interpolation_batches.len() != batches.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "cube model interpolation batch count {} does not match visibility batch count {}",
+            model_interpolation_batches.len(),
+            batches.len()
+        )));
+    }
+    if let Some(plans) = planned_batches
+        && plans.len() != batches.len()
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "planned batch count {} does not match visibility batch count {}",
+            plans.len(),
+            batches.len()
+        )));
+    }
+    let [nx, ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex32>::zeros((nx, ny));
+    let mut samples = if capture_samples {
+        Vec::with_capacity(batches.iter().map(VisibilityBatch::len).sum())
+    } else {
+        Vec::new()
+    };
+    let degrid_grid_started = Instant::now();
+    for (batch_index, (batch, interpolation_batch)) in batches
+        .iter()
+        .zip(model_interpolation_batches.iter())
+        .enumerate()
+    {
+        if interpolation_batch.sample_contributions.len() != batch.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "cube model interpolation batch {batch_index} length {} does not match visibility batch length {}",
+                interpolation_batch.sample_contributions.len(),
+                batch.len()
+            )));
+        }
+        for index in 0..batch.len() {
+            let weight = batch.weight[index];
+            let observed_visibility = batch.visibility[index];
+            let gridable = batch.gridable[index];
+            let planned_sample = planned_batches
+                .and_then(|plans| {
+                    plans
+                        .get(batch_index)
+                        .and_then(|batch_plans| batch_plans.get(index))
+                })
+                .copied()
+                .flatten()
+                .or_else(|| {
+                    if gridable
+                        && weight.is_finite()
+                        && weight > 0.0
+                        && observed_visibility.re.is_finite()
+                        && observed_visibility.im.is_finite()
+                    {
+                        gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+                    } else {
+                        None
+                    }
+                });
+            let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
+                let mut predicted = Complex32::new(0.0, 0.0);
+                for contribution in &interpolation_batch.sample_contributions[index] {
+                    if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+                        continue;
+                    }
+                    let Some(model_grid) = model_grids.get(contribution.model_channel_index) else {
+                        return Err(ImagingError::InvalidRequest(format!(
+                            "cube model interpolation references channel {} beyond {} model planes",
+                            contribution.model_channel_index,
+                            model_grids.len()
+                        )));
+                    };
+                    if let Some(model_grid) = model_grid.as_ref() {
+                        let contribution_prediction = match prediction_lambda_mode {
+                            CubePredictionLambdaMode::OutputChannel => {
+                                gridder.degrid_sample_product_planned(model_grid, &plan.positive)
+                            }
+                            CubePredictionLambdaMode::ModelChannel => {
+                                let Some(&model_frequency_hz) = model_channel_frequencies_hz
+                                    .get(contribution.model_channel_index)
+                                else {
+                                    return Err(ImagingError::InvalidRequest(format!(
+                                        "cube model interpolation references model frequency for channel {} beyond {} channels",
+                                        contribution.model_channel_index,
+                                        model_channel_frequencies_hz.len()
+                                    )));
+                                };
+                                if !(output_channel_frequency_hz.is_finite()
+                                    && output_channel_frequency_hz > 0.0
+                                    && model_frequency_hz.is_finite()
+                                    && model_frequency_hz > 0.0)
+                                {
+                                    continue;
+                                }
+                                let uv_scale = model_frequency_hz / output_channel_frequency_hz;
+                                let Some(model_plan) = gridder.plan_sample(
+                                    batch.u_lambda[index] * uv_scale,
+                                    batch.v_lambda[index] * uv_scale,
+                                ) else {
+                                    continue;
+                                };
+                                gridder
+                                    .degrid_sample_product_planned(model_grid, &model_plan.positive)
+                            }
+                        };
+                        predicted += contribution_prediction * contribution.factor;
+                    }
+                }
+                predicted
+            } else {
+                Complex32::new(0.0, 0.0)
+            };
+            let residual_visibility = observed_visibility - predicted_visibility;
+            if capture_samples {
+                samples.push(ResidualSampleTraceInternal {
+                    batch_index,
+                    sample_index: index,
+                    u_lambda: batch.u_lambda[index],
+                    v_lambda: batch.v_lambda[index],
+                    w_lambda: batch.w_lambda[index],
+                    observed_visibility,
+                    predicted_visibility,
+                    residual_visibility,
+                    weight,
+                    gridable,
+                });
+            }
+            let Some(plan) = planned_sample.as_ref() else {
+                continue;
+            };
+            let residual = residual_visibility * weight;
+            gridder.grid_sample_product_planned(&mut residual_grid, &plan.positive, residual);
+            gridder.grid_sample_product_planned(
+                &mut residual_grid,
+                &plan.negative,
+                residual.conj(),
+            );
+        }
+    }
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_image_from_grid(&raw);
+    image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    Ok(ResidualRefreshTraceInternal {
+        samples,
+        residual_image: image,
+        normalization_sumwt: psf_state.normalization_sumwt,
+        reported_sumwt: psf_state.reported_sumwt,
+        psf_peak: psf_state.psf_peak,
+        gridded_samples: psf_state.gridded_samples,
+        skipped_samples: psf_state.skipped_samples,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RawWProjectSample {
+    batch_index: usize,
+    sample_index: usize,
+    u_lambda: f64,
+    v_lambda: f64,
+    w_lambda: f64,
+    weight: f32,
+    visibility: Complex32,
+    sumwt_factor: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WProjectSkippedSample {
+    batch_index: usize,
+    sample_index: usize,
+    u_lambda: f64,
+    v_lambda: f64,
+    w_lambda: f64,
+    weight: f32,
+    sumwt_factor: f32,
+    reason: WProjectSkipReason,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WProjectPreparedSample {
+    batch_index: usize,
+    sample_index: usize,
+    u_lambda: f64,
+    v_lambda: f64,
+    w_lambda: f64,
+    sumwt_factor: f32,
+    positive_plan: WProjectSamplePlan,
+    weight: f32,
+    visibility: Complex32,
+}
+
+struct WProjectPreparedData {
+    requested_plane_count: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    samples: Vec<WProjectPreparedSample>,
+    skipped_samples: Vec<WProjectSkippedSample>,
+    normalization_sumwt: f32,
+    reported_sumwt: f32,
+    gridded_samples: usize,
+}
+
+fn compute_psf_w_project(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let prepare_started = Instant::now();
+    let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let mut timings = PsfComputationTimings {
+        grid: prepare_started.elapsed(),
+        ..PsfComputationTimings::default()
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    for sample in &prepared.samples {
+        let psf_weight = Complex32::new(sample.weight, 0.0);
+        prepared
+            .projector
+            .grid_sample_planned(&mut psf_grid, &sample.positive_plan, psf_weight);
+    }
+    timings.grid += grid_started.elapsed();
+
+    if prepared.normalization_sumwt <= 0.0 || prepared.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2(&psf_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf =
+        gridder.corrected_w_project_image_from_grid(&raw_psf, prepared.projector.sampling());
+    psf.mapv_inplace(|value| 2.0 * value / prepared.normalization_sumwt);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok(PsfState {
+        psf,
+        normalization_sumwt: prepared.normalization_sumwt,
+        reported_sumwt: prepared.reported_sumwt,
+        psf_peak,
+        gridded_samples: prepared.gridded_samples,
+        skipped_samples: prepared.skipped_samples.len(),
+    })
+}
+
+fn compute_residual_w_project(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let prepare_started = Instant::now();
+    let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let mut timings = ResidualComputationTimings {
+        degrid_grid: prepare_started.elapsed(),
+        ..ResidualComputationTimings::default()
+    };
+    let model_nonzero = model.iter().any(|value| value.abs() > 0.0);
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let model_grid = if model_nonzero {
+        let model_fft_started = Instant::now();
+        let transformed =
+            centered_fft2(&gridder.apodize_w_project_model(model, prepared.projector.sampling()));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    let degrid_started = Instant::now();
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    for sample in &prepared.samples {
+        let predicted = model_grid.as_ref().map_or_else(
+            || Complex32::new(0.0, 0.0),
+            |grid| {
+                prepared
+                    .projector
+                    .degrid_sample_planned(grid, &sample.positive_plan)
+            },
+        );
+        let residual = (sample.visibility - predicted) * sample.weight;
+        prepared
+            .projector
+            .grid_sample_planned(&mut residual_grid, &sample.positive_plan, residual);
+    }
+    timings.degrid_grid += degrid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image =
+        gridder.corrected_w_project_image_from_grid(&raw, prepared.projector.sampling());
+    image.mapv_inplace(|value| 2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
     Ok(image)
+}
+
+fn prepare_w_project_data(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+) -> Result<WProjectPreparedData, ImagingError> {
+    let (raw_samples, mut skipped_samples, max_abs_w_lambda) =
+        collect_w_project_raw_samples(batches);
+    if raw_samples.is_empty() {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let mut samples = Vec::with_capacity(raw_samples.len());
+    let mut normalization_sumwt = 0.0f32;
+    let mut reported_sumwt = 0.0f32;
+    let mut gridded_samples = 0usize;
+
+    for sample in raw_samples {
+        let Some(positive_plan) =
+            projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
+        else {
+            skipped_samples.push(WProjectSkippedSample {
+                batch_index: sample.batch_index,
+                sample_index: sample.sample_index,
+                u_lambda: sample.u_lambda,
+                v_lambda: sample.v_lambda,
+                w_lambda: sample.w_lambda,
+                weight: sample.weight,
+                sumwt_factor: sample.sumwt_factor,
+                reason: WProjectSkipReason::OutsideGrid,
+            });
+            continue;
+        };
+        normalization_sumwt += 2.0 * sample.weight * positive_plan.normalization;
+        reported_sumwt += sample.weight * sample.sumwt_factor;
+        gridded_samples += 1;
+        samples.push(WProjectPreparedSample {
+            batch_index: sample.batch_index,
+            sample_index: sample.sample_index,
+            u_lambda: sample.u_lambda,
+            v_lambda: sample.v_lambda,
+            w_lambda: sample.w_lambda,
+            sumwt_factor: sample.sumwt_factor,
+            positive_plan,
+            weight: sample.weight,
+            visibility: sample.visibility,
+        });
+    }
+
+    if samples.is_empty() || normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    skipped_samples.sort_by_key(|sample| (sample.batch_index, sample.sample_index));
+
+    Ok(WProjectPreparedData {
+        requested_plane_count: w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+    })
+}
+
+fn collect_w_project_raw_samples(
+    batches: &[VisibilityBatch],
+) -> (Vec<RawWProjectSample>, Vec<WProjectSkippedSample>, f64) {
+    let mut raw_samples = Vec::<RawWProjectSample>::new();
+    let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
+    let mut max_abs_w_lambda = 0.0f64;
+
+    for (batch_index, batch) in batches.iter().enumerate() {
+        for sample_index in 0..batch.len() {
+            let sample = RawWProjectSample {
+                batch_index,
+                sample_index,
+                u_lambda: batch.u_lambda[sample_index],
+                v_lambda: batch.v_lambda[sample_index],
+                w_lambda: batch.w_lambda[sample_index],
+                weight: batch.weight[sample_index],
+                visibility: batch.visibility[sample_index],
+                sumwt_factor: batch.sumwt_factor[sample_index],
+            };
+            if !batch.gridable[sample_index] {
+                skipped_samples.push(WProjectSkippedSample {
+                    batch_index,
+                    sample_index,
+                    u_lambda: sample.u_lambda,
+                    v_lambda: sample.v_lambda,
+                    w_lambda: sample.w_lambda,
+                    weight: sample.weight,
+                    sumwt_factor: sample.sumwt_factor,
+                    reason: WProjectSkipReason::NotGridable,
+                });
+                continue;
+            }
+            if !(sample.weight.is_finite()
+                && sample.weight > 0.0
+                && sample.sumwt_factor.is_finite()
+                && sample.sumwt_factor > 0.0
+                && sample.visibility.re.is_finite()
+                && sample.visibility.im.is_finite()
+                && sample.u_lambda.is_finite()
+                && sample.v_lambda.is_finite()
+                && sample.w_lambda.is_finite())
+            {
+                skipped_samples.push(WProjectSkippedSample {
+                    batch_index,
+                    sample_index,
+                    u_lambda: sample.u_lambda,
+                    v_lambda: sample.v_lambda,
+                    w_lambda: sample.w_lambda,
+                    weight: sample.weight,
+                    sumwt_factor: sample.sumwt_factor,
+                    reason: WProjectSkipReason::InvalidInput,
+                });
+                continue;
+            }
+            max_abs_w_lambda = max_abs_w_lambda.max(sample.w_lambda.abs());
+            raw_samples.push(sample);
+        }
+    }
+
+    (raw_samples, skipped_samples, max_abs_w_lambda)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2696,16 +5650,25 @@ fn peak_location_masked(
     image: &Array2<f32>,
     mask: Option<&Array2<bool>>,
 ) -> Option<((usize, usize), f32)> {
-    image.indexed_iter().fold(None, |best, (index, value)| {
-        if mask.is_some_and(|current| !current[index]) {
-            return best;
+    let (nx, ny) = image.dim();
+    let mut best = None;
+    // Match casacore's `hclean` search order: y-major with strict `>` updates.
+    for y in 0..ny {
+        for x in 0..nx {
+            if mask.is_some_and(|current| !current[(x, y)]) {
+                continue;
+            }
+            let value = image[(x, y)];
+            match best {
+                None => best = Some(((x, y), value)),
+                Some((_, best_value)) if value.abs() > best_value.abs() => {
+                    best = Some(((x, y), value));
+                }
+                _ => {}
+            }
         }
-        match best {
-            None => Some((index, *value)),
-            Some((_, best_value)) if value.abs() > best_value.abs() => Some((index, *value)),
-            _ => best,
-        }
-    })
+    }
+    best
 }
 
 fn compute_cycle_threshold(
@@ -2748,16 +5711,10 @@ fn nsigma_threshold_jy_per_beam(
     }
 }
 
-fn global_nsigma_threshold_jy_per_beam(
-    residual_planes: &[(&Array2<f32>, Option<&Array2<bool>>)],
-    clean: CleanConfig,
-) -> f32 {
-    if clean.nsigma <= 0.0 {
-        return 0.0;
-    }
-    residual_planes
+fn global_nsigma_threshold_jy_per_beam(nsigma_thresholds_jy_per_beam: &[f32]) -> f32 {
+    nsigma_thresholds_jy_per_beam
         .iter()
-        .map(|(residual, clean_mask)| nsigma_threshold_jy_per_beam(residual, *clean_mask, clean))
+        .copied()
         .fold(0.0f32, f32::max)
 }
 
@@ -2907,24 +5864,9 @@ fn threshold_reached_with_tolerance(peak_abs_jy_per_beam: f32, threshold_jy_per_
     if threshold_jy_per_beam <= 0.0 {
         return peak_abs_jy_per_beam <= threshold_jy_per_beam;
     }
+    let tolerance_jy_per_beam = (0.01 * threshold_jy_per_beam).max(2.0e-8);
     peak_abs_jy_per_beam <= threshold_jy_per_beam
-        || ((peak_abs_jy_per_beam - threshold_jy_per_beam).abs() / threshold_jy_per_beam) < 0.01
-}
-
-fn strict_clean_stop_reason(
-    peak_abs_jy_per_beam: f32,
-    threshold_jy_per_beam: f32,
-    nsigma_threshold_jy_per_beam: f32,
-) -> Option<CleanStopReason> {
-    if peak_abs_jy_per_beam <= threshold_jy_per_beam {
-        Some(CleanStopReason::GlobalThresholdReached)
-    } else if nsigma_threshold_jy_per_beam > threshold_jy_per_beam
-        && peak_abs_jy_per_beam <= nsigma_threshold_jy_per_beam
-    {
-        Some(CleanStopReason::NsigmaThresholdReached)
-    } else {
-        None
-    }
+        || (peak_abs_jy_per_beam - threshold_jy_per_beam).abs() <= tolerance_jy_per_beam
 }
 
 fn tolerant_clean_stop_reason(
@@ -2949,13 +5891,19 @@ fn minor_cycle_stop_reason(
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
 ) -> Option<CleanStopReason> {
-    if let Some(reason) = strict_clean_stop_reason(
-        peak_abs_jy_per_beam,
-        threshold_jy_per_beam,
-        nsigma_threshold_jy_per_beam,
-    ) {
-        Some(reason)
-    } else if peak_abs_jy_per_beam <= cycle_threshold_jy_per_beam {
+    let threshold_floor_active = threshold_jy_per_beam > 0.0
+        && (0.01 * threshold_jy_per_beam) < 2.0e-8
+        && cycle_threshold_jy_per_beam <= threshold_jy_per_beam;
+    if peak_abs_jy_per_beam < threshold_jy_per_beam
+        || (threshold_floor_active
+            && threshold_reached_with_tolerance(peak_abs_jy_per_beam, threshold_jy_per_beam))
+    {
+        Some(CleanStopReason::GlobalThresholdReached)
+    } else if nsigma_threshold_jy_per_beam > threshold_jy_per_beam
+        && peak_abs_jy_per_beam < nsigma_threshold_jy_per_beam
+    {
+        Some(CleanStopReason::NsigmaThresholdReached)
+    } else if peak_abs_jy_per_beam < cycle_threshold_jy_per_beam {
         Some(CleanStopReason::CycleThresholdReached)
     } else {
         None
@@ -3055,6 +6003,7 @@ fn dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
 
 fn add_stage_timings(total: &mut ImagingStageTimings, part: ImagingStageTimings) {
     total.controller_overhead += part.controller_overhead;
+    total.weighting += part.weighting;
     total.psf_grid += part.psf_grid;
     total.psf_fft += part.psf_fft;
     total.psf_normalize += part.psf_normalize;
@@ -3090,19 +6039,24 @@ fn expand_scalar(value: f32) -> Array4<f32> {
 #[cfg(test)]
 #[allow(clippy::excessive_precision, clippy::useless_vec)]
 mod tests {
+    use casa_test_support::gridder_interop::cpp_convolve_gridder_make_model_residual_image_2d;
+    use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
     use ndarray::{Array2, s};
     use num_complex::Complex32;
 
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
-        Deconvolver, DirectComponent, ImageGeometry, ImagingRequest, ImagingStageTimings,
-        ParallelHandBatch, PlaneStokes, RestoringBeamMode, StandardGridder, VisibilityBatch,
+        CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
+        ImageGeometry, ImagingRequest, ImagingStageTimings, ParallelHandBatch, PlaneStokes,
+        PsfState, RestoringBeamMode, StandardGridder, VisibilityBatch, WProjectSkipReason,
         WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel, apply_chauvenet_clipping,
-        build_direct_components, build_direct_pixel_coordinates, centered_fft2,
+        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
         compute_cycle_threshold, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        make_multiscale_kernel, mean_stddev, peak_abs_value, run_cube, run_dirty_cube, run_imaging,
-        tolerant_clean_stop_reason,
+        make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason, peak_abs_value,
+        peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
+        tolerant_clean_stop_reason, trace_cube_weighting, trace_residual_refresh,
+        trace_w_project_plan, trace_weighting,
     };
     fn point_source_visibilities(
         samples: &[(f64, f64, f64)],
@@ -3136,6 +6090,47 @@ mod tests {
             flux,
             true,
         )
+    }
+
+    fn assert_close_f32(actual: f32, expected: f32, tol: f32) {
+        let delta = (actual - expected).abs();
+        assert!(
+            delta <= tol,
+            "expected {expected}, got {actual}, delta={delta}, tol={tol}"
+        );
+    }
+
+    fn identity_cube_model_interpolation_batches(
+        model_channel_index: usize,
+        visibility_batches: &[VisibilityBatch],
+    ) -> Vec<CubeModelInterpolationBatch> {
+        visibility_batches
+            .iter()
+            .map(|batch| CubeModelInterpolationBatch {
+                sample_contributions: (0..batch.len())
+                    .map(|_| {
+                        vec![CubeModelChannelContribution {
+                            model_channel_index,
+                            factor: 1.0,
+                        }]
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn cube_channel_request_identity(
+        channel_frequency_hz: f64,
+        visibility_batches: Vec<VisibilityBatch>,
+        model_channel_index: usize,
+    ) -> CubeChannelRequest {
+        let model_interpolation_batches =
+            identity_cube_model_interpolation_batches(model_channel_index, &visibility_batches);
+        CubeChannelRequest {
+            channel_frequency_hz,
+            visibility_batches,
+            model_interpolation_batches,
+        }
     }
 
     fn point_source_visibilities_with_mode(
@@ -3249,7 +6244,171 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::XX,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: dirty_clean_config(0.35),
+            clean_mask: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+
+        assert!((result.sumwt[(0, 0, 0, 0)] - 1.5).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn trace_weighting_reports_normalization_and_reported_sumwt_separately() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let batch = VisibilityBatch {
+            u_lambda: vec![10.0],
+            v_lambda: vec![5.0],
+            w_lambda: vec![0.0],
+            weight: vec![1.5],
+            sumwt_factor: vec![1.0],
+            gridable: vec![true],
+            visibility: vec![Complex32::new(1.0, 0.0)],
+        };
+        let diagnostics = trace_weighting(&ImagingRequest {
+            geometry,
+            visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::XX,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: dirty_clean_config(0.35),
+            clean_mask: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+
+        assert_eq!(diagnostics.samples.len(), 1);
+        assert!((diagnostics.normalization_sumwt - 3.0).abs() < 1.0e-5);
+        assert!((diagnostics.reported_sumwt - 1.5).abs() < 1.0e-5);
+        assert!(diagnostics.normalization_sumwt > diagnostics.reported_sumwt);
+        let sample = &diagnostics.samples[0];
+        assert!((sample.output_weight - 1.5).abs() < 1.0e-6);
+        assert!((sample.normalization_contribution - 3.0).abs() < 1.0e-5);
+        assert!((sample.reported_contribution - 1.5).abs() < 1.0e-5);
+        assert_eq!(sample.density_weight, None);
+    }
+
+    #[test]
+    fn trace_cube_weighting_exposes_combined_density_and_taper_effects() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let make_batch = |weight: f32| VisibilityBatch {
+            u_lambda: vec![100.0],
+            v_lambda: vec![50.0],
+            w_lambda: vec![0.0],
+            weight: vec![weight],
+            sumwt_factor: vec![1.0],
+            gridable: vec![true],
+            visibility: vec![Complex32::new(1.0, 0.0)],
+        };
+        let diagnostics = trace_cube_weighting(&CubeImagingRequest {
+            geometry,
+            channels: vec![
+                cube_channel_request_identity(1.4e9, vec![make_batch(1.0)], 0),
+                cube_channel_request_identity(1.41e9, vec![make_batch(3.0)], 1),
+            ],
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Uniform,
+            weight_density_mode: WeightDensityMode::Combined,
+            uv_taper: Some(crate::GaussianUvTaper {
+                major: crate::UvTaperSize::BaselineHwhmLambda(50.0),
+                minor: crate::UvTaperSize::BaselineHwhmLambda(50.0),
+                position_angle_rad: 0.0,
+            }),
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: dirty_clean_config(0.35),
+            clean_mask: None,
+            psf_cutoff: 0.35,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+
+        assert_eq!(diagnostics.len(), 2);
+        for diagnostic in &diagnostics {
+            assert_eq!(diagnostic.weighting, WeightingMode::Uniform);
+            assert_eq!(diagnostic.weight_density_mode, WeightDensityMode::Combined);
+            assert!(diagnostic.uv_taper.is_some());
+            assert_eq!(diagnostic.samples.len(), 1);
+            let sample = &diagnostic.samples[0];
+            assert_close_f32(sample.density_weight.unwrap(), 4.0, 1.0e-5);
+            assert!(sample.output_weight > 0.0);
+            assert!(sample.output_weight < sample.input_weight / 4.0);
+            assert_close_f32(
+                diagnostic.normalization_sumwt,
+                sample.normalization_contribution,
+                1.0e-6,
+            );
+            assert_close_f32(
+                diagnostic.reported_sumwt,
+                sample.reported_contribution,
+                1.0e-6,
+            );
+        }
+    }
+
+    #[test]
+    fn trace_residual_refresh_matches_fft_residual_and_prediction_order() {
+        let samples = vec![
+            (-310.25, -205.5, 0.0),
+            (-248.75, 140.125, 0.0),
+            (-180.5, 285.75, 0.0),
+            (-95.125, -310.875, 0.0),
+            (24.625, 96.5, 0.0),
+            (77.25, -55.875, 0.0),
+        ];
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let mut model = Array2::<f32>::zeros((64, 64));
+        model[(31, 28)] = 0.75;
+        model[(36, 34)] = -0.2;
+        let pixels = build_direct_pixel_coordinates(geometry);
+        let components = build_direct_components(&model, &pixels, 64);
+        let batch = VisibilityBatch {
+            u_lambda: samples.iter().map(|(u, _, _)| *u).collect(),
+            v_lambda: samples.iter().map(|(_, v, _)| *v).collect(),
+            w_lambda: samples.iter().map(|(_, _, w)| *w).collect(),
+            visibility: samples
+                .iter()
+                .map(|(u, v, w)| direct_predict_visibility(&components, *u, *v, *w))
+                .collect(),
+            weight: vec![1.0; samples.len()],
+            sumwt_factor: vec![1.0; samples.len()],
+            gridable: vec![true; samples.len()],
+        };
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![batch.clone()],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
             selected_frequency_range_hz: [1.399e9, 1.401e9],
@@ -3259,11 +6418,41 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
-        })
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let weighted_batches = apply_weighting(&request, &gridder).unwrap();
+        let mut stage_timings = ImagingStageTimings::default();
+        let psf_state =
+            compute_psf(&request, &weighted_batches, &gridder, &mut stage_timings).unwrap();
+        let fft_residual = compute_residual(
+            &request,
+            &weighted_batches,
+            &gridder,
+            &model,
+            &psf_state,
+            &mut stage_timings,
+        )
         .unwrap();
 
-        assert!((result.sumwt[(0, 0, 0, 0)] - 1.5).abs() < 1.0e-5);
+        let trace = trace_residual_refresh(&request, &model).unwrap();
+        assert_eq!(trace.samples.len(), batch.len());
+        for (sample, source) in trace.samples.iter().zip(samples.iter()) {
+            assert_eq!(sample.u_lambda, source.0);
+            assert_eq!(sample.v_lambda, source.1);
+            assert_eq!(sample.w_lambda, source.2);
+            assert!(sample.weight > 0.0);
+            assert!(sample.gridable);
+            let recomposed = sample.predicted_visibility + sample.residual_visibility;
+            assert_close_f32(recomposed.re, sample.observed_visibility.re, 1.0e-5);
+            assert_close_f32(recomposed.im, sample.observed_visibility.im, 1.0e-5);
+        }
+        let residual_rms = rms_difference(&trace.residual_image, &fft_residual);
+        assert!(
+            residual_rms < 1.0e-6,
+            "trace/image mismatch rms={residual_rms}"
+        );
     }
 
     #[test]
@@ -3283,6 +6472,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3299,6 +6489,7 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -3328,6 +6519,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3335,9 +6527,10 @@ mod tests {
             deconvolver: Deconvolver::Hogbom,
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
-            clean: CleanConfig::default(),
+            clean: dirty_clean_config(0.35),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -3364,6 +6557,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3374,6 +6568,7 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -3435,6 +6630,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![visibility],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3445,6 +6641,7 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -3488,6 +6685,7 @@ mod tests {
         let request = ImagingRequest {
             geometry,
             visibility_batches: vec![batch.clone()],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3498,6 +6696,7 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
         let gridder = StandardGridder::new(geometry).unwrap();
@@ -3521,44 +6720,51 @@ mod tests {
             &mut stage_timings,
         )
         .unwrap();
-        let direct_residual = compute_residual_direct(
-            geometry,
-            std::slice::from_ref(&batch),
-            &model,
-            &psf_state,
-            &mut stage_timings,
-        )
-        .unwrap();
-
         let fft_peak = peak_abs_value(&fft_residual);
-        let direct_peak = peak_abs_value(&direct_residual);
-        let model_grid = centered_fft2(&gridder.apodize_model(&model));
-        let predicted_direct = direct_predict_visibility(
-            &[DirectComponent {
-                value: 1.0,
-                l: (37.0 - 32.0) * 1.0e-4,
-                m: (32.0 - 28.0) * 1.0e-4,
-                n_minus_one: 0.0,
-            }],
-            batch.u_lambda[0],
-            batch.v_lambda[0],
-            batch.w_lambda[0],
-        );
-        let predicted_fft = gridder
-            .degrid_sample(&model_grid, batch.u_lambda[0], batch.v_lambda[0])
-            .unwrap();
+        let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
+            gridder.grid_shape(),
+            geometry.image_shape,
+            [
+                gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
+                gridder.grid_shape()[1] as f64 * geometry.cell_size_rad[1],
+            ],
+            [
+                gridder.grid_shape()[0] as f64 / 2.0,
+                gridder.grid_shape()[1] as f64 / 2.0,
+            ],
+            &batch.u_lambda,
+            &batch.v_lambda,
+            &batch
+                .visibility
+                .iter()
+                .map(|value| value.re)
+                .collect::<Vec<_>>(),
+            &batch
+                .visibility
+                .iter()
+                .map(|value| value.im)
+                .collect::<Vec<_>>(),
+            &batch.weight,
+            &batch.gridable,
+            model.as_slice().unwrap(),
+        ) {
+            Ok(result) => result,
+            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(error) => panic!("run model residual interop: {error}"),
+        };
+        let mut sum_sq = 0.0f64;
+        let mut max_abs = 0.0f32;
+        let mut cpp_peak = 0.0f32;
+        for (&rust_value, &cpp_value) in fft_residual.iter().zip(&cpp.pixels) {
+            let delta = rust_value - cpp_value;
+            sum_sq += f64::from(delta) * f64::from(delta);
+            max_abs = max_abs.max(delta.abs());
+            cpp_peak = cpp_peak.max(cpp_value.abs());
+        }
+        let rms = (sum_sq / cpp.pixels.len() as f64).sqrt() as f32;
         assert!(
-            (predicted_fft.re - predicted_direct.re).abs() < 8.0e-4
-                && (predicted_fft.im - predicted_direct.im).abs() < 8.0e-4,
-            "FFT prediction should match the direct model: direct={predicted_direct:?} fft={predicted_fft:?}"
-        );
-        assert!(
-            direct_peak < 1.0e-4,
-            "direct residual peak should be nearly zero, got {direct_peak}"
-        );
-        assert!(
-            fft_peak < 1.0e-2,
-            "FFT residual peak should stay small when prediction matches the direct model, got {fft_peak}"
+            rms < 1.0e-5 && max_abs < 1.0e-4,
+            "FFT residual should match casacore for the off-center source: rust_peak={fft_peak} cpp_peak={cpp_peak} rms={rms} max_abs={max_abs}"
         );
     }
 
@@ -3603,6 +6809,7 @@ mod tests {
         let request = ImagingRequest {
             geometry,
             visibility_batches: vec![batch.clone()],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3613,6 +6820,7 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
         let gridder = StandardGridder::new(geometry).unwrap();
@@ -3634,38 +6842,51 @@ mod tests {
             &mut stage_timings,
         )
         .unwrap();
-        let direct_residual = compute_residual_direct(
-            geometry,
-            std::slice::from_ref(&batch),
-            &model,
-            &psf_state,
-            &mut stage_timings,
-        )
-        .unwrap();
         let fft_peak = peak_abs_value(&fft_residual);
-        let direct_peak = peak_abs_value(&direct_residual);
-        let model_grid = centered_fft2(&gridder.apodize_model(&model));
-        let predicted_fft = gridder
-            .degrid_sample(&model_grid, batch.u_lambda[0], batch.v_lambda[0])
-            .unwrap();
-        let predicted_direct = direct_predict_visibility(
-            &components,
-            batch.u_lambda[0],
-            batch.v_lambda[0],
-            batch.w_lambda[0],
-        );
+        let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
+            gridder.grid_shape(),
+            geometry.image_shape,
+            [
+                gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
+                gridder.grid_shape()[1] as f64 * geometry.cell_size_rad[1],
+            ],
+            [
+                gridder.grid_shape()[0] as f64 / 2.0,
+                gridder.grid_shape()[1] as f64 / 2.0,
+            ],
+            &batch.u_lambda,
+            &batch.v_lambda,
+            &batch
+                .visibility
+                .iter()
+                .map(|value| value.re)
+                .collect::<Vec<_>>(),
+            &batch
+                .visibility
+                .iter()
+                .map(|value| value.im)
+                .collect::<Vec<_>>(),
+            &batch.weight,
+            &batch.gridable,
+            model.as_slice().unwrap(),
+        ) {
+            Ok(result) => result,
+            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(error) => panic!("run model residual interop: {error}"),
+        };
+        let mut sum_sq = 0.0f64;
+        let mut max_abs = 0.0f32;
+        let mut cpp_peak = 0.0f32;
+        for (&rust_value, &cpp_value) in fft_residual.iter().zip(&cpp.pixels) {
+            let delta = rust_value - cpp_value;
+            sum_sq += f64::from(delta) * f64::from(delta);
+            max_abs = max_abs.max(delta.abs());
+            cpp_peak = cpp_peak.max(cpp_value.abs());
+        }
+        let rms = (sum_sq / cpp.pixels.len() as f64).sqrt() as f32;
         assert!(
-            (predicted_fft.re - predicted_direct.re).abs() < 1.0e-3
-                && (predicted_fft.im - predicted_direct.im).abs() < 1.0e-3,
-            "FFT prediction should match the direct structured model: direct={predicted_direct:?} fft={predicted_fft:?}"
-        );
-        assert!(
-            direct_peak < 1.0e-4,
-            "direct residual peak should be nearly zero for the structured model, got {direct_peak}"
-        );
-        assert!(
-            fft_peak < 3.0e-2,
-            "FFT residual peak should stay small for the structured model, got {fft_peak}"
+            rms < 1.0e-5 && max_abs < 1.0e-4,
+            "FFT residual should match casacore for the structured model: rust_peak={fft_peak} cpp_peak={cpp_peak} rms={rms} max_abs={max_abs}"
         );
     }
 
@@ -3690,6 +6911,7 @@ mod tests {
         let request = ImagingRequest {
             geometry,
             visibility_batches: vec![batch.clone()],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3700,6 +6922,7 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
         let gridder = StandardGridder::new(geometry).unwrap();
@@ -3779,6 +7002,7 @@ mod tests {
         let full = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![all],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3789,12 +7013,14 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
         let split = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![split_left, split_right],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -3805,6 +7031,7 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -3821,26 +7048,28 @@ mod tests {
             cell_size_rad: [1.5e-4, 1.5e-4],
         };
         let samples = [(20.0, -10.0, 0.0), (-15.0, 25.0, 0.0), (30.0, 12.0, 0.0)];
-        let channel_a = CubeChannelRequest {
-            channel_frequency_hz: 1.40e9,
-            visibility_batches: vec![point_source_visibilities(
+        let channel_a = cube_channel_request_identity(
+            1.40e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (16.0, 16.0),
                 1.0,
             )],
-        };
-        let channel_b = CubeChannelRequest {
-            channel_frequency_hz: 1.41e9,
-            visibility_batches: vec![point_source_visibilities(
+            0,
+        );
+        let channel_b = cube_channel_request_identity(
+            1.41e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (18.0, 14.0),
                 2.0,
             )],
-        };
+            1,
+        );
 
         let result = run_dirty_cube(&CubeImagingRequest {
             geometry,
@@ -3857,6 +7086,7 @@ mod tests {
             clean_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -3886,19 +7116,20 @@ mod tests {
             cell_size_rad: [1.5e-4, 1.5e-4],
         };
         let samples = [(20.0, -10.0, 0.0), (-15.0, 25.0, 0.0), (30.0, 12.0, 0.0)];
-        let populated = CubeChannelRequest {
-            channel_frequency_hz: 1.40e9,
-            visibility_batches: vec![point_source_visibilities(
+        let populated = cube_channel_request_identity(
+            1.40e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (16.0, 16.0),
                 1.0,
             )],
-        };
-        let blank = CubeChannelRequest {
-            channel_frequency_hz: 1.45e9,
-            visibility_batches: vec![VisibilityBatch {
+            0,
+        );
+        let blank = cube_channel_request_identity(
+            1.45e9,
+            vec![VisibilityBatch {
                 u_lambda: Vec::new(),
                 v_lambda: Vec::new(),
                 w_lambda: Vec::new(),
@@ -3907,7 +7138,8 @@ mod tests {
                 gridable: Vec::new(),
                 visibility: Vec::new(),
             }],
-        };
+            1,
+        );
 
         let result = run_dirty_cube(&CubeImagingRequest {
             geometry,
@@ -3924,6 +7156,7 @@ mod tests {
             clean_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -3944,26 +7177,28 @@ mod tests {
             cell_size_rad: [1.2e-4, 1.2e-4],
         };
         let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel_a = CubeChannelRequest {
-            channel_frequency_hz: 1.40e9,
-            visibility_batches: vec![point_source_visibilities(
+        let channel_a = cube_channel_request_identity(
+            1.40e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (24.0, 24.0),
                 1.0,
             )],
-        };
-        let channel_b = CubeChannelRequest {
-            channel_frequency_hz: 1.41e9,
-            visibility_batches: vec![point_source_visibilities(
+            0,
+        );
+        let channel_b = cube_channel_request_identity(
+            1.41e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (26.0, 22.0),
                 1.5,
             )],
-        };
+            1,
+        );
 
         let result = run_cube(&CubeImagingRequest {
             geometry,
@@ -3990,6 +7225,7 @@ mod tests {
             clean_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4021,22 +7257,25 @@ mod tests {
             cell_size_rad: [1.2e-4, 1.2e-4],
         };
         let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let make_channel = |freq_hz, center| CubeChannelRequest {
-            channel_frequency_hz: freq_hz,
-            visibility_batches: vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                center,
-                1.0,
-            )],
+        let make_channel = |freq_hz, center, model_channel_index| {
+            cube_channel_request_identity(
+                freq_hz,
+                vec![point_source_visibilities(
+                    &samples,
+                    geometry.cell_size_rad[0],
+                    geometry.image_shape,
+                    center,
+                    1.0,
+                )],
+                model_channel_index,
+            )
         };
         let result = run_cube(&CubeImagingRequest {
             geometry,
             channels: vec![
-                make_channel(1.40e9, (24.0, 24.0)),
-                make_channel(1.41e9, (26.0, 22.0)),
-                make_channel(1.42e9, (20.0, 28.0)),
+                make_channel(1.40e9, (24.0, 24.0), 0),
+                make_channel(1.41e9, (26.0, 22.0), 1),
+                make_channel(1.42e9, (20.0, 28.0), 2),
             ],
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
@@ -4060,6 +7299,7 @@ mod tests {
             clean_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4071,32 +7311,106 @@ mod tests {
     }
 
     #[test]
+    fn cube_major_cycle_refreshes_planes_with_cross_channel_model_dependencies() {
+        let geometry = ImageGeometry {
+            image_shape: [48, 48],
+            cell_size_rad: [1.2e-4, 1.2e-4],
+        };
+        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
+        let channel0_batch = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (24.0, 24.0),
+            1.0,
+        );
+        let mut channel1_batch = channel0_batch.clone();
+        for visibility in &mut channel1_batch.visibility {
+            *visibility = Complex32::new(0.0, 0.0);
+        }
+        let channel0 = cube_channel_request_identity(1.40e9, vec![channel0_batch.clone()], 0);
+        let channel1 = CubeChannelRequest {
+            channel_frequency_hz: 1.41e9,
+            visibility_batches: vec![channel1_batch.clone()],
+            model_interpolation_batches: identity_cube_model_interpolation_batches(
+                0,
+                &[channel1_batch],
+            ),
+        };
+
+        let result = run_cube(&CubeImagingRequest {
+            geometry,
+            channels: vec![channel0, channel1],
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            weight_density_mode: WeightDensityMode::Combined,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                gain: 0.2,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 1,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 0.0,
+            },
+            clean_mask: None,
+            psf_cutoff: 0.35,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+
+        assert!(
+            result.diagnostics.channel_diagnostics[0].minor_iterations > 0,
+            "expected driving channel to clean"
+        );
+        assert!(
+            result.diagnostics.channel_diagnostics[1].major_cycles > 0,
+            "expected dependent channel to refresh after channel 0 model updates"
+        );
+        assert!(
+            result.diagnostics.channel_diagnostics[1].final_residual_peak_jy_per_beam > 0.0,
+            "expected dependent channel residual to reflect the refreshed cross-channel prediction"
+        );
+    }
+
+    #[test]
     fn clark_cube_cleans_each_channel_independently() {
         let geometry = ImageGeometry {
             image_shape: [48, 48],
             cell_size_rad: [1.2e-4, 1.2e-4],
         };
         let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel_a = CubeChannelRequest {
-            channel_frequency_hz: 1.40e9,
-            visibility_batches: vec![point_source_visibilities(
+        let channel_a = cube_channel_request_identity(
+            1.40e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (24.0, 24.0),
                 1.0,
             )],
-        };
-        let channel_b = CubeChannelRequest {
-            channel_frequency_hz: 1.41e9,
-            visibility_batches: vec![point_source_visibilities(
+            0,
+        );
+        let channel_b = cube_channel_request_identity(
+            1.41e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (26.0, 22.0),
                 1.5,
             )],
-        };
+            1,
+        );
 
         let result = run_cube(&CubeImagingRequest {
             geometry,
@@ -4123,6 +7437,7 @@ mod tests {
             clean_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4164,26 +7479,28 @@ mod tests {
             cell_size_rad: [1.2e-4, 1.2e-4],
         };
         let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel_a = CubeChannelRequest {
-            channel_frequency_hz: 1.40e9,
-            visibility_batches: vec![point_source_visibilities(
+        let channel_a = cube_channel_request_identity(
+            1.40e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (24.0, 24.0),
                 1.0,
             )],
-        };
-        let channel_b = CubeChannelRequest {
-            channel_frequency_hz: 1.41e9,
-            visibility_batches: vec![point_source_visibilities(
+            0,
+        );
+        let channel_b = cube_channel_request_identity(
+            1.41e9,
+            vec![point_source_visibilities(
                 &samples,
                 geometry.cell_size_rad[0],
                 geometry.image_shape,
                 (26.0, 22.0),
                 1.5,
             )],
-        };
+            1,
+        );
 
         let result = run_cube(&CubeImagingRequest {
             geometry,
@@ -4210,6 +7527,7 @@ mod tests {
             clean_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4261,6 +7579,7 @@ mod tests {
         let dirty = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch.clone()],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4271,12 +7590,14 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
         let clean = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4297,6 +7618,7 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4325,6 +7647,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4345,6 +7668,7 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4375,6 +7699,7 @@ mod tests {
         let clark = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch.clone()],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4395,12 +7720,14 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
         let multiscale = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4421,6 +7748,7 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4448,6 +7776,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4468,6 +7797,7 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4541,6 +7871,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![visibility],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4561,6 +7892,7 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4596,6 +7928,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4616,6 +7949,7 @@ mod tests {
             },
             clean_mask: Some(mask),
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4642,6 +7976,7 @@ mod tests {
         let result = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4658,6 +7993,7 @@ mod tests {
             },
             clean_mask: Some(mask),
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4686,6 +8022,7 @@ mod tests {
         let relaxed = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch.clone()],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4706,12 +8043,14 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
         let strict = run_imaging(&ImagingRequest {
             geometry,
             visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4732,6 +8071,7 @@ mod tests {
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
@@ -4768,10 +8108,11 @@ mod tests {
             visibility: vec![Complex32::new(50.0, 0.0), Complex32::new(1.0, 0.0)],
         };
 
-        for w_term_mode in [WTermMode::None, WTermMode::Direct] {
+        for w_term_mode in [WTermMode::None, WTermMode::Direct, WTermMode::WProject] {
             let request = ImagingRequest {
                 geometry,
                 visibility_batches: vec![cross_only.clone()],
+                gridder_mode: GridderMode::Standard,
                 plane_stokes: PlaneStokes::I,
                 weighting: WeightingMode::Natural,
                 reffreq_hz: 1.4e9,
@@ -4782,6 +8123,7 @@ mod tests {
                 clean: CleanConfig::default(),
                 clean_mask: None,
                 w_term_mode,
+                w_project_planes: None,
                 compatibility: CompatibilityMode::CasaStandardMfs,
             };
             let baseline = run_imaging(&request).unwrap();
@@ -4811,11 +8153,16 @@ mod tests {
             image_shape: [64, 64],
             cell_size_rad: [4.0e-3, 4.0e-3],
         };
-        let batch =
-            point_source_visibilities_with_w_term(&samples, 4.0e-3, [64, 64], (42.0, 20.0), 1.0);
-        let two_d = run_imaging(&ImagingRequest {
+        let build_request = |w_term_mode| ImagingRequest {
             geometry,
-            visibility_batches: vec![batch.clone()],
+            visibility_batches: vec![point_source_visibilities_with_w_term(
+                &samples,
+                4.0e-3,
+                [64, 64],
+                (42.0, 20.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
@@ -4823,34 +8170,127 @@ mod tests {
             deconvolver: Deconvolver::Hogbom,
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
-            clean: CleanConfig::default(),
+            clean: dirty_clean_config(0.35),
             clean_mask: None,
-            w_term_mode: WTermMode::None,
+            w_term_mode,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-        let direct = run_imaging(&ImagingRequest {
-            geometry,
-            visibility_batches: vec![batch],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            reffreq_hz: 1.4e9,
-            selected_frequency_range_hz: [1.399e9, 1.401e9],
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: CleanConfig::default(),
-            clean_mask: None,
-            w_term_mode: WTermMode::Direct,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
+        };
+        let evaluate_dirty = |request: &ImagingRequest| {
+            let gridder = StandardGridder::new(request.geometry).unwrap();
+            let weighted = apply_weighting(request, &gridder).unwrap();
+            let mut timings = ImagingStageTimings::default();
+            let psf = compute_psf(request, &weighted, &gridder, &mut timings).unwrap();
+            let residual = compute_residual(
+                request,
+                &weighted,
+                &gridder,
+                &Array2::<f32>::zeros((geometry.nx(), geometry.ny())),
+                &psf,
+                &mut timings,
+            )
+            .unwrap();
+            (residual, peak_abs_value(&psf.psf))
+        };
 
-        assert!(direct.residual[(42, 20, 0, 0)] > two_d.residual[(42, 20, 0, 0)]);
-        assert!(
-            direct.diagnostics.final_residual_peak_jy_per_beam
-                > two_d.diagnostics.final_residual_peak_jy_per_beam
+        let (two_d_residual, two_d_psf_peak) = evaluate_dirty(&build_request(WTermMode::None));
+        let (direct_residual, direct_psf_peak) = evaluate_dirty(&build_request(WTermMode::Direct));
+        let (wproject_residual, wproject_psf_peak) =
+            evaluate_dirty(&build_request(WTermMode::WProject));
+
+        assert!(direct_residual[(42, 20)] > two_d_residual[(42, 20)]);
+        assert!(wproject_residual[(42, 20)] > two_d_residual[(42, 20)]);
+        assert!(direct_psf_peak >= two_d_psf_peak);
+        assert!(wproject_psf_peak >= two_d_psf_peak);
+    }
+
+    #[test]
+    fn trace_w_project_plan_records_planned_and_skipped_samples() {
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [4.0e-3, 4.0e-3],
+            },
+            visibility_batches: vec![VisibilityBatch {
+                u_lambda: vec![15.0, 50_000.0, 0.0, 20.0],
+                v_lambda: vec![-20.0, 0.0, 0.0, 10.0],
+                w_lambda: vec![30.0, 40.0, 50.0, f64::NAN],
+                weight: vec![1.0, 2.0, 5.0, 1.0],
+                sumwt_factor: vec![1.0, 2.0, 3.0, 1.0],
+                gridable: vec![true, true, false, true],
+                visibility: vec![
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(2.0, 0.0),
+                    Complex32::new(5.0, 0.0),
+                    Complex32::new(1.0, 1.0),
+                ],
+            }],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: dirty_clean_config(0.35),
+            clean_mask: None,
+            w_term_mode: WTermMode::WProject,
+            w_project_planes: Some(8),
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+
+        let trace = trace_w_project_plan(&request).unwrap();
+
+        assert_eq!(trace.requested_plane_count, Some(8));
+        assert_eq!(trace.plane_count, 8);
+        assert_eq!(trace.gridded_samples, 1);
+        assert_eq!(trace.samples.len(), 1);
+        assert_eq!(trace.samples[0].batch_index, 0);
+        assert_eq!(trace.samples[0].sample_index, 0);
+        assert_eq!(trace.samples[0].sumwt_factor, 1.0);
+        assert!(trace.samples[0].plane_index < trace.plane_count);
+        assert_eq!(trace.skipped_samples.len(), 3);
+        assert_eq!(trace.skipped_samples[0].sample_index, 1);
+        assert_eq!(
+            trace.skipped_samples[0].reason,
+            WProjectSkipReason::OutsideGrid
         );
+        assert_eq!(trace.skipped_samples[1].sample_index, 2);
+        assert_eq!(
+            trace.skipped_samples[1].reason,
+            WProjectSkipReason::NotGridable
+        );
+        assert_eq!(trace.skipped_samples[2].sample_index, 3);
+        assert_eq!(
+            trace.skipped_samples[2].reason,
+            WProjectSkipReason::InvalidInput
+        );
+        assert_eq!(trace.max_abs_w_lambda, 40.0);
+    }
+
+    #[test]
+    fn wproject_plan_matches_casa_kernel_conjugation_sign() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let projector =
+            crate::gridder::WProjector::new(geometry, &gridder, 400.0, Some(8)).unwrap();
+
+        let positive = projector.plan_sample(15.0, -10.0, 120.0).unwrap();
+        let negative = projector.plan_sample(15.0, -10.0, -120.0).unwrap();
+
+        assert!(
+            positive.conjugate_kernel,
+            "CASA wprojgrid.f conjugates the kernel when uvw(3) > 0"
+        );
+        assert!(
+            !negative.conjugate_kernel,
+            "CASA wprojgrid.f uses the stored kernel directly when uvw(3) <= 0"
+        );
+        assert_eq!(positive.plane_index, negative.plane_index);
     }
 
     #[test]
@@ -4864,6 +8304,242 @@ mod tests {
             Some(CleanStopReason::NsigmaThresholdReached)
         );
         assert_eq!(tolerant_clean_stop_reason(2.5, 1.0, 2.0), None);
+    }
+
+    #[test]
+    fn minor_cycle_stop_reason_uses_threshold_tolerance() {
+        assert_eq!(
+            minor_cycle_stop_reason(1.009e-6, 1.0e-6, 2.0e-6, 0.0),
+            Some(CleanStopReason::CycleThresholdReached)
+        );
+        assert_eq!(
+            minor_cycle_stop_reason(1.013e-6, 1.0e-6, 2.0e-6, 0.0),
+            Some(CleanStopReason::CycleThresholdReached)
+        );
+        assert_eq!(
+            minor_cycle_stop_reason(1.013e-6, 1.0e-6, 1.0e-6, 0.0),
+            Some(CleanStopReason::GlobalThresholdReached)
+        );
+        assert_eq!(minor_cycle_stop_reason(0.505, 0.50001, 0.50001, 0.0), None);
+        assert_eq!(minor_cycle_stop_reason(1.009e-6, 0.0, 1.0e-6, 0.0), None);
+        assert_eq!(
+            minor_cycle_stop_reason(1.021e-6, 1.0e-6, 2.0e-6, 0.0),
+            Some(CleanStopReason::CycleThresholdReached)
+        );
+    }
+
+    #[test]
+    fn peak_location_masked_matches_hclean_y_major_tie_breaking() {
+        let image = Array2::from_shape_vec(
+            (3, 3),
+            vec![
+                0.0, 4.0, 0.0, //
+                -4.0, 0.0, 0.0, //
+                0.0, 0.0, 0.0,
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(peak_location_masked(&image, None), Some(((1, 0), -4.0)));
+    }
+
+    #[test]
+    fn hogbom_minor_cycle_treats_niter_as_hard_cap() {
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [6, 6],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 1,
+                gain: 0.5,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 1,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+            },
+            clean_mask: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let psf = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0, //
+                0.0, 0.0, 0.1, 0.2, 0.1, 0.0, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.05, 0.2, 0.4, 1.0, 0.4, 0.1, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0,
+            ],
+        )
+        .unwrap();
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut model = Array2::<f32>::zeros((6, 6));
+        let mut residual = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.1, 0.4, 1.2, 0.4, 0.05, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0,
+            ],
+        )
+        .unwrap();
+        let mut stage_timings = ImagingStageTimings::default();
+
+        let outcome = run_hogbom_minor_cycle(
+            &request,
+            &psf_state,
+            &mut model,
+            &mut residual,
+            1,
+            0.0,
+            0.0,
+            &mut stage_timings,
+        );
+
+        assert_eq!(outcome.actual_updates, 1);
+        assert_eq!(outcome.reported_updates, 1);
+        assert_eq!(model[(3, 3)], 0.6);
+    }
+
+    #[test]
+    fn hogbom_minor_cycle_matches_casacore_hclean_on_simple_plane() {
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [6, 6],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                gain: 0.5,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 4,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+            },
+            clean_mask: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let psf = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0, //
+                0.0, 0.0, 0.1, 0.2, 0.1, 0.0, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.05, 0.2, 0.4, 1.0, 0.4, 0.1, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0,
+            ],
+        )
+        .unwrap();
+        let psf_state = PsfState {
+            psf: psf.clone(),
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut model = Array2::<f32>::zeros((6, 6));
+        let mut residual = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.1, 0.4, 1.2, 0.4, 0.05, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0,
+            ],
+        )
+        .unwrap();
+        let mut stage_timings = ImagingStageTimings::default();
+        let outcome = run_hogbom_minor_cycle(
+            &request,
+            &psf_state,
+            &mut model,
+            &mut residual,
+            4,
+            0.15,
+            0.0,
+            &mut stage_timings,
+        );
+
+        let cpp = match cpp_hogbom_clean_minor_cycle_2d(
+            psf.as_slice().unwrap(),
+            &[
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.1, 0.4, 1.2, 0.4, 0.05, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0,
+            ],
+            [6, 6],
+            0.5,
+            0.15,
+            4,
+        ) {
+            Ok(cpp) => cpp,
+            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(error) => panic!("run casacore hclean shim: {error}"),
+        };
+
+        assert_eq!(
+            outcome.reported_updates, cpp.iterdone,
+            "reported updates mismatch\nrust model={model:?}\nrust residual={residual:?}\ncpp model={:?}\ncpp residual={:?}",
+            cpp.model, cpp.residual
+        );
+        for (&rust_value, &cpp_value) in residual.iter().zip(&cpp.residual) {
+            assert!(
+                (rust_value - cpp_value).abs() < 1.0e-6,
+                "residual mismatch: rust={rust_value} cpp={cpp_value}"
+            );
+        }
+        for (&rust_value, &cpp_value) in model.iter().zip(&cpp.model) {
+            assert!(
+                (rust_value - cpp_value).abs() < 1.0e-6,
+                "model mismatch: rust={rust_value} cpp={cpp_value}"
+            );
+        }
     }
 
     #[test]

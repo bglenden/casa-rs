@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "slow-tests")]
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -13,10 +14,16 @@ use casa_imaging::{
 };
 use casa_test_support::{
     casa_source_root, casacore_source_root, casatestdata_path, discover_casa_python,
-    git_head_commit,
+    git_head_commit, gridder_interop::cpp_convolve_gridder_make_dirty_image_2d,
+    hogbom_interop::cpp_hogbom_clean_minor_cycle_2d,
 };
 use casa_types::measures::frequency::FrequencyRef;
-use casars_imager::{CliConfig, RunSummary, run_from_config};
+use casars_imager::{
+    CliConfig, RunSummary, build_prepare_plane_trace_from_config, run_from_config,
+    trace_cube_channel_residual_refresh_from_config,
+    trace_cube_channel_residual_refresh_from_config_with_model_cube,
+    trace_cube_channel_residual_refresh_from_config_with_model_cube_model_channel_lambda,
+};
 use ndarray::{Array2, ArrayD, IxDyn};
 use serde_json::Value;
 use tempfile::tempdir;
@@ -29,7 +36,8 @@ fn casa_tclean_lock() -> &'static Mutex<()> {
 #[derive(Debug, Clone, Copy)]
 struct ParityCase<'a> {
     dataset_rel: &'a str,
-    field: i32,
+    field_ids: &'a [i32],
+    phasecenter_field: Option<i32>,
     spw: i32,
     channel_start: usize,
     channel_count: usize,
@@ -39,7 +47,31 @@ struct ParityCase<'a> {
     cell_arcsec: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum StagedFieldLayout {
+    SingleField,
+    SharedPhaseMultiField,
+    DistinctPhaseMultiField { ra_offset_rad: f64 },
+}
+
 impl<'a> ParityCase<'a> {
+    fn field_selector(self) -> String {
+        if self.field_ids.is_empty() {
+            return "*".to_string();
+        }
+        self.field_ids
+            .iter()
+            .map(|field_id| field_id.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn default_phasecenter_field(self) -> i32 {
+        self.phasecenter_field
+            .or_else(|| self.field_ids.first().copied())
+            .expect("parity cases require at least one field id")
+    }
+
     fn robust(self) -> Option<f32> {
         match self.weighting {
             WeightingMode::Briggs { robust } => Some(robust),
@@ -64,16 +96,18 @@ impl<'a> ParityCase<'a> {
     fn cube_channel_spw_selector(self) -> String {
         if self.channel_count == 0 {
             self.spw.to_string()
-        } else if self.channel_start == 0 {
-            self.spw.to_string()
         } else {
-            format!(
-                "{}:{}~{}",
-                self.spw,
-                self.channel_start,
-                self.channel_start + self.channel_count
-            )
+            let end = self.channel_start + self.channel_count - 1;
+            format!("{}:{}~{}", self.spw, self.channel_start, end)
         }
+    }
+
+    fn channel_start_option(self) -> Option<usize> {
+        (self.channel_count != 0).then_some(self.channel_start)
+    }
+
+    fn channel_count_option(self) -> Option<usize> {
+        (self.channel_count != 0).then_some(self.channel_count)
     }
 
     fn center(self) -> usize {
@@ -151,7 +185,8 @@ fn dirty_products_track_casa_headers_and_pixels() {
 fn multi_channel_dirty_products_track_casa_headers_and_pixels() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_twochan.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 2,
@@ -190,7 +225,8 @@ fn multi_channel_dirty_products_track_casa_headers_and_pixels() {
 fn dirty_cube_products_track_casa_on_simulated_jet() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/sim_data_VLA_jet.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 5,
@@ -285,10 +321,35 @@ fn dirty_cube_products_track_casa_on_simulated_jet() {
 }
 
 #[test]
+fn parity_case_spw_selector_preserves_explicit_channel_ranges() {
+    let case = ParityCase {
+        dataset_rel: "unused.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 3,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 64,
+        cell_arcsec: 1.0,
+    };
+    assert_eq!(case.cube_channel_spw_selector(), "3:0~0");
+
+    let later = ParityCase {
+        channel_start: 5,
+        channel_count: 4,
+        ..case
+    };
+    assert_eq!(later.cube_channel_spw_selector(), "3:5~8");
+}
+
+#[test]
 fn dirty_cube_products_track_casa_on_refim_cband_g37line() {
     let case = ParityCase {
         dataset_rel: "measurementset/evla/refim_Cband.G37line.ms",
-        field: 1,
+        field_ids: &[1],
+        phasecenter_field: Some(1),
         spw: 0,
         channel_start: 105,
         channel_count: 30,
@@ -410,10 +471,642 @@ fn dirty_cube_products_track_casa_on_refim_cband_g37line() {
 }
 
 #[test]
+fn dirty_cube_products_track_casa_on_refim_point_withline() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 5,
+        channel_count: 3,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms").expect("stage ms");
+    let rust_prefix = temp.path().join("rust-refim-point-withline-cube-dirty");
+    let casa_prefix = temp.path().join("casa-refim-point-withline-cube-dirty");
+
+    run_rust_imager_cube_dirty(case, &staged_ms_path, &rust_prefix).expect("run rust imager");
+    run_casa_tclean_cube_dirty_case(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        CubeAxisStep::Channel(case.channel_start as i32),
+        CubeAxisStep::Channel(1),
+    )
+    .expect("run casa tclean");
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "sumwt"),
+        &casa_product(&casa_prefix, "sumwt"),
+        "",
+        false,
+    );
+
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_sumwt = read_image(&rust_product(&rust_prefix, "sumwt"));
+    let casa_sumwt = read_image(&casa_product(&casa_prefix, "sumwt"));
+    let center = case.center();
+
+    for chan in [0usize, 2usize] {
+        assert_eq!(
+            peak_location_in_plane(&extract_channel_plane(&rust_psf, chan)),
+            Some((center, center)),
+            "rust cube psf peak moved at chan={chan}"
+        );
+        assert_eq!(
+            peak_location_in_plane(&extract_channel_plane(&casa_psf, chan)),
+            Some((center, center)),
+            "casa cube psf peak moved at chan={chan}"
+        );
+        assert_close(
+            sample_channel(&rust_psf, center, center, chan),
+            sample_channel(&casa_psf, center, center, chan),
+            1.0e-4,
+            1.0e-4,
+            &format!("point_withline cube psf center[chan={chan}]"),
+        );
+
+        let rust_peak = peak_location_in_plane(&extract_channel_plane(&rust_residual, chan))
+            .expect("rust peak");
+        let casa_peak = peak_location_in_plane(&extract_channel_plane(&casa_residual, chan))
+            .expect("casa peak");
+        assert_eq!(
+            rust_peak, casa_peak,
+            "point_withline cube residual peak pixel changed at chan={chan}"
+        );
+        assert_close(
+            sample_channel(&rust_residual, rust_peak.0, rust_peak.1, chan),
+            sample_channel(&casa_residual, casa_peak.0, casa_peak.1, chan),
+            5.0e-4,
+            5.0e-4,
+            &format!("point_withline cube residual peak[chan={chan}]"),
+        );
+
+        let stats = plane_difference_stats(
+            &extract_channel_plane(&rust_residual, chan),
+            &extract_channel_plane(&casa_residual, chan),
+        );
+        eprintln!(
+            "point_withline source-backed dirty residual chan={chan}: rms={:.9e} max_abs={:.9e} corr={:.9e}",
+            stats.rms, stats.max_abs, stats.correlation
+        );
+        assert!(
+            stats.rms <= 5.0e-5,
+            "point_withline cube residual RMS diff too large at chan={chan}: {stats:?}"
+        );
+        assert!(
+            stats.max_abs <= 5.0e-4,
+            "point_withline cube residual max diff too large at chan={chan}: {stats:?}"
+        );
+        assert!(
+            stats.correlation >= 0.999_999,
+            "point_withline cube residual correlation too small at chan={chan}: {stats:?}"
+        );
+
+        assert_close(
+            sample_scalar_channel(&rust_sumwt, chan),
+            sample_scalar_channel(&casa_sumwt, chan),
+            0.1,
+            1.0e-4,
+            &format!("point_withline cube sumwt[chan={chan}]"),
+        );
+    }
+}
+
+#[test]
+fn alma_mosaic_dirty_products_diagnostics() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/alma/refim_alma_mosaic.ms",
+        field_ids: &[0, 1, 2],
+        phasecenter_field: Some(1),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 3,
+        correlation: Some("XX"),
+        weighting: WeightingMode::Natural,
+        imsize: 128,
+        cell_arcsec: 0.25,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "refim_alma_mosaic.ms").expect("stage ms");
+    let rust_prefix = temp.path().join("rust-refim-alma-mosaic-dirty");
+    let casa_prefix = temp.path().join("casa-refim-alma-mosaic-dirty");
+
+    run_rust_imager_case(case, &staged_ms_path, &rust_prefix, true, 0).expect("run rust imager");
+    run_casa_tclean_case_with_mosaic(case, &staged_ms_path, &casa_prefix, 0)
+        .expect("run casa tclean");
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "sumwt"),
+        &casa_product(&casa_prefix, "sumwt"),
+        "",
+        false,
+    );
+
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_sumwt = read_scalar_image(&rust_product(&rust_prefix, "sumwt"));
+    let casa_sumwt = read_scalar_image(&casa_product(&casa_prefix, "sumwt"));
+    let psf_stats = image_difference_stats(&rust_psf, &casa_psf);
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+    let rust_peak = peak_location_in_plane(&extract_channel_plane(&rust_residual, 0));
+    let casa_peak = peak_location_in_plane(&extract_channel_plane(&casa_residual, 0));
+
+    eprintln!(
+        "alma mosaic dirty diagnostic: residual_rms={:.9e} residual_max_abs={:.9e} residual_corr={:.9e} \
+         psf_rms={:.9e} psf_max_abs={:.9e} psf_corr={:.9e} rust_peak={rust_peak:?} casa_peak={casa_peak:?} \
+         rust_sumwt={:.9e} casa_sumwt={:.9e}",
+        residual_stats.rms,
+        residual_stats.max_abs,
+        residual_stats.correlation,
+        psf_stats.rms,
+        psf_stats.max_abs,
+        psf_stats.correlation,
+        rust_sumwt,
+        casa_sumwt,
+    );
+    assert!(
+        residual_stats.rms <= 1.2e-2,
+        "alma residual RMS diff too large: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.max_abs <= 3.5e-1,
+        "alma residual max diff too large: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.correlation >= 0.98,
+        "alma residual correlation too small: {residual_stats:?}"
+    );
+    assert!(
+        psf_stats.rms <= 5.0e-3,
+        "alma PSF RMS diff too large: {psf_stats:?}"
+    );
+    assert!(
+        psf_stats.max_abs <= 1.0e-1,
+        "alma PSF max diff too large: {psf_stats:?}"
+    );
+    assert!(
+        psf_stats.correlation >= 0.97,
+        "alma PSF correlation too small: {psf_stats:?}"
+    );
+    assert_eq!(rust_peak, casa_peak, "alma mosaic residual peak shifted");
+    assert_close(rust_sumwt, casa_sumwt, 200.0, 1.0e-3, "alma mosaic sumwt");
+}
+
+#[test]
+fn papersky_mosaic_dirty_products_diagnostics() {
+    let field_ids = (0..25).collect::<Vec<_>>();
+    let case = ParityCase {
+        dataset_rel: "measurementset/evla/papersky_mosaic.ms",
+        field_ids: &field_ids,
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: Some("I"),
+        weighting: WeightingMode::Natural,
+        imsize: 128,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "papersky_mosaic.ms").expect("stage ms");
+    let rust_prefix = temp.path().join("rust-papersky-mosaic-dirty");
+    let casa_prefix = temp.path().join("casa-papersky-mosaic-dirty");
+
+    run_rust_imager_case(case, &staged_ms_path, &rust_prefix, true, 0).expect("run rust imager");
+    run_casa_tclean_case_with_mosaic(case, &staged_ms_path, &casa_prefix, 0)
+        .expect("run casa tclean");
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "sumwt"),
+        &casa_product(&casa_prefix, "sumwt"),
+        "",
+        false,
+    );
+
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_sumwt = read_scalar_image(&rust_product(&rust_prefix, "sumwt"));
+    let casa_sumwt = read_scalar_image(&casa_product(&casa_prefix, "sumwt"));
+    let psf_stats = image_difference_stats(&rust_psf, &casa_psf);
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+    let rust_peak = peak_location_in_plane(&extract_channel_plane(&rust_residual, 0));
+    let casa_peak = peak_location_in_plane(&extract_channel_plane(&casa_residual, 0));
+
+    eprintln!(
+        "papersky mosaic dirty diagnostic: residual_rms={:.9e} residual_max_abs={:.9e} residual_corr={:.9e} \
+         psf_rms={:.9e} psf_max_abs={:.9e} psf_corr={:.9e} rust_peak={rust_peak:?} casa_peak={casa_peak:?} \
+         rust_sumwt={:.9e} casa_sumwt={:.9e}",
+        residual_stats.rms,
+        residual_stats.max_abs,
+        residual_stats.correlation,
+        psf_stats.rms,
+        psf_stats.max_abs,
+        psf_stats.correlation,
+        rust_sumwt,
+        casa_sumwt,
+    );
+    assert!(
+        residual_stats.rms <= 2.0e-3,
+        "papersky residual RMS diff too large: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.max_abs <= 1.0e-2,
+        "papersky residual max diff too large: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.correlation >= 0.94,
+        "papersky residual correlation too small: {residual_stats:?}"
+    );
+    assert!(
+        psf_stats.rms <= 3.0e-3,
+        "papersky PSF RMS diff too large: {psf_stats:?}"
+    );
+    assert!(
+        psf_stats.max_abs <= 1.5e-2,
+        "papersky PSF max diff too large: {psf_stats:?}"
+    );
+    assert!(
+        psf_stats.correlation >= 0.99,
+        "papersky PSF correlation too small: {psf_stats:?}"
+    );
+    assert_close(rust_sumwt, casa_sumwt, 0.1, 1.0e-4, "papersky mosaic sumwt");
+}
+
+#[test]
+fn oneshiftpoint_mosaic_dirty_products_diagnostics() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/evla/refim_oneshiftpoint.mosaic.ms",
+        field_ids: &[0, 1],
+        phasecenter_field: None,
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: Some("I"),
+        weighting: WeightingMode::Natural,
+        imsize: 1024,
+        cell_arcsec: 10.0,
+    };
+    let explicit_phasecenter = "J2000 5.233697011339747rad 0.7097745013495772rad";
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "refim_oneshiftpoint.mosaic.ms")
+            .expect("stage ms");
+    let rust_prefix = temp.path().join("rust-oneshiftpoint-mosaic-dirty");
+    let casa_prefix = temp.path().join("casa-oneshiftpoint-mosaic-dirty");
+
+    run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        true,
+        0,
+        explicit_phasecenter,
+        WTermMode::None,
+        None,
+    )
+    .expect("run rust imager");
+    run_casa_tclean_case_with_mosaic_and_explicit_phasecenter(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        0,
+        explicit_phasecenter,
+    )
+    .expect("run casa tclean");
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "sumwt"),
+        &casa_product(&casa_prefix, "sumwt"),
+        "",
+        false,
+    );
+
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_sumwt = read_scalar_image(&rust_product(&rust_prefix, "sumwt"));
+    let casa_sumwt = read_scalar_image(&casa_product(&casa_prefix, "sumwt"));
+    let psf_stats = image_difference_stats(&rust_psf, &casa_psf);
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+    let rust_peak = peak_location_in_plane(&extract_channel_plane(&rust_residual, 0));
+    let casa_peak = peak_location_in_plane(&extract_channel_plane(&casa_residual, 0));
+
+    eprintln!(
+        "oneshiftpoint mosaic dirty diagnostic: residual_rms={:.9e} residual_max_abs={:.9e} residual_corr={:.9e} \
+         psf_rms={:.9e} psf_max_abs={:.9e} psf_corr={:.9e} rust_peak={rust_peak:?} casa_peak={casa_peak:?} \
+         rust_sumwt={:.9e} casa_sumwt={:.9e}",
+        residual_stats.rms,
+        residual_stats.max_abs,
+        residual_stats.correlation,
+        psf_stats.rms,
+        psf_stats.max_abs,
+        psf_stats.correlation,
+        rust_sumwt,
+        casa_sumwt,
+    );
+    assert!(
+        residual_stats.rms <= 2.0e-3,
+        "oneshiftpoint residual RMS diff too large: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.max_abs <= 2.5e-1,
+        "oneshiftpoint residual max diff too large: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.correlation >= 0.93,
+        "oneshiftpoint residual correlation too small: {residual_stats:?}"
+    );
+    assert!(
+        psf_stats.rms <= 2.5e-3,
+        "oneshiftpoint PSF RMS diff too large: {psf_stats:?}"
+    );
+    assert!(
+        psf_stats.max_abs <= 5.0e-2,
+        "oneshiftpoint PSF max diff too large: {psf_stats:?}"
+    );
+    assert!(
+        psf_stats.correlation >= 0.9,
+        "oneshiftpoint PSF correlation too small: {psf_stats:?}"
+    );
+    assert_eq!(rust_peak, casa_peak, "oneshiftpoint residual peak shifted");
+    assert_close(
+        rust_sumwt,
+        casa_sumwt,
+        0.1,
+        1.0e-4,
+        "oneshiftpoint mosaic sumwt",
+    );
+}
+
+#[test]
+fn wproject_dirty_cube_products_track_casa_on_refim_point_withline() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 6,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    assert_wproject_dirty_cube_products_track_casa_on_refim_point_withline(
+        case,
+        "singlefield",
+        StagedFieldLayout::SingleField,
+    );
+}
+
+#[test]
+fn wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_multifield() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0, 1],
+        phasecenter_field: None,
+        spw: 0,
+        channel_start: 0,
+        channel_count: 6,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    assert_wproject_dirty_cube_products_track_casa_on_refim_point_withline(
+        case,
+        "shared-phase-multifield",
+        StagedFieldLayout::SharedPhaseMultiField,
+    );
+}
+
+fn assert_wproject_dirty_cube_products_track_casa_on_refim_point_withline(
+    case: ParityCase<'_>,
+    label: &str,
+    field_layout: StagedFieldLayout,
+) {
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_name = format!("refim_point_withline-{label}.ms");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), &staged_name)
+        .expect("stage refim_point_withline");
+    match field_layout {
+        StagedFieldLayout::SingleField => {}
+        StagedFieldLayout::SharedPhaseMultiField => {
+            promote_staged_measurement_set_to_multifield(&staged_ms_path, case.field_ids, None)
+                .expect("promote staged cube MS to shared-phase multi-field");
+        }
+        StagedFieldLayout::DistinctPhaseMultiField { .. } => {
+            panic!("cube helper does not support distinct-phase staging")
+        }
+    }
+    let rust_prefix = temp
+        .path()
+        .join(format!("rust-refim-point-withline-cube-wproject-{label}"));
+    let casa_prefix = temp
+        .path()
+        .join(format!("casa-refim-point-withline-cube-wproject-{label}"));
+
+    run_rust_imager_cube_dirty_with_w_term_mode(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        casars_imager::SpectralMode::Cube,
+        WTermMode::WProject,
+        Some(8),
+    )
+    .expect("run rust wproject cube");
+    run_casa_tclean_cube_dirty_case_with_wproject(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        CubeAxisStep::Channel(0),
+        CubeAxisStep::Channel(1),
+        8,
+    )
+    .expect("run casa wproject cube");
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "sumwt"),
+        &casa_product(&casa_prefix, "sumwt"),
+        "",
+        false,
+    );
+
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_sumwt = read_image(&rust_product(&rust_prefix, "sumwt"));
+    let casa_sumwt = read_image(&casa_product(&casa_prefix, "sumwt"));
+    let center = case.center();
+
+    for chan in [0usize, case.channel_count - 1] {
+        let rust_peak = peak_location_in_plane(&extract_channel_plane(&rust_residual, chan))
+            .expect("rust residual peak");
+        let casa_peak = peak_location_in_plane(&extract_channel_plane(&casa_residual, chan))
+            .expect("casa residual peak");
+        assert_eq!(
+            rust_peak, casa_peak,
+            "wproject cube peak pixel changed at chan={chan}"
+        );
+        assert_eq!(
+            peak_location_in_plane(&extract_channel_plane(&rust_psf, chan)),
+            Some((center, center)),
+            "rust cube psf peak moved at chan={chan}"
+        );
+        assert_eq!(
+            peak_location_in_plane(&extract_channel_plane(&casa_psf, chan)),
+            Some((center, center)),
+            "casa cube psf peak moved at chan={chan}"
+        );
+        assert_close(
+            sample_channel(&rust_residual, rust_peak.0, rust_peak.1, chan),
+            sample_channel(&casa_residual, casa_peak.0, casa_peak.1, chan),
+            0.08,
+            0.12,
+            &format!("wproject cube residual peak[chan={chan}]"),
+        );
+        assert_close(
+            sample_channel(&rust_psf, center, center, chan),
+            sample_channel(&casa_psf, center, center, chan),
+            1.0e-3,
+            1.0e-3,
+            &format!("wproject cube psf center[chan={chan}]"),
+        );
+        let stats = plane_difference_stats(
+            &extract_channel_plane(&rust_residual, chan),
+            &extract_channel_plane(&casa_residual, chan),
+        );
+        assert!(
+            stats.rms <= 0.01,
+            "wproject cube residual RMS diff too large at chan={chan}: {stats:?}"
+        );
+        assert!(
+            stats.max_abs <= 0.2,
+            "wproject cube residual max diff too large at chan={chan}: {stats:?}"
+        );
+        assert_close(
+            sample_scalar_channel(&rust_sumwt, chan),
+            sample_scalar_channel(&casa_sumwt, chan),
+            1.0,
+            0.05,
+            &format!("wproject cube sumwt[chan={chan}]"),
+        );
+    }
+}
+
+#[test]
 fn dirty_cubedata_products_track_casa_on_refim_cband_g37line() {
     let case = ParityCase {
         dataset_rel: "measurementset/evla/refim_Cband.G37line.ms",
-        field: 1,
+        field_ids: &[1],
+        phasecenter_field: Some(1),
         spw: 0,
         channel_start: 105,
         channel_count: 30,
@@ -434,7 +1127,26 @@ fn dirty_cubedata_products_track_casa_on_refim_cband_g37line() {
     let rust_prefix = temp.path().join("rust-refim-cband-cubedata-dirty");
     let casa_prefix = temp.path().join("casa-refim-cband-cubedata-dirty");
 
-    run_rust_imager_cubedata_dirty(case, &staged_ms_path, &rust_prefix).expect("run rust imager");
+    run_rust_imager_spectral_cube_case_with_options_and_weighting(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        casars_imager::SpectralMode::Cubedata,
+        CubeCaseOptions {
+            spw_selector: "0:105~135",
+            nchan: 30,
+            start: Some(CubeAxisStep::Channel(105)),
+            width: Some(CubeAxisStep::Channel(1)),
+            outframe: "LSRK",
+            interpolation: "linear",
+            veltype: "radio",
+            restfreq: "1.25GHz",
+        },
+        true,
+        0,
+        CubeWeightingOptions::default(),
+    )
+    .expect("run rust imager");
     run_casa_tclean_cubedata_case_with_options(
         case,
         &staged_ms_path,
@@ -503,7 +1215,8 @@ fn dirty_cubedata_products_track_casa_on_refim_cband_g37line() {
 fn dirty_cubedata_briggs_products_track_casa_on_refim_cband_g37line() {
     let case = ParityCase {
         dataset_rel: "measurementset/evla/refim_Cband.G37line.ms",
-        field: 1,
+        field_ids: &[1],
+        phasecenter_field: Some(1),
         spw: 0,
         channel_start: 105,
         channel_count: 30,
@@ -524,7 +1237,29 @@ fn dirty_cubedata_briggs_products_track_casa_on_refim_cband_g37line() {
     let rust_prefix = temp.path().join("rust-refim-cband-cubedata-briggs-dirty");
     let casa_prefix = temp.path().join("casa-refim-cband-cubedata-briggs-dirty");
 
-    run_rust_imager_cubedata_dirty(case, &staged_ms_path, &rust_prefix).expect("run rust imager");
+    run_rust_imager_spectral_cube_case_with_options_and_weighting(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        casars_imager::SpectralMode::Cubedata,
+        CubeCaseOptions {
+            spw_selector: "0:105~135",
+            nchan: 30,
+            start: Some(CubeAxisStep::Channel(105)),
+            width: Some(CubeAxisStep::Channel(1)),
+            outframe: "LSRK",
+            interpolation: "linear",
+            veltype: "radio",
+            restfreq: "1.25GHz",
+        },
+        true,
+        0,
+        CubeWeightingOptions {
+            per_channel_weight_density: true,
+            ..CubeWeightingOptions::default()
+        },
+    )
+    .expect("run rust imager");
     run_casa_tclean_cubedata_case_with_options(
         case,
         &staged_ms_path,
@@ -589,7 +1324,8 @@ fn dirty_cubedata_briggs_products_track_casa_on_refim_cband_g37line() {
 fn cube_perchanweight_briggs_tracks_casa_on_refim_point_withline() {
     let natural_case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -780,7 +1516,8 @@ fn cube_perchanweight_briggs_tracks_casa_on_refim_point_withline() {
 fn cube_weighting_taper_common_beam_tracks_casa_on_refim_point_withline() {
     let uniform_case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1072,7 +1809,8 @@ fn cube_weighting_taper_common_beam_tracks_casa_on_refim_point_withline() {
 fn cube_badchannel_restoringbeam_tracks_casa_on_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1257,7 +1995,8 @@ fn cube_badchannel_restoringbeam_tracks_casa_on_refim_point() {
 fn cube_common_restoringbeam_tracks_casa_on_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1365,7 +2104,8 @@ fn cube_common_restoringbeam_tracks_casa_on_refim_point() {
 fn cube_common_restoringbeam_algorithm_matches_casa_on_casa_beamset_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1439,7 +2179,8 @@ fn cube_common_restoringbeam_algorithm_matches_casa_on_casa_beamset_refim_point(
 fn cube_common_restoringbeam_algorithm_compares_rust_and_casa_beamsets_on_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1523,7 +2264,8 @@ fn cube_common_restoringbeam_algorithm_compares_rust_and_casa_beamsets_on_refim_
 fn cube_uniform_common_beam_diagnostics_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1610,7 +2352,8 @@ fn cube_uniform_common_beam_diagnostics_on_refim_point_withline() {
 fn cube_uniform_per_plane_psf_beam_diagnostics_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1715,7 +2458,8 @@ fn cube_uniform_per_plane_psf_beam_diagnostics_on_refim_point_withline() {
 fn cube_uniform_psf_fit_diagnostics_on_casa_psfs_for_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1813,7 +2557,8 @@ fn cube_uniform_psf_fit_diagnostics_on_casa_psfs_for_refim_point_withline() {
 fn cube_psf_beamset_tracks_casa_on_refim_point_common_beam_case() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1902,7 +2647,8 @@ fn cube_psf_beamset_tracks_casa_on_refim_point_common_beam_case() {
 fn cube_psf_beam_fit_matches_casa_on_refim_point_channel_zero() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -1979,7 +2725,8 @@ fn cube_psf_beam_fit_matches_casa_on_refim_point_channel_zero() {
 fn cube_rust_psf_metadata_matches_rust_fit_on_refim_point_channel_zero() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -2052,7 +2799,8 @@ fn cube_rust_psf_metadata_matches_rust_fit_on_refim_point_channel_zero() {
 fn channel_mode_cube_products_track_casa_on_refim_point_selected_cases() {
     let case = ParityCase {
         dataset_rel: "unittest/tclean/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 10,
@@ -2581,7 +3329,8 @@ struct DirectCubeParityCase<'a> {
 fn run_refim_point_direct_cube_case(spec: DirectCubeParityCase<'_>) {
     let case = ParityCase {
         dataset_rel: "unittest/tclean/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: spec.options.nchan,
@@ -2690,6 +3439,56 @@ fn run_refim_point_direct_cube_case(spec: DirectCubeParityCase<'_>) {
 }
 
 #[test]
+fn channel_mode_cube_products_track_casa_on_refim_point_case_20_direct_parity() {
+    run_refim_point_direct_cube_case(DirectCubeParityCase {
+        suffix: "cube20-direct",
+        options: CubeCaseOptions {
+            spw_selector: "0",
+            nchan: 10,
+            start: Some(CubeAxisStep::FramedValue {
+                python_literal: "_me.todoppler('radio', _me.frequency('LSRK', _qa.quantity('1.199989GHz')), _qa.quantity('1.25GHz'))",
+                value: casa_ms::CubeAxisValue::VelocityMs {
+                    ms: 11_994_336.493_630_42,
+                    frame: None,
+                },
+            }),
+            width: None,
+            outframe: "LSRK",
+            interpolation: "linear",
+            veltype: "radio",
+            restfreq: "1.25GHz",
+        },
+        center_spectrum_abs_tol: 0.04,
+        center_spectrum_rel_tol: 0.08,
+        image_rms_tol: 0.03,
+        image_max_abs_tol: 0.30,
+        image_correlation_min: 0.993,
+    });
+}
+
+#[test]
+fn channel_mode_cube_products_track_casa_on_refim_point_case_22_direct_parity() {
+    run_refim_point_direct_cube_case(DirectCubeParityCase {
+        suffix: "cube22-direct",
+        options: CubeCaseOptions {
+            spw_selector: "0:0~10^2",
+            nchan: 10,
+            start: Some(CubeAxisStep::Channel(0)),
+            width: None,
+            outframe: "LSRK",
+            interpolation: "nearest",
+            veltype: "radio",
+            restfreq: "1.25GHz",
+        },
+        center_spectrum_abs_tol: 0.04,
+        center_spectrum_rel_tol: 0.08,
+        image_rms_tol: 0.03,
+        image_max_abs_tol: 0.15,
+        image_correlation_min: 0.995,
+    });
+}
+
+#[test]
 #[ignore = "CASA test_task_tclean.py leaves cube4 assertions commented out; not a validated oracle"]
 fn channel_mode_cube_products_track_casa_on_refim_point_case_4_direct_parity() {
     run_refim_point_direct_cube_case(DirectCubeParityCase {
@@ -2747,7 +3546,8 @@ struct RefimDescendingCase<'a> {
 fn run_refim_point_descendingfreqs_case(spec: RefimDescendingCase<'_>) {
     let case = ParityCase {
         dataset_rel: "unittest/tclean/refim_point_descendingfreqs.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 10,
@@ -2837,7 +3637,8 @@ fn run_refim_point_descendingfreqs_case(spec: RefimDescendingCase<'_>) {
 fn run_refim_point_descendingfreqs_dirty_case(spec: RefimDescendingCase<'_>) {
     let case = ParityCase {
         dataset_rel: "unittest/tclean/refim_point_descendingfreqs.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 10,
@@ -3215,7 +4016,8 @@ fn dirty_cube_products_track_casa_on_refim_point_descendingfreqs_case_f14() {
 fn hogbom_cube_products_track_casa_on_refim_eptwochan() {
     let case = ParityCase {
         dataset_rel: "unittest/tclean/refim_eptwochan.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 3,
@@ -3331,7 +4133,8 @@ fn hogbom_cube_products_track_casa_on_refim_eptwochan() {
 fn clark_cube_products_track_casa_on_refim_eptwochan() {
     let case = ParityCase {
         dataset_rel: "unittest/tclean/refim_eptwochan.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 3,
@@ -3447,7 +4250,8 @@ fn clark_cube_products_track_casa_on_refim_eptwochan() {
 fn multiscale_cube_products_track_casa_on_refim_eptwochan() {
     let case = ParityCase {
         dataset_rel: "unittest/tclean/refim_eptwochan.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 3,
@@ -3696,7 +4500,8 @@ fn multiscale_cube_products_track_casa_on_refim_eptwochan() {
 fn clark_cube_iteration_controls_track_casa_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -3859,7 +4664,8 @@ fn clark_cube_iteration_controls_track_casa_on_refim_point_withline() {
 fn hogbom_cube_threshold_tolerance_tracks_casa_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -3938,11 +4744,12 @@ fn hogbom_cube_threshold_tolerance_tracks_casa_on_refim_point_withline() {
 }
 
 #[test]
-#[ignore = "known open checkpoint gap: cube Hogbom nsigma stopping on refim_point_withline still differs from CASA by two late updates"]
+#[ignore = "issue #44: late major-cycle residual-refresh divergence still drives the final two extra nsigma updates on refim_point_withline"]
 fn hogbom_cube_nsigma_stopping_tracks_casa_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,
@@ -3969,7 +4776,6 @@ fn hogbom_cube_nsigma_stopping_tracks_casa_on_refim_point_withline() {
         minor_cycle_length: 10,
         ..CubeCleanControls::default()
     };
-
     let rust_summary = run_rust_imager_cube_task_default_case_with_clean_controls(
         case,
         &staged_ms_path,
@@ -4097,10 +4903,1341 @@ fn hogbom_cube_nsigma_stopping_tracks_casa_on_refim_point_withline() {
 }
 
 #[test]
+#[ignore = "diagnostic for Wave 8 late-block CASA restart residual parity"]
+fn hogbom_cube_nsigma_late_block_residual_planes_track_casa_restart() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let rust_prefix = temp.path().join("rust-refim-point-withline-cube-nsigma");
+    let clean = CubeCleanControls {
+        gain: 0.5,
+        threshold_jy: 0.000001,
+        nsigma: 10.0,
+        minor_cycle_length: 10,
+        ..CubeCleanControls::default()
+    };
+    for &(channel_index, block_index) in &[(7usize, 8usize), (5usize, 9usize)] {
+        let capture_dir = temp.path().join(format!(
+            "capture-channel-{channel_index}-block-{block_index}"
+        ));
+        unsafe {
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_CHANNEL", channel_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_BLOCK", block_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_DIR", &capture_dir);
+        }
+        let _ = run_rust_imager_cube_task_default_case_with_clean_controls(
+            case,
+            &staged_ms_path,
+            &rust_prefix,
+            false,
+            1_000_000,
+            Deconvolver::Hogbom,
+            &[],
+            0.0,
+            clean,
+            CubeWeightingOptions::default(),
+        )
+        .expect("rerun rust cube nsigma capture case");
+        unsafe {
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_CHANNEL");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_BLOCK");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_DIR");
+        }
+        let captured = read_captured_cube_minor_cycle_plane(&capture_dir);
+
+        let casa_prefix = temp.path().join(format!(
+            "casa-refim-point-withline-cube-preblock-{channel_index}-{block_index}"
+        ));
+        let mut casa_summary = None::<Value>;
+        for step in 0..block_index {
+            casa_summary = Some(
+                run_casa_tclean_cube_task_default_case_with_clean_controls(
+                    case,
+                    &staged_ms_path,
+                    &casa_prefix,
+                    clean.minor_cycle_length,
+                    "hogbom",
+                    &[],
+                    0.0,
+                    CubeWeightingOptions::default(),
+                    clean,
+                    "0.000001Jy",
+                )
+                .expect("run casa cube nsigma restart step"),
+            );
+            let completed = casa_summary
+                .as_ref()
+                .and_then(|summary| summary["iterdone"].as_u64())
+                .map(|value| value as usize)
+                .unwrap_or(0);
+            let step_channel_trace = casa_summary
+                .as_ref()
+                .and_then(|summary| extract_casa_cube_minor_cycle_traces(summary).ok())
+                .and_then(|channels| channels.get(channel_index).cloned())
+                .and_then(|traces| traces.last().cloned());
+            let step_casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+            let step_casa_residual_plane =
+                extract_channel_plane(&step_casa_residual, channel_index);
+            let step_residual_stats =
+                plane_difference_stats(&captured.residual, &step_casa_residual_plane);
+            let step_casa_model = read_image(&casa_product(&casa_prefix, "model"));
+            let step_casa_model_plane = extract_channel_plane(&step_casa_model, channel_index);
+            let step_model_stats = plane_difference_stats(&captured.model, &step_casa_model_plane);
+            eprintln!(
+                "cube nsigma restart step channel={channel_index} block={block_index} step={step}: requested_niter={} completed_iterdone={completed} channel_start_iter={:?} channel_updates={:?} residual_rms={:.9e} residual_max_abs={:.9e} residual_corr={:.9e} model_rms={:.9e} model_max_abs={:.9e} model_corr={:.9e}",
+                clean.minor_cycle_length,
+                step_channel_trace
+                    .as_ref()
+                    .map(|trace| trace.start_reported_iteration),
+                step_channel_trace
+                    .as_ref()
+                    .map(|trace| trace.reported_updates),
+                step_residual_stats.rms,
+                step_residual_stats.max_abs,
+                step_residual_stats.correlation,
+                step_model_stats.rms,
+                step_model_stats.max_abs,
+                step_model_stats.correlation,
+            );
+        }
+        let casa_summary = casa_summary.expect("casa restart boundary summary");
+
+        let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+        let casa_plane = extract_channel_plane(&casa_residual, channel_index);
+        let stats = plane_difference_stats(&captured.residual, &casa_plane);
+        let casa_model = read_image(&casa_product(&casa_prefix, "model"));
+        let casa_model_plane = extract_channel_plane(&casa_model, channel_index);
+        let model_stats = plane_difference_stats(&captured.model, &casa_model_plane);
+        eprintln!(
+            "cube nsigma pre-block residual channel={channel_index} block={block_index}: casa_iterdone={:?} rms={:.9e} max_abs={:.9e} correlation={:.9e}",
+            casa_summary["iterdone"].as_u64(),
+            stats.rms,
+            stats.max_abs,
+            stats.correlation,
+        );
+        eprintln!(
+            "cube nsigma pre-block model channel={channel_index} block={block_index}: rms={:.9e} max_abs={:.9e} correlation={:.9e}",
+            model_stats.rms, model_stats.max_abs, model_stats.correlation,
+        );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic for Wave 8 exact CASA inputres/inputmod late-block parity"]
+fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let clean = CubeCleanControls {
+        gain: 0.5,
+        threshold_jy: 0.000001,
+        nsigma: 10.0,
+        minor_cycle_length: 10,
+        ..CubeCleanControls::default()
+    };
+    let mut cube_axis = casa_ms::CubeAxisConfig::default();
+    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let config = CliConfig {
+        ms: staged_ms_path.clone(),
+        imagename: temp
+            .path()
+            .join("rust-trace-refim-point-withline-cube-snapshots"),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: Some(case.spw.to_string()),
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
+        datacolumn: Some("DATA".to_string()),
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Cube,
+        cube_axis,
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter: 1_000_000,
+        gain: clean.gain,
+        threshold_jy: clean.threshold_jy,
+        nsigma: clean.nsigma,
+        psf_cutoff: 0.35,
+        minor_cycle_length: clean.minor_cycle_length,
+        cyclefactor: clean.cyclefactor,
+        min_psf_fraction: clean.min_psf_fraction,
+        max_psf_fraction: clean.max_psf_fraction,
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    };
+
+    for &(channel_index, block_index) in &[(7usize, 8usize), (5usize, 9usize), (9usize, 9usize)] {
+        let rust_prefix = temp.path().join(format!(
+            "rust-refim-point-withline-cube-nsigma-{channel_index}-{block_index}"
+        ));
+        let casa_prefix = temp.path().join(format!(
+            "casa-refim-point-withline-cube-nsigma-snapshots-{channel_index}-{block_index}"
+        ));
+        let capture_dir = temp.path().join(format!(
+            "capture-exact-channel-{channel_index}-block-{block_index}"
+        ));
+        unsafe {
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_CHANNEL", channel_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_BLOCK", block_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_DIR", &capture_dir);
+        }
+        let _ = run_rust_imager_cube_task_default_case_with_clean_controls(
+            case,
+            &staged_ms_path,
+            &rust_prefix,
+            false,
+            1_000_000,
+            Deconvolver::Hogbom,
+            &[],
+            0.0,
+            clean,
+            CubeWeightingOptions::default(),
+        )
+        .expect("rerun rust cube nsigma capture case");
+        unsafe {
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_CHANNEL");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_BLOCK");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_DIR");
+            std::env::set_var("SAVE_ALL_RESIMS", "true");
+        }
+        let casa_summary = run_casa_tclean_cube_task_default_case_with_clean_controls(
+            case,
+            &staged_ms_path,
+            &casa_prefix,
+            1_000_000,
+            "hogbom",
+            &[],
+            0.0,
+            CubeWeightingOptions::default(),
+            clean,
+            "0.000001Jy",
+        )
+        .expect("run casa cube nsigma snapshot case");
+        unsafe {
+            std::env::remove_var("SAVE_ALL_RESIMS");
+        }
+        let casa_traces = extract_casa_cube_minor_cycle_traces(&casa_summary).expect("CASA traces");
+
+        let captured = read_captured_cube_minor_cycle_plane(&capture_dir);
+        let cycle_number = block_index + 1;
+        let casa_psf_plane =
+            read_channel_plane_in_casa(&casa_product(&casa_prefix, "psf"), channel_index)
+                .expect("read CASA psf plane");
+        let casa_residual_plane = read_channel_plane_in_casa(
+            &PathBuf::from(format!("{}.inputres{cycle_number}", casa_prefix.display())),
+            channel_index,
+        )
+        .expect("read CASA inputres plane");
+        let casa_model_plane = read_channel_plane_in_casa(
+            &PathBuf::from(format!("{}.inputmod{cycle_number}", casa_prefix.display())),
+            channel_index,
+        )
+        .expect("read CASA inputmod plane");
+        let casa_model_cube_path =
+            PathBuf::from(format!("{}.inputmod{cycle_number}", casa_prefix.display()));
+        let casa_model_cube = if casa_model_cube_path.exists() {
+            read_cube_planes_in_casa(&casa_model_cube_path).expect("read CASA inputmod cube")
+        } else {
+            (0..case.channel_count)
+                .map(|_| Array2::<f32>::zeros((case.imsize, case.imsize)))
+                .collect::<Vec<_>>()
+        };
+        let residual_stats = plane_difference_stats(&captured.residual, &casa_residual_plane);
+        let model_stats = plane_difference_stats(&captured.model, &casa_model_plane);
+        let rust_trace = trace_cube_channel_residual_refresh_from_config_with_model_cube(
+            &config,
+            channel_index,
+            &casa_model_cube,
+        )
+        .expect("trace rust residual refresh from CASA inputmod");
+        let rust_trace_model_channel_lambda =
+            trace_cube_channel_residual_refresh_from_config_with_model_cube_model_channel_lambda(
+                &config,
+                channel_index,
+                &casa_model_cube,
+            )
+            .expect("trace rust residual refresh from CASA inputmod with model-channel lambda");
+        let same_model_stats =
+            plane_difference_stats(&rust_trace.residual_image, &casa_residual_plane);
+        let model_channel_lambda_stats = plane_difference_stats(
+            &rust_trace_model_channel_lambda.residual_image,
+            &casa_residual_plane,
+        );
+        let casa_trace = casa_traces
+            .get(channel_index)
+            .and_then(|channel| channel.get(block_index))
+            .expect("CASA trace for channel/block");
+        let casa_threshold = casa_trace
+            .cycle_threshold_jy_per_beam
+            .max(clean.threshold_jy);
+        let casa_residual_flat = casa_residual_plane.iter().copied().collect::<Vec<_>>();
+        let casa_psf_flat = casa_psf_plane.iter().copied().collect::<Vec<_>>();
+        let rust_replay = replay_rust_hogbom_minor_cycle_2d(
+            &casa_psf_flat,
+            &casa_residual_flat,
+            [case.imsize, case.imsize],
+            clean.gain,
+            casa_threshold,
+            clean.minor_cycle_length,
+        );
+        let cpp_replay = match cpp_hogbom_clean_minor_cycle_2d(
+            &casa_psf_flat,
+            &casa_residual_flat,
+            [case.imsize, case.imsize],
+            clean.gain,
+            casa_threshold,
+            clean.minor_cycle_length,
+        ) {
+            Ok(result) => Some(result),
+            Err(error) if error == "casacore C++ backend unavailable" => None,
+            Err(error) => panic!("run CASA snapshot hclean interop: {error}"),
+        };
+        eprintln!(
+            "cube nsigma exact input snapshot channel={channel_index} block={block_index}: residual_rms={:.9e} residual_max_abs={:.9e} residual_corr={:.9e} model_rms={:.9e} model_max_abs={:.9e} model_corr={:.9e} same_model_residual_rms={:.9e} same_model_residual_max_abs={:.9e} same_model_residual_corr={:.9e} model_channel_lambda_residual_rms={:.9e} model_channel_lambda_residual_max_abs={:.9e} model_channel_lambda_residual_corr={:.9e} casa_start_peak={:.9e} casa_end_peak={:.9e} casa_cycle_threshold={:.9e} rust_replay_iterdone={} cpp_replay_iterdone={:?}",
+            residual_stats.rms,
+            residual_stats.max_abs,
+            residual_stats.correlation,
+            model_stats.rms,
+            model_stats.max_abs,
+            model_stats.correlation,
+            same_model_stats.rms,
+            same_model_stats.max_abs,
+            same_model_stats.correlation,
+            model_channel_lambda_stats.rms,
+            model_channel_lambda_stats.max_abs,
+            model_channel_lambda_stats.correlation,
+            casa_trace.start_peak_residual_jy_per_beam,
+            casa_trace.end_peak_residual_jy_per_beam,
+            casa_trace.cycle_threshold_jy_per_beam,
+            rust_replay.iterdone,
+            cpp_replay.as_ref().map(|result| result.iterdone),
+        );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic for Wave 8 same-model residual refresh at CASA restart boundaries"]
+fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let clean = CubeCleanControls {
+        gain: 0.5,
+        threshold_jy: 0.000001,
+        nsigma: 10.0,
+        minor_cycle_length: 10,
+        ..CubeCleanControls::default()
+    };
+    let mut cube_axis = casa_ms::CubeAxisConfig::default();
+    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let config = CliConfig {
+        ms: staged_ms_path.clone(),
+        imagename: temp
+            .path()
+            .join("rust-trace-refim-point-withline-cube-nsigma"),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: Some(case.spw.to_string()),
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
+        datacolumn: Some("DATA".to_string()),
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Cube,
+        cube_axis,
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter: 1_000_000,
+        gain: clean.gain,
+        threshold_jy: clean.threshold_jy,
+        nsigma: clean.nsigma,
+        psf_cutoff: 0.35,
+        minor_cycle_length: clean.minor_cycle_length,
+        cyclefactor: clean.cyclefactor,
+        min_psf_fraction: clean.min_psf_fraction,
+        max_psf_fraction: clean.max_psf_fraction,
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    };
+
+    for &(channel_index, block_index) in &[(7usize, 8usize), (5usize, 9usize), (9usize, 9usize)] {
+        let casa_prefix = temp.path().join(format!(
+            "casa-refim-point-withline-cube-same-model-{channel_index}-{block_index}"
+        ));
+        for _ in 0..block_index {
+            run_casa_tclean_cube_task_default_case_with_clean_controls(
+                case,
+                &staged_ms_path,
+                &casa_prefix,
+                clean.minor_cycle_length,
+                "hogbom",
+                &[],
+                0.0,
+                CubeWeightingOptions::default(),
+                clean,
+                "0.000001Jy",
+            )
+            .expect("run casa cube nsigma restart step");
+        }
+
+        let casa_residual_plane =
+            read_channel_plane_in_casa(&casa_product(&casa_prefix, "residual"), channel_index)
+                .expect("read CASA residual plane");
+        let casa_model_plane =
+            read_channel_plane_in_casa(&casa_product(&casa_prefix, "model"), channel_index)
+                .expect("read CASA model plane");
+        let rust_trace = trace_cube_channel_residual_refresh_from_config(
+            &config,
+            channel_index,
+            &casa_model_plane,
+        )
+        .expect("trace rust residual refresh from casa model");
+        let stats = plane_difference_stats(&rust_trace.residual_image, &casa_residual_plane);
+        eprintln!(
+            "cube nsigma same-model residual channel={channel_index} block={block_index}: rms={:.9e} max_abs={:.9e} correlation={:.9e} normalization_sumwt={:.9e} reported_sumwt={:.9e} psf_peak={:.9e}",
+            stats.rms,
+            stats.max_abs,
+            stats.correlation,
+            rust_trace.normalization_sumwt,
+            rust_trace.reported_sumwt,
+            rust_trace.psf_peak,
+        );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic for Wave 8 internal-model residual refresh consistency"]
+fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let rust_prefix = temp.path().join("rust-refim-point-withline-internal-model");
+    let clean = CubeCleanControls {
+        gain: 0.5,
+        threshold_jy: 0.000001,
+        nsigma: 10.0,
+        minor_cycle_length: 10,
+        ..CubeCleanControls::default()
+    };
+    let mut cube_axis = casa_ms::CubeAxisConfig::default();
+    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let config = CliConfig {
+        ms: staged_ms_path.clone(),
+        imagename: rust_prefix.clone(),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: Some(case.spw.to_string()),
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
+        datacolumn: Some("DATA".to_string()),
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Cube,
+        cube_axis,
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter: 1_000_000,
+        gain: clean.gain,
+        threshold_jy: clean.threshold_jy,
+        nsigma: clean.nsigma,
+        psf_cutoff: 0.35,
+        minor_cycle_length: clean.minor_cycle_length,
+        cyclefactor: clean.cyclefactor,
+        min_psf_fraction: clean.min_psf_fraction,
+        max_psf_fraction: clean.max_psf_fraction,
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    };
+
+    for &(channel_index, block_index) in &[(7usize, 8usize), (5usize, 9usize)] {
+        let capture_dir = temp.path().join(format!(
+            "capture-internal-channel-{channel_index}-block-{block_index}"
+        ));
+        unsafe {
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_CHANNEL", channel_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_BLOCK", block_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_DIR", &capture_dir);
+        }
+        let _ = run_rust_imager_cube_task_default_case_with_clean_controls(
+            case,
+            &staged_ms_path,
+            &rust_prefix,
+            false,
+            1_000_000,
+            Deconvolver::Hogbom,
+            &[],
+            0.0,
+            clean,
+            CubeWeightingOptions::default(),
+        )
+        .expect("rerun rust cube nsigma capture case");
+        unsafe {
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_CHANNEL");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_BLOCK");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_DIR");
+        }
+
+        let captured = read_captured_cube_minor_cycle_plane(&capture_dir);
+        let rust_trace = trace_cube_channel_residual_refresh_from_config(
+            &config,
+            channel_index,
+            &captured.model,
+        )
+        .expect("trace rust residual refresh from internal model");
+        let stats = plane_difference_stats(&rust_trace.residual_image, &captured.residual);
+        let rust_model_image = read_image(&rust_product(&rust_prefix, "model"));
+        let rust_model_plane = extract_channel_plane(&rust_model_image, channel_index);
+        let file_model_stats = plane_difference_stats(&rust_model_plane, &captured.model);
+        let rust_file_trace = trace_cube_channel_residual_refresh_from_config(
+            &config,
+            channel_index,
+            &rust_model_plane,
+        )
+        .expect("trace rust residual refresh from rust file model");
+        let file_residual_stats =
+            plane_difference_stats(&rust_file_trace.residual_image, &captured.residual);
+        eprintln!(
+            "cube nsigma internal-model residual channel={channel_index} block={block_index}: rms={:.9e} max_abs={:.9e} correlation={:.9e}",
+            stats.rms, stats.max_abs, stats.correlation,
+        );
+        eprintln!(
+            "cube nsigma rust-file model channel={channel_index} block={block_index}: model_rms={:.9e} model_max_abs={:.9e} model_corr={:.9e} residual_rms={:.9e} residual_max_abs={:.9e} residual_corr={:.9e}",
+            file_model_stats.rms,
+            file_model_stats.max_abs,
+            file_model_stats.correlation,
+            file_residual_stats.rms,
+            file_residual_stats.max_abs,
+            file_residual_stats.correlation,
+        );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic for Wave 9 full-cube restart consistency on refim_point_withline"]
+fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let clean = CubeCleanControls {
+        gain: 0.5,
+        threshold_jy: 0.000001,
+        nsigma: 10.0,
+        minor_cycle_length: 10,
+        ..CubeCleanControls::default()
+    };
+    let mut cube_axis = casa_ms::CubeAxisConfig::default();
+    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let config = CliConfig {
+        ms: staged_ms_path.clone(),
+        imagename: temp
+            .path()
+            .join("rust-trace-refim-point-withline-cube-full-context"),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: Some(case.spw.to_string()),
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
+        datacolumn: Some("DATA".to_string()),
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Cube,
+        cube_axis,
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter: 1_000_000,
+        gain: clean.gain,
+        threshold_jy: clean.threshold_jy,
+        nsigma: clean.nsigma,
+        psf_cutoff: 0.35,
+        minor_cycle_length: clean.minor_cycle_length,
+        cyclefactor: clean.cyclefactor,
+        min_psf_fraction: clean.min_psf_fraction,
+        max_psf_fraction: clean.max_psf_fraction,
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    };
+
+    let channel_index = 9usize;
+    unsafe {
+        std::env::set_var("SAVE_ALL_RESIMS", "true");
+    }
+    let casa_prefix = temp
+        .path()
+        .join("casa-refim-point-withline-cube-full-context");
+    let _ = run_casa_tclean_cube_task_default_case_with_clean_controls(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        1_000_000,
+        "hogbom",
+        &[],
+        0.0,
+        CubeWeightingOptions::default(),
+        clean,
+        "0.000001Jy",
+    )
+    .expect("run casa cube nsigma snapshot case");
+    unsafe {
+        std::env::remove_var("SAVE_ALL_RESIMS");
+    }
+    for &block_index in &[0usize, 8usize, 9usize] {
+        let cycle_number = block_index + 1;
+        let capture_dir = temp.path().join(format!(
+            "capture-full-context-channel-{channel_index}-block-{block_index}"
+        ));
+        unsafe {
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_CHANNEL", channel_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_BLOCK", block_index.to_string());
+            std::env::set_var("CASA_RS_CUBE_CAPTURE_DIR", &capture_dir);
+        }
+        let rust_prefix = temp.path().join(format!(
+            "rust-refim-point-withline-cube-full-context-{block_index}"
+        ));
+        let _ = run_rust_imager_cube_task_default_case_with_clean_controls(
+            case,
+            &staged_ms_path,
+            &rust_prefix,
+            false,
+            1_000_000,
+            Deconvolver::Hogbom,
+            &[],
+            0.0,
+            clean,
+            CubeWeightingOptions::default(),
+        )
+        .expect("rerun rust cube nsigma capture case");
+        unsafe {
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_CHANNEL");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_BLOCK");
+            std::env::remove_var("CASA_RS_CUBE_CAPTURE_DIR");
+        }
+
+        let captured = read_captured_cube_minor_cycle_plane(&capture_dir);
+        let captured_model_cube = read_captured_cube_model_cube(&capture_dir);
+        let captured_trace = trace_cube_channel_residual_refresh_from_config_with_model_cube(
+            &config,
+            channel_index,
+            &captured_model_cube,
+        )
+        .expect("trace residual refresh from captured full model cube");
+        let captured_trace_stats =
+            plane_difference_stats(&captured_trace.residual_image, &captured.residual);
+
+        let casa_model_cube_path =
+            PathBuf::from(format!("{}.inputmod{cycle_number}", casa_prefix.display()));
+        let casa_model_cube = if casa_model_cube_path.exists() {
+            read_cube_planes_in_casa(&casa_model_cube_path).expect("read CASA inputmod cube")
+        } else {
+            (0..case.channel_count)
+                .map(|_| Array2::<f32>::zeros((case.imsize, case.imsize)))
+                .collect::<Vec<_>>()
+        };
+        let casa_residual_plane = read_channel_plane_in_casa(
+            &PathBuf::from(format!("{}.inputres{cycle_number}", casa_prefix.display())),
+            channel_index,
+        )
+        .expect("read CASA inputres plane");
+        let casa_trace = trace_cube_channel_residual_refresh_from_config_with_model_cube(
+            &config,
+            channel_index,
+            &casa_model_cube,
+        )
+        .expect("trace residual refresh from CASA full model cube");
+        let casa_trace_vs_captured =
+            plane_difference_stats(&casa_trace.residual_image, &captured.residual);
+        let casa_trace_vs_casa =
+            plane_difference_stats(&casa_trace.residual_image, &casa_residual_plane);
+
+        for compared_channel in [8usize, 9usize, 10usize] {
+            let stats = plane_difference_stats(
+                &captured_model_cube[compared_channel],
+                &casa_model_cube[compared_channel],
+            );
+            eprintln!(
+                "cube nsigma full-context block={block_index} model channel={compared_channel}: rms={:.9e} max_abs={:.9e} correlation={:.9e}",
+                stats.rms, stats.max_abs, stats.correlation,
+            );
+        }
+        eprintln!(
+            "cube nsigma full-context residual channel={channel_index} block={block_index}: captured_full_trace_rms={:.9e} captured_full_trace_max_abs={:.9e} captured_full_trace_corr={:.9e} casa_full_trace_vs_captured_rms={:.9e} casa_full_trace_vs_captured_max_abs={:.9e} casa_full_trace_vs_captured_corr={:.9e} casa_full_trace_vs_casa_rms={:.9e} casa_full_trace_vs_casa_max_abs={:.9e} casa_full_trace_vs_casa_corr={:.9e}",
+            captured_trace_stats.rms,
+            captured_trace_stats.max_abs,
+            captured_trace_stats.correlation,
+            casa_trace_vs_captured.rms,
+            casa_trace_vs_captured.max_abs,
+            casa_trace_vs_captured.correlation,
+            casa_trace_vs_casa.rms,
+            casa_trace_vs_casa.max_abs,
+            casa_trace_vs_casa.correlation,
+        );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic for Wave 9 channel-9 block-0 nearest-vs-linear dirty parity"]
+fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let clean = CubeCleanControls {
+        gain: 0.5,
+        threshold_jy: 0.000001,
+        nsigma: 10.0,
+        minor_cycle_length: 10,
+        ..CubeCleanControls::default()
+    };
+
+    unsafe {
+        std::env::set_var("SAVE_ALL_RESIMS", "true");
+    }
+    let casa_prefix = temp
+        .path()
+        .join("casa-refim-point-withline-cube-block0-nearest-linear");
+    let _ = run_casa_tclean_cube_task_default_case_with_clean_controls(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        1_000_000,
+        "hogbom",
+        &[],
+        0.0,
+        CubeWeightingOptions::default(),
+        clean,
+        "0.000001Jy",
+    )
+    .expect("run casa cube nsigma snapshot case");
+    unsafe {
+        std::env::remove_var("SAVE_ALL_RESIMS");
+    }
+
+    let channel_index = 9usize;
+    let casa_residual_plane = read_channel_plane_in_casa(
+        &PathBuf::from(format!("{}.inputres1", casa_prefix.display())),
+        channel_index,
+    )
+    .expect("read CASA inputres1 plane");
+
+    let make_config = |suffix: &str, interpolation| {
+        let mut cube_axis = casa_ms::CubeAxisConfig::default();
+        cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+        cube_axis.interpolation = interpolation;
+        CliConfig {
+            ms: staged_ms_path.clone(),
+            imagename: temp
+                .path()
+                .join(format!("rust-refim-point-withline-cube-block0-{suffix}")),
+            imsize: case.imsize,
+            cell_arcsec: case.cell_arcsec,
+            field_ids: Some(case.field_ids.to_vec()),
+            phasecenter_field: case.phasecenter_field,
+            phasecenter: None,
+            ddid: None,
+            spw: Some(case.spw),
+            spw_selector: Some(case.spw.to_string()),
+            channel_start: case.channel_start_option(),
+            channel_count: case.channel_count_option(),
+            datacolumn: Some("DATA".to_string()),
+            correlation: case.correlation.map(str::to_string),
+            spectral_mode: casars_imager::SpectralMode::Cube,
+            cube_axis,
+            weighting: case.weighting,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: clean.gain,
+            threshold_jy: clean.threshold_jy,
+            nsigma: clean.nsigma,
+            psf_cutoff: 0.35,
+            minor_cycle_length: clean.minor_cycle_length,
+            cyclefactor: clean.cyclefactor,
+            min_psf_fraction: clean.min_psf_fraction,
+            max_psf_fraction: clean.max_psf_fraction,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        }
+    };
+
+    let linear_config = make_config("linear", casa_ms::CubeInterpolation::Linear);
+    let nearest_config = make_config("nearest", casa_ms::CubeInterpolation::Nearest);
+    let _ = run_from_config(&linear_config).expect("run rust linear dirty cube");
+    let _ = run_from_config(&nearest_config).expect("run rust nearest dirty cube");
+
+    let linear_residual = extract_channel_plane(
+        &read_image(&rust_product(&linear_config.imagename, "residual")),
+        channel_index,
+    );
+    let nearest_residual = extract_channel_plane(
+        &read_image(&rust_product(&nearest_config.imagename, "residual")),
+        channel_index,
+    );
+    let linear_sumwt = sample_scalar_channel(
+        &read_image(&rust_product(&linear_config.imagename, "sumwt")),
+        channel_index,
+    );
+    let nearest_sumwt = sample_scalar_channel(
+        &read_image(&rust_product(&nearest_config.imagename, "sumwt")),
+        channel_index,
+    );
+    let casa_sumwt = sample_scalar_channel(
+        &read_image(&casa_product(&casa_prefix, "sumwt")),
+        channel_index,
+    );
+    let linear_stats = plane_difference_stats(&linear_residual, &casa_residual_plane);
+    let nearest_stats = plane_difference_stats(&nearest_residual, &casa_residual_plane);
+    eprintln!(
+        "cube nsigma block0 channel9 dirty parity: linear_rms={:.9e} linear_max_abs={:.9e} linear_corr={:.9e} nearest_rms={:.9e} nearest_max_abs={:.9e} nearest_corr={:.9e} linear_sumwt={:.9e} nearest_sumwt={:.9e} casa_sumwt={:.9e}",
+        linear_stats.rms,
+        linear_stats.max_abs,
+        linear_stats.correlation,
+        nearest_stats.rms,
+        nearest_stats.max_abs,
+        nearest_stats.correlation,
+        linear_sumwt,
+        nearest_sumwt,
+        casa_sumwt,
+    );
+}
+
+#[test]
+#[ignore = "diagnostic for Wave 9 block-0 cube dirty isolation with CASA mstransform output"]
+fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let casa_regridded_ms = temp.path().join("refim_point_withline.mstransform.ms");
+    run_casa_mstransform_default_cube_case(&staged_ms_path, &casa_regridded_ms, case, "linear")
+        .expect("run casa mstransform cube regrid");
+
+    let clean = CubeCleanControls {
+        gain: 0.5,
+        threshold_jy: 0.000001,
+        nsigma: 10.0,
+        minor_cycle_length: 10,
+        ..CubeCleanControls::default()
+    };
+    let casa_prefix = temp
+        .path()
+        .join("casa-refim-point-withline-cube-block0-casa-regridded");
+    unsafe {
+        std::env::set_var("SAVE_ALL_RESIMS", "true");
+    }
+    let _ = run_casa_tclean_cube_task_default_case_with_clean_controls(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        1_000_000,
+        "hogbom",
+        &[],
+        0.0,
+        CubeWeightingOptions::default(),
+        clean,
+        "0.000001Jy",
+    )
+    .expect("run casa cube nsigma snapshot case");
+    unsafe {
+        std::env::remove_var("SAVE_ALL_RESIMS");
+    }
+
+    let channel_index = 9usize;
+    let casa_residual_plane = read_channel_plane_in_casa(
+        &PathBuf::from(format!("{}.inputres1", casa_prefix.display())),
+        channel_index,
+    )
+    .expect("read CASA inputres1 plane");
+
+    let mut cubedata_axis = casa_ms::CubeAxisConfig::default();
+    cubedata_axis.specmode = casa_ms::CubeSpecMode::Cubedata;
+    let cubedata_config = CliConfig {
+        ms: casa_regridded_ms.clone(),
+        imagename: temp
+            .path()
+            .join("rust-refim-point-withline-cubedata-from-casa-regrid"),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: Some(case.spw.to_string()),
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
+        datacolumn: Some("DATA".to_string()),
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Cubedata,
+        cube_axis: cubedata_axis,
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter: 0,
+        gain: clean.gain,
+        threshold_jy: clean.threshold_jy,
+        nsigma: clean.nsigma,
+        psf_cutoff: 0.35,
+        minor_cycle_length: clean.minor_cycle_length,
+        cyclefactor: clean.cyclefactor,
+        min_psf_fraction: clean.min_psf_fraction,
+        max_psf_fraction: clean.max_psf_fraction,
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: true,
+        write_preview_pngs: false,
+    };
+    let _ = run_from_config(&cubedata_config).expect("run rust cubedata dirty cube");
+
+    let cubedata_residual = extract_channel_plane(
+        &read_image(&rust_product(&cubedata_config.imagename, "residual")),
+        channel_index,
+    );
+    let cubedata_stats = plane_difference_stats(&cubedata_residual, &casa_residual_plane);
+    let casa_regrid_spw_selector = case.spw.to_string();
+    let casa_regrid_prefix = temp
+        .path()
+        .join("casa-refim-point-withline-cubedata-from-casa-regrid");
+    let casa_regrid_options = CubeCaseOptions {
+        spw_selector: &casa_regrid_spw_selector,
+        nchan: case.channel_count,
+        start: Some(CubeAxisStep::Channel(case.channel_start as i32)),
+        width: Some(CubeAxisStep::Channel(1)),
+        outframe: "LSRK",
+        interpolation: "nearest",
+        veltype: "radio",
+        restfreq: "1.25GHz",
+    };
+    let _ = run_casa_tclean_cubedata_case_with_options(
+        case,
+        &casa_regridded_ms,
+        &casa_regrid_prefix,
+        0,
+        "hogbom",
+        &[],
+        0.0,
+        false,
+        casa_regrid_options,
+        "0Jy",
+    )
+    .expect("run CASA cubedata dirty cube on regridded MS");
+    let casa_regrid_residual = extract_channel_plane(
+        &read_image(&casa_product(&casa_regrid_prefix, "residual")),
+        channel_index,
+    );
+    let casa_regrid_stats = plane_difference_stats(&casa_regrid_residual, &casa_residual_plane);
+    let trace = build_prepare_plane_trace_from_config(&cubedata_config)
+        .expect("build prepared cubedata trace from CASA regridded MS");
+    let output_frequency_hz = trace.output_channel_frequencies_hz[channel_index];
+    let lambda_scale = output_frequency_hz / 299_792_458.0;
+    let channel_samples = trace
+        .samples
+        .iter()
+        .filter(|sample| sample.output_channel_index == Some(channel_index))
+        .collect::<Vec<_>>();
+    let cell_size_rad = case.cell_arcsec / 206_264.806_247;
+    let padded_len = |image_len: usize| {
+        let padded = (1.2 * image_len as f64 - 0.5).floor() as usize;
+        let padded = padded.max(image_len);
+        if padded % 2 == 0 { padded } else { padded + 1 }
+    };
+    let grid_shape = [padded_len(case.imsize), padded_len(case.imsize)];
+    let make_cpp_dirty = |grid_shape: [usize; 2]| {
+        cpp_convolve_gridder_make_dirty_image_2d(
+            grid_shape,
+            [case.imsize, case.imsize],
+            [
+                grid_shape[0] as f64 * cell_size_rad,
+                grid_shape[1] as f64 * cell_size_rad,
+            ],
+            [grid_shape[0] as f64 / 2.0, grid_shape[1] as f64 / 2.0],
+            &channel_samples
+                .iter()
+                .map(|sample| sample.imaging_uvw_m[0] * lambda_scale)
+                .collect::<Vec<_>>(),
+            &channel_samples
+                .iter()
+                .map(|sample| sample.imaging_uvw_m[1] * lambda_scale)
+                .collect::<Vec<_>>(),
+            &channel_samples
+                .iter()
+                .map(|sample| sample.visibility_re)
+                .collect::<Vec<_>>(),
+            &channel_samples
+                .iter()
+                .map(|sample| sample.visibility_im)
+                .collect::<Vec<_>>(),
+            &channel_samples
+                .iter()
+                .map(|sample| sample.weight)
+                .collect::<Vec<_>>(),
+            &channel_samples
+                .iter()
+                .map(|sample| sample.gridable)
+                .collect::<Vec<_>>(),
+        )
+    };
+    let cpp_dirty = match make_cpp_dirty(grid_shape) {
+        Ok(image) => image,
+        Err(error) if error == "casacore C++ backend unavailable" => {
+            eprintln!(
+                "cube nsigma block0 channel9 CASA-regridded cubedata parity: casacore C++ gridder shim unavailable"
+            );
+            return;
+        }
+        Err(error) => panic!("run casacore dirty-image shim: {error}"),
+    };
+    let cpp_dirty_plane = Array2::from_shape_vec((case.imsize, case.imsize), cpp_dirty.pixels)
+        .expect("shape C++ dirty plane");
+    let cpp_stats = plane_difference_stats(&cpp_dirty_plane, &casa_residual_plane);
+    let cpp_no_padding = match make_cpp_dirty([case.imsize, case.imsize]) {
+        Ok(image) => image,
+        Err(error) if error == "casacore C++ backend unavailable" => {
+            eprintln!(
+                "cube nsigma block0 channel9 CASA-regridded cubedata parity: casacore C++ gridder shim unavailable"
+            );
+            return;
+        }
+        Err(error) => panic!("run casacore dirty-image shim: {error}"),
+    };
+    let cpp_no_padding_plane =
+        Array2::from_shape_vec((case.imsize, case.imsize), cpp_no_padding.pixels)
+            .expect("shape C++ no-padding dirty plane");
+    let cpp_no_padding_stats = plane_difference_stats(&cpp_no_padding_plane, &casa_residual_plane);
+    let rust_peak_index =
+        peak_location_in_plane(&cubedata_residual).expect("rust cubedata residual peak");
+    let casa_peak_index = peak_location_in_plane(&casa_residual_plane).expect("casa residual peak");
+    let rust_peak_value = cubedata_residual[(rust_peak_index.0, rust_peak_index.1)];
+    let casa_peak_value = casa_residual_plane[(casa_peak_index.0, casa_peak_index.1)];
+    let slope = |lhs: &Array2<f32>, rhs: &Array2<f32>| {
+        let (mut num, mut den) = (0.0f64, 0.0f64);
+        for (&lhs_value, &rhs_value) in lhs.iter().zip(rhs.iter()) {
+            num += f64::from(lhs_value) * f64::from(rhs_value);
+            den += f64::from(rhs_value) * f64::from(rhs_value);
+        }
+        if den > 0.0 { num / den } else { f64::NAN }
+    };
+    let rust_scale_vs_casa = slope(&cubedata_residual, &casa_residual_plane);
+    let casa_regrid_scale_vs_casa = slope(&casa_regrid_residual, &casa_residual_plane);
+    let cpp_scale_vs_casa = slope(&cpp_dirty_plane, &casa_residual_plane);
+    let rust_psf_plane = extract_channel_plane(
+        &read_image(&rust_product(&cubedata_config.imagename, "psf")),
+        channel_index,
+    );
+    let casa_psf_plane = extract_channel_plane(
+        &read_image(&casa_product(&casa_prefix, "psf")),
+        channel_index,
+    );
+    let rust_psf_center = rust_psf_plane[(case.center(), case.center())];
+    let casa_psf_center = casa_psf_plane[(case.center(), case.center())];
+    eprintln!(
+        "cube nsigma block0 channel9 CASA-regridded cubedata parity: rust_rms={:.9e} rust_max_abs={:.9e} rust_corr={:.9e} casa_regrid_rms={:.9e} casa_regrid_max_abs={:.9e} casa_regrid_corr={:.9e} cpp_rms={:.9e} cpp_max_abs={:.9e} cpp_corr={:.9e} cpp_nopad_rms={:.9e} cpp_nopad_max_abs={:.9e} cpp_nopad_corr={:.9e} rust_peak={} casa_peak={} rust_scale_vs_casa={:.9e} casa_regrid_scale_vs_casa={:.9e} cpp_scale_vs_casa={:.9e} rust_psf_center={} casa_psf_center={}",
+        cubedata_stats.rms,
+        cubedata_stats.max_abs,
+        cubedata_stats.correlation,
+        casa_regrid_stats.rms,
+        casa_regrid_stats.max_abs,
+        casa_regrid_stats.correlation,
+        cpp_stats.rms,
+        cpp_stats.max_abs,
+        cpp_stats.correlation,
+        cpp_no_padding_stats.rms,
+        cpp_no_padding_stats.max_abs,
+        cpp_no_padding_stats.correlation,
+        rust_peak_value,
+        casa_peak_value,
+        rust_scale_vs_casa,
+        casa_regrid_scale_vs_casa,
+        cpp_scale_vs_casa,
+        rust_psf_center,
+        casa_psf_center,
+    );
+}
+
+#[test]
+#[ignore = "diagnostic for Wave 9 block-0 cube dirty parity split by correlation product"]
+fn hogbom_cube_nsigma_block0_channel9_single_pol_dirty_parity() {
+    let base_case = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_withline.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 20,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(base_case) {
+        eprintln!("{}", skip_reason_for_case(base_case));
+        return;
+    }
+
+    let ms_path = dataset_path(base_case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_point_withline.ms")
+        .expect("stage refim_point_withline");
+    let channel_index = 9usize;
+
+    for correlation in ["RR", "LL", "XX", "YY"] {
+        let case = ParityCase {
+            correlation: Some(correlation),
+            ..base_case
+        };
+        let rust_prefix = temp
+            .path()
+            .join(format!("rust-refim-point-withline-{correlation}-dirty"));
+        let casa_prefix = temp
+            .path()
+            .join(format!("casa-refim-point-withline-{correlation}-dirty"));
+        let rust_summary = run_rust_imager_cube_dirty(case, &staged_ms_path, &rust_prefix);
+        if let Err(error) = rust_summary {
+            if error.contains("requested correlation") && error.contains("is not present") {
+                eprintln!(
+                    "cube nsigma block0 channel9 single-pol dirty parity {correlation}: skipped ({error})"
+                );
+                continue;
+            }
+            panic!("run rust cube dirty: {error}");
+        }
+        run_casa_tclean_cube_case(
+            case,
+            &staged_ms_path,
+            &casa_prefix,
+            0,
+            "hogbom",
+            CubeAxisStep::Channel(case.channel_start as i32),
+            CubeAxisStep::Channel(1),
+            "0Jy",
+        )
+        .expect("run casa cube dirty");
+
+        let rust_residual = extract_channel_plane(
+            &read_image(&rust_product(&rust_prefix, "residual")),
+            channel_index,
+        );
+        let casa_residual = extract_channel_plane(
+            &read_image(&casa_product(&casa_prefix, "residual")),
+            channel_index,
+        );
+        let stats = plane_difference_stats(&rust_residual, &casa_residual);
+        let rust_sumwt = sample_scalar_channel(
+            &read_image(&rust_product(&rust_prefix, "sumwt")),
+            channel_index,
+        );
+        let casa_sumwt = sample_scalar_channel(
+            &read_image(&casa_product(&casa_prefix, "sumwt")),
+            channel_index,
+        );
+        eprintln!(
+            "cube nsigma block0 channel9 single-pol dirty parity {correlation}: rms={:.9e} max_abs={:.9e} corr={:.9e} rust_sumwt={:.9e} casa_sumwt={:.9e}",
+            stats.rms, stats.max_abs, stats.correlation, rust_sumwt, casa_sumwt,
+        );
+    }
+}
+
+#[test]
 fn explicit_xx_dirty_products_track_casa_headers_and_pixels() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_linXY.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 1,
@@ -4173,10 +6310,144 @@ fn explicit_xx_dirty_products_track_casa_headers_and_pixels() {
 }
 
 #[test]
+fn full_stokes_dirty_products_track_casa_on_refim_point_linxy() {
+    let base = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_linXY.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 64,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(base) {
+        eprintln!("{}", skip_reason_for_case(base));
+        return;
+    }
+
+    let ms_path = dataset_path(base.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "refim_point_linXY.ms").expect("stage ms");
+
+    for stokes in ["I", "Q", "U", "V"] {
+        let case = ParityCase {
+            correlation: Some(stokes),
+            ..base
+        };
+        let rust_prefix = temp.path().join(format!("rust-refim-linxy-{stokes}"));
+        let casa_prefix = temp.path().join(format!("casa-refim-linxy-{stokes}"));
+        run_rust_imager_case(case, &staged_ms_path, &rust_prefix, true, 0)
+            .expect("run rust imager");
+        run_casa_tclean_case(case, &staged_ms_path, &casa_prefix, 0).expect("run casa tclean");
+        assert_dirty_case_matches(
+            case,
+            &rust_prefix,
+            &casa_prefix,
+            0.15,
+            0.4,
+            0.15,
+            0.35,
+            true,
+        );
+    }
+}
+
+#[test]
+fn full_stokes_dirty_products_track_casa_on_polcal_circular_basis() {
+    let base = ParityCase {
+        dataset_rel: "measurementset/vla/polcal_CIRCULAR_BASIS.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 256,
+        cell_arcsec: 0.02,
+    };
+    if !parity_case_available(base) {
+        eprintln!("{}", skip_reason_for_case(base));
+        return;
+    }
+
+    let ms_path = dataset_path(base.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "polcal_CIRCULAR_BASIS.ms").expect("stage ms");
+
+    for stokes in ["I", "Q", "U", "V"] {
+        let case = ParityCase {
+            correlation: Some(stokes),
+            ..base
+        };
+        let rust_prefix = temp.path().join(format!("rust-polcal-circular-{stokes}"));
+        let casa_prefix = temp.path().join(format!("casa-polcal-circular-{stokes}"));
+        run_rust_imager_case(case, &staged_ms_path, &rust_prefix, true, 0)
+            .expect("run rust imager");
+        run_casa_tclean_case(case, &staged_ms_path, &casa_prefix, 0).expect("run casa tclean");
+        assert_dirty_case_matches(case, &rust_prefix, &casa_prefix, 0.2, 0.45, 0.2, 0.4, true);
+    }
+}
+
+#[test]
+fn full_stokes_hogbom_products_track_casa_on_refim_point_stokes() {
+    let base = ParityCase {
+        dataset_rel: "measurementset/vla/refim_point_stokes.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 64,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(base) {
+        eprintln!("{}", skip_reason_for_case(base));
+        return;
+    }
+
+    let ms_path = dataset_path(base.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "refim_point_stokes.ms").expect("stage ms");
+
+    for stokes in ["I", "Q", "U", "V"] {
+        let case = ParityCase {
+            correlation: Some(stokes),
+            ..base
+        };
+        let rust_prefix = temp.path().join(format!("rust-refim-stokes-{stokes}"));
+        let casa_prefix = temp.path().join(format!("casa-refim-stokes-{stokes}"));
+        run_rust_imager_case(case, &staged_ms_path, &rust_prefix, false, 20)
+            .expect("run rust imager");
+        run_casa_tclean_case(case, &staged_ms_path, &casa_prefix, 20).expect("run casa tclean");
+        assert_clean_case_matches(
+            case,
+            &rust_prefix,
+            &casa_prefix,
+            0.2,
+            0.5,
+            0.2,
+            0.45,
+            0.2,
+            0.45,
+        );
+    }
+}
+
+#[test]
 fn flagged_dirty_products_track_casa_headers_and_pixels() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/ngc5921_with_flags.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 1,
@@ -4215,7 +6486,8 @@ fn flagged_dirty_products_track_casa_headers_and_pixels() {
 fn uniform_dirty_products_track_casa_headers_and_pixels() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/ngc5921.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 1,
@@ -4245,7 +6517,8 @@ fn uniform_dirty_products_track_casa_headers_and_pixels() {
 fn briggs_dirty_products_track_casa_headers_and_pixels() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/ngc5921.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 1,
@@ -4269,6 +6542,754 @@ fn briggs_dirty_products_track_casa_headers_and_pixels() {
     run_rust_imager_case(case, &staged_ms_path, &rust_prefix, true, 0).expect("run rust imager");
     run_casa_tclean_case(case, &staged_ms_path, &casa_prefix, 0).expect("run casa tclean");
     assert_dirty_case_matches(case, &rust_prefix, &casa_prefix, 0.2, 0.45, 0.2, 0.35, true);
+}
+
+fn assert_m51_dirty_products_track_casa_headers_and_pixels(weighting: WeightingMode, label: &str) {
+    let case = ParityCase {
+        dataset_rel: "measurementset/alma/M51.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting,
+        imsize: 256,
+        cell_arcsec: 0.05,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "M51.ms").expect("stage ms");
+    let rust_prefix = temp.path().join(format!("rust-m51-dirty-{label}"));
+    let casa_prefix = temp.path().join(format!("casa-m51-dirty-{label}"));
+
+    run_rust_imager_case(case, &staged_ms_path, &rust_prefix, true, 0).expect("run rust imager");
+    run_casa_tclean_case(case, &staged_ms_path, &casa_prefix, 0).expect("run casa tclean");
+    assert_dirty_case_matches(
+        case,
+        &rust_prefix,
+        &casa_prefix,
+        0.05,
+        0.15,
+        0.02,
+        0.05,
+        true,
+    );
+
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let psf_stats = image_difference_stats(&rust_psf, &casa_psf);
+    let psf_rms_tol = match weighting {
+        WeightingMode::Briggs { .. } => 1.1e-3,
+        _ => 5.0e-4,
+    };
+    assert!(
+        psf_stats.rms <= psf_rms_tol,
+        "M51 dirty PSF RMS diff too large: {psf_stats:?}"
+    );
+    assert!(
+        psf_stats.max_abs <= 5.0e-3,
+        "M51 dirty PSF max diff too large: {psf_stats:?}"
+    );
+
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+    let rust_peak = peak_location(&rust_residual).expect("rust residual peak");
+    let casa_peak = peak_location(&casa_residual).expect("casa residual peak");
+    assert_eq!(
+        rust_peak, casa_peak,
+        "M51 dirty residual peak pixel mismatch"
+    );
+    let casa_peak_value = sample(&casa_residual, casa_peak.0, casa_peak.1).abs();
+    let normalized_rms = residual_stats.rms / casa_peak_value.max(1.0e-6);
+    let normalized_max = residual_stats.max_abs / casa_peak_value.max(1.0e-6);
+    assert!(
+        normalized_rms <= 0.02,
+        "M51 dirty residual normalized RMS diff too large: peak={casa_peak_value} stats={residual_stats:?}"
+    );
+    assert!(
+        normalized_max <= 0.2,
+        "M51 dirty residual normalized max diff too large: peak={casa_peak_value} stats={residual_stats:?}"
+    );
+    assert!(
+        residual_stats.correlation >= 0.995,
+        "M51 dirty residual correlation too low: {residual_stats:?}"
+    );
+}
+
+#[test]
+fn m51_dirty_products_track_casa_headers_and_pixels() {
+    assert_m51_dirty_products_track_casa_headers_and_pixels(WeightingMode::Natural, "natural");
+}
+
+#[test]
+fn m51_briggs_dirty_products_track_casa_headers_and_pixels() {
+    assert_m51_dirty_products_track_casa_headers_and_pixels(
+        WeightingMode::Briggs { robust: 0.5 },
+        "briggs",
+    );
+}
+
+fn assert_wideband_single_term_field_tracks_casa(
+    niter: usize,
+    label: &str,
+    deconvolver: Deconvolver,
+    casa_deconvolver: &str,
+) {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/vla_wideband_2ptg_w_squint.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 0,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 256,
+        cell_arcsec: 8.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "vla_wideband_2ptg_w_squint.ms")
+            .expect("stage ms");
+    let rust_prefix = temp
+        .path()
+        .join(format!("rust-vla-wideband-field0-{label}"));
+    let casa_prefix = temp
+        .path()
+        .join(format!("casa-vla-wideband-field0-{label}"));
+
+    run_rust_imager_case_with_deconvolver(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        niter == 0,
+        niter,
+        deconvolver,
+    )
+    .expect("run rust imager");
+    run_casa_tclean_case_with_deconvolver(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        niter,
+        casa_deconvolver,
+    )
+    .expect("run casa tclean");
+
+    if niter == 0 {
+        assert_dirty_case_matches(case, &rust_prefix, &casa_prefix, 0.05, 0.2, 0.05, 0.2, true);
+
+        let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+        let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+        let psf_stats = image_difference_stats(&rust_psf, &casa_psf);
+        assert!(
+            psf_stats.correlation >= 0.995,
+            "wideband nterms=1 dirty PSF correlation too low: {psf_stats:?}"
+        );
+
+        let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+        let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+        let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+        assert!(
+            residual_stats.correlation >= 0.995,
+            "wideband nterms=1 dirty residual correlation too low: {residual_stats:?}"
+        );
+    } else {
+        assert_clean_case_matches(
+            case,
+            &rust_prefix,
+            &casa_prefix,
+            0.1,
+            0.2,
+            0.1,
+            0.2,
+            0.1,
+            0.25,
+        );
+
+        let rust_image = read_image(&rust_product(&rust_prefix, "image"));
+        let casa_image = read_image(&casa_product(&casa_prefix, "image"));
+        let image_stats = image_difference_stats(&rust_image, &casa_image);
+        let casa_peak = peak_location(&casa_image).expect("casa image peak");
+        let casa_peak_value = sample(&casa_image, casa_peak.0, casa_peak.1).abs();
+        let normalized_rms = image_stats.rms / casa_peak_value.max(1.0e-6);
+        let normalized_max = image_stats.max_abs / casa_peak_value.max(1.0e-6);
+        assert!(
+            normalized_rms <= 0.02,
+            "wideband nterms=1 clean image normalized RMS diff too large: peak={casa_peak_value} stats={image_stats:?}"
+        );
+        assert!(
+            normalized_max <= 0.2,
+            "wideband nterms=1 clean image normalized max diff too large: peak={casa_peak_value} stats={image_stats:?}"
+        );
+        assert!(
+            image_stats.correlation >= 0.97,
+            "wideband nterms=1 clean image correlation too low: {image_stats:?}"
+        );
+    }
+}
+
+#[test]
+fn wideband_single_term_dirty_products_track_casa_on_vla_field0() {
+    assert_wideband_single_term_field_tracks_casa(0, "dirty", Deconvolver::Hogbom, "hogbom");
+}
+
+#[test]
+fn wideband_single_term_clark_products_track_casa_on_vla_field0() {
+    assert_wideband_single_term_field_tracks_casa(10, "clark", Deconvolver::Clark, "clark");
+}
+
+fn assert_mtmfs_vlass_tracks_casa(niter: usize, label: &str) {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/ref_vlass_wtsp_creation.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 0,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 128,
+        cell_arcsec: 2.5,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let rust_prefix = temp.path().join(format!("rust-ref-vlass-mtmfs-{label}"));
+    let casa_prefix = temp.path().join(format!("casa-ref-vlass-mtmfs-{label}"));
+
+    run_rust_imager_case_with_mtmfs(case, &ms_path, &rust_prefix, niter == 0, niter, 2)
+        .expect("run rust mtmfs");
+    run_casa_tclean_case_with_mtmfs(case, &ms_path, &casa_prefix, niter, 2)
+        .expect("run casa mtmfs");
+
+    if niter == 0 {
+        assert_mtmfs_dirty_products_track_casa(&rust_prefix, &casa_prefix);
+    } else {
+        assert_mtmfs_clean_products_track_casa(&rust_prefix, &casa_prefix);
+    }
+}
+
+#[test]
+fn mtmfs_dirty_products_track_casa_on_ref_vlass_wtsp_creation() {
+    assert_mtmfs_vlass_tracks_casa(0, "dirty");
+}
+
+#[test]
+fn mtmfs_clean_products_track_casa_on_ref_vlass_wtsp_creation() {
+    assert_mtmfs_vlass_tracks_casa(1, "clean");
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad() {
+    let case = ParityCase {
+        dataset_rel: "unittest/tclean/refim_point_wterm_vlad.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Uniform,
+        imsize: 256,
+        cell_arcsec: 80.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
+        case,
+        "uniform-256-80arcsec",
+        StagedFieldLayout::SingleField,
+        WProjectDirtyParityExpectation {
+            rust_wprojplanes: None,
+            casa_wprojplanes: 16,
+            min_peak_gain: 0.1,
+            peak_abs_tol: 6.0e-2,
+            peak_rel_tol: 8.0e-2,
+            residual_rms_tol: 0.005,
+            residual_max_abs_tol: 0.15,
+        },
+    );
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_natural_weighting() {
+    let case = ParityCase {
+        dataset_rel: "unittest/tclean/refim_point_wterm_vlad.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 256,
+        cell_arcsec: 80.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
+        case,
+        "natural-256-80arcsec",
+        StagedFieldLayout::SingleField,
+        WProjectDirtyParityExpectation {
+            rust_wprojplanes: None,
+            casa_wprojplanes: 16,
+            min_peak_gain: 0.05,
+            peak_abs_tol: 7.0e-2,
+            peak_rel_tol: 9.0e-2,
+            residual_rms_tol: 0.01,
+            residual_max_abs_tol: 0.25,
+        },
+    );
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_tighter_field() {
+    let case = ParityCase {
+        dataset_rel: "unittest/tclean/refim_point_wterm_vlad.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Uniform,
+        imsize: 384,
+        cell_arcsec: 60.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
+        case,
+        "uniform-384-60arcsec",
+        StagedFieldLayout::SingleField,
+        WProjectDirtyParityExpectation {
+            rust_wprojplanes: None,
+            casa_wprojplanes: 16,
+            min_peak_gain: 0.08,
+            peak_abs_tol: 8.0e-2,
+            peak_rel_tol: 9.0e-2,
+            residual_rms_tol: 0.007,
+            residual_max_abs_tol: 0.2,
+        },
+    );
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_eight_planes() {
+    let case = ParityCase {
+        dataset_rel: "unittest/tclean/refim_point_wterm_vlad.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Uniform,
+        imsize: 256,
+        cell_arcsec: 80.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
+        case,
+        "uniform-256-80arcsec-8planes",
+        StagedFieldLayout::SingleField,
+        WProjectDirtyParityExpectation {
+            rust_wprojplanes: Some(8),
+            casa_wprojplanes: 8,
+            min_peak_gain: 0.08,
+            peak_abs_tol: 7.0e-2,
+            peak_rel_tol: 9.0e-2,
+            residual_rms_tol: 0.006,
+            residual_max_abs_tol: 0.18,
+        },
+    );
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_shared_phase_multifield() {
+    let case = ParityCase {
+        dataset_rel: "unittest/tclean/refim_point_wterm_vlad.ms",
+        field_ids: &[0, 1],
+        phasecenter_field: None,
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Uniform,
+        imsize: 256,
+        cell_arcsec: 80.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
+        case,
+        "uniform-256-80arcsec-multifield",
+        StagedFieldLayout::SharedPhaseMultiField,
+        WProjectDirtyParityExpectation {
+            rust_wprojplanes: None,
+            casa_wprojplanes: 16,
+            min_peak_gain: 0.1,
+            peak_abs_tol: 6.0e-2,
+            peak_rel_tol: 8.0e-2,
+            residual_rms_tol: 0.005,
+            residual_max_abs_tol: 0.15,
+        },
+    );
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_distinct_phase_multifield() {
+    let case = ParityCase {
+        dataset_rel: "unittest/tclean/refim_point_wterm_vlad.ms",
+        field_ids: &[0, 1],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Uniform,
+        imsize: 256,
+        cell_arcsec: 80.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
+        case,
+        "uniform-256-80arcsec-distinct-phase-multifield",
+        StagedFieldLayout::DistinctPhaseMultiField {
+            ra_offset_rad: 600.0 / 206_264.806_247_096_36,
+        },
+        WProjectDirtyParityExpectation {
+            rust_wprojplanes: None,
+            casa_wprojplanes: 16,
+            min_peak_gain: 0.05,
+            peak_abs_tol: 7.0e-2,
+            peak_rel_tol: 9.0e-2,
+            residual_rms_tol: 0.01,
+            residual_max_abs_tol: 0.25,
+        },
+    );
+}
+
+#[derive(Clone, Copy)]
+struct WProjectDirtyParityExpectation {
+    rust_wprojplanes: Option<usize>,
+    casa_wprojplanes: usize,
+    min_peak_gain: f32,
+    peak_abs_tol: f32,
+    peak_rel_tol: f32,
+    residual_rms_tol: f32,
+    residual_max_abs_tol: f32,
+}
+
+const MAWPROJECT_PHASECENTER: &str = "J2000 19:59:28.500 +40.44.01.50";
+
+fn assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
+    case: ParityCase<'_>,
+    label: &str,
+    field_layout: StagedFieldLayout,
+    expectation: WProjectDirtyParityExpectation,
+) {
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_name = format!("refim_point_wterm_vlad-{label}.ms");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), &staged_name).expect("stage ms");
+    match field_layout {
+        StagedFieldLayout::SingleField => {}
+        StagedFieldLayout::SharedPhaseMultiField => {
+            promote_staged_measurement_set_to_multifield(&staged_ms_path, case.field_ids, None)
+                .expect("promote staged MS to shared-phase multi-field");
+        }
+        StagedFieldLayout::DistinctPhaseMultiField { ra_offset_rad } => {
+            promote_staged_measurement_set_to_multifield(
+                &staged_ms_path,
+                case.field_ids,
+                Some(ra_offset_rad),
+            )
+            .expect("promote staged MS to distinct-phase multi-field");
+        }
+    }
+    let rust_standard_prefix = temp
+        .path()
+        .join(format!("rust-refim-point-wterm-standard-{label}"));
+    let rust_wproject_prefix = temp
+        .path()
+        .join(format!("rust-refim-point-wterm-wproject-{label}"));
+    let casa_prefix = temp
+        .path()
+        .join(format!("casa-refim-point-wterm-wproject-{label}"));
+
+    run_rust_imager_case(case, &staged_ms_path, &rust_standard_prefix, true, 0)
+        .expect("run rust standard imager");
+    run_rust_imager_case_with_w_term_mode(
+        case,
+        &staged_ms_path,
+        &rust_wproject_prefix,
+        true,
+        0,
+        WTermMode::WProject,
+        expectation.rust_wprojplanes,
+    )
+    .expect("run rust wproject imager");
+    run_casa_tclean_case_with_wproject(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        0,
+        expectation.casa_wprojplanes,
+    )
+    .expect("run casa wproject tclean");
+
+    compare_image_headers(
+        &rust_product(&rust_wproject_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_wproject_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+
+    let center = (case.center(), case.center());
+    let rust_standard_residual = read_image(&rust_product(&rust_standard_prefix, "residual"));
+    let rust_wproject_residual = read_image(&rust_product(&rust_wproject_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_wproject_psf = read_image(&rust_product(&rust_wproject_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let expected_peak = peak_location(&casa_residual).expect("casa wproject residual peak");
+
+    assert_eq!(
+        peak_location(&rust_wproject_residual),
+        Some(expected_peak),
+        "Rust wproject dirty peak pixel changed for {label}"
+    );
+    assert_eq!(
+        peak_location(&casa_residual),
+        Some(expected_peak),
+        "CASA wproject dirty peak pixel changed for {label}"
+    );
+    assert_ne!(
+        expected_peak, center,
+        "expected off-axis wproject peak for {label}"
+    );
+    assert_eq!(
+        peak_location(&rust_wproject_psf),
+        Some(center),
+        "Rust wproject PSF peak pixel changed for {label}"
+    );
+    assert_eq!(
+        peak_location(&casa_psf),
+        Some(center),
+        "CASA wproject PSF peak pixel changed for {label}"
+    );
+
+    let rust_standard_peak = sample(&rust_standard_residual, expected_peak.0, expected_peak.1);
+    let rust_wproject_peak = sample(&rust_wproject_residual, expected_peak.0, expected_peak.1);
+    let casa_peak = sample(&casa_residual, expected_peak.0, expected_peak.1);
+    assert!(
+        rust_wproject_peak > rust_standard_peak + expectation.min_peak_gain,
+        "Rust wproject should materially improve the off-axis source peak for {label}: standard={rust_standard_peak}, wproject={rust_wproject_peak}"
+    );
+    assert_close(
+        rust_wproject_peak,
+        casa_peak,
+        expectation.peak_abs_tol,
+        expectation.peak_rel_tol,
+        &format!("wproject residual peak ({label})"),
+    );
+
+    assert_close(
+        sample(&rust_wproject_psf, center.0, center.1),
+        sample(&casa_psf, center.0, center.1),
+        1.0e-3,
+        1.0e-3,
+        "wproject psf center",
+    );
+
+    let residual_stats = image_difference_stats(&rust_wproject_residual, &casa_residual);
+    assert!(
+        residual_stats.rms <= expectation.residual_rms_tol,
+        "wproject residual RMS diff too large for {label}: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.max_abs <= expectation.residual_max_abs_tol,
+        "wproject residual max diff too large for {label}: {residual_stats:?}"
+    );
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_mawproject() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/evla/refim_mawproject.ms",
+        field_ids: &[],
+        phasecenter_field: None,
+        spw: 1,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 512,
+        cell_arcsec: 10.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_mawproject(case, "between-pointings");
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_mawproject_offcenter() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/evla/refim_mawproject_offcenter.ms",
+        field_ids: &[],
+        phasecenter_field: None,
+        spw: 1,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 512,
+        cell_arcsec: 10.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_mawproject(case, "offcenter");
+}
+
+#[test]
+fn wproject_dirty_products_track_casa_on_refim_mawproject_twopointings() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/evla/refim_mawproject_twopointings.ms",
+        field_ids: &[],
+        phasecenter_field: None,
+        spw: 0,
+        channel_start: 0,
+        channel_count: 1,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 512,
+        cell_arcsec: 10.0,
+    };
+    assert_wproject_dirty_products_track_casa_on_mawproject(case, "twopointings");
+}
+
+fn assert_wproject_dirty_products_track_casa_on_mawproject(case: ParityCase<'_>, label: &str) {
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_name = format!("refim-mawproject-{label}.ms");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), &staged_name).expect("stage ms");
+    let rust_prefix = temp.path().join(format!("rust-refim-mawproject-{label}"));
+    let casa_prefix = temp.path().join(format!("casa-refim-mawproject-{label}"));
+
+    run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        true,
+        0,
+        MAWPROJECT_PHASECENTER,
+        WTermMode::WProject,
+        Some(16),
+    )
+    .expect("run rust wproject imager");
+    run_casa_tclean_case_with_wproject_and_explicit_phasecenter(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        0,
+        16,
+        MAWPROJECT_PHASECENTER,
+    )
+    .expect("run casa wproject tclean");
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let casa_peak = peak_location(&casa_residual).expect("casa mawproject peak");
+    let rust_peak = peak_location(&rust_residual).expect("rust mawproject peak");
+    let center = (case.center(), case.center());
+
+    assert_eq!(
+        rust_peak, casa_peak,
+        "Rust mawproject peak pixel changed for {label}"
+    );
+    assert_eq!(
+        peak_location(&rust_psf),
+        Some(center),
+        "Rust mawproject PSF peak pixel changed for {label}"
+    );
+    assert_eq!(
+        peak_location(&casa_psf),
+        Some(center),
+        "CASA mawproject PSF peak pixel changed for {label}"
+    );
+
+    let rust_peak_value = sample(&rust_residual, rust_peak.0, rust_peak.1);
+    let casa_peak_value = sample(&casa_residual, casa_peak.0, casa_peak.1);
+    assert_close(
+        rust_peak_value,
+        casa_peak_value,
+        8.0e-2,
+        1.2e-1,
+        &format!("mawproject residual peak ({label})"),
+    );
+    assert_close(
+        sample(&rust_psf, center.0, center.1),
+        sample(&casa_psf, center.0, center.1),
+        1.0e-3,
+        1.0e-3,
+        &format!("mawproject psf center ({label})"),
+    );
+
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+    eprintln!(
+        "mawproject {label}: peak={casa_peak:?} rust_peak={rust_peak_value:.9e} casa_peak={casa_peak_value:.9e} rms={:.9e} max_abs={:.9e} corr={:.9e}",
+        residual_stats.rms, residual_stats.max_abs, residual_stats.correlation,
+    );
+    assert!(
+        residual_stats.rms <= 2.0e-2,
+        "mawproject residual RMS diff too large for {label}: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.max_abs <= 4.0e-1,
+        "mawproject residual max diff too large for {label}: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.correlation >= 0.99,
+        "mawproject residual correlation too small for {label}: {residual_stats:?}"
+    );
 }
 
 #[test]
@@ -4324,7 +7345,8 @@ fn clean_products_reopen_in_casa_and_rust() {
 fn clark_niter_one_matches_casa_component_support() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/sim_data_VLA_jet.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 5,
@@ -4393,7 +7415,8 @@ fn clark_niter_one_matches_casa_component_support() {
 fn clark_products_track_casa_on_simulated_jet() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/sim_data_VLA_jet.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 5,
@@ -4481,7 +7504,8 @@ fn clark_products_track_casa_on_simulated_jet() {
 fn clark_products_track_casa_on_ngc5921() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/ngc5921.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 1,
@@ -4556,7 +7580,8 @@ fn clark_products_track_casa_on_ngc5921() {
 fn multiscale_scales_zero_matches_casa_component_support() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/sim_data_VLA_jet.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 5,
@@ -4634,7 +7659,8 @@ fn multiscale_scales_zero_matches_casa_component_support() {
 fn multiscale_products_track_casa_on_simulated_jet() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/sim_data_VLA_jet.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 5,
@@ -4725,7 +7751,8 @@ fn multiscale_products_track_casa_on_simulated_jet() {
 fn multiscale_products_track_casa_on_m51_single_field() {
     let case = ParityCase {
         dataset_rel: "measurementset/alma/M51.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 1,
@@ -4819,10 +7846,178 @@ fn multiscale_products_track_casa_on_m51_single_field() {
 }
 
 #[test]
+fn wproject_dirty_cube_products_track_casa_on_n2403_source_backed_multifield() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/n2403.short.ms",
+        field_ids: &[0, 1],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 2,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 128,
+        cell_arcsec: 8.0,
+    };
+    assert_wproject_dirty_cube_products_track_casa_on_n2403_source_backed_multifield(
+        case,
+        "phasecenter-0",
+    );
+}
+
+#[test]
+fn wproject_dirty_cube_products_track_casa_on_n2403_source_backed_calibrator_multifield() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/n2403.short.ms",
+        field_ids: &[1, 3],
+        phasecenter_field: Some(1),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 2,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 128,
+        cell_arcsec: 8.0,
+    };
+    assert_wproject_dirty_cube_products_track_casa_on_n2403_source_backed_multifield(
+        case,
+        "calibrators-phasecenter-1",
+    );
+}
+
+fn assert_wproject_dirty_cube_products_track_casa_on_n2403_source_backed_multifield(
+    case: ParityCase<'_>,
+    label: &str,
+) {
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), &format!("n2403.{label}.ms"))
+        .expect("stage ms");
+    let rust_prefix = temp
+        .path()
+        .join(format!("rust-n2403-multifield-cube-wproject-{label}"));
+    let casa_prefix = temp
+        .path()
+        .join(format!("casa-n2403-multifield-cube-wproject-{label}"));
+
+    run_rust_imager_cube_dirty_with_w_term_mode(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        casars_imager::SpectralMode::Cube,
+        WTermMode::WProject,
+        Some(8),
+    )
+    .expect("run rust wproject cube");
+    run_casa_tclean_cube_dirty_case_with_wproject(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        CubeAxisStep::Channel(0),
+        CubeAxisStep::Channel(1),
+        8,
+    )
+    .expect("run casa wproject cube");
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "psf"),
+        &casa_product(&casa_prefix, "psf"),
+        "",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+
+    let rust_psf = read_image(&rust_product(&rust_prefix, "psf"));
+    let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_sumwt = read_image(&rust_product(&rust_prefix, "sumwt"));
+    let casa_sumwt = read_image(&casa_product(&casa_prefix, "sumwt"));
+    let center = case.center();
+
+    for chan in [0usize, case.channel_count - 1] {
+        let rust_psf_plane = extract_channel_plane(&rust_psf, chan);
+        let casa_psf_plane = extract_channel_plane(&casa_psf, chan);
+        let rust_residual_plane = extract_channel_plane(&rust_residual, chan);
+        let casa_residual_plane = extract_channel_plane(&casa_residual, chan);
+
+        assert_eq!(
+            peak_location_in_plane(&rust_psf_plane),
+            Some((center, center)),
+            "Rust n2403 multifield wproject PSF peak moved at chan={chan}"
+        );
+        assert_eq!(
+            peak_location_in_plane(&casa_psf_plane),
+            Some((center, center)),
+            "CASA n2403 multifield wproject PSF peak moved at chan={chan}"
+        );
+        assert_close(
+            sample_channel(&rust_psf, center, center, chan),
+            sample_channel(&casa_psf, center, center, chan),
+            1.0e-3,
+            1.0e-3,
+            &format!("n2403 multifield wproject psf center[chan={chan}]"),
+        );
+
+        for (x, y) in [
+            (center, center),
+            (center.saturating_sub(1), center),
+            (center, center.saturating_sub(1)),
+        ] {
+            assert_close(
+                sample_channel(&rust_residual, x, y, chan),
+                sample_channel(&casa_residual, x, y, chan),
+                0.1,
+                0.2,
+                &format!("n2403 multifield wproject residual[{x},{y},chan={chan}]"),
+            );
+        }
+
+        let stats = plane_difference_stats(&rust_residual_plane, &casa_residual_plane);
+        let rust_peak_scale = rust_residual_plane
+            .iter()
+            .fold(0.0f32, |best, value| best.max(value.abs()));
+        let casa_peak_scale = casa_residual_plane
+            .iter()
+            .fold(0.0f32, |best, value| best.max(value.abs()));
+        let peak_scale = rust_peak_scale.max(casa_peak_scale).max(1.0);
+        assert!(
+            stats.rms / peak_scale <= 0.03,
+            "n2403 multifield wproject residual RMS diff too large at chan={chan}: {stats:?}"
+        );
+        assert!(
+            stats.max_abs / peak_scale <= 0.12,
+            "n2403 multifield wproject residual max diff too large at chan={chan}: {stats:?}"
+        );
+        let rust_sumwt_chan = sample_scalar_channel(&rust_sumwt, chan);
+        let casa_sumwt_chan = sample_scalar_channel(&casa_sumwt, chan);
+        assert!(
+            rust_sumwt_chan.is_finite() && rust_sumwt_chan > 0.0,
+            "expected positive Rust n2403 multifield wproject sumwt[chan={chan}]"
+        );
+        assert!(
+            casa_sumwt_chan.is_finite() && casa_sumwt_chan > 0.0,
+            "expected positive CASA n2403 multifield wproject sumwt[chan={chan}]"
+        );
+    }
+}
+
+#[test]
 fn multiscale_products_track_casa_on_n2403() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/n2403.short.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 127,
@@ -5006,6 +8201,128 @@ fn stage_measurement_set(ms_path: &Path, temp_root: &Path, name: &str) -> Result
     Ok(staged)
 }
 
+fn promote_staged_measurement_set_to_multifield(
+    staged_ms_path: &Path,
+    field_ids: &[i32],
+    ra_offset_rad: Option<f64>,
+) -> Result<(), String> {
+    if field_ids.len() <= 1 {
+        return Ok(());
+    }
+    let casa = discover_casa_python().ok_or_else(skip_reason)?;
+    let field_ids_text = field_ids
+        .iter()
+        .map(|field_id| field_id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let script = r#"
+import os
+import numpy as np
+from casatools import table
+
+ms_path = os.environ["CASA_VIS"]
+field_ids = [int(value) for value in os.environ["CASA_FIELD_IDS"].split(",") if value]
+ra_offset_rad = float(os.environ["CASA_RA_OFFSET_RAD"])
+if len(field_ids) < 2:
+    raise RuntimeError("need at least two field ids for multi-field staging")
+if field_ids[0] != 0:
+    raise RuntimeError(f"expected first field id 0 for staged multi-field parity, found {field_ids[0]}")
+
+tb = table()
+field_path = os.path.join(ms_path, "FIELD")
+tb.open(field_path, nomodify=False)
+field_colnames = tb.colnames()
+if tb.nrows() < 1:
+    raise RuntimeError("FIELD table is empty")
+row0 = {name: tb.getcell(name, 0) for name in field_colnames}
+ra0 = float(row0["PHASE_DIR"][0][0])
+dec0 = float(row0["PHASE_DIR"][1][0])
+required_rows = max(field_ids) + 1
+if tb.nrows() < required_rows:
+    tb.addrows(required_rows - tb.nrows())
+for field_id in field_ids[1:]:
+    for name, value in row0.items():
+        tb.putcell(name, field_id, value)
+    if ra_offset_rad != 0.0:
+        shifted_ra = ra0 + ra_offset_rad * field_id
+        for dir_name in ["PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"]:
+            if dir_name not in field_colnames:
+                continue
+            direction = tb.getcell(dir_name, field_id)
+            direction[0][0] = shifted_ra
+            tb.putcell(dir_name, field_id, direction)
+    if "NAME" in field_colnames:
+        tb.putcell("NAME", field_id, f"FIELD{field_id}")
+tb.close()
+
+tb.open(os.path.join(ms_path, "DATA_DESCRIPTION"))
+ddid_to_spw = [int(value) for value in tb.getcol("SPECTRAL_WINDOW_ID").tolist()]
+tb.close()
+
+tb.open(os.path.join(ms_path, "SPECTRAL_WINDOW"))
+chan_freq_by_spw = [np.asarray(tb.getcell("CHAN_FREQ", row), dtype=np.float64) for row in range(tb.nrows())]
+tb.close()
+
+tb.open(ms_path, nomodify=False)
+main_field_ids = tb.getcol("FIELD_ID")
+if len(main_field_ids) < len(field_ids):
+    raise RuntimeError(
+        f"need at least {len(field_ids)} MAIN rows to split across fields, found {len(main_field_ids)}"
+    )
+for row in range(len(main_field_ids)):
+    main_field_ids[row] = field_ids[row % len(field_ids)]
+tb.putcol("FIELD_ID", main_field_ids)
+if ra_offset_rad != 0.0:
+    c_m_per_s = 299792458.0
+    ddids = tb.getcol("DATA_DESC_ID")
+    for row, field_id in enumerate(main_field_ids.tolist()):
+        field_id = int(field_id)
+        if field_id == 0:
+            continue
+        shifted_ra = ra0 + ra_offset_rad * field_id
+        delta_ra = shifted_ra - ra0
+        l = np.cos(dec0) * np.sin(delta_ra)
+        m = np.sin(dec0) * np.cos(dec0) - np.cos(dec0) * np.sin(dec0) * np.cos(delta_ra)
+        n = np.sin(dec0) * np.sin(dec0) + np.cos(dec0) * np.cos(dec0) * np.cos(delta_ra)
+        uvw = np.asarray(tb.getcell("UVW", row), dtype=np.float64)
+        spw_id = ddid_to_spw[int(ddids[row])]
+        chan_freq_hz = chan_freq_by_spw[spw_id]
+        phase = 2.0 * np.pi * (
+            (uvw[0] * chan_freq_hz / c_m_per_s) * l
+            + (uvw[1] * chan_freq_hz / c_m_per_s) * m
+            + (uvw[2] * chan_freq_hz / c_m_per_s) * (n - 1.0)
+        )
+        rotation = np.exp(1j * phase).astype(np.complex64)
+        data = tb.getcell("DATA", row)
+        tb.putcell("DATA", row, data * rotation[np.newaxis, :])
+tb.close()
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", staged_ms_path)
+        .env("CASA_FIELD_IDS", field_ids_text)
+        .env(
+            "CASA_RA_OFFSET_RAD",
+            ra_offset_rad.unwrap_or(0.0).to_string(),
+        )
+        .output()
+        .map_err(|error| {
+            format!(
+                "spawn CASA python to promote {} to multi-field: {error}",
+                staged_ms_path.display()
+            )
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "promote {} to multi-field failed: {}",
+            staged_ms_path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
 fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<(), String> {
     let _ = (casa_source_root(), casacore_source_root());
     run_from_config(&CliConfig {
@@ -5013,7 +8330,9 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         imagename: prefix.to_path_buf(),
         imsize: 128,
         cell_arcsec: 30.0,
-        field: Some(0),
+        field_ids: Some(vec![0]),
+        phasecenter_field: Some(0),
+        phasecenter: None,
         ddid: None,
         spw: Some(0),
         spw_selector: None,
@@ -5028,6 +8347,7 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
         deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 4,
@@ -5042,6 +8362,7 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
+        w_project_planes: None,
         dirty_only,
         write_preview_pngs: false,
     })
@@ -5086,18 +8407,121 @@ fn run_rust_imager_case_with_solver(
     deconvolver: Deconvolver,
     multiscale_scales: &[f32],
 ) -> Result<(), String> {
+    run_rust_imager_case_with_solver_and_w_term_mode(
+        case,
+        ms_path,
+        prefix,
+        dirty_only,
+        niter,
+        deconvolver,
+        multiscale_scales,
+        WTermMode::None,
+        None,
+    )
+}
+
+fn run_rust_imager_case_with_w_term_mode(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    dirty_only: bool,
+    niter: usize,
+    w_term_mode: WTermMode,
+    w_project_planes: Option<usize>,
+) -> Result<(), String> {
+    run_rust_imager_case_with_solver_and_w_term_mode(
+        case,
+        ms_path,
+        prefix,
+        dirty_only,
+        niter,
+        Deconvolver::Hogbom,
+        &[],
+        w_term_mode,
+        w_project_planes,
+    )
+}
+
+fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    dirty_only: bool,
+    niter: usize,
+    explicit_phasecenter: &str,
+    w_term_mode: WTermMode,
+    w_project_planes: Option<usize>,
+) -> Result<(), String> {
     let _ = (casa_source_root(), casacore_source_root());
     run_from_config(&CliConfig {
         ms: ms_path.to_path_buf(),
         imagename: prefix.to_path_buf(),
         imsize: case.imsize,
         cell_arcsec: case.cell_arcsec,
-        field: Some(case.field),
+        field_ids: (!case.field_ids.is_empty()).then(|| case.field_ids.to_vec()),
+        phasecenter_field: None,
+        phasecenter: Some(explicit_phasecenter.to_string()),
         ddid: None,
         spw: Some(case.spw),
         spw_selector: None,
-        channel_start: Some(case.channel_start),
-        channel_count: Some(case.channel_count),
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
+        datacolumn: Some("DATA".to_string()),
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Mfs,
+        cube_axis: casa_ms::CubeAxisConfig::default(),
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter,
+        gain: 0.1,
+        threshold_jy: 0.0,
+        nsigma: 0.0,
+        psf_cutoff: 0.35,
+        minor_cycle_length: niter.max(1),
+        cyclefactor: 1.0,
+        min_psf_fraction: 0.1,
+        max_psf_fraction: 0.8,
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode,
+        w_project_planes,
+        dirty_only,
+        write_preview_pngs: false,
+    })
+    .map(|_| ())
+}
+
+fn run_rust_imager_case_with_solver_and_w_term_mode(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    dirty_only: bool,
+    niter: usize,
+    deconvolver: Deconvolver,
+    multiscale_scales: &[f32],
+    w_term_mode: WTermMode,
+    w_project_planes: Option<usize>,
+) -> Result<(), String> {
+    let _ = (casa_source_root(), casacore_source_root());
+    run_from_config(&CliConfig {
+        ms: ms_path.to_path_buf(),
+        imagename: prefix.to_path_buf(),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: None,
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Mfs,
@@ -5107,6 +8531,7 @@ fn run_rust_imager_case_with_solver(
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
         deconvolver,
+        nterms: 1,
         multiscale_scales: multiscale_scales.to_vec(),
         small_scale_bias: 0.0,
         niter,
@@ -5120,7 +8545,61 @@ fn run_rust_imager_case_with_solver(
         max_psf_fraction: 0.8,
         mask_boxes: Vec::new(),
         mask_image: None,
+        w_term_mode,
+        w_project_planes,
+        dirty_only,
+        write_preview_pngs: false,
+    })
+    .map(|_| ())
+}
+
+fn run_rust_imager_case_with_mtmfs(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    dirty_only: bool,
+    niter: usize,
+    nterms: usize,
+) -> Result<(), String> {
+    let _ = (casa_source_root(), casacore_source_root());
+    run_from_config(&CliConfig {
+        ms: ms_path.to_path_buf(),
+        imagename: prefix.to_path_buf(),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: None,
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
+        datacolumn: Some("DATA".to_string()),
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Mfs,
+        cube_axis: casa_ms::CubeAxisConfig::default(),
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Mtmfs,
+        nterms,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter,
+        gain: 0.1,
+        threshold_jy: 0.0,
+        nsigma: 0.0,
+        psf_cutoff: 0.35,
+        minor_cycle_length: niter.max(1),
+        cyclefactor: 1.0,
+        min_psf_fraction: 0.1,
+        max_psf_fraction: 0.8,
+        mask_boxes: Vec::new(),
+        mask_image: None,
         w_term_mode: WTermMode::None,
+        w_project_planes: None,
         dirty_only,
         write_preview_pngs: false,
     })
@@ -5132,29 +8611,25 @@ fn run_rust_imager_cube_dirty(
     ms_path: &Path,
     prefix: &Path,
 ) -> Result<RunSummary, String> {
-    run_rust_imager_spectral_cube_dirty(case, ms_path, prefix, casars_imager::SpectralMode::Cube)
-}
-
-fn run_rust_imager_cubedata_dirty(
-    case: ParityCase<'_>,
-    ms_path: &Path,
-    prefix: &Path,
-) -> Result<RunSummary, String> {
-    run_rust_imager_spectral_cube_dirty(
+    run_rust_imager_cube_dirty_with_w_term_mode(
         case,
         ms_path,
         prefix,
-        casars_imager::SpectralMode::Cubedata,
+        casars_imager::SpectralMode::Cube,
+        WTermMode::None,
+        None,
     )
 }
 
-fn run_rust_imager_spectral_cube_dirty(
+fn run_rust_imager_cube_dirty_with_w_term_mode(
     case: ParityCase<'_>,
     ms_path: &Path,
     prefix: &Path,
     spectral_mode: casars_imager::SpectralMode,
+    w_term_mode: WTermMode,
+    w_project_planes: Option<usize>,
 ) -> Result<RunSummary, String> {
-    run_rust_imager_cube_case_with_solver(
+    run_rust_imager_cube_case_with_solver_and_w_term_mode(
         case,
         ms_path,
         prefix,
@@ -5167,6 +8642,8 @@ fn run_rust_imager_spectral_cube_dirty(
         2,
         spectral_mode,
         CubeWeightingOptions::default(),
+        w_term_mode,
+        w_project_planes,
     )
 }
 
@@ -5180,7 +8657,7 @@ fn run_rust_imager_cube_case_with_deconvolver(
     threshold_jy: f32,
     minor_cycle_length: usize,
 ) -> Result<RunSummary, String> {
-    run_rust_imager_cube_case_with_solver(
+    run_rust_imager_cube_case_with_solver_and_w_term_mode(
         case,
         ms_path,
         prefix,
@@ -5193,6 +8670,8 @@ fn run_rust_imager_cube_case_with_deconvolver(
         minor_cycle_length,
         casars_imager::SpectralMode::Cube,
         CubeWeightingOptions::default(),
+        WTermMode::None,
+        None,
     )
 }
 
@@ -5216,7 +8695,9 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         imagename: prefix.to_path_buf(),
         imsize: case.imsize,
         cell_arcsec: case.cell_arcsec,
-        field: Some(case.field),
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
         ddid: None,
         spw: Some(case.spw),
         spw_selector: None,
@@ -5231,6 +8712,7 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         uv_taper: parse_rust_uv_taper(weighting_options.uvtaper)?,
         restoring_beam_mode: weighting_options.restoring_beam_mode,
         deconvolver,
+        nterms: 1,
         multiscale_scales: multiscale_scales.to_vec(),
         small_scale_bias,
         niter,
@@ -5245,6 +8727,7 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
+        w_project_planes: None,
         dirty_only,
         write_preview_pngs: false,
     })
@@ -5264,18 +8747,54 @@ fn run_rust_imager_cube_case_with_solver(
     spectral_mode: casars_imager::SpectralMode,
     weighting_options: CubeWeightingOptions<'_>,
 ) -> Result<RunSummary, String> {
+    run_rust_imager_cube_case_with_solver_and_w_term_mode(
+        case,
+        ms_path,
+        prefix,
+        dirty_only,
+        niter,
+        deconvolver,
+        multiscale_scales,
+        small_scale_bias,
+        threshold_jy,
+        minor_cycle_length,
+        spectral_mode,
+        weighting_options,
+        WTermMode::None,
+        None,
+    )
+}
+
+fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    dirty_only: bool,
+    niter: usize,
+    deconvolver: Deconvolver,
+    multiscale_scales: &[f32],
+    small_scale_bias: f32,
+    threshold_jy: f32,
+    minor_cycle_length: usize,
+    spectral_mode: casars_imager::SpectralMode,
+    weighting_options: CubeWeightingOptions<'_>,
+    w_term_mode: WTermMode,
+    w_project_planes: Option<usize>,
+) -> Result<RunSummary, String> {
     let _ = (casa_source_root(), casacore_source_root());
     run_from_config(&CliConfig {
         ms: ms_path.to_path_buf(),
         imagename: prefix.to_path_buf(),
         imsize: case.imsize,
         cell_arcsec: case.cell_arcsec,
-        field: Some(case.field),
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
         ddid: None,
         spw: Some(case.spw),
         spw_selector: None,
-        channel_start: Some(case.channel_start),
-        channel_count: Some(case.channel_count),
+        channel_start: case.channel_start_option(),
+        channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         correlation: case.correlation.map(str::to_string),
         spectral_mode,
@@ -5286,7 +8805,7 @@ fn run_rust_imager_cube_case_with_solver(
             },
             outframe: FrequencyRef::LSRK,
             veltype: casa_types::measures::doppler::DopplerRef::RADIO,
-            interpolation: casa_ms::CubeInterpolation::Nearest,
+            interpolation: casa_ms::CubeInterpolation::Linear,
             rest_frequency_hz: Some(1.25e9),
             start: Some(casa_ms::CubeAxisValue::Channel(case.channel_start as i32)),
             width: Some(casa_ms::CubeAxisValue::Channel(1)),
@@ -5296,6 +8815,7 @@ fn run_rust_imager_cube_case_with_solver(
         uv_taper: parse_rust_uv_taper(weighting_options.uvtaper)?,
         restoring_beam_mode: weighting_options.restoring_beam_mode,
         deconvolver,
+        nterms: 1,
         multiscale_scales: multiscale_scales.to_vec(),
         small_scale_bias,
         niter,
@@ -5309,7 +8829,8 @@ fn run_rust_imager_cube_case_with_solver(
         max_psf_fraction: 0.8,
         mask_boxes: Vec::new(),
         mask_image: None,
-        w_term_mode: WTermMode::None,
+        w_term_mode,
+        w_project_planes,
         dirty_only,
         write_preview_pngs: false,
     })
@@ -5368,6 +8889,28 @@ fn run_rust_imager_cube_case_with_options_and_weighting(
     niter: usize,
     weighting_options: CubeWeightingOptions<'_>,
 ) -> Result<RunSummary, String> {
+    run_rust_imager_spectral_cube_case_with_options_and_weighting(
+        case,
+        ms_path,
+        prefix,
+        casars_imager::SpectralMode::Cube,
+        options,
+        dirty_only,
+        niter,
+        weighting_options,
+    )
+}
+
+fn run_rust_imager_spectral_cube_case_with_options_and_weighting(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    spectral_mode: casars_imager::SpectralMode,
+    options: CubeCaseOptions<'_>,
+    dirty_only: bool,
+    niter: usize,
+    weighting_options: CubeWeightingOptions<'_>,
+) -> Result<RunSummary, String> {
     let veltype = options
         .veltype
         .parse::<casa_types::measures::doppler::DopplerRef>()
@@ -5387,7 +8930,9 @@ fn run_rust_imager_cube_case_with_options_and_weighting(
         imagename: prefix.to_path_buf(),
         imsize: case.imsize,
         cell_arcsec: case.cell_arcsec,
-        field: Some(case.field),
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
         ddid: None,
         spw: Some(case.spw),
         spw_selector: Some(options.spw_selector.to_string()),
@@ -5395,9 +8940,12 @@ fn run_rust_imager_cube_case_with_options_and_weighting(
         channel_count: Some(options.nchan),
         datacolumn: Some("DATA".to_string()),
         correlation: case.correlation.map(str::to_string),
-        spectral_mode: casars_imager::SpectralMode::Cube,
+        spectral_mode,
         cube_axis: casa_ms::CubeAxisConfig {
-            specmode: casa_ms::CubeSpecMode::Cube,
+            specmode: match spectral_mode {
+                casars_imager::SpectralMode::Cubedata => casa_ms::CubeSpecMode::Cubedata,
+                _ => casa_ms::CubeSpecMode::Cube,
+            },
             outframe,
             veltype,
             interpolation,
@@ -5420,6 +8968,7 @@ fn run_rust_imager_cube_case_with_options_and_weighting(
         uv_taper: parse_rust_uv_taper(weighting_options.uvtaper)?,
         restoring_beam_mode: weighting_options.restoring_beam_mode,
         deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter,
@@ -5434,6 +8983,7 @@ fn run_rust_imager_cube_case_with_options_and_weighting(
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
+        w_project_planes: None,
         dirty_only,
         write_preview_pngs: false,
     })
@@ -5497,6 +9047,72 @@ tclean(
     Ok(())
 }
 
+fn run_casa_mstransform_default_cube_case(
+    ms_path: &Path,
+    outputvis_path: &Path,
+    case: ParityCase<'_>,
+    interpolation: &str,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA mstransform");
+    let casa = discover_casa_python().ok_or_else(skip_reason)?;
+    let outputvis_text = outputvis_path
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 outputvis path {}", outputvis_path.display()))?;
+    let script = r#"
+import os
+import shutil
+from casatasks import mstransform
+
+outputvis = os.environ["CASA_OUTPUTVIS"]
+if os.path.exists(outputvis):
+    shutil.rmtree(outputvis)
+
+mstransform(
+    vis=os.environ["CASA_VIS"],
+    outputvis=outputvis,
+    field=os.environ["CASA_FIELD"],
+    phasecenter=int(os.environ["CASA_PHASECENTER"]),
+    spw=os.environ["CASA_SPW"],
+    datacolumn="DATA",
+    keepflags=True,
+    usewtspectrum=True,
+    regridms=True,
+    mode="channel",
+    nchan=int(os.environ["CASA_NCHAN"]),
+    start=int(os.environ["CASA_START"]),
+    width=1,
+    interpolation=os.environ["CASA_INTERPOLATION"],
+    outframe="LSRK",
+    veltype="radio",
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_OUTPUTVIS", outputvis_text)
+        .env("CASA_FIELD", case.field_selector())
+        .env(
+            "CASA_PHASECENTER",
+            case.default_phasecenter_field().to_string(),
+        )
+        .env("CASA_SPW", case.spw.to_string())
+        .env("CASA_NCHAN", case.channel_count.to_string())
+        .env("CASA_START", case.channel_start.to_string())
+        .env("CASA_INTERPOLATION", interpolation)
+        .output()
+        .map_err(|error| format!("spawn casa mstransform: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "casa mstransform failed with status {}:\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
 fn run_casa_tclean_case(
     case: ParityCase<'_>,
     ms_path: &Path,
@@ -5514,6 +9130,371 @@ fn run_casa_tclean_case_with_deconvolver(
     deconvolver: &str,
 ) -> Result<(), String> {
     run_casa_tclean_case_with_solver(case, ms_path, prefix, niter, deconvolver, &[])
+}
+
+fn run_casa_tclean_case_with_mtmfs(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    niter: usize,
+    nterms: usize,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field=os.environ["CASA_FIELD"],
+    phasecenter=int(os.environ["CASA_PHASECENTER"]),
+    spw=os.environ["CASA_SPW"],
+    stokes=os.environ["CASA_STOKES"],
+    specmode="mfs",
+    gridder="standard",
+    weighting=os.environ["CASA_WEIGHTING"],
+    deconvolver="mtmfs",
+    nterms=int(os.environ["CASA_NTERMS"]),
+    imsize=int(os.environ["CASA_IMSIZE"]),
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
+    niter=int(os.environ["CASA_NITER"]),
+    cycleniter=int(os.environ["CASA_CYCLENITER"]),
+    gain=0.1,
+    threshold="0Jy",
+    cyclefactor=float(os.environ["CASA_CYCLEFACTOR"]),
+    minpsffraction=float(os.environ["CASA_MINPSFFRACTION"]),
+    maxpsffraction=float(os.environ["CASA_MAXPSFFRACTION"]),
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    usemask="user",
+    mask="",
+    savemodel="none",
+    psfcutoff=0.35,
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_FIELD", case.field_selector())
+        .env(
+            "CASA_PHASECENTER",
+            case.default_phasecenter_field().to_string(),
+        )
+        .env("CASA_SPW", case.cube_channel_spw_selector())
+        .env("CASA_STOKES", case.stokes())
+        .env("CASA_WEIGHTING", case.casa_weighting())
+        .env("CASA_NTERMS", nterms.to_string())
+        .env("CASA_IMSIZE", case.imsize.to_string())
+        .env("CASA_CELL_ARCSEC", case.cell_arcsec.to_string())
+        .env("CASA_NITER", niter.to_string())
+        .env("CASA_CYCLENITER", niter.max(1).to_string())
+        .env("CASA_CYCLEFACTOR", "1.0")
+        .env("CASA_MINPSFFRACTION", "0.1")
+        .env("CASA_MAXPSFFRACTION", "0.8")
+        .output()
+        .map_err(|error| format!("spawn casa tclean: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+fn run_casa_tclean_case_with_wproject(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    niter: usize,
+    wprojplanes: usize,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field=os.environ["CASA_FIELD"],
+    phasecenter=int(os.environ["CASA_PHASECENTER"]),
+    spw=os.environ["CASA_SPW"],
+    stokes=os.environ["CASA_STOKES"],
+    specmode="mfs",
+    gridder="wproject",
+    wprojplanes=int(os.environ["CASA_WPROJPLANES"]),
+    weighting=os.environ["CASA_WEIGHTING"],
+    deconvolver="hogbom",
+    imsize=int(os.environ["CASA_IMSIZE"]),
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
+    niter=int(os.environ["CASA_NITER"]),
+    robust=float(os.environ["CASA_ROBUST"]),
+    gain=0.1,
+    threshold="0Jy",
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    pblimit=-0.1,
+    usemask="user",
+    mask="",
+    savemodel="none",
+    psfcutoff=0.35,
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_FIELD", case.field_selector())
+        .env(
+            "CASA_PHASECENTER",
+            case.default_phasecenter_field().to_string(),
+        )
+        .env("CASA_SPW", case.cube_channel_spw_selector())
+        .env("CASA_STOKES", case.stokes())
+        .env("CASA_WEIGHTING", case.casa_weighting())
+        .env("CASA_ROBUST", case.robust().unwrap_or(0.5).to_string())
+        .env("CASA_IMSIZE", case.imsize.to_string())
+        .env("CASA_CELL_ARCSEC", case.cell_arcsec.to_string())
+        .env("CASA_NITER", niter.to_string())
+        .env("CASA_WPROJPLANES", wprojplanes.to_string())
+        .output()
+        .map_err(|error| format!("spawn casa tclean: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+fn run_casa_tclean_case_with_wproject_and_explicit_phasecenter(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    niter: usize,
+    wprojplanes: usize,
+    explicit_phasecenter: &str,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field=os.environ["CASA_FIELD"],
+    phasecenter=os.environ["CASA_PHASECENTER"],
+    spw=os.environ["CASA_SPW"],
+    stokes=os.environ["CASA_STOKES"],
+    specmode="mfs",
+    gridder="wproject",
+    wprojplanes=int(os.environ["CASA_WPROJPLANES"]),
+    weighting=os.environ["CASA_WEIGHTING"],
+    deconvolver="hogbom",
+    imsize=int(os.environ["CASA_IMSIZE"]),
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
+    niter=int(os.environ["CASA_NITER"]),
+    robust=float(os.environ["CASA_ROBUST"]),
+    gain=0.1,
+    threshold="0Jy",
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    pblimit=-0.1,
+    usemask="user",
+    mask="",
+    savemodel="none",
+    psfcutoff=0.35,
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_FIELD", case.field_selector())
+        .env("CASA_PHASECENTER", explicit_phasecenter)
+        .env("CASA_SPW", case.cube_channel_spw_selector())
+        .env("CASA_STOKES", case.stokes())
+        .env("CASA_WEIGHTING", case.casa_weighting())
+        .env("CASA_ROBUST", case.robust().unwrap_or(0.5).to_string())
+        .env("CASA_IMSIZE", case.imsize.to_string())
+        .env("CASA_CELL_ARCSEC", case.cell_arcsec.to_string())
+        .env("CASA_NITER", niter.to_string())
+        .env("CASA_WPROJPLANES", wprojplanes.to_string())
+        .output()
+        .map_err(|error| format!("spawn casa tclean: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+fn run_casa_tclean_case_with_mosaic_and_explicit_phasecenter(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    niter: usize,
+    explicit_phasecenter: &str,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field=os.environ["CASA_FIELD"],
+    phasecenter=os.environ["CASA_PHASECENTER"],
+    spw=os.environ["CASA_SPW"],
+    stokes=os.environ["CASA_STOKES"],
+    specmode="mfs",
+    gridder="mosaic",
+    weighting=os.environ["CASA_WEIGHTING"],
+    deconvolver="hogbom",
+    imsize=int(os.environ["CASA_IMSIZE"]),
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
+    niter=int(os.environ["CASA_NITER"]),
+    robust=float(os.environ["CASA_ROBUST"]),
+    gain=0.1,
+    threshold="0Jy",
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    pblimit=0.1,
+    usemask="user",
+    mask="",
+    savemodel="none",
+    psfcutoff=0.35,
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_FIELD", case.field_selector())
+        .env("CASA_PHASECENTER", explicit_phasecenter)
+        .env("CASA_SPW", case.cube_channel_spw_selector())
+        .env("CASA_STOKES", case.stokes())
+        .env("CASA_WEIGHTING", case.casa_weighting())
+        .env("CASA_ROBUST", case.robust().unwrap_or(0.5).to_string())
+        .env("CASA_IMSIZE", case.imsize.to_string())
+        .env("CASA_CELL_ARCSEC", case.cell_arcsec.to_string())
+        .env("CASA_NITER", niter.to_string())
+        .output()
+        .map_err(|error| format!("spawn casa tclean: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+fn run_casa_tclean_case_with_mosaic(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    niter: usize,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field=os.environ["CASA_FIELD"],
+    phasecenter=int(os.environ["CASA_PHASECENTER"]),
+    spw=os.environ["CASA_SPW"],
+    stokes=os.environ["CASA_STOKES"],
+    specmode="mfs",
+    gridder="mosaic",
+    weighting=os.environ["CASA_WEIGHTING"],
+    deconvolver="hogbom",
+    imsize=int(os.environ["CASA_IMSIZE"]),
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
+    niter=int(os.environ["CASA_NITER"]),
+    robust=float(os.environ["CASA_ROBUST"]),
+    gain=0.1,
+    threshold="0Jy",
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    pblimit=0.1,
+    usemask="user",
+    mask="",
+    savemodel="none",
+    psfcutoff=0.35,
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_FIELD", case.field_selector())
+        .env(
+            "CASA_PHASECENTER",
+            case.default_phasecenter_field().to_string(),
+        )
+        .env("CASA_SPW", case.cube_channel_spw_selector())
+        .env("CASA_STOKES", case.stokes())
+        .env("CASA_WEIGHTING", case.casa_weighting())
+        .env("CASA_ROBUST", case.robust().unwrap_or(0.5).to_string())
+        .env("CASA_IMSIZE", case.imsize.to_string())
+        .env("CASA_CELL_ARCSEC", case.cell_arcsec.to_string())
+        .env("CASA_NITER", niter.to_string())
+        .output()
+        .map_err(|error| format!("spawn casa tclean: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
 }
 
 fn run_casa_tclean_case_with_solver(
@@ -5548,19 +9529,26 @@ tclean(
     imagename=os.environ["CASA_IMAGENAME"],
     datacolumn="data",
     field=os.environ["CASA_FIELD"],
+    phasecenter=int(os.environ["CASA_PHASECENTER"]),
     spw=os.environ["CASA_SPW"],
     stokes=os.environ["CASA_STOKES"],
     specmode="mfs",
     gridder="standard",
     weighting=os.environ["CASA_WEIGHTING"],
     deconvolver=os.environ["CASA_DECONVOLVER"],
+    nterms=1,
     scales=[] if os.environ["CASA_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_SCALES"].split(",")],
+    smallscalebias=float(os.environ["CASA_SMALLSCALEBIAS"]),
     imsize=int(os.environ["CASA_IMSIZE"]),
-    cell=f'{{os.environ["CASA_CELL_ARCSEC"]}}arcsec',
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
     niter=int(os.environ["CASA_NITER"]),
+    cycleniter=int(os.environ["CASA_CYCLENITER"]),
     robust=float(os.environ["CASA_ROBUST"]),
     gain=0.1,
     threshold="0Jy",
+    cyclefactor=float(os.environ["CASA_CYCLEFACTOR"]),
+    minpsffraction=float(os.environ["CASA_MINPSFFRACTION"]),
+    maxpsffraction=float(os.environ["CASA_MAXPSFFRACTION"]),
     restoration=True,
     calcpsf=True,
     calcres=True,
@@ -5579,16 +9567,25 @@ tclean(
         .arg(script)
         .env("CASA_VIS", ms_path)
         .env("CASA_IMAGENAME", prefix_text)
-        .env("CASA_FIELD", case.field.to_string())
+        .env("CASA_FIELD", case.field_selector())
+        .env(
+            "CASA_PHASECENTER",
+            case.default_phasecenter_field().to_string(),
+        )
         .env("CASA_SPW", case.cube_channel_spw_selector())
         .env("CASA_STOKES", case.stokes())
         .env("CASA_WEIGHTING", case.casa_weighting())
         .env("CASA_DECONVOLVER", deconvolver)
         .env("CASA_SCALES", scales)
+        .env("CASA_SMALLSCALEBIAS", "0.0")
         .env("CASA_ROBUST", case.robust().unwrap_or(0.5).to_string())
         .env("CASA_IMSIZE", case.imsize.to_string())
         .env("CASA_CELL_ARCSEC", case.cell_arcsec.to_string())
         .env("CASA_NITER", niter.to_string())
+        .env("CASA_CYCLENITER", niter.max(1).to_string())
+        .env("CASA_CYCLEFACTOR", "1.0")
+        .env("CASA_MINPSFFRACTION", "0.1")
+        .env("CASA_MAXPSFFRACTION", "0.8")
         .output()
         .map_err(|error| format!("spawn casa tclean: {error}"))?;
     if !output.status.success() {
@@ -5765,6 +9762,43 @@ fn run_casa_tclean_cube_dirty_case(
     run_casa_tclean_cube_case(case, ms_path, prefix, 0, "hogbom", start, width, "0Jy").map(|_| ())
 }
 
+fn run_casa_tclean_cube_dirty_case_with_wproject(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    start: CubeAxisStep<'_>,
+    width: CubeAxisStep<'_>,
+    wprojplanes: usize,
+) -> Result<(), String> {
+    run_casa_tclean_cube_case_with_options_internal(
+        case,
+        ms_path,
+        prefix,
+        0,
+        "hogbom",
+        &[],
+        0.0,
+        "cube",
+        false,
+        &[],
+        "",
+        CubeCaseOptions {
+            spw_selector: &case.cube_channel_spw_selector(),
+            nchan: case.channel_count,
+            start: Some(start),
+            width: Some(width),
+            outframe: "LSRK",
+            interpolation: "nearest",
+            veltype: "radio",
+            restfreq: "1.25GHz",
+        },
+        "0Jy",
+        "wproject",
+        Some(wprojplanes),
+    )
+    .map(|_| ())
+}
+
 fn run_casa_tclean_cube_case(
     case: ParityCase<'_>,
     ms_path: &Path,
@@ -5798,6 +9832,8 @@ fn run_casa_tclean_cube_case(
             restfreq: "1.25GHz",
         },
         threshold,
+        "standard",
+        None,
     )
 }
 
@@ -5836,6 +9872,8 @@ fn run_casa_tclean_cube_case_with_solver(
             restfreq: "1.25GHz",
         },
         threshold,
+        "standard",
+        None,
     )
 }
 
@@ -5864,6 +9902,8 @@ fn run_casa_tclean_cube_case_with_options(
         "",
         options,
         threshold,
+        "standard",
+        None,
     )
 }
 
@@ -5961,6 +10001,7 @@ ret = tclean(
     uvtaper={uvtaper_literal},
     restoringbeam=os.environ["CASA_RESTORINGBEAM"],
     deconvolver=os.environ["CASA_DECONVOLVER"],
+    nterms=1,
     scales=[] if os.environ["CASA_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_SCALES"].split(",")],
     smallscalebias=float(os.environ["CASA_SMALLSCALEBIAS"]),
     imsize=int(os.environ["CASA_IMSIZE"]),
@@ -6004,7 +10045,7 @@ print(json.dumps({{
         .arg(script)
         .env("CASA_VIS", ms_path)
         .env("CASA_IMAGENAME", prefix_text)
-        .env("CASA_FIELD", case.field.to_string())
+        .env("CASA_FIELD", case.field_selector())
         .env("CASA_SPW", case.spw.to_string())
         .env("CASA_STOKES", case.stokes())
         .env("CASA_WEIGHTING", case.casa_weighting())
@@ -6072,6 +10113,8 @@ fn run_casa_tclean_cubedata_case_with_options(
         "",
         options,
         threshold,
+        "standard",
+        None,
     )
 }
 
@@ -6089,6 +10132,8 @@ fn run_casa_tclean_cube_case_with_options_internal(
     restoring_beam: &str,
     options: CubeCaseOptions<'_>,
     threshold: &str,
+    gridder: &str,
+    wprojplanes: Option<usize>,
 ) -> Result<Value, String> {
     let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
     let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
@@ -6126,7 +10171,10 @@ fn run_casa_tclean_cube_case_with_options_internal(
                 .join(", ")
         )
     };
-    let phasecenter_literal = case.field.to_string();
+    let phasecenter_literal = case.default_phasecenter_field().to_string();
+    let wprojplanes_literal = wprojplanes
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "0".to_string());
     let script = format!(
         r#"
 import os
@@ -6150,7 +10198,8 @@ ret = tclean(
     veltype=os.environ["CASA_VELTYPE"],
     outframe=os.environ["CASA_OUTFRAME"],
     restfreq=[os.environ["CASA_RESTFREQ"]],
-    gridder="standard",
+    gridder=os.environ["CASA_GRIDDER"],
+    wprojplanes=int(os.environ["CASA_WPROJPLANES"]),
     weighting=os.environ["CASA_WEIGHTING"],
     robust=float(os.environ["CASA_ROBUST"]),
     perchanweightdensity=os.environ["CASA_PERCHANWEIGHTDENSITY"] == "true",
@@ -6158,6 +10207,7 @@ ret = tclean(
     restoringbeam=os.environ["CASA_RESTORINGBEAM"],
     phasecenter={phasecenter_literal},
     deconvolver=os.environ["CASA_DECONVOLVER"],
+    nterms=1,
     scales=[] if os.environ["CASA_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_SCALES"].split(",")],
     smallscalebias=float(os.environ["CASA_SMALLSCALEBIAS"]),
     imsize=int(os.environ["CASA_IMSIZE"]),
@@ -6196,7 +10246,7 @@ print(json.dumps({{
         .arg(script)
         .env("CASA_VIS", ms_path)
         .env("CASA_IMAGENAME", prefix_text)
-        .env("CASA_FIELD", case.field.to_string())
+        .env("CASA_FIELD", case.field_selector())
         .env("CASA_SPW", options.spw_selector)
         .env("CASA_STOKES", case.stokes())
         .env("CASA_SPECMODE", specmode)
@@ -6216,6 +10266,8 @@ print(json.dumps({{
         .env("CASA_VELTYPE", options.veltype)
         .env("CASA_OUTFRAME", options.outframe)
         .env("CASA_RESTFREQ", options.restfreq)
+        .env("CASA_GRIDDER", gridder)
+        .env("CASA_WPROJPLANES", wprojplanes_literal)
         .env("CASA_DECONVOLVER", deconvolver)
         .env("CASA_SCALES", scales)
         .env("CASA_SMALLSCALEBIAS", small_scale_bias.to_string())
@@ -6391,6 +10443,206 @@ fn assert_dirty_case_matches(
     }
 }
 
+fn assert_clean_case_matches(
+    case: ParityCase<'_>,
+    rust_prefix: &Path,
+    casa_prefix: &Path,
+    model_abs_tol: f32,
+    model_rel_tol: f32,
+    image_abs_tol: f32,
+    image_rel_tol: f32,
+    residual_abs_tol: f32,
+    residual_rel_tol: f32,
+) {
+    compare_image_headers(
+        &rust_product(rust_prefix, "model"),
+        &casa_product(casa_prefix, "model"),
+        "Jy/pixel",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(rust_prefix, "image"),
+        &casa_product(casa_prefix, "image"),
+        "Jy/beam",
+        false,
+    );
+    compare_image_headers(
+        &rust_product(rust_prefix, "residual"),
+        &casa_product(casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+
+    let center = case.center();
+    let points = [
+        (center, center),
+        (center.saturating_sub(1), center),
+        (center, center.saturating_sub(1)),
+        (center.saturating_sub(4), center.saturating_sub(4)),
+    ];
+
+    let rust_model = read_image(&rust_product(rust_prefix, "model"));
+    let casa_model = read_image(&casa_product(casa_prefix, "model"));
+    for (x, y) in points {
+        assert_close(
+            sample(&rust_model, x, y),
+            sample(&casa_model, x, y),
+            model_abs_tol,
+            model_rel_tol,
+            &format!("model[{x},{y}]"),
+        );
+    }
+
+    let rust_image = read_image(&rust_product(rust_prefix, "image"));
+    let casa_image = read_image(&casa_product(casa_prefix, "image"));
+    for (x, y) in points {
+        assert_close(
+            sample(&rust_image, x, y),
+            sample(&casa_image, x, y),
+            image_abs_tol,
+            image_rel_tol,
+            &format!("image[{x},{y}]"),
+        );
+    }
+
+    let rust_residual = read_image(&rust_product(rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(casa_prefix, "residual"));
+    for (x, y) in points {
+        assert_close(
+            sample(&rust_residual, x, y),
+            sample(&casa_residual, x, y),
+            residual_abs_tol,
+            residual_rel_tol,
+            &format!("residual[{x},{y}]"),
+        );
+    }
+}
+
+fn assert_mtmfs_dirty_products_track_casa(rust_prefix: &Path, casa_prefix: &Path) {
+    for &(suffix, correlation_min, normalized_rms_max, normalized_max_max) in &[
+        ("psf.tt0", 0.995, 0.02, 0.10),
+        ("psf.tt1", 0.99, 0.05, 0.15),
+        ("psf.tt2", 0.99, 0.05, 0.15),
+        ("residual.tt0", 0.995, 0.02, 0.15),
+        ("residual.tt1", 0.99, 0.05, 0.20),
+    ] {
+        assert_mtmfs_image_pair(
+            rust_product(rust_prefix, suffix),
+            casa_product(casa_prefix, suffix),
+            correlation_min,
+            normalized_rms_max,
+            normalized_max_max,
+        );
+    }
+
+    for suffix in ["sumwt.tt0", "sumwt.tt1", "sumwt.tt2"] {
+        let rust_sumwt = read_scalar_image(&rust_product(rust_prefix, suffix));
+        let casa_sumwt = read_scalar_image(&casa_product(casa_prefix, suffix));
+        assert_close(rust_sumwt, casa_sumwt, 1.0, 0.10, suffix);
+    }
+}
+
+fn assert_mtmfs_clean_products_track_casa(rust_prefix: &Path, casa_prefix: &Path) {
+    for &(suffix, rms_max, max_abs_max) in
+        &[("model.tt0", 1.0e-3, 1.0e-2), ("model.tt1", 1.0e-3, 1.0e-2)]
+    {
+        let rust_model = read_image(&rust_product(rust_prefix, suffix));
+        let casa_model = read_image(&casa_product(casa_prefix, suffix));
+        let stats = image_difference_stats(&rust_model, &casa_model);
+        assert!(
+            stats.rms <= rms_max,
+            "{} RMS diff too large: {:?}",
+            suffix,
+            stats
+        );
+        assert!(
+            stats.max_abs <= max_abs_max,
+            "{} max diff too large: {:?}",
+            suffix,
+            stats
+        );
+    }
+
+    for &(suffix, correlation_min, normalized_rms_max, normalized_max_max) in &[
+        ("image.tt0", 0.95, 0.02, 0.15),
+        // `tt1` is low-amplitude on this tiny two-channel fixture, so
+        // normalized error is the stronger gate than raw correlation.
+        ("image.tt1", 0.90, 0.08, 0.30),
+        // Residual Taylor terms can be close to noise after a short clean,
+        // which makes correlation less stable than bounded normalized error.
+        ("residual.tt0", 0.95, 0.03, 0.20),
+        ("residual.tt1", 0.95, 0.10, 0.35),
+    ] {
+        assert_mtmfs_image_pair(
+            rust_product(rust_prefix, suffix),
+            casa_product(casa_prefix, suffix),
+            correlation_min,
+            normalized_rms_max,
+            normalized_max_max,
+        );
+    }
+
+    let casa_image_tt0 = read_image(&casa_product(casa_prefix, "image.tt0"));
+    let peak = peak_location(&casa_image_tt0).expect("casa mtmfs image.tt0 peak");
+    let rust_alpha = read_image(&rust_product(rust_prefix, "alpha"));
+    let casa_alpha = read_image(&casa_product(casa_prefix, "alpha"));
+    assert_close(
+        sample(&rust_alpha, peak.0, peak.1),
+        sample(&casa_alpha, peak.0, peak.1),
+        0.25,
+        0.25,
+        "alpha at image.tt0 peak",
+    );
+    let rust_alpha_error = read_image(&rust_product(rust_prefix, "alpha.error"));
+    let casa_alpha_error = read_image(&casa_product(casa_prefix, "alpha.error"));
+    assert_close(
+        sample(&rust_alpha_error, peak.0, peak.1),
+        sample(&casa_alpha_error, peak.0, peak.1),
+        0.25,
+        0.25,
+        "alpha.error at image.tt0 peak",
+    );
+}
+
+fn assert_mtmfs_image_pair(
+    rust_path: PathBuf,
+    casa_path: PathBuf,
+    correlation_min: f32,
+    normalized_rms_max: f32,
+    normalized_max_max: f32,
+) {
+    let rust_image = read_image(&rust_path);
+    let casa_image = read_image(&casa_path);
+    let stats = image_difference_stats(&rust_image, &casa_image);
+    let casa_peak = casa_image
+        .iter()
+        .map(|value| value.abs())
+        .fold(0.0f32, f32::max)
+        .max(1.0e-6);
+    let normalized_rms = stats.rms / casa_peak;
+    let normalized_max = stats.max_abs / casa_peak;
+    assert!(
+        stats.correlation >= correlation_min,
+        "{} correlation too low: {:?}",
+        rust_path.display(),
+        stats
+    );
+    assert!(
+        normalized_rms <= normalized_rms_max,
+        "{} normalized RMS diff too large: peak={} stats={:?}",
+        rust_path.display(),
+        casa_peak,
+        stats
+    );
+    assert!(
+        normalized_max <= normalized_max_max,
+        "{} normalized max diff too large: peak={} stats={:?}",
+        rust_path.display(),
+        casa_peak,
+        stats
+    );
+}
+
 fn summarize_image_in_casa(image_path: &Path) -> Result<Value, String> {
     let casa = discover_casa_python().ok_or_else(skip_reason)?;
     let script = r#"
@@ -6467,6 +10719,99 @@ print(json.dumps(values))
         .map_err(|error| format!("decode casa image samples: {error}"))
 }
 
+fn read_channel_plane_in_casa(image_path: &Path, channel: usize) -> Result<Array2<f32>, String> {
+    let casa = discover_casa_python().ok_or_else(skip_reason)?;
+    let script = r#"
+import json
+import os
+from casatools import image
+
+ia = image()
+if not ia.open(os.environ["CASA_IMAGE"]):
+    raise RuntimeError("failed to open image")
+shape = ia.shape()
+chan = int(os.environ["CASA_CHANNEL"])
+chunk = ia.getchunk(
+    blc=[0, 0, 0, chan],
+    trc=[shape[0] - 1, shape[1] - 1, 0, chan],
+)
+plane = chunk[:, :, 0, 0]
+ia.done()
+print(json.dumps(plane.tolist()))
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_IMAGE", image_path)
+        .env("CASA_CHANNEL", channel.to_string())
+        .output()
+        .map_err(|error| format!("spawn casa image plane reader: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let rows: Vec<Vec<f32>> = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode casa image plane: {error}"))?;
+    let nx = rows.len();
+    let ny = rows.first().map_or(0, Vec::len);
+    if ny == 0 || nx == 0 {
+        return Err("CASA image plane was empty".to_string());
+    }
+    if rows.iter().any(|row| row.len() != ny) {
+        return Err("CASA image plane rows had inconsistent lengths".to_string());
+    }
+    let data = rows.into_iter().flatten().collect::<Vec<_>>();
+    Array2::from_shape_vec((nx, ny), data)
+        .map_err(|error| format!("reshape CASA image plane: {error}"))
+}
+
+fn read_cube_planes_in_casa(image_path: &Path) -> Result<Vec<Array2<f32>>, String> {
+    let casa = discover_casa_python().ok_or_else(skip_reason)?;
+    let script = r#"
+import json
+import os
+from casatools import image
+
+ia = image()
+if not ia.open(os.environ["CASA_IMAGE"]):
+    raise RuntimeError("failed to open image")
+shape = ia.shape()
+chunk = ia.getchunk(
+    blc=[0, 0, 0, 0],
+    trc=[shape[0] - 1, shape[1] - 1, 0, shape[3] - 1],
+)
+planes = [chunk[:, :, 0, chan].tolist() for chan in range(shape[3])]
+ia.done()
+print(json.dumps(planes))
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_IMAGE", image_path)
+        .output()
+        .map_err(|error| format!("spawn casa cube reader: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let planes: Vec<Vec<Vec<f32>>> = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode casa cube planes: {error}"))?;
+    planes
+        .into_iter()
+        .map(|rows| {
+            let nx = rows.len();
+            let ny = rows.first().map_or(0, Vec::len);
+            if ny == 0 || nx == 0 {
+                return Err("CASA cube plane was empty".to_string());
+            }
+            if rows.iter().any(|row| row.len() != ny) {
+                return Err("CASA cube plane rows had inconsistent lengths".to_string());
+            }
+            let data = rows.into_iter().flatten().collect::<Vec<_>>();
+            Array2::from_shape_vec((nx, ny), data)
+                .map_err(|error| format!("reshape CASA cube plane: {error}"))
+        })
+        .collect()
+}
+
 fn compare_image_headers(
     rust_path: &Path,
     casa_path: &Path,
@@ -6508,6 +10853,155 @@ struct SpectralHeaderSummary {
     frequency_ref: String,
     reference_value_hz: f64,
     increment_hz: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CapturedCubeMinorCyclePlane {
+    residual: Array2<f32>,
+    model: Array2<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HogbomReplay2d {
+    iterdone: usize,
+    residual: Vec<f32>,
+}
+
+fn read_captured_cube_minor_cycle_plane(directory: &Path) -> CapturedCubeMinorCyclePlane {
+    let meta = fs::read_to_string(directory.join("meta.txt")).expect("read captured meta");
+    let mut nx = None::<usize>;
+    let mut ny = None::<usize>;
+    for line in meta.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key {
+            "nx" => nx = Some(value.parse().expect("captured nx")),
+            "ny" => ny = Some(value.parse().expect("captured ny")),
+            _ => {}
+        }
+    }
+    let nx = nx.expect("captured nx");
+    let ny = ny.expect("captured ny");
+    let values = fs::read_to_string(directory.join("residual.txt"))
+        .expect("read captured residual")
+        .lines()
+        .map(|line| line.parse::<f32>().expect("captured residual value"))
+        .collect::<Vec<_>>();
+    let residual = Array2::from_shape_vec((nx, ny), values).expect("captured residual shape");
+    let model_values = fs::read_to_string(directory.join("model.txt"))
+        .expect("read captured model")
+        .lines()
+        .map(|line| line.parse::<f32>().expect("captured model value"))
+        .collect::<Vec<_>>();
+    let model = Array2::from_shape_vec((nx, ny), model_values).expect("captured model shape");
+    CapturedCubeMinorCyclePlane { residual, model }
+}
+
+fn read_captured_cube_model_cube(directory: &Path) -> Vec<Array2<f32>> {
+    let meta = fs::read_to_string(directory.join("meta.txt")).expect("read captured meta");
+    let mut nx = None::<usize>;
+    let mut ny = None::<usize>;
+    let mut channel_count = None::<usize>;
+    for line in meta.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key {
+            "nx" => nx = Some(value.parse().expect("captured nx")),
+            "ny" => ny = Some(value.parse().expect("captured ny")),
+            "channel_count" => channel_count = Some(value.parse().expect("captured channel count")),
+            _ => {}
+        }
+    }
+    let nx = nx.expect("captured nx");
+    let ny = ny.expect("captured ny");
+    let channel_count = channel_count.expect("captured channel count");
+    (0..channel_count)
+        .map(|channel_index| {
+            let values =
+                fs::read_to_string(directory.join(format!("model_channel_{channel_index}.txt")))
+                    .expect("read captured model channel")
+                    .lines()
+                    .map(|line| line.parse::<f32>().expect("captured model channel value"))
+                    .collect::<Vec<_>>();
+            Array2::from_shape_vec((nx, ny), values).expect("captured model channel shape")
+        })
+        .collect()
+}
+
+fn replay_rust_hogbom_minor_cycle_2d(
+    psf: &[f32],
+    residual: &[f32],
+    shape: [usize; 2],
+    gain: f32,
+    threshold: f32,
+    cycle_reported_niter: usize,
+) -> HogbomReplay2d {
+    let [nx, ny] = shape;
+    let mut residual = residual.to_vec();
+    let mut cycle_component_updates = 0usize;
+    // Keep the replay helper aligned with casa-rs production semantics, not
+    // CASA's known Hogbom off-by-one bug. `niter` is a hard cap here.
+    let cycle_component_budget = cycle_reported_niter;
+    while cycle_component_updates < cycle_component_budget {
+        let Some((peak_index, peak_value)) = peak_location_flat_xy(&residual, [nx, ny]) else {
+            break;
+        };
+        if peak_value.abs() < threshold {
+            break;
+        }
+        let component = gain * peak_value;
+        subtract_shifted_psf_flat(&mut residual, psf, [nx, ny], peak_index, component);
+        cycle_component_updates += 1;
+    }
+    HogbomReplay2d {
+        iterdone: cycle_component_updates.min(cycle_reported_niter),
+        residual,
+    }
+}
+
+fn peak_location_flat_xy(values: &[f32], shape: [usize; 2]) -> Option<((usize, usize), f32)> {
+    let [nx, ny] = shape;
+    if values.len() != nx * ny {
+        return None;
+    }
+    values
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| {
+            left.abs()
+                .partial_cmp(&right.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(index, value)| ((index / ny, index % ny), value))
+}
+
+fn subtract_shifted_psf_flat(
+    residual: &mut [f32],
+    psf: &[f32],
+    shape: [usize; 2],
+    peak_index: (usize, usize),
+    component: f32,
+) {
+    let [nx, ny] = shape;
+    let center = (nx / 2, ny / 2);
+    for x in 0..nx {
+        let psf_x = x as isize + center.0 as isize - peak_index.0 as isize;
+        if !(0..nx as isize).contains(&psf_x) {
+            continue;
+        }
+        for y in 0..ny {
+            let psf_y = y as isize + center.1 as isize - peak_index.1 as isize;
+            if !(0..ny as isize).contains(&psf_y) {
+                continue;
+            }
+            let residual_index = x * ny + y;
+            let psf_index = psf_x as usize * ny + psf_y as usize;
+            residual[residual_index] -= component * psf[psf_index];
+        }
+    }
 }
 
 fn spectral_header_summary_full(path: &Path) -> SpectralHeaderSummary {
@@ -6720,12 +11214,68 @@ fn extract_channel_plane(array: &ArrayD<f32>, chan: usize) -> Array2<f32> {
     plane
 }
 
+fn peak_location_in_plane(plane: &Array2<f32>) -> Option<(usize, usize)> {
+    let (nx, ny) = plane.dim();
+    let mut best = None::<((usize, usize), f32)>;
+    for x in 0..nx {
+        for y in 0..ny {
+            let value = plane[(x, y)];
+            match best {
+                None => best = Some(((x, y), value)),
+                Some((_, best_value)) if value.abs() > best_value.abs() => {
+                    best = Some(((x, y), value));
+                }
+                _ => {}
+            }
+        }
+    }
+    best.map(|(index, _)| index)
+}
+
+fn plane_difference_stats(left: &Array2<f32>, right: &Array2<f32>) -> ImageDifferenceStats {
+    assert_eq!(left.dim(), right.dim(), "plane shape mismatch");
+    let len = left.len().max(1) as f64;
+    let left_mean = left.iter().map(|value| *value as f64).sum::<f64>() / len;
+    let right_mean = right.iter().map(|value| *value as f64).sum::<f64>() / len;
+    let mut max_abs = 0.0f32;
+    let mut sum_sq = 0.0f64;
+    let mut cov = 0.0f64;
+    let mut left_var = 0.0f64;
+    let mut right_var = 0.0f64;
+    let mut count = 0usize;
+    for ((x, y), left_value) in left.indexed_iter() {
+        let diff = *left_value - right[(x, y)];
+        max_abs = max_abs.max(diff.abs());
+        sum_sq += (diff as f64) * (diff as f64);
+        let left_centered = *left_value as f64 - left_mean;
+        let right_centered = right[(x, y)] as f64 - right_mean;
+        cov += left_centered * right_centered;
+        left_var += left_centered * left_centered;
+        right_var += right_centered * right_centered;
+        count += 1;
+    }
+    ImageDifferenceStats {
+        max_abs,
+        rms: if count == 0 {
+            0.0
+        } else {
+            (sum_sq / count as f64).sqrt() as f32
+        },
+        correlation: if left_var == 0.0 || right_var == 0.0 {
+            if max_abs == 0.0 { 1.0 } else { 0.0 }
+        } else {
+            (cov / (left_var.sqrt() * right_var.sqrt())) as f32
+        },
+    }
+}
+
 #[test]
 #[ignore = "diagnostic for Backlog 11.6 raw cube PSF parity on refim_point common-beam case"]
 fn cube_common_restoringbeam_psf_header_and_plane_compare_on_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
-        field: 0,
+        field_ids: &[0],
+        phasecenter_field: Some(0),
         spw: 0,
         channel_start: 0,
         channel_count: 20,

@@ -14,12 +14,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+use casa_ms::{CubeAxisConfig, CubeInterpolation};
 use casars_imager::{CliConfig, RunSummary, SpectralMode, run_from_config};
 
 #[derive(Debug, Clone)]
 struct Options {
     ms: PathBuf,
-    field: Option<i32>,
+    field_ids: Option<Vec<i32>>,
+    phasecenter_field: Option<i32>,
     ddid: Option<i32>,
     spw: Option<i32>,
     channel_start: Option<usize>,
@@ -27,8 +29,10 @@ struct Options {
     datacolumn: Option<String>,
     correlation: Option<String>,
     spectral_mode: SpectralMode,
+    interpolation: CubeInterpolation,
     weighting: WeightingMode,
     deconvolver: Deconvolver,
+    nterms: usize,
     multiscale_scales: Vec<f32>,
     small_scale_bias: f32,
     imsize: usize,
@@ -45,6 +49,7 @@ struct Options {
     mask_boxes: Vec<[usize; 4]>,
     mask_image: Option<PathBuf>,
     w_term_mode: WTermMode,
+    w_project_planes: Option<usize>,
     dirty_only: bool,
     repeats: usize,
     warmups: usize,
@@ -75,7 +80,7 @@ fn run() -> Result<(), String> {
         let prefix = temp.join(format!("run-{run_index}"));
         let summary = run_from_config(&build_cli_config(&options, prefix))?;
         println!(
-            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} minor_ms={:.3}",
+            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} minor_ms={:.3}",
             run_index + 1,
             millis(summary.frontend_timings.total),
             millis(summary.frontend_timings.open_measurement_set),
@@ -86,6 +91,7 @@ fn run() -> Result<(), String> {
             millis(summary.frontend_timings.write_products),
             millis(summary.stage_timings.total),
             millis(summary.stage_timings.controller_overhead),
+            millis(summary.stage_timings.weighting),
             millis(summary.stage_timings.major_cycle_refresh),
             millis(summary.stage_timings.psf_grid),
             millis(summary.stage_timings.psf_fft),
@@ -97,18 +103,22 @@ fn run() -> Result<(), String> {
     }
 
     println!(
-        "ms={} field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} weighting={:?} deconvolver={:?} scales={:?} wterm={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
+        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} interpolation={:?} weighting={:?} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
         options.ms.display(),
-        options.field,
+        options.field_ids,
+        options.phasecenter_field,
         options.ddid,
         options.spw,
         options.channel_start,
         options.channel_count,
         options.correlation,
+        options.interpolation,
         options.weighting,
         options.deconvolver,
+        options.nterms,
         options.multiscale_scales,
         options.w_term_mode,
+        options.w_project_planes,
         options.imsize,
         options.cell_arcsec,
         options.dirty_only,
@@ -150,6 +160,10 @@ fn run() -> Result<(), String> {
     print_stage(
         "controller_overhead",
         median_duration(&runs, |run| run.stage_timings.controller_overhead),
+    );
+    print_stage(
+        "weighting",
+        median_duration(&runs, |run| run.stage_timings.weighting),
     );
     print_stage(
         "psf_grid",
@@ -265,7 +279,9 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         imagename,
         imsize: options.imsize,
         cell_arcsec: options.cell_arcsec,
-        field: options.field,
+        field_ids: options.field_ids.clone(),
+        phasecenter_field: options.phasecenter_field,
+        phasecenter: None,
         ddid: options.ddid,
         spw: options.spw,
         spw_selector: None,
@@ -274,12 +290,16 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         datacolumn: options.datacolumn.clone(),
         correlation: options.correlation.clone(),
         spectral_mode: options.spectral_mode,
-        cube_axis: casa_ms::CubeAxisConfig::default(),
+        cube_axis: CubeAxisConfig {
+            interpolation: options.interpolation,
+            ..CubeAxisConfig::default()
+        },
         weighting: options.weighting,
         per_channel_weight_density: false,
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
         deconvolver: options.deconvolver,
+        nterms: options.nterms,
         multiscale_scales: options.multiscale_scales.clone(),
         small_scale_bias: options.small_scale_bias,
         niter: options.niter,
@@ -294,6 +314,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         mask_boxes: options.mask_boxes.clone(),
         mask_image: options.mask_image.clone(),
         w_term_mode: options.w_term_mode,
+        w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
         write_preview_pngs: false,
     }
@@ -321,7 +342,8 @@ fn millis(value: Duration) -> f64 {
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
     let mut ms = None::<PathBuf>;
-    let mut field = None::<i32>;
+    let mut field_ids = None::<Vec<i32>>;
+    let mut phasecenter_field = None::<i32>;
     let mut ddid = None::<i32>;
     let mut spw = None::<i32>;
     let mut channel_start = None::<usize>;
@@ -329,9 +351,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut datacolumn = Some("DATA".to_string());
     let mut correlation = None::<String>;
     let mut spectral_mode = SpectralMode::Mfs;
+    let mut interpolation = CubeInterpolation::Linear;
     let mut weighting_name = String::from("natural");
     let mut robust = 0.5f32;
     let mut deconvolver = Deconvolver::Hogbom;
+    let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
     let mut small_scale_bias = 0.0f32;
     let mut imsize = 128usize;
@@ -348,6 +372,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut mask_boxes = Vec::<[usize; 4]>::new();
     let mut mask_image = None::<PathBuf>;
     let mut w_term_mode = WTermMode::None;
+    let mut w_project_planes = None::<usize>;
     let mut dirty_only = false;
     let mut repeats = 5usize;
     let mut warmups = 1usize;
@@ -356,7 +381,15 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => return Err(help_text()),
-            "--field" => field = Some(parse_next(&mut args, "--field")?),
+            "--field" => {
+                field_ids = Some(
+                    casa_ms::parse_numeric_id_selector(&next_value(&mut args, "--field")?, "field")
+                        .map_err(|error| error.to_string())?,
+                )
+            }
+            "--phasecenter-field" => {
+                phasecenter_field = Some(parse_next(&mut args, "--phasecenter-field")?)
+            }
             "--ddid" => ddid = Some(parse_next(&mut args, "--ddid")?),
             "--spw" => spw = Some(parse_next(&mut args, "--spw")?),
             "--channel-start" => channel_start = Some(parse_next(&mut args, "--channel-start")?),
@@ -366,11 +399,16 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--specmode" => {
                 spectral_mode = parse_spectral_mode(&next_value(&mut args, "--specmode")?)?
             }
+            "--interpolation" => {
+                interpolation =
+                    parse_cube_interpolation(&next_value(&mut args, "--interpolation")?)?
+            }
             "--weighting" => weighting_name = next_value(&mut args, "--weighting")?,
             "--robust" => robust = parse_next(&mut args, "--robust")?,
             "--deconvolver" => {
                 deconvolver = parse_deconvolver(&next_value(&mut args, "--deconvolver")?)?
             }
+            "--nterms" => nterms = parse_next(&mut args, "--nterms")?,
             "--scales" => {
                 multiscale_scales = parse_multiscale_scales(&next_value(&mut args, "--scales")?)?
             }
@@ -394,6 +432,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
                 mask_image = Some(PathBuf::from(next_value(&mut args, "--mask-image")?))
             }
             "--wterm" => w_term_mode = parse_w_term_mode(&next_value(&mut args, "--wterm")?)?,
+            "--wprojplanes" => w_project_planes = Some(parse_next(&mut args, "--wprojplanes")?),
             "--dirty-only" => dirty_only = true,
             "--repeats" => repeats = parse_next(&mut args, "--repeats")?,
             "--warmups" => warmups = parse_next(&mut args, "--warmups")?,
@@ -416,7 +455,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
 
     Ok(Options {
         ms: ms.ok_or_else(help_text)?,
-        field,
+        field_ids,
+        phasecenter_field,
         ddid,
         spw,
         channel_start,
@@ -424,8 +464,10 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         datacolumn,
         correlation,
         spectral_mode,
+        interpolation,
         weighting,
         deconvolver,
+        nterms,
         multiscale_scales,
         small_scale_bias,
         imsize,
@@ -442,6 +484,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         mask_boxes,
         mask_image,
         w_term_mode,
+        w_project_planes,
         dirty_only,
         repeats,
         warmups,
@@ -486,7 +529,21 @@ fn parse_w_term_mode(text: &str) -> Result<WTermMode, String> {
     match text.to_ascii_lowercase().as_str() {
         "none" | "2d" => Ok(WTermMode::None),
         "direct" => Ok(WTermMode::Direct),
-        _ => Err(format!("unsupported --wterm value {text:?}")),
+        "wproject" => Ok(WTermMode::WProject),
+        _ => Err(format!(
+            "unsupported --wterm value {text:?}; expected none, direct, or wproject"
+        )),
+    }
+}
+
+fn parse_cube_interpolation(text: &str) -> Result<CubeInterpolation, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "nearest" => Ok(CubeInterpolation::Nearest),
+        "linear" => Ok(CubeInterpolation::Linear),
+        "cubic" => Err(
+            "unsupported cube interpolation \"cubic\"; cubic is not implemented yet".to_string(),
+        ),
+        other => Err(format!("unsupported cube interpolation {other:?}")),
     }
 }
 
@@ -541,7 +598,8 @@ fn help_text() -> String {
     "Usage: profile_imager <ms-path> [options]
 
 Options:
-  --field ID
+  --field IDS
+  --phasecenter-field ID
   --ddid ID
   --spw ID
   --channel-start N
@@ -549,9 +607,11 @@ Options:
   --datacolumn NAME
   --corr XX|YY|RR|LL
   --specmode mfs|cube
+  --interpolation nearest|linear
   --weighting natural|uniform|briggs
   --robust VALUE
-  --deconvolver hogbom|clark|multiscale
+  --deconvolver hogbom|clark|multiscale|mtmfs
+  --nterms N
   --scales PIXELS
   --smallscalebias VALUE
   --imsize N
@@ -568,7 +628,8 @@ Options:
   --maxpsffraction VALUE
   --mask-box X0,Y0,X1,Y1
   --mask-image PATH
-  --wterm none|direct
+  --wterm none|direct|wproject
+  --wprojplanes N
   --dirty-only
   --repeats N
   --warmups N

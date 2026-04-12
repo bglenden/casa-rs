@@ -9,6 +9,32 @@ use crate::{
     gridder::{DensityCellConvention, StandardGridder},
 };
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WeightingSampleTraceInternal {
+    pub batch_index: usize,
+    pub sample_index: usize,
+    pub u_lambda: f64,
+    pub v_lambda: f64,
+    pub w_lambda: f64,
+    pub input_weight: f32,
+    pub density_weight: Option<f32>,
+    pub output_weight: f32,
+    pub sumwt_factor: f32,
+    pub gridable: bool,
+    pub normalization_contribution: f32,
+    pub reported_contribution: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WeightingTraceInternal {
+    pub weighted_batches: Vec<VisibilityBatch>,
+    pub samples: Vec<WeightingSampleTraceInternal>,
+    pub gridded_samples: usize,
+    pub skipped_samples: usize,
+    pub normalization_sumwt: f32,
+    pub reported_sumwt: f32,
+}
+
 pub(crate) fn apply_weighting(
     request: &ImagingRequest,
     gridder: &StandardGridder,
@@ -82,6 +108,103 @@ pub(crate) fn apply_weighting_with_density_source(
             ))
         }
     }
+}
+
+pub(crate) fn trace_weighting_with_density_source(
+    weighting: WeightingMode,
+    weight_density_mode: WeightDensityMode,
+    uv_taper: Option<GaussianUvTaper>,
+    target_batches: &[VisibilityBatch],
+    density_batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+) -> Result<WeightingTraceInternal, crate::ImagingError> {
+    let density_convention = density_cell_convention(weighting, weight_density_mode);
+    let density = match weighting {
+        WeightingMode::Natural => None,
+        WeightingMode::Uniform | WeightingMode::Briggs { .. } => Some(build_density_grid(
+            density_batches,
+            gridder,
+            true,
+            density_convention,
+        )),
+    };
+    let weighted_batches = apply_weighting_with_density_source(
+        weighting,
+        weight_density_mode,
+        uv_taper,
+        target_batches,
+        density_batches,
+        gridder,
+    )?;
+    let mut samples = Vec::new();
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut normalization_sumwt = 0.0f32;
+    let mut reported_sumwt = 0.0f32;
+
+    for (batch_index, (input_batch, weighted_batch)) in target_batches
+        .iter()
+        .zip(weighted_batches.iter())
+        .enumerate()
+    {
+        for sample_index in 0..input_batch.len() {
+            let output_weight = weighted_batch.weight[sample_index];
+            let sumwt_factor = weighted_batch.sumwt_factor[sample_index];
+            let gridable = weighted_batch.gridable[sample_index];
+            let contributes = gridable
+                && output_weight.is_finite()
+                && output_weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0;
+            let normalization_contribution = if contributes {
+                2.0 * output_weight
+            } else {
+                0.0
+            };
+            let reported_contribution = if contributes {
+                output_weight * sumwt_factor
+            } else {
+                0.0
+            };
+            if contributes {
+                gridded_samples += 1;
+                normalization_sumwt += normalization_contribution;
+                reported_sumwt += reported_contribution;
+            } else {
+                skipped_samples += 1;
+            }
+            samples.push(WeightingSampleTraceInternal {
+                batch_index,
+                sample_index,
+                u_lambda: input_batch.u_lambda[sample_index],
+                v_lambda: input_batch.v_lambda[sample_index],
+                w_lambda: input_batch.w_lambda[sample_index],
+                input_weight: input_batch.weight[sample_index],
+                density_weight: density.as_ref().and_then(|grid| {
+                    gridder.density_at_with_convention(
+                        grid,
+                        input_batch.u_lambda[sample_index],
+                        input_batch.v_lambda[sample_index],
+                        density_convention,
+                    )
+                }),
+                output_weight,
+                sumwt_factor,
+                gridable,
+                normalization_contribution,
+                reported_contribution,
+            });
+        }
+    }
+
+    Ok(WeightingTraceInternal {
+        weighted_batches,
+        samples,
+        gridded_samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+    })
 }
 
 fn density_cell_convention(
@@ -205,7 +328,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        CleanConfig, CompatibilityMode, Deconvolver, ImageGeometry, ImagingRequest, PlaneStokes,
+        CleanConfig, CompatibilityMode, Deconvolver, GridderMode, ImageGeometry, ImagingRequest,
+        PlaneStokes,
     };
 
     fn request_for(mode: WeightingMode) -> ImagingRequest {
@@ -223,6 +347,7 @@ mod tests {
                 gridable: vec![true; 5],
                 visibility: vec![Complex32::new(1.0, 0.0); 5],
             }],
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: mode,
             reffreq_hz: 1.4e9,
@@ -233,6 +358,7 @@ mod tests {
             clean: CleanConfig::default(),
             clean_mask: None,
             w_term_mode: crate::WTermMode::None,
+            w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         }
     }

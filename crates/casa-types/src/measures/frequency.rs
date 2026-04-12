@@ -28,6 +28,8 @@ use std::str::FromStr;
 
 use casa_measures_data::SpectralLineCatalog;
 
+use super::casacore_aberration::earth_barycentric_velocity_ms;
+use super::direction::DirectionRef;
 use super::epoch::EpochRef;
 use super::error::MeasureError;
 use super::frame::MeasFrame;
@@ -333,68 +335,58 @@ pub(super) fn get_direction_j2000(frame: &MeasFrame) -> Result<[f64; 3], Measure
     })
 }
 
+/// Get direction in APP from the frame.
+pub(super) fn get_direction_app(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
+    frame.cached_direction_app(|| {
+        let dir = frame.direction().ok_or(MeasureError::MissingFrameData {
+            what: "direction (for velocity projection)",
+        })?;
+        Ok(dir.convert_to(DirectionRef::APP, frame)?.cosines())
+    })
+}
+
 /// Get Earth's barycentric velocity in m/s (J2000).
 pub(super) fn earth_velocity_ms(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
     frame.cached_earth_velocity_ms(|| {
         let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
             what: "epoch (for Earth orbital velocity)",
         })?;
-        let tt = if epoch.refer() == EpochRef::TT {
-            epoch.clone()
-        } else {
-            epoch.convert_to(EpochRef::TT, frame)?
-        };
-        let (tt1, tt2) = tt.value().as_jd_pair();
-        let (_pvh, pvb) =
-            sofars::eph::epv00(tt1, tt2).ok_or(MeasureError::SofarsError { code: -1 })?;
-        // pvb[1] is Earth barycentric velocity in AU/day → convert to m/s
-        let au_to_m = 149_597_870_700.0_f64;
-        let day_to_s = 86400.0;
-        Ok([
-            pvb[1][0] * au_to_m / day_to_s,
-            pvb[1][1] * au_to_m / day_to_s,
-            pvb[1][2] * au_to_m / day_to_s,
-        ])
+        let tdb_mjd = epoch.convert_to(EpochRef::TDB, frame)?.value().as_mjd();
+        Ok(earth_barycentric_velocity_ms(tdb_mjd))
     })
 }
 
-/// Get observatory velocity in m/s (J2000) from Earth rotation.
-pub(super) fn observatory_velocity_ms(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
-    frame.cached_observatory_velocity_ms(|| {
-        let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-            what: "position (for diurnal velocity)",
-        })?;
-        let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
-            what: "epoch (for Earth rotation angle)",
-        })?;
+fn diurnal_aberration_factor(radius_m: f64, tdb_mjd: f64) -> f64 {
+    let centuries_since_j2000 = (tdb_mjd - 51_544.5) / 36_525.0;
+    let ut_to_st = 1.002_737_909_350_795
+        + (5.9006e-11 + (-5.9e-15) * centuries_since_j2000) * centuries_since_j2000;
+    (2.0 * std::f64::consts::PI) * radius_m / 86_400.0 * ut_to_st / C_M_PER_S
+}
 
-        // Get ITRF coordinates
-        let itrf = pos.as_itrf();
-
-        // Earth angular velocity (rad/s)
-        const OMEGA: f64 = 7.292_115e-5;
-
-        // Velocity in ITRF: v = omega cross r = [-omega*y, omega*x, 0]
-        let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
-
-        // Rotate to J2000 using ERA (simplified — ignores precession/nutation)
-        let ut1 = if epoch.refer() == EpochRef::UT1 {
-            epoch.clone()
-        } else {
-            epoch.convert_to(EpochRef::UT1, frame)?
-        };
-        let (ut_a, ut_b) = ut1.value().as_jd_pair();
-        let era = sofars::erst::era00(ut_a, ut_b);
-
-        // Rotate velocity from ITRF to J2000 by -ERA around z
-        let mut r = [[0.0; 3]; 3];
-        sofars::vm::ir(&mut r);
-        sofars::vm::rz(-era, &mut r);
-        let mut v_j2000 = [0.0; 3];
-        sofars::vm::rxp(&r, &v_itrf, &mut v_j2000);
-
-        Ok(v_j2000)
-    })
+/// Compute the GEO↔TOPO beta term using casacore's diurnal-aberration model.
+///
+/// Casacore does not model this hop as a J2000 observer-velocity projection.
+/// It uses the apparent source direction together with LAST, TDB, the
+/// observatory radius, and geodetic latitude. Matching that formulation keeps
+/// TOPO↔LSRK conversions in the sub-Hz regime required by spectral regridding.
+pub(super) fn geo_topo_beta(frame: &MeasFrame) -> Result<f64, MeasureError> {
+    let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+        what: "epoch (for Earth rotation angle)",
+    })?;
+    let pos = frame.position().ok_or(MeasureError::MissingFrameData {
+        what: "position (for diurnal velocity)",
+    })?;
+    let last = epoch.convert_to(EpochRef::LAST, frame)?.value().frac() * std::f64::consts::TAU;
+    let tdb_mjd = epoch.convert_to(EpochRef::TDB, frame)?.value().as_mjd();
+    let lat = pos.geocentric_latitude_rad();
+    let radius = {
+        let xyz = pos.as_itrf();
+        (xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2]).sqrt()
+    };
+    let app_dir = get_direction_app(frame)?;
+    let scale = diurnal_aberration_factor(radius, tdb_mjd) * lat.cos();
+    let diurnal_dir = [-last.sin(), last.cos(), 0.0];
+    Ok(scale * sofars::vm::pdp(&diurnal_dir, &app_dir))
 }
 
 // ---------------------------------------------------------------------------
@@ -596,15 +588,11 @@ fn apply_freq_hop(
 
         // GEO ↔ TOPO: diurnal rotation velocity
         (GEO, TOPO) => {
-            let d = get_direction_j2000(frame)?;
-            let v_obs = observatory_velocity_ms(frame)?;
-            let beta = compute_beta(&v_obs, &d);
+            let beta = geo_topo_beta(frame)?;
             Ok(doppler_shift(hz, beta))
         }
         (TOPO, GEO) => {
-            let d = get_direction_j2000(frame)?;
-            let v_obs = observatory_velocity_ms(frame)?;
-            let beta = compute_beta(&v_obs, &d);
+            let beta = geo_topo_beta(frame)?;
             Ok(doppler_shift(hz, -beta))
         }
 

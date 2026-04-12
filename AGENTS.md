@@ -63,6 +63,19 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - During development, commit freely (checkpoints, incremental progress).
 - Use `git merge --squash` locally or "Squash and merge" on GitHub PRs.
 
+## Wave Execution
+
+- For imaging-plan work, the wave is the execution unit.
+- Once a wave starts, carry it through to wave closure without pausing for
+  intermediate user check-ins.
+- Wave closure includes implementation, verification against the wave gates,
+  and the end-of-wave code-review/fix pass.
+- Only stop before wave closure if there is a real blocker, ambiguity, or
+  tradeoff that needs explicit discussion with the user.
+- If an active wave gate becomes too slow to support productive iteration,
+  insert an explicit performance wave ahead of the remaining correctness waves
+  and rebaseline before resuming feature/correctness expansion.
+
 ## Quality Gates
 
 - `cargo fmt --all -- --check`
