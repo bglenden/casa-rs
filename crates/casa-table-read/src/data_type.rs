@@ -185,3 +185,59 @@ pub fn parse_column_class_name(class_name: &str) -> Option<(CasacoreDataType, bo
 
     Some((dt, is_array))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_i32_covers_known_and_unknown_values() {
+        for value in 0..=30 {
+            assert!(
+                CasacoreDataType::from_i32(value).is_some(),
+                "expected data type for {value}"
+            );
+        }
+
+        assert_eq!(CasacoreDataType::from_i32(-1), None);
+        assert_eq!(CasacoreDataType::from_i32(31), None);
+    }
+
+    #[test]
+    fn array_element_type_uses_scalar_variant_for_arrays() {
+        assert_eq!(
+            CasacoreDataType::TpArrayBool.array_element_type(),
+            CasacoreDataType::TpBool
+        );
+        assert_eq!(
+            CasacoreDataType::TpArrayInt64.array_element_type(),
+            CasacoreDataType::TpInt64
+        );
+        assert_eq!(
+            CasacoreDataType::TpDouble.array_element_type(),
+            CasacoreDataType::TpDouble
+        );
+    }
+
+    #[test]
+    fn parse_column_class_name_recognizes_scalars_arrays_records_and_unknowns() {
+        assert_eq!(
+            parse_column_class_name("ScalarRecordColumnDesc"),
+            Some((CasacoreDataType::TpRecord, false))
+        );
+        assert_eq!(
+            parse_column_class_name("ScalarColumnDesc<double>"),
+            Some((CasacoreDataType::TpDouble, false))
+        );
+        assert_eq!(
+            parse_column_class_name("ArrayColumnDesc<Int64>"),
+            Some((CasacoreDataType::TpArrayInt64, true))
+        );
+        assert_eq!(
+            parse_column_class_name("ArrayColumnDesc<Bool>"),
+            Some((CasacoreDataType::TpArrayBool, true))
+        );
+        assert_eq!(parse_column_class_name("ArrayColumnDesc<unknown>"), None);
+        assert_eq!(parse_column_class_name("NotAColumnDesc"), None);
+    }
+}

@@ -316,3 +316,95 @@ pub fn cpp_convolve_gridder_make_dirty_image_2d(
         Err("casacore C++ backend unavailable".to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_cpp_backend_reports_unavailable_and_validates_lengths() {
+        if cfg!(has_casacore_cpp) {
+            assert!(cpp_convolve_gridder_grid_unit_sample_2d(
+                [16, 16],
+                [1.0, 1.0],
+                [0.0, 0.0],
+                [0.1, 0.2],
+            )
+            .is_err());
+            assert!(cpp_convolve_gridder_correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3)
+                .is_ok());
+            assert_eq!(
+                cpp_convolve_gridder_make_dirty_image_2d(
+                    [16, 16],
+                    [8, 8],
+                    [1.0, 1.0],
+                    [0.0, 0.0],
+                    &[0.0, 1.0],
+                    &[0.0],
+                    &[1.0, 1.0],
+                    &[0.0, 0.0],
+                    &[1.0, 1.0],
+                    &[true, true],
+                ),
+                Err("dirty-image inputs must have matching lengths".to_string())
+            );
+            assert!(cpp_convolve_gridder_make_dirty_image_2d(
+                [16, 16],
+                [8, 8],
+                [1.0, 1.0],
+                [0.0, 0.0],
+                &[0.0, 1.0],
+                &[0.0, 1.0],
+                &[1.0, 1.0],
+                &[0.0, 0.0],
+                &[1.0, 1.0],
+                &[true, true],
+            )
+            .is_err());
+        } else {
+            assert_eq!(
+                cpp_convolve_gridder_grid_unit_sample_2d(
+                    [16, 16],
+                    [1.0, 1.0],
+                    [0.0, 0.0],
+                    [0.1, 0.2],
+                ),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_convolve_gridder_correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+            assert_eq!(
+                cpp_convolve_gridder_make_dirty_image_2d(
+                    [16, 16],
+                    [8, 8],
+                    [1.0, 1.0],
+                    [0.0, 0.0],
+                    &[0.0, 1.0],
+                    &[0.0],
+                    &[1.0, 1.0],
+                    &[0.0, 0.0],
+                    &[1.0, 1.0],
+                    &[true, true],
+                ),
+                Err("dirty-image inputs must have matching lengths".to_string())
+            );
+            assert_eq!(
+                cpp_convolve_gridder_make_dirty_image_2d(
+                    [16, 16],
+                    [8, 8],
+                    [1.0, 1.0],
+                    [0.0, 0.0],
+                    &[0.0, 1.0],
+                    &[0.0, 1.0],
+                    &[1.0, 1.0],
+                    &[0.0, 0.0],
+                    &[1.0, 1.0],
+                    &[true, true],
+                ),
+                Err("casacore C++ backend unavailable".to_string())
+            );
+        }
+    }
+}

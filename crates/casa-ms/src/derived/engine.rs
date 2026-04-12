@@ -904,4 +904,27 @@ mod tests {
             dec.to_degrees()
         );
     }
+
+    #[test]
+    fn engine_public_methods_cover_observatory_and_invalid_index_paths() {
+        let engine = make_engine();
+        let time = 59000.5 * 86400.0;
+
+        assert_eq!(engine.num_antennas(), 2);
+        assert_eq!(engine.num_fields(), 1);
+        assert!(engine.field_direction_j2000(0).is_ok());
+        assert!(engine.spectral_frame_observatory(time, 0).is_ok());
+        assert!(engine.hour_angle(time, 0, 0).unwrap().is_finite());
+        assert!(engine.hour_angle_observatory(time, 0).unwrap().is_finite());
+        assert!(engine.parallactic_angle(time, 0, 0).unwrap().is_finite());
+        assert!(engine.parallactic_angle_observatory(time, 0).unwrap().is_finite());
+        assert!(engine.azel(time, 0, 0).unwrap().0.is_finite());
+        assert!(engine.azel_observatory(time, 0).unwrap().0.is_finite());
+        assert!(engine.last(time, 0).unwrap().is_finite());
+        assert!(engine.last_observatory(time).unwrap().is_finite());
+        assert!(engine.hadec(time, 0, 0).unwrap().0.is_finite());
+        assert!(engine.uvw_j2000(time, 0, 0, 1).unwrap()[0].is_finite());
+        assert!(engine.field_direction_j2000(1).is_err());
+        assert!(engine.hour_angle(time, 0, 9).is_err());
+    }
 }

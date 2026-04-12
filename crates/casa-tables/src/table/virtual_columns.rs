@@ -314,3 +314,202 @@ impl Table {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{ColumnSchema, TableSchema};
+    use casa_types::{Complex64, PrimitiveType};
+    use std::path::PathBuf;
+
+    fn table_with_schema(columns: Vec<ColumnSchema>) -> Table {
+        Table::with_schema(TableSchema::new(columns).unwrap())
+    }
+
+    fn binding_schema() -> Table {
+        table_with_schema(vec![
+            ColumnSchema::scalar("forward_col", PrimitiveType::Float64),
+            ColumnSchema::scalar("stored_int", PrimitiveType::Int32),
+            ColumnSchema::scalar("scaled_col", PrimitiveType::Float64),
+            ColumnSchema::scalar("stored_complex_raw", PrimitiveType::Int32),
+            ColumnSchema::scalar("scaled_complex", PrimitiveType::Complex64),
+            ColumnSchema::scalar("stored_flags", PrimitiveType::UInt32),
+            ColumnSchema::scalar("bitflags", PrimitiveType::Bool),
+            ColumnSchema::scalar("stored_short", PrimitiveType::Int16),
+            ColumnSchema::scalar("compressed_float", PrimitiveType::Float64),
+            ColumnSchema::scalar("stored_complex_int", PrimitiveType::Int32),
+            ColumnSchema::scalar("compressed_complex", PrimitiveType::Complex64),
+            ColumnSchema::scalar("row_forward", PrimitiveType::Float64),
+            ColumnSchema::scalar("row_map", PrimitiveType::Int32),
+            ColumnSchema::scalar("taql_col", PrimitiveType::Float64),
+        ])
+    }
+
+    #[test]
+    fn bind_methods_record_virtual_columns_and_bindings() {
+        let mut table = binding_schema();
+        let expected_ref_table = PathBuf::from("ref");
+        table
+            .bind_forward_column("forward_col", &expected_ref_table)
+            .unwrap();
+        table
+            .bind_scaled_array_column("scaled_col", "stored_int", 2.0, 1.0)
+            .unwrap();
+        table
+            .bind_scaled_complex_column(
+                "scaled_complex",
+                "stored_complex_raw",
+                Complex64::new(2.0, -1.0),
+                Complex64::new(1.0, 0.5),
+            )
+            .unwrap();
+        table
+            .bind_bitflags_column("bitflags", "stored_flags", 0b0011, 0b0101)
+            .unwrap();
+        table
+            .bind_compress_float_column("compressed_float", "stored_short", 0.5, 1.0)
+            .unwrap();
+        table
+            .bind_compress_complex_column(
+                "compressed_complex",
+                "stored_complex_int",
+                0.25,
+                0.75,
+                true,
+            )
+            .unwrap();
+        table
+            .bind_forward_column_indexed("row_forward", &expected_ref_table, "row_map")
+            .unwrap();
+        table.bind_taql_column("taql_col", "stored_int * 2").unwrap();
+
+        for name in [
+            "forward_col",
+            "scaled_col",
+            "scaled_complex",
+            "bitflags",
+            "compressed_float",
+            "compressed_complex",
+            "row_forward",
+            "taql_col",
+        ] {
+            assert!(table.is_virtual_column(name), "{name} should be virtual");
+        }
+        assert!(!table.is_virtual_column("stored_int"));
+        assert_eq!(table.virtual_bindings.len(), 8);
+        assert!(matches!(
+            &table.virtual_bindings[0],
+            VirtualColumnBinding::Forward { col_name, ref_table }
+                if col_name == "forward_col" && ref_table == &expected_ref_table
+        ));
+        assert!(matches!(
+            &table.virtual_bindings[1],
+            VirtualColumnBinding::ScaledArray {
+                virtual_col,
+                stored_col,
+                scale,
+                offset,
+            } if virtual_col == "scaled_col"
+                && stored_col == "stored_int"
+                && (*scale - 2.0).abs() < f64::EPSILON
+                && (*offset - 1.0).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn bind_methods_reject_missing_virtual_columns() {
+        let mut table = table_with_schema(vec![ColumnSchema::scalar(
+            "present",
+            PrimitiveType::Float64,
+        )]);
+        let ref_table = PathBuf::from("ref");
+
+        assert!(matches!(
+            table.bind_forward_column("forward_col", &ref_table),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "forward_col"
+        ));
+        assert!(matches!(
+            table.bind_scaled_array_column("scaled_col", "present", 2.0, 1.0),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "scaled_col"
+        ));
+        assert!(matches!(
+            table.bind_scaled_complex_column(
+                "scaled_complex",
+                "present",
+                Complex64::new(1.0, 1.0),
+                Complex64::new(0.0, 0.0),
+            ),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "scaled_complex"
+        ));
+        assert!(matches!(
+            table.bind_bitflags_column("bitflags", "present", 1, 1),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "bitflags"
+        ));
+        assert!(matches!(
+            table.bind_compress_float_column("compressed_float", "present", 1.0, 0.0),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "compressed_float"
+        ));
+        assert!(matches!(
+            table.bind_compress_complex_column(
+                "compressed_complex",
+                "present",
+                1.0,
+                0.0,
+                false,
+            ),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "compressed_complex"
+        ));
+        assert!(matches!(
+            table.bind_forward_column_indexed("row_forward", &ref_table, "row_map"),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "row_forward"
+        ));
+        assert!(matches!(
+            table.bind_taql_column("taql_col", "present * 2"),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "taql_col"
+        ));
+    }
+
+    #[test]
+    fn bind_methods_reject_missing_stored_columns() {
+        let mut table = table_with_schema(vec![
+            ColumnSchema::scalar("forward_col", PrimitiveType::Float64),
+            ColumnSchema::scalar("scaled_col", PrimitiveType::Float64),
+            ColumnSchema::scalar("scaled_complex", PrimitiveType::Complex64),
+            ColumnSchema::scalar("bitflags", PrimitiveType::Bool),
+            ColumnSchema::scalar("compressed_float", PrimitiveType::Float64),
+            ColumnSchema::scalar("compressed_complex", PrimitiveType::Complex64),
+        ]);
+
+        assert!(matches!(
+            table.bind_scaled_array_column("scaled_col", "stored_int", 2.0, 1.0),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "stored_int"
+        ));
+        assert!(matches!(
+            table.bind_scaled_complex_column(
+                "scaled_complex",
+                "stored_complex_raw",
+                Complex64::new(1.0, 1.0),
+                Complex64::new(0.0, 0.0),
+            ),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "stored_complex_raw"
+        ));
+        assert!(matches!(
+            table.bind_bitflags_column("bitflags", "stored_flags", 1, 1),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "stored_flags"
+        ));
+        assert!(matches!(
+            table.bind_compress_float_column("compressed_float", "stored_short", 1.0, 0.0),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "stored_short"
+        ));
+        assert!(matches!(
+            table.bind_compress_complex_column(
+                "compressed_complex",
+                "stored_complex_int",
+                1.0,
+                0.0,
+                false,
+            ),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "stored_complex_int"
+        ));
+    }
+}
