@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cpp_hogbom_clean_minor_cycle_2d"],"struct":["HogbomMinorCycle2d"]};
