@@ -2889,6 +2889,7 @@ fn action_argument(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -2897,10 +2898,133 @@ mod tests {
 
     use super::{CliAction, Command, OutputFormat, command_schema, parse_args};
     use crate::{
-        ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, BandpassSolveCombine,
-        BandpassType, GainFieldSelector, GainSolveInterval, GainSolveMode, GainType,
-        RefAntSelector,
+        ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyExecutionReport,
+        ApplyExecutionTimings, ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplySpwMapping,
+        BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationColumnSummary,
+        CalibrationIndexedStats, CalibrationIssueSeverity, CalibrationKeywordSummary,
+        CalibrationParameterFamily, CalibrationStatsAxis, CalibrationStatsReport,
+        CalibrationSubtableSummary, CalibrationTableSummary, CalibrationValidationIssue,
+        CalibrationValueStats, FluxScaleFieldResult, FluxScaleReport, FluxScaleSpwResult,
+        GainFieldSelector, GainSolveInterval, GainSolveMode, GainSolveReport, GainType,
+        RefAntSelector, ResolvedGainField, ResolvedNearestGainField, TimeCoverageSummary,
     };
+
+    fn sample_keywords() -> CalibrationKeywordSummary {
+        CalibrationKeywordSummary {
+            par_type: Some("Complex".into()),
+            vis_cal: Some("G Jones".into()),
+            ms_name: Some("dataset.ms".into()),
+            pol_basis: Some("Circular".into()),
+            casa_version: Some("6.7.0".into()),
+        }
+    }
+
+    fn sample_summary(path: &str) -> CalibrationTableSummary {
+        CalibrationTableSummary {
+            path: PathBuf::from(path),
+            table_type: "Calibration".into(),
+            table_subtype: "G Jones".into(),
+            row_count: 12,
+            columns: vec!["TIME".into(), "CPARAM".into()],
+            keywords: sample_keywords(),
+            subtables: vec![CalibrationSubtableSummary {
+                name: "FIELD".into(),
+                stored_reference: Some("Table: field".into()),
+                resolved_path: Some(PathBuf::from(format!("{path}/FIELD"))),
+                exists: true,
+                row_count: Some(4),
+                open_error: None,
+            }],
+            parameter_family: CalibrationParameterFamily::Complex,
+            parameter_column: CalibrationColumnSummary {
+                parameter_column: Some("CPARAM".into()),
+                parameter_primitive_type: Some("Complex".into()),
+                first_cell_shape: Some(vec![2, 1]),
+            },
+            field_ids: vec![0, 1],
+            spectral_window_ids: vec![0, 1],
+            antenna1_ids: vec![0, 1],
+            antenna2_ids: vec![0],
+            observation_ids: vec![7],
+            time_coverage: Some(TimeCoverageSummary {
+                min_time: 1.0,
+                max_time: 5.0,
+                min_interval: Some(1.0),
+                max_interval: Some(2.0),
+            }),
+            issues: vec![CalibrationValidationIssue {
+                code: "warn/test".into(),
+                severity: CalibrationIssueSeverity::Warning,
+                message: "test issue".into(),
+            }],
+        }
+    }
+
+    fn sample_apply_plan() -> ApplyPlan {
+        let mut spec = ApplyCalibrationTableSpec::new("phase.gcal");
+        spec.apply_to.field_ids = vec![0];
+        spec.apply_to.spectral_window_ids = vec![3];
+        spec.apply_to.observation_ids = vec![7];
+        spec.gainfield = Some(GainFieldSelector::Nearest);
+        spec.calwt = true;
+        ApplyPlan {
+            measurement_set_path: Some(PathBuf::from("dataset.ms")),
+            apply_mode: ApplyMode::CalFlag,
+            requires_corrected_data_column: true,
+            selected_rows: Vec::new(),
+            selected_row_count: 11,
+            parang: true,
+            selected_field_ids: vec![0, 1],
+            selected_data_desc_ids: vec![2],
+            selected_data_spw_ids: vec![3],
+            measurement_set_spectral_windows: Vec::new(),
+            calibration_tables: vec![ApplyCalibrationTablePlan {
+                spec,
+                applicable_selected_row_count: 9,
+                summary: sample_summary("phase.gcal"),
+                resolved_gainfield: Some(ResolvedGainField {
+                    selector: GainFieldSelector::Nearest,
+                    field_id: 4,
+                    field_name: Some("calibrator".into()),
+                }),
+                resolved_nearest_gainfields: vec![ResolvedNearestGainField {
+                    measurement_set_field_id: 0,
+                    measurement_set_field_name: Some("target".into()),
+                    calibration_field_id: 4,
+                    calibration_field_name: Some("calibrator".into()),
+                    angular_separation_rad: 0.012_345,
+                }],
+                spw_mapping: vec![ApplySpwMapping {
+                    data_spw_id: 3,
+                    calibration_spw_id: 1,
+                }],
+                calibration_spectral_windows: Vec::new(),
+                interp: ApplyInterpolationMode::NearestLinear,
+                calwt: true,
+            }],
+        }
+    }
+
+    fn sample_stats() -> CalibrationValueStats {
+        CalibrationValueStats {
+            npts: 10,
+            flagged_npts: 2,
+            total_npts: 12,
+            sum: 42.0,
+            sumsq: 256.0,
+            min: 1.0,
+            max: 9.0,
+            mean: 4.2,
+            median: 4.0,
+            medabsdevmed: 1.5,
+            q1: 2.0,
+            q3: 6.0,
+            quartile: 4.0,
+            var: 2.5,
+            stddev: 1.581_138_830_084_189_8,
+            rms: 5.0,
+        }
+    }
 
     #[test]
     fn command_schema_describes_public_workflow_surface() {
@@ -3497,5 +3621,230 @@ mod tests {
             }
             _ => panic!("expected summary action"),
         }
+    }
+
+    #[test]
+    fn render_summary_and_apply_outputs_include_key_sections() {
+        let summary_text = super::render_summary_text(&[
+            sample_summary("phase.gcal"),
+            CalibrationTableSummary {
+                issues: Vec::new(),
+                ..sample_summary("bandpass.bcal")
+            },
+        ]);
+        assert!(summary_text.contains("Calibration Table: phase.gcal"));
+        assert!(summary_text.contains("subtable FIELD exists=true"));
+        assert!(summary_text.contains("issues=none"));
+
+        let plan = sample_apply_plan();
+        let plan_text = super::render_apply_plan_text(&plan);
+        assert!(plan_text.contains("requires_corrected_data_column=true"));
+        assert!(plan_text.contains("apply_to=field=[0] spw=[3] obs=[7]"));
+        assert!(plan_text.contains("gainfield[ms_field=0] -> 4"));
+        assert!(plan_text.contains("spw 3 -> 1"));
+
+        let report = ApplyExecutionReport {
+            plan: plan.clone(),
+            created_corrected_data_column: true,
+            wrote_measurement_set: true,
+            updated_row_count: 9,
+            flagged_row_count: 2,
+            flagged_sample_count: 5,
+            timings: ApplyExecutionTimings {
+                planning_ns: 1_500_000,
+                planning_selection_ns: 500_000,
+                planning_selected_rows_ns: 250_000,
+                planning_measurement_set_spectral_windows_ns: 750_000,
+                planning_calibration_table_plans_ns: 900_000,
+                open_measurement_set_ns: 2_000_000,
+                ensure_corrected_data_ns: 3_000,
+                correlation_lookup_ns: 4_000,
+                calibration_load_ns: 5_000,
+                row_compute_ns: 6_000,
+                row_writeback_ns: 7_000,
+                save_ns: 8_000,
+                total_ns: 3_500_000,
+            },
+        };
+        let apply_text = super::render_apply_report_text(&report);
+        assert!(apply_text.contains("Calibration Apply Report: dataset.ms"));
+        assert!(apply_text.contains("created_corrected_data_column=true"));
+        assert!(apply_text.contains("1.500ms"));
+        assert!(apply_text.contains("gainfield=4 Some(\"calibrator\")"));
+    }
+
+    #[test]
+    fn render_stats_and_solver_outputs_include_grouped_details() {
+        let report = CalibrationStatsReport {
+            path: PathBuf::from("phase.gcal"),
+            axis: CalibrationStatsAxis::Amplitude,
+            datacolumn: Some("CPARAM".into()),
+            row_count: 12,
+            global: sample_stats(),
+            by_field_id: vec![CalibrationIndexedStats {
+                key: 3,
+                stats: sample_stats(),
+            }],
+            by_spectral_window_id: vec![CalibrationIndexedStats {
+                key: 1,
+                stats: sample_stats(),
+            }],
+            by_antenna1_id: vec![CalibrationIndexedStats {
+                key: 0,
+                stats: sample_stats(),
+            }],
+            by_observation_id: vec![CalibrationIndexedStats {
+                key: 7,
+                stats: sample_stats(),
+            }],
+        };
+        let stats_text = super::render_stats_text(&report);
+        assert!(stats_text.contains("Calibration Stats: phase.gcal"));
+        assert!(stats_text.contains("grouped_by_field_id"));
+        assert!(stats_text.contains("npts=10 flagged_npts=2 total_npts=12"));
+
+        let gain_text = super::render_gain_solve_report_text(&GainSolveReport {
+            output_table: PathBuf::from("phase.gcal"),
+            gain_type: GainType::G,
+            refant_antenna_id: 3,
+            field_ids: vec![0, 1],
+            spectral_window_ids: vec![2],
+            solution_row_count: 24,
+        });
+        assert!(gain_text.contains("Gain Solve Report: phase.gcal"));
+        assert!(gain_text.contains("solution_rows=24"));
+
+        let bandpass_text = super::render_bandpass_solve_report_text(&BandpassSolveReport {
+            output_table: PathBuf::from("bandpass.bcal"),
+            table_subtype: "B Jones".into(),
+            refant_antenna_id: 4,
+            field_ids: vec![0],
+            spectral_window_ids: vec![1, 2],
+            solution_row_count: 8,
+            channel_count: 64,
+        });
+        assert!(bandpass_text.contains("Bandpass Solve Report: bandpass.bcal"));
+        assert!(bandpass_text.contains("channel_count=64"));
+
+        let fluxscale_text = super::render_fluxscale_report_text(&FluxScaleReport {
+            output_table: PathBuf::from("fluxscale.gcal"),
+            spw_ids: vec![0],
+            spw_names: vec!["SPW0".into()],
+            frequencies_hz: vec![1.42e9],
+            fields: BTreeMap::from([(
+                5,
+                FluxScaleFieldResult {
+                    field_name: "target".into(),
+                    spw_results: BTreeMap::from([(
+                        0,
+                        FluxScaleSpwResult {
+                            fluxd: [1.0, 0.0, 0.0, 0.0],
+                            fluxd_err: [0.1, 0.0, 0.0, 0.0],
+                            num_sol: [4.0, 0.0, 0.0, 0.0],
+                        },
+                    )]),
+                    fit_ref_frequency_hz: 1.42e9,
+                    fit_fluxd: 1.0,
+                    fit_fluxd_err: 0.1,
+                    spidx: vec![0.0],
+                    spidx_err: vec![0.0],
+                    covar_mat: vec![vec![1.0]],
+                },
+            )]),
+        });
+        assert!(fluxscale_text.contains("FluxScale Report: fluxscale.gcal"));
+        assert!(fluxscale_text.contains("field 5 (target)"));
+        assert!(fluxscale_text.contains("fluxd=[1.0, 0.0, 0.0, 0.0]"));
+    }
+
+    #[test]
+    fn helper_parsers_and_writers_cover_error_paths() {
+        assert_eq!(super::format_duration_ns(999), "999ns");
+        assert_eq!(super::format_duration_ns(12_500), "12.500us");
+        assert_eq!(super::format_duration_ns(1_250_000), "1.250ms");
+        assert_eq!(super::format_duration_ns(1_500_000_000), "1.500s");
+
+        let selection = super::build_selection(&super::SelectionOptions {
+            selectdata: true,
+            field: Some("1,2".into()),
+            spw: Some("3".into()),
+            antenna: Some("4".into()),
+            scan: Some("5".into()),
+            observation: Some("6".into()),
+            array: Some("7".into()),
+            timerange: Some("10.0:20.0".into()),
+            msselect: Some("ANTENNA1 == 4".into()),
+        })
+        .expect("selection");
+        let taql = selection.to_taql();
+        assert!(taql.contains("FIELD_ID IN [1,2]"));
+        assert!(taql.contains("DATA_DESC_ID IN [3]"));
+        assert!(taql.contains("ARRAY_ID IN [7]"));
+        assert!(taql.contains("TIME>=10"));
+
+        let bad_timerange = super::parse_time_range("nope").unwrap_err();
+        assert!(bad_timerange.contains("START:END"));
+        let bad_bool = super::parse_bool_literal("maybe").unwrap_err();
+        assert!(bad_bool.contains("expected true or false"));
+        let bad_interp = super::parse_interp_value("--interp", "bogus").unwrap_err();
+        assert!(bad_interp.contains("is unsupported"));
+        assert_eq!(
+            super::parse_gainfield_value("--gainfield", "nearest,0").unwrap(),
+            Some(GainFieldSelector::FieldName("nearest,0".into()))
+        );
+
+        let tempdir = TempDir::new().expect("tempdir");
+        let output_path = tempdir.path().join("report.txt");
+        fs::write(&output_path, "old").expect("seed output");
+        let error = super::write_output(Some(&output_path), false, "new output")
+            .expect_err("refuse overwrite");
+        assert!(error.contains("refusing to overwrite existing output"));
+        super::write_output(Some(&output_path), true, "new output").expect("overwrite");
+        assert_eq!(fs::read_to_string(&output_path).unwrap(), "new output");
+
+        let json = super::render_json_output(
+            true,
+            &vec!["raw"],
+            crate::ManagedCalibrationOutput::Summary(Vec::new()),
+            "summary report",
+        )
+        .expect("managed json");
+        assert!(json.contains("\"kind\""));
+    }
+
+    #[test]
+    fn parse_args_reject_misaligned_calibration_metadata_lists() {
+        let error = parse_args([
+            "apply".into(),
+            "dataset.ms".into(),
+            "--gaintables".into(),
+            "phase.gcal,bandpass.bcal".into(),
+            "--gainfield".into(),
+            "nearest;0;1".into(),
+        ])
+        .unwrap_err();
+        assert!(error.contains("expected one value or one per table"));
+    }
+
+    #[test]
+    fn parse_args_rejects_invalid_selection_and_solver_literals() {
+        assert_eq!(
+            super::parse_gain_solve_interval("0s").unwrap(),
+            GainSolveInterval::Seconds(0.0)
+        );
+
+        let fluxscale_error = parse_args([
+            "fluxscale".into(),
+            "--in".into(),
+            "gain.gcal".into(),
+            "--out".into(),
+            "flux.gcal".into(),
+            "--reference".into(),
+            "3C286".into(),
+            "--refspwmap".into(),
+            "0,nope".into(),
+        ])
+        .unwrap_err();
+        assert!(fluxscale_error.contains("parse --refspwmap"));
     }
 }

@@ -17,8 +17,9 @@ use casa_ms::{
     MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLayoutSpec, MsLegendPosition,
     MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
     apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-    build_msexplore_plot_payload, preview_msexplore_flag_edit,
-    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
+    build_msexplore_payload_from_spec, build_msexplore_plot_payload, export_msexplore_plot,
+    preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
+    render_msexplore_plot_image,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
@@ -1082,6 +1083,219 @@ fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
         .expect("render overplot image");
     assert_eq!(image.width(), 1200);
     assert_eq!(image.height(), 800);
+}
+
+#[test]
+fn msexplore_payload_from_spec_opens_disk_backed_ms_for_scatter_pages() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+
+    let mut amplitude = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    amplitude.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 2,
+        rowindex: 0,
+        colindex: 0,
+        plotindex: 0,
+    };
+    amplitude.style.showlegend = true;
+    amplitude.style.legendposition = MsLegendPosition::ExteriorRight;
+
+    let mut phase = MsPlotSpec::from_preset(MsPlotPreset::PhaseVsTime);
+    phase.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 2,
+        rowindex: 0,
+        colindex: 1,
+        plotindex: 1,
+    };
+    phase.style.showlegend = true;
+    phase.style.legendposition = MsLegendPosition::ExteriorRight;
+
+    let payload = build_msexplore_payload_from_spec(&MsExploreSpec {
+        ms_path,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
+        selection: MsSelectionSpec::default(),
+        header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
+        page_title: Some("Amplitude and Phase".to_string()),
+        exprange: MsPageExportRange::Current,
+        max_plot_points: DEFAULT_MAX_PLOT_POINTS,
+        plots: vec![amplitude, phase],
+    })
+    .expect("build payload from spec");
+
+    let MsPlotPayload::ScatterPage(page) = payload else {
+        panic!("expected scatter page payload");
+    };
+    assert_eq!(page.gridrows, 1);
+    assert_eq!(page.gridcols, 2);
+    assert_eq!(page.items.len(), 2);
+    assert!(
+        page.header_lines
+            .iter()
+            .any(|line| line.contains("Filename:"))
+    );
+    assert!(
+        page.header_lines
+            .iter()
+            .any(|line| line.contains("Y Column: Amplitude") || line.contains("Y Column: Phase"))
+    );
+}
+
+#[test]
+fn msexplore_export_api_writes_grid_page_png_pdf_and_manifest_outputs() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open fixture");
+
+    let mut iterated = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    iterated.iteration.iteraxis = Some(MsIterationAxis::Scan);
+    iterated.iteration.xselfscale = true;
+    iterated.style.showlegend = true;
+    iterated.style.legendposition = MsLegendPosition::ExteriorRight;
+    let grid_payload = build_msexplore_plot_payload(&ms, &MsSelectionSpec::default(), &iterated)
+        .expect("build iterated payload");
+    let MsPlotPayload::ScatterGrid(_) = &grid_payload else {
+        panic!("expected scatter grid payload");
+    };
+
+    let grid_png = temp.path().join("iter-grid.png");
+    export_msexplore_plot(
+        &grid_payload,
+        MeasurementSetPlotTheme::light(),
+        &grid_png,
+        casa_ms::MsExportFormat::Png,
+        1200,
+        800,
+    )
+    .expect("export grid png");
+    assert!(grid_png.exists());
+
+    let grid_txt = temp.path().join("iter-grid.txt");
+    export_msexplore_plot(
+        &grid_payload,
+        MeasurementSetPlotTheme::dark(),
+        &grid_txt,
+        casa_ms::MsExportFormat::Txt,
+        1200,
+        800,
+    )
+    .expect("export grid txt");
+    let grid_manifest = std::fs::read_to_string(&grid_txt).expect("read grid manifest");
+    assert_eq!(
+        manifest_header_value(&grid_manifest, "iteraxis"),
+        Some("scan")
+    );
+    assert_eq!(
+        manifest_header_value(&grid_manifest, "legendposition"),
+        Some("exteriorRight")
+    );
+
+    let mut amplitude = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    amplitude.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 2,
+        rowindex: 0,
+        colindex: 0,
+        plotindex: 0,
+    };
+    amplitude.style.showlegend = true;
+    amplitude.style.legendposition = MsLegendPosition::ExteriorRight;
+
+    let mut phase = MsPlotSpec::from_preset(MsPlotPreset::PhaseVsTime);
+    phase.layout = MsLayoutSpec {
+        gridrows: 1,
+        gridcols: 2,
+        rowindex: 0,
+        colindex: 1,
+        plotindex: 1,
+    };
+    phase.style.showlegend = true;
+    phase.style.legendposition = MsLegendPosition::ExteriorRight;
+
+    let page_payload = build_msexplore_payload(
+        &ms,
+        &MsExploreSpec {
+            ms_path,
+            summary_format: MeasurementSetSummaryOutputFormat::Text,
+            selection: MsSelectionSpec::default(),
+            header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
+            page_title: Some("Amplitude and Phase".to_string()),
+            exprange: MsPageExportRange::Current,
+            max_plot_points: DEFAULT_MAX_PLOT_POINTS,
+            plots: vec![amplitude, phase],
+        },
+    )
+    .expect("build page payload");
+    let MsPlotPayload::ScatterPage(_) = &page_payload else {
+        panic!("expected scatter page payload");
+    };
+
+    let page_pdf = temp.path().join("page.pdf");
+    export_msexplore_plot(
+        &page_payload,
+        MeasurementSetPlotTheme::light(),
+        &page_pdf,
+        casa_ms::MsExportFormat::Pdf,
+        1200,
+        800,
+    )
+    .expect("export page pdf");
+    assert!(page_pdf.exists());
+    assert!(
+        std::fs::metadata(&page_pdf)
+            .expect("page pdf metadata")
+            .len()
+            > 0
+    );
+
+    let page_txt = temp.path().join("page.txt");
+    export_msexplore_plot(
+        &page_payload,
+        MeasurementSetPlotTheme::light(),
+        &page_txt,
+        casa_ms::MsExportFormat::Txt,
+        1200,
+        800,
+    )
+    .expect("export page txt");
+    let page_manifest = std::fs::read_to_string(&page_txt).expect("read page manifest");
+    assert_eq!(manifest_header_value(&page_manifest, "gridrows"), Some("1"));
+    assert_eq!(manifest_header_value(&page_manifest, "gridcols"), Some("2"));
+    assert!(page_manifest.contains("# header_line=Filename:"));
+}
+
+#[test]
+fn msexplore_export_api_rejects_text_for_listobs_payloads() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_geometry_fixture_ms(temp.path());
+
+    let payload = build_msexplore_payload_from_spec(&MsExploreSpec {
+        ms_path,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
+        selection: MsSelectionSpec::default(),
+        header_items: Vec::new(),
+        page_title: None,
+        exprange: MsPageExportRange::Current,
+        max_plot_points: DEFAULT_MAX_PLOT_POINTS,
+        plots: vec![MsPlotSpec::from_preset(MsPlotPreset::UvCoverage)],
+    })
+    .expect("build listobs payload");
+    let MsPlotPayload::ListObs(_) = &payload else {
+        panic!("expected listobs payload");
+    };
+
+    let output = temp.path().join("uv.txt");
+    let error = export_msexplore_plot(
+        &payload,
+        MeasurementSetPlotTheme::light(),
+        &output,
+        casa_ms::MsExportFormat::Txt,
+        1200,
+        800,
+    )
+    .unwrap_err();
+    assert!(error.contains("text export"));
 }
 
 #[test]
