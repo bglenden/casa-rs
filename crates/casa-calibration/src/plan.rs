@@ -1077,3 +1077,353 @@ fn scalar_kind(value: &ScalarValue) -> &'static str {
         ScalarValue::String(_) => "String",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+    use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::model::{
+        CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
+        CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
+        CalibrationValidationIssue,
+    };
+
+    fn row(fields: Vec<RecordField>) -> RecordValue {
+        RecordValue::new(fields)
+    }
+
+    fn scalar_table(fields: Vec<RecordField>) -> Table {
+        Table::from_rows_memory(vec![row(fields)])
+    }
+
+    fn empty_summary(path: PathBuf) -> CalibrationTableSummary {
+        CalibrationTableSummary {
+            path,
+            table_type: "Calibration".to_string(),
+            table_subtype: "G Jones".to_string(),
+            row_count: 0,
+            columns: Vec::new(),
+            keywords: CalibrationKeywordSummary {
+                par_type: None,
+                vis_cal: None,
+                ms_name: None,
+                pol_basis: None,
+                casa_version: None,
+            },
+            subtables: Vec::new(),
+            parameter_family: CalibrationParameterFamily::Complex,
+            parameter_column: CalibrationColumnSummary {
+                parameter_column: None,
+                parameter_primitive_type: None,
+                first_cell_shape: None,
+            },
+            field_ids: Vec::new(),
+            spectral_window_ids: Vec::new(),
+            antenna1_ids: Vec::new(),
+            antenna2_ids: Vec::new(),
+            observation_ids: Vec::new(),
+            time_coverage: None,
+            issues: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn helper_math_and_spw_mapping_cover_success_and_error_paths() {
+        let phase_dir = ArrayValue::Float64(
+            ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![1.25_f64, -0.5]).unwrap(),
+        );
+        assert_eq!(phase_direction_to_radec(&phase_dir).unwrap(), (1.25, -0.5));
+        assert!(
+            phase_direction_to_radec(&ArrayValue::Int32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![1_i32, 2]).unwrap()
+            ))
+            .unwrap_err()
+            .contains("Float64")
+        );
+        assert!(
+            phase_direction_to_radec(&ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![1.0_f64, 2.0]).unwrap()
+            ))
+            .unwrap_err()
+            .contains("unsupported shape")
+        );
+
+        assert!(angular_separation_rad(0.0, 0.0, 0.0, 0.0) < 1.0e-12);
+        let pi = angular_separation_rad(0.0, 0.0, std::f64::consts::PI, 0.0);
+        assert!((pi - std::f64::consts::PI).abs() < 1.0e-12);
+
+        let mut spec = ApplyCalibrationTableSpec::new("/tmp/fake.gcal");
+        spec.interp = ApplyInterpolationMode::Nearest;
+        spec.spwmap = vec![7, 5];
+        let mappings = resolve_spw_mapping(&spec, &[5, 7], &[0, 1]).unwrap();
+        assert_eq!(
+            mappings,
+            vec![
+                ApplySpwMapping {
+                    data_spw_id: 0,
+                    calibration_spw_id: 7,
+                },
+                ApplySpwMapping {
+                    data_spw_id: 1,
+                    calibration_spw_id: 5,
+                },
+            ]
+        );
+        match resolve_spw_mapping(&spec, &[5, 7], &[2]).unwrap_err() {
+            ApplyPlanError::MissingSpwMapEntry {
+                data_spw_id, path, ..
+            } => {
+                assert_eq!(data_spw_id, 2);
+                assert!(path.contains("fake.gcal"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        match resolve_spw_mapping(
+            &ApplyCalibrationTableSpec {
+                spwmap: vec![],
+                ..spec.clone()
+            },
+            &[5],
+            &[3],
+        )
+        .unwrap_err()
+        {
+            ApplyPlanError::MissingCalibrationSpectralWindow {
+                calibration_spw_id, ..
+            } => assert_eq!(calibration_spw_id, 3),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cal_desc_and_summary_helpers_round_trip_subtables() {
+        let temp = tempdir().unwrap();
+        let cal_desc_root = temp.path().join("bpoly.cal");
+        std::fs::create_dir_all(&cal_desc_root).unwrap();
+        let cal_desc_schema = TableSchema::new(vec![ColumnSchema::array_variable(
+            "SPECTRAL_WINDOW_ID",
+            casa_types::PrimitiveType::Int32,
+            Some(1),
+        )])
+        .unwrap();
+        let mut cal_desc = Table::with_schema_memory(cal_desc_schema);
+        cal_desc
+            .add_row(row(vec![RecordField::new(
+                "SPECTRAL_WINDOW_ID",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![3_i32]).unwrap(),
+                )),
+            )]))
+            .unwrap();
+        cal_desc
+            .add_row(row(vec![RecordField::new(
+                "SPECTRAL_WINDOW_ID",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![7_i32, 5]).unwrap(),
+                )),
+            )]))
+            .unwrap();
+        cal_desc
+            .save(TableOptions::new(cal_desc_root.join("CAL_DESC")))
+            .unwrap();
+        assert_eq!(
+            load_bpoly_spectral_window_ids(&cal_desc_root).unwrap(),
+            vec![3, 5, 7]
+        );
+
+        let bad_root = temp.path().join("bad.cal");
+        std::fs::create_dir_all(&bad_root).unwrap();
+        let bad_schema = TableSchema::new(vec![ColumnSchema::array_variable(
+            "SPECTRAL_WINDOW_ID",
+            casa_types::PrimitiveType::Float32,
+            Some(1),
+        )])
+        .unwrap();
+        let mut bad_cal_desc = Table::with_schema_memory(bad_schema);
+        bad_cal_desc
+            .add_row(row(vec![RecordField::new(
+                "SPECTRAL_WINDOW_ID",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![1.0_f32]).unwrap(),
+                )),
+            )]))
+            .unwrap();
+        bad_cal_desc
+            .save(TableOptions::new(bad_root.join("CAL_DESC")))
+            .unwrap();
+        match load_bpoly_spectral_window_ids(&bad_root).unwrap_err() {
+            ApplyPlanError::ScalarTypeMismatch {
+                expected, found, ..
+            } => {
+                assert_eq!(expected, "Int32 array");
+                assert_eq!(found, "non-Int32 array");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let field_path = temp.path().join("FIELD");
+        let mut field_table = Table::with_schema_memory(
+            TableSchema::new(vec![ColumnSchema::scalar(
+                "NAME",
+                casa_types::PrimitiveType::String,
+            )])
+            .unwrap(),
+        );
+        field_table
+            .add_row(row(vec![RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String("target".to_string())),
+            )]))
+            .unwrap();
+        field_table.save(TableOptions::new(&field_path)).unwrap();
+        let spw_path = temp.path().join("SPECTRAL_WINDOW");
+        let mut spw_table = Table::with_schema_memory(
+            TableSchema::new(vec![
+                ColumnSchema::scalar("NUM_CHAN", casa_types::PrimitiveType::Int32),
+                ColumnSchema::scalar("REF_FREQUENCY", casa_types::PrimitiveType::Float64),
+                ColumnSchema::array_variable(
+                    "CHAN_FREQ",
+                    casa_types::PrimitiveType::Float64,
+                    Some(1),
+                ),
+            ])
+            .unwrap(),
+        );
+        spw_table
+            .add_row(row(vec![
+                RecordField::new("NUM_CHAN", Value::Scalar(ScalarValue::Int32(2))),
+                RecordField::new("REF_FREQUENCY", Value::Scalar(ScalarValue::Float64(1.4e9))),
+                RecordField::new(
+                    "CHAN_FREQ",
+                    Value::Array(ArrayValue::Float64(
+                        ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.4e9_f64, 1.401e9]).unwrap(),
+                    )),
+                ),
+            ]))
+            .unwrap();
+        spw_table.save(TableOptions::new(&spw_path)).unwrap();
+
+        let mut summary = empty_summary(temp.path().join("gaincal"));
+        summary.subtables = vec![
+            CalibrationSubtableSummary {
+                name: "FIELD".to_string(),
+                stored_reference: Some("Table: FIELD".to_string()),
+                resolved_path: Some(field_path.clone()),
+                exists: true,
+                row_count: Some(1),
+                open_error: None,
+            },
+            CalibrationSubtableSummary {
+                name: "SPECTRAL_WINDOW".to_string(),
+                stored_reference: Some("Table: SPECTRAL_WINDOW".to_string()),
+                resolved_path: Some(spw_path.clone()),
+                exists: true,
+                row_count: Some(1),
+                open_error: None,
+            },
+        ];
+
+        assert_eq!(
+            field_name_by_id(&summary, 0).unwrap(),
+            Some("target".to_string())
+        );
+        assert_eq!(field_name_by_id(&summary, 4).unwrap(), None);
+        let plan = spectral_window_plan(&MsSpectralWindow::new(&spw_table), 0).unwrap();
+        assert_eq!(plan.num_chan, 2);
+        assert_eq!(plan.channel_frequencies_hz, vec![1.4e9, 1.401e9]);
+        let loaded = load_caltable_spectral_windows(
+            &summary,
+            &[
+                ApplySpwMapping {
+                    data_spw_id: 1,
+                    calibration_spw_id: 0,
+                },
+                ApplySpwMapping {
+                    data_spw_id: 2,
+                    calibration_spw_id: 0,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].spw_id, 0);
+        assert_eq!(
+            open_summary_subtable(&summary, "FIELD")
+                .unwrap()
+                .row_count(),
+            1
+        );
+
+        let mut broken = summary.clone();
+        broken.subtables[0].resolved_path = None;
+        match open_summary_subtable(&broken, "FIELD").unwrap_err() {
+            ApplyPlanError::ResolveGainField {
+                selector, reason, ..
+            } => {
+                assert_eq!(selector, "FIELD");
+                assert!(reason.contains("missing"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scalar_access_helpers_report_expected_kinds() {
+        let table = scalar_table(vec![
+            RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String("demo".to_string())),
+            ),
+            RecordField::new("FIELD_ID", Value::Scalar(ScalarValue::Int32(3))),
+            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(12.5))),
+        ]);
+
+        assert_eq!(get_string(&table, 0, "NAME").unwrap(), "demo");
+        assert_eq!(get_i32(&table, 0, "FIELD_ID").unwrap(), 3);
+        assert_eq!(get_f64(&table, 0, "TIME").unwrap(), 12.5);
+        match get_i32(&table, 0, "NAME").unwrap_err() {
+            ApplyPlanError::ScalarTypeMismatch {
+                expected, found, ..
+            } => {
+                assert_eq!(expected, "Int32");
+                assert_eq!(found, "String");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        assert_eq!(unique_i32([5, 3, 5, 1, 3]), vec![1, 3, 5]);
+        assert_eq!(scalar_kind(&ScalarValue::Bool(true)), "Bool");
+        assert_eq!(
+            scalar_kind(&ScalarValue::Complex64(casa_types::Complex64::new(
+                1.0, 2.0
+            ))),
+            "Complex64"
+        );
+    }
+
+    #[test]
+    fn summary_support_predicate_accepts_expected_table_families() {
+        let mut summary = empty_summary(PathBuf::from("/tmp/summary"));
+        assert!(summary.supported_for_v1_apply());
+
+        summary.parameter_family = CalibrationParameterFamily::Float;
+        summary.table_subtype = "K Jones".to_string();
+        assert!(summary.supported_for_v1_apply());
+
+        summary.table_subtype = "BPOLY".to_string();
+        assert!(summary.supported_for_v1_apply());
+
+        summary.issues.push(CalibrationValidationIssue {
+            code: "bad".to_string(),
+            severity: CalibrationIssueSeverity::Error,
+            message: "nope".to_string(),
+        });
+        assert!(!summary.supported_for_v1_apply());
+    }
+}
