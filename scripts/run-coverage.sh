@@ -52,6 +52,11 @@ run_tarpaulin() {
   # line-coverage drift when benchmarks are added, renamed, or explicitly ignored.
   # Thin binary entrypoints are exercised indirectly through library/runtime tests
   # and otherwise add denominator without meaningful extra signal in tarpaulin.
+  #
+  # The real-fixture tablebrowser traversal test is exercised in the normal
+  # `cargo test --workspace` gate. Under tarpaulin it can complete successfully
+  # and then leave the coverage runner in a generic post-test abort state, so
+  # skip it only for coverage collection.
   cargo tarpaulin \
     --workspace \
     --timeout "$tarpaulin_timeout" \
@@ -61,7 +66,9 @@ run_tarpaulin() {
     '*/src/bin/*' \
     '*/src/main.rs' \
     '*/examples/*' \
-    '*/tests/*perf*.rs'
+    '*/tests/*perf*.rs' \
+    -- \
+    --skip tablebrowser::tests::browser_traverses_real_fixture_tables_and_cells
 }
 
 tarpaulin_log="$(mktemp -t casa-rs-tarpaulin.XXXXXX.log)"
