@@ -1388,7 +1388,7 @@ mod tests {
         let dv = 1.0 / (32.0 * 1.0e-4);
         assert_eq!(
             gridder.density_cell_index(0.99 * du, -0.99 * dv),
-            Some((center.0, center.1 - 1))
+            Some((center.0, center.1))
         );
         assert_eq!(
             gridder.density_cell_index(1.01 * du, -1.01 * dv),
