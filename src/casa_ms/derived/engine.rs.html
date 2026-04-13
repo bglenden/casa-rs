@@ -1185,15 +1185,20 @@
 <a href=#1185 id=1185 data-nosnippet>1185</a>        <span class="macro">assert!</span>(engine.hour_angle(time, <span class="number">0</span>, <span class="number">0</span>).unwrap().is_finite());
 <a href=#1186 id=1186 data-nosnippet>1186</a>        <span class="macro">assert!</span>(engine.hour_angle_observatory(time, <span class="number">0</span>).unwrap().is_finite());
 <a href=#1187 id=1187 data-nosnippet>1187</a>        <span class="macro">assert!</span>(engine.parallactic_angle(time, <span class="number">0</span>, <span class="number">0</span>).unwrap().is_finite());
-<a href=#1188 id=1188 data-nosnippet>1188</a>        <span class="macro">assert!</span>(engine.parallactic_angle_observatory(time, <span class="number">0</span>).unwrap().is_finite());
-<a href=#1189 id=1189 data-nosnippet>1189</a>        <span class="macro">assert!</span>(engine.azel(time, <span class="number">0</span>, <span class="number">0</span>).unwrap().<span class="number">0</span>.is_finite());
-<a href=#1190 id=1190 data-nosnippet>1190</a>        <span class="macro">assert!</span>(engine.azel_observatory(time, <span class="number">0</span>).unwrap().<span class="number">0</span>.is_finite());
-<a href=#1191 id=1191 data-nosnippet>1191</a>        <span class="macro">assert!</span>(engine.last(time, <span class="number">0</span>).unwrap().is_finite());
-<a href=#1192 id=1192 data-nosnippet>1192</a>        <span class="macro">assert!</span>(engine.last_observatory(time).unwrap().is_finite());
-<a href=#1193 id=1193 data-nosnippet>1193</a>        <span class="macro">assert!</span>(engine.hadec(time, <span class="number">0</span>, <span class="number">0</span>).unwrap().<span class="number">0</span>.is_finite());
-<a href=#1194 id=1194 data-nosnippet>1194</a>        <span class="macro">assert!</span>(engine.uvw_j2000(time, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>).unwrap()[<span class="number">0</span>].is_finite());
-<a href=#1195 id=1195 data-nosnippet>1195</a>        <span class="macro">assert!</span>(engine.field_direction_j2000(<span class="number">1</span>).is_err());
-<a href=#1196 id=1196 data-nosnippet>1196</a>        <span class="macro">assert!</span>(engine.hour_angle(time, <span class="number">0</span>, <span class="number">9</span>).is_err());
-<a href=#1197 id=1197 data-nosnippet>1197</a>    }
-<a href=#1198 id=1198 data-nosnippet>1198</a>}
+<a href=#1188 id=1188 data-nosnippet>1188</a>        <span class="macro">assert!</span>(
+<a href=#1189 id=1189 data-nosnippet>1189</a>            engine
+<a href=#1190 id=1190 data-nosnippet>1190</a>                .parallactic_angle_observatory(time, <span class="number">0</span>)
+<a href=#1191 id=1191 data-nosnippet>1191</a>                .unwrap()
+<a href=#1192 id=1192 data-nosnippet>1192</a>                .is_finite()
+<a href=#1193 id=1193 data-nosnippet>1193</a>        );
+<a href=#1194 id=1194 data-nosnippet>1194</a>        <span class="macro">assert!</span>(engine.azel(time, <span class="number">0</span>, <span class="number">0</span>).unwrap().<span class="number">0</span>.is_finite());
+<a href=#1195 id=1195 data-nosnippet>1195</a>        <span class="macro">assert!</span>(engine.azel_observatory(time, <span class="number">0</span>).unwrap().<span class="number">0</span>.is_finite());
+<a href=#1196 id=1196 data-nosnippet>1196</a>        <span class="macro">assert!</span>(engine.last(time, <span class="number">0</span>).unwrap().is_finite());
+<a href=#1197 id=1197 data-nosnippet>1197</a>        <span class="macro">assert!</span>(engine.last_observatory(time).unwrap().is_finite());
+<a href=#1198 id=1198 data-nosnippet>1198</a>        <span class="macro">assert!</span>(engine.hadec(time, <span class="number">0</span>, <span class="number">0</span>).unwrap().<span class="number">0</span>.is_finite());
+<a href=#1199 id=1199 data-nosnippet>1199</a>        <span class="macro">assert!</span>(engine.uvw_j2000(time, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>).unwrap()[<span class="number">0</span>].is_finite());
+<a href=#1200 id=1200 data-nosnippet>1200</a>        <span class="macro">assert!</span>(engine.field_direction_j2000(<span class="number">1</span>).is_err());
+<a href=#1201 id=1201 data-nosnippet>1201</a>        <span class="macro">assert!</span>(engine.hour_angle(time, <span class="number">0</span>, <span class="number">9</span>).is_err());
+<a href=#1202 id=1202 data-nosnippet>1202</a>    }
+<a href=#1203 id=1203 data-nosnippet>1203</a>}
 </code></pre></div></section></main></body></html>
