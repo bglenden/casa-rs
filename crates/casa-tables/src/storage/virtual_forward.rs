@@ -358,7 +358,10 @@ mod tests {
         let col_descs = [column_desc(
             "value",
             "dm",
-            keyword_record(FORWARD_TABLE_KEYWORD, Value::Scalar(ScalarValue::String("ref".to_string()))),
+            keyword_record(
+                FORWARD_TABLE_KEYWORD,
+                Value::Scalar(ScalarValue::String("ref".to_string())),
+            ),
         )];
         let ctx = VirtualContext {
             col_descs: &col_descs,
@@ -386,7 +389,10 @@ mod tests {
         let col_descs = [column_desc(
             "value",
             "dm",
-            keyword_record(FORWARD_TABLE_KEYWORD, Value::Scalar(ScalarValue::String("ref".to_string()))),
+            keyword_record(
+                FORWARD_TABLE_KEYWORD,
+                Value::Scalar(ScalarValue::String("ref".to_string())),
+            ),
         )];
         let mut first_keywords = col_descs[0].keywords.clone();
         first_keywords.upsert(

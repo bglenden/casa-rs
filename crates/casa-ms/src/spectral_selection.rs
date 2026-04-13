@@ -2162,6 +2162,20 @@ fn cube_source_channel_support(
 mod tests {
     use super::*;
 
+    fn test_engine() -> MsCalEngine {
+        let observatory = casa_types::measures::position::MPosition::new_itrf(
+            -1_601_185.4,
+            -5_041_977.5,
+            3_554_875.9,
+        );
+        let direction = casa_types::measures::direction::MDirection::from_angles(
+            0.0,
+            std::f64::consts::FRAC_PI_4,
+            casa_types::measures::direction::DirectionRef::J2000,
+        );
+        MsCalEngine::from_parts(vec![observatory.clone()], vec![direction], observatory)
+    }
+
     #[test]
     fn parse_cube_axis_value_channel() {
         assert_eq!(
@@ -2907,7 +2921,10 @@ mod tests {
             output_freq_ref: FrequencyRef::TOPO,
             interpolation: CubeInterpolation::Linear,
             interpolation_uses_native_source_frequencies: false,
+            output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
+            output_frame_field_id: 0,
             output_channel_frequencies_hz: vec![1.0e9],
+            output_channel_widths_hz: vec![5.0e7],
         };
         let engine = test_engine();
         let error = setup
@@ -2927,7 +2944,10 @@ mod tests {
             output_freq_ref: FrequencyRef::LSRK,
             interpolation: CubeInterpolation::Nearest,
             interpolation_uses_native_source_frequencies: true,
+            output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
+            output_frame_field_id: 0,
             output_channel_frequencies_hz: vec![1.05e9],
+            output_channel_widths_hz: vec![5.0e7],
         };
         let engine = test_engine();
         let contributions = setup

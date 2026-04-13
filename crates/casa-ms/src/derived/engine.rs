@@ -1185,7 +1185,12 @@ mod tests {
         assert!(engine.hour_angle(time, 0, 0).unwrap().is_finite());
         assert!(engine.hour_angle_observatory(time, 0).unwrap().is_finite());
         assert!(engine.parallactic_angle(time, 0, 0).unwrap().is_finite());
-        assert!(engine.parallactic_angle_observatory(time, 0).unwrap().is_finite());
+        assert!(
+            engine
+                .parallactic_angle_observatory(time, 0)
+                .unwrap()
+                .is_finite()
+        );
         assert!(engine.azel(time, 0, 0).unwrap().0.is_finite());
         assert!(engine.azel_observatory(time, 0).unwrap().0.is_finite());
         assert!(engine.last(time, 0).unwrap().is_finite());

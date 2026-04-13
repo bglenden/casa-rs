@@ -1401,6 +1401,7 @@ fn build_mosaic_pointing_groups(
     Ok(grouped.into_values().collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_mosaic_projector(
     geometry: ImageGeometry,
     gridder: &StandardGridder,
@@ -2382,7 +2383,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 total_reported_minor_iterations,
                 refreshed_planes,
                 refreshed_channel_indices,
-                dominant_channel.map(|(index, peak, nsigma)| (index, peak, nsigma)),
+                dominant_channel,
                 global_peak_after_refresh,
                 cube_nsigma_threshold_after_refresh_jy_per_beam,
             );
@@ -2626,6 +2627,7 @@ fn cube_minor_cycle_capture_config() -> Option<CubeMinorCycleCaptureConfig> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn maybe_capture_cube_minor_cycle_state(
     capture: Option<&CubeMinorCycleCaptureConfig>,
     channel_index: usize,
@@ -4019,14 +4021,13 @@ fn compute_mtmfs_psf_terms(
                     "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
                 ))
             })?;
-        for index in 0..batch.len() {
+        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
             if !batch.gridable[index] {
                 skipped_samples += 1;
                 continue;
             }
             let weight = batch.weight[index];
             let sumwt_factor = batch.sumwt_factor[index];
-            let frequency_hz = frequencies_hz[index];
             if !(weight.is_finite()
                 && weight > 0.0
                 && sumwt_factor.is_finite()
@@ -4144,10 +4145,9 @@ fn compute_mtmfs_residual_terms(
                     "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
                 ))
             })?;
-        for index in 0..batch.len() {
+        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
             let weight = batch.weight[index];
             let observed_visibility = batch.visibility[index];
-            let frequency_hz = frequencies_hz[index];
             let gridable = batch.gridable[index];
             let planned_sample = if gridable
                 && weight.is_finite()
@@ -4172,30 +4172,28 @@ fn compute_mtmfs_residual_terms(
             } else {
                 vec![Complex32::new(0.0, 0.0); request.nterms]
             };
-            for residual_order in 0..request.nterms {
+            for (residual_order, residual_grid) in
+                residual_grids.iter_mut().enumerate().take(request.nterms)
+            {
                 let observed_term = observed_visibility
                     * mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, residual_order);
                 let mut predicted_term = Complex32::new(0.0, 0.0);
-                for model_order in 0..request.nterms {
+                for (model_order, predicted_visibility) in predicted_visibility_terms
+                    .iter()
+                    .enumerate()
+                    .take(request.nterms)
+                {
                     let factor = mtmfs_taylor_weight(
                         frequency_hz,
                         request.reffreq_hz,
                         residual_order + model_order,
                     );
-                    predicted_term += predicted_visibility_terms[model_order] * factor;
+                    predicted_term += *predicted_visibility * factor;
                 }
                 let residual_visibility = observed_term - predicted_term;
                 let residual = residual_visibility * weight;
-                gridder.grid_sample_product_planned(
-                    &mut residual_grids[residual_order],
-                    &plan.positive,
-                    residual,
-                );
-                gridder.grid_sample_product_planned(
-                    &mut residual_grids[residual_order],
-                    &plan.negative,
-                    residual.conj(),
-                );
+                gridder.grid_sample_product_planned(residual_grid, &plan.positive, residual);
+                gridder.grid_sample_product_planned(residual_grid, &plan.negative, residual.conj());
             }
         }
     }
@@ -4242,6 +4240,7 @@ fn mtmfs_hessian(psf_terms: &[Array2<f32>], nterms: usize) -> Result<Vec<Vec<f32
         .collect())
 }
 
+#[allow(clippy::needless_range_loop)]
 fn invert_small_matrix(matrix: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, ImagingError> {
     let n = matrix.len();
     if n == 0 || matrix.iter().any(|row| row.len() != n) {
@@ -4372,6 +4371,7 @@ fn find_mtmfs_component(
     best
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_mtmfs_minor_cycle(
     request: &MtmfsRequest,
     psf_terms: &[Array2<f32>],
@@ -4650,10 +4650,7 @@ fn compute_residual(
         gridder,
         model,
         psf_state,
-        matches!(
-            request.deconvolver,
-            Deconvolver::Clark | Deconvolver::Multiscale
-        ),
+        matches!(request.deconvolver, Deconvolver::Clark),
         stage_timings,
     )
 }
@@ -4734,6 +4731,7 @@ fn compute_residual_trace_standard(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard_internal(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -4854,6 +4852,7 @@ fn compute_residual_standard_internal(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_trace_cube_standard(
     batches: &[VisibilityBatch],
     model_interpolation_batches: &[CubeModelInterpolationBatch],
@@ -4950,6 +4949,7 @@ fn cube_refresh_flags(planes: &[CubePlaneWork], updated_model_channels: &[bool])
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_trace_cube_standard_with_model_grids(
     batches: &[VisibilityBatch],
     planned_batches: Option<&[Vec<Option<PlannedSample>>]>,
@@ -6043,19 +6043,20 @@ mod tests {
     use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
     use ndarray::{Array2, s};
     use num_complex::Complex32;
+    use serial_test::serial;
 
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
-        ImageGeometry, ImagingRequest, ImagingStageTimings, ParallelHandBatch, PlaneStokes,
-        PsfState, RestoringBeamMode, StandardGridder, VisibilityBatch, WProjectSkipReason,
-        WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel, apply_chauvenet_clipping,
-        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
-        compute_cycle_threshold, compute_psf, compute_psf_direct, compute_residual,
-        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
+        ImageGeometry, ImagingRequest, ImagingStageTimings, MtmfsRequest, ParallelHandBatch,
+        PlaneStokes, PsfState, RestoringBeamMode, StandardGridder, VisibilityBatch,
+        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
+        apply_chauvenet_clipping, apply_weighting, build_direct_components,
+        build_direct_pixel_coordinates, compute_cycle_threshold, compute_psf, compute_psf_direct,
+        compute_residual, compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason, peak_abs_value,
         peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
-        tolerant_clean_stop_reason, trace_cube_weighting, trace_residual_refresh,
+        run_mtmfs, tolerant_clean_stop_reason, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
     fn point_source_visibilities(
@@ -6668,6 +6669,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(casa_cpp)]
     fn fft_major_cycle_prediction_matches_direct_for_off_center_source() {
         let samples = vec![
             (-150.0, -120.0, 0.0),
@@ -6769,6 +6771,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(casa_cpp)]
     fn fft_major_cycle_prediction_matches_direct_for_structured_model() {
         let samples = vec![
             (-310.25, -205.5, 0.0),
@@ -7563,6 +7566,114 @@ mod tests {
     }
 
     #[test]
+    fn mtmfs_run_produces_taylor_terms_and_alpha_products() {
+        let geometry = ImageGeometry {
+            image_shape: [48, 48],
+            cell_size_rad: [1.2e-4, 1.2e-4],
+        };
+        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
+        let low = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (24.0, 24.0),
+            0.7,
+        );
+        let high = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (24.0, 24.0),
+            1.3,
+        );
+        let mut batch = VisibilityBatch {
+            u_lambda: Vec::new(),
+            v_lambda: Vec::new(),
+            w_lambda: Vec::new(),
+            weight: Vec::new(),
+            sumwt_factor: Vec::new(),
+            gridable: Vec::new(),
+            visibility: Vec::new(),
+        };
+        let mut frequencies_hz = Vec::new();
+        for (source_batch, frequency_hz) in [(&low, 1.39e9_f64), (&high, 1.41e9_f64)] {
+            batch
+                .u_lambda
+                .extend_from_slice(source_batch.u_lambda.as_slice());
+            batch
+                .v_lambda
+                .extend_from_slice(source_batch.v_lambda.as_slice());
+            batch
+                .w_lambda
+                .extend_from_slice(source_batch.w_lambda.as_slice());
+            batch
+                .weight
+                .extend_from_slice(source_batch.weight.as_slice());
+            batch
+                .sumwt_factor
+                .extend_from_slice(source_batch.sumwt_factor.as_slice());
+            batch
+                .gridable
+                .extend_from_slice(source_batch.gridable.as_slice());
+            batch
+                .visibility
+                .extend_from_slice(source_batch.visibility.as_slice());
+            frequencies_hz.extend(std::iter::repeat_n(frequency_hz, source_batch.len()));
+        }
+
+        let result = run_mtmfs(&MtmfsRequest {
+            geometry,
+            visibility_batches: vec![batch],
+            sample_frequency_batches_hz: vec![frequencies_hz],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.40e9,
+            selected_frequency_range_hz: [1.39e9, 1.41e9],
+            nterms: 2,
+            clean: CleanConfig {
+                niter: 6,
+                gain: 0.1,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 2,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+            },
+            clean_mask: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+
+        assert_eq!(result.psf_terms.len(), 3);
+        assert_eq!(result.residual_terms.len(), 2);
+        assert_eq!(result.model_terms.len(), 2);
+        assert_eq!(result.image_terms.len(), 2);
+        assert_eq!(result.sumwt_terms.len(), 3);
+        assert!(result.alpha.is_some());
+        assert!(result.alpha_error.is_some());
+        assert!(result.diagnostics.gridded_samples > 0);
+        assert!(result.diagnostics.major_cycles > 0);
+        assert!(result.diagnostics.minor_iterations > 0);
+        assert_eq!(result.compatibility.channel_frequencies_hz, vec![1.40e9]);
+        assert_eq!(result.image_terms[0].shape(), &[48, 48, 1, 1]);
+        assert!(peak_abs_value(&result.image_terms[0].slice(s![.., .., 0, 0]).to_owned()) > 1.0e-3);
+        assert!(peak_abs_value(&result.image_terms[1].slice(s![.., .., 0, 0]).to_owned()) > 1.0e-4);
+        assert!(
+            peak_abs_value(
+                &result
+                    .alpha
+                    .as_ref()
+                    .unwrap()
+                    .slice(s![.., .., 0, 0])
+                    .to_owned()
+            ) > 1.0e-4
+        );
+    }
+
+    #[test]
     fn hogbom_reduces_peak_residual() {
         let samples = vec![
             (-140.0, -110.0, 0.0),
@@ -7631,7 +7742,7 @@ mod tests {
     }
 
     #[test]
-    fn casa_hogbom_compatibility_uses_inclusive_cycle_iteration_budget() {
+    fn casa_hogbom_compatibility_keeps_niter_as_a_hard_cap() {
         let samples = vec![
             (-140.0, -110.0, 0.0),
             (-80.0, 60.0, 0.0),
@@ -7678,7 +7789,7 @@ mod tests {
             Some(CleanStopReason::IterationLimitReached)
         );
         assert_eq!(result.diagnostics.major_cycles, 1);
-        assert_eq!(result.diagnostics.minor_iterations, 2);
+        assert_eq!(result.diagnostics.minor_iterations, 1);
         assert!(result.model[(32, 32, 0, 0)] > 0.0);
     }
 
@@ -8427,6 +8538,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(casa_cpp)]
     fn hogbom_minor_cycle_matches_casacore_hclean_on_simple_plane() {
         let request = ImagingRequest {
             geometry: ImageGeometry {
