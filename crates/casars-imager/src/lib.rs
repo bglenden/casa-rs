@@ -2,7 +2,9 @@
 #![warn(missing_docs)]
 //! Thin MeasurementSet-backed frontend for the pure `casa-imaging` core.
 
+mod managed_output;
 mod oracle;
+mod schema;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
@@ -54,6 +56,10 @@ use image::{ImageBuffer, Rgb};
 use ndarray::{Array2, Array4, IxDyn, s};
 use num_complex::Complex32;
 
+pub use managed_output::{
+    ManagedImagingArtifact, ManagedImagingChannelRun, ManagedImagingOutput, ManagedImagingRequest,
+    ManagedImagingRun, ManagedImagingStageTimings,
+};
 pub use oracle::{
     ArtifactFormat, ChannelContributionTrace, DatasetTier, ORACLE_SCHEMA_VERSION,
     OracleArtifactManifest, OracleBundleManifest, OracleBundleOverrides, PhaseCenterTrace,
@@ -65,6 +71,7 @@ pub use oracle::{
     WProjectSkippedSampleTrace, WProjectTraceBundle, WeightSourceKind, sha256_hex_path,
     write_json_gzip_hashed, write_json_pretty, write_json_pretty_hashed,
 };
+pub use schema::command_schema;
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 4096;
@@ -416,8 +423,38 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
 
 /// Run the imager CLI with already-split argument strings.
 pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
-    let config = CliConfig::parse(args)?;
+    let args = args.into_iter().collect::<Vec<_>>();
+    if args
+        .iter()
+        .any(|arg| matches!(arg.to_str(), Some("--ui-schema")))
+    {
+        println!(
+            "{}",
+            command_schema("casars-imager")
+                .render_json_pretty()
+                .map_err(|error| format!("serialize ui schema: {error}"))?
+        );
+        return Ok(());
+    }
+    if args
+        .iter()
+        .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
+    {
+        println!("{}", command_schema("casars-imager").render_help());
+        return Ok(());
+    }
+
+    let (managed_output, filtered_args) = extract_option_value(&args, "--managed-output")?;
+    let config = CliConfig::parse(filtered_args)?;
     let output = run_from_config(&config)?;
+    if managed_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ManagedImagingOutput::from_run(&config, &output))
+                .map_err(|error| format!("serialize managed imaging output: {error}"))?
+        );
+        return Ok(());
+    }
     for warning in &output.warnings {
         eprintln!("warning: {warning}");
     }
@@ -430,6 +467,35 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         output.clean_stop_reason
     );
     Ok(())
+}
+
+fn extract_option_value(args: &[OsString], flag: &str) -> Result<(bool, Vec<OsString>), String> {
+    let mut enabled = false;
+    let mut filtered = Vec::with_capacity(args.len());
+    let mut index = 0;
+    while index < args.len() {
+        let Some(current) = args[index].to_str() else {
+            filtered.push(args[index].clone());
+            index += 1;
+            continue;
+        };
+        if current != flag {
+            filtered.push(args[index].clone());
+            index += 1;
+            continue;
+        }
+        let value = args
+            .get(index + 1)
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        enabled = match value {
+            "true" => true,
+            "false" => false,
+            other => return Err(format!("{flag} expects true or false, got {other:?}")),
+        };
+        index += 2;
+    }
+    Ok((enabled, filtered))
 }
 
 /// Build a frozen-oracle trace for the current `prepare_plane_input()` seam.

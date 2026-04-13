@@ -39,6 +39,7 @@ use casars_imagebrowser_protocol::{
     ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImagePlaneContentMode,
     ImageProfilePayload,
 };
+use casars_imager::{ManagedImagingOutput, ManagedImagingStageTimings};
 use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
     BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
@@ -75,9 +76,14 @@ use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
 use crate::graphics::{
     BrowserRenderTheme, ImagePlaneColormap, ImagePlaneOverlayMarker, ImagePlaneRenderInput,
-    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, MsExplorePlotRenderInput,
-    PlotRenderInput, image_plane_layout, image_spectrum_layout, plot_theme,
-    render_image_plane_image, render_image_spectrum_image, render_plot_image,
+    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, ImagingPlotPayload,
+    ImagingPlotRenderInput, ImagingPlotSeries, MsExplorePlotRenderInput, PlotRenderInput,
+    image_plane_layout, image_spectrum_layout, plot_theme, render_image_plane_image,
+    render_image_spectrum_image, render_plot_image,
+};
+use crate::imaging_workflow::{
+    ImagingDiagnosticKind, imaging_catalog_entries, imaging_preferred_diagnostic,
+    imaging_products_display_groups,
 };
 use crate::movie_perf::{
     BackendTimingBreakdown, MovieFrameOutcome, MoviePerfContext, MoviePerfTracer,
@@ -530,6 +536,7 @@ pub(crate) struct PlotCatalogRowView {
 pub(crate) enum PlotCatalogTarget {
     Preset(MsPlotPreset),
     Calibration(CalibrationPlotPreset),
+    Imaging(ImagingDiagnosticKind),
     CustomPlot,
     PageSpec,
 }
@@ -1912,6 +1919,7 @@ struct MeasurementSetRunSnapshot {
 #[derive(Debug, Clone)]
 enum CurrentPlotPayload {
     MsPlot(MsPlotPayload),
+    Imaging(ImagingPlotPayload),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1980,6 +1988,7 @@ struct ResultState {
 enum StructuredResult {
     MeasurementSetSummary(Box<MeasurementSetSummary>),
     Calibration(Box<ManagedCalibrationOutput>),
+    Imaging(Box<ManagedImagingOutput>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -5134,6 +5143,12 @@ impl AppState {
     }
 
     fn workflow_products_display_groups(&self) -> Vec<WorkflowArtifactGroupDisplay> {
+        if self.app.id == "imager" {
+            return self
+                .current_imaging_report()
+                .map(imaging_products_display_groups)
+                .unwrap_or_default();
+        }
         workflow_products_display_groups(
             &self.split_csv_field("gaintables"),
             self.non_empty_field_text("callib").as_deref(),
@@ -9764,9 +9779,28 @@ impl AppState {
                 .unwrap_or_else(|| self.default_calibration_plot_target());
             return match target {
                 PlotCatalogTarget::Calibration(preset) => preset.display_name().to_string(),
-                PlotCatalogTarget::Preset(_)
+                PlotCatalogTarget::Imaging(_)
+                | PlotCatalogTarget::Preset(_)
                 | PlotCatalogTarget::CustomPlot
                 | PlotCatalogTarget::PageSpec => "Calibration Plot".to_string(),
+            };
+        }
+        if self.app.id == "imager" {
+            let report = match self.current_imaging_report() {
+                Some(report) => report,
+                None => return "Imaging Diagnostics".to_string(),
+            };
+            let target = self
+                .current_plot_catalog_target()
+                .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
+                    report,
+                )));
+            return match target {
+                PlotCatalogTarget::Imaging(kind) => kind.label().to_string(),
+                PlotCatalogTarget::Calibration(_)
+                | PlotCatalogTarget::Preset(_)
+                | PlotCatalogTarget::CustomPlot
+                | PlotCatalogTarget::PageSpec => "Imaging Diagnostics".to_string(),
             };
         }
         self.msexplore_plot_label()
@@ -9806,6 +9840,32 @@ impl AppState {
                 },
             ));
         }
+        if self.app.id == "imager" {
+            let report = self.current_imaging_report()?;
+            let target = self
+                .current_plot_catalog_target()
+                .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
+                    report,
+                )));
+            return Some(match target {
+                PlotCatalogTarget::Imaging(ImagingDiagnosticKind::ResidualByChannel) => {
+                    "Per-channel residual peak before and after deconvolution.".to_string()
+                }
+                PlotCatalogTarget::Imaging(ImagingDiagnosticKind::IterationsByChannel) => {
+                    "Per-channel major-cycle and minor-iteration counts.".to_string()
+                }
+                PlotCatalogTarget::Imaging(kind) => {
+                    format!(
+                        "Preview the {} written by the latest imaging run.",
+                        kind.label()
+                    )
+                }
+                PlotCatalogTarget::Calibration(_)
+                | PlotCatalogTarget::Preset(_)
+                | PlotCatalogTarget::CustomPlot
+                | PlotCatalogTarget::PageSpec => "Choose an imaging diagnostic.".to_string(),
+            });
+        }
         let ms_path = self.field_text("ms_path").unwrap_or_default();
         if ms_path.trim().is_empty() {
             return Some(
@@ -9832,7 +9892,7 @@ impl AppState {
                 .as_ref()
                 .map(|snapshot| &snapshot.summary);
         }
-        if self.app.id == "calibrate"
+        if matches!(self.app.id, "calibrate" | "imager")
             && self.result.structured.is_none()
             && let Some(snapshot) = self.plot_workspace.snapshot.as_ref()
         {
@@ -9840,14 +9900,27 @@ impl AppState {
         }
         match self.result.structured.as_ref() {
             Some(StructuredResult::MeasurementSetSummary(summary)) => Some(summary.as_ref()),
-            Some(StructuredResult::Calibration(_)) | None => None,
+            Some(StructuredResult::Calibration(_)) | Some(StructuredResult::Imaging(_)) | None => {
+                None
+            }
         }
     }
 
     fn current_calibration_report(&self) -> Option<&ManagedCalibrationOutput> {
         match self.result.structured.as_ref() {
             Some(StructuredResult::Calibration(report)) => Some(report.as_ref()),
-            Some(StructuredResult::MeasurementSetSummary(_)) | None => None,
+            Some(StructuredResult::MeasurementSetSummary(_))
+            | Some(StructuredResult::Imaging(_))
+            | None => None,
+        }
+    }
+
+    fn current_imaging_report(&self) -> Option<&ManagedImagingOutput> {
+        match self.result.structured.as_ref() {
+            Some(StructuredResult::Imaging(report)) => Some(report.as_ref()),
+            Some(StructuredResult::MeasurementSetSummary(_))
+            | Some(StructuredResult::Calibration(_))
+            | None => None,
         }
     }
 
@@ -9980,6 +10053,23 @@ impl AppState {
         }
 
         self.result.status_line = format!("{} completed.", completed_stage.label());
+        self.result.status_kind = StatusKind::Ok;
+    }
+
+    fn apply_imaging_post_run_guidance(&mut self, report: &ManagedImagingOutput) {
+        if !(self.app.shell_kind() == AppShellKind::Workflow && self.app.id == "imager") {
+            return;
+        }
+        self.plot_workspace.selected_catalog_target = Some(PlotCatalogTarget::Imaging(
+            imaging_preferred_diagnostic(report),
+        ));
+        self.clear_plot_render_cache();
+        self.activate_result_tab(ResultTab::Diagnostics);
+        self.result.status_line = format!(
+            "Imaging completed. {} artifacts recorded at {}.",
+            report.artifacts.len(),
+            report.request.imagename
+        );
         self.result.status_kind = StatusKind::Ok;
     }
 
@@ -10141,6 +10231,41 @@ impl AppState {
         Ok((ms_path, options))
     }
 
+    fn current_imager_summary_request(
+        &self,
+    ) -> Result<(PathBuf, MeasurementSetSummaryOptions), String> {
+        let ms_path = self
+            .field_text("ms")
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                "Enter a MeasurementSet path to populate the summary tabs.".to_string()
+            })?;
+        let selection_value =
+            |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
+        let options = MeasurementSetSummaryOptions {
+            verbose: self.verbose_enabled(),
+            selectdata: true,
+            field: selection_value("field"),
+            spw: selection_value("spw"),
+            antenna: None,
+            scan: None,
+            observation: None,
+            array: None,
+            timerange: None,
+            uvrange: None,
+            correlation: self
+                .field_text("polarization")
+                .filter(|value| !value.trim().is_empty()),
+            intent: None,
+            msselect: None,
+            feed: None,
+            listunfl: self.listunfl_enabled(),
+            cachesize_mb: None,
+        };
+        Ok((ms_path, options))
+    }
+
     fn current_calibrate_selection_spec(&self) -> MsSelectionSpec {
         let selection_value =
             |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
@@ -10222,6 +10347,15 @@ impl AppState {
                     return;
                 }
             }
+        } else if self.app.id == "imager" {
+            match self.current_imager_summary_request() {
+                Ok(request) => request,
+                Err(error) => {
+                    self.plot_workspace.snapshot = None;
+                    self.result.structured_error = Some(error);
+                    return;
+                }
+            }
         } else if self.app.id == "calibrate" && self.result.structured.is_none() {
             match self.current_calibrate_summary_request() {
                 Ok(request) => request,
@@ -10269,6 +10403,117 @@ impl AppState {
         build_msexplore_payload_from_spec(&spec)
     }
 
+    fn current_imaging_plot_payload(&self) -> Result<ImagingPlotPayload, String> {
+        let report = self
+            .current_imaging_report()
+            .ok_or_else(|| "run imaging first".to_string())?;
+        let target = self
+            .current_plot_catalog_target()
+            .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
+                report,
+            )));
+        match target {
+            PlotCatalogTarget::Imaging(ImagingDiagnosticKind::ResidualByChannel) => {
+                let initial = report
+                    .run
+                    .channels
+                    .iter()
+                    .map(|channel| {
+                        (
+                            channel.channel_index,
+                            channel.initial_residual_peak_jy_per_beam as f64,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let final_values = report
+                    .run
+                    .channels
+                    .iter()
+                    .map(|channel| {
+                        (
+                            channel.channel_index,
+                            channel.final_residual_peak_jy_per_beam as f64,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                Ok(ImagingPlotPayload::ChannelSeries {
+                    title: "Residual Peak By Channel".to_string(),
+                    y_label: "Jy / beam".to_string(),
+                    series: vec![
+                        ImagingPlotSeries {
+                            label: "Initial".to_string(),
+                            points: initial,
+                            color_index: 0,
+                        },
+                        ImagingPlotSeries {
+                            label: "Final".to_string(),
+                            points: final_values,
+                            color_index: 1,
+                        },
+                    ],
+                })
+            }
+            PlotCatalogTarget::Imaging(ImagingDiagnosticKind::IterationsByChannel) => {
+                Ok(ImagingPlotPayload::ChannelSeries {
+                    title: "Cycle Counts By Channel".to_string(),
+                    y_label: "Count".to_string(),
+                    series: vec![
+                        ImagingPlotSeries {
+                            label: "Major cycles".to_string(),
+                            points: report
+                                .run
+                                .channels
+                                .iter()
+                                .map(|channel| (channel.channel_index, channel.major_cycles as f64))
+                                .collect(),
+                            color_index: 2,
+                        },
+                        ImagingPlotSeries {
+                            label: "Minor iterations".to_string(),
+                            points: report
+                                .run
+                                .channels
+                                .iter()
+                                .map(|channel| {
+                                    (channel.channel_index, channel.minor_iterations as f64)
+                                })
+                                .collect(),
+                            color_index: 3,
+                        },
+                    ],
+                })
+            }
+            PlotCatalogTarget::Imaging(kind) => {
+                let artifact_kind = match kind {
+                    ImagingDiagnosticKind::PsfPreview => "psf",
+                    ImagingDiagnosticKind::ResidualPreview => "residual",
+                    ImagingDiagnosticKind::ModelPreview => "model",
+                    ImagingDiagnosticKind::ImagePreview => "image",
+                    ImagingDiagnosticKind::AlphaPreview => "alpha",
+                    ImagingDiagnosticKind::ResidualByChannel
+                    | ImagingDiagnosticKind::IterationsByChannel => unreachable!(),
+                };
+                let artifact = report
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.kind == artifact_kind)
+                    .ok_or_else(|| format!("no artifact recorded for {artifact_kind}"))?;
+                let preview = artifact
+                    .preview_png_path
+                    .as_ref()
+                    .ok_or_else(|| format!("no preview image available for {}", artifact.label))?;
+                Ok(ImagingPlotPayload::ArtifactPreview {
+                    title: artifact.label.clone(),
+                    image_path: PathBuf::from(preview),
+                })
+            }
+            PlotCatalogTarget::Calibration(_)
+            | PlotCatalogTarget::Preset(_)
+            | PlotCatalogTarget::CustomPlot
+            | PlotCatalogTarget::PageSpec => Err("choose an imaging diagnostic".to_string()),
+        }
+    }
+
     fn current_plot_payload(&self) -> Result<CurrentPlotPayload, String> {
         if self.app.id == "calibrate" {
             let target = self
@@ -10283,6 +10528,11 @@ impl AppState {
             )
             .map(CurrentPlotPayload::MsPlot)
             .map_err(|error| error.to_string());
+        }
+        if self.app.id == "imager" {
+            return self
+                .current_imaging_plot_payload()
+                .map(CurrentPlotPayload::Imaging);
         }
         self.current_msexplore_plot_payload()
             .map(CurrentPlotPayload::MsPlot)
@@ -10320,6 +10570,20 @@ impl AppState {
             }
             parts.push(format!("target={target:?}"));
             return Ok(parts.join("\u{1f}"));
+        }
+        if self.app.id == "imager" {
+            let report = self
+                .current_imaging_report()
+                .ok_or_else(|| "run imaging first".to_string())?;
+            let target = self
+                .current_plot_catalog_target()
+                .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
+                    report,
+                )));
+            return Ok(format!(
+                "{}\u{1f}{}\u{1f}{target:?}",
+                report.request.imagename, report.request.spectral_mode
+            ));
         }
         self.build_execution_plan().map(|plan| {
             plan.arguments
@@ -11036,6 +11300,12 @@ impl AppState {
                         terminal_cell_px: panel.font_size,
                     })
                 }
+                CurrentPlotPayload::Imaging(payload) => {
+                    PlotRenderInput::Imaging(ImagingPlotRenderInput {
+                        payload,
+                        theme_mode,
+                    })
+                }
             },
         ) {
             panel.last_error = Some(error.to_string());
@@ -11520,6 +11790,23 @@ impl AppState {
                 })
                 .collect();
         }
+        if self.app.id == "imager" {
+            let Some(report) = self.current_imaging_report() else {
+                return Vec::new();
+            };
+            let selected_kind = match selected {
+                Some(PlotCatalogTarget::Imaging(kind)) => kind,
+                _ => imaging_preferred_diagnostic(report),
+            };
+            return imaging_catalog_entries(report, selected_kind)
+                .into_iter()
+                .map(|entry| PlotCatalogRowView {
+                    target: PlotCatalogTarget::Imaging(entry.target),
+                    label: entry.label,
+                    selected: entry.selected,
+                })
+                .collect();
+        }
         let mut rows = Vec::new();
         match selected {
             Some(PlotCatalogTarget::PageSpec) => rows.push(PlotCatalogRowView {
@@ -11553,6 +11840,11 @@ impl AppState {
                 (PlotControlTarget::Refresh, "Refresh Preview"),
                 (PlotControlTarget::ExportPng, "Export PNG"),
                 (PlotControlTarget::ExportPdf, "Export PDF"),
+            ]
+        } else if self.app.id == "imager" {
+            vec![
+                (PlotControlTarget::Refresh, "Refresh Preview"),
+                (PlotControlTarget::ExportPng, "Export PNG"),
             ]
         } else {
             vec![
@@ -11656,7 +11948,7 @@ impl AppState {
     }
 
     fn copy_current_plot_cli(&mut self) {
-        if self.app.id == "calibrate" {
+        if matches!(self.app.id, "calibrate" | "imager") {
             self.result.status_line =
                 "Copy CLI is not available for this diagnostic workspace.".to_string();
             self.result.status_kind = StatusKind::Warning;
@@ -11694,6 +11986,23 @@ impl AppState {
                 width,
                 height,
             ),
+            CurrentPlotPayload::Imaging(payload) => match format {
+                MsExportFormat::Png => render_plot_image(
+                    width,
+                    height,
+                    &PlotRenderInput::Imaging(ImagingPlotRenderInput {
+                        payload,
+                        theme_mode: self.theme_mode(),
+                    }),
+                )
+                .and_then(|image| image.save(&output_path).map_err(|error| error.to_string())),
+                MsExportFormat::Pdf => {
+                    Err("PDF export is not available for imaging diagnostics yet.".to_string())
+                }
+                MsExportFormat::Txt => {
+                    Err("Text export is not available for imaging diagnostics.".to_string())
+                }
+            },
         };
         match export_result {
             Ok(()) => {
@@ -11727,18 +12036,26 @@ impl AppState {
             path.set_extension(format.extension());
             return path;
         }
+        if self.app.id == "imager" {
+            let slug = self
+                .selected_plot_label()
+                .to_ascii_lowercase()
+                .replace(':', "")
+                .replace(['/', ' '], "-");
+            return PathBuf::from(format!("imager-{slug}.{}", format.extension()));
+        }
         self.current_msexplore_output_path(format)
     }
 
     fn current_plot_export_width(&self) -> u32 {
-        if self.app.id == "calibrate" {
+        if matches!(self.app.id, "calibrate" | "imager") {
             return 1600;
         }
         self.current_msexplore_export_width()
     }
 
     fn current_plot_export_height(&self) -> u32 {
-        if self.app.id == "calibrate" {
+        if matches!(self.app.id, "calibrate" | "imager") {
             return 900;
         }
         self.current_msexplore_export_height()
@@ -11796,6 +12113,9 @@ impl AppState {
                     .unwrap_or_else(|| self.default_calibration_plot_target()),
             );
         }
+        if self.app.id == "imager" {
+            return self.plot_workspace.selected_catalog_target;
+        }
         if self
             .field_text("page_spec")
             .is_some_and(|value| !value.trim().is_empty())
@@ -11826,6 +12146,11 @@ impl AppState {
             PlotCatalogTarget::Calibration(preset) => {
                 self.plot_workspace.selected_catalog_target =
                     Some(PlotCatalogTarget::Calibration(preset));
+                self.clear_plot_render_cache();
+            }
+            PlotCatalogTarget::Imaging(kind) => {
+                self.plot_workspace.selected_catalog_target =
+                    Some(PlotCatalogTarget::Imaging(kind));
                 self.clear_plot_render_cache();
             }
             PlotCatalogTarget::Preset(preset) => self.apply_msexplore_preset(preset),
@@ -13145,6 +13470,35 @@ impl AppState {
                         };
                     }
                 }
+            } else if matches!(running.renderer.as_deref(), Some("imager-run-v1")) {
+                match serde_json::from_str::<ManagedImagingOutput>(&self.result.stdout) {
+                    Ok(report) => {
+                        self.record_history_entry(
+                            None,
+                            "Imaging Run".to_string(),
+                            StatusKind::Ok,
+                            imaging_history_details(&report),
+                        );
+                        self.result.structured =
+                            Some(StructuredResult::Imaging(Box::new(report.clone())));
+                        self.result.structured_error = None;
+                        self.activate_result_tab(ResultTab::Overview);
+                        self.apply_imaging_post_run_guidance(&report);
+                    }
+                    Err(error) => {
+                        self.result.structured = None;
+                        self.result.structured_error =
+                            Some(format!("Failed to parse structured output: {error}"));
+                        self.result.status_line =
+                            "Execution completed, but structured rendering failed.".to_string();
+                        self.result.status_kind = StatusKind::Warning;
+                        self.active_result_tab = if !self.result.stdout.is_empty() {
+                            ResultTab::Stdout
+                        } else {
+                            ResultTab::Stderr
+                        };
+                    }
+                }
             } else {
                 self.activate_result_tab(if !self.result.stdout.is_empty() {
                     ResultTab::Stdout
@@ -13178,6 +13532,9 @@ impl AppState {
     }
 
     fn overview_lines(&self) -> Vec<String> {
+        if let Some(report) = self.current_imaging_report() {
+            return build_imaging_overview_lines(report);
+        }
         if let Some(summary) = self.current_structured_summary() {
             let mut lines = Vec::new();
             lines.push("MeasurementSet".to_string());
@@ -13243,20 +13600,33 @@ impl AppState {
                             .and_then(|state| WorkflowStageId::from_key(state.id))
                             .map(|stage| stage.label().to_string())
                     }),
-                selected_stage: self.current_workflow_stage().label().to_string(),
+                selected_stage: if self.app.id == "imager" {
+                    self.field_text("deconvolver")
+                        .unwrap_or_else(|| "hogbom".to_string())
+                } else {
+                    self.current_workflow_stage().label().to_string()
+                },
                 active_products: self
-                    .workflow_products
-                    .iter()
-                    .filter(|product| product.status == WorkflowProductStatus::Active)
-                    .count(),
+                    .current_imaging_report()
+                    .map(|report| report.artifacts.iter().filter(|artifact| artifact.exists).count())
+                    .unwrap_or_else(|| {
+                        self.workflow_products
+                            .iter()
+                            .filter(|product| product.status == WorkflowProductStatus::Active)
+                            .count()
+                    }),
                 stale_products: 0,
-                total_products: self.workflow_products.len(),
+                total_products: self
+                    .current_imaging_report()
+                    .map(|report| report.artifacts.len())
+                    .unwrap_or_else(|| self.workflow_products.len()),
                 guidance:
                     "Use Context for dataset/selection, Products for revisions, Stages for the ordered workflow, and Diagnostics for recommended plots/stats."
                         .to_string(),
                 latest_run_lines: self
                     .current_calibration_report()
                     .map(build_calibration_overview_lines)
+                    .or_else(|| self.current_imaging_report().map(build_imaging_overview_lines))
                     .unwrap_or_default(),
             });
         }
@@ -13453,6 +13823,94 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
             ),
         ],
     }
+}
+
+fn build_imaging_overview_lines(report: &ManagedImagingOutput) -> Vec<String> {
+    let mut lines = vec![
+        "Imaging Run".to_string(),
+        format!("MS: {}", report.request.measurement_set),
+        format!("Image Prefix: {}", report.request.imagename),
+        format!(
+            "Mode: {}   Deconvolver: {}   Weighting: {}",
+            report.request.spectral_mode, report.request.deconvolver, report.request.weighting
+        ),
+        format!(
+            "W-term: {}   Dirty Only: {}   Gridded Samples: {}",
+            report.request.w_term_mode,
+            yes_no(report.request.dirty_only),
+            report.run.gridded_samples
+        ),
+        format!(
+            "Major Cycles: {}   Minor Iterations: {}   Stop: {}",
+            report.run.major_cycles,
+            report.run.minor_iterations,
+            report.run.clean_stop_reason.as_deref().unwrap_or("n/a")
+        ),
+    ];
+    if !report.run.channels.is_empty() {
+        lines.push(format!(
+            "Cube planes: {}   Taylor terms: {}",
+            report.run.channels.len(),
+            report.request.nterms
+        ));
+    }
+    if !report.run.warnings.is_empty() {
+        lines.push(String::new());
+        lines.push("Warnings".to_string());
+        lines.extend(
+            report
+                .run
+                .warnings
+                .iter()
+                .take(4)
+                .map(|warning| format!("  {warning}")),
+        );
+        if report.run.warnings.len() > 4 {
+            lines.push(format!(
+                "  … {} more warnings",
+                report.run.warnings.len() - 4
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push(format!(
+        "Frontend timing: {}",
+        render_managed_stage_timing_summary(&report.run.frontend_timings)
+    ));
+    lines.push(format!(
+        "Core timing: {}",
+        render_managed_stage_timing_summary(&report.run.stage_timings)
+    ));
+    lines
+}
+
+fn imaging_history_details(report: &ManagedImagingOutput) -> Vec<String> {
+    let mut details = vec![
+        format!("prefix={}", report.request.imagename),
+        format!("specmode={}", report.request.spectral_mode),
+        format!("weighting={}", report.request.weighting),
+        format!("deconvolver={}", report.request.deconvolver),
+        format!("gridded_samples={}", report.run.gridded_samples),
+        format!("major_cycles={}", report.run.major_cycles),
+        format!("minor_iterations={}", report.run.minor_iterations),
+    ];
+    if let Some(stop) = &report.run.clean_stop_reason {
+        details.push(format!("stop={stop}"));
+    }
+    if !report.run.channels.is_empty() {
+        details.push(format!("channels={}", report.run.channels.len()));
+    }
+    details
+}
+
+fn render_managed_stage_timing_summary(timings: &ManagedImagingStageTimings) -> String {
+    timings
+        .values_ns
+        .iter()
+        .take(4)
+        .map(|(label, ns)| format!("{label}={}", format_duration_ns(*ns)))
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
@@ -13824,6 +14282,58 @@ fn build_inspect_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection
 }
 
 fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection> {
+    if app_id == "imager" {
+        let context_ids = [
+            "ms",
+            "datacolumn",
+            "field",
+            "phasecenter_field",
+            "phasecenter",
+            "ddid",
+            "spw",
+            "channel_start",
+            "channel_count",
+            "polarization",
+        ];
+        let product_ids = ["imagename", "write_preview_pngs"];
+        let stage_ids = [
+            "specmode",
+            "dirty_only",
+            "deconvolver",
+            "weighting",
+            "perchanweightdensity",
+            "wterm",
+            "wprojplanes",
+        ];
+        let stage_parameters = fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| field.schema.group == "Stage Parameters")
+            .map(|(index, _)| StaticFormItem::Field(index))
+            .collect::<Vec<_>>();
+        return vec![
+            FormSection {
+                name: "Context".to_string(),
+                content: FormSectionContent::Items(collect_field_items(fields, &context_ids)),
+                collapsed: false,
+            },
+            FormSection {
+                name: "Products".to_string(),
+                content: FormSectionContent::Items(collect_field_items(fields, &product_ids)),
+                collapsed: false,
+            },
+            FormSection {
+                name: "Stages".to_string(),
+                content: FormSectionContent::Items(collect_field_items(fields, &stage_ids)),
+                collapsed: false,
+            },
+            FormSection {
+                name: "Stage Parameters".to_string(),
+                content: FormSectionContent::Items(stage_parameters),
+                collapsed: false,
+            },
+        ];
+    }
     if app_id != "calibrate" {
         return build_browser_sections(None, fields);
     }
@@ -13987,7 +14497,7 @@ fn initial_form_selection(
 
 fn default_summary_view_for_app(app_id: &str) -> SummaryDataView {
     match app_id {
-        "calibrate" => SummaryDataView::Fields,
+        "calibrate" | "imager" => SummaryDataView::Fields,
         _ => SummaryDataView::Observations,
     }
 }
@@ -16346,13 +16856,15 @@ mod tests {
         ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneCursorState, ImagePlaneRaster,
         ImageProfilePayload, ImageProfileSampleState,
     };
+    use casars_imager::command_schema as imager_command_schema;
     use ratatui::layout::Rect;
 
     use super::{
-        AppState, BrowserSession, BrowserSessionKind, ConfigStore, ImageBrowserLeftPaneMode,
-        ImageBrowserSessionState, ImageMovieState, ImagePlaneColormap, ImagePlaneMode,
-        centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
-        image_plane_draw_rect, image_zoom_parameters, new_direct_image_movie_engine,
+        AppState, BrowserSession, BrowserSessionKind, ConfigStore, FormField, FormSectionContent,
+        ImageBrowserLeftPaneMode, ImageBrowserSessionState, ImageMovieState, ImagePlaneColormap,
+        ImagePlaneMode, StaticFormItem, build_workflow_sections, centered_window_start,
+        expand_tilde_path_with_home, image_pan_parameters, image_plane_draw_rect,
+        image_zoom_parameters, new_direct_image_movie_engine,
     };
     use std::{
         path::{Path, PathBuf},
@@ -16880,5 +17392,32 @@ mod tests {
             .clone();
 
         assert_ne!(first_spectrum.as_raw(), second_spectrum.as_raw());
+    }
+
+    #[test]
+    fn imager_stage_parameters_exclude_meta_arguments() {
+        let schema = imager_command_schema("casars-imager");
+        let fields = schema
+            .arguments
+            .iter()
+            .filter_map(FormField::from_schema)
+            .collect::<Vec<_>>();
+        let sections = build_workflow_sections("imager", &fields);
+        let stage_parameters = sections
+            .iter()
+            .find(|section| section.name == "Stage Parameters")
+            .expect("stage parameters section");
+        let FormSectionContent::Items(items) = &stage_parameters.content;
+        let ids = items
+            .iter()
+            .map(|item| match item {
+                StaticFormItem::Field(index) => fields[*index].schema.id.as_str(),
+                other => panic!("unexpected stage-parameters item: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"imsize"));
+        assert!(ids.contains(&"niter"));
+        assert!(!ids.contains(&"ui_schema"));
+        assert!(!ids.contains(&"help"));
     }
 }

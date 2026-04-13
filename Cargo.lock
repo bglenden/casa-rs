@@ -149,7 +149,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0348a1c054491f4bfe6ab86a7b6ab1e44e45d899005de92f58b3df180b36ddaf"
 dependencies = [
  "clipboard-win",
- "image",
+ "image 0.25.10",
  "log",
  "objc2",
  "objc2-app-kit",
@@ -464,7 +464,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "casars-imagebrowser-protocol",
- "image",
+ "image 0.25.10",
  "ndarray",
  "plotters",
  "serde",
@@ -539,7 +539,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "flate2",
- "image",
+ "image 0.25.10",
  "ndarray",
  "num-complex",
  "plotters",
@@ -625,17 +625,20 @@ dependencies = [
  "arboard",
  "casa-calibration",
  "casa-images",
+ "casa-imaging",
  "casa-ms",
  "casa-tables",
  "casa-types",
  "casars-imagebrowser-protocol",
+ "casars-imager",
  "casars-tablebrowser-protocol",
  "crossterm 0.28.1",
  "directories",
  "flate2",
- "image",
+ "image 0.25.10",
  "libc",
  "ndarray",
+ "plotters",
  "ratatui",
  "ratatui-explorer",
  "ratatui-graphics",
@@ -669,7 +672,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "flate2",
- "image",
+ "image 0.25.10",
  "ndarray",
  "num-complex",
  "serde",
@@ -1762,6 +1765,20 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "image"
+version = "0.24.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5690139d2f55868e080017335e4b94cb7414274c74f1669c84fb5feba2c9f69d"
+dependencies = [
+ "bytemuck",
+ "byteorder",
+ "color_quant",
+ "jpeg-decoder",
+ "num-traits",
+ "png 0.17.16",
+]
+
+[[package]]
+name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
@@ -1774,7 +1791,7 @@ dependencies = [
  "image-webp",
  "moxcms",
  "num-traits",
- "png",
+ "png 0.18.1",
  "qoi",
  "ravif",
  "rayon",
@@ -1910,6 +1927,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpeg-decoder"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+
+[[package]]
 name = "js-sys"
 version = "0.3.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1937,7 +1960,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60c7c5cd12fa1b81b892fe06e04daa9e58ccd8993693378e8c1792aa0a4245fd"
 dependencies = [
  "base64-simd",
- "image",
+ "image 0.25.10",
  "memchr",
  "memmap2",
  "psx-shm",
@@ -2826,6 +2849,7 @@ version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72ce181e3f6bf82d6c1dc569103ca7b1bd964c60ba03d7e6cdfbb3e3eb7f7405"
 dependencies = [
+ "image 0.24.9",
  "plotters-backend",
 ]
 
@@ -2836,6 +2860,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
+]
+
+[[package]]
+name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide",
 ]
 
 [[package]]
@@ -2936,7 +2973,7 @@ dependencies = [
  "base64",
  "flate2",
  "getrandom 0.3.4",
- "image",
+ "image 0.25.10",
  "lopdf",
  "serde",
  "serde_derive",
@@ -3032,7 +3069,7 @@ checksum = "c98fecda8b16396ff9adac67644a523dd1778c42b58606a29df5c31ca925d174"
 dependencies = [
  "bitvec",
  "bytemuck",
- "image",
+ "image 0.25.10",
  "libm",
  "num-traits",
  "ordered-float 5.1.0",
@@ -3214,7 +3251,7 @@ dependencies = [
  "anyhow",
  "base64-simd",
  "flate2",
- "image",
+ "image 0.25.10",
  "kittage",
  "plotters",
  "ratatui",
@@ -3231,7 +3268,7 @@ checksum = "c57add959ab80c9a92be620fa6f8e4a64f7c014829250ba78862e8d81a903cb5"
 dependencies = [
  "base64-simd",
  "icy_sixel",
- "image",
+ "image 0.25.10",
  "rand 0.8.5",
  "ratatui",
  "rustix 0.38.44",
