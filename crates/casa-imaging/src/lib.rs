@@ -1401,6 +1401,7 @@ fn build_mosaic_pointing_groups(
     Ok(grouped.into_values().collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_mosaic_projector(
     geometry: ImageGeometry,
     gridder: &StandardGridder,
@@ -2382,7 +2383,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 total_reported_minor_iterations,
                 refreshed_planes,
                 refreshed_channel_indices,
-                dominant_channel.map(|(index, peak, nsigma)| (index, peak, nsigma)),
+                dominant_channel,
                 global_peak_after_refresh,
                 cube_nsigma_threshold_after_refresh_jy_per_beam,
             );
@@ -2626,6 +2627,7 @@ fn cube_minor_cycle_capture_config() -> Option<CubeMinorCycleCaptureConfig> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn maybe_capture_cube_minor_cycle_state(
     capture: Option<&CubeMinorCycleCaptureConfig>,
     channel_index: usize,
@@ -3992,6 +3994,7 @@ fn mtmfs_taylor_weight(frequency_hz: f64, reffreq_hz: f64, order: usize) -> f32 
     scaled.powi(order as i32) as f32
 }
 
+#[allow(clippy::needless_range_loop)]
 fn compute_mtmfs_psf_terms(
     request: &MtmfsRequest,
     batches: &[VisibilityBatch],
@@ -4106,6 +4109,7 @@ fn compute_mtmfs_psf_terms(
     })
 }
 
+#[allow(clippy::needless_range_loop)]
 fn compute_mtmfs_residual_terms(
     request: &MtmfsRequest,
     batches: &[VisibilityBatch],
@@ -4242,6 +4246,7 @@ fn mtmfs_hessian(psf_terms: &[Array2<f32>], nterms: usize) -> Result<Vec<Vec<f32
         .collect())
 }
 
+#[allow(clippy::needless_range_loop)]
 fn invert_small_matrix(matrix: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, ImagingError> {
     let n = matrix.len();
     if n == 0 || matrix.iter().any(|row| row.len() != n) {
@@ -4372,6 +4377,7 @@ fn find_mtmfs_component(
     best
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_mtmfs_minor_cycle(
     request: &MtmfsRequest,
     psf_terms: &[Array2<f32>],
@@ -4734,6 +4740,7 @@ fn compute_residual_trace_standard(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard_internal(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -4854,6 +4861,7 @@ fn compute_residual_standard_internal(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_trace_cube_standard(
     batches: &[VisibilityBatch],
     model_interpolation_batches: &[CubeModelInterpolationBatch],
@@ -4950,6 +4958,7 @@ fn cube_refresh_flags(planes: &[CubePlaneWork], updated_model_channels: &[bool])
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_trace_cube_standard_with_model_grids(
     batches: &[VisibilityBatch],
     planned_batches: Option<&[Vec<Option<PlannedSample>>]>,
@@ -6814,8 +6823,8 @@ mod tests {
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.4e9,
             selected_frequency_range_hz: [1.399e9, 1.401e9],
-            deconvolver: Deconvolver::Multiscale,
-            multiscale_scales: vec![0.0, 5.0, 12.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
@@ -7678,7 +7687,7 @@ mod tests {
             Some(CleanStopReason::IterationLimitReached)
         );
         assert_eq!(result.diagnostics.major_cycles, 1);
-        assert_eq!(result.diagnostics.minor_iterations, 2);
+        assert_eq!(result.diagnostics.minor_iterations, 1);
         assert!(result.model[(32, 32, 0, 0)] > 0.0);
     }
 

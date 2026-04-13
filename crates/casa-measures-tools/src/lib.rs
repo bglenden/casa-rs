@@ -238,7 +238,10 @@ mod tests {
         }
 
         let candidates = runtime_root_candidates();
-        assert_eq!(candidates, vec![measures.clone(), legacy.clone(), home.join(".casa/data")]);
+        assert_eq!(
+            candidates,
+            vec![measures.clone(), legacy.clone(), home.join(".casa/data")]
+        );
 
         unsafe {
             match old_measures {
@@ -311,6 +314,9 @@ mod tests {
         assert_eq!(provenance["casarundata_version"], "1.2.3");
         assert_eq!(provenance["measures_version"], "4.5.6");
         assert_eq!(provenance["measures_site"], "TEST_SITE");
-        assert_eq!(provenance["included_paths"].as_array().unwrap().len(), PACKAGED_SNAPSHOT_PATHS.len());
+        assert_eq!(
+            provenance["included_paths"].as_array().unwrap().len(),
+            PACKAGED_SNAPSHOT_PATHS.len()
+        );
     }
 }

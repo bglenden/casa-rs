@@ -381,7 +381,9 @@ mod tests {
         table
             .bind_forward_column_indexed("row_forward", &expected_ref_table, "row_map")
             .unwrap();
-        table.bind_taql_column("taql_col", "stored_int * 2").unwrap();
+        table
+            .bind_taql_column("taql_col", "stored_int * 2")
+            .unwrap();
 
         for name in [
             "forward_col",

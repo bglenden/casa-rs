@@ -5091,10 +5091,14 @@ fn infer_primary_beam_model(ms: &MeasurementSet) -> Result<PrimaryBeamModel, Str
     let observation = ms
         .observation()
         .map_err(|error| format!("open OBSERVATION: {error}"))?;
-    let telescope_name = observation
-        .string(0, "TELESCOPE_NAME")
-        .map_err(|error| format!("read OBSERVATION.TELESCOPE_NAME: {error}"))?
-        .to_ascii_uppercase();
+    let telescope_name = if observation.row_count() > 0 {
+        observation
+            .string(0, "TELESCOPE_NAME")
+            .map_err(|error| format!("read OBSERVATION.TELESCOPE_NAME: {error}"))?
+            .to_ascii_uppercase()
+    } else {
+        String::new()
+    };
     let antenna = ms
         .antenna()
         .map_err(|error| format!("open ANTENNA: {error}"))?;
@@ -6689,19 +6693,26 @@ mod tests {
             parse_cube_interpolation("linear").unwrap(),
             CubeInterpolation::Linear
         );
-        assert_eq!(
-            parse_cube_interpolation("cubic").unwrap(),
-            CubeInterpolation::Cubic
-        );
+        let cubic = parse_cube_interpolation("cubic").unwrap_err();
+        assert!(cubic.contains("not implemented yet"));
         assert!(parse_cube_interpolation("spline").is_err());
 
         assert_eq!(parse_spectral_mode("mfs").unwrap(), SpectralMode::Mfs);
         assert_eq!(parse_spectral_mode("cube").unwrap(), SpectralMode::Cube);
-        assert_eq!(parse_spectral_mode("cubedata").unwrap(), SpectralMode::Cubedata);
+        assert_eq!(
+            parse_spectral_mode("cubedata").unwrap(),
+            SpectralMode::Cubedata
+        );
         assert!(parse_spectral_mode("other").is_err());
 
-        assert_eq!(parse_weighting_mode("natural", 0.0).unwrap(), WeightingMode::Natural);
-        assert_eq!(parse_weighting_mode("uniform", 0.0).unwrap(), WeightingMode::Uniform);
+        assert_eq!(
+            parse_weighting_mode("natural", 0.0).unwrap(),
+            WeightingMode::Natural
+        );
+        assert_eq!(
+            parse_weighting_mode("uniform", 0.0).unwrap(),
+            WeightingMode::Uniform
+        );
         assert_eq!(
             parse_weighting_mode("briggs", 0.5).unwrap(),
             WeightingMode::Briggs { robust: 0.5 }
@@ -6710,7 +6721,10 @@ mod tests {
 
         assert_eq!(parse_deconvolver("hogbom").unwrap(), Deconvolver::Hogbom);
         assert_eq!(parse_deconvolver("clark").unwrap(), Deconvolver::Clark);
-        assert_eq!(parse_deconvolver("multiscale").unwrap(), Deconvolver::Multiscale);
+        assert_eq!(
+            parse_deconvolver("multiscale").unwrap(),
+            Deconvolver::Multiscale
+        );
         assert!(parse_deconvolver("other").is_err());
 
         assert_eq!(parse_multiscale_scales("").unwrap(), Vec::<f32>::new());
@@ -6740,12 +6754,21 @@ mod tests {
         assert!(parse_uv_taper_size("10degrees").is_err());
 
         let single = parse_uv_taper("10arcsec").unwrap();
-        assert_eq!(single.major, casa_imaging::UvTaperSize::ImageFwhmRad(10.0 * arcsec_to_rad()));
+        assert_eq!(
+            single.major,
+            casa_imaging::UvTaperSize::ImageFwhmRad(10.0 * arcsec_to_rad())
+        );
         assert_eq!(single.minor, single.major);
         assert_eq!(single.position_angle_rad, 0.0);
         let pair = parse_uv_taper("10arcsec,20lambda").unwrap();
-        assert_eq!(pair.major, casa_imaging::UvTaperSize::ImageFwhmRad(10.0 * arcsec_to_rad()));
-        assert_eq!(pair.minor, casa_imaging::UvTaperSize::BaselineHwhmLambda(20.0));
+        assert_eq!(
+            pair.major,
+            casa_imaging::UvTaperSize::ImageFwhmRad(10.0 * arcsec_to_rad())
+        );
+        assert_eq!(
+            pair.minor,
+            casa_imaging::UvTaperSize::BaselineHwhmLambda(20.0)
+        );
         let triplet = parse_uv_taper("10arcsec,20lambda,30deg").unwrap();
         assert!((triplet.position_angle_rad - 30.0 * degrees_to_rad()).abs() < 1e-12);
         assert!(parse_uv_taper("10arcsec,20lambda,30deg,40deg").is_err());

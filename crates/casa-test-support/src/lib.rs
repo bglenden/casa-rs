@@ -38,6 +38,8 @@ use thiserror::Error;
 pub(crate) enum CasacoreGlobalStateDomain {
     /// IAU 2000 / 2000A mode toggles driven by `AipsrcValue` and `MeasTable`.
     MeasuresIau2000A,
+    /// Imaging/gridder interop shims that exercise casacore FFT and gridding state.
+    ImagingInterop,
     /// Table-oriented C++ shims that exercise shared casacore table state.
     Tables,
 }
@@ -67,6 +69,7 @@ impl Drop for CasacoreGlobalFileLock {
 fn lock_casacore_global_file(domain: CasacoreGlobalStateDomain) -> CasacoreGlobalFileLock {
     let suffix = match domain {
         CasacoreGlobalStateDomain::MeasuresIau2000A => "measures-iau2000a",
+        CasacoreGlobalStateDomain::ImagingInterop => "imaging-interop",
         CasacoreGlobalStateDomain::Tables => "tables",
     };
     let path = std::env::temp_dir().join(format!("casa-rs-casa-test-support-{suffix}.lock"));
@@ -94,6 +97,10 @@ pub(crate) fn lock_casacore_global_state(
             static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
             LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
         }
+        CasacoreGlobalStateDomain::ImagingInterop => {
+            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        }
         CasacoreGlobalStateDomain::Tables => {
             static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
             LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
@@ -103,7 +110,9 @@ pub(crate) fn lock_casacore_global_state(
         _mutex: mutex,
         #[cfg(all(has_casacore_cpp, unix))]
         _file_lock: match domain {
-            CasacoreGlobalStateDomain::Tables => Some(lock_casacore_global_file(domain)),
+            CasacoreGlobalStateDomain::Tables | CasacoreGlobalStateDomain::ImagingInterop => {
+                Some(lock_casacore_global_file(domain))
+            }
             CasacoreGlobalStateDomain::MeasuresIau2000A => None,
         },
     }

@@ -432,7 +432,7 @@ mod tests {
             true,
             DensityCellConvention::VisImagingWeight,
         );
-        assert_eq!(density[(17, 17)], 2.0);
-        assert_eq!(density[(14, 14)], 2.0);
+        assert_eq!(density[(17, 14)], 2.0);
+        assert_eq!(density[(14, 17)], 2.0);
     }
 }

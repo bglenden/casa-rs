@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! C++ casacore `hclean` interop helpers.
 
+#[cfg(has_casacore_cpp)]
+use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
+
 /// Result of running one casacore `hclean` minor-cycle call on a single plane.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HogbomMinorCycle2d {
@@ -47,6 +50,7 @@ pub fn cpp_hogbom_clean_minor_cycle_2d(
 ) -> Result<HogbomMinorCycle2d, String> {
     #[cfg(has_casacore_cpp)]
     {
+        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
         let [nx, ny] = shape;
         if psf.len() != nx * ny || residual.len() != nx * ny {
             return Err(format!(

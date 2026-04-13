@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! C++ casacore `ConvolveGridder` interop helpers.
 
+#[cfg(has_casacore_cpp)]
+use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
+
 /// One nonzero cell written by C++ `ConvolveGridder::grid()` for a unit sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GridderSampleCell {
@@ -162,6 +165,7 @@ pub fn cpp_convolve_gridder_grid_unit_sample_2d(
 ) -> Result<GridderSamplePatch, String> {
     #[cfg(has_casacore_cpp)]
     {
+        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
         let mut location = [0_i32; 2];
         let mut grid_position = [0.0_f64; 2];
         let mut support = 0_i32;
@@ -239,6 +243,7 @@ pub fn cpp_convolve_gridder_correction_row_2d(
 ) -> Result<Vec<f32>, String> {
     #[cfg(has_casacore_cpp)]
     {
+        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
         let mut factor = vec![0.0_f32; grid_shape[0]];
         let mut nread = 0_i32;
         let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -304,6 +309,7 @@ pub fn cpp_convolve_gridder_make_dirty_image_2d(
     }
     #[cfg(has_casacore_cpp)]
     {
+        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
         let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
         let gridable_bytes = gridable
             .iter()
@@ -401,6 +407,7 @@ pub fn cpp_convolve_gridder_make_model_residual_image_2d(
     }
     #[cfg(has_casacore_cpp)]
     {
+        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
         let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
         let gridable_bytes = gridable
             .iter()
@@ -485,6 +492,7 @@ pub fn cpp_convolve_gridder_predict_visibility_2d(
     }
     #[cfg(has_casacore_cpp)]
     {
+        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
         let mut predicted_re = 0.0f32;
         let mut predicted_im = 0.0f32;
         let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -544,15 +552,18 @@ mod tests {
     #[test]
     fn no_cpp_backend_reports_unavailable_and_validates_lengths() {
         if cfg!(has_casacore_cpp) {
-            assert!(cpp_convolve_gridder_grid_unit_sample_2d(
-                [16, 16],
-                [1.0, 1.0],
-                [0.0, 0.0],
-                [0.1, 0.2],
-            )
-            .is_err());
-            assert!(cpp_convolve_gridder_correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3)
-                .is_ok());
+            assert!(
+                cpp_convolve_gridder_grid_unit_sample_2d(
+                    [16, 16],
+                    [1.0, 1.0],
+                    [0.0, 0.0],
+                    [0.1, 0.2],
+                )
+                .is_err()
+            );
+            assert!(
+                cpp_convolve_gridder_correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3).is_ok()
+            );
             assert_eq!(
                 cpp_convolve_gridder_make_dirty_image_2d(
                     [16, 16],
@@ -568,19 +579,21 @@ mod tests {
                 ),
                 Err("dirty-image inputs must have matching lengths".to_string())
             );
-            assert!(cpp_convolve_gridder_make_dirty_image_2d(
-                [16, 16],
-                [8, 8],
-                [1.0, 1.0],
-                [0.0, 0.0],
-                &[0.0, 1.0],
-                &[0.0, 1.0],
-                &[1.0, 1.0],
-                &[0.0, 0.0],
-                &[1.0, 1.0],
-                &[true, true],
-            )
-            .is_err());
+            assert!(
+                cpp_convolve_gridder_make_dirty_image_2d(
+                    [16, 16],
+                    [8, 8],
+                    [1.0, 1.0],
+                    [0.0, 0.0],
+                    &[0.0, 1.0],
+                    &[0.0, 1.0],
+                    &[1.0, 1.0],
+                    &[0.0, 0.0],
+                    &[1.0, 1.0],
+                    &[true, true],
+                )
+                .is_err()
+            );
         } else {
             assert_eq!(
                 cpp_convolve_gridder_grid_unit_sample_2d(
