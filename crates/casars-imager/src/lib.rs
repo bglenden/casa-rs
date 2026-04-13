@@ -6693,8 +6693,8 @@ mod tests {
             parse_cube_interpolation("linear").unwrap(),
             CubeInterpolation::Linear
         );
-        let cubic = parse_cube_interpolation("cubic").unwrap_err();
-        assert!(cubic.contains("not implemented yet"));
+        let cubic_error = parse_cube_interpolation("cubic").unwrap_err();
+        assert!(cubic_error.contains("cubic is not implemented yet"));
         assert!(parse_cube_interpolation("spline").is_err());
 
         assert_eq!(parse_spectral_mode("mfs").unwrap(), SpectralMode::Mfs);
@@ -7199,6 +7199,7 @@ mod tests {
         )
         .unwrap();
         add_vla_antenna_pair(&mut ms);
+        add_observation_row(&mut ms);
         add_field_row(&mut ms);
         add_field_row_with_direction(
             &mut ms,
@@ -7313,6 +7314,7 @@ mod tests {
         )
         .unwrap();
         add_vla_antenna_pair(&mut ms);
+        add_observation_row(&mut ms);
         add_field_row(&mut ms);
         add_field_row_with_direction(
             &mut ms,
@@ -8735,6 +8737,611 @@ mod tests {
         assert_eq!(image.shape(), &[32, 32, 1, 2]);
         let sumwt = PagedImage::<f32>::open(format!("{}.sumwt", image_prefix.display())).unwrap();
         assert_eq!(sumwt.shape(), &[1, 1, 1, 2]);
+    }
+
+    #[test]
+    fn mtmfs_smoke_writes_taylor_terms_and_preview_pngs() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_mtmfs.ms");
+        let image_prefix = tmp.path().join("tiny_mtmfs_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.39e9, 1.41e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_channels(
+            &mut ms,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.8, 0.0),
+                Complex32::new(1.2, 0.0),
+                Complex32::new(1.2, 0.0),
+            ],
+        );
+        add_main_row_channels(
+            &mut ms,
+            [-25.0, 20.0, 0.0],
+            &[
+                Complex32::new(0.7, 0.0),
+                Complex32::new(0.7, 0.0),
+                Complex32::new(1.3, 0.0),
+                Complex32::new(1.3, 0.0),
+            ],
+        );
+        add_main_row_channels(
+            &mut ms,
+            [10.0, 35.0, 0.0],
+            &[
+                Complex32::new(0.9, 0.0),
+                Complex32::new(0.9, 0.0),
+                Complex32::new(1.1, 0.0),
+                Complex32::new(1.1, 0.0),
+            ],
+        );
+        ms.save().unwrap();
+
+        let summary = run_from_config(&CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Mtmfs,
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 6,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        })
+        .unwrap();
+
+        assert!(summary.gridded_samples > 0);
+        assert!(summary.major_cycles > 0);
+        assert!(summary.minor_iterations > 0);
+
+        for suffix in [
+            "psf.tt0",
+            "psf.tt1",
+            "residual.tt0",
+            "residual.tt1",
+            "model.tt0",
+            "model.tt1",
+            "image.tt0",
+            "image.tt1",
+            "sumwt.tt0",
+            "sumwt.tt1",
+            "alpha",
+            "alpha.error",
+        ] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing MTMFS product {path}");
+        }
+
+        for suffix in [
+            "psf.tt0.png",
+            "residual.tt0.png",
+            "model.tt0.png",
+            "image.tt0.png",
+            "alpha.png",
+        ] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing MTMFS preview {path}");
+        }
+
+        let image_tt0 =
+            PagedImage::<f32>::open(format!("{}.image.tt0", image_prefix.display())).unwrap();
+        assert_eq!(image_tt0.shape(), &[32, 32, 1, 1]);
+        assert_eq!(image_tt0.units(), "Jy/beam");
+        let alpha = PagedImage::<f32>::open(format!("{}.alpha", image_prefix.display())).unwrap();
+        assert_eq!(alpha.shape(), &[32, 32, 1, 1]);
+    }
+
+    #[test]
+    fn clark_smoke_writes_casa_products() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_clark.ms");
+        let image_prefix = tmp.path().join("tiny_clark_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_channels(
+            &mut ms,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.6, 0.0),
+                Complex32::new(0.6, 0.0),
+            ],
+        );
+        add_main_row_channels(
+            &mut ms,
+            [-25.0, 20.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.3, 0.0),
+                Complex32::new(0.3, 0.0),
+            ],
+        );
+        add_main_row_channels(
+            &mut ms,
+            [10.0, 35.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.8, 0.0),
+            ],
+        );
+        ms.save().unwrap();
+
+        let summary = run_from_config(&CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Clark,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 4,
+            gain: 0.2,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: false,
+        })
+        .unwrap();
+
+        assert!(summary.gridded_samples > 0);
+        assert!(summary.minor_iterations > 0);
+        assert!(summary.major_cycles > 0);
+
+        for suffix in ["psf", "residual", "model", "image", "sumwt"] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing product {path}");
+        }
+
+        let model = PagedImage::<f32>::open(format!("{}.model", image_prefix.display())).unwrap();
+        assert_eq!(model.shape(), &[32, 32, 1, 1]);
+        let max_model = model
+            .get()
+            .unwrap()
+            .iter()
+            .fold(0.0f32, |current, value| current.max(value.abs()));
+        assert!(max_model > 0.0);
+    }
+
+    #[test]
+    fn multiscale_smoke_writes_casa_products() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_multiscale.ms");
+        let image_prefix = tmp.path().join("tiny_multiscale_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_channels(
+            &mut ms,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.6, 0.0),
+                Complex32::new(0.6, 0.0),
+            ],
+        );
+        add_main_row_channels(
+            &mut ms,
+            [-25.0, 20.0, 0.0],
+            &[
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.5, 0.0),
+                Complex32::new(0.5, 0.0),
+            ],
+        );
+        add_main_row_channels(
+            &mut ms,
+            [10.0, 35.0, 0.0],
+            &[
+                Complex32::new(0.7, 0.0),
+                Complex32::new(0.7, 0.0),
+                Complex32::new(0.4, 0.0),
+                Complex32::new(0.4, 0.0),
+            ],
+        );
+        ms.save().unwrap();
+
+        let summary = run_from_config(&CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Multiscale,
+            nterms: 1,
+            multiscale_scales: vec![0.0, 3.0],
+            small_scale_bias: 0.6,
+            niter: 4,
+            gain: 0.2,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: false,
+        })
+        .unwrap();
+
+        assert!(summary.gridded_samples > 0);
+        assert!(summary.minor_iterations > 0);
+        assert!(summary.major_cycles > 0);
+
+        for suffix in ["psf", "residual", "model", "image", "sumwt"] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing product {path}");
+        }
+
+        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
+        assert_eq!(image.shape(), &[32, 32, 1, 1]);
+        let max_image = image
+            .get()
+            .unwrap()
+            .iter()
+            .fold(0.0f32, |current, value| current.max(value.abs()));
+        assert!(max_image > 0.0);
+    }
+
+    #[test]
+    fn cube_linear_interpolation_smoke_writes_channelized_products() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_cube_linear.ms");
+        let image_prefix = tmp.path().join("tiny_cube_linear_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.0e9, 1.2e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels_and_weight_spectrum(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(3.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+            ],
+            &[2.0, 4.0, 1.0, 1.0],
+        );
+        ms.save().unwrap();
+
+        let summary = run_from_config(&CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: Some(0),
+            spw_selector: Some("0".to_string()),
+            channel_start: None,
+            channel_count: Some(1),
+            datacolumn: None,
+            correlation: Some("XX".to_string()),
+            spectral_mode: SpectralMode::Cube,
+            cube_axis: CubeAxisConfig {
+                specmode: CubeSpecMode::Cube,
+                outframe: FrequencyRef::TOPO,
+                veltype: DopplerRef::RADIO,
+                interpolation: CubeInterpolation::Linear,
+                rest_frequency_hz: Some(1.25e9),
+                start: Some(CubeAxisValue::FrequencyHz {
+                    hz: 1.1e9,
+                    frame: None,
+                }),
+                width: Some(CubeAxisValue::FrequencyHz {
+                    hz: 1.0e8,
+                    frame: None,
+                }),
+            },
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        })
+        .unwrap();
+
+        assert!(summary.gridded_samples > 0);
+        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
+        assert_eq!(image.shape(), &[32, 32, 1, 1]);
+        let sumwt = PagedImage::<f32>::open(format!("{}.sumwt", image_prefix.display())).unwrap();
+        assert_eq!(sumwt.shape(), &[1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn multi_field_phasecenter_smoke_writes_casa_products() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_multifield_phasecenter.ms");
+        let image_prefix = tmp.path().join("tiny_multifield_phasecenter_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_observation_row(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row_with_direction(
+            &mut ms,
+            MDirection::from_angles(1.1, 0.55, DirectionRef::J2000),
+            TEST_TIME_MJD_SEC,
+        );
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_channels(
+            &mut ms,
+            0,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(1.0, 0.5)],
+        );
+        add_main_row_with_field_channels(
+            &mut ms,
+            1,
+            [-25.0, 20.0, -7.5],
+            &[Complex32::new(0.25, 1.25), Complex32::new(0.25, 1.25)],
+        );
+        ms.save().unwrap();
+
+        let summary = run_from_config(&CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0, 1]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            correlation: Some("XX".to_string()),
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        })
+        .unwrap();
+
+        assert!(summary.gridded_samples > 0);
+        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
+        assert_eq!(image.shape(), &[32, 32, 1, 1]);
+    }
+
+    #[test]
+    fn stokes_q_dirty_smoke_writes_casa_products() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_stokes_q.ms");
+        let image_prefix = tmp.path().join("tiny_stokes_q_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_full_linear_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_corr_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 0.0],
+            4,
+            &[
+                Complex32::new(5.0, 0.0),
+                Complex32::new(1.0, 2.0),
+                Complex32::new(1.0, -2.0),
+                Complex32::new(3.0, 0.0),
+            ],
+        );
+        ms.save().unwrap();
+
+        let summary = run_from_config(&CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            correlation: Some("Q".to_string()),
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        })
+        .unwrap();
+
+        assert!(summary.gridded_samples > 0);
+        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
+        assert_eq!(image.shape(), &[32, 32, 1, 1]);
+        let sumwt = PagedImage::<f32>::open(format!("{}.sumwt", image_prefix.display())).unwrap();
+        assert_eq!(sumwt.shape(), &[1, 1, 1, 1]);
     }
 
     #[test]
@@ -10626,6 +11233,57 @@ mod tests {
             MDirection::from_angles(1.0, 0.5, DirectionRef::J2000),
             TEST_TIME_MJD_SEC,
         );
+    }
+
+    fn add_observation_row(ms: &mut MeasurementSet) {
+        let table = ms.subtable_mut(SubtableId::Observation).unwrap();
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+                RecordField::new(
+                    "LOG",
+                    Value::Array(ArrayValue::String(
+                        ArrayD::from_shape_vec(vec![1], vec![String::new()]).unwrap(),
+                    )),
+                ),
+                RecordField::new(
+                    "OBSERVER",
+                    Value::Scalar(ScalarValue::String("test".to_string())),
+                ),
+                RecordField::new(
+                    "PROJECT",
+                    Value::Scalar(ScalarValue::String("casars-imager".to_string())),
+                ),
+                RecordField::new(
+                    "RELEASE_DATE",
+                    Value::Scalar(ScalarValue::Float64(TEST_TIME_MJD_SEC)),
+                ),
+                RecordField::new(
+                    "SCHEDULE",
+                    Value::Array(ArrayValue::String(
+                        ArrayD::from_shape_vec(vec![1], vec![String::new()]).unwrap(),
+                    )),
+                ),
+                RecordField::new(
+                    "SCHEDULE_TYPE",
+                    Value::Scalar(ScalarValue::String(String::new())),
+                ),
+                RecordField::new(
+                    "TELESCOPE_NAME",
+                    Value::Scalar(ScalarValue::String("VLA".to_string())),
+                ),
+                RecordField::new(
+                    "TIME_RANGE",
+                    Value::Array(ArrayValue::Float64(
+                        ArrayD::from_shape_vec(
+                            vec![2],
+                            vec![TEST_TIME_MJD_SEC, TEST_TIME_MJD_SEC + 14_400.0],
+                        )
+                        .unwrap(),
+                    )),
+                ),
+            ]))
+            .unwrap();
     }
 
     const VLA_X: f64 = -1601185.4;

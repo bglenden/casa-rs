@@ -378,7 +378,7 @@ impl StandardGridder {
         let (x, y) = match convention {
             DensityCellConvention::VisImagingWeight => (
                 u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
-                v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
+                -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
             ),
             DensityCellConvention::CubeBriggsWeightor => (
                 -u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
@@ -1211,6 +1211,7 @@ mod tests {
     };
     use ndarray::Array2;
     use num_complex::Complex32;
+    use serial_test::serial;
 
     use super::{DensityCellConvention, ScreenProjector, StandardGridder};
     use crate::{
@@ -1391,11 +1392,11 @@ mod tests {
         );
         assert_eq!(
             gridder.density_cell_index(1.01 * du, -1.01 * dv),
-            Some((center.0 + 1, center.1 - 2))
+            Some((center.0 + 1, center.1 + 1))
         );
         assert_eq!(
             gridder.density_cell_index(-1.01 * du, 1.01 * dv),
-            Some((center.0 - 2, center.1 + 1))
+            Some((center.0 - 2, center.1 - 2))
         );
     }
 
@@ -1447,6 +1448,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(casa_cpp)]
     fn convolve_gridder_patch_matches_casacore_for_fractional_sample() {
         let geometry = ImageGeometry {
             image_shape: [100, 100],
@@ -1518,6 +1520,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(casa_cpp)]
     fn convolve_gridder_correction_row_matches_casacore() {
         let geometry = ImageGeometry {
             image_shape: [100, 100],
@@ -1577,6 +1580,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(casa_cpp)]
     fn convolve_gridder_accumulates_multiple_fractional_samples_like_casacore() {
         let geometry = ImageGeometry {
             image_shape: [100, 100],
@@ -1633,6 +1637,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(casa_cpp)]
     fn convolve_gridder_degrids_structured_model_like_casacore() {
         let geometry = ImageGeometry {
             image_shape: [64, 64],

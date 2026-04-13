@@ -2168,15 +2168,12 @@ mod tests {
             -5_041_977.5,
             3_554_875.9,
         );
-        MsCalEngine::from_parts(
-            vec![observatory.clone()],
-            vec![casa_types::measures::direction::MDirection::from_angles(
-                1.0,
-                0.5,
-                casa_types::measures::direction::DirectionRef::J2000,
-            )],
-            observatory,
-        )
+        let direction = casa_types::measures::direction::MDirection::from_angles(
+            0.0,
+            std::f64::consts::FRAC_PI_4,
+            casa_types::measures::direction::DirectionRef::J2000,
+        );
+        MsCalEngine::from_parts(vec![observatory.clone()], vec![direction], observatory)
     }
 
     #[test]
