@@ -10,6 +10,7 @@ use casa_calibration::command_schema as calibrate_command_schema;
 use casa_images::imexplore_ui_schema_json;
 use casa_ms::msexplore::cli::command_schema as msexplore_command_schema;
 use casa_ms::ui_schema::UiCommandSchema;
+use casars_imager::command_schema as imager_command_schema;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
@@ -78,6 +79,9 @@ impl RegistryApp {
         }
         if !self.has_explicit_binary_override() && self.id == "calibrate" {
             return Ok(calibrate_command_schema("calibrate"));
+        }
+        if !self.has_explicit_binary_override() && self.id == "imager" {
+            return Ok(imager_command_schema("casars-imager"));
         }
         if !self.has_explicit_binary_override() && self.id == "imexplore" {
             let json = imexplore_ui_schema_json("imexplore")?;
@@ -227,10 +231,11 @@ pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
     match id.unwrap_or("msexplore") {
         "msexplore" => Ok(msexplore_app()),
         "calibrate" => Ok(calibrate_app()),
+        "imager" => Ok(imager_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: msexplore, calibrate, tablebrowser, imexplore"
+            "unknown casars app {other:?}; expected one of: msexplore, calibrate, imager, tablebrowser, imexplore"
         )),
     }
 }
@@ -239,6 +244,7 @@ pub(crate) fn registered_apps() -> Vec<RegistryApp> {
     vec![
         msexplore_app(),
         calibrate_app(),
+        imager_app(),
         tablebrowser_app(),
         imexplore_app(),
     ]
@@ -254,6 +260,21 @@ pub(crate) fn calibrate_app() -> RegistryApp {
             binary_name: "calibrate",
             cargo_package: "casa-calibration",
             override_env: "CASARS_CALIBRATE_BIN",
+            interaction: AppInteraction::OneShot,
+        },
+    }
+}
+
+pub(crate) fn imager_app() -> RegistryApp {
+    RegistryApp {
+        id: "imager",
+        category: "Imaging",
+        display_name: "Imager",
+        shell_kind: AppShellKind::Workflow,
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "casars-imager",
+            cargo_package: "casars-imager",
+            override_env: "CASARS_IMAGER_BIN",
             interaction: AppInteraction::OneShot,
         },
     }
@@ -547,6 +568,22 @@ mod tests {
     }
 
     #[test]
+    fn imager_load_schema_describes_public_workflow_surface() {
+        let schema = imager_app().load_schema().expect("load imager schema");
+        assert_eq!(schema.command_id, "imager");
+        assert_eq!(schema.display_name, "Imager");
+        assert_eq!(schema.category, "Imaging");
+        let specmode = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "specmode")
+            .expect("specmode argument");
+        assert_eq!(specmode.group, "Stages");
+        let managed_output = schema.managed_output.expect("managed output");
+        assert_eq!(managed_output.renderer, "imager-run-v1");
+    }
+
+    #[test]
     fn imexplore_load_schema_describes_browser_surface_without_subprocess() {
         let _guard = crate::test_env_lock();
         unsafe {
@@ -638,6 +675,7 @@ mod tests {
     fn workspace_ms_apps_prefer_cargo_fallback_for_stale_siblings() {
         assert!(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(calibrate_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+        assert!(!imager_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
         assert!(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
     }

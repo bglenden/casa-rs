@@ -61,7 +61,7 @@ use crate::calibration_workflow::{
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
 use crate::registry::{
-    calibrate_app, imexplore_app, msexplore_app, registered_apps, tablebrowser_app,
+    calibrate_app, imager_app, imexplore_app, msexplore_app, registered_apps, tablebrowser_app,
 };
 use crate::theme::theme;
 use crate::ui;
@@ -77,7 +77,13 @@ fn launcher_lists_registered_apps_in_expected_order() {
     let ids = apps.iter().map(|app| app.id).collect::<Vec<_>>();
     assert_eq!(
         ids,
-        vec!["msexplore", "calibrate", "tablebrowser", "imexplore"]
+        vec![
+            "msexplore",
+            "calibrate",
+            "imager",
+            "tablebrowser",
+            "imexplore"
+        ]
     );
 }
 
@@ -101,10 +107,12 @@ fn launcher_screen_renders_available_apps() {
     assert!(rendered.contains("Select Application"));
     assert!(rendered.contains("msexplore"));
     assert!(rendered.contains("calibrate"));
+    assert!(rendered.contains("imager"));
     assert!(rendered.contains("tablebrowser"));
     assert!(rendered.contains("imexplore"));
     assert!(rendered.contains("MSExplore"));
     assert!(rendered.contains("Calibrate"));
+    assert!(rendered.contains("Imager"));
     assert!(rendered.contains("Table Browser"));
     assert!(rendered.contains("ImExplore"));
 }
@@ -8503,6 +8511,98 @@ fn msexplore_summary_tabs_populate_from_current_form_without_subprocess_run() {
 }
 
 #[test]
+fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
+    with_test_env_lock(clear_imager_launcher_bin);
+
+    let (_fixture_temp, ms_path) = unpack_casa_ms_fixture("mssel_test_small.ms.tgz");
+    let temp = tempdir().expect("tempdir");
+    let imagename = temp.path().join("fixture-dirty-cube");
+    let schema = imager_app().load_schema().expect("load imager schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
+    app.set_text_value("ms", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("imagename", imagename.to_string_lossy().as_ref());
+    app.set_text_value("imsize", "32");
+    app.set_text_value("cell_arcsec", "5.0");
+    app.set_text_value("field", "0");
+    app.set_text_value("spw", "1");
+    app.set_text_value("specmode", "cube");
+    app.set_text_value("channel_start", "0");
+    app.set_text_value("channel_count", "1");
+
+    start_run_with_default_imager_launcher(&mut app);
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    assert!(
+        app.stderr_for_test().trim().is_empty(),
+        "status={} stderr={}",
+        app.status_line_for_test(),
+        app.stderr_for_test()
+    );
+    assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
+    assert!(
+        app.status_line_for_test().contains("Imaging completed."),
+        "status={}",
+        app.status_line_for_test()
+    );
+
+    for suffix in [
+        "psf",
+        "residual",
+        "model",
+        "image",
+        "psf.png",
+        "residual.png",
+        "model.png",
+        "image.png",
+    ] {
+        let path = PathBuf::from(format!("{}.{}", imagename.display(), suffix));
+        assert!(
+            path.exists(),
+            "expected imaging artifact {}",
+            path.display()
+        );
+    }
+
+    app.prepare_graphics_for_test(140, 32);
+    assert!(
+        wait_for_plot_render(&mut app, 140, 32, Duration::from_secs(5)),
+        "status={} pending={} last_error={:?} stderr={}",
+        app.status_line_for_test(),
+        app.plot_pending(),
+        app.plot_last_error(),
+        app.stderr_for_test()
+    );
+    assert!(
+        app.plot_protocol().is_some(),
+        "expected rendered diagnostic plot, last_error={:?}",
+        app.plot_last_error()
+    );
+    match app.active_result_content() {
+        crate::app::ResultContent::Graphic(summary) => {
+            assert!(summary.contains("Per-channel residual peak"));
+        }
+        other => panic!("expected diagnostic graphic, got {other:?}"),
+    }
+
+    let diagnostics = render_app(&app, 140, 32);
+    assert!(diagnostics.contains("Residual By Channel"));
+    assert!(diagnostics.contains("Iterations By Channel"));
+    assert!(diagnostics.contains("Refresh Preview"));
+
+    app.set_active_result_tab(ResultTab::Overview);
+    let overview = render_app(&app, 140, 32);
+    assert!(overview.contains("Imaging Run"));
+    assert!(overview.contains("Mode: cube"));
+    assert!(overview.contains("W-term"));
+
+    app.set_active_result_tab(ResultTab::Products);
+    let products = render_app(&app, 160, 34);
+    assert!(products.contains("Imaging Products"));
+    assert!(products.contains("PSF"));
+    assert!(products.contains("Residual"));
+}
+
+#[test]
 fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
@@ -9538,6 +9638,18 @@ fn start_run_with_default_calibrate_launcher(app: &mut AppState) {
     });
 }
 
+fn start_run_with_default_imager_launcher(app: &mut AppState) {
+    with_test_env_lock(|| {
+        if let Some(path) = test_workspace_binary("casars-imager") {
+            set_imager_launcher_bin(&path);
+        } else {
+            clear_imager_launcher_bin();
+        }
+        app.start_run_for_test();
+        clear_imager_launcher_bin();
+    });
+}
+
 fn start_run_with_msexplore_launcher_bin(app: &mut AppState, path: &Path) {
     with_test_env_lock(|| {
         set_launcher_bin(path);
@@ -9621,6 +9733,18 @@ fn clear_calibrate_launcher_bin() {
 fn set_calibrate_launcher_bin(path: &Path) {
     unsafe {
         std::env::set_var("CASARS_CALIBRATE_BIN", path);
+    }
+}
+
+fn clear_imager_launcher_bin() {
+    unsafe {
+        std::env::remove_var("CASARS_IMAGER_BIN");
+    }
+}
+
+fn set_imager_launcher_bin(path: &Path) {
+    unsafe {
+        std::env::set_var("CASARS_IMAGER_BIN", path);
     }
 }
 

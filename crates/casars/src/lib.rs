@@ -6,6 +6,7 @@ mod clipboard;
 mod config;
 mod execution;
 mod graphics;
+mod imaging_workflow;
 mod movie_perf;
 mod registry;
 mod shell;
