@@ -59,6 +59,8 @@
 //! ```
 
 pub mod beam;
+pub mod browser_render;
+pub mod command_schema;
 pub mod error;
 pub mod expr_file;
 pub mod expr_parser;
@@ -68,6 +70,7 @@ pub mod image_info;
 pub mod image_view;
 pub mod imagebrowser_session;
 pub mod iterator;
+pub mod movie;
 pub mod subimage;
 pub mod temp_image;
 
@@ -75,6 +78,14 @@ pub mod temp_image;
 mod mask;
 
 pub use beam::{GaussianBeam, ImageBeamSet};
+pub use browser_render::{
+    BrowserRenderTheme, ImagePlaneColormap, ImagePlaneDrawGeometry, ImagePlaneLayout,
+    ImagePlaneOverlayMarker, ImagePlaneRenderInput, ImageSpectrumLayout,
+    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, image_plane_draw_geometry,
+    image_plane_layout, image_spectrum_layout, render_image_plane_image,
+    render_image_spectrum_image,
+};
+pub use command_schema::ui_schema_json as imexplore_ui_schema_json;
 pub use error::ImageError;
 pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
@@ -92,5 +103,12 @@ pub use image_view::{
 };
 pub use imagebrowser_session::ImageBrowserSession;
 pub use iterator::{ImageChunk, ImageIter, ImageIterMut};
+pub use movie::{
+    ImageMovieBundleCache, ImageMovieBundleEngine, ImageMovieBundleKey, ImageMovieBundleRequest,
+    ImageMovieOccurrence, ImageMoviePreparedBundle, ImageMoviePreparedSurface,
+    ImageMoviePresentationCoordinator, ImageMoviePresentationPoll, ImageMovieRender,
+    ImageMovieRenderedBundle, ImageMovieRenderedSurface, ImageMovieSurfaceKind,
+    ImageMovieSurfaceRequest, ImageMovieSurfaceSpec,
+};
 pub use subimage::{SubImage, SubImageMut};
 pub use temp_image::TempImage;

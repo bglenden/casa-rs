@@ -14,8 +14,8 @@ use ratatui::widgets::{
 use ratatui_image::Image as PanelImage;
 
 use crate::app::{
-    AppState, FormRowKind, FormSelection, OutputPane, PaneFocus, PlotControlTarget, PlotPaneFocus,
-    ResultContent, ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
+    AppState, BrowserTab, FormRowKind, FormSelection, OutputPane, PaneFocus, PlotControlTarget,
+    PlotPaneFocus, ResultContent, ResultTab, VisibleTextBuffer, VisibleTextLine, VisibleTextRole,
 };
 use crate::config::ThemeMode;
 use crate::registry::RegistryApp;
@@ -58,8 +58,14 @@ pub(crate) struct FormRowHit {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TabHit {
-    pub tab: ResultTab,
+    pub target: TabHitTarget,
     pub rect: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TabHitTarget {
+    Result(ResultTab),
+    Browser(BrowserTab),
 }
 
 #[derive(Debug, Clone)]
@@ -122,11 +128,11 @@ impl UiLayout {
             .map(|hit| hit.target)
     }
 
-    pub(crate) fn result_tab_at(&self, column: u16, row: u16) -> Option<ResultTab> {
+    pub(crate) fn result_tab_at(&self, column: u16, row: u16) -> Option<TabHitTarget> {
         self.tab_hits
             .iter()
             .find(|hit| rect_contains(hit.rect, column, row))
-            .map(|hit| hit.tab)
+            .map(|hit| hit.target)
     }
 
     pub(crate) fn in_divider(&self, column: u16, row: u16) -> bool {
@@ -666,21 +672,7 @@ fn draw_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette
 
     if layout.result_tabs.height > 0 {
         let mut spans = Vec::<Span<'static>>::new();
-        for tab in app.result_tabs() {
-            if !spans.is_empty() {
-                spans.push(Span::raw(" "));
-            }
-            let label = tab_label(*tab, *tab == app.active_result_tab(), palette);
-            let style = if *tab == app.active_result_tab() {
-                Style::default()
-                    .fg(palette.active_tab_fg)
-                    .bg(palette.active_tab_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(palette.tab_fg)
-            };
-            spans.push(Span::styled(label, style));
-        }
+        push_result_tab_spans(&mut spans, app, palette);
         frame.render_widget(Paragraph::new(Line::from(spans)), layout.result_tabs);
     }
 
@@ -1014,21 +1006,7 @@ fn draw_plot_workspace(
 fn draw_browser_result(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, palette: Theme) {
     if layout.result_tabs.height > 0 {
         let mut spans = Vec::<Span<'static>>::new();
-        for tab in app.result_tabs() {
-            if !spans.is_empty() {
-                spans.push(Span::raw(" "));
-            }
-            let active = *tab == app.active_result_tab();
-            let style = if active {
-                Style::default()
-                    .fg(palette.active_tab_fg)
-                    .bg(palette.active_tab_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(palette.tab_fg)
-            };
-            spans.push(Span::styled(tab_label(*tab, active, palette), style));
-        }
+        push_result_tab_spans(&mut spans, app, palette);
         frame.render_widget(Paragraph::new(Line::from(spans)), layout.result_tabs);
     }
 
@@ -1480,6 +1458,46 @@ fn visible_form_hits(area: Rect, app: &AppState) -> Vec<FormRowHit> {
         .collect()
 }
 
+fn push_result_tab_spans(spans: &mut Vec<Span<'static>>, app: &AppState, palette: Theme) {
+    if app.browser_is_active() {
+        for tab in app.browser_tabs() {
+            if !spans.is_empty() {
+                spans.push(Span::raw(" "));
+            }
+            let active = Some(*tab) == app.active_browser_tab_for_ui();
+            let style = if active {
+                Style::default()
+                    .fg(palette.active_tab_fg)
+                    .bg(palette.active_tab_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.tab_fg)
+            };
+            spans.push(Span::styled(
+                browser_tab_label(*tab, active, palette),
+                style,
+            ));
+        }
+        return;
+    }
+
+    for tab in app.result_tabs() {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        let active = *tab == app.active_result_tab();
+        let style = if active {
+            Style::default()
+                .fg(palette.active_tab_fg)
+                .bg(palette.active_tab_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette.tab_fg)
+        };
+        spans.push(Span::styled(tab_label(*tab, active, palette), style));
+    }
+}
+
 fn visible_tab_hits(area: Rect, app: &AppState) -> Vec<TabHit> {
     if area.height == 0 || area.width == 0 {
         return Vec::new();
@@ -1488,6 +1506,29 @@ fn visible_tab_hits(area: Rect, app: &AppState) -> Vec<TabHit> {
     let palette = theme(app.theme_mode());
     let mut hits = Vec::new();
     let mut x = area.x;
+    if app.browser_is_active() {
+        for tab in app.browser_tabs() {
+            let label =
+                browser_tab_label(*tab, Some(*tab) == app.active_browser_tab_for_ui(), palette);
+            let width = label.chars().count() as u16;
+            if x >= area.x + area.width {
+                break;
+            }
+            let rect = Rect {
+                x,
+                y: area.y,
+                width: width.min(area.x + area.width - x),
+                height: 1,
+            };
+            hits.push(TabHit {
+                target: TabHitTarget::Browser(*tab),
+                rect,
+            });
+            x = x.saturating_add(width + 1);
+        }
+        return hits;
+    }
+
     for tab in app.result_tabs() {
         let label = tab_label(*tab, *tab == app.active_result_tab(), palette);
         let width = label.chars().count() as u16;
@@ -1500,7 +1541,10 @@ fn visible_tab_hits(area: Rect, app: &AppState) -> Vec<TabHit> {
             width: width.min(area.x + area.width - x),
             height: 1,
         };
-        hits.push(TabHit { tab: *tab, rect });
+        hits.push(TabHit {
+            target: TabHitTarget::Result(*tab),
+            rect,
+        });
         x = x.saturating_add(width + 1);
     }
     hits
@@ -1729,6 +1773,16 @@ fn tab_label(tab: ResultTab, active: bool, palette: Theme) -> String {
         format!("◖ {} ◗", tab.label())
     } else if palette.selection_glyph == "▌" {
         format!("·{short}·")
+    } else {
+        format!("[{}]", tab.label())
+    }
+}
+
+fn browser_tab_label(tab: BrowserTab, active: bool, palette: Theme) -> String {
+    if active {
+        format!("◖ {} ◗", tab.label())
+    } else if palette.selection_glyph == "▌" {
+        format!("·{}·", tab.label())
     } else {
         format!("[{}]", tab.label())
     }
@@ -2154,9 +2208,11 @@ pub(crate) fn image_plane_workspace_layout(
     let plane_canvas_height = if collapsed {
         available_canvas
     } else {
+        let min_spectrum_canvas = image_workspace_min_spectrum_canvas_height(available_canvas);
+        let max_plane_canvas = available_canvas.saturating_sub(min_spectrum_canvas).max(3);
         ((available_canvas as f32) * split_ratio)
             .round()
-            .clamp(3.0, f32::from(available_canvas.saturating_sub(3))) as u16
+            .clamp(3.0, f32::from(max_plane_canvas)) as u16
     };
     let spectrum_canvas_height = available_canvas.saturating_sub(plane_canvas_height);
     let plane = ImagePlaneCanvasLayout {
@@ -2184,6 +2240,14 @@ pub(crate) fn image_plane_workspace_layout(
             width: area.width,
             height: spectrum_canvas_height,
         }),
+    }
+}
+
+fn image_workspace_min_spectrum_canvas_height(available_canvas: u16) -> u16 {
+    if available_canvas < 6 {
+        3
+    } else {
+        ((available_canvas as f32) * 0.32).round().clamp(5.0, 12.0) as u16
     }
 }
 
@@ -2351,8 +2415,8 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::{
-        choice_picker_scroll, fit_text_preserving_suffix, resolve_scrollbars,
-        result_hscrollbar_state, result_scrollbar_state,
+        choice_picker_scroll, fit_text_preserving_suffix, image_plane_workspace_layout,
+        resolve_scrollbars, result_hscrollbar_state, result_scrollbar_state,
     };
     use crate::app::ResultContent;
 
@@ -2402,5 +2466,13 @@ mod tests {
         assert_eq!(choice_picker_scroll(4, 5), 0);
         assert_eq!(choice_picker_scroll(5, 5), 1);
         assert_eq!(choice_picker_scroll(9, 5), 5);
+    }
+
+    #[test]
+    fn image_workspace_layout_reserves_meaningful_spectrum_height() {
+        let workspace = image_plane_workspace_layout(Rect::new(0, 0, 120, 40), true, 0.7);
+        let spectrum = workspace.spectrum_canvas.expect("spectrum canvas");
+        assert!(spectrum.height >= 12);
+        assert!(workspace.plane.canvas.height > spectrum.height);
     }
 }

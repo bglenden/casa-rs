@@ -5,7 +5,7 @@ use std::{collections::HashMap, io::Write, num::NonZeroU32, time::Duration};
 
 use base64_simd::STANDARD;
 use flate2::{Compression, write::ZlibEncoder};
-use image::RgbaImage;
+use image::{RgbImage, RgbaImage};
 use kittage::{
     Verbosity,
     action::Action,
@@ -56,7 +56,7 @@ pub struct KittyStoredImageInfo {
     pub pixel_width: u32,
     /// Height of the uploaded bitmap in pixels.
     pub pixel_height: u32,
-    /// Raw RGBA byte size uploaded for the bitmap.
+    /// Raw uploaded byte size for the bitmap.
     pub bytes: usize,
 }
 
@@ -259,6 +259,24 @@ impl KittyLayerManager {
         ))
     }
 
+    /// Upload RGB image data to the terminal using the supplied handle.
+    pub fn upload_rgb<W: Write>(
+        &self,
+        out: &mut W,
+        handle: KittyLayerHandle,
+        image: &RgbImage,
+    ) -> Result<(), KittyLayerError> {
+        self.upload_direct_with_compression(
+            out,
+            handle.image_id(),
+            image.width(),
+            image.height(),
+            24,
+            image.as_raw(),
+            false,
+        )
+    }
+
     /// Upload RGBA image data to the terminal using the supplied handle.
     pub fn upload_rgba<W: Write>(
         &self,
@@ -266,28 +284,46 @@ impl KittyLayerManager {
         handle: KittyLayerHandle,
         image: &RgbaImage,
     ) -> Result<(), KittyLayerError> {
-        self.upload_rgba_with_compression(out, handle.image_id(), image, false)
+        self.upload_direct_with_compression(
+            out,
+            handle.image_id(),
+            image.width(),
+            image.height(),
+            32,
+            image.as_raw(),
+            false,
+        )
     }
 
-    fn upload_rgba_with_compression<W: Write>(
+    #[allow(clippy::too_many_arguments)]
+    fn upload_direct_with_compression<W: Write>(
         &self,
         out: &mut W,
         image_id: NonZeroU32,
-        image: &RgbaImage,
+        width: u32,
+        height: u32,
+        pixel_format: u8,
+        data: &[u8],
         compressed: bool,
     ) -> Result<(), KittyLayerError> {
-        let intro = format!(
-            "\x1b_Ga=t,q=1,f=32,s={},v={},i={}",
-            image.width(),
-            image.height(),
-            image_id
-        );
-        write_direct_data_chunks(out, &intro, image.as_raw(), compressed)?;
+        let intro = format!("\x1b_Ga=t,q=1,f={pixel_format},s={width},v={height},i={image_id}",);
+        write_direct_data_chunks(out, &intro, data, compressed)?;
         Ok(())
     }
 
     /// Place a previously uploaded image on the terminal surface.
     pub fn place<W: Write>(
+        &self,
+        out: &mut W,
+        handle: KittyLayerHandle,
+        placement: KittyPlacement,
+    ) -> Result<(), KittyLayerError> {
+        self.write_place_command(out, handle, placement)?;
+        out.flush()?;
+        Ok(())
+    }
+
+    fn write_place_command<W: Write>(
         &self,
         out: &mut W,
         handle: KittyLayerHandle,
@@ -324,10 +360,19 @@ impl KittyLayerManager {
         if placement.preserve_cursor {
             execute!(out, RestorePosition)?;
         }
-
-        out.flush()?;
-
         Ok(())
+    }
+
+    /// Upload a new RGB image and place it immediately.
+    pub fn upload_and_place_rgb<W: Write>(
+        &self,
+        out: &mut W,
+        handle: KittyLayerHandle,
+        image: &RgbImage,
+        placement: KittyPlacement,
+    ) -> Result<(), KittyLayerError> {
+        self.upload_rgb(out, handle, image)?;
+        self.place(out, handle, placement)
     }
 
     /// Upload a new RGBA image and place it immediately.
@@ -401,13 +446,22 @@ impl KittyLayerManager {
         out: &mut W,
         handle: KittyLayerHandle,
     ) -> Result<(), KittyLayerError> {
+        self.write_clear_placement_command(out, handle)?;
+        out.flush()?;
+        Ok(())
+    }
+
+    fn write_clear_placement_command<W: Write>(
+        &self,
+        out: &mut W,
+        handle: KittyLayerHandle,
+    ) -> Result<(), KittyLayerError> {
         write!(
             out,
             "\x1b_Ga=d,q=1,d=i,i={},p={}\x1b\\",
             handle.image_id(),
             handle.placement_id()
         )?;
-        out.flush()?;
         Ok(())
     }
 
@@ -474,6 +528,32 @@ impl KittyStoredImageStore {
         Ok(slot)
     }
 
+    /// Upload an RGB bitmap into terminal memory and return its stored id.
+    pub fn store_rgb<W: Write>(
+        &mut self,
+        out: &mut W,
+        image: &RgbImage,
+    ) -> Result<(KittyStoredImageId, KittyStoredImageInfo), KittyLayerError> {
+        let image_id = KittyStoredImageId(self.manager.allocate_image_id()?);
+        let info = KittyStoredImageInfo {
+            pixel_width: image.width(),
+            pixel_height: image.height(),
+            bytes: image.as_raw().len(),
+        };
+        self.manager.upload_direct_with_compression(
+            out,
+            image_id.0,
+            image.width(),
+            image.height(),
+            24,
+            image.as_raw(),
+            true,
+        )?;
+        self.total_bytes = self.total_bytes.saturating_add(info.bytes);
+        self.images.insert(image_id, info);
+        Ok((image_id, info))
+    }
+
     /// Upload an RGBA bitmap into terminal memory and return its stored id.
     pub fn store_rgba<W: Write>(
         &mut self,
@@ -486,8 +566,15 @@ impl KittyStoredImageStore {
             pixel_height: image.height(),
             bytes: image.as_raw().len(),
         };
-        self.manager
-            .upload_rgba_with_compression(out, image_id.0, image, true)?;
+        self.manager.upload_direct_with_compression(
+            out,
+            image_id.0,
+            image.width(),
+            image.height(),
+            32,
+            image.as_raw(),
+            true,
+        )?;
         self.total_bytes = self.total_bytes.saturating_add(info.bytes);
         self.images.insert(image_id, info);
         Ok((image_id, info))
@@ -532,9 +619,16 @@ impl KittyStoredImageStore {
         };
         if current != image {
             self.manager
-                .clear_placement(out, KittyLayerHandle::new(current.0, slot.0))?;
+                .write_clear_placement_command(out, KittyLayerHandle::new(current.0, slot.0))?;
         }
-        self.place_in_slot(out, slot, image, placement)
+        self.manager
+            .write_place_command(out, KittyLayerHandle::new(image.0, slot.0), placement)?;
+        out.flush()?;
+        let Some(current_slot) = self.slots.get_mut(&slot) else {
+            return Err(KittyLayerError::UnknownSlot(slot.0));
+        };
+        *current_slot = Some(image);
+        Ok(())
     }
 
     /// Clear the current placement for a pane slot while leaving stored images resident.
@@ -665,7 +759,7 @@ fn write_direct_data_chunks<W: Write>(
 mod tests {
     use std::{num::NonZeroU32, time::Duration};
 
-    use image::{Rgba, RgbaImage};
+    use image::{Rgb, RgbImage, Rgba, RgbaImage};
     use ratatui::layout::Rect;
 
     use super::{
@@ -744,6 +838,19 @@ mod tests {
         let delete = String::from_utf8(delete).unwrap();
         assert!(delete.contains("\u{1b}_Ga=d"));
         assert!(delete.contains(",d=I"));
+    }
+
+    #[test]
+    fn writes_rgb_upload_sequences_with_rgb_pixel_format() {
+        let mut manager = KittyLayerManager::new();
+        let handle = manager.allocate().unwrap();
+        let image = RgbImage::from_pixel(1, 1, Rgb([1, 2, 3]));
+
+        let mut upload = Vec::new();
+        manager.upload_rgb(&mut upload, handle, &image).unwrap();
+        let upload = String::from_utf8(upload).unwrap();
+        assert!(upload.contains("\u{1b}_Ga=t"));
+        assert!(upload.contains("f=24"));
     }
 
     #[test]
@@ -864,6 +971,20 @@ mod tests {
             .unwrap();
         assert_eq!(store.slot_image(slot), Some(stored_b));
         assert_eq!(store.image_count(), 2);
+    }
+
+    #[test]
+    fn store_rgb_tracks_uploaded_byte_size() {
+        let mut store = KittyStoredImageStore::new();
+        let image = RgbImage::from_pixel(2, 1, Rgb([1, 2, 3]));
+        let mut out = Vec::new();
+
+        let (stored, info) = store.store_rgb(&mut out, &image).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("f=24"));
+        assert_eq!(info.bytes, image.as_raw().len());
+        assert_eq!(store.total_bytes(), image.as_raw().len());
+        assert_eq!(store.image_info(stored), Some(info));
     }
 
     #[test]

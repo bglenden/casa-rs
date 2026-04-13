@@ -15,13 +15,13 @@ use casa_types::measures::direction::{
 use casa_types::measures::position::PositionRef;
 use casa_types::quanta::{MvTime, Quantity, Unit};
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::{Array2, Axis, Ix2, IxDyn};
+use ndarray::{Array2, Axis, Ix1, Ix2, IxDyn};
 
 use self::region_geometry::*;
 use self::region_persistence::*;
 use crate::beam::{GaussianBeam, ImageBeamSet};
 use crate::error::ImageError;
-use crate::image::{AnyPagedImage, ImagePixelType, PagedImage, image_pixel_type};
+use crate::image::{AnyPagedImage, ImagePixelType, PagedImage};
 
 const IMAGE_BROWSER_DEFAULT_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const REGION_TYPE_WC: i32 = 2;
@@ -448,6 +448,15 @@ impl OpenedImageView {
     /// Returns the opened image path.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn refresh_image_handle(&mut self) -> Result<(), ImageError> {
+        if self.path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        self.image = open_view_image_with_cache(&self.path, IMAGE_BROWSER_DEFAULT_CACHE_BYTES)?;
+        self.capabilities.mask_present = image_has_pixel_mask(&self.image);
+        Ok(())
     }
 
     /// Returns the detected image pixel type.
@@ -960,10 +969,7 @@ impl OpenedImageView {
         }
 
         let value = image_real_get_at(&self.image, &pixel_indices)?;
-        let mask = image_get_mask(&self.image)?;
-        let masked = mask
-            .as_ref()
-            .is_some_and(|data| !data[IxDyn(&pixel_indices)]);
+        let masked = image_get_mask_value(&self.image, &pixel_indices)?.is_some_and(|value| !value);
         let axis_descriptors = build_axis_descriptors(image_coordinates(&self.image), self.shape());
         let pixel_axes = pixel_indices
             .iter()
@@ -1357,39 +1363,42 @@ impl OpenedImageView {
     }
 
     /// Sets the named persistent mask as the image default.
-    pub fn set_default_mask(&self, name: &str) -> Result<(), ImageError> {
+    pub fn set_default_mask(&mut self, name: &str) -> Result<(), ImageError> {
         if self.path.as_os_str().is_empty() {
             return Err(ImageError::NotPersistent);
         }
         let mut image = AnyPagedImage::open(&self.path)?;
         image.set_default_mask(name)?;
-        image.save()
+        image.save()?;
+        self.refresh_image_handle()
     }
 
     /// Clears the configured default mask.
-    pub fn unset_default_mask(&self) -> Result<(), ImageError> {
+    pub fn unset_default_mask(&mut self) -> Result<(), ImageError> {
         if self.path.as_os_str().is_empty() {
             return Err(ImageError::NotPersistent);
         }
         let mut image = AnyPagedImage::open(&self.path)?;
         image.unset_default_mask()?;
-        image.save()
+        image.save()?;
+        self.refresh_image_handle()
     }
 
     /// Removes a named persistent mask from the image.
-    pub fn remove_mask(&self, name: &str) -> Result<(), ImageError> {
+    pub fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
         if self.path.as_os_str().is_empty() {
             return Err(ImageError::NotPersistent);
         }
         let mut image = AnyPagedImage::open(&self.path)?;
         image.remove_mask(name)?;
-        image.save()
+        image.save()?;
+        self.refresh_image_handle()
     }
 
     /// Writes a named persistent image mask from a WCS-native region. The mask
     /// is broadcast across all non-display planes.
     pub fn write_region_mask(
-        &self,
+        &mut self,
         region: &ImageRegion,
         name: &str,
         set_default: bool,
@@ -1434,7 +1443,7 @@ impl OpenedImageView {
                 ));
             }
         }
-        Ok(())
+        self.refresh_image_handle()
     }
 
     fn read_dense_plane(
@@ -1474,45 +1483,21 @@ impl OpenedImageView {
             ImageError::InvalidMetadata(format!("expected 2D plane for axes {:?}", display_axes))
         })?;
 
-        let mask = match image_get_mask(&self.image)? {
-            Some(mask_data) => Some(self.read_dense_mask_plane(
-                mask_data,
-                window,
-                display_axes,
-                non_display_indices,
-            )?),
-            None => None,
-        };
+        let stride = vec![1; self.shape().len()];
+        let mask = image_get_mask_slice(&self.image, &start, &shape, &stride)?
+            .map(|mask| {
+                squeeze_plane_axes(mask, &squeeze_axes)
+                    .into_dimensionality::<Ix2>()
+                    .map_err(|_| {
+                        ImageError::InvalidMetadata(format!(
+                            "expected 2D mask plane for axes {:?}",
+                            display_axes
+                        ))
+                    })
+            })
+            .transpose()?;
 
         Ok((plane, mask))
-    }
-
-    fn read_dense_mask_plane(
-        &self,
-        mask_data: ArrayD<bool>,
-        window: &ImageViewWindow,
-        display_axes: [usize; 2],
-        non_display_indices: &[usize],
-    ) -> Result<Array2<bool>, ImageError> {
-        let width = window.trc()[display_axes[0]] - window.blc()[display_axes[0]] + 1;
-        let height = window.trc()[display_axes[1]] - window.blc()[display_axes[1]] + 1;
-        let non_display_pixels = selected_non_display_axes(
-            window,
-            &self.axis_model.non_display_axes,
-            non_display_indices,
-        )?;
-        Ok(Array2::from_shape_fn(
-            (width, height),
-            |(x_index, y_index)| {
-                let mut indices = window.blc.clone();
-                indices[display_axes[0]] = window.blc()[display_axes[0]] + x_index;
-                indices[display_axes[1]] = window.blc()[display_axes[1]] + y_index;
-                for &(axis, _index, pixel) in &non_display_pixels {
-                    indices[axis] = pixel;
-                }
-                mask_data[IxDyn(&indices)]
-            },
-        ))
     }
 
     fn region_dense_plane_mask(
@@ -1689,6 +1674,26 @@ impl OpenedImageView {
         }
 
         let axis_len = window.sampled_axis_len(profile_axis);
+        let mut mask_start = fixed_pixel_indices.clone();
+        let mut mask_shape = vec![1; self.shape().len()];
+        let mut mask_stride = vec![1; self.shape().len()];
+        mask_start[profile_axis] = window.blc[profile_axis];
+        mask_shape[profile_axis] = axis_len;
+        mask_stride[profile_axis] = window.inc[profile_axis];
+        let mask = image_get_mask_slice(&self.image, &mask_start, &mask_shape, &mask_stride)?
+            .map(|mask| {
+                let squeeze_axes = (0..mask.ndim())
+                    .filter(|&axis| axis != profile_axis)
+                    .collect::<Vec<_>>();
+                squeeze_plane_axes(mask, &squeeze_axes)
+                    .into_dimensionality::<Ix1>()
+                    .map_err(|_| {
+                        ImageError::InvalidMetadata(format!(
+                            "expected 1D mask profile for axis {profile_axis}"
+                        ))
+                    })
+            })
+            .transpose()?;
         let samples = (0..axis_len)
             .map(|sample_index| {
                 let pixel = window
@@ -1700,10 +1705,7 @@ impl OpenedImageView {
                 let mut pixel_indices = fixed_pixel_indices.clone();
                 pixel_indices[profile_axis] = pixel;
                 let value = image_real_get_at(&self.image, &pixel_indices)?;
-                let mask = image_get_mask(&self.image)?;
-                let masked = mask
-                    .as_ref()
-                    .is_some_and(|data| !data[IxDyn(&pixel_indices)]);
+                let masked = mask.as_ref().is_some_and(|data| !data[sample_index]);
                 let world_axis = if self.capabilities.world_coords_available {
                     let world = self.pixel_indices_to_world(&pixel_indices)?;
                     Some(ImageAxisValue {
@@ -1893,42 +1895,26 @@ impl OpenedImageView {
             window.inc[display_axes[1]],
         );
 
-        let mask = match image_get_mask(&self.image)? {
-            Some(mask_data) => {
-                Some(self.read_mask_plane(mask_data, window, display_axes, non_display_indices)?)
-            }
-            None => None,
-        };
+        let mut sampled_shape = shape.clone();
+        sampled_shape[display_axes[0]] = window.sampled_axis_len(display_axes[0]);
+        sampled_shape[display_axes[1]] = window.sampled_axis_len(display_axes[1]);
+        let mut stride = vec![1; self.shape().len()];
+        stride[display_axes[0]] = window.inc[display_axes[0]];
+        stride[display_axes[1]] = window.inc[display_axes[1]];
+        let mask = image_get_mask_slice(&self.image, &start, &sampled_shape, &stride)?
+            .map(|mask| {
+                squeeze_plane_axes(mask, &squeeze_axes)
+                    .into_dimensionality::<Ix2>()
+                    .map_err(|_| {
+                        ImageError::InvalidMetadata(format!(
+                            "expected 2D sampled mask plane for axes {:?}",
+                            display_axes
+                        ))
+                    })
+            })
+            .transpose()?;
 
         Ok((plane, mask))
-    }
-
-    fn read_mask_plane(
-        &self,
-        mask_data: ArrayD<bool>,
-        window: &ImageViewWindow,
-        display_axes: [usize; 2],
-        non_display_indices: &[usize],
-    ) -> Result<Array2<bool>, ImageError> {
-        let x_pixels = window.sampled_axis_values(display_axes[0]);
-        let y_pixels = window.sampled_axis_values(display_axes[1]);
-        let non_display_pixels = selected_non_display_axes(
-            window,
-            &self.axis_model.non_display_axes,
-            non_display_indices,
-        )?;
-        Ok(Array2::from_shape_fn(
-            (x_pixels.len(), y_pixels.len()),
-            |(x_index, y_index)| {
-                let mut indices = window.blc.clone();
-                indices[display_axes[0]] = x_pixels[x_index];
-                indices[display_axes[1]] = y_pixels[y_index];
-                for &(axis, _index, pixel) in &non_display_pixels {
-                    indices[axis] = pixel;
-                }
-                mask_data[IxDyn(&indices)]
-            },
-        ))
     }
 }
 
@@ -1936,24 +1922,7 @@ fn open_view_image_with_cache(
     path: &Path,
     cache_bytes: usize,
 ) -> Result<AnyPagedImage, ImageError> {
-    match image_pixel_type(path)? {
-        ImagePixelType::Float32 => Ok(AnyPagedImage::Float32(PagedImage::open_with_cache(
-            path,
-            cache_bytes,
-        )?)),
-        ImagePixelType::Float64 => Ok(AnyPagedImage::Float64(PagedImage::open_with_cache(
-            path,
-            cache_bytes,
-        )?)),
-        ImagePixelType::Complex32 => Ok(AnyPagedImage::Complex32(PagedImage::open_with_cache(
-            path,
-            cache_bytes,
-        )?)),
-        ImagePixelType::Complex64 => Ok(AnyPagedImage::Complex64(PagedImage::open_with_cache(
-            path,
-            cache_bytes,
-        )?)),
-    }
+    AnyPagedImage::open_with_cache(path, cache_bytes)
 }
 
 #[derive(Debug, Clone)]
@@ -2554,13 +2523,27 @@ fn image_default_mask_name(image: &AnyPagedImage) -> Option<String> {
     }
 }
 
-fn image_get_mask(image: &AnyPagedImage) -> Result<Option<ArrayD<bool>>, ImageError> {
+fn image_get_mask_slice(
+    image: &AnyPagedImage,
+    start: &[usize],
+    shape: &[usize],
+    stride: &[usize],
+) -> Result<Option<ArrayD<bool>>, ImageError> {
     match image {
-        AnyPagedImage::Float32(image) => image.get_mask(),
-        AnyPagedImage::Float64(image) => image.get_mask(),
-        AnyPagedImage::Complex32(image) => image.get_mask(),
-        AnyPagedImage::Complex64(image) => image.get_mask(),
+        AnyPagedImage::Float32(image) => image.get_mask_slice(start, shape, stride),
+        AnyPagedImage::Float64(image) => image.get_mask_slice(start, shape, stride),
+        AnyPagedImage::Complex32(image) => image.get_mask_slice(start, shape, stride),
+        AnyPagedImage::Complex64(image) => image.get_mask_slice(start, shape, stride),
     }
+}
+
+fn image_get_mask_value(
+    image: &AnyPagedImage,
+    position: &[usize],
+) -> Result<Option<bool>, ImageError> {
+    let ones = vec![1; position.len()];
+    Ok(image_get_mask_slice(image, position, &ones, &ones)?
+        .and_then(|mask| mask.into_iter().next()))
 }
 
 fn image_real_get_slice(
@@ -3367,7 +3350,7 @@ mod tests {
         let mut image = PagedImage::<f32>::create(vec![5, 5], direction_coords(), &path).unwrap();
         image.save().unwrap();
 
-        let opened = OpenedImageView::open(&path).unwrap();
+        let mut opened = OpenedImageView::open(&path).unwrap();
         let window = opened.default_window();
         let mut region = opened.default_region("Region 1").unwrap();
         let vertices = [(1usize, 1usize), (3, 1), (3, 3), (1, 3)]

@@ -36,6 +36,15 @@ fn install_perf_signal_handler() {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MoviePerfEventKind {
+    StartupStarted,
+    StartupBrowserOpenRequested,
+    StartupBrowserOpenCompleted,
+    StartupPlaneRenderRequested,
+    StartupPlaneRenderCompleted,
+    StartupPlanePresented,
+    StartupSpectrumRenderRequested,
+    StartupSpectrumRenderCompleted,
+    StartupCompleted,
     MovieStarted,
     MovieStopped,
     FpsChanged,
@@ -50,6 +59,7 @@ pub(crate) enum MoviePerfEventKind {
     DeadlineMissed,
     BrowserCommandSent,
     BrowserSnapshotReceived,
+    DirectOverlayRefreshCompleted,
     PlaneRenderRequested,
     PlaneRenderCompleted,
     PlanePresented,
@@ -145,6 +155,18 @@ pub(crate) struct MoviePerfEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<MoviePipelineState>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub render_duration_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_duration_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_duration_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uploaded_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub surface_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_hit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
@@ -169,6 +191,26 @@ struct CompletedFrameSample {
     backend_latency_ns: u64,
     render_latency_ns: u64,
     present_latency_ns: u64,
+}
+
+#[derive(Debug, Clone)]
+struct StartupPerfTrace {
+    browser_context: MoviePerfContext,
+    plane_context: MoviePerfContext,
+    spectrum_context: MoviePerfContext,
+    started_at: Instant,
+    browser_requested_at: Option<Instant>,
+    browser_completed_at: Option<Instant>,
+    browser_backend: Option<BackendTimingBreakdown>,
+    plane_request_hash: Option<u64>,
+    plane_render_requested_at: Option<Instant>,
+    plane_render_completed_at: Option<Instant>,
+    plane_presented_at: Option<Instant>,
+    spectrum_expected: bool,
+    spectrum_request_hash: Option<u64>,
+    spectrum_render_requested_at: Option<Instant>,
+    spectrum_render_completed_at: Option<Instant>,
+    completed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -208,6 +250,7 @@ pub(crate) struct MoviePerfTracer {
     total_dropped_frames: u64,
     total_stale_frames: u64,
     total_skipped_pending: u64,
+    startup_trace: Option<StartupPerfTrace>,
 }
 
 impl MoviePerfTracer {
@@ -246,6 +289,300 @@ impl MoviePerfTracer {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn log_path(&self) -> Option<&Path> {
         self.log_path.as_deref()
+    }
+
+    pub(crate) fn startup_started(&mut self, context: MoviePerfContext, note: impl Into<String>) {
+        if !self.enabled {
+            return;
+        }
+        self.startup_trace = Some(StartupPerfTrace {
+            browser_context: context,
+            plane_context: context,
+            spectrum_context: context,
+            started_at: Instant::now(),
+            browser_requested_at: None,
+            browser_completed_at: None,
+            browser_backend: None,
+            plane_request_hash: None,
+            plane_render_requested_at: None,
+            plane_render_completed_at: None,
+            plane_presented_at: None,
+            spectrum_expected: false,
+            spectrum_request_hash: None,
+            spectrum_render_requested_at: None,
+            spectrum_render_completed_at: None,
+            completed: false,
+        });
+        self.write_event(MoviePerfEvent {
+            kind: MoviePerfEventKind::StartupStarted,
+            note: Some(note.into()),
+            ..self.base_event(context, MoviePerfEventKind::StartupStarted, None)
+        });
+    }
+
+    pub(crate) fn startup_browser_open_requested(
+        &mut self,
+        context: MoviePerfContext,
+        note: impl Into<String>,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(trace) = self.startup_trace.as_mut() else {
+                return;
+            };
+            trace.browser_context = context;
+            trace.browser_requested_at = Some(Instant::now());
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::StartupBrowserOpenRequested,
+                monotonic_ns,
+                note: Some(note.into()),
+                ..base_event_from_context(
+                    trace.browser_context,
+                    monotonic_ns,
+                    MoviePerfEventKind::StartupBrowserOpenRequested,
+                    None,
+                )
+            }
+        };
+        self.write_event(event);
+    }
+
+    pub(crate) fn startup_browser_open_completed(
+        &mut self,
+        context: MoviePerfContext,
+        backend: Option<BackendTimingBreakdown>,
+        spectrum_expected: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(trace) = self.startup_trace.as_mut() else {
+                return;
+            };
+            trace.browser_context = context;
+            trace.browser_completed_at = Some(Instant::now());
+            trace.browser_backend = backend;
+            trace.spectrum_expected = spectrum_expected;
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::StartupBrowserOpenCompleted,
+                monotonic_ns,
+                duration_ns: trace
+                    .browser_requested_at
+                    .map(|started| duration_ns(started.elapsed())),
+                backend,
+                note: Some(format!("spectrum_expected={spectrum_expected}")),
+                ..base_event_from_context(
+                    trace.browser_context,
+                    monotonic_ns,
+                    MoviePerfEventKind::StartupBrowserOpenCompleted,
+                    None,
+                )
+            }
+        };
+        self.write_event(event);
+    }
+
+    pub(crate) fn startup_plane_render_requested(
+        &mut self,
+        render_request_key_hash: u64,
+        context: MoviePerfContext,
+        queue_depth: usize,
+        panel_pending: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(trace) = self.startup_trace.as_mut() else {
+                return;
+            };
+            if trace.completed || trace.plane_render_requested_at.is_some() {
+                return;
+            }
+            trace.plane_context = context;
+            trace.plane_context.render_request_key_hash = Some(render_request_key_hash);
+            trace.plane_request_hash = Some(render_request_key_hash);
+            trace.plane_render_requested_at = Some(Instant::now());
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::StartupPlaneRenderRequested,
+                monotonic_ns,
+                duration_ns: trace
+                    .browser_completed_at
+                    .map(|received| duration_ns(received.elapsed())),
+                queue_depth: Some(queue_depth),
+                panel_pending: Some(panel_pending),
+                ..base_event_from_context(
+                    trace.plane_context,
+                    monotonic_ns,
+                    MoviePerfEventKind::StartupPlaneRenderRequested,
+                    None,
+                )
+            }
+        };
+        self.write_event(event);
+    }
+
+    pub(crate) fn startup_plane_render_completed(
+        &mut self,
+        render_request_key_hash: u64,
+        queue_depth: usize,
+        panel_pending: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(trace) = self.startup_trace.as_mut() else {
+                return;
+            };
+            if trace.completed
+                || trace.plane_request_hash != Some(render_request_key_hash)
+                || trace.plane_render_completed_at.is_some()
+            {
+                return;
+            }
+            trace.plane_render_completed_at = Some(Instant::now());
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::StartupPlaneRenderCompleted,
+                monotonic_ns,
+                duration_ns: trace
+                    .plane_render_requested_at
+                    .map(|started| duration_ns(started.elapsed())),
+                queue_depth: Some(queue_depth),
+                panel_pending: Some(panel_pending),
+                ..base_event_from_context(
+                    trace.plane_context,
+                    monotonic_ns,
+                    MoviePerfEventKind::StartupPlaneRenderCompleted,
+                    None,
+                )
+            }
+        };
+        self.write_event(event);
+    }
+
+    pub(crate) fn startup_plane_presented(&mut self, render_request_key_hash: u64) {
+        if !self.enabled {
+            return;
+        }
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(trace) = self.startup_trace.as_mut() else {
+                return;
+            };
+            if trace.completed
+                || trace.plane_request_hash != Some(render_request_key_hash)
+                || trace.plane_presented_at.is_some()
+            {
+                return;
+            }
+            trace.plane_presented_at = Some(Instant::now());
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::StartupPlanePresented,
+                monotonic_ns,
+                duration_ns: Some(duration_ns(trace.started_at.elapsed())),
+                ..base_event_from_context(
+                    trace.plane_context,
+                    monotonic_ns,
+                    MoviePerfEventKind::StartupPlanePresented,
+                    None,
+                )
+            }
+        };
+        self.write_event(event);
+        self.maybe_finish_startup();
+    }
+
+    pub(crate) fn startup_spectrum_render_requested(
+        &mut self,
+        render_request_key_hash: u64,
+        context: MoviePerfContext,
+        queue_depth: usize,
+        panel_pending: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(trace) = self.startup_trace.as_mut() else {
+                return;
+            };
+            if trace.completed
+                || !trace.spectrum_expected
+                || trace.spectrum_render_requested_at.is_some()
+            {
+                return;
+            }
+            trace.spectrum_context = context;
+            trace.spectrum_context.render_request_key_hash = Some(render_request_key_hash);
+            trace.spectrum_request_hash = Some(render_request_key_hash);
+            trace.spectrum_render_requested_at = Some(Instant::now());
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::StartupSpectrumRenderRequested,
+                monotonic_ns,
+                duration_ns: trace
+                    .browser_completed_at
+                    .map(|received| duration_ns(received.elapsed())),
+                queue_depth: Some(queue_depth),
+                panel_pending: Some(panel_pending),
+                ..base_event_from_context(
+                    trace.spectrum_context,
+                    monotonic_ns,
+                    MoviePerfEventKind::StartupSpectrumRenderRequested,
+                    None,
+                )
+            }
+        };
+        self.write_event(event);
+    }
+
+    pub(crate) fn startup_spectrum_render_completed(
+        &mut self,
+        render_request_key_hash: u64,
+        queue_depth: usize,
+        panel_pending: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(trace) = self.startup_trace.as_mut() else {
+                return;
+            };
+            if trace.completed
+                || trace.spectrum_request_hash != Some(render_request_key_hash)
+                || trace.spectrum_render_completed_at.is_some()
+            {
+                return;
+            }
+            trace.spectrum_render_completed_at = Some(Instant::now());
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::StartupSpectrumRenderCompleted,
+                monotonic_ns,
+                duration_ns: trace
+                    .spectrum_render_requested_at
+                    .map(|started| duration_ns(started.elapsed())),
+                queue_depth: Some(queue_depth),
+                panel_pending: Some(panel_pending),
+                ..base_event_from_context(
+                    trace.spectrum_context,
+                    monotonic_ns,
+                    MoviePerfEventKind::StartupSpectrumRenderCompleted,
+                    None,
+                )
+            }
+        };
+        self.write_event(event);
+        self.maybe_finish_startup();
     }
 
     pub(crate) fn begin_frame(&mut self, context: MoviePerfContext) -> Option<u64> {
@@ -615,6 +952,92 @@ impl MoviePerfTracer {
                 None,
                 None,
             )
+        };
+        self.write_event(event);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn direct_overlay_refresh_completed(
+        &mut self,
+        render_request_key_hash: u64,
+        context: MoviePerfContext,
+        outcome: MovieFrameOutcome,
+        render_duration: Duration,
+        upload_duration: Duration,
+        show_duration: Duration,
+        refresh_duration: Duration,
+        uploaded_bytes: usize,
+        surface_count: usize,
+        cache_hit: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        self.update_outcome_counters(outcome);
+        let monotonic_ns = self.monotonic_ns();
+        let event = {
+            let Some(frame_seq) = self
+                .active_frames
+                .iter()
+                .filter(|(_, trace)| {
+                    trace.context.axis == context.axis
+                        && trace.context.axis_index == context.axis_index
+                })
+                .map(|(frame_seq, _)| *frame_seq)
+                .max()
+            else {
+                return;
+            };
+            let Some(trace) = self.active_frames.get_mut(&frame_seq) else {
+                return;
+            };
+            let completed_at = Instant::now();
+            trace.context = context;
+            trace.context.render_request_key_hash = Some(render_request_key_hash);
+            trace.outcome = Some(outcome);
+            trace.plane_render_requested_at = Some(
+                completed_at
+                    .checked_sub(render_duration)
+                    .unwrap_or(completed_at),
+            );
+            trace.plane_render_completed_at = Some(completed_at);
+            if !self.present_waiting_frames.contains(&trace.frame_seq) {
+                self.present_waiting_frames.push(trace.frame_seq);
+            }
+            MoviePerfEvent {
+                kind: MoviePerfEventKind::DirectOverlayRefreshCompleted,
+                monotonic_ns,
+                frame_seq: Some(frame_seq),
+                axis: trace.context.axis,
+                axis_index: trace.context.axis_index,
+                axis_length: trace.context.axis_length,
+                render_request_key_hash: trace.context.render_request_key_hash,
+                canvas_cell_width: trace.context.canvas_cell_size.map(|(w, _)| w),
+                canvas_cell_height: trace.context.canvas_cell_size.map(|(_, h)| h),
+                canvas_pixel_width: trace.context.canvas_pixel_size.map(|(w, _)| w),
+                canvas_pixel_height: trace.context.canvas_pixel_size.map(|(_, h)| h),
+                plane_mode: if trace.context.raster_mode {
+                    "raster"
+                } else {
+                    "spreadsheet"
+                },
+                direct_overlay: trace.context.direct_overlay,
+                terminal_looping: trace.context.terminal_looping,
+                requested_fps_milli: trace.context.requested_fps_milli,
+                duration_ns: Some(duration_ns(refresh_duration)),
+                queue_depth: None,
+                panel_pending: Some(false),
+                outcome: trace.outcome,
+                backend: trace.backend,
+                pipeline: None,
+                render_duration_ns: Some(duration_ns(render_duration)),
+                upload_duration_ns: Some(duration_ns(upload_duration)),
+                show_duration_ns: Some(duration_ns(show_duration)),
+                uploaded_bytes: Some(uploaded_bytes),
+                surface_count: Some(surface_count),
+                cache_hit: Some(cache_hit),
+                note: None,
+            }
         };
         self.write_event(event);
     }
@@ -1005,6 +1428,80 @@ impl MoviePerfTracer {
         }
     }
 
+    fn maybe_finish_startup(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        let session_started_at = self.started_at;
+        let Some(trace) = self.startup_trace.as_mut() else {
+            return;
+        };
+        if trace.completed
+            || trace.plane_presented_at.is_none()
+            || (trace.spectrum_expected && trace.spectrum_render_completed_at.is_none())
+        {
+            return;
+        }
+        trace.completed = true;
+        let total_ms = trace.started_at.elapsed().as_secs_f64() * 1000.0;
+        let browser_ms = trace
+            .browser_requested_at
+            .zip(trace.browser_completed_at)
+            .map(|(started, completed)| completed.saturating_duration_since(started))
+            .map(|duration| duration.as_secs_f64() * 1000.0)
+            .unwrap_or_default();
+        let plane_render_ms = trace
+            .plane_render_requested_at
+            .zip(trace.plane_render_completed_at)
+            .map(|(started, completed)| completed.saturating_duration_since(started))
+            .map(|duration| duration.as_secs_f64() * 1000.0)
+            .unwrap_or_default();
+        let plane_present_delay_ms = trace
+            .plane_render_completed_at
+            .zip(trace.plane_presented_at)
+            .map(|(completed, presented)| presented.saturating_duration_since(completed))
+            .map(|duration| duration.as_secs_f64() * 1000.0)
+            .unwrap_or_default();
+        let spectrum_render_ms = trace
+            .spectrum_render_requested_at
+            .zip(trace.spectrum_render_completed_at)
+            .map(|(started, completed)| completed.saturating_duration_since(started))
+            .map(|duration| duration.as_secs_f64() * 1000.0)
+            .unwrap_or_default();
+        let note = format!(
+            "total_ms={total_ms:.2} browser_open_ms={browser_ms:.2} plane_render_ms={plane_render_ms:.2} plane_present_delay_ms={plane_present_delay_ms:.2} spectrum_render_ms={spectrum_render_ms:.2} spectrum_expected={}",
+            trace.spectrum_expected
+        );
+        let monotonic_ns = session_started_at
+            .map(|started| duration_ns(started.elapsed()))
+            .unwrap_or_default();
+        let event = MoviePerfEvent {
+            kind: MoviePerfEventKind::StartupCompleted,
+            monotonic_ns,
+            duration_ns: Some(duration_ns(trace.started_at.elapsed())),
+            backend: trace.browser_backend,
+            note: Some(note.clone()),
+            ..base_event_from_context(
+                trace.plane_context,
+                monotonic_ns,
+                MoviePerfEventKind::StartupCompleted,
+                None,
+            )
+        };
+        self.write_event(event);
+        if let Some(file) = self.log_file.as_mut() {
+            let now = Instant::now();
+            let _ = writeln!(
+                file,
+                "[+{:>7} ms] startup {}",
+                now.saturating_duration_since(self.started_at.unwrap_or(now))
+                    .as_millis(),
+                note
+            );
+            let _ = file.flush();
+        }
+    }
+
     fn base_event(
         &self,
         context: MoviePerfContext,
@@ -1037,6 +1534,12 @@ impl MoviePerfTracer {
             outcome: None,
             backend: None,
             pipeline: None,
+            render_duration_ns: None,
+            upload_duration_ns: None,
+            show_duration_ns: None,
+            uploaded_bytes: None,
+            surface_count: None,
+            cache_hit: None,
             note: None,
         }
     }
@@ -1045,6 +1548,48 @@ impl MoviePerfTracer {
         self.started_at
             .map(|started| duration_ns(started.elapsed()))
             .unwrap_or_default()
+    }
+}
+
+fn base_event_from_context(
+    context: MoviePerfContext,
+    monotonic_ns: u64,
+    kind: MoviePerfEventKind,
+    frame_seq: Option<u64>,
+) -> MoviePerfEvent {
+    MoviePerfEvent {
+        kind,
+        monotonic_ns,
+        frame_seq,
+        axis: context.axis,
+        axis_index: context.axis_index,
+        axis_length: context.axis_length,
+        render_request_key_hash: context.render_request_key_hash,
+        canvas_cell_width: context.canvas_cell_size.map(|(w, _)| w),
+        canvas_cell_height: context.canvas_cell_size.map(|(_, h)| h),
+        canvas_pixel_width: context.canvas_pixel_size.map(|(w, _)| w),
+        canvas_pixel_height: context.canvas_pixel_size.map(|(_, h)| h),
+        plane_mode: if context.raster_mode {
+            "raster"
+        } else {
+            "spreadsheet"
+        },
+        direct_overlay: context.direct_overlay,
+        terminal_looping: context.terminal_looping,
+        requested_fps_milli: context.requested_fps_milli,
+        duration_ns: None,
+        queue_depth: None,
+        panel_pending: None,
+        outcome: None,
+        backend: None,
+        pipeline: None,
+        render_duration_ns: None,
+        upload_duration_ns: None,
+        show_duration_ns: None,
+        uploaded_bytes: None,
+        surface_count: None,
+        cache_hit: None,
+        note: None,
     }
 }
 
@@ -1083,6 +1628,12 @@ fn frame_event_from_trace(
         outcome: trace.outcome,
         backend: trace.backend,
         pipeline,
+        render_duration_ns: None,
+        upload_duration_ns: None,
+        show_duration_ns: None,
+        uploaded_bytes: None,
+        surface_count: None,
+        cache_hit: None,
         note: None,
     }
 }
@@ -1190,6 +1741,12 @@ mod tests {
             outcome: Some(MovieFrameOutcome::CacheMiss),
             backend: Some(sample_backend()),
             pipeline: Some(sample_pipeline()),
+            render_duration_ns: Some(2_000),
+            upload_duration_ns: Some(3_000),
+            show_duration_ns: Some(4_000),
+            uploaded_bytes: Some(4096),
+            surface_count: Some(2),
+            cache_hit: Some(false),
             note: Some("hello".into()),
         };
         let encoded = serde_json::to_string(&event).expect("encode");
@@ -1197,6 +1754,7 @@ mod tests {
         assert!(encoded.contains("\"kind\":\"frame_requested\""));
         assert!(encoded.contains("\"plane_mode\":\"raster\""));
         assert!(encoded.contains("\"render_active_jobs\":1"));
+        assert!(encoded.contains("\"surface_count\":2"));
     }
 
     #[test]
@@ -1331,6 +1889,39 @@ mod tests {
         assert!(summary.achieved_fps > 0.0);
         assert!(summary.backend_avg_ms >= 0.0);
         assert!(summary.render_avg_ms >= 0.0);
+        assert!(summary.present_avg_ms >= 0.0);
+    }
+
+    #[test]
+    fn direct_overlay_refresh_contributes_render_and_present_latency() {
+        let mut tracer = MoviePerfTracer {
+            enabled: true,
+            started_at: Some(Instant::now() - Duration::from_secs(1)),
+            ..MoviePerfTracer::default()
+        };
+        let context = sample_context();
+        let backend = sample_backend();
+
+        let frame_seq = tracer.begin_frame(context).expect("frame seq");
+        tracer.browser_command_sent(frame_seq);
+        tracer.browser_snapshot_received(frame_seq, context, Some(backend));
+        tracer.direct_overlay_refresh_completed(
+            0x1234,
+            context,
+            MovieFrameOutcome::CacheHitRenderedImage,
+            Duration::from_millis(28),
+            Duration::from_millis(12),
+            Duration::from_millis(9),
+            Duration::from_millis(49),
+            8192,
+            2,
+            true,
+        );
+        tracer.plane_presented(0x1234);
+
+        let summary = tracer.summary(10.0, None);
+        assert_eq!(summary.recent_frame_count, 1);
+        assert!(summary.render_avg_ms >= 20.0);
         assert!(summary.present_avg_ms >= 0.0);
     }
 

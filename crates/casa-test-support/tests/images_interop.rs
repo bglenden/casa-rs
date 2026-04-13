@@ -828,7 +828,7 @@ fn rc_rust_write_cpp_reads_default_mask() {
     let path = dir.path().join("rust_mask.image");
     casa_test_support::cpp_create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
 
-    let opened = OpenedImageView::open(&path).unwrap();
+    let mut opened = OpenedImageView::open(&path).unwrap();
     let window = opened.default_window();
     let mut region = opened.default_region("Region 1").unwrap();
     region.start_shape().unwrap();

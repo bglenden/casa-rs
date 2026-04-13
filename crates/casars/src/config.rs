@@ -149,6 +149,13 @@ fn normalize_config(mut config: UiConfig) -> UiConfig {
         normalize_image_workspace_split_ratio(config.image_workspace_split_ratio);
     config.image_workspace_restore_ratio =
         normalize_image_workspace_restore_ratio(config.image_workspace_restore_ratio);
+    if is_legacy_default_image_workspace_ratio(
+        config.image_workspace_split_ratio,
+        config.image_workspace_restore_ratio,
+    ) {
+        config.image_workspace_split_ratio = default_image_workspace_split_ratio();
+        config.image_workspace_restore_ratio = default_image_workspace_restore_ratio();
+    }
     if config.image_workspace_split_ratio > 0.0 && config.image_workspace_split_ratio < 1.0 {
         config.image_workspace_restore_ratio = config.image_workspace_split_ratio;
     }
@@ -176,7 +183,7 @@ fn normalize_restore_ratio(pane_restore_ratio: f32) -> f32 {
 }
 
 fn default_image_workspace_split_ratio() -> f32 {
-    0.7
+    0.64
 }
 
 fn default_image_workspace_restore_ratio() -> f32 {
@@ -197,6 +204,17 @@ fn normalize_image_workspace_restore_ratio(image_workspace_restore_ratio: f32) -
     } else {
         image_workspace_restore_ratio.clamp(0.35, 0.85)
     }
+}
+
+fn is_legacy_default_image_workspace_ratio(
+    image_workspace_split_ratio: f32,
+    image_workspace_restore_ratio: f32,
+) -> bool {
+    const LEGACY_DEFAULTS: [f32; 2] = [0.7, 0.58];
+    LEGACY_DEFAULTS.into_iter().any(|legacy_default| {
+        (image_workspace_split_ratio - legacy_default).abs() < f32::EPSILON
+            && (image_workspace_restore_ratio - legacy_default).abs() < f32::EPSILON
+    })
 }
 
 #[cfg(test)]
@@ -231,7 +249,10 @@ image_workspace_restore_ratio = -1.0
         assert_eq!(store.pane_split_ratio(), 0.75);
         assert_eq!(store.pane_restore_ratio(), 0.75);
         assert_eq!(store.image_workspace_split_ratio(), 1.0);
-        assert_eq!(store.image_workspace_restore_ratio(), 0.7);
+        assert_eq!(
+            store.image_workspace_restore_ratio(),
+            default_image_workspace_restore_ratio()
+        );
     }
 
     #[test]
@@ -272,5 +293,56 @@ image_workspace_restore_ratio = -1.0
         let saved_config: UiConfig = toml::from_str(&saved).expect("parse saved config");
         assert_eq!(saved_config.image_workspace_split_ratio, 1.0);
         assert!((saved_config.image_workspace_restore_ratio - 0.35).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn load_for_tests_migrates_legacy_default_image_workspace_ratio() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("casars.toml");
+        fs::write(
+            &path,
+            r#"
+theme_mode = "dense_ansi"
+pane_split_ratio = 0.42
+pane_restore_ratio = 0.42
+image_workspace_split_ratio = 0.7
+image_workspace_restore_ratio = 0.7
+"#,
+        )
+        .expect("write config");
+
+        let store = ConfigStore::load_for_tests(path);
+        assert_eq!(
+            store.image_workspace_split_ratio(),
+            default_image_workspace_split_ratio()
+        );
+        assert_eq!(
+            store.image_workspace_restore_ratio(),
+            default_image_workspace_restore_ratio()
+        );
+    }
+
+    #[test]
+    fn load_for_tests_migrates_previous_temporary_image_workspace_ratio() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("casars.toml");
+        fs::write(
+            &path,
+            r#"
+image_workspace_split_ratio = 0.58
+image_workspace_restore_ratio = 0.58
+"#,
+        )
+        .expect("write config");
+
+        let store = ConfigStore::load_for_tests(path);
+        assert_eq!(
+            store.image_workspace_split_ratio(),
+            default_image_workspace_split_ratio()
+        );
+        assert_eq!(
+            store.image_workspace_restore_ratio(),
+            default_image_workspace_restore_ratio()
+        );
     }
 }

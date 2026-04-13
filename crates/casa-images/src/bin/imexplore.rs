@@ -6,12 +6,11 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
 
-use casa_images::ImageBrowserSession;
+use casa_images::{ImageBrowserSession, imexplore_ui_schema_json};
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserRequestEnvelope, ImageBrowserResponseEnvelope,
     ImageBrowserViewport, PROTOCOL_VERSION,
 };
-use serde_json::json;
 
 fn main() {
     match run() {
@@ -26,7 +25,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1).peekable();
     if args.peek().is_some_and(|arg| arg == "--ui-schema") {
-        print!("{}", ui_schema_json()?);
+        print!("{}", imexplore_ui_schema_json("imexplore")?);
         return Ok(());
     }
     if args.peek().is_some_and(|arg| arg == "--session") {
@@ -176,197 +175,4 @@ fn run_session() -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn ui_schema_json() -> Result<String, String> {
-    let schema = json!({
-        "schema_version": 1,
-        "command_id": "imexplore",
-        "invocation_name": "imexplore",
-        "display_name": "ImExplore",
-        "category": "Images",
-        "summary": "browse persistent casacore images",
-        "usage": "imexplore <image-path>",
-        "arguments": [
-            {
-                "id": "image_path",
-                "label": "Image Path",
-                "order": 0,
-                "parser": {
-                    "kind": "positional",
-                    "metavar": "image-path"
-                },
-                "value_kind": "path",
-                "required": true,
-                "default": null,
-                "help": "Path to the casacore image root directory",
-                "group": "Input",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "blc",
-                "label": "BLC",
-                "order": 1,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--blc"],
-                    "metavar": "BLC",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Comma-separated inclusive bottom-left-corner pixel indices",
-                "group": "View",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "trc",
-                "label": "TRC",
-                "order": 2,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--trc"],
-                    "metavar": "TRC",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Comma-separated inclusive top-right-corner pixel indices",
-                "group": "View",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "inc",
-                "label": "INC",
-                "order": 3,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--inc"],
-                    "metavar": "INC",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Comma-separated per-axis pixel increments",
-                "group": "View",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "stretch",
-                "label": "Stretch",
-                "order": 4,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--stretch"],
-                    "metavar": "STRETCH",
-                    "choices": ["percentile99", "percentile95", "minmax", "zscale", "manual"]
-                },
-                "value_kind": "choice",
-                "required": false,
-                "default": "percentile99",
-                "help": "Plane stretch preset",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "autoscale",
-                "label": "Autoscale",
-                "order": 5,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--autoscale"],
-                    "metavar": "AUTOSCALE",
-                    "choices": ["per_plane", "frozen"]
-                },
-                "value_kind": "choice",
-                "required": false,
-                "default": "per_plane",
-                "help": "Whether clip bounds update per plane or stay frozen while stepping cubes",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "clip_low",
-                "label": "Clip Low",
-                "order": 6,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--clip-low"],
-                    "metavar": "LOW",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Manual lower clip bound in image value units",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "clip_high",
-                "label": "Clip High",
-                "order": 7,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--clip-high"],
-                    "metavar": "HIGH",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Manual upper clip bound in image value units",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "fps",
-                "label": "FPS",
-                "order": 8,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--fps"],
-                    "metavar": "FPS",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "1",
-                "help": "Movie playback frames per second",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "help",
-                "label": "Help",
-                "order": 9,
-                "parser": {
-                    "kind": "action",
-                    "flags": ["-h", "--help"],
-                    "action": "help"
-                },
-                "value_kind": "none",
-                "required": false,
-                "default": null,
-                "help": "Print this help message",
-                "group": "Input",
-                "advanced": true,
-                "hidden_in_tui": true
-            }
-        ],
-        "managed_output": null
-    });
-    serde_json::to_string_pretty(&schema).map_err(|error| format!("serialize ui schema: {error}"))
 }

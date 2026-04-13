@@ -34,12 +34,17 @@ const MAX_NDIM: usize = 8;
 
 /// Pixel types supported by the generic tile I/O path.
 ///
-/// Implemented for `f32`, `f64`, `Complex32`, and `Complex64`.
-/// `ELEM_SIZE` is the on-disk element size; `SWAP_SIZE` is the component
-/// size for byte-swapping (4 for f32/Complex32, 8 for f64/Complex64).
+/// Implemented for `bool`, `f32`, `f64`, `Complex32`, and `Complex64`.
+/// `ELEM_SIZE` is the unpacked in-memory element size used by the tile cache;
+/// `SWAP_SIZE` is the component size for byte-swapping (1 for bool, 4 for
+/// f32/Complex32, 8 for f64/Complex64).
 pub trait TilePixel: Copy + Default + 'static {
     const ELEM_SIZE: usize;
     const SWAP_SIZE: usize;
+}
+impl TilePixel for bool {
+    const ELEM_SIZE: usize = 1;
+    const SWAP_SIZE: usize = 1;
 }
 impl TilePixel for f32 {
     const ELEM_SIZE: usize = 4;
@@ -2447,10 +2452,12 @@ pub struct TiledFileIO {
     nr_tiles: usize,
     elem_size: usize,
     tile_bytes: usize,
+    file_tile_bytes: usize,
     tile_nelem: usize,
     big_endian: bool,
     file_offset: usize,
     dm_seq_nr: u32,
+    storage_data_type: CasacoreDataType,
     /// Precomputed Fortran-order strides for tile indexing.
     tile_strides: Vec<usize>,
     /// Precomputed Fortran-order strides for tile-grid indexing.
@@ -2468,6 +2475,66 @@ pub struct TiledFileIO {
     tile_on_disk: Vec<bool>,
     /// Persistent read file handle (used by flat cache bulk load).
     read_file: Option<std::fs::File>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_tiled_file_tile(
+    file: &mut std::fs::File,
+    file_pos: u64,
+    dst: &mut [u8],
+    file_tile_bytes: usize,
+    dt: CasacoreDataType,
+    tile_nelem: usize,
+    needs_swap: bool,
+    swap_size: usize,
+) -> Result<(), StorageError> {
+    if file_tile_bytes == dst.len() {
+        file.seek(SeekFrom::Start(file_pos))?;
+        file.read_exact(dst)?;
+        if needs_swap {
+            swap_bytes_inplace(dst, swap_size);
+        }
+        return Ok(());
+    }
+
+    let mut packed = vec![0u8; file_tile_bytes];
+    file.seek(SeekFrom::Start(file_pos))?;
+    file.read_exact(&mut packed)?;
+    let unpacked = read_tile_storage(&packed, dt, tile_nelem);
+    debug_assert_eq!(unpacked.len(), dst.len());
+    dst.copy_from_slice(&unpacked);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_tiled_file_tile(
+    file: &mut std::fs::File,
+    file_pos: u64,
+    src: &[u8],
+    file_tile_bytes: usize,
+    dt: CasacoreDataType,
+    tile_nelem: usize,
+    needs_swap: bool,
+    swap_size: usize,
+) -> Result<(), StorageError> {
+    if file_tile_bytes == src.len() {
+        if needs_swap {
+            let mut buf = src.to_vec();
+            swap_bytes_inplace(&mut buf, swap_size);
+            file.seek(SeekFrom::Start(file_pos))?;
+            file.write_all(&buf)?;
+        } else {
+            file.seek(SeekFrom::Start(file_pos))?;
+            file.write_all(src)?;
+        }
+        return Ok(());
+    }
+
+    let mut packed = vec![0u8; file_tile_bytes];
+    write_tile_storage(&mut packed, dt, src, tile_nelem);
+    file.seek(SeekFrom::Start(file_pos))?;
+    file.write_all(&packed)?;
+    Ok(())
 }
 
 impl TiledFileIO {
@@ -2530,12 +2597,13 @@ impl TiledFileIO {
         let elem_size = tile_element_size(dt);
         let tile_nelem: usize = tile_shape.iter().product();
         let tile_bytes = tile_nelem * elem_size;
+        let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
 
         let tiles_per_dim: Vec<usize> = (0..ndim)
             .map(|d| cube_shape[d].div_ceil(tile_shape[d]))
             .collect();
         let nr_tiles: usize = tiles_per_dim.iter().product();
-        let total_bytes = nr_tiles * tile_bytes;
+        let total_bytes = nr_tiles * file_tile_bytes;
 
         // Write zeroed TSM data file.
         let tsm_path = tsm_data_path(table_path, dm_seq_nr, 0);
@@ -2581,7 +2649,7 @@ impl TiledFileIO {
         let tiles_per_dim_strides = fortran_order_strides(&tiles_per_dim);
         let needs_swap = big_endian != cfg!(target_endian = "big");
 
-        let total_data_bytes = nr_tiles * tile_bytes;
+        let total_data_bytes = nr_tiles * file_tile_bytes;
         let use_lru = max_cache_bytes > 0 && max_cache_bytes < total_data_bytes;
         let cache = if use_lru {
             let max_slots = max_cache_bytes / tile_bytes;
@@ -2625,10 +2693,12 @@ impl TiledFileIO {
             nr_tiles,
             elem_size,
             tile_bytes,
+            file_tile_bytes,
             tile_nelem,
             big_endian,
             file_offset: 0,
             dm_seq_nr,
+            storage_data_type: dt,
             tile_strides,
             tiles_per_dim_strides,
             cache,
@@ -2682,6 +2752,7 @@ impl TiledFileIO {
         let elem_size = tile_element_size(dt);
         let tile_nelem: usize = cube.tile_shape.iter().product();
         let tile_bytes = tile_nelem * elem_size;
+        let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
         let ndim = cube.cube_shape.len();
 
         let tiles_per_dim: Vec<usize> = (0..ndim)
@@ -2701,7 +2772,7 @@ impl TiledFileIO {
             _ => elem_size,
         };
 
-        let total_data_bytes = nr_tiles * tile_bytes;
+        let total_data_bytes = nr_tiles * file_tile_bytes;
         let use_lru = max_cache_bytes > 0 && max_cache_bytes < total_data_bytes;
         let (cache, read_file) = if use_lru {
             let max_slots = (max_cache_bytes / tile_bytes).max(1);
@@ -2749,10 +2820,12 @@ impl TiledFileIO {
             nr_tiles,
             elem_size,
             tile_bytes,
+            file_tile_bytes,
             tile_nelem,
             big_endian: header.big_endian,
             file_offset: cube.file_offset as usize,
             dm_seq_nr,
+            storage_data_type: dt,
             tile_strides,
             tiles_per_dim_strides,
             cache,
@@ -2812,8 +2885,11 @@ impl TiledFileIO {
         if all_fresh {
             flat.data = vec![0u8; total_bytes];
         } else {
+            let file_tile_bytes = self.file_tile_bytes;
             let needs_swap = self.needs_swap;
             let swap_size = self.swap_size;
+            let dt = self.storage_data_type;
+            let tile_nelem = self.tile_nelem;
 
             flat.data = vec![0u8; total_bytes];
             {
@@ -2825,11 +2901,27 @@ impl TiledFileIO {
                     temp_file = OpenOptions::new().read(true).open(&self.tsm_path)?;
                     f = &mut temp_file;
                 }
-                f.seek(SeekFrom::Start(self.file_offset as u64))?;
-                f.read_exact(&mut flat.data)?;
-
-                if needs_swap {
-                    swap_bytes_inplace(&mut flat.data, swap_size);
+                if file_tile_bytes == flat.tile_bytes {
+                    f.seek(SeekFrom::Start(self.file_offset as u64))?;
+                    f.read_exact(&mut flat.data)?;
+                    if needs_swap {
+                        swap_bytes_inplace(&mut flat.data, swap_size);
+                    }
+                } else {
+                    for tile_index in 0..flat.nr_tiles {
+                        let off = tile_index * flat.tile_bytes;
+                        let file_pos = (self.file_offset + tile_index * file_tile_bytes) as u64;
+                        read_tiled_file_tile(
+                            f,
+                            file_pos,
+                            &mut flat.data[off..off + flat.tile_bytes],
+                            file_tile_bytes,
+                            dt,
+                            tile_nelem,
+                            needs_swap,
+                            swap_size,
+                        )?;
+                    }
                 }
             }
         }
@@ -2851,9 +2943,12 @@ impl TiledFileIO {
         }
 
         let tile_bytes = self.tile_bytes;
+        let file_tile_bytes = self.file_tile_bytes;
         let file_offset = self.file_offset;
         let needs_swap = self.needs_swap;
         let swap_size = self.swap_size;
+        let dt = self.storage_data_type;
+        let tile_nelem = self.tile_nelem;
         let tile_needs_read = self.tile_on_disk[tile_index];
 
         let lru = match &mut self.cache {
@@ -2871,6 +2966,7 @@ impl TiledFileIO {
                 lru,
                 &mut self.tile_on_disk,
                 tile_bytes,
+                file_tile_bytes,
                 file_offset,
                 needs_swap,
                 swap_size,
@@ -2886,6 +2982,7 @@ impl TiledFileIO {
                 tile_index,
                 self.nr_tiles,
                 tile_bytes,
+                file_tile_bytes,
                 file_offset,
                 needs_swap,
                 swap_size,
@@ -2907,16 +3004,17 @@ impl TiledFileIO {
                 let old_tile = lru.slot_tile[min_slot];
                 if old_tile != usize::MAX && lru.slot_dirty[min_slot] {
                     let off = min_slot * tile_bytes;
-                    let file_pos = (file_offset + old_tile * tile_bytes) as u64;
-                    if needs_swap {
-                        let mut buf = lru.data[off..off + tile_bytes].to_vec();
-                        swap_bytes_inplace(&mut buf, swap_size);
-                        lru.file.seek(SeekFrom::Start(file_pos))?;
-                        lru.file.write_all(&buf)?;
-                    } else {
-                        lru.file.seek(SeekFrom::Start(file_pos))?;
-                        lru.file.write_all(&lru.data[off..off + tile_bytes])?;
-                    }
+                    let file_pos = (file_offset + old_tile * file_tile_bytes) as u64;
+                    write_tiled_file_tile(
+                        &mut lru.file,
+                        file_pos,
+                        &lru.data[off..off + tile_bytes],
+                        file_tile_bytes,
+                        dt,
+                        tile_nelem,
+                        needs_swap,
+                        swap_size,
+                    )?;
                     self.tile_on_disk[old_tile] = true;
                 }
                 if old_tile != usize::MAX {
@@ -2931,17 +3029,30 @@ impl TiledFileIO {
         if !tile_needs_read {
             lru.data[off..off + tile_bytes].fill(0);
         } else {
-            let file_pos = (file_offset + tile_index * tile_bytes) as u64;
-            #[cfg(unix)]
-            lru.file
-                .read_exact_at(&mut lru.data[off..off + tile_bytes], file_pos)?;
-            #[cfg(not(unix))]
-            {
-                lru.file.seek(SeekFrom::Start(file_pos))?;
-                lru.file.read_exact(&mut lru.data[off..off + tile_bytes])?;
-            }
-            if needs_swap {
-                swap_bytes_inplace(&mut lru.data[off..off + tile_bytes], swap_size);
+            let file_pos = (file_offset + tile_index * file_tile_bytes) as u64;
+            if file_tile_bytes == tile_bytes {
+                #[cfg(unix)]
+                lru.file
+                    .read_exact_at(&mut lru.data[off..off + tile_bytes], file_pos)?;
+                #[cfg(not(unix))]
+                {
+                    lru.file.seek(SeekFrom::Start(file_pos))?;
+                    lru.file.read_exact(&mut lru.data[off..off + tile_bytes])?;
+                }
+                if needs_swap {
+                    swap_bytes_inplace(&mut lru.data[off..off + tile_bytes], swap_size);
+                }
+            } else {
+                read_tiled_file_tile(
+                    &mut lru.file,
+                    file_pos,
+                    &mut lru.data[off..off + tile_bytes],
+                    file_tile_bytes,
+                    dt,
+                    tile_nelem,
+                    needs_swap,
+                    swap_size,
+                )?;
             }
         }
 
@@ -2964,10 +3075,14 @@ impl TiledFileIO {
         lru: &mut LruTileCache,
         tile_on_disk: &mut [bool],
         tile_bytes: usize,
+        file_tile_bytes: usize,
         file_offset: usize,
         needs_swap: bool,
         swap_size: usize,
     ) -> Result<bool, StorageError> {
+        if file_tile_bytes != tile_bytes {
+            return Ok(false);
+        }
         // All slots must be used and dirty, and tiles must be in sequential
         // slot order (slot i holds tile base+i) for a single contiguous write.
         let max_slots = lru.max_slots;
@@ -3026,10 +3141,14 @@ impl TiledFileIO {
         tile_index: usize,
         nr_tiles: usize,
         tile_bytes: usize,
+        file_tile_bytes: usize,
         file_offset: usize,
         needs_swap: bool,
         swap_size: usize,
     ) -> Result<bool, StorageError> {
+        if file_tile_bytes != tile_bytes {
+            return Ok(false);
+        }
         let max_slots = lru.max_slots;
 
         // Check: current slots hold contiguous clean tiles, and the requested
@@ -3160,20 +3279,27 @@ impl TiledFileIO {
                         OpenOptions::new().write(true).open(&self.tsm_path)?,
                     );
 
-                    if self.needs_swap {
+                    if self.file_tile_bytes != self.tile_bytes || self.needs_swap {
                         let tile_bytes = self.tile_bytes;
-                        let swap_size = self.swap_size;
-                        let mut raw = vec![0u8; tile_bytes];
+                        let file_tile_bytes = self.file_tile_bytes;
+                        let dt = self.storage_data_type;
+                        let tile_nelem = self.tile_nelem;
                         for tile_index in 0..self.nr_tiles {
                             if !flat.dirty[tile_index] {
                                 continue;
                             }
                             let off = tile_index * tile_bytes;
-                            raw.copy_from_slice(&flat.data[off..off + tile_bytes]);
-                            swap_bytes_inplace(&mut raw, swap_size);
-                            let offset = self.file_offset + tile_index * tile_bytes;
-                            f.seek(SeekFrom::Start(offset as u64))?;
-                            f.write_all(&raw)?;
+                            let offset = self.file_offset + tile_index * file_tile_bytes;
+                            write_tiled_file_tile(
+                                f.get_mut(),
+                                offset as u64,
+                                &flat.data[off..off + tile_bytes],
+                                file_tile_bytes,
+                                dt,
+                                tile_nelem,
+                                self.needs_swap,
+                                self.swap_size,
+                            )?;
                         }
                     } else {
                         let tile_bytes = self.tile_bytes;
@@ -3202,14 +3328,18 @@ impl TiledFileIO {
             }
             TileCache::Lru(lru) => {
                 let tile_bytes = self.tile_bytes;
+                let file_tile_bytes = self.file_tile_bytes;
                 let file_offset = self.file_offset;
                 let needs_swap = self.needs_swap;
                 let swap_size = self.swap_size;
+                let dt = self.storage_data_type;
+                let tile_nelem = self.tile_nelem;
                 // Try batch flush first (single write if tiles are contiguous).
                 if !Self::try_batch_flush_lru_inner(
                     lru,
                     &mut self.tile_on_disk,
                     tile_bytes,
+                    file_tile_bytes,
                     file_offset,
                     needs_swap,
                     swap_size,
@@ -3221,16 +3351,17 @@ impl TiledFileIO {
                             continue;
                         }
                         let off = slot * tile_bytes;
-                        let file_pos = (file_offset + tile_idx * tile_bytes) as u64;
-                        if needs_swap {
-                            let mut buf = lru.data[off..off + tile_bytes].to_vec();
-                            swap_bytes_inplace(&mut buf, swap_size);
-                            lru.file.seek(SeekFrom::Start(file_pos))?;
-                            lru.file.write_all(&buf)?;
-                        } else {
-                            lru.file.seek(SeekFrom::Start(file_pos))?;
-                            lru.file.write_all(&lru.data[off..off + tile_bytes])?;
-                        }
+                        let file_pos = (file_offset + tile_idx * file_tile_bytes) as u64;
+                        write_tiled_file_tile(
+                            &mut lru.file,
+                            file_pos,
+                            &lru.data[off..off + tile_bytes],
+                            file_tile_bytes,
+                            dt,
+                            tile_nelem,
+                            needs_swap,
+                            swap_size,
+                        )?;
                         lru.slot_dirty[slot] = false;
                     }
                     // Reset cache state.
