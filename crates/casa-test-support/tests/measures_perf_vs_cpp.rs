@@ -27,11 +27,6 @@ fn bench_epoch(ref_in: EpochRef, ref_out: EpochRef) -> f64 {
     let ref_in_str = ref_in.as_str();
     let ref_out_str = ref_out.as_str();
 
-    // Match the C++ harness, which warms a reusable converter before timing.
-    let warm_epoch = MEpoch::from_mjd(J2000_MJD, ref_in);
-    let warm_result = warm_epoch.convert_to(ref_out, &frame).unwrap();
-    std::hint::black_box(&warm_result);
-
     // --- Rust ---
     let rust_start = std::time::Instant::now();
     for i in 0..COUNT {
