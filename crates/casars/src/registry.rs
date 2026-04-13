@@ -7,6 +7,7 @@ use std::process::Command;
 use std::time::SystemTime;
 
 use casa_calibration::command_schema as calibrate_command_schema;
+use casa_images::imexplore_ui_schema_json;
 use casa_ms::msexplore::cli::command_schema as msexplore_command_schema;
 use casa_ms::ui_schema::UiCommandSchema;
 
@@ -77,6 +78,11 @@ impl RegistryApp {
         }
         if !self.has_explicit_binary_override() && self.id == "calibrate" {
             return Ok(calibrate_command_schema("calibrate"));
+        }
+        if !self.has_explicit_binary_override() && self.id == "imexplore" {
+            let json = imexplore_ui_schema_json("imexplore")?;
+            return serde_json::from_str(&json)
+                .map_err(|error| format!("parse embedded imexplore schema: {error}"));
         }
         match &self.kind {
             RegistryAppKind::Subprocess { binary_name, .. } => {
@@ -538,6 +544,40 @@ mod tests {
             panic!("apply_mode should be an option parser");
         };
         assert_eq!(choices, &["calflag", "calonly", "trial"]);
+    }
+
+    #[test]
+    fn imexplore_load_schema_describes_browser_surface_without_subprocess() {
+        let _guard = crate::test_env_lock();
+        unsafe {
+            env::remove_var("CASARS_IMEXPLORE_BIN");
+            env::remove_var("CARGO_BIN_EXE_imexplore");
+        }
+
+        let schema = imexplore_app()
+            .load_schema()
+            .expect("load imexplore schema");
+        assert_eq!(schema.command_id, "imexplore");
+        assert_eq!(schema.display_name, "ImExplore");
+        assert_eq!(schema.category, "Images");
+        let image_path = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "image_path")
+            .expect("image path argument");
+        assert_eq!(image_path.group, "Input");
+        let stretch = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "stretch")
+            .expect("stretch argument");
+        let UiArgumentParser::Option { choices, .. } = &stretch.parser else {
+            panic!("stretch should be an option parser");
+        };
+        assert_eq!(
+            choices,
+            &["percentile99", "percentile95", "minmax", "zscale", "manual"]
+        );
     }
 
     #[test]

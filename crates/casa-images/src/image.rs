@@ -103,12 +103,108 @@ pub enum AnyPagedImage {
 impl AnyPagedImage {
     /// Opens an image from disk after detecting its pixel type.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
-        let path_ref = path.as_ref();
-        match image_pixel_type(path_ref)? {
-            ImagePixelType::Float32 => Ok(Self::Float32(PagedImage::open(path_ref)?)),
-            ImagePixelType::Float64 => Ok(Self::Float64(PagedImage::open(path_ref)?)),
-            ImagePixelType::Complex32 => Ok(Self::Complex32(PagedImage::open(path_ref)?)),
-            ImagePixelType::Complex64 => Ok(Self::Complex64(PagedImage::open(path_ref)?)),
+        Self::open_with_cache(path, 0)
+    }
+
+    /// Opens an image from disk with an explicit cache size limit.
+    pub fn open_with_cache(
+        path: impl AsRef<Path>,
+        max_cache_bytes: usize,
+    ) -> Result<Self, ImageError> {
+        let path = path.as_ref().to_path_buf();
+        let tiled_io = PagedImage::<f32>::open_tiled_io(&path, max_cache_bytes)
+            .ok()
+            .map(RefCell::new);
+        let table = if tiled_io.is_some() {
+            Table::open_metadata_only(TableOptions::new(&path))?
+        } else {
+            Table::open(TableOptions::new(&path))?
+        };
+        let coords = match table.keywords().get("coords") {
+            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
+            _ => CoordinateSystem::new(),
+        };
+        let units = match table.keywords().get("units") {
+            Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
+            _ => String::new(),
+        };
+        let misc_info = match table.keywords().get("miscinfo") {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => RecordValue::default(),
+        };
+        let pixel_type = ImagePixelType::from_primitive_type(
+            PagedImage::<f32>::map_column_primitive_type(&table, tiled_io.as_ref())?,
+        )?;
+        let (shape, tile_shape) = if let Some(ref tio) = tiled_io {
+            let tio_ref = tio.borrow();
+            (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
+        } else {
+            let shape = PagedImage::<f32>::map_column_shape(&table)?;
+            let tile_shape = TiledShape::new(shape.clone()).tile_shape();
+            (shape, tile_shape)
+        };
+
+        match pixel_type {
+            ImagePixelType::Float32 => Ok(Self::Float32(PagedImage {
+                table,
+                shape,
+                tile_shape,
+                coords,
+                path: Some(path),
+                units,
+                misc_info,
+                temp_masks: BTreeMap::new(),
+                persistent_masks: RefCell::new(BTreeMap::new()),
+                temp_history: Vec::new(),
+                tiled_io,
+                max_cache_bytes: Cell::new(max_cache_bytes),
+                _pixel: PhantomData,
+            })),
+            ImagePixelType::Float64 => Ok(Self::Float64(PagedImage {
+                table,
+                shape,
+                tile_shape,
+                coords,
+                path: Some(path),
+                units,
+                misc_info,
+                temp_masks: BTreeMap::new(),
+                persistent_masks: RefCell::new(BTreeMap::new()),
+                temp_history: Vec::new(),
+                tiled_io,
+                max_cache_bytes: Cell::new(max_cache_bytes),
+                _pixel: PhantomData,
+            })),
+            ImagePixelType::Complex32 => Ok(Self::Complex32(PagedImage {
+                table,
+                shape,
+                tile_shape,
+                coords,
+                path: Some(path),
+                units,
+                misc_info,
+                temp_masks: BTreeMap::new(),
+                persistent_masks: RefCell::new(BTreeMap::new()),
+                temp_history: Vec::new(),
+                tiled_io,
+                max_cache_bytes: Cell::new(max_cache_bytes),
+                _pixel: PhantomData,
+            })),
+            ImagePixelType::Complex64 => Ok(Self::Complex64(PagedImage {
+                table,
+                shape,
+                tile_shape,
+                coords,
+                path: Some(path),
+                units,
+                misc_info,
+                temp_masks: BTreeMap::new(),
+                persistent_masks: RefCell::new(BTreeMap::new()),
+                temp_history: Vec::new(),
+                tiled_io,
+                max_cache_bytes: Cell::new(max_cache_bytes),
+                _pixel: PhantomData,
+            })),
         }
     }
 
@@ -169,6 +265,21 @@ impl AnyPagedImage {
             Self::Float64(image) => image.mask_names(),
             Self::Complex32(image) => image.mask_names(),
             Self::Complex64(image) => image.mask_names(),
+        }
+    }
+
+    /// Returns a slice from the default mask, if one is configured.
+    pub fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        match self {
+            Self::Float32(image) => image.get_mask_slice(start, shape, stride),
+            Self::Float64(image) => image.get_mask_slice(start, shape, stride),
+            Self::Complex32(image) => image.get_mask_slice(start, shape, stride),
+            Self::Complex64(image) => image.get_mask_slice(start, shape, stride),
         }
     }
 
@@ -256,6 +367,20 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
                 .ok_or_else(|| ImageError::MaskNotFound(name.to_string()));
         }
         Err(ImageError::MaskNotFound(name.to_string()))
+    }
+
+    /// Returns a named mask slice, mirroring casacore `getMaskSlice`.
+    ///
+    /// The default implementation slices the fully materialized named mask.
+    /// Persistent images should override this to route through paged storage.
+    fn get_named_mask_slice(
+        &self,
+        name: &str,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        slice_mask_array(self.get_named_mask(name)?, start, shape, stride)
     }
 
     /// Returns the history entries associated with the image.
@@ -371,6 +496,24 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
         match self.default_mask_name() {
             Some(name) => Ok(Some(self.get_named_mask(&name)?)),
             None => self.default_mask(),
+        }
+    }
+
+    /// Returns a slice from the default mask if one is configured.
+    fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        match self.default_mask_name() {
+            Some(name) => Ok(Some(
+                self.get_named_mask_slice(&name, start, shape, stride)?,
+            )),
+            None => self
+                .default_mask()?
+                .map(|mask| slice_mask_array(mask, start, shape, stride))
+                .transpose(),
         }
     }
 
@@ -529,6 +672,7 @@ pub struct PagedImage<T: ImagePixel> {
     units: String,
     misc_info: RecordValue,
     temp_masks: BTreeMap<String, ArrayD<bool>>,
+    persistent_masks: RefCell<BTreeMap<String, PagedArray<bool>>>,
     temp_history: Vec<String>,
     /// When `Some`, pixel I/O goes directly through tile-level file access,
     /// bypassing the `Table` cell abstraction. Enabled by `create_with_tile_shape`
@@ -640,7 +784,46 @@ impl<T: ImagePixel> PagedImage<T> {
 
     fn set_cache_bytes_shared(&self, max_cache_bytes: usize) -> Result<(), ImageError> {
         self.max_cache_bytes.set(max_cache_bytes);
+        self.persistent_masks.borrow_mut().clear();
         self.refresh_tiled_io()
+    }
+
+    fn persistent_mask_relative_path(record: &RecordValue) -> Result<String, ImageError> {
+        match record.get("mask") {
+            Some(Value::TableRef(path)) => Ok(path.clone()),
+            Some(Value::Scalar(ScalarValue::String(path))) => Ok(path.clone()),
+            _ => Err(ImageError::InvalidMetadata(
+                "mask record is missing table reference".to_string(),
+            )),
+        }
+    }
+
+    fn with_persistent_mask<R, F>(
+        &self,
+        name: &str,
+        record: &RecordValue,
+        func: F,
+    ) -> Result<R, ImageError>
+    where
+        F: FnOnce(&PagedArray<bool>) -> Result<R, ImageError>,
+    {
+        if !self.persistent_masks.borrow().contains_key(name) {
+            let image_path = self.path.as_deref().ok_or(ImageError::NotPersistent)?;
+            let relative_path = Self::persistent_mask_relative_path(record)?;
+            let mask = PagedArray::<bool>::open_with_cache(
+                resolve_mask_table_path(image_path, &relative_path),
+                self.cache_bytes(),
+            )?;
+            self.persistent_masks
+                .borrow_mut()
+                .insert(name.to_string(), mask);
+        }
+
+        let persistent_masks = self.persistent_masks.borrow();
+        let mask = persistent_masks
+            .get(name)
+            .ok_or_else(|| ImageError::MaskNotFound(name.to_string()))?;
+        func(mask)
     }
 
     /// Creates a new persistent image on disk.
@@ -679,6 +862,7 @@ impl<T: ImagePixel> PagedImage<T> {
             units: String::new(),
             misc_info: RecordValue::default(),
             temp_masks: BTreeMap::new(),
+            persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io: None,
             max_cache_bytes: Cell::new(0),
@@ -761,6 +945,7 @@ impl<T: ImagePixel> PagedImage<T> {
             units: String::new(),
             misc_info: RecordValue::default(),
             temp_masks: BTreeMap::new(),
+            persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(0),
@@ -828,6 +1013,7 @@ impl<T: ImagePixel> PagedImage<T> {
             units: String::new(),
             misc_info: RecordValue::default(),
             temp_masks: BTreeMap::new(),
+            persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(max_cache_bytes),
@@ -886,6 +1072,7 @@ impl<T: ImagePixel> PagedImage<T> {
             units,
             misc_info,
             temp_masks: BTreeMap::new(),
+            persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io,
             max_cache_bytes: Cell::new(max_cache_bytes),
@@ -923,6 +1110,7 @@ impl<T: ImagePixel> PagedImage<T> {
             units: String::new(),
             misc_info: RecordValue::default(),
             temp_masks: BTreeMap::new(),
+            persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io: None,
             max_cache_bytes: Cell::new(0),
@@ -984,6 +1172,7 @@ impl<T: ImagePixel> PagedImage<T> {
             units,
             misc_info,
             temp_masks: BTreeMap::new(),
+            persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io,
             max_cache_bytes: Cell::new(0),
@@ -1416,6 +1605,16 @@ impl<T: ImagePixel> PagedImage<T> {
         <Self as ImageInterface<T>>::get_mask(self)
     }
 
+    /// Returns a slice from the default mask if one is configured.
+    pub fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        <Self as ImageInterface<T>>::get_mask_slice(self, start, shape, stride)
+    }
+
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
         if let Some(mask) = self.temp_masks.get(name) {
@@ -1428,7 +1627,68 @@ impl<T: ImagePixel> PagedImage<T> {
         let entry = masks
             .get(name)
             .ok_or_else(|| ImageError::MaskNotFound(name.to_string()))?;
-        read_mask_entry(entry, self.path.as_deref(), &self.shape)
+        match entry {
+            Value::Array(ArrayValue::Bool(array)) => {
+                if array.shape() != self.shape.as_slice() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: array.shape().to_vec(),
+                    });
+                }
+                Ok(array.clone())
+            }
+            Value::Record(record) => self.with_persistent_mask(name, record, |mask| {
+                let array = mask.get()?;
+                if array.shape() != self.shape.as_slice() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: array.shape().to_vec(),
+                    });
+                }
+                Ok(array)
+            }),
+            _ => Err(ImageError::InvalidMetadata(
+                "mask keyword is neither a bool array nor a paged-mask record".to_string(),
+            )),
+        }
+    }
+
+    /// Returns a slice from a named mask without materializing the full mask
+    /// when the backing storage supports paged reads.
+    pub fn get_named_mask_slice(
+        &self,
+        name: &str,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        if let Some(mask) = self.temp_masks.get(name) {
+            return slice_mask_array(mask.clone(), start, shape, stride);
+        }
+        let masks = match self.table.keywords().get(MASKS_KEYWORD) {
+            Some(Value::Record(rec)) => rec,
+            _ => return Err(ImageError::MaskNotFound(name.to_string())),
+        };
+        let entry = masks
+            .get(name)
+            .ok_or_else(|| ImageError::MaskNotFound(name.to_string()))?;
+        match entry {
+            Value::Array(ArrayValue::Bool(array)) => {
+                if array.shape() != self.shape.as_slice() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: array.shape().to_vec(),
+                    });
+                }
+                slice_mask_array(array.clone(), start, shape, stride)
+            }
+            Value::Record(record) => self.with_persistent_mask(name, record, |mask| {
+                mask.get_slice(start, shape, stride).map_err(Into::into)
+            }),
+            _ => Err(ImageError::InvalidMetadata(
+                "mask keyword is neither a bool array nor a paged-mask record".to_string(),
+            )),
+        }
     }
 
     /// Replaces a named mask.
@@ -1458,6 +1718,7 @@ impl<T: ImagePixel> PagedImage<T> {
         } else {
             self.temp_masks.insert(name.to_string(), data.clone());
         }
+        self.persistent_masks.borrow_mut().remove(name);
         Ok(())
     }
 
@@ -1474,6 +1735,7 @@ impl<T: ImagePixel> PagedImage<T> {
             .keywords_mut()
             .upsert(MASKS_KEYWORD, Value::Record(masks));
         self.temp_masks.remove(name);
+        self.persistent_masks.borrow_mut().remove(name);
         if let Some(path) = &self.path {
             let mask_path = path.join(name);
             if mask_path.exists() {
@@ -1531,6 +1793,7 @@ impl<T: ImagePixel> PagedImage<T> {
         let path = path.as_ref().to_path_buf();
         self.materialize_to_path(&path)?;
         self.path = Some(path);
+        self.persistent_masks.borrow_mut().clear();
         Ok(())
     }
 
@@ -1818,6 +2081,16 @@ impl<T: ImagePixel> ImageInterface<T> for PagedImage<T> {
 
     fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
         PagedImage::get_named_mask(self, name)
+    }
+
+    fn get_named_mask_slice(
+        &self,
+        name: &str,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        PagedImage::get_named_mask_slice(self, name, start, shape, stride)
     }
 
     fn history(&self) -> Result<Vec<String>, ImageError> {
@@ -2180,47 +2453,53 @@ fn resolve_mask_table_path(image_path: &Path, stored_path: &str) -> PathBuf {
     image_path.join(stored)
 }
 
-fn read_mask_entry(
-    value: &Value,
-    image_path: Option<&Path>,
-    expected_shape: &[usize],
+fn slice_mask_array(
+    mask: ArrayD<bool>,
+    start: &[usize],
+    shape: &[usize],
+    stride: &[usize],
 ) -> Result<ArrayD<bool>, ImageError> {
-    match value {
-        Value::Array(ArrayValue::Bool(array)) => {
-            if array.shape() != expected_shape {
-                return Err(ImageError::ShapeMismatch {
-                    expected: expected_shape.to_vec(),
-                    got: array.shape().to_vec(),
-                });
-            }
-            Ok(array.clone())
-        }
-        Value::Record(record) => {
-            let relative_path = match record.get("mask") {
-                Some(Value::TableRef(path)) => path.clone(),
-                Some(Value::Scalar(ScalarValue::String(path))) => path.clone(),
-                _ => {
-                    return Err(ImageError::InvalidMetadata(
-                        "mask record is missing table reference".to_string(),
-                    ));
-                }
-            };
-            let image_path = image_path.ok_or(ImageError::NotPersistent)?;
-            let mask =
-                PagedArray::<bool>::open(resolve_mask_table_path(image_path, &relative_path))?;
-            let array = mask.get()?;
-            if array.shape() != expected_shape {
-                return Err(ImageError::ShapeMismatch {
-                    expected: expected_shape.to_vec(),
-                    got: array.shape().to_vec(),
-                });
-            }
-            Ok(array)
-        }
-        _ => Err(ImageError::InvalidMetadata(
-            "mask keyword is neither a bool array nor a paged-mask record".to_string(),
-        )),
+    let ndim = mask.ndim();
+    if start.len() != ndim || shape.len() != ndim || stride.len() != ndim {
+        return Err(ImageError::ShapeMismatch {
+            expected: vec![ndim],
+            got: vec![start.len(), shape.len(), stride.len()],
+        });
     }
+    for axis in 0..ndim {
+        let Some(last) = shape[axis]
+            .checked_sub(1)
+            .and_then(|count| count.checked_mul(stride[axis]))
+            .and_then(|offset| start[axis].checked_add(offset))
+        else {
+            return Err(ImageError::ShapeMismatch {
+                expected: mask.shape().to_vec(),
+                got: start.to_vec(),
+            });
+        };
+        if shape[axis] > 0 && (start[axis] >= mask.shape()[axis] || last >= mask.shape()[axis]) {
+            return Err(ImageError::ShapeMismatch {
+                expected: mask.shape().to_vec(),
+                got: start.to_vec(),
+            });
+        }
+    }
+
+    let slice_info: Vec<SliceInfoElem> = start
+        .iter()
+        .zip(shape.iter())
+        .zip(stride.iter())
+        .map(|((&s, &n), &st)| {
+            let end = if n == 0 { s } else { s + n * st };
+            SliceInfoElem::Slice {
+                start: s as isize,
+                end: Some(end as isize),
+                step: st as isize,
+            }
+        })
+        .collect();
+    let view = mask.slice(slice_info.as_slice());
+    Ok(view.to_owned())
 }
 
 fn to_array_value<T: ImagePixel>(array: &ArrayD<T>) -> ArrayValue {
@@ -2740,6 +3019,42 @@ mod tests {
             image.put_mask("bad", &ArrayD::from_elem(IxDyn(&[1, 2]), true)),
             Err(ImageError::ShapeMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn paged_image_mask_slice_reads_persistent_subregion_without_full_mask() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_slice.image");
+        let mut image = PagedImage::<f32>::create(vec![5, 4, 3], make_coords(), &path).unwrap();
+        image
+            .put_mask(
+                "quality",
+                &ArrayD::from_shape_fn(IxDyn(&[5, 4, 3]), |idx| {
+                    let x = idx[0];
+                    let y = idx[1];
+                    let z = idx[2];
+                    (x + y + z) % 2 == 0
+                }),
+            )
+            .unwrap();
+        image.set_default_mask("quality").unwrap();
+        image.save().unwrap();
+
+        let reopened = PagedImage::<f32>::open_with_cache(&path, 256).unwrap();
+        let slice = reopened
+            .get_mask_slice(&[1, 1, 0], &[2, 2, 3], &[2, 1, 1])
+            .unwrap()
+            .unwrap();
+        assert_eq!(slice.shape(), &[2, 2, 3]);
+        for x in 0..2 {
+            for y in 0..2 {
+                for z in 0..3 {
+                    let src_x = 1 + x * 2;
+                    let src_y = 1 + y;
+                    assert_eq!(slice[[x, y, z]], (src_x + src_y + z) % 2 == 0);
+                }
+            }
+        }
     }
 
     #[test]

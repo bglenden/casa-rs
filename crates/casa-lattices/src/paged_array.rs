@@ -93,7 +93,8 @@ impl<T: LatticeElement> PagedArray<T> {
     fn supports_tiled_io() -> bool {
         matches!(
             T::PRIMITIVE_TYPE,
-            PrimitiveType::Float32
+            PrimitiveType::Bool
+                | PrimitiveType::Float32
                 | PrimitiveType::Float64
                 | PrimitiveType::Complex32
                 | PrimitiveType::Complex64
@@ -167,6 +168,9 @@ impl<T: LatticeElement> PagedArray<T> {
         shape: &[usize],
     ) -> Result<ArrayD<T>, LatticeError> {
         match T::PRIMITIVE_TYPE {
+            PrimitiveType::Bool => {
+                Self::cast_tiled_array(tio.get_slice::<bool>(start, shape).map_err(tiled_io_err)?)
+            }
             PrimitiveType::Float32 => {
                 Self::cast_tiled_array(tio.get_slice::<f32>(start, shape).map_err(tiled_io_err)?)
             }
@@ -189,6 +193,9 @@ impl<T: LatticeElement> PagedArray<T> {
 
     fn tiled_get_all(tio: &mut TiledFileIO) -> Result<ArrayD<T>, LatticeError> {
         match T::PRIMITIVE_TYPE {
+            PrimitiveType::Bool => {
+                Self::cast_tiled_array(tio.get_all::<bool>().map_err(tiled_io_err)?)
+            }
             PrimitiveType::Float32 => {
                 Self::cast_tiled_array(tio.get_all::<f32>().map_err(tiled_io_err)?)
             }
@@ -213,6 +220,7 @@ impl<T: LatticeElement> PagedArray<T> {
         start: &[usize],
     ) -> Result<(), LatticeError> {
         match T::PRIMITIVE_TYPE {
+            PrimitiveType::Bool => Self::tiled_put_slice_typed::<bool>(tio, data, start),
             PrimitiveType::Float32 => Self::tiled_put_slice_typed::<f32>(tio, data, start),
             PrimitiveType::Float64 => Self::tiled_put_slice_typed::<f64>(tio, data, start),
             PrimitiveType::Complex32 => Self::tiled_put_slice_typed::<Complex32>(tio, data, start),
@@ -343,6 +351,18 @@ impl<T: LatticeElement> PagedArray<T> {
     /// The table must have been created by a `PagedArray` (Rust or C++),
     /// with a single column named `"PagedArray"`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, LatticeError> {
+        Self::open_with_cache(path, 0)
+    }
+
+    /// Opens an existing `PagedArray` from disk with an explicit cache size.
+    ///
+    /// A `max_cache_bytes` value of `0` keeps the existing "no explicit limit"
+    /// behavior, while non-zero values allow slice-heavy callers to force the
+    /// bounded LRU path instead of fully warming the backing tiled payload.
+    pub fn open_with_cache(
+        path: impl AsRef<Path>,
+        max_cache_bytes: usize,
+    ) -> Result<Self, LatticeError> {
         let path = path.as_ref();
         let table = Table::open(TableOptions::new(path)).map_err(table_err)?;
 
@@ -364,7 +384,7 @@ impl<T: LatticeElement> PagedArray<T> {
         };
 
         let tiled_io = if Self::supports_tiled_io() {
-            Some(Self::open_tiled_io(path, 0)?)
+            Some(Self::open_tiled_io(path, max_cache_bytes)?)
         } else {
             None
         };
@@ -379,7 +399,7 @@ impl<T: LatticeElement> PagedArray<T> {
             tiled_io: RefCell::new(tiled_io),
             shape,
             tile_shape,
-            max_cache_bytes: Cell::new(0),
+            max_cache_bytes: Cell::new(max_cache_bytes),
             path: Some(path.to_path_buf()),
             _phantom: std::marker::PhantomData,
         })
@@ -952,6 +972,40 @@ mod tests {
                 for y in 0..16 {
                     let expected = (x + y * 16 + z * 16 * 16) as f32;
                     assert_eq!(plane[[x, y, 0]], expected, "mismatch at [{x}, {y}, {z}]");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn persistent_bool_slice_round_trip_uses_packed_tiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bool_slice_round_trip.table");
+        let ts = TiledShape::with_tile_shape(vec![8, 8, 4], vec![4, 4, 2]).unwrap();
+        let mut pa = PagedArray::<bool>::create(ts, &path).unwrap();
+
+        for z in 0..4 {
+            let plane = ArrayD::from_shape_fn(IxDyn(&[8, 8, 1]), |idx| {
+                let x = idx[0];
+                let y = idx[1];
+                (x + y + z) % 3 == 0
+            });
+            pa.put_slice(&plane, &[0, 0, z]).unwrap();
+        }
+        pa.flush().unwrap();
+
+        let reopened = PagedArray::<bool>::open_with_cache(&path, 64).unwrap();
+        let slice = reopened
+            .get_slice(&[1, 2, 1], &[3, 2, 2], &[2, 1, 1])
+            .unwrap();
+        assert_eq!(slice.shape(), &[3, 2, 2]);
+        for x in 0..3 {
+            for y in 0..2 {
+                for z in 0..2 {
+                    let src_x = 1 + x * 2;
+                    let src_y = 2 + y;
+                    let src_z = 1 + z;
+                    assert_eq!(slice[[x, y, z]], (src_x + src_y + src_z) % 3 == 0);
                 }
             }
         }

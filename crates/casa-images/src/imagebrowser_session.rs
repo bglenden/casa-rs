@@ -47,6 +47,7 @@ pub struct ImageBrowserSession {
     plane_content_mode: ImagePlaneContentMode,
     region: Option<ImageRegion>,
     region_revision: u64,
+    mask_revision: u64,
     active_region_definition_name: Option<String>,
     saved_region_cycle_index: usize,
     perf_enabled: bool,
@@ -173,6 +174,7 @@ struct PlaneCacheKey {
     manual_clip: Option<(u64, u64)>,
     clip_override: Option<(u64, u64)>,
     region_revision: u64,
+    mask_revision: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -184,6 +186,7 @@ struct ProfileCacheKey {
     normalized_non_display_indices: Vec<usize>,
     profile_axis: usize,
     region_revision: Option<u64>,
+    mask_revision: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -411,6 +414,7 @@ impl ImageBrowserSession {
             plane_content_mode: default_plane_content_mode(viewport),
             region: None,
             region_revision: 0,
+            mask_revision: 0,
             active_region_definition_name: None,
             saved_region_cycle_index: 0,
             perf_enabled,
@@ -446,6 +450,8 @@ impl ImageBrowserSession {
         &mut self,
         request: &ImageBrowserPreviewRequest,
     ) -> Result<ImageBrowserPreviewPayload, ImageError> {
+        let visible_display_pixels = self.current_display_pixels();
+        let visible_non_display_pixels = self.current_non_display_pixels();
         let saved = SessionPreviewState {
             viewport: self.viewport,
             window: self.window.clone(),
@@ -469,10 +475,10 @@ impl ImageBrowserSession {
         let preview_non_display_indices =
             normalize_non_display_indices(&self.view, &self.window, &request.non_display_indices);
         self.non_display_indices = preview_non_display_indices.clone();
-        self.clamp_cursor_to_window(None, None, None, None);
+        self.clamp_cursor_to_window(visible_display_pixels, None, None, None);
         self.non_display_indices = preview_non_display_indices.clone();
 
-        let snapshot = self.snapshot();
+        let snapshot = self.snapshot_with_profile(request.include_profile);
 
         self.viewport = saved.viewport;
         self.window = saved.window;
@@ -481,13 +487,15 @@ impl ImageBrowserSession {
         self.plane_content_mode = saved.plane_content_mode;
         self.non_display_indices = saved.non_display_indices.clone();
         self.content_offset = saved.content_offset;
-        self.clamp_cursor_to_window(None, None, None, None);
+        self.clamp_cursor_to_window(
+            visible_display_pixels,
+            visible_non_display_pixels,
+            None,
+            None,
+        );
         self.non_display_indices = saved.non_display_indices;
 
-        let mut snapshot = snapshot?;
-        if !request.include_profile {
-            snapshot.profile = None;
-        }
+        let snapshot = snapshot?;
         Ok(ImageBrowserPreviewPayload {
             non_display_indices: preview_non_display_indices,
             snapshot: Box::new(snapshot),
@@ -615,6 +623,13 @@ impl ImageBrowserSession {
 
     /// Returns the current snapshot without changing state.
     pub fn snapshot(&mut self) -> Result<ImageBrowserSnapshot, ImageError> {
+        self.snapshot_with_profile(true)
+    }
+
+    fn snapshot_with_profile(
+        &mut self,
+        include_profile: bool,
+    ) -> Result<ImageBrowserSnapshot, ImageError> {
         self.drain_prefetched_planes();
         let mut backend_timing = self.perf_enabled.then_some(ImageBackendTimingState {
             plane_cache_result: ImageBackendPlaneCacheResult::Miss,
@@ -648,7 +663,8 @@ impl ImageBrowserSession {
         };
         let mut inspector_lines = self.inspector_lines()?;
         inspector_lines.extend(self.plane_display_lines(plane_raster.as_ref()));
-        let profile = if self.view.capabilities().renderable_plane
+        let profile = if include_profile
+            && self.view.capabilities().renderable_plane
             && matches!(
                 self.active_view,
                 ImageBrowserView::Plane | ImageBrowserView::Spectrum
@@ -1218,6 +1234,7 @@ impl ImageBrowserSession {
                 .map(|(low, high)| (low.to_bits(), high.to_bits())),
             clip_override: clip_override.map(|(low, high)| (low.to_bits(), high.to_bits())),
             region_revision: self.region_revision,
+            mask_revision: self.mask_revision,
         }
     }
 
@@ -1236,6 +1253,7 @@ impl ImageBrowserSession {
                 .normalized_profile_non_display_indices(profile_axis),
             profile_axis,
             region_revision: region.map(|_| self.region_revision),
+            mask_revision: self.mask_revision,
         }
     }
 
@@ -1650,15 +1668,21 @@ impl ImageBrowserSession {
     }
 
     fn set_default_mask(&mut self, name: &str) -> Result<(), ImageError> {
-        self.view.set_default_mask(name)
+        self.view.set_default_mask(name)?;
+        self.mask_revision = self.mask_revision.saturating_add(1);
+        Ok(())
     }
 
     fn unset_default_mask(&mut self) -> Result<(), ImageError> {
-        self.view.unset_default_mask()
+        self.view.unset_default_mask()?;
+        self.mask_revision = self.mask_revision.saturating_add(1);
+        Ok(())
     }
 
     fn delete_mask(&mut self, name: &str) -> Result<(), ImageError> {
-        self.view.remove_mask(name)
+        self.view.remove_mask(name)?;
+        self.mask_revision = self.mask_revision.saturating_add(1);
+        Ok(())
     }
 
     fn write_region_mask(
@@ -1680,6 +1704,7 @@ impl ImageBrowserSession {
             .map(str::to_string)
             .unwrap_or_else(|| self.view.next_generated_region_mask_name());
         self.view.write_region_mask(region, &name, set_default)?;
+        self.mask_revision = self.mask_revision.saturating_add(1);
         Ok(())
     }
 
@@ -2383,6 +2408,57 @@ mod tests {
     }
 
     #[test]
+    fn preview_occurrence_preserves_cursor_for_profile_extraction() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview_cursor_profile.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    vec![
+                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                    ],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 12)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
+            .unwrap();
+        let before = session.snapshot().unwrap();
+        assert_eq!(before.plane_cursor.as_ref().unwrap().pixel_x, 1);
+        assert_eq!(before.plane_cursor.as_ref().unwrap().pixel_y, 1);
+
+        let preview = session
+            .preview_occurrence(&ImageBrowserPreviewRequest {
+                viewport: ImageBrowserViewport::new(80, 12),
+                parameters: before.parameters.clone(),
+                plane_content_mode: ImagePlaneContentMode::Raster,
+                non_display_indices: vec![2],
+                include_profile: true,
+            })
+            .unwrap();
+
+        assert_eq!(preview.snapshot.plane_cursor.as_ref().unwrap().pixel_x, 1);
+        assert_eq!(preview.snapshot.plane_cursor.as_ref().unwrap().pixel_y, 1);
+        assert_eq!(
+            &preview.snapshot.probe.as_ref().unwrap().pixel_indices[..2],
+            &[1, 1]
+        );
+        let profile = preview.snapshot.profile.as_ref().expect("preview profile");
+        assert_eq!(profile.samples.len(), 3);
+        assert_eq!(profile.samples[2].value, 400.0);
+    }
+
+    #[test]
     fn preview_occurrence_backend_timing_is_opt_in() {
         let _lock = perf_env_lock();
         clear_perf_env();
@@ -2429,6 +2505,57 @@ mod tests {
             ImageBrowserSession::open(&path, ImageBrowserViewport::new(32, 12)).unwrap();
         let preview = session.preview_occurrence(&request).unwrap();
         assert!(preview.snapshot.backend_timing.is_some());
+    }
+
+    #[test]
+    fn preview_occurrence_skips_profile_work_when_profile_is_not_requested() {
+        let _lock = perf_env_lock();
+        let _perf_guard = set_perf_env();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview_without_profile.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    (0..12).map(|value| value as f32).collect(),
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(32, 12)).unwrap();
+        let preview = session
+            .preview_occurrence(&ImageBrowserPreviewRequest {
+                viewport: ImageBrowserViewport::new(32, 12),
+                parameters: ImageBrowserParameters {
+                    blc: String::new(),
+                    trc: String::new(),
+                    inc: String::new(),
+                    stretch: "percentile99".to_string(),
+                    autoscale: "per_plane".to_string(),
+                    clip_low: String::new(),
+                    clip_high: String::new(),
+                },
+                plane_content_mode: ImagePlaneContentMode::Raster,
+                non_display_indices: vec![1],
+                include_profile: false,
+            })
+            .unwrap();
+
+        assert!(preview.snapshot.profile.is_none());
+        let timing = preview
+            .snapshot
+            .backend_timing
+            .expect("backend timing should be present when perf is enabled");
+        assert_eq!(timing.profile_cache_hits, 0);
+        assert_eq!(timing.profile_cache_misses, 0);
+        assert_eq!(timing.profile_extract_total_ns, 0);
     }
 
     #[test]
@@ -2940,6 +3067,96 @@ mod tests {
     }
 
     #[test]
+    fn session_default_mask_toggle_invalidates_plane_and_profile_caches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("linked-plane-mask.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2, 3], cube_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2, 3]),
+                    vec![
+                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                    ],
+                )
+                .unwrap(),
+                &[0, 0, 0],
+            )
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        let mut mask = ArrayD::from_elem(IxDyn(&[2, 2, 3]), true);
+        mask[IxDyn(&[1, 1, 0])] = false;
+        mask[IxDyn(&[1, 1, 1])] = false;
+        mask[IxDyn(&[1, 1, 2])] = false;
+        image.put_mask("mask0", &mask).unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(80, 12)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::MoveCursor { dx: 1, dy: 1 })
+            .unwrap();
+
+        let unmasked = session.snapshot().unwrap();
+        assert_eq!(unmasked.default_mask_name, None);
+        assert!(!unmasked.probe.as_ref().unwrap().masked);
+        assert_eq!(
+            unmasked.plane.as_ref().unwrap().masked_or_non_finite_count,
+            0
+        );
+        assert!(
+            unmasked
+                .profile
+                .as_ref()
+                .unwrap()
+                .samples
+                .iter()
+                .all(|sample| !sample.masked)
+        );
+
+        let masked = session
+            .handle_command(ImageBrowserCommand::SetDefaultMask {
+                name: "mask0".into(),
+            })
+            .unwrap();
+        assert_eq!(masked.default_mask_name.as_deref(), Some("mask0"));
+        assert!(masked.probe.as_ref().unwrap().masked);
+        assert_eq!(masked.plane.as_ref().unwrap().masked_or_non_finite_count, 1);
+        assert!(
+            masked
+                .profile
+                .as_ref()
+                .unwrap()
+                .samples
+                .iter()
+                .all(|sample| sample.masked)
+        );
+
+        let unmasked_again = session
+            .handle_command(ImageBrowserCommand::UnsetDefaultMask)
+            .unwrap();
+        assert_eq!(unmasked_again.default_mask_name, None);
+        assert!(!unmasked_again.probe.as_ref().unwrap().masked);
+        assert_eq!(
+            unmasked_again
+                .plane
+                .as_ref()
+                .unwrap()
+                .masked_or_non_finite_count,
+            0
+        );
+        assert!(
+            unmasked_again
+                .profile
+                .as_ref()
+                .unwrap()
+                .samples
+                .iter()
+                .all(|sample| !sample.masked)
+        );
+    }
+
+    #[test]
     fn session_active_region_switches_profile_to_region_sum() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("linked-region-profile.image");
@@ -3378,7 +3595,7 @@ mod tests {
                 &ArrayD::from_shape_vec(
                     IxDyn(&[2, 2, 1, 3]),
                     vec![
-                        1.0, 10.0, 100.0, 2.0, 20.0, 200.0, 3.0, 30.0, 300.0, 4.0, 40.0, 400.0,
+                        1.0, 10.0, 30.0, 4.0, 8.0, 6.0, 2.0, 20.0, 5.0, 7.0, 9.0, 40.0,
                     ],
                 )
                 .unwrap(),
@@ -3405,7 +3622,11 @@ mod tests {
             stepped.probe.as_ref().unwrap().pixel_indices,
             vec![1, 1, 0, 2]
         );
-        assert_eq!(stepped.probe.as_ref().unwrap().value, 400.0);
+        assert_eq!(stepped.probe.as_ref().unwrap().value, 40.0);
+        assert_ne!(
+            snapshot.plane.as_ref().unwrap().pixels_u8,
+            stepped.plane.as_ref().unwrap().pixels_u8
+        );
     }
 
     #[test]

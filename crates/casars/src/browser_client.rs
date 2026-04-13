@@ -246,6 +246,14 @@ impl BrowserClient {
         self.process.stderr_text()
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            process: SessionProcessClient::spawn_stub("tablebrowser"),
+        }
+    }
+
     fn request_with_timeout(
         &self,
         command: BrowserCommand,
@@ -312,6 +320,13 @@ impl ImageBrowserClient {
         self.process.stderr_text()
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            process: SessionProcessClient::spawn_stub("imexplore"),
+        }
+    }
+
     fn request_with_timeout(
         &self,
         command: ImageBrowserCommand,
@@ -374,6 +389,71 @@ impl ImageBrowserClient {
                 "{}: {}",
                 error.code, error.message
             ))),
+        }
+    }
+}
+
+#[cfg(test)]
+impl SessionProcessClient {
+    fn spawn_stub(session_name: &str) -> Self {
+        let mut child = std::process::Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn {session_name} stub session: {error}"));
+        let stdin = child
+            .stdin
+            .take()
+            .unwrap_or_else(|| panic!("{session_name} stub stdin was not captured"));
+        let stdout = child
+            .stdout
+            .take()
+            .unwrap_or_else(|| panic!("{session_name} stub stdout was not captured"));
+        let stderr = child
+            .stderr
+            .take()
+            .unwrap_or_else(|| panic!("{session_name} stub stderr was not captured"));
+
+        let child = Arc::new(Mutex::new(child));
+        let stdin = Arc::new(Mutex::new(stdin));
+        let stderr_buffer = Arc::new(Mutex::new(String::new()));
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line_result in reader.lines() {
+                let Ok(line) = line_result else {
+                    break;
+                };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let stderr_target = Arc::clone(&stderr_buffer);
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line_result in reader.lines() {
+                let Ok(line) = line_result else {
+                    break;
+                };
+                if let Ok(mut stderr) = stderr_target.lock() {
+                    stderr.push_str(&line);
+                    stderr.push('\n');
+                }
+            }
+        });
+
+        Self {
+            child,
+            stdin,
+            responses: rx,
+            stderr: stderr_buffer,
         }
     }
 }
