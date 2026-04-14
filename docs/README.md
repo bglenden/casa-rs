@@ -8,6 +8,8 @@ This directory holds stable project documentation.
   - architecture and app-authoring rules for the shell family
 - [`casars-calibrate-user-guide.md`](casars-calibrate-user-guide.md)
   - current user-facing guide for the `calibrate` workflow app
+- [`provider-contracts.md`](provider-contracts.md)
+  - canonical provider schema model for task, session, and object surfaces
 - [`tablebrowser-protocol.md`](tablebrowser-protocol.md)
   - protocol contract for `tablebrowser --session`
 - [`kitty-graphics-protocol-details.md`](kitty-graphics-protocol-details.md)

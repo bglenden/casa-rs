@@ -5,6 +5,7 @@
 mod managed_output;
 mod oracle;
 mod schema;
+mod task_contract;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
@@ -41,6 +42,7 @@ use casa_ms::columns::weight_columns::WeightSpectrumColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::spectral_selection::CubeRowSpectralContributions;
+use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
     CubeSpectralSetup, parse_numeric_id_selector,
@@ -72,6 +74,15 @@ pub use oracle::{
     write_json_gzip_hashed, write_json_pretty, write_json_pretty_hashed,
 };
 pub use schema::command_schema;
+pub use task_contract::{
+    IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifact, ImagerArtifactKind,
+    ImagerChannelRunResult, ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig,
+    ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
+    ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerPlaneSelection,
+    ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
+    ImagerRunTaskResult, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
+    ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+};
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 4096;
@@ -438,33 +449,67 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     }
     if args
         .iter()
+        .any(|arg| matches!(arg.to_str(), Some("--json-schema")))
+    {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ImagerTaskSchemaBundle::current())
+                .map_err(|error| format!("serialize imager task schema: {error}"))?
+        );
+        return Ok(());
+    }
+    if args
+        .iter()
+        .any(|arg| matches!(arg.to_str(), Some("--protocol-info")))
+    {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ImagerProtocolInfo::current())
+                .map_err(|error| format!("serialize imager protocol info: {error}"))?
+        );
+        return Ok(());
+    }
+    if args
+        .iter()
         .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
     {
-        println!("{}", command_schema("casars-imager").render_help());
+        println!("{}", render_help(&command_schema("casars-imager")));
         return Ok(());
     }
 
-    let (managed_output, filtered_args) = extract_option_value(&args, "--managed-output")?;
+    let (json_run, filtered_args) = extract_string_option(&args, "--json-run")?;
+    if let Some(source) = json_run {
+        let request = ImagerTaskRequest::read_from_source(&source)?;
+        let result = request.execute()?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result)
+                .map_err(|error| format!("serialize imager task result: {error}"))?
+        );
+        return Ok(());
+    }
+
+    let (managed_output, filtered_args) = extract_option_value(&filtered_args, "--managed-output")?;
     let config = CliConfig::parse(filtered_args)?;
-    let output = run_from_config(&config)?;
+    let result = ImagerRunTaskRequest::from_cli_config(&config).execute()?;
     if managed_output {
         println!(
             "{}",
-            serde_json::to_string_pretty(&ManagedImagingOutput::from_run(&config, &output))
+            serde_json::to_string_pretty(&ManagedImagingOutput::from_task_result(&result))
                 .map_err(|error| format!("serialize managed imaging output: {error}"))?
         );
         return Ok(());
     }
-    for warning in &output.warnings {
+    for warning in &result.run.warnings {
         eprintln!("warning: {warning}");
     }
     println!(
         "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} minor iterations, stop={:?})",
-        config.imagename.display(),
-        output.gridded_samples,
-        output.major_cycles,
-        output.minor_iterations,
-        output.clean_stop_reason
+        result.request.image_name.display(),
+        result.run.gridded_samples,
+        result.run.major_cycles,
+        result.run.minor_iterations,
+        result.run.clean_stop_reason
     );
     Ok(())
 }
@@ -496,6 +541,41 @@ fn extract_option_value(args: &[OsString], flag: &str) -> Result<(bool, Vec<OsSt
         index += 2;
     }
     Ok((enabled, filtered))
+}
+
+fn extract_string_option(
+    args: &[OsString],
+    flag: &str,
+) -> Result<(Option<String>, Vec<OsString>), String> {
+    let mut value = None;
+    let mut filtered = Vec::with_capacity(args.len());
+    let mut index = 0;
+    while index < args.len() {
+        let Some(current) = args[index].to_str() else {
+            filtered.push(args[index].clone());
+            index += 1;
+            continue;
+        };
+        if current != flag {
+            filtered.push(args[index].clone());
+            index += 1;
+            continue;
+        }
+        let next = args
+            .get(index + 1)
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        value = Some(next.to_string());
+        index += 2;
+    }
+    Ok((value, filtered))
+}
+
+fn render_help(schema: &UiCommandSchema) -> String {
+    format!(
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n",
+        schema.render_help()
+    )
 }
 
 /// Build a frozen-oracle trace for the current `prepare_plane_input()` seam.
@@ -5934,6 +6014,10 @@ Options:
   --wprojplanes N           explicit CASA-style wproject plane budget
   --dirty-only              write dirty/residual products without CLEAN
   --no-preview-pngs         skip writing PNG preview sidecars
+  --ui-schema               emit the launcher/TUI schema
+  --json-schema             emit the canonical imager task JSON schema
+  --protocol-info           emit the imager task protocol descriptor
+  --json-run <SOURCE>       execute one JSON ImagerTaskRequest from SOURCE or - for stdin
   -h, --help                show this help
 "
     .to_string()
@@ -6841,6 +6925,18 @@ mod tests {
 
         assert!(help_text().contains("--specmode"));
         assert!(help_text().contains("--uvtaper"));
+        assert!(help_text().contains("--json-schema"));
+        assert!(help_text().contains("--protocol-info"));
+        assert!(help_text().contains("--json-run <SOURCE>"));
+    }
+
+    #[test]
+    fn render_help_mentions_json_protocol_surface() {
+        let help = render_help(&command_schema("casars-imager-test"));
+        assert!(help.contains("--ui-schema"));
+        assert!(help.contains("--json-schema"));
+        assert!(help.contains("--protocol-info"));
+        assert!(help.contains("--json-run <SOURCE>"));
     }
 
     #[test]

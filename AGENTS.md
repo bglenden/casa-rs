@@ -29,6 +29,9 @@ Use modern Rust crates where appropriate, but keep on-disk interoperability.
 - For `casars` TUI work, follow `docs/casars-tui-framework.md`; new apps must
   conform to its shell-family conventions instead of inventing app-local UI
   structure.
+- For functionality-provider contracts, follow `docs/provider-contracts.md`.
+  Treat the versioned schema bundle as the boundary contract; UI views are
+  derived projections, not separate sources of truth.
 - Prefer red/green development: add failing regression test first.
 - C++-dependent tests must skip cleanly when `pkg-config casacore` is missing.
 - Shared CASA dataset root defaults to `../casatestdata`.

@@ -677,6 +677,7 @@ dependencies = [
  "image 0.25.10",
  "ndarray",
  "num-complex",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

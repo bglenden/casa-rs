@@ -5,6 +5,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::task_contract::{
+    ImagerArtifactKind, ImagerDeconvolver, ImagerRestoringBeamMode, ImagerRunTaskResult,
+    ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+};
 use crate::{
     ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode,
     canonical_deconvolver_name, canonical_restoring_beam_mode_name, canonical_spectral_mode_name,
@@ -165,6 +169,171 @@ impl ManagedImagingOutput {
                     .collect(),
             },
             artifacts: imaging_artifacts(config),
+        }
+    }
+
+    /// Build the launcher report from the canonical task result.
+    pub fn from_task_result(result: &ImagerRunTaskResult) -> Self {
+        let request = &result.request;
+        Self {
+            request: ManagedImagingRequest {
+                measurement_set: request.measurement_set.display().to_string(),
+                imagename: request.image_name.display().to_string(),
+                spectral_mode: match request.spectral_mode {
+                    ImagerSpectralMode::Mfs => "mfs".to_string(),
+                    ImagerSpectralMode::Cube => "cube".to_string(),
+                    ImagerSpectralMode::Cubedata => "cubedata".to_string(),
+                },
+                weighting: match &request.weighting {
+                    ImagerWeighting::Natural => "natural".to_string(),
+                    ImagerWeighting::Uniform => "uniform".to_string(),
+                    ImagerWeighting::Briggs { robust } => format!("briggs:{robust}"),
+                },
+                deconvolver: match request.deconvolver {
+                    ImagerDeconvolver::Hogbom => "hogbom".to_string(),
+                    ImagerDeconvolver::Mtmfs => "mtmfs".to_string(),
+                    ImagerDeconvolver::Clark => "clark".to_string(),
+                    ImagerDeconvolver::Multiscale => "multiscale".to_string(),
+                },
+                w_term_mode: match request.w_term_mode {
+                    ImagerWTermMode::None => "none".to_string(),
+                    ImagerWTermMode::Direct => "direct".to_string(),
+                    ImagerWTermMode::Wproject => "wproject".to_string(),
+                },
+                data_column: request.data_column.clone(),
+                imsize: request.image_size,
+                cell_arcsec: request.cell_arcsec,
+                dirty_only: request.dirty_only,
+                write_preview_pngs: request.write_preview_pngs,
+                per_channel_weight_density: request.per_channel_weight_density,
+                nterms: request.nterms,
+                output_channels: result.run.channels.len(),
+                correlation: request
+                    .correlation
+                    .map(|value| value.as_cli_text().to_string()),
+                restoring_beam_mode: match request.restoring_beam_mode {
+                    ImagerRestoringBeamMode::PerPlane => "per_plane".to_string(),
+                    ImagerRestoringBeamMode::Common => "common".to_string(),
+                },
+            },
+            run: ManagedImagingRun {
+                warnings: result.run.warnings.clone(),
+                gridded_samples: result.run.gridded_samples,
+                major_cycles: result.run.major_cycles,
+                minor_iterations: result.run.minor_iterations,
+                clean_stop_reason: result
+                    .run
+                    .clean_stop_reason
+                    .map(|reason| format!("{reason:?}")),
+                stage_timings: ManagedImagingStageTimings {
+                    values_ns: vec![
+                        (
+                            "controller_total".to_string(),
+                            result.run.stage_timings.total_ns,
+                        ),
+                        (
+                            "controller_overhead".to_string(),
+                            result.run.stage_timings.controller_overhead_ns,
+                        ),
+                        (
+                            "weighting".to_string(),
+                            result.run.stage_timings.weighting_ns,
+                        ),
+                        (
+                            "major_cycle_refresh".to_string(),
+                            result.run.stage_timings.major_cycle_refresh_ns,
+                        ),
+                        ("psf_grid".to_string(), result.run.stage_timings.psf_grid_ns),
+                        ("psf_fft".to_string(), result.run.stage_timings.psf_fft_ns),
+                        (
+                            "residual_degrid_grid".to_string(),
+                            result.run.stage_timings.residual_degrid_grid_ns,
+                        ),
+                        (
+                            "residual_fft".to_string(),
+                            result.run.stage_timings.residual_fft_ns,
+                        ),
+                        (
+                            "residual_normalize".to_string(),
+                            result.run.stage_timings.residual_normalize_ns,
+                        ),
+                        (
+                            "minor_cycle".to_string(),
+                            result.run.stage_timings.minor_cycle_ns,
+                        ),
+                        (
+                            "minor_cycle_solve".to_string(),
+                            result.run.stage_timings.minor_cycle_solve_ns,
+                        ),
+                    ],
+                },
+                frontend_timings: ManagedImagingStageTimings {
+                    values_ns: vec![
+                        (
+                            "open_measurement_set".to_string(),
+                            result.run.frontend_timings.open_measurement_set_ns,
+                        ),
+                        (
+                            "prepare_plane_input".to_string(),
+                            result.run.frontend_timings.prepare_plane_input_ns,
+                        ),
+                        (
+                            "extract_phase_center".to_string(),
+                            result.run.frontend_timings.extract_phase_center_ns,
+                        ),
+                        (
+                            "run_imaging".to_string(),
+                            result.run.frontend_timings.run_imaging_ns,
+                        ),
+                        (
+                            "build_coordinate_system".to_string(),
+                            result.run.frontend_timings.build_coordinate_system_ns,
+                        ),
+                        (
+                            "write_products".to_string(),
+                            result.run.frontend_timings.write_products_ns,
+                        ),
+                        ("total".to_string(), result.run.frontend_timings.total_ns),
+                    ],
+                },
+                channels: result
+                    .run
+                    .channels
+                    .iter()
+                    .map(|summary| ManagedImagingChannelRun {
+                        channel_index: summary.channel_index,
+                        major_cycles: summary.major_cycles,
+                        minor_iterations: summary.minor_iterations,
+                        clean_stop_reason: summary
+                            .clean_stop_reason
+                            .map(|reason| format!("{reason:?}")),
+                        initial_residual_peak_jy_per_beam: summary
+                            .initial_residual_peak_jy_per_beam,
+                        final_residual_peak_jy_per_beam: summary.final_residual_peak_jy_per_beam,
+                        final_cycle_threshold_jy_per_beam: summary
+                            .final_cycle_threshold_jy_per_beam,
+                        beam_fit_available: summary.beam_fit_available,
+                    })
+                    .collect(),
+            },
+            artifacts: result
+                .artifacts
+                .iter()
+                .map(|artifact| ManagedImagingArtifact {
+                    kind: match artifact.kind {
+                        ImagerArtifactKind::Psf => "psf".to_string(),
+                        ImagerArtifactKind::Residual => "residual".to_string(),
+                        ImagerArtifactKind::Model => "model".to_string(),
+                        ImagerArtifactKind::Image => "image".to_string(),
+                        ImagerArtifactKind::Alpha => "alpha".to_string(),
+                    },
+                    label: artifact.label.clone(),
+                    path: artifact.path.clone(),
+                    exists: artifact.exists,
+                    preview_png_path: artifact.preview_png_path.clone(),
+                    preview_png_exists: artifact.preview_png_exists,
+                })
+                .collect(),
         }
     }
 }
