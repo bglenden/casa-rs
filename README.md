@@ -270,6 +270,31 @@ secrets. To reproduce the artifact build locally, run:
 scripts/build-python-dist.sh
 ```
 
+Release candidates are cut with the same release script using an explicit
+version, for example:
+
+```bash
+scripts/release.sh 0.15.0-rc1 --push
+```
+
+The intended suite install layout is:
+
+```text
+~/.local/opt/casa-rs/<version>/
+  bin/
+    casars
+    calibrate
+  python/
+    ...
+~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<version>
+~/.local/bin/
+  casars -> ~/.local/opt/casa-rs/current/bin/casars
+  calibrate -> ~/.local/opt/casa-rs/current/bin/calibrate
+```
+
+Python task wrappers prefer a sibling suite-installed `calibrate` in that layout
+before they fall back to repo-local binaries or `PATH`.
+
 ## Git Hooks
 
 This repo includes a lightweight pre-commit hook in `.githooks/pre-commit`

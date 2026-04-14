@@ -29,6 +29,7 @@ Use --full to additionally run:
 
 Examples:
   scripts/release.sh 0.3.1
+  scripts/release.sh 0.4.0-rc1
   scripts/release.sh --patch
   scripts/release.sh --minor --push
   scripts/release.sh --minor --full
@@ -60,109 +61,198 @@ run_timed_step() {
   echo "==> $label completed in $(format_elapsed $(( finished_at - started_at )))"
 }
 
-if [[ $# -lt 1 || $# -gt 3 ]]; then
-  usage
-  exit 1
-fi
+parse_version() {
+  local value="$1"
+  local prefix="$2"
 
-version_arg="$1"
-push_release="false"
-run_full="false"
-shift
-for flag in "$@"; do
-  case "$flag" in
-    --push)
-      push_release="true"
+  if [[ ! "$value" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([0-9]+))?$ ]]; then
+    return 1
+  fi
+
+  eval "${prefix}_major=${BASH_REMATCH[1]}"
+  eval "${prefix}_minor=${BASH_REMATCH[2]}"
+  eval "${prefix}_patch=${BASH_REMATCH[3]}"
+  if [[ -n "${BASH_REMATCH[4]:-}" ]]; then
+    eval "${prefix}_is_rc=true"
+    eval "${prefix}_rc=${BASH_REMATCH[5]}"
+  else
+    eval "${prefix}_is_rc=false"
+    eval "${prefix}_rc=0"
+  fi
+}
+
+version_core_compare() {
+  local left="$1"
+  local right="$2"
+
+  local left_major left_minor left_patch
+  local right_major right_minor right_patch
+  eval "left_major=\${${left}_major}"
+  eval "left_minor=\${${left}_minor}"
+  eval "left_patch=\${${left}_patch}"
+  eval "right_major=\${${right}_major}"
+  eval "right_minor=\${${right}_minor}"
+  eval "right_patch=\${${right}_patch}"
+
+  if (( left_major != right_major )); then
+    (( left_major > right_major )) && return 1 || return 2
+  fi
+  if (( left_minor != right_minor )); then
+    (( left_minor > right_minor )) && return 1 || return 2
+  fi
+  if (( left_patch != right_patch )); then
+    (( left_patch > right_patch )) && return 1 || return 2
+  fi
+  return 0
+}
+
+validate_requested_version() {
+  local current="$1"
+  local requested="$2"
+
+  parse_version "$current" current || die "current workspace version is not x.y.z or x.y.z-rcN"
+  parse_version "$requested" requested || die "version must look like x.y.z or x.y.z-rcN"
+
+  if [[ "$current" == "$requested" ]]; then
+    die "workspace version is already $requested"
+  fi
+
+  version_core_compare requested current
+  case $? in
+    1)
+      return 0
       ;;
-    --full)
-      run_full="true"
+    2)
+      die "requested version $requested must be greater than current version $current"
       ;;
-    *)
-      usage
-      exit 1
+    0)
       ;;
   esac
-done
 
-repo_root="$(git rev-parse --show-toplevel)"
-cd "$repo_root"
-
-if [[ -n "$(git status --short)" ]]; then
-  die "worktree must be clean before cutting a release"
-fi
-
-current_version="$(
-  sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1
-)"
-[[ -n "$current_version" ]] || die "failed to read workspace version from Cargo.toml"
-[[ "$current_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || die "current workspace version is not x.y.z"
-current_major="${BASH_REMATCH[1]}"
-current_minor="${BASH_REMATCH[2]}"
-current_patch="${BASH_REMATCH[3]}"
-
-case "$version_arg" in
-  --patch)
-    version="${current_major}.${current_minor}.$((current_patch + 1))"
-    ;;
-  --minor)
-    version="${current_major}.$((current_minor + 1)).0"
-    ;;
-  *)
-    version="$version_arg"
-    [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || die "version must look like x.y.z"
-    new_major="${BASH_REMATCH[1]}"
-    new_minor="${BASH_REMATCH[2]}"
-    new_patch="${BASH_REMATCH[3]}"
-    if (( new_major < current_major )) \
-      || (( new_major == current_major && new_minor < current_minor )) \
-      || (( new_major == current_major && new_minor == current_minor && new_patch <= current_patch )); then
-      die "requested version $version must be greater than current version $current_version"
-    fi
-    ;;
-esac
-
-[[ "$current_version" != "$version" ]] || die "workspace version is already $version"
-
-tag="v$version"
-git rev-parse --verify "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
-
-release_started_at="$(date +%s)"
-
-echo "==> Running default local release gates"
-run_timed_step "cargo fmt" cargo fmt --all -- --check
-run_timed_step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
-run_timed_step "cargo test" cargo test --workspace
-run_timed_step "python package gate" scripts/test-python-package.sh
-
-if [[ "$run_full" == "true" ]]; then
-  run_timed_step "slow parity gate" scripts/test-slow.sh
-  run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
-  run_timed_step "python docs build" scripts/build-python-docs.sh
-fi
-
-for cargo_toml in crates/*/Cargo.toml; do
-  if ! grep -Eq '^version\.workspace = true$' "$cargo_toml"; then
-    die "$cargo_toml does not use version.workspace = true"
+  if [[ "$current_is_rc" != "true" ]]; then
+    die "requested version $requested must be greater than current version $current"
   fi
-done
 
-echo "==> Updating workspace version $current_version -> $version"
-perl -0pi -e 's/^version = "\Q'"$current_version"'\E"$/version = "'"$version"'"/m' Cargo.toml
+  if [[ "$requested_is_rc" == "true" ]]; then
+    if (( requested_rc <= current_rc )); then
+      die "requested version $requested must be greater than current version $current"
+    fi
+    return 0
+  fi
 
-if git diff --quiet -- Cargo.toml; then
-  die "version update did not modify Cargo.toml"
+  return 0
+}
+
+next_patch_version() {
+  local current="$1"
+  parse_version "$current" current || die "current workspace version is not x.y.z or x.y.z-rcN"
+  [[ "$current_is_rc" == "false" ]] || die "--patch is not supported when current version is a release candidate; pass an explicit version"
+  echo "${current_major}.${current_minor}.$((current_patch + 1))"
+}
+
+next_minor_version() {
+  local current="$1"
+  parse_version "$current" current || die "current workspace version is not x.y.z or x.y.z-rcN"
+  [[ "$current_is_rc" == "false" ]] || die "--minor is not supported when current version is a release candidate; pass an explicit version"
+  echo "${current_major}.$((current_minor + 1)).0"
+}
+
+main() {
+  if [[ $# -lt 1 || $# -gt 3 ]]; then
+    usage
+    exit 1
+  fi
+
+  version_arg="$1"
+  push_release="false"
+  run_full="false"
+  shift
+  for flag in "$@"; do
+    case "$flag" in
+      --push)
+        push_release="true"
+        ;;
+      --full)
+        run_full="true"
+        ;;
+      *)
+        usage
+        exit 1
+        ;;
+    esac
+  done
+
+  repo_root="$(git rev-parse --show-toplevel)"
+  cd "$repo_root"
+
+  if [[ -n "$(git status --short)" ]]; then
+    die "worktree must be clean before cutting a release"
+  fi
+
+  current_version="$(
+    sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1
+  )"
+  [[ -n "$current_version" ]] || die "failed to read workspace version from Cargo.toml"
+  parse_version "$current_version" current || die "current workspace version is not x.y.z or x.y.z-rcN"
+
+  case "$version_arg" in
+    --patch)
+      version="$(next_patch_version "$current_version")"
+      ;;
+    --minor)
+      version="$(next_minor_version "$current_version")"
+      ;;
+    *)
+      version="$version_arg"
+      validate_requested_version "$current_version" "$version"
+      ;;
+  esac
+
+  tag="v$version"
+  git rev-parse --verify "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
+
+  release_started_at="$(date +%s)"
+
+  echo "==> Running default local release gates"
+  run_timed_step "cargo fmt" cargo fmt --all -- --check
+  run_timed_step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
+  run_timed_step "cargo test" cargo test --workspace
+  run_timed_step "python package gate" scripts/test-python-package.sh
+
+  if [[ "$run_full" == "true" ]]; then
+    run_timed_step "slow parity gate" scripts/test-slow.sh
+    run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
+    run_timed_step "python docs build" scripts/build-python-docs.sh
+  fi
+
+  for cargo_toml in crates/*/Cargo.toml; do
+    if ! grep -Eq '^version\.workspace = true$' "$cargo_toml"; then
+      die "$cargo_toml does not use version.workspace = true"
+    fi
+  done
+
+  echo "==> Updating workspace version $current_version -> $version"
+  perl -0pi -e 's/^version = "\Q'"$current_version"'\E"$/version = "'"$version"'"/m' Cargo.toml
+
+  if git diff --quiet -- Cargo.toml; then
+    die "version update did not modify Cargo.toml"
+  fi
+
+  run_timed_step "refreshing Cargo.lock metadata" cargo metadata --format-version=1 >/dev/null
+
+  git add Cargo.toml Cargo.lock
+  git commit -m "Release $version"
+  git tag "$tag"
+
+  if [[ "$push_release" == "true" ]]; then
+    run_timed_step "pushing release commit" git push origin HEAD
+    run_timed_step "pushing release tag" git push origin "$tag"
+  fi
+
+  release_finished_at="$(date +%s)"
+  echo "Release $version created successfully in $(format_elapsed $(( release_finished_at - release_started_at )))"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-run_timed_step "refreshing Cargo.lock metadata" cargo metadata --format-version=1 >/dev/null
-
-git add Cargo.toml Cargo.lock
-git commit -m "Release $version"
-git tag "$tag"
-
-if [[ "$push_release" == "true" ]]; then
-  run_timed_step "pushing release commit" git push origin HEAD
-  run_timed_step "pushing release tag" git push origin "$tag"
-fi
-
-release_finished_at="$(date +%s)"
-echo "Release $version created successfully in $(format_elapsed $(( release_finished_at - release_started_at )))"

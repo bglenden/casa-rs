@@ -9,6 +9,7 @@ import textwrap
 
 import pytest
 
+from casars import _task_runtime
 from casars.tasks import calibrate
 
 
@@ -19,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 def reset_calibrate_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     calibrate.configure(binary=None)
     monkeypatch.delenv("CASARS_CALIBRATE_BIN", raising=False)
+    monkeypatch.delenv("CASARS_SUITE_ROOT", raising=False)
 
 
 def test_binary_lookup_precedence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -34,6 +36,38 @@ def test_binary_lookup_precedence(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
     calibrate.configure(binary=None)
     assert calibrate.protocol_info().binary_version == "env"
+
+
+def test_suite_root_env_precedes_repo_local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    _write_stub_binary(suite_root / "bin" / "calibrate", version="suite")
+
+    monkeypatch.setenv("CASARS_SUITE_ROOT", str(suite_root))
+
+    assert calibrate.protocol_info().binary_version == "suite"
+
+
+def test_package_relative_suite_layout_is_discovered(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    binary = _write_stub_binary(suite_root / "bin" / "calibrate", version="suite-relative")
+    module_file = suite_root / "python" / "site-packages" / "casars" / "_task_runtime.py"
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text("# suite layout test\n", encoding="utf-8")
+
+    assert _task_runtime._find_installed_suite_binary(module_file=module_file) == str(binary)
+
+
+def test_standard_suite_root_is_discovered(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    binary = _write_stub_binary(
+        home / ".local" / "opt" / "casa-rs" / "current" / "bin" / "calibrate",
+        version="standard-root",
+    )
+    module_file = tmp_path / "venv" / "lib" / "python3.14" / "site-packages" / "casars" / "_task_runtime.py"
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text("# standard root fallback test\n", encoding="utf-8")
+
+    assert _task_runtime._find_installed_suite_binary(module_file=module_file, home=home) == str(binary)
 
 
 def test_protocol_mismatch_fails_fast(tmp_path: Path) -> None:

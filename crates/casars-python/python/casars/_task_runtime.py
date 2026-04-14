@@ -16,6 +16,7 @@ from .data import StrPath
 CALIBRATION_PROTOCOL_NAME = "casa_calibration_task"
 CALIBRATION_PROTOCOL_VERSION = 1
 CALIBRATE_BINARY_ENVVAR = "CASARS_CALIBRATE_BIN"
+CASARS_SUITE_ROOT_ENVVAR = "CASARS_SUITE_ROOT"
 
 _configured_calibrate_binary: str | None = None
 
@@ -60,6 +61,14 @@ def resolve_calibrate_binary(binary: StrPath | None = None) -> str:
     if env_binary:
         return _require_binary(env_binary, source=f"${CALIBRATE_BINARY_ENVVAR}")
 
+    env_suite_root = os.environ.get(CASARS_SUITE_ROOT_ENVVAR)
+    if env_suite_root:
+        return _require_suite_binary(Path(env_suite_root), source=f"${CASARS_SUITE_ROOT_ENVVAR}")
+
+    suite_binary = _find_installed_suite_binary()
+    if suite_binary is not None:
+        return suite_binary
+
     repo_binary = _find_repo_local_binary()
     if repo_binary is not None:
         return repo_binary
@@ -70,7 +79,8 @@ def resolve_calibrate_binary(binary: StrPath | None = None) -> str:
 
     raise CalibrationBinaryNotFoundError(
         "could not resolve the calibrate binary; pass binary=..., call "
-        "configure(binary=...), set CASARS_CALIBRATE_BIN, or ensure calibrate is on PATH"
+        "configure(binary=...), set CASARS_CALIBRATE_BIN, set CASARS_SUITE_ROOT, "
+        "install the casa-rs suite, or ensure calibrate is on PATH"
     )
 
 
@@ -129,12 +139,53 @@ def _require_binary(candidate: str, *, source: str) -> str:
     return resolved
 
 
+def _require_suite_binary(root: Path, *, source: str) -> str:
+    candidate = _suite_binary_path(root)
+    if not candidate.exists():
+        raise CalibrationBinaryNotFoundError(
+            f"{source} did not contain a suite calibrate binary at {candidate}"
+        )
+    return str(candidate)
+
+
+def _binary_name() -> str:
+    suffix = ".exe" if os.name == "nt" else ""
+    return f"calibrate{suffix}"
+
+
+def _suite_binary_path(root: Path) -> Path:
+    return root / "bin" / _binary_name()
+
+
+def _find_installed_suite_binary(
+    *,
+    module_file: StrPath | None = None,
+    home: Path | None = None,
+) -> str | None:
+    here = Path(module_file).resolve() if module_file is not None else Path(__file__).resolve()
+    seen: set[Path] = set()
+
+    for ancestor in here.parents:
+        candidate = _suite_binary_path(ancestor)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return str(candidate)
+
+    standard_root = (home or Path.home()) / ".local" / "opt" / "casa-rs" / "current"
+    standard_candidate = _suite_binary_path(standard_root)
+    if standard_candidate not in seen and standard_candidate.exists():
+        return str(standard_candidate)
+
+    return None
+
+
 def _find_repo_local_binary() -> str | None:
     here = Path(__file__).resolve()
-    suffix = ".exe" if os.name == "nt" else ""
     for parent in here.parents:
         for profile in ("debug", "release"):
-            candidate = parent / "target" / profile / f"calibrate{suffix}"
+            candidate = parent / "target" / profile / _binary_name()
             if candidate.exists():
                 return str(candidate)
     return None
