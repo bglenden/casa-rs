@@ -9,7 +9,8 @@ Contributor/developer policy is in `AGENTS.md`.
 
 ## Documentation
 
-- API docs: [bglenden.github.io/casa-rs](https://bglenden.github.io/casa-rs/)
+- documentation site: [bglenden.github.io/casa-rs](https://bglenden.github.io/casa-rs/)
+- Rust API docs: [bglenden.github.io/casa-rs/rustdoc](https://bglenden.github.io/casa-rs/rustdoc/)
 - docs index: [`docs/README.md`](docs/README.md)
 - `casars` framework guide:
   [`docs/casars-tui-framework.md`](docs/casars-tui-framework.md)
@@ -252,6 +253,23 @@ cargo test -p casa-measures-data packaged_snapshot_not_stale
 
 If it fails during release prep, rebuild the packaged snapshot before
 publishing.
+
+Python release artifacts are built separately from the Rust tag-cutting script.
+After `scripts/release.sh ... --push` creates and pushes `v<version>`, the
+`Python Release` GitHub Actions workflow builds:
+
+- Linux `x86_64` wheels
+- macOS `x86_64` wheels
+- macOS `arm64` wheels
+- one source distribution
+
+The workflow uploads those artifacts to the GitHub release for the tag and
+publishes them to PyPI when `PYPI_API_TOKEN` is configured in the repository
+secrets. To reproduce the artifact build locally, run:
+
+```bash
+scripts/build-python-dist.sh
+```
 
 ## Git Hooks
 

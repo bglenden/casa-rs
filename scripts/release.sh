@@ -20,10 +20,12 @@ Default local release gates:
   - cargo fmt --all -- --check
   - cargo clippy --workspace --all-targets -- -D warnings
   - cargo test --workspace
+  - scripts/test-python-package.sh
 
 Use --full to additionally run:
   - scripts/test-slow.sh
   - scripts/run-coverage.sh --ci-like
+  - scripts/build-python-docs.sh
 
 Examples:
   scripts/release.sh 0.3.1
@@ -130,10 +132,12 @@ echo "==> Running default local release gates"
 run_timed_step "cargo fmt" cargo fmt --all -- --check
 run_timed_step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
 run_timed_step "cargo test" cargo test --workspace
+run_timed_step "python package gate" scripts/test-python-package.sh
 
 if [[ "$run_full" == "true" ]]; then
   run_timed_step "slow parity gate" scripts/test-slow.sh
   run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
+  run_timed_step "python docs build" scripts/build-python-docs.sh
 fi
 
 for cargo_toml in crates/*/Cargo.toml; do

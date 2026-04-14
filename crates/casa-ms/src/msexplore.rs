@@ -39,6 +39,7 @@ use ndarray::{Ix1, Ix2};
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::columns::{
@@ -720,7 +721,7 @@ impl MsExportFormat {
 }
 
 /// Structured selection controls shared by CLI and library callers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MsSelectionSpec {
     /// Enable the structured selectors below.
     pub selectdata: bool,

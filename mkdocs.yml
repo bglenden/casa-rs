@@ -1,0 +1,31 @@
+site_name: casa-rs
+site_description: Rust and Python APIs for CASA-compatible data and tasks
+theme:
+  name: material
+
+docs_dir: docs
+
+nav:
+  - Home: README.md
+  - Rust API: rust-api.md
+  - Python:
+      - Overview: python/index.md
+      - Data API: python/data.md
+      - Calibrate Tasks: python/tasks-calibrate.md
+      - Compatibility: python/versioning.md
+      - API Reference: python/api.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - crates/casars-python/python
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - tables
+  - toc:
+      permalink: true

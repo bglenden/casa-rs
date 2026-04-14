@@ -1,0 +1,49 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "casa-rs-python"
+description = "Python bindings for casa-rs"
+requires-python = ">=3.10"
+dynamic = ["version"]
+readme = "README.md"
+license = { text = "LGPL-3.0-or-later" }
+keywords = ["astronomy", "radio-astronomy", "casacore", "casa", "numpy"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+  "numpy>=2,<3",
+]
+
+[project.urls]
+Documentation = "https://bglenden.github.io/casa-rs/"
+Repository = "https://github.com/bglenden/casa-rs"
+Issues = "https://github.com/bglenden/casa-rs/issues"
+
+[project.optional-dependencies]
+docs = [
+  "mkdocs>=1.6,<2",
+  "mkdocs-material>=9.5,<10",
+  "mkdocstrings[python]>=0.25,<1",
+]
+test = [
+  "pytest>=8,<9",
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "casars._core"
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import textwrap
+
+import pytest
+
+from casars.tasks import calibrate
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+@pytest.fixture(autouse=True)
+def reset_calibrate_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    calibrate.configure(binary=None)
+    monkeypatch.delenv("CASARS_CALIBRATE_BIN", raising=False)
+
+
+def test_binary_lookup_precedence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_binary = _write_stub_binary(tmp_path / "env" / "calibrate", version="env")
+    configured_binary = _write_stub_binary(tmp_path / "configured" / "calibrate", version="configured")
+    explicit_binary = _write_stub_binary(tmp_path / "explicit" / "calibrate", version="explicit")
+
+    monkeypatch.setenv("CASARS_CALIBRATE_BIN", str(env_binary))
+    calibrate.configure(binary=configured_binary)
+
+    assert calibrate.protocol_info().binary_version == "configured"
+    assert calibrate.protocol_info(binary=explicit_binary).binary_version == "explicit"
+
+    calibrate.configure(binary=None)
+    assert calibrate.protocol_info().binary_version == "env"
+
+
+def test_protocol_mismatch_fails_fast(tmp_path: Path) -> None:
+    binary = _write_stub_binary(
+        tmp_path / "bad" / "calibrate",
+        version="bad",
+        protocol_version=99,
+    )
+
+    with pytest.raises(RuntimeError, match="expected protocol version"):
+        calibrate.summary(["phase.gcal"], binary=binary)
+
+
+def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "calibrate", version="ok")
+
+    result = calibrate.solve_gain(
+        "dataset.ms",
+        "gain.gcal",
+        refant="ea01",
+        selection=calibrate.Selection(field="0", spw="0,1"),
+        gain_type="t",
+        solve_mode="ap",
+        solve_interval=30.0,
+        combine=calibrate.SolveCombine(scans=True, fields=False),
+        prior_calibration_tables=[
+            calibrate.CalibrationTableSpec("phase.gcal", gainfield="nearest", calwt=True)
+        ],
+        parang=True,
+        smodel=(1.0, 0.0, 0.0, 0.0),
+        binary=binary,
+    )
+
+    assert result["kind"] == "solve_gain"
+    request = result["report"]["request"]
+    assert request["measurement_set"] == "dataset.ms"
+    assert request["output_table"] == "gain.gcal"
+    assert request["gain_type"] == "T"
+    assert request["solve_mode"] == "AmplitudePhase"
+    assert request["solve_interval"] == {"Seconds": 30.0}
+    assert request["combine"] == {"scans": True, "fields": False}
+    assert request["refant"] == {"AntennaName": "ea01"}
+    assert request["selection"]["field"] == "0"
+    assert request["selection"]["spw"] == "0,1"
+    assert request["prior_calibration_tables"][0]["gainfield"] == "Nearest"
+    assert request["prior_calibration_tables"][0]["calwt"] is True
+
+
+def test_signature_parity_against_rust_schema() -> None:
+    calibrate_binary = _build_calibrate_binary()
+    calibrate.validate_signature_parity(binary=calibrate_binary)
+
+
+def _build_calibrate_binary() -> str:
+    subprocess.run(
+        ["cargo", "build", "-q", "-p", "casa-calibration", "--bin", "calibrate"],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    suffix = ".exe" if os.name == "nt" else ""
+    return str(REPO_ROOT / "target" / "debug" / f"calibrate{suffix}")
+
+
+def _write_stub_binary(
+    path: Path,
+    *,
+    version: str,
+    protocol_version: int = 1,
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    script = textwrap.dedent(
+        f"""\
+        #!/usr/bin/env python3
+        import json
+        import sys
+
+        if "--protocol-info" in sys.argv:
+            print(json.dumps({{
+                "protocol_name": "casa_calibration_task",
+                "protocol_version": {protocol_version},
+                "binary_version": {version!r},
+            }}))
+            raise SystemExit(0)
+
+        if "--json-run" in sys.argv:
+            payload = json.load(sys.stdin)
+            print(json.dumps({{
+                "kind": payload["kind"],
+                "report": {{
+                    "request": payload["request"],
+                    "binary_version": {version!r},
+                }},
+            }}))
+            raise SystemExit(0)
+
+        if "--json-schema" in sys.argv:
+            print(json.dumps({{"request_schema": {{"definitions": {{}}}}, "result_schema": {{}}, "protocol": {{
+                "protocol_name": "casa_calibration_task",
+                "protocol_version": {protocol_version},
+                "binary_version": {version!r},
+            }}}}))
+            raise SystemExit(0)
+
+        raise SystemExit("unexpected argv: " + " ".join(sys.argv[1:]))
+        """
+    )
+    path.write_text(script, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path

@@ -1,0 +1,192 @@
+name: Python Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_wheels:
+    name: Build wheels (${{ matrix.artifact_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: python-wheels-linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            manylinux: auto
+            smoke_wheel_glob: dist/*cp312*.whl
+          - os: macos-13
+            artifact_name: python-wheels-macos-x86_64
+            target: x86_64-apple-darwin
+            manylinux: off
+            smoke_wheel_glob: dist/*cp312*.whl
+          - os: macos-14
+            artifact_name: python-wheels-macos-aarch64
+            target: aarch64-apple-darwin
+            manylinux: off
+            smoke_wheel_glob: dist/*cp312*.whl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up smoke-test Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          rust-toolchain: stable
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --manifest-path crates/casars-python/Cargo.toml --interpreter 3.10 3.11 3.12 --out dist
+
+      - name: Build calibrate binary for smoke test
+        run: cargo build -q -p casa-calibration --bin calibrate
+
+      - name: Smoke-test built wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=( ${{ matrix.smoke_wheel_glob }} )
+          if [[ ${#wheels[@]} -ne 1 ]]; then
+            echo "expected exactly one cp312 wheel, found ${#wheels[@]}" >&2
+            printf '%s\n' "${wheels[@]}" >&2
+            exit 1
+          fi
+
+          python -m pip install --upgrade pip
+          python -m pip install "${wheels[0]}"
+          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/debug/calibrate" python - <<'PY'
+          import casars
+          from casars.tasks import calibrate
+
+          assert casars.__version__
+          info = calibrate.protocol_info()
+          assert info.protocol_name == "casa_calibration_task"
+          assert info.protocol_version == 1
+          schema = calibrate.schema()
+          assert "request_schema" in schema
+          assert "result_schema" in schema
+          calibrate.validate_signature_parity()
+          PY
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/*
+          if-no-files-found: error
+
+  build_sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          rust-toolchain: stable
+          args: --manifest-path crates/casars-python/Cargo.toml --out dist
+
+      - name: Build calibrate binary for smoke test
+        run: cargo build -q -p casa-calibration --bin calibrate
+
+      - name: Smoke-test built sdist
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sdists=( dist/*.tar.gz )
+          if [[ ${#sdists[@]} -ne 1 ]]; then
+            echo "expected exactly one sdist, found ${#sdists[@]}" >&2
+            printf '%s\n' "${sdists[@]}" >&2
+            exit 1
+          fi
+
+          python -m pip install --upgrade pip
+          python -m pip install "${sdists[0]}"
+          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/debug/calibrate" python - <<'PY'
+          import casars
+          from casars.tasks import calibrate
+
+          assert casars.__version__
+          info = calibrate.protocol_info()
+          assert info.protocol_name == "casa_calibration_task"
+          assert info.protocol_version == 1
+          calibrate.validate_signature_parity()
+          PY
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release artifacts
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Python artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Set up Python for PyPI upload
+        if: ${{ secrets.PYPI_API_TOKEN != '' && !contains(github.ref_name, '-') }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Publish to PyPI
+        if: ${{ secrets.PYPI_API_TOKEN != '' && !contains(github.ref_name, '-') }}
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'maturin>=1.7,<2'
+          maturin upload --non-interactive dist/*
+
+      - name: Skip PyPI upload for prerelease tags
+        if: ${{ contains(github.ref_name, '-') }}
+        run: echo "Prerelease tag detected; GitHub release assets were published but PyPI upload was intentionally skipped."
+
+      - name: Skip PyPI upload when no token is configured
+        if: ${{ secrets.PYPI_API_TOKEN == '' && !contains(github.ref_name, '-') }}
+        run: echo "PYPI_API_TOKEN is not configured; GitHub release assets were published only."

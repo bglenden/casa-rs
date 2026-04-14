@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Parameter family carried by the calibration table payload.
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// parameters (`FPARAM`) depending on the table family. The first-wave reader
 /// accepts both on disk but only marks the complex family as supported for the
 /// upcoming `applycal` v1 work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CalibrationParameterFamily {
     /// `ParType=Complex` / `CPARAM`.
     Complex,
@@ -23,7 +24,7 @@ pub enum CalibrationParameterFamily {
 
 /// Severity assigned to a validation issue discovered while summarizing a
 /// calibration table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CalibrationIssueSeverity {
     /// The issue places the table outside the supported v1 apply surface.
     Error,
@@ -32,7 +33,7 @@ pub enum CalibrationIssueSeverity {
 }
 
 /// A single validation issue surfaced during summary generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationValidationIssue {
     /// Stable issue code for tests and future UI consumers.
     pub code: String,
@@ -43,7 +44,7 @@ pub struct CalibrationValidationIssue {
 }
 
 /// Scalar keyword values lifted into a stable summary shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationKeywordSummary {
     /// `ParType`.
     pub par_type: Option<String>,
@@ -58,7 +59,7 @@ pub struct CalibrationKeywordSummary {
 }
 
 /// Summary of a standard keyword-linked subtable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationSubtableSummary {
     /// Keyword name, for example `FIELD`.
     pub name: String,
@@ -75,7 +76,7 @@ pub struct CalibrationSubtableSummary {
 }
 
 /// Summary of the payload-carrying parameter column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationColumnSummary {
     /// Selected payload column name, usually `CPARAM`.
     pub parameter_column: Option<String>,
@@ -86,7 +87,7 @@ pub struct CalibrationColumnSummary {
 }
 
 /// Coarse time-domain coverage derived from MAIN rows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TimeCoverageSummary {
     /// Minimum row time in seconds.
     pub min_time: f64,
@@ -99,7 +100,7 @@ pub struct TimeCoverageSummary {
 }
 
 /// Machine-readable summary for one calibration table.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationTableSummary {
     /// Table root path that was opened.
     pub path: PathBuf,

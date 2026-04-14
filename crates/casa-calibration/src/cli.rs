@@ -3,23 +3,23 @@
 
 use std::ffi::OsString;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use casa_ms::MsSelectionSpec;
 use casa_ms::msexplore::cli::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiInjectedArgument,
     UiManagedOutputSchema, UiValueKind,
 };
-use casa_ms::selection::MsSelection;
 
 use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyInterpolationMode, ApplyMode, ApplyPlan,
-    ApplyPlanRequest, BandpassSolveCombine, BandpassSolveReport, BandpassSolveRequest,
-    BandpassType, CalibrationStatsAxis, CalibrationStatsReport, CalibrationStatsRequest,
-    CalibrationTableSummary, FluxScaleReport, FluxScaleRequest, GainFieldSelector,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveReport, GainSolveRequest,
-    GainType, ManagedCalibrationOutput, RefAntSelector, calibration_stats, execute_apply_from_path,
-    fluxscale, load_apply_specs_from_callib, plan_apply_from_path, solve_bandpass_from_path,
-    solve_gain_from_path, summarize_tables,
+    BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationProtocolInfo,
+    CalibrationStatsAxis, CalibrationStatsReport, CalibrationTableSummary, CalibrationTaskRequest,
+    CalibrationTaskResult, CalibrationTaskSchemaBundle, ExecuteApplyTaskRequest, FluxScaleReport,
+    FluxScaleRequest, GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode,
+    GainSolveReport, GainType, PlanApplyTaskRequest, RefAntSelector, SolveBandpassTaskRequest,
+    SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest, load_apply_specs_from_callib,
 };
 
 const UI_SCHEMA_VERSION: u32 = 1;
@@ -46,18 +46,7 @@ struct ApplyOptions {
     selection: SelectionOptions,
 }
 
-#[derive(Debug, Default)]
-struct SelectionOptions {
-    selectdata: bool,
-    field: Option<String>,
-    spw: Option<String>,
-    antenna: Option<String>,
-    scan: Option<String>,
-    observation: Option<String>,
-    array: Option<String>,
-    timerange: Option<String>,
-    msselect: Option<String>,
-}
+type SelectionOptions = MsSelectionSpec;
 
 #[derive(Debug)]
 struct SummaryOptions {
@@ -75,6 +64,7 @@ struct ApplyPlanOptions {
     format: OutputFormat,
     output: Option<PathBuf>,
     overwrite: bool,
+    selection: SelectionOptions,
 }
 
 #[derive(Debug)]
@@ -148,10 +138,116 @@ enum Command {
     FluxScale(FluxScaleOptions),
 }
 
+impl Command {
+    fn format(&self) -> OutputFormat {
+        match self {
+            Self::Apply(options) => options.format,
+            Self::Summarize(options) => options.format,
+            Self::PlanApply(options) => options.format,
+            Self::Stats(options) => options.format,
+            Self::SolveGain(options) => options.format,
+            Self::SolveBandpass(options) => options.format,
+            Self::FluxScale(options) => options.format,
+        }
+    }
+
+    fn output_path(&self) -> Option<&Path> {
+        match self {
+            Self::Apply(options) => options.output.as_deref(),
+            Self::Summarize(options) => options.output.as_deref(),
+            Self::PlanApply(options) => options.output.as_deref(),
+            Self::Stats(options) => options.output.as_deref(),
+            Self::SolveGain(options) => options.output.as_deref(),
+            Self::SolveBandpass(options) => options.output.as_deref(),
+            Self::FluxScale(options) => options.output.as_deref(),
+        }
+    }
+
+    fn overwrite(&self) -> bool {
+        match self {
+            Self::Apply(options) => options.overwrite,
+            Self::Summarize(options) => options.overwrite,
+            Self::PlanApply(options) => options.overwrite,
+            Self::Stats(options) => options.overwrite,
+            Self::SolveGain(options) => options.overwrite,
+            Self::SolveBandpass(options) => options.overwrite,
+            Self::FluxScale(options) => options.overwrite,
+        }
+    }
+
+    fn into_task_request(self) -> CalibrationTaskRequest {
+        match self {
+            Self::Apply(options) => CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+                measurement_set: options.measurement_set,
+                selection: options.selection,
+                calibration_tables: options.calibration_tables,
+                apply_mode: options.apply_mode,
+                parang: options.parang,
+            }),
+            Self::Summarize(options) => CalibrationTaskRequest::Summary(SummaryTaskRequest {
+                paths: options.paths,
+            }),
+            Self::PlanApply(options) => CalibrationTaskRequest::PlanApply(PlanApplyTaskRequest {
+                measurement_set: options.measurement_set,
+                selection: options.selection,
+                calibration_tables: options.calibration_tables,
+                parang: options.parang,
+            }),
+            Self::Stats(options) => CalibrationTaskRequest::Stats(StatsTaskRequest {
+                path: options.path,
+                axis: options.axis,
+                datacolumn: options.datacolumn,
+                use_flags: options.use_flags,
+            }),
+            Self::SolveGain(options) => CalibrationTaskRequest::SolveGain(SolveGainTaskRequest {
+                measurement_set: options.measurement_set,
+                selection: options.selection,
+                output_table: options.output_table,
+                gain_type: options.gain_type,
+                solve_mode: options.solve_mode,
+                solve_interval: options.solve_interval,
+                combine: options.combine,
+                refant: options.refant,
+                prior_calibration_tables: options.prior_calibration_tables,
+                parang: options.parang,
+                smodel: [1.0, 0.0, 0.0, 0.0],
+            }),
+            Self::SolveBandpass(options) => {
+                CalibrationTaskRequest::SolveBandpass(SolveBandpassTaskRequest {
+                    measurement_set: options.measurement_set,
+                    selection: options.selection,
+                    output_table: options.output_table,
+                    refant: options.refant,
+                    prior_calibration_tables: options.prior_calibration_tables,
+                    parang: options.parang,
+                    combine: options.combine,
+                    band_type: options.band_type,
+                    normalize_average_amplitude: options.normalize_average_amplitude,
+                    amplitude_degree: options.amplitude_degree,
+                    phase_degree: options.phase_degree,
+                    smodel: [1.0, 0.0, 0.0, 0.0],
+                })
+            }
+            Self::FluxScale(options) => CalibrationTaskRequest::FluxScale(FluxScaleRequest {
+                input_table: options.input_table,
+                output_table: options.output_table,
+                reference_fields: options.reference_fields,
+                transfer_fields: options.transfer_fields,
+                refspwmap: options.refspwmap,
+                gainthreshold: options.gainthreshold,
+                incremental: options.incremental,
+            }),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum CliAction {
     Help,
     UiSchema,
+    JsonSchema,
+    ProtocolInfo,
+    JsonRun(String),
     Run(Box<RunRequest>),
 }
 
@@ -203,6 +299,37 @@ pub fn run_env(program_name: &str) -> i32 {
             }
             Err(error) => {
                 eprintln!("Error: failed to serialize --ui-schema output: {error}");
+                1
+            }
+        },
+        Ok(CliAction::JsonSchema) => {
+            match serde_json::to_string_pretty(&CalibrationTaskSchemaBundle::current()) {
+                Ok(json) => {
+                    print!("{json}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("Error: failed to serialize --json-schema output: {error}");
+                    1
+                }
+            }
+        }
+        Ok(CliAction::ProtocolInfo) => {
+            match serde_json::to_string_pretty(&CalibrationProtocolInfo::current()) {
+                Ok(json) => {
+                    print!("{json}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("Error: failed to serialize --protocol-info output: {error}");
+                    1
+                }
+            }
+        }
+        Ok(CliAction::JsonRun(source)) => match run_json_request(&source) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("Error: {error}");
                 1
             }
         },
@@ -832,231 +959,62 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
 }
 
 fn run(request: RunRequest) -> Result<(), String> {
-    match request.command {
-        Command::Apply(options) => run_apply(options, request.managed_output),
-        Command::Summarize(options) => run_summary(options, request.managed_output),
-        Command::PlanApply(options) => run_apply_plan(options, request.managed_output),
-        Command::Stats(options) => run_stats(options, request.managed_output),
-        Command::SolveGain(options) => run_solve_gain(options, request.managed_output),
-        Command::SolveBandpass(options) => run_solve_bandpass(options, request.managed_output),
-        Command::FluxScale(options) => run_fluxscale(options, request.managed_output),
+    let format = request.command.format();
+    let output_path = request.command.output_path().map(Path::to_path_buf);
+    let overwrite = request.command.overwrite();
+    let result = request.command.into_task_request().execute()?;
+    let rendered = match format {
+        OutputFormat::Text => render_text_task_result(&result),
+        OutputFormat::Json => render_json_task_result(request.managed_output, &result)?,
+    };
+    write_output(output_path.as_deref(), overwrite, &rendered)
+}
+
+fn run_json_request(source: &str) -> Result<(), String> {
+    let payload = read_json_request_payload(source)?;
+    let request = serde_json::from_str::<CalibrationTaskRequest>(&payload)
+        .map_err(|error| format!("failed to parse calibration task request: {error}"))?;
+    let result = request.execute()?;
+    let rendered = serde_json::to_string_pretty(&result)
+        .map_err(|error| format!("failed to serialize calibration task result: {error}"))?;
+    println!("{rendered}");
+    Ok(())
+}
+
+fn read_json_request_payload(source: &str) -> Result<String, String> {
+    if source == "-" {
+        let mut payload = String::new();
+        std::io::stdin()
+            .read_to_string(&mut payload)
+            .map_err(|error| format!("failed to read JSON request from stdin: {error}"))?;
+        return Ok(payload);
     }
-}
 
-fn run_apply(options: ApplyOptions, managed_output: bool) -> Result<(), String> {
-    let selection = build_selection(&options.selection)?;
-    let report = execute_apply_from_path(
-        &options.measurement_set,
-        &ApplyPlanRequest {
-            selection,
-            apply_mode: options.apply_mode,
-            parang: options.parang,
-            calibration_tables: options.calibration_tables,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let rendered = match options.format {
-        OutputFormat::Text => render_apply_report_text(&report),
-        OutputFormat::Json => render_json_output(
-            managed_output,
-            &report,
-            ManagedCalibrationOutput::Apply(report.clone()),
-            "apply report",
-        )?,
-    };
-    write_output(options.output.as_deref(), options.overwrite, &rendered)
-}
-
-fn run_summary(options: SummaryOptions, managed_output: bool) -> Result<(), String> {
-    let path_refs: Vec<_> = options.paths.iter().map(PathBuf::as_path).collect();
-    let summaries = summarize_tables(path_refs).map_err(|error| error.to_string())?;
-    let rendered = match options.format {
-        OutputFormat::Text => render_summary_text(&summaries),
-        OutputFormat::Json => render_json_output(
-            managed_output,
-            &summaries,
-            ManagedCalibrationOutput::Summary(summaries.clone()),
-            "summary report",
-        )?,
-    };
-    write_output(options.output.as_deref(), options.overwrite, &rendered)
-}
-
-fn run_apply_plan(options: ApplyPlanOptions, managed_output: bool) -> Result<(), String> {
-    let plan = plan_apply_from_path(
-        &options.measurement_set,
-        &ApplyPlanRequest {
-            selection: MsSelection::new(),
-            apply_mode: ApplyMode::Trial,
-            parang: options.parang,
-            calibration_tables: options.calibration_tables,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let rendered = match options.format {
-        OutputFormat::Text => render_apply_plan_text(&plan),
-        OutputFormat::Json => render_json_output(
-            managed_output,
-            &plan,
-            ManagedCalibrationOutput::PlanApply(plan.clone()),
-            "apply plan",
-        )?,
-    };
-    write_output(options.output.as_deref(), options.overwrite, &rendered)
-}
-
-fn run_stats(options: StatsOptions, managed_output: bool) -> Result<(), String> {
-    let report = calibration_stats(
-        &options.path,
-        &CalibrationStatsRequest {
-            axis: options.axis,
-            datacolumn: options.datacolumn,
-            use_flags: options.use_flags,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let rendered = match options.format {
-        OutputFormat::Text => render_stats_text(&report),
-        OutputFormat::Json => render_json_output(
-            managed_output,
-            &report,
-            ManagedCalibrationOutput::Stats(report.clone()),
-            "stats report",
-        )?,
-    };
-    write_output(options.output.as_deref(), options.overwrite, &rendered)
-}
-
-fn run_solve_gain(options: SolveGainOptions, managed_output: bool) -> Result<(), String> {
-    let selection = build_selection(&options.selection)?;
-    let report = solve_gain_from_path(
-        &options.measurement_set,
-        &GainSolveRequest {
-            selection,
-            output_table: options.output_table,
-            gain_type: options.gain_type,
-            solve_mode: options.solve_mode,
-            solve_interval: options.solve_interval,
-            combine: options.combine,
-            refant: options.refant,
-            prior_calibration_tables: options.prior_calibration_tables,
-            parang: options.parang,
-            smodel: [1.0, 0.0, 0.0, 0.0],
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let rendered = match options.format {
-        OutputFormat::Text => render_gain_solve_report_text(&report),
-        OutputFormat::Json => render_json_output(
-            managed_output,
-            &report,
-            ManagedCalibrationOutput::SolveGain(report.clone()),
-            "gain solve report",
-        )?,
-    };
-    write_output(options.output.as_deref(), options.overwrite, &rendered)
-}
-
-fn run_solve_bandpass(options: SolveBandpassOptions, managed_output: bool) -> Result<(), String> {
-    let selection = build_selection(&options.selection)?;
-    let report = solve_bandpass_from_path(
-        &options.measurement_set,
-        &BandpassSolveRequest {
-            selection,
-            output_table: options.output_table,
-            refant: options.refant,
-            prior_calibration_tables: options.prior_calibration_tables,
-            parang: options.parang,
-            combine: options.combine,
-            band_type: options.band_type,
-            normalize_average_amplitude: options.normalize_average_amplitude,
-            amplitude_degree: options.amplitude_degree,
-            phase_degree: options.phase_degree,
-            smodel: [1.0, 0.0, 0.0, 0.0],
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let rendered = match options.format {
-        OutputFormat::Text => render_bandpass_solve_report_text(&report),
-        OutputFormat::Json => render_json_output(
-            managed_output,
-            &report,
-            ManagedCalibrationOutput::SolveBandpass(report.clone()),
-            "bandpass solve report",
-        )?,
-    };
-    write_output(options.output.as_deref(), options.overwrite, &rendered)
-}
-
-fn run_fluxscale(options: FluxScaleOptions, managed_output: bool) -> Result<(), String> {
-    let report = fluxscale(&FluxScaleRequest {
-        input_table: options.input_table,
-        output_table: options.output_table,
-        reference_fields: options.reference_fields,
-        transfer_fields: options.transfer_fields,
-        refspwmap: options.refspwmap,
-        gainthreshold: options.gainthreshold,
-        incremental: options.incremental,
+    fs::read_to_string(source).map_err(|error| {
+        format!(
+            "failed to read JSON request from {}: {error}",
+            Path::new(source).display()
+        )
     })
-    .map_err(|error| error.to_string())?;
-    let rendered = match options.format {
-        OutputFormat::Text => render_fluxscale_report_text(&report),
-        OutputFormat::Json => render_json_output(
-            managed_output,
-            &report,
-            ManagedCalibrationOutput::FluxScale(report.clone()),
-            "fluxscale report",
-        )?,
-    };
-    write_output(options.output.as_deref(), options.overwrite, &rendered)
-}
-
-fn build_selection(options: &SelectionOptions) -> Result<MsSelection, String> {
-    if !options.selectdata {
-        return Ok(MsSelection::new());
-    }
-
-    let mut selection = MsSelection::new();
-    if let Some(field) = &options.field {
-        let ids = parse_i32_list("--field", field)?;
-        selection = selection.field(&ids);
-    }
-    if let Some(spw) = &options.spw {
-        let ids = parse_i32_list("--spw", spw)?;
-        selection = selection.spw(&ids);
-    }
-    if let Some(antenna) = &options.antenna {
-        let ids = parse_i32_list("--antenna", antenna)?;
-        selection = selection.antenna(&ids);
-    }
-    if let Some(scan) = &options.scan {
-        let ids = parse_i32_list("--scan", scan)?;
-        selection = selection.scan(&ids);
-    }
-    if let Some(observation) = &options.observation {
-        let ids = parse_i32_list("--observation", observation)?;
-        selection = selection.observation(&ids);
-    }
-    if let Some(array) = &options.array {
-        let ids = parse_i32_list("--array", array)?;
-        selection = selection.array(&ids);
-    }
-    if let Some(timerange) = &options.timerange {
-        let (start, end) = parse_time_range(timerange)?;
-        selection = selection.time_range(start, end);
-    }
-    if let Some(msselect) = &options.msselect {
-        if !msselect.trim().is_empty() {
-            selection = selection.taql(msselect.trim());
-        }
-    }
-    Ok(selection)
 }
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
     let args = args.into_iter().collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "--ui-schema") {
         return Ok(CliAction::UiSchema);
+    }
+    if args.iter().any(|arg| arg == "--json-schema") {
+        return Ok(CliAction::JsonSchema);
+    }
+    if args.iter().any(|arg| arg == "--protocol-info") {
+        return Ok(CliAction::ProtocolInfo);
+    }
+    if let Some(index) = args.iter().position(|arg| arg == "--json-run") {
+        let source = args
+            .get(index + 1)
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "missing value for --json-run".to_string())?;
+        return Ok(CliAction::JsonRun(source.to_string()));
     }
     if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
         return Ok(CliAction::Help);
@@ -1322,6 +1280,10 @@ fn parse_apply_plan_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
+    let mut selection = SelectionOptions {
+        selectdata: true,
+        ..SelectionOptions::default()
+    };
 
     let mut index = 0;
     while index < args.len() {
@@ -1377,6 +1339,40 @@ fn parse_apply_plan_args(args: &[OsString], managed_output: bool) -> Result<CliA
                 output = Some(PathBuf::from(value));
             }
             "--overwrite" => overwrite = true,
+            "--selectdata" => selection.selectdata = true,
+            "--no-selectdata" => selection.selectdata = false,
+            "--field" => {
+                index += 1;
+                selection.field = Some(take_string_value(index, args, "--field")?);
+            }
+            "--spw" => {
+                index += 1;
+                selection.spw = Some(take_string_value(index, args, "--spw")?);
+            }
+            "--antenna" => {
+                index += 1;
+                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
+            }
+            "--scan" => {
+                index += 1;
+                selection.scan = Some(take_string_value(index, args, "--scan")?);
+            }
+            "--observation" => {
+                index += 1;
+                selection.observation = Some(take_string_value(index, args, "--observation")?);
+            }
+            "--array" => {
+                index += 1;
+                selection.array = Some(take_string_value(index, args, "--array")?);
+            }
+            "--timerange" => {
+                index += 1;
+                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
+            }
+            "--msselect" => {
+                index += 1;
+                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
+            }
             _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
             _ => calibration_table_paths.push(PathBuf::from(&args[index])),
         }
@@ -1403,6 +1399,7 @@ fn parse_apply_plan_args(args: &[OsString], managed_output: bool) -> Result<CliA
             format,
             output,
             overwrite,
+            selection,
         }),
     })))
 }
@@ -2368,6 +2365,12 @@ fn parse_bool_list(flag: &str, value: &str) -> Result<Vec<bool>, String> {
         .collect()
 }
 
+#[cfg(test)]
+fn build_selection(options: &SelectionOptions) -> Result<casa_ms::selection::MsSelection, String> {
+    crate::task_contract::selection_from_spec(options)
+}
+
+#[cfg(test)]
 fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
     let (start, end) = value
         .split_once(':')
@@ -2385,7 +2388,7 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n",
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical calibration task JSON schema\n  --protocol-info          Emit the calibration task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON CalibrationTaskRequest from SOURCE or - for stdin\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n",
         schema.render_help(),
         schema.invocation_name,
         schema.invocation_name,
@@ -2790,17 +2793,42 @@ fn write_output(path: Option<&Path>, overwrite: bool, text: &str) -> Result<(), 
     }
 }
 
-fn render_json_output<T: serde::Serialize>(
+fn render_json_task_result(
     managed_output: bool,
-    raw: &T,
-    wrapped: ManagedCalibrationOutput,
-    label: &str,
+    result: &CalibrationTaskResult,
 ) -> Result<String, String> {
     if managed_output {
-        serde_json::to_string_pretty(&wrapped)
-            .map_err(|error| format!("serialize managed {label}: {error}"))
+        serde_json::to_string_pretty(result)
+            .map_err(|error| format!("serialize managed calibration task result: {error}"))
     } else {
-        serde_json::to_string_pretty(raw).map_err(|error| format!("serialize {label}: {error}"))
+        match result {
+            CalibrationTaskResult::Apply(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize apply report: {error}")),
+            CalibrationTaskResult::Summary(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize summary report: {error}")),
+            CalibrationTaskResult::PlanApply(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize apply plan: {error}")),
+            CalibrationTaskResult::Stats(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize stats report: {error}")),
+            CalibrationTaskResult::SolveGain(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize gain solve report: {error}")),
+            CalibrationTaskResult::SolveBandpass(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize bandpass solve report: {error}")),
+            CalibrationTaskResult::FluxScale(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize fluxscale report: {error}")),
+        }
+    }
+}
+
+fn render_text_task_result(result: &CalibrationTaskResult) -> String {
+    match result {
+        CalibrationTaskResult::Apply(report) => render_apply_report_text(report),
+        CalibrationTaskResult::Summary(report) => render_summary_text(report),
+        CalibrationTaskResult::PlanApply(report) => render_apply_plan_text(report),
+        CalibrationTaskResult::Stats(report) => render_stats_text(report),
+        CalibrationTaskResult::SolveGain(report) => render_gain_solve_report_text(report),
+        CalibrationTaskResult::SolveBandpass(report) => render_bandpass_solve_report_text(report),
+        CalibrationTaskResult::FluxScale(report) => render_fluxscale_report_text(report),
     }
 }
 
@@ -2893,20 +2921,21 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use casa_ms::ui_schema::UiValueKind;
+    use casa_ms::{MsSelectionSpec, ui_schema::UiValueKind};
     use tempfile::TempDir;
 
-    use super::{CliAction, Command, OutputFormat, command_schema, parse_args};
+    use super::{CliAction, Command, OutputFormat, command_schema, parse_args, render_help};
     use crate::{
         ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyExecutionReport,
         ApplyExecutionTimings, ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplySpwMapping,
         BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationColumnSummary,
         CalibrationIndexedStats, CalibrationIssueSeverity, CalibrationKeywordSummary,
         CalibrationParameterFamily, CalibrationStatsAxis, CalibrationStatsReport,
-        CalibrationSubtableSummary, CalibrationTableSummary, CalibrationValidationIssue,
-        CalibrationValueStats, FluxScaleFieldResult, FluxScaleReport, FluxScaleSpwResult,
-        GainFieldSelector, GainSolveInterval, GainSolveMode, GainSolveReport, GainType,
-        RefAntSelector, ResolvedGainField, ResolvedNearestGainField, TimeCoverageSummary,
+        CalibrationSubtableSummary, CalibrationTableSummary, CalibrationTaskRequest,
+        CalibrationValidationIssue, CalibrationValueStats, ExecuteApplyTaskRequest,
+        FluxScaleFieldResult, FluxScaleReport, FluxScaleSpwResult, GainFieldSelector,
+        GainSolveInterval, GainSolveMode, GainSolveReport, GainType, RefAntSelector,
+        ResolvedGainField, ResolvedNearestGainField, TimeCoverageSummary,
     };
 
     fn sample_keywords() -> CalibrationKeywordSummary {
@@ -3134,6 +3163,66 @@ mod tests {
             }
             _ => panic!("expected apply action"),
         }
+    }
+
+    #[test]
+    fn parse_args_exposes_machine_readable_actions() {
+        assert!(matches!(
+            parse_args(["--json-schema".into()]).expect("json schema action"),
+            CliAction::JsonSchema
+        ));
+        assert!(matches!(
+            parse_args(["--protocol-info".into()]).expect("protocol info action"),
+            CliAction::ProtocolInfo
+        ));
+        match parse_args(["--json-run".into(), "-".into()]).expect("json run action") {
+            CliAction::JsonRun(source) => assert_eq!(source, "-"),
+            other => panic!("expected json run action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_flag_parsing_matches_execute_apply_task_request() {
+        let action = parse_args([
+            "apply".into(),
+            "dataset.ms".into(),
+            "--gaintables".into(),
+            "phase.gcal".into(),
+            "--apply-mode".into(),
+            "trial".into(),
+            "--field".into(),
+            "0".into(),
+            "--spw".into(),
+            "1".into(),
+            "--parang".into(),
+        ])
+        .expect("parse succeeds");
+
+        let CliAction::Run(request) = action else {
+            panic!("expected run action");
+        };
+        assert_eq!(
+            request.command.into_task_request(),
+            CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+                measurement_set: PathBuf::from("dataset.ms"),
+                selection: MsSelectionSpec {
+                    field: Some("0".into()),
+                    spw: Some("1".into()),
+                    ..MsSelectionSpec::default()
+                },
+                calibration_tables: vec![ApplyCalibrationTableSpec::new("phase.gcal")],
+                apply_mode: ApplyMode::Trial,
+                parang: true,
+            })
+        );
+    }
+
+    #[test]
+    fn help_mentions_json_protocol_surface() {
+        let help = render_help(&command_schema("calibrate-test"));
+        assert!(help.contains("--json-schema"));
+        assert!(help.contains("--protocol-info"));
+        assert!(help.contains("--json-run <SOURCE>"));
     }
 
     #[test]
@@ -3768,11 +3857,15 @@ mod tests {
             selectdata: true,
             field: Some("1,2".into()),
             spw: Some("3".into()),
+            timerange: Some("10.0:20.0".into()),
+            uvrange: None,
             antenna: Some("4".into()),
             scan: Some("5".into()),
+            correlation: None,
             observation: Some("6".into()),
             array: Some("7".into()),
-            timerange: Some("10.0:20.0".into()),
+            intent: None,
+            feed: None,
             msselect: Some("ANTENNA1 == 4".into()),
         })
         .expect("selection");
@@ -3802,11 +3895,9 @@ mod tests {
         super::write_output(Some(&output_path), true, "new output").expect("overwrite");
         assert_eq!(fs::read_to_string(&output_path).unwrap(), "new output");
 
-        let json = super::render_json_output(
+        let json = super::render_json_task_result(
             true,
-            &vec!["raw"],
-            crate::ManagedCalibrationOutput::Summary(Vec::new()),
-            "summary report",
+            &crate::ManagedCalibrationOutput::Summary(Vec::new()),
         )
         .expect("managed json");
         assert!(json.contains("\"kind\""));

@@ -1,5 +1,7 @@
 target/
 target-clippy/
+dist/
+site/
 .DS_Store
 crates/casa-test-support/tAipsIO_tmp.*
 tarpaulin-ci/

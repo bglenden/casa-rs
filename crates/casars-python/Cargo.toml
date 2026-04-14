@@ -1,0 +1,25 @@
+[package]
+name = "casars-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Python bindings and package for casa-rs"
+repository.workspace = true
+publish = false
+
+[lib]
+name = "casars_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+casa-images = { path = "../casa-images" }
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
+ndarray.workspace = true
+numpy = "0.28"
+pyo3 = { version = "0.28", features = ["extension-module"] }
+
+[lints]
+workspace = true

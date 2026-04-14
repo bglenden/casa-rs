@@ -22,6 +22,7 @@ use casa_ms::selection::MsSelection;
 use casa_ms::{MsError, MsSpectralWindow};
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, ScalarValue};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -29,7 +30,7 @@ use crate::model::CalibrationTableSummary;
 use crate::summary::{CalibrationTableError, summarize_table};
 
 /// Calibration-application mode planned for the executor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ApplyMode {
     /// Apply calibrations and propagate flags.
     CalFlag,
@@ -40,7 +41,7 @@ pub enum ApplyMode {
 }
 
 /// Supported first-wave interpolation modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ApplyInterpolationMode {
     /// Nearest-neighbor lookup.
     Nearest,
@@ -58,7 +59,7 @@ impl ApplyInterpolationMode {
 }
 
 /// Explicit `gainfield` selector accepted by the planner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainFieldSelector {
     /// Resolve a caltable field by exact integer FIELD_ID.
     FieldId(i32),
@@ -70,7 +71,7 @@ pub enum GainFieldSelector {
 
 /// Optional per-table applicability selection, used by callibrary-style apply
 /// entries.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ApplyTableSelection {
     /// Restrict application to these MS FIELD_ID values.
     pub field_ids: Vec<i32>,
@@ -106,7 +107,7 @@ impl ApplyTableSelection {
 }
 
 /// One input calibration table in an apply plan request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ApplyCalibrationTableSpec {
     /// Caltable path.
     pub path: PathBuf,
@@ -150,7 +151,7 @@ pub struct ApplyPlanRequest {
 }
 
 /// One selected MeasurementSet row carried forward by the plan.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ApplyRowPlan {
     /// MAIN row index.
     pub row_index: usize,
@@ -179,7 +180,7 @@ pub struct ApplyRowPlan {
 }
 
 /// Frequency-grid summary attached to a selected or mapped spectral window.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SpectralWindowPlan {
     /// Spectral window identifier.
     pub spw_id: i32,
@@ -192,7 +193,7 @@ pub struct SpectralWindowPlan {
 }
 
 /// Resolved explicit gainfield override.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ResolvedGainField {
     /// Original selector.
     pub selector: GainFieldSelector,
@@ -203,7 +204,7 @@ pub struct ResolvedGainField {
 }
 
 /// Resolved nearest-field mapping for one selected MS field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ResolvedNearestGainField {
     /// MS FIELD_ID to which this nearest mapping applies.
     pub measurement_set_field_id: i32,
@@ -218,7 +219,7 @@ pub struct ResolvedNearestGainField {
 }
 
 /// Resolved mapping from an MS data SPW to a caltable SPW.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ApplySpwMapping {
     /// Selected MS data spectral window id.
     pub data_spw_id: i32,
@@ -227,7 +228,7 @@ pub struct ApplySpwMapping {
 }
 
 /// Planner output for one input calibration table.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ApplyCalibrationTablePlan {
     /// Original request spec.
     pub spec: ApplyCalibrationTableSpec,
@@ -250,7 +251,7 @@ pub struct ApplyCalibrationTablePlan {
 }
 
 /// Full apply plan for one MeasurementSet selection and table chain.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ApplyPlan {
     /// Filesystem path of the MeasurementSet when planned from disk.
     pub measurement_set_path: Option<PathBuf>,
@@ -277,7 +278,7 @@ pub struct ApplyPlan {
 }
 
 /// Timing breakdown for constructing an apply plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct ApplyPlanTimings {
     /// Time spent applying the MS selection and collecting row indices.
     pub selection_ns: u64,

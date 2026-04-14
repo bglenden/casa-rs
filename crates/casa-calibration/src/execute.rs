@@ -32,6 +32,7 @@ use casa_ms::{MsError, MsResult};
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -47,7 +48,7 @@ use crate::plan::{
 };
 
 /// Outcome summary for one executor run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ApplyExecutionReport {
     /// The resolved apply plan used by the executor.
     pub plan: ApplyPlan,
@@ -66,7 +67,7 @@ pub struct ApplyExecutionReport {
 }
 
 /// Timing breakdown for one apply execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct ApplyExecutionTimings {
     /// Time spent building the apply plan.
     pub planning_ns: u64,

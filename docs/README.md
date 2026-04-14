@@ -13,6 +13,11 @@ This directory holds stable project documentation.
 - [`kitty-graphics-protocol-details.md`](kitty-graphics-protocol-details.md)
   - notes on the kitty graphics backend used by `imexplore`
 
+## Published docs
+
+- MkDocs site root: `https://bglenden.github.io/casa-rs/`
+- Rust API reference: `https://bglenden.github.io/casa-rs/rustdoc/`
+
 ## Planning
 
 Phase plans live under:

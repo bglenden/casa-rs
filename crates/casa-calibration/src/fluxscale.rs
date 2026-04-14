@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::ArrayD;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -29,7 +30,7 @@ use crate::constants::{COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_SPECTRAL_WINDOW_I
 use crate::summary::{CalibrationTableError, summarize_table};
 
 /// Request for a first-wave `fluxscale` solve.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FluxScaleRequest {
     /// Input gain table produced by `gaincal`.
     pub input_table: PathBuf,
@@ -48,7 +49,7 @@ pub struct FluxScaleRequest {
 }
 
 /// Per-SPW flux result for one transfer field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FluxScaleSpwResult {
     /// Flux density vector in CASA-style Stokes order.
     pub fluxd: [f64; 4],
@@ -59,7 +60,7 @@ pub struct FluxScaleSpwResult {
 }
 
 /// Per-field `fluxscale` result.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FluxScaleFieldResult {
     /// Transfer-field name from the FIELD subtable.
     pub field_name: String,
@@ -80,7 +81,7 @@ pub struct FluxScaleFieldResult {
 }
 
 /// Machine-readable `fluxscale` report.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FluxScaleReport {
     /// Output table path.
     pub output_table: PathBuf,
