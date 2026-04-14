@@ -33,6 +33,7 @@ mod plots;
 mod solve;
 mod stats;
 mod summary;
+mod task_contract;
 
 pub use bandpass::{
     BandpassSolveCombine, BandpassSolveError, BandpassSolveReport, BandpassSolveRequest,
@@ -48,7 +49,7 @@ pub use fluxscale::{
     FluxScaleError, FluxScaleFieldResult, FluxScaleReport, FluxScaleRequest, FluxScaleSpwResult,
     fluxscale,
 };
-pub use managed_output::ManagedCalibrationOutput;
+pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
@@ -73,3 +74,9 @@ pub use stats::{
     CalibrationStatsRequest, CalibrationValueStats, calibration_stats,
 };
 pub use summary::{CalibrationTableError, summarize_table, summarize_tables};
+pub use task_contract::{
+    CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
+    CalibrationTaskRequest, CalibrationTaskSchemaBundle, ExecuteApplyTaskRequest,
+    PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
+    SummaryTaskRequest,
+};

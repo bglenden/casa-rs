@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, ScalarValue};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -19,7 +20,7 @@ use crate::constants::{
 };
 
 /// Axis transform used when computing calibration statistics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CalibrationStatsAxis {
     /// Magnitude of complex values.
     Amplitude,
@@ -64,7 +65,7 @@ impl CalibrationStatsAxis {
 }
 
 /// Request for `calstat`-class statistics over a calibration table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationStatsRequest {
     /// Axis to compute.
     pub axis: CalibrationStatsAxis,
@@ -92,7 +93,7 @@ impl Default for CalibrationStatsRequest {
 }
 
 /// Descriptive statistics over one numeric value stream.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationValueStats {
     /// Number of numeric values included in the statistics.
     pub npts: u64,
@@ -129,7 +130,7 @@ pub struct CalibrationValueStats {
 }
 
 /// Statistics for one integer-identified group.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationIndexedStats {
     /// Group key, for example `FIELD_ID`.
     pub key: i32,
@@ -138,7 +139,7 @@ pub struct CalibrationIndexedStats {
 }
 
 /// Machine-readable `calstat`-class report.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrationStatsReport {
     /// Table root path that was opened.
     pub path: PathBuf,

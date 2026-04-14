@@ -24,11 +24,22 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Build rustdoc
         run: cargo doc --workspace --no-deps
 
-      - name: Add redirect index
-        run: echo '<meta http-equiv="refresh" content="0;url=casa_tables/index.html">' > target/doc/index.html
+      - name: Build MkDocs site
+        run: scripts/build-python-docs.sh site
+
+      - name: Stage rustdoc into published site
+        run: |
+          mkdir -p site/rustdoc
+          echo '<meta http-equiv="refresh" content="0;url=casa_tables/index.html">' > target/doc/index.html
+          rsync -a target/doc/ site/rustdoc/
 
       - name: Deploy to gh-pages
         env:
@@ -47,7 +58,7 @@ jobs:
             git -C "$publish_dir" rm -rf . >/dev/null 2>&1 || true
           fi
 
-          rsync -a --delete --exclude '.git/' target/doc/ "$publish_dir"/
+          rsync -a --delete --exclude '.git/' site/ "$publish_dir"/
           touch "$publish_dir/.nojekyll"
 
           git -C "$publish_dir" config user.name "github-actions[bot]"

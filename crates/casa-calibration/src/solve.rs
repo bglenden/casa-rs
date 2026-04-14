@@ -24,6 +24,7 @@ use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableError};
 use casa_types::ScalarValue;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -36,7 +37,7 @@ use kernel::solve_group;
 use writer::write_gain_caltable;
 
 /// Supported first-wave gain solve families.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainType {
     /// Per-receptor complex gains.
     G,
@@ -54,7 +55,7 @@ impl GainType {
 }
 
 /// Supported first-wave solve modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveMode {
     /// Phase-only solve.
     Phase,
@@ -63,7 +64,7 @@ pub enum GainSolveMode {
 }
 
 /// Supported first-wave gain solution intervals.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveInterval {
     /// Solve one solution per `(observation, field, spw, scan)` group.
     Infinite,
@@ -74,7 +75,7 @@ pub enum GainSolveInterval {
 }
 
 /// Supported first-wave `gaincal` combine axes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GainSolveCombine {
     /// Extend solves across scan boundaries.
     pub scans: bool,
@@ -83,7 +84,7 @@ pub struct GainSolveCombine {
 }
 
 /// Reference antenna selector for solve requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum RefAntSelector {
     /// Exact antenna id.
     AntennaId(i32),
@@ -117,7 +118,7 @@ pub struct GainSolveRequest {
 }
 
 /// Solve summary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GainSolveReport {
     /// Output caltable path.
     pub output_table: PathBuf,

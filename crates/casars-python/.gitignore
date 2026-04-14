@@ -1,0 +1,3 @@
+.pytest_cache/
+python/casars/__pycache__/
+python/casars/_core*.so

@@ -26,6 +26,7 @@ use casa_tables::{
 };
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -51,7 +52,7 @@ const COL_TIME_EXTRA_PREC: &str = "TIME_EXTRA_PREC";
 const LEGACY_CAL_HISTORY_KEYWORD: &str = "CAL_HISTORY";
 
 /// Supported `bandpass` table families.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum BandpassType {
     /// Channelized complex `B Jones` solutions stored in `CPARAM`.
     B,
@@ -60,7 +61,7 @@ pub enum BandpassType {
 }
 
 /// Supported `bandpass(..., combine=...)` axes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct BandpassSolveCombine {
     /// Extend solves across scan boundaries.
     pub scans: bool,
@@ -96,7 +97,7 @@ pub struct BandpassSolveRequest {
 }
 
 /// Solve summary for a limited `bandpass` request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BandpassSolveReport {
     /// Output caltable path.
     pub output_table: PathBuf,

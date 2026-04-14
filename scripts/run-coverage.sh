@@ -59,6 +59,7 @@ run_tarpaulin() {
   # skip it only for coverage collection.
   cargo tarpaulin \
     --workspace \
+    --exclude casars-python \
     --timeout "$tarpaulin_timeout" \
     --out Stdout \
     --fail-under 75 \
