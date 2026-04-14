@@ -17,7 +17,6 @@ For images specifically, v1 includes pixel-slice writes on existing persistent i
 Tagged releases build Python artifacts for:
 
 - Linux `x86_64`
-- macOS `x86_64`
 - macOS `arm64`
 
 plus a source distribution for environments that need to build from source.

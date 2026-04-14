@@ -259,7 +259,6 @@ After `scripts/release.sh ... --push` creates and pushes `v<version>`, the
 `Python Release` GitHub Actions workflow builds:
 
 - Linux `x86_64` wheels
-- macOS `x86_64` wheels
 - macOS `arm64` wheels
 - one source distribution
 
