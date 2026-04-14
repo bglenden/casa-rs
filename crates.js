@@ -1,2 +1,0 @@
-window.ALL_CRATES = ["calibrate","casa_aipsio","casa_calibration","casa_coordinates","casa_images","casa_imaging","casa_lattices","casa_measures_data","casa_measures_tools","casa_ms","casa_table_read","casa_tables","casa_test_support","casa_types","casa_values","casars","casars_imagebrowser_protocol","casars_imager","casars_tablebrowser_protocol","imexplore","lock_helper","msexplore","package_snapshot","ratatui_graphics","tablebrowser"];
-//{"start":21,"fragment_lengths":[11,14,19,19,14,15,16,21,22,10,18,14,20,13,14,9,31,16,31,12,14,12,19,19,15]}

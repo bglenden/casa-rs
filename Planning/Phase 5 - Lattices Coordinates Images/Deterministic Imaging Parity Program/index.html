@@ -1,0 +1,1212 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Deterministic Imaging Parity Program - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#deterministic-imaging-parity-program" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Deterministic Imaging Parity Program
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#program-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Program Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#canonical-proof-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical Proof Boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ownership-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership Contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waves
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Waves">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#wave-0-program-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 0. Program Reset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-1-truth-harness-and-frozen-oracles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 1. Truth Harness and Frozen Oracles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-2-geometric-preparation-seam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 2. Geometric Preparation Seam
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-3-spectral-preparation-seam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 3. Spectral Preparation Seam
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-4-upstream-dirty-plane-closure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 4. Upstream Dirty-Plane Closure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-5-writer-metadata-and-openability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 5. Writer Metadata and Openability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-6-standard-dirty-imaging-scalar-mfs-natural" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 6. Standard Dirty Imaging: Scalar MFS Natural
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-7-weighting-normalization-and-cube-dirty-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 7. Weighting, Normalization, and Cube Dirty Semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-8-imaging-throughput-and-cycle-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 8. Imaging Throughput and Cycle Time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-9-standard-major-cycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 9. Standard Major Cycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-10-standard-minor-cycles-and-restoration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 10. Standard Minor Cycles and Restoration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-11-standard-full-stokes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 11. Standard Full-Stokes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-12-existing-wproject-qualification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 12. Existing WProject Qualification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-13-recentering-and-faceting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 13. Recentering and Faceting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-14-mosaic-pb-aw-and-heterogeneous-arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 14. Mosaic, PB, AW, and Heterogeneous Arrays
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-15-wideband-continuum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 15. Wideband Continuum
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-16-completion-matrix-and-stop-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 16. Completion Matrix and Stop Condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#canonical-test-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical Test Strategy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#defaults-and-deferred-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defaults and Deferred Items
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="deterministic-imaging-parity-program">Deterministic Imaging Parity Program<a class="headerlink" href="#deterministic-imaging-parity-program" title="Permanent link">&para;</a></h1>
+<p>This document is the single active implementation plan for CASA-compatible
+synthesis imaging in this repository.</p>
+<ul>
+<li>Numeric parity uses CASA/casacore imaging behavior as the truth oracle.</li>
+<li>Metadata, serialization, and <code>image.open()</code> parity use CASA/casacore image
+  table behavior as the truth oracle.</li>
+<li>Older imaging wave/checkpoint/backlog documents are historical context only.</li>
+<li>GitHub umbrella tracker: issue <code>#39</code>.</li>
+</ul>
+<h2 id="program-summary">Program Summary<a class="headerlink" href="#program-summary" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Replace opportunistic end-image debugging with stage-by-stage proof.</li>
+<li>Build and freeze seam-level oracle bundles before broadening feature work.</li>
+<li>Prefer reuse of already-proven kernels and same-input fixtures as anchors.</li>
+<li>Only replace code when doing so creates a necessary proof boundary or removes
+  an ownership ambiguity.</li>
+<li>Execute work wave-by-wave. The wave is the execution unit, not the
+  intermediate checkpoint.</li>
+<li>Once a wave starts, it must be carried through to that wave's closure
+  without stopping for intermediate status checks or user confirmation.</li>
+<li>Wave closure includes implementation, verification against the wave gates,
+  and the end-of-wave code-review/fix pass.</li>
+<li>Stop and take stock only at wave boundaries, or earlier if a real blocker,
+  ambiguity, or tradeoff appears that needs explicit discussion.</li>
+</ul>
+<h2 id="current-status">Current Status<a class="headerlink" href="#current-status" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Wave 0 is complete.</li>
+<li>Wave 1 is complete on the prepare-seam frozen-oracle substrate:
+  Rust bundle schema, pinned provenance metadata, deterministic artifact
+  hashing, and frozen source-backed prepare bundles for the canonical Wave 1
+  dataset set are now in place under the Wave 1 freezer workflow.</li>
+<li>Wave 2 is complete:
+  the geometric preparation seam is now explicit, <code>PreparedGeometryTraceBundle</code>
+  is emitted from stable row selection, raw-MS UVW reprojection follows the
+  casacore <code>UVWMachine</code> path rather than the old approximation, and the Wave 2
+  gate tuples are green against CASA <code>fixvis</code> on both <code>ngc5921.ms</code> and
+  <code>n2403.short.ms</code>.</li>
+<li>Wave 3 is complete:
+  the spectral preparation seam now emits source-backed frame conversion,
+  channel contribution, interpolation, and weight-source artifacts, and the
+  Wave 3 gate tuples are green against CASA on <code>refim_point_withline.ms</code>
+  <code>specmode='cube'</code>, <code>refim_Cband.G37line.ms</code> <code>specmode='cube'
+  outframe='LSRK'</code>, and <code>refim_Cband.G37line.ms</code> <code>specmode='cubedata'</code>.</li>
+<li>Wave 4 is complete:
+  <code>refim_point_withline.ms</code> source-backed dirty products are pinned green on
+  the focused cube window, and the first ALMA mosaic dirty mismatch is reduced
+  to the exact source-backed repro in
+  <a href="https://github.com/bglenden/casa-rs/issues/43">#43</a> for Wave 13 ownership.</li>
+<li>Wave 5 is complete:
+  Rust-written clean products now reopen in CASA/casacore again after fixing
+  legacy <code>StokesCoordinate</code> image-table serialization, and representative
+  header/openability parity is green on the pinned <code>ngc5921.ms</code> clean gate.</li>
+<li>Wave 6 is complete:
+  the standard scalar MFS natural dirty path is now qualified on the rebuilt
+  seams for both <code>ngc5921.ms</code> and <code>M51.ms</code>, with header parity, sample-pixel
+  parity, and image-scale residual/PSF checks green against CASA.</li>
+<li>Wave 7 is complete:
+  the dedicated weighting and normalization seam is now explicit via
+  <code>WeightingDiagnostics</code>, the planned <code>ngc5921.ms</code>, <code>M51.ms</code>,
+  <code>refim_point_withline.ms</code>, and <code>refim_Cband.G37line.ms</code> weighting / dirty
+  gates are green, and the earlier <code>.sumwt</code> drift was traced to a parity
+  harness SPW-selection bug rather than the imaging core.
+  An additional <code>cubedata</code> Briggs stress case remains open in
+  <a href="https://github.com/bglenden/casa-rs/issues/45">#45</a>, but it is outside the
+  pinned Wave 7 gate list and is now tracked explicitly.</li>
+<li>Wave 8 is complete:
+  the benchmark harness now reproduces both pinned cube gates through
+  <code>scripts/bench-imager-vs-casa.sh</code>, including explicit cube interpolation and
+  <code>nsigma</code>, Rust stage reporting now includes weighting alongside preparation,
+  residual refresh, and product-writing timings, and the active gates are fast
+  enough to resume correctness work.
+  On the same workstation with <code>BENCH_REPEATS=1</code>:
+  <code>refim_point_withline.ms</code> (<code>specmode=cube</code>, <code>deconvolver=hogbom</code>,
+  <code>nsigma=10</code>) measures <code>14.88 s</code> in Rust vs <code>16.56 s</code> in CASA, and
+  <code>refim_Cband.G37line.ms</code> dirty cube measures <code>4.24 s</code> in Rust vs <code>1.88 s</code>
+  in CASA. Both are well inside the Wave 8 <code>&lt;= 3 min</code> and <code>&lt;= 2.5x CASA</code>
+  gate, and issue <a href="https://github.com/bglenden/casa-rs/issues/47">#47</a> is
+  closed.</li>
+<li>Wave 9 is complete:
+  standard major-cycle prediction, per-visibility residual/prediction seams,
+  residual refresh, and major-cycle orchestration are requalified on the
+  pinned <code>refim_point_withline.ms</code> cube Hogbom <code>nsigma</code> gate. The late-block
+  stop mismatch is closed, issue
+  <a href="https://github.com/bglenden/casa-rs/issues/44">#44</a> is resolved, and the
+  remaining intentional divergence from CASA is the documented Hogbom
+  off-by-one bug noted in
+  <a href="../../../CASA%20%28C%2B%2B%29%20bugs/">docs/CASA (C++) bugs.md</a>, which casa-rs
+  does not reproduce.</li>
+<li>Wave 10 is complete:
+  standard minor-cycle and restoration parity is now green on the pinned
+  Clark, multiscale, and common-beam gates. The harness now drives CASA with
+  the same cycle controls and <code>smallscalebias</code> as Rust, the final exact
+  residual refresh is guaranteed before returning from a CLEAN run, and the
+  planned standard-imaging gates are green on <code>sim_data_VLA_jet.ms</code>,
+  <code>ngc5921.ms</code>, <code>M51.ms</code>, <code>n2403.short.ms</code>, and
+  <code>refim_point.ms</code> common-beam restoration. The remaining follow-up is a
+  performance/implementation audit of the structured-model FFT residual-refresh
+  predictor, tracked in
+  <a href="https://github.com/bglenden/casa-rs/issues/48">#48</a>, but Wave 10
+  correctness itself is closed.</li>
+<li>Wave 11 is complete:
+  scalar full-Stokes plane selection now supports <code>I</code>, <code>Q</code>, <code>U</code>, and <code>V</code>
+  directly on top of the standard imaging path, with the frontend deriving the
+  requested plane from the correct linear-basis (<code>XX/XY/YX/YY</code>) or
+  circular-basis (<code>RR/RL/LR/LL</code>) correlation pairs. The reported polarized
+  <code>.sumwt</code> semantics now match CASA without perturbing the already-proven dirty
+  and CLEAN normalization path. The planned local gates are green on
+  <code>refim_point_linXY.ms</code> dirty, <code>polcal_CIRCULAR_BASIS.ms</code> dirty, and
+  <code>refim_point_stokes.ms</code> Hogbom CLEAN. <code>polcal_LINEAR_BASIS.ms</code> remains part
+  of the canonical Wave 11 matrix, but that dataset is not currently present in
+  the mounted local test-data tree.</li>
+<li>Wave 12 is complete:
+  the existing <code>wproject</code> implementation is now qualified against CASA on the
+  pinned <code>refim_point_wterm_vlad.ms</code> and <code>n2403.short.ms</code> gates, with explicit
+  <code>WProjectTraceBundle</code> artifacts for plane/support/sample planning and CASA's
+  conjugation / fixed-plane fallback behavior mirrored in Rust.</li>
+<li>Wave 13 is complete:
+  recentering and faceting parity is green on <code>refim_mawproject.ms</code>,
+  <code>refim_mawproject_offcenter.ms</code>, and <code>refim_mawproject_twopointings.ms</code>
+  after aligning Rust's UVW reprojection sign handling with CASA's
+  UVWMachine/MS convention.</li>
+<li>Wave 14 is complete:
+  dirty mosaic parity is green on the pinned <code>refim_alma_mosaic.ms</code>,
+  <code>papersky_mosaic.ms</code>, and <code>refim_oneshiftpoint.mosaic.ms</code> gates. Rust now
+  applies source-backed common-PB defaults for the current corpus and matches
+  CASA's non-normalized sensitivity division during mosaic dirty/PSF
+  normalization.</li>
+<li>Wave 15 is complete:
+  the <code>nterms=1</code> half remains green on
+  <code>vla_wideband_2ptg_w_squint.ms field=0</code>, and true CASA-style <code>mtmfs</code> with
+  <code>nterms=2</code> is now pinned green on the accessible local wideband gate
+  <code>ref_vlass_wtsp_creation.ms field=0 spw=0 specmode=mfs gridder=standard
+  weighting=natural</code>. Rust now exposes a real MTMFS request surface, writes
+  <code>.tt*</code>, <code>.alpha</code>, and <code>.alpha.error</code> products, and mirrors CASA's
+  principal-solution restore path when assembling restored Taylor-term images.</li>
+</ul>
+<h2 id="canonical-proof-boundaries">Canonical Proof Boundaries<a class="headerlink" href="#canonical-proof-boundaries" title="Permanent link">&para;</a></h2>
+<ol>
+<li><code>SelectedRows</code></li>
+<li><code>PreparedVisibilityBlock</code></li>
+<li><code>WeightedVisibilityBlock</code></li>
+<li><code>GridPlan/CFPlan</code></li>
+<li><code>DirtyProducts</code></li>
+<li><code>NormalizationState</code></li>
+<li><code>MinorCycleInput</code></li>
+<li><code>MinorCycleOutput</code></li>
+<li><code>RestoredProducts</code></li>
+<li><code>ProductTableBundle</code></li>
+</ol>
+<h2 id="ownership-contract">Ownership Contract<a class="headerlink" href="#ownership-contract" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>casa-ms</code> owns row selection, field/pointing identity, phase-center
+  resolution, UVW reprojection, per-row phasors, spectral/frame conversion,
+  channel contribution maps, correlation mapping, flags, multiplicity, base
+  weights, and <code>sumwt_factor</code>.</li>
+<li><code>casa-imaging</code> owns geometry-dependent weighting, grid planning, CF planning,
+  derivative engines, normalization, major-cycle orchestration, minor-cycle
+  solvers, restoration, and product assembly.</li>
+<li><code>casars-imager</code> owns orchestration, staged dataset copies, run manifests,
+  oracle-harness entrypoints, and product writing coordination.</li>
+</ul>
+<h2 id="waves">Waves<a class="headerlink" href="#waves" title="Permanent link">&para;</a></h2>
+<h3 id="wave-0-program-reset">Wave 0. Program Reset<a class="headerlink" href="#wave-0-program-reset" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Audit existing imaging wave/checkpoint/backlog docs.</li>
+<li>Move still-in-scope items into this program or the effect matrix.</li>
+<li>Move out-of-scope but still relevant items into GitHub issues.</li>
+<li>Mark prior imaging planning docs as superseded archival context.</li>
+<li>Record the freeze rule: only seam-building, oracle-building, and fixes
+  expressed through new seams may land before their wave opens.</li>
+</ul>
+<h3 id="wave-1-truth-harness-and-frozen-oracles">Wave 1. Truth Harness and Frozen Oracles<a class="headerlink" href="#wave-1-truth-harness-and-frozen-oracles" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Implement the oracle harness and artifact schema.</li>
+<li>Emit frozen bundles for selected rows, prepared visibilities, weighting
+  artifacts, grid plans, dirty/PSF/residual/model/image products,
+  normalization outputs, and writer header dumps.</li>
+<li>Pin tolerance classes and dataset tiers.</li>
+</ul>
+<h3 id="wave-2-geometric-preparation-seam">Wave 2. Geometric Preparation Seam<a class="headerlink" href="#wave-2-geometric-preparation-seam" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Rebuild row selection, field resolution, phase-center choice, UVW
+  reprojection, per-row phasors, and correlation mapping into the prepared
+  visibility seam.</li>
+<li>Preserve row-native field and pointing identity instead of collapsing the
+  world to one global phase-center abstraction.</li>
+</ul>
+<h3 id="wave-3-spectral-preparation-seam">Wave 3. Spectral Preparation Seam<a class="headerlink" href="#wave-3-spectral-preparation-seam" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Rebuild frame conversion, channel contribution maps, interpolation
+  coefficients, <code>WEIGHT_SPECTRUM</code> vs <code>WEIGHT</code> behavior, and cube/cubedata
+  channel semantics.</li>
+</ul>
+<h3 id="wave-4-upstream-dirty-plane-closure">Wave 4. Upstream Dirty-Plane Closure<a class="headerlink" href="#wave-4-upstream-dirty-plane-closure" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Use the new preparation seams to close known upstream discrepancies before
+  touching solver behavior.</li>
+<li>The parked <code>refim_point_withline.ms</code> <code>409 vs 407</code> gap is owned here because
+  current evidence already points to prepared-sample / dirty-plane drift.</li>
+</ul>
+<h3 id="wave-5-writer-metadata-and-openability">Wave 5. Writer Metadata and Openability<a class="headerlink" href="#wave-5-writer-metadata-and-openability" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Isolate the minimal writer layer and close coordinate/header/openability
+  parity independent of later numeric product expansion.</li>
+</ul>
+<h3 id="wave-6-standard-dirty-imaging-scalar-mfs-natural">Wave 6. Standard Dirty Imaging: Scalar MFS Natural<a class="headerlink" href="#wave-6-standard-dirty-imaging-scalar-mfs-natural" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Qualify the standard dirty path on top of the new seams with the smallest
+  numeric surface first.</li>
+</ul>
+<h3 id="wave-7-weighting-normalization-and-cube-dirty-semantics">Wave 7. Weighting, Normalization, and Cube Dirty Semantics<a class="headerlink" href="#wave-7-weighting-normalization-and-cube-dirty-semantics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add the dedicated weighting seam and fully define CASA truth for natural,
+  uniform, and Briggs weighting, taper, normalization denominators,
+  <code>normalization_sumwt</code>, and <code>reported_sumwt</code>.</li>
+<li>Extend the standard dirty path to <code>cube</code> and <code>cubedata</code>.</li>
+</ul>
+<h3 id="wave-8-imaging-throughput-and-cycle-time">Wave 8. Imaging Throughput and Cycle Time<a class="headerlink" href="#wave-8-imaging-throughput-and-cycle-time" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Pause downstream correctness waves until the active parity gates are fast
+  enough to support iterative development.</li>
+<li>Pin Rust-vs-CASA timing baselines for:</li>
+<li><code>refim_point_withline.ms field=0 specmode=cube deconvolver=hogbom nsigma=10</code></li>
+<li>one dirty-only cube gate on a pinned real dataset</li>
+<li>Add explicit progress/timing reporting for:</li>
+<li>preparation</li>
+<li>weighting</li>
+<li>residual refresh / prediction</li>
+<li><code>nsigma</code> thresholding</li>
+<li>product writing</li>
+<li>Remove repeated work in the active hotspots:</li>
+<li>cube spectral preparation / per-row channel assignment</li>
+<li>repeated MADFM-based <code>nsigma</code> estimation</li>
+<li>cube major-cycle residual refresh / prediction overhead</li>
+<li>Gate:</li>
+<li>the pinned <code>refim_point_withline.ms</code> cube Hogbom <code>nsigma</code> release gate
+    completes in at most <code>3 min</code> wall time and no worse than <code>2.5x</code> the timed
+    CASA baseline on the same workstation</li>
+<li>long-running parity gates expose named stage/progress counters instead of
+    behaving as opaque black boxes</li>
+</ul>
+<h3 id="wave-9-standard-major-cycle">Wave 9. Standard Major Cycle<a class="headerlink" href="#wave-9-standard-major-cycle" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Requalify model prediction, per-visibility prediction/residual seams,
+  residual refresh, and major-cycle orchestration.</li>
+</ul>
+<h3 id="wave-10-standard-minor-cycles-and-restoration">Wave 10. Standard Minor Cycles and Restoration<a class="headerlink" href="#wave-10-standard-minor-cycles-and-restoration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Requalify Hogbom, Clark, multiscale, restoring beams, common-beam logic,
+  <code>.model</code>, <code>.image</code>, and final writer outputs for standard imaging.</li>
+</ul>
+<h3 id="wave-11-standard-full-stokes">Wave 11. Standard Full-Stokes<a class="headerlink" href="#wave-11-standard-full-stokes" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Pull standard full-Stokes forward rather than blocking it behind
+  widefield/mosaic work.</li>
+</ul>
+<h3 id="wave-12-existing-wproject-qualification">Wave 12. Existing WProject Qualification<a class="headerlink" href="#wave-12-existing-wproject-qualification" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Treat the current convolutional <code>WProject</code> implementation as an existing
+  asset to instrument and qualify.</li>
+<li>Split <code>GridPlan/CFPlan</code> cleanly out of the current mixed
+  <code>prepare_w_project_data()</code> seam.</li>
+<li>Status: green on the pinned wave gates. The seam now emits explicit
+  <code>WProjectDiagnostics</code> / <code>WProjectTraceBundle</code> artifacts, the auto-plane
+  scaler matches CASA's fixed-plane fallback, and kernel conjugation now
+  follows CASA's <code>wprojgrid.f</code> sign convention (<code>uvw(3) &gt; 0</code> uses the
+  conjugated kernel).</li>
+</ul>
+<h3 id="wave-13-recentering-and-faceting">Wave 13. Recentering and Faceting<a class="headerlink" href="#wave-13-recentering-and-faceting" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add recentering and facet infrastructure only after the existing <code>wproject</code>
+  path is qualified at its current seam boundaries.</li>
+<li>Status: green on the pinned recentering gates. Explicit <code>--phasecenter</code>
+  support now propagates through the prepare and <code>wproject</code> parity paths, and
+  the UVW reprojection seam now matches CASA's <code>UVWMachine</code> sign convention
+  for <code>(u, v)</code> when computing rotated UVW coordinates and per-row phase shifts.</li>
+</ul>
+<h3 id="wave-14-mosaic-pb-aw-and-heterogeneous-arrays">Wave 14. Mosaic, PB, AW, and Heterogeneous Arrays<a class="headerlink" href="#wave-14-mosaic-pb-aw-and-heterogeneous-arrays" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Close the current extended multi-field gap in ordered steps:</li>
+<li>mosaic pointing and PB basics</li>
+<li>PB-aware normalization</li>
+<li>AW-style CF planning using precomputed CF caches first</li>
+<li>heterogeneous arrays and PB-aware restoration/common-beam semantics</li>
+<li>Status: green on the pinned dirty-mosaic/PB gates
+  (<code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic.ms</code>,
+  <code>refim_oneshiftpoint.mosaic.ms</code>). The closing parity fix was to mirror
+  CASA's mosaic normalization semantics by dividing the dirty image and PSF by
+  the non-normalized sensitivity image rather than by a <code>sqrt(PB)</code> surrogate.
+  The Rust path now also infers telescope-specific common-PB defaults for the
+  current gate set (ALMA/ACA effective Airy apertures and the EVLA L-band
+  common polynomial model) before building the mosaic projector.</li>
+</ul>
+<h3 id="wave-15-wideband-continuum">Wave 15. Wideband Continuum<a class="headerlink" href="#wave-15-wideband-continuum" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>nterms=1</code> continuity is now pinned green on
+  <code>vla_wideband_2ptg_w_squint.ms field=0</code>:
+  dirty products match CASA through the existing single-term MFS path, and a
+  restored-product gate is green with the already-qualified Clark solver.</li>
+<li>True CASA-style <code>mtmfs</code> with <code>nterms=2</code> is now pinned green on
+  <code>ref_vlass_wtsp_creation.ms field=0 spw=0 specmode=mfs gridder=standard
+  weighting=natural</code>:
+  dirty <code>.psf.tt*</code>, <code>.residual.tt*</code>, and <code>.sumwt.tt*</code> products track CASA, and
+  the one-iteration clean gate is green on <code>.model.tt*</code>, <code>.image.tt*</code>,
+  <code>.residual.tt*</code>, <code>.alpha</code>, and <code>.alpha.error</code>.</li>
+<li>The closing restore bug was CASA's principal-solution residual transform:
+  restored MTMFS images and spectral-index products must use the inverse-Hessian
+  transformed residual Taylor terms, while the emitted <code>.residual.tt*</code> products
+  remain the raw residual terms.</li>
+</ul>
+<h3 id="wave-16-completion-matrix-and-stop-condition">Wave 16. Completion Matrix and Stop Condition<a class="headerlink" href="#wave-16-completion-matrix-and-stop-condition" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Replace checkpoint prose with a supported-mode matrix listing the exact
+  dataset/parameter tuple, stage artifacts, truth domain, owner, and pass
+  status for every required row.</li>
+<li>Reopen new imaging feature work only after all required rows are green.</li>
+<li>Wave 16 closeout now includes a final local performance recheck to ensure the
+  late-wave feature work did not regress the earlier Wave 8 throughput gate.
+  On the current workstation:
+  <code>ngc5921.ms field=0 spw=0 specmode=mfs gridder=standard weighting=natural
+  niter=0</code> reran at <code>0.220 s</code> median in Rust vs <code>0.173 s</code> in CASA
+  (<code>1.27x CASA</code>), and the new Wave 15 MTMFS tuple
+  <code>ref_vlass_wtsp_creation.ms field=0 spw=0 specmode=mfs
+  deconvolver=mtmfs nterms=2 niter=1</code> measured <code>3.36 s</code> median in Rust vs
+  <code>2.90 s</code> in CASA (<code>1.16x CASA</code>). Both remain comfortably inside the active
+  <code>&lt;= 2.5x CASA</code> target.</li>
+</ul>
+<h2 id="canonical-test-strategy">Canonical Test Strategy<a class="headerlink" href="#canonical-test-strategy" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Every wave uses the same proof order:</li>
+<li>synthetic same-input oracle</li>
+<li>source-backed seam-trace oracle</li>
+<li>end-product oracle</li>
+<li>A wave is the mutually agreed execution unit. The implementation default is
+  to finish the entire wave, including its verification gates and
+  code-review/fix pass, before pausing for user confirmation.</li>
+<li>Mid-wave progress updates are informational only. They do not imply a pause
+  point or request permission to continue unless an explicit blocker is raised.</li>
+<li><code>ImagingTraceBundle</code> artifacts are persisted whenever applicable:</li>
+<li>selected row ids/order</li>
+<li>post-prepare visibilities</li>
+<li>post-reprojection UVW</li>
+<li>phase-center metadata</li>
+<li>per-row phasors</li>
+<li>spectral source-channel indices and interpolation coefficients</li>
+<li><code>WEIGHT_SPECTRUM</code> vs <code>WEIGHT</code> source choice</li>
+<li>base weights</li>
+<li>multiplicity</li>
+<li><code>sumwt_factor</code></li>
+<li>per-sample weighting outputs</li>
+<li>grid plans / CF plans</li>
+<li>WProject/AW kernel artifacts</li>
+<li>gridded UV plane</li>
+<li>FFT plane</li>
+<li>pre/post-normalization PSF and dirty planes</li>
+<li>predicted visibilities</li>
+<li>residual visibilities</li>
+<li>writer header dumps</li>
+<li>Each wave closes with a code-review pass over every change created during
+  that wave. Findings that affect correctness, proof-boundary stability, or
+  oracle reproducibility must be fixed before the wave can close; anything not
+  fixed must move into a GitHub issue owned by a later wave.</li>
+</ul>
+<h2 id="defaults-and-deferred-items">Defaults and Deferred Items<a class="headerlink" href="#defaults-and-deferred-items" title="Permanent link">&para;</a></h2>
+<ul>
+<li>CASA/casacore remains the only behavioral truth oracle.</li>
+<li>LibRA is an architectural/process reference only.</li>
+<li>Standard full-Stokes is in scope.</li>
+<li>Widefield/mosaic full-Stokes with DD Mueller-aware polarization correction is
+  deferred to issue <code>#40</code>.</li>
+<li>Precomputed CF caches are in scope; full CF generation from antenna models
+  is deferred unless a required dataset proves it necessary; see issue <code>#40</code>.</li>
+<li>GPU/distributed execution remains outside this program; see issue <code>#40</code>.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

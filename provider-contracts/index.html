@@ -1,0 +1,1000 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Provider Contracts and Schema Bundles - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#provider-contracts-and-schema-bundles" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Provider Contracts and Schema Bundles
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Surface Kinds
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Surface Kinds">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task Surfaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Surfaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#object-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Object Surfaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bundle-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bundle Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#-json-schema-and-ui-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --json-schema and --ui-schema
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shared-versioned-component-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared Versioned Component Schemas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#projection-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Projection Rules
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Projection Rules">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#casars-tui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casars TUI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#native-gui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native GUI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-repo-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Repo Mapping
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Guidance
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="provider-contracts-and-schema-bundles">Provider Contracts and Schema Bundles<a class="headerlink" href="#provider-contracts-and-schema-bundles" title="Permanent link">&para;</a></h1>
+<p>This document defines the contract model between functionality providers and
+consumers such as:</p>
+<ul>
+<li><code>casars</code> TUI</li>
+<li>future native GUI applications</li>
+<li>Python bindings</li>
+<li>MCP servers</li>
+<li>standalone task binaries</li>
+</ul>
+<p>The goal is to keep one source of truth for each provider surface while still
+allowing different transports and different UI capabilities.</p>
+<h2 id="core-rule">Core Rule<a class="headerlink" href="#core-rule" title="Permanent link">&para;</a></h2>
+<p>The canonical boundary contract is a versioned JSON schema bundle.</p>
+<ul>
+<li>Providers own a semantic contract expressed as JSON request/result,
+  command/response, or object/method/property schemas.</li>
+<li>Rust types implement that contract inside the provider.</li>
+<li>Generated schema artifacts publish that contract to UIs, Python parity checks,
+  MCP projections, and test fixtures.</li>
+<li>Presentation hints belong in the same schema bundle as annotations. They do
+  not replace the semantic contract.</li>
+</ul>
+<p>The source of truth is therefore not:</p>
+<ul>
+<li>raw CLI flags</li>
+<li>an app-local TUI form schema</li>
+<li>hand-maintained Python wrappers</li>
+</ul>
+<p>It is the provider schema bundle.</p>
+<h2 id="surface-kinds">Surface Kinds<a class="headerlink" href="#surface-kinds" title="Permanent link">&para;</a></h2>
+<p>Not every provider surface should look like a standalone executable task. The
+repo supports three primary surface kinds.</p>
+<h3 id="task-surfaces">Task Surfaces<a class="headerlink" href="#task-surfaces" title="Permanent link">&para;</a></h3>
+<p>Task surfaces are one-shot operations with a request and a result.</p>
+<p>Examples:</p>
+<ul>
+<li><code>calibrate</code></li>
+<li><code>casars-imager</code></li>
+</ul>
+<p>Recommended machine-facing shape:</p>
+<ul>
+<li><code>--protocol-info</code></li>
+<li><code>--json-schema</code></li>
+<li><code>--json-run &lt;SOURCE&gt;</code></li>
+</ul>
+<p>The protocol is request/result oriented. CLI flags, TUI forms, native GUI forms,
+and Python wrappers are projections of the same task contract.</p>
+<h3 id="session-surfaces">Session Surfaces<a class="headerlink" href="#session-surfaces" title="Permanent link">&para;</a></h3>
+<p>Session surfaces are stateful command streams with request/response envelopes.</p>
+<p>Examples:</p>
+<ul>
+<li><code>tablebrowser --session</code></li>
+<li><code>imexplore --session</code></li>
+</ul>
+<p>These are appropriate when the backend owns interactive state such as:</p>
+<ul>
+<li>current open root</li>
+<li>selection and scroll position</li>
+<li>viewport-dependent snapshots</li>
+<li>prefetch or cache state</li>
+</ul>
+<p>Recommended machine-facing shape:</p>
+<ul>
+<li><code>--protocol-info</code></li>
+<li><code>--json-schema</code></li>
+<li>a stateful transport such as <code>--session</code> over JSON Lines</li>
+</ul>
+<p>The contract is a versioned command/event/state protocol, not a one-shot task
+request/result pair.</p>
+<h3 id="object-surfaces">Object Surfaces<a class="headerlink" href="#object-surfaces" title="Permanent link">&para;</a></h3>
+<p>Object surfaces expose stateful handles with constructors, properties, methods,
+and lifecycle operations.</p>
+<p>Examples:</p>
+<ul>
+<li><code>casars.data.Image</code></li>
+<li><code>casars.data.Table</code></li>
+</ul>
+<p>These are appropriate for persistent data access APIs that should be used
+in-process from Rust or Python, and remotely through a stateful bridge such as
+MCP. They should not be forced into the task-binary model if there is no real
+CLI or TUI use case.</p>
+<p>Recommended machine-facing shape:</p>
+<ul>
+<li>a versioned schema bundle describing constructors, properties, methods, and
+  common value types</li>
+<li>no standalone executable required</li>
+<li>handle-based MCP projection for remote access</li>
+</ul>
+<p>For object surfaces, the Python binding is normally direct and in-process, while
+the MCP projection is stateful and handle-based.</p>
+<h2 id="bundle-shape">Bundle Shape<a class="headerlink" href="#bundle-shape" title="Permanent link">&para;</a></h2>
+<p>Each provider surface should expose one canonical schema bundle. The bundle
+should contain at least:</p>
+<ol>
+<li><code>protocol</code></li>
+<li>protocol name</li>
+<li>protocol version</li>
+<li>surface kind: <code>task</code>, <code>session</code>, or <code>object</code></li>
+<li>semantic contract</li>
+<li>tasks: operations with request/result schemas</li>
+<li>sessions: commands, responses, events, and state snapshots</li>
+<li>objects: constructors, properties, methods, lifecycle operations</li>
+<li>shared component schemas</li>
+<li>reusable logical value definitions referenced across operations</li>
+<li>annotations</li>
+<li>labels, descriptions, ordering, groupings, widget hints, examples,
+     advanced/basic flags, units, and other presentation metadata</li>
+<li>projection metadata where needed</li>
+<li>CLI flag names</li>
+<li>TUI/native GUI rendering hints</li>
+<li>MCP tool naming or handle semantics</li>
+</ol>
+<p>The semantic layer is authoritative. Annotations and projections may add
+presentation or mapping metadata, but they must not change semantic meaning.</p>
+<h2 id="-json-schema-and-ui-schema"><code>--json-schema</code> and <code>--ui-schema</code><a class="headerlink" href="#-json-schema-and-ui-schema" title="Permanent link">&para;</a></h2>
+<p>For new work, <code>--json-schema</code> should emit the canonical schema bundle.</p>
+<p>If <code>--ui-schema</code> exists, it should be treated as:</p>
+<ul>
+<li>a derived compatibility view of the canonical schema bundle, or</li>
+<li>a legacy alias retained for current launcher integration</li>
+</ul>
+<p><code>--ui-schema</code> must not become a separate source of truth. If a field, enum, or
+operation exists for UI use, it should exist in the canonical schema bundle
+first and then be projected into the UI-specific view.</p>
+<h2 id="shared-versioned-component-schemas">Shared Versioned Component Schemas<a class="headerlink" href="#shared-versioned-component-schemas" title="Permanent link">&para;</a></h2>
+<p>Yes: the architecture should include versioned underlying shared schemas for
+protocol-independent basic types.</p>
+<p>These shared components should be reused across task, session, and object
+surfaces rather than redefined per app. Candidate shared component families
+include:</p>
+<ul>
+<li>scalar values</li>
+<li>bool</li>
+<li>integer and floating-point values</li>
+<li>complex values</li>
+<li>strings</li>
+<li>array values</li>
+<li>dtype / primitive type</li>
+<li>shape</li>
+<li>axis-order semantics</li>
+<li>fixed-shape and variable-shape array forms</li>
+<li>record values</li>
+<li>named fields with nested values</li>
+<li>keyword maps</li>
+<li>table keywords</li>
+<li>column keywords</li>
+<li>image misc/info-like nested metadata maps</li>
+<li>error envelopes</li>
+<li>stable error code</li>
+<li>message</li>
+<li>optional structured details</li>
+<li>file/path references</li>
+<li>file path</li>
+<li>directory path</li>
+<li>path role hints for pickers or validation</li>
+<li>viewport / region / selection references where relevant to session surfaces</li>
+</ul>
+<p>These shared schemas should be versioned explicitly. A practical model is:</p>
+<ul>
+<li>a versioned family name for the logical type set</li>
+<li>stable <code>$defs</code> / component identifiers within that family</li>
+<li>additive extension within a compatible protocol version</li>
+<li>explicit protocol-version bumps for breaking shape changes</li>
+</ul>
+<p>The logical schema should describe semantics, not commit every consumer to the
+same transport encoding. For example:</p>
+<ul>
+<li>Python can map image planes directly to NumPy arrays in-process.</li>
+<li>MCP can project the same logical array type as a structured payload plus a
+  transport-specific binary or JSON representation.</li>
+</ul>
+<h2 id="projection-rules">Projection Rules<a class="headerlink" href="#projection-rules" title="Permanent link">&para;</a></h2>
+<p>All consumers should project from the same canonical schema bundle.</p>
+<h3 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h3>
+<p>CLI parsing is a projection from the semantic contract plus CLI annotation
+metadata such as flag names and positional rules.</p>
+<p>CLI flags are not the source of truth.</p>
+<h3 id="casars-tui"><code>casars</code> TUI<a class="headerlink" href="#casars-tui" title="Permanent link">&para;</a></h3>
+<p>The TUI projects forms, panes, and result rendering from the same schema bundle
+plus TUI-specific annotations. It should not require app-local parallel schemas
+that drift from the provider contract.</p>
+<h3 id="native-gui">Native GUI<a class="headerlink" href="#native-gui" title="Permanent link">&para;</a></h3>
+<p>A future native macOS GUI should read the same semantic schema bundle and use
+the annotations as hints, not strict layout instructions. Keep hints coarse:</p>
+<ul>
+<li>section ordering</li>
+<li>basic vs advanced</li>
+<li>picker hints</li>
+<li>enum display labels</li>
+<li>units and ranges</li>
+</ul>
+<p>Do not freeze app-specific pixel layouts into the provider schema.</p>
+<h3 id="python">Python<a class="headerlink" href="#python" title="Permanent link">&para;</a></h3>
+<p>Python should remain ergonomic and typed, but its wrappers and docs should be
+checked against the canonical schema bundle so signatures and enums cannot drift.</p>
+<p>For task surfaces, Python can invoke a task binary or other provider transport.
+For object surfaces, Python can bind directly in-process.</p>
+<h3 id="mcp">MCP<a class="headerlink" href="#mcp" title="Permanent link">&para;</a></h3>
+<p>MCP should also project from the same schema bundle.</p>
+<ul>
+<li>task surfaces map naturally to MCP tools</li>
+<li>session surfaces map to stateful command/event protocols</li>
+<li>object surfaces map to handle-based services such as <code>image_open</code>,
+  <code>image_get_slice</code>, <code>image_put_slice</code>, and <code>image_close</code></li>
+</ul>
+<p>Object surfaces should remain stateful over MCP. They should not be forced into
+fake-stateless request patterns that reopen files and discard backend state on
+every call.</p>
+<h2 id="current-repo-mapping">Current Repo Mapping<a class="headerlink" href="#current-repo-mapping" title="Permanent link">&para;</a></h2>
+<p>This is the intended classification for current and near-term surfaces.</p>
+<ul>
+<li><code>calibrate</code>: task surface</li>
+<li><code>casars-imager</code>: task surface</li>
+<li><code>tablebrowser</code>: session surface</li>
+<li><code>imexplore</code>: session surface</li>
+<li><code>casars.data.Image</code>: object surface</li>
+<li><code>casars.data.Table</code>: object surface</li>
+</ul>
+<p><code>msexplore</code> needs an explicit decision. It should be treated as either:</p>
+<ul>
+<li>a task surface with one-shot plot/export operations, or</li>
+<li>a session surface if the backend owns durable interactive exploration state</li>
+</ul>
+<p>It should not remain indefinitely as only a launcher-oriented <code>--ui-schema</code>
+producer without a clearly identified canonical provider contract.</p>
+<h2 id="implementation-guidance">Implementation Guidance<a class="headerlink" href="#implementation-guidance" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Define typed Rust structs and enums that serialize exactly to the canonical
+  schema bundle shapes.</li>
+<li>Generate schema output from those types rather than hand-maintaining schema
+  JSON.</li>
+<li>Keep presentation hints in the schema bundle as annotations.</li>
+<li>Keep protocol names and protocol versions explicit and machine-checkable.</li>
+<li>Add CI parity tests so wrappers, docs, and projections cannot drift from the
+  canonical schema bundle.</li>
+</ul>
+<p>This preserves one source of truth while still supporting:</p>
+<ul>
+<li>direct Rust APIs</li>
+<li>Python bindings</li>
+<li><code>casars</code> TUI</li>
+<li>future native GUIs</li>
+<li>MCP servers</li>
+<li>standalone binaries where they make sense</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

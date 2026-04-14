@@ -1,0 +1,809 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Imaging Effect Matrix - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imaging-effect-matrix" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Imaging Effect Matrix
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dataset-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset Tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imaging-effect-matrix">Imaging Effect Matrix<a class="headerlink" href="#imaging-effect-matrix" title="Permanent link">&para;</a></h1>
+<p>This matrix is the canonical inventory of required imaging effects for the
+deterministic parity program.</p>
+<ul>
+<li>Source of truth for backlog/status remains GitHub issues.</li>
+<li>This matrix is the local implementation contract: required vs deferred,
+  minimal proof seam, and the first gate tuple that must go green.</li>
+<li>Umbrella program tracker: issue <code>#39</code>.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Mode / Effect</th>
+<th>Required</th>
+<th>Truth Domain</th>
+<th>First Seam Gate</th>
+<th>First Gate Tuple</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Row selection identity and stable ordering</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>SelectedRows</code></td>
+<td><code>ngc5921.ms field=0 phasecenter=0 specmode=mfs gridder=standard weighting=natural niter=0</code></td>
+<td>Includes DDID/SPW/POL mapping</td>
+</tr>
+<tr>
+<td>Phase-center resolution and UVW reprojection</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>PreparedVisibilityBlock</code></td>
+<td><code>n2403.short.ms field=0,1 phasecenter=0 specmode=cube gridder=wproject wprojplanes=8 niter=0</code></td>
+<td>Preserve row-native field identity</td>
+</tr>
+<tr>
+<td>Per-row visibility phasors</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>PreparedVisibilityBlock</code></td>
+<td>same as above</td>
+<td>Must be proven before multi-field claims</td>
+</tr>
+<tr>
+<td>Spectral frame conversion and channel contributions</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>PreparedVisibilityBlock</code></td>
+<td><code>refim_point_withline.ms specmode=cube</code></td>
+<td>Explicit source-channel indices and interpolation coefficients</td>
+</tr>
+<tr>
+<td><code>WEIGHT_SPECTRUM</code> vs <code>WEIGHT</code> fallback</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>PreparedVisibilityBlock</code></td>
+<td><code>refim_point_withline.ms specmode=cube</code></td>
+<td>Weight source must be emitted explicitly</td>
+</tr>
+<tr>
+<td>Natural MFS dirty imaging</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>DirtyProducts</code></td>
+<td><code>ngc5921.ms</code> and <code>M51.ms</code> natural MFS dirty</td>
+<td>Wave 6 gate is green on both pinned datasets</td>
+</tr>
+<tr>
+<td>Uniform/Briggs/taper weighting</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>WeightedVisibilityBlock</code></td>
+<td><code>ngc5921.ms</code> natural/uniform/Briggs</td>
+<td>Wave 7 planned gates are green; the earlier <code>.sumwt</code> drift came from a parity harness SPW-selector bug, not the weighting seam</td>
+</tr>
+<tr>
+<td><code>normalization_sumwt</code> vs <code>reported_sumwt</code></td>
+<td>Yes</td>
+<td>CASA imaging + image tables</td>
+<td><code>NormalizationState</code></td>
+<td>same weighting gates</td>
+<td>Wave 7 now exposes these explicitly via <code>WeightingDiagnostics</code>; no unexplained ambiguity remains on the planned gate set</td>
+</tr>
+<tr>
+<td>Cube / cubedata dirty semantics</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>DirtyProducts</code></td>
+<td><code>refim_point_withline.ms</code>, <code>refim_Cband.G37line.ms</code></td>
+<td>Wave 7 planned cube gates are green; extra cubedata Briggs stress gap is tracked in <code>#45</code></td>
+</tr>
+<tr>
+<td>Imaging throughput / cycle time</td>
+<td>Yes</td>
+<td>pinned local timing baselines</td>
+<td>wave-level instrumentation</td>
+<td><code>refim_point_withline.ms field=0 specmode=cube deconvolver=hogbom nsigma=10</code></td>
+<td>Wave 8 remains green, and the Wave 16 recheck confirms no late regression on accessible local gates: <code>ngc5921.ms field=0 spw=0 specmode=mfs weighting=natural niter=0</code> reran at <code>0.220 s</code> Rust vs <code>0.173 s</code> CASA (<code>1.27x</code>), and <code>ref_vlass_wtsp_creation.ms field=0 spw=0 specmode=mfs deconvolver=mtmfs nterms=2 niter=1</code> reran at <code>3.36 s</code> Rust vs <code>2.90 s</code> CASA (<code>1.16x</code>).</td>
+</tr>
+<tr>
+<td>Major-cycle prediction and residual refresh</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>MinorCycleInput</code></td>
+<td>synthetic same-input fixtures + standard real datasets</td>
+<td>Wave 9 is green on the pinned <code>refim_point_withline.ms</code> cube Hogbom <code>nsigma</code> gate; late-block restart/refresh parity is now closed</td>
+</tr>
+<tr>
+<td>Hogbom / Clark / multiscale minor cycles</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>MinorCycleOutput</code></td>
+<td><code>refim_point_withline.ms</code>, <code>sim_data_VLA_jet.ms</code>, <code>M51.ms</code></td>
+<td>Wave 10 planned standard-imaging gates are green on <code>sim_data_VLA_jet.ms</code>, <code>ngc5921.ms</code>, <code>M51.ms</code>, <code>n2403.short.ms</code>, and <code>refim_point.ms</code> common-beam restoration. casa-rs intentionally does not reproduce CASA's documented Hogbom <code>niter</code> off-by-one bug; treat that as an upstream divergence, not a parity target. The remaining structured-model FFT residual-refresh predictor audit is tracked in <code>#48</code></td>
+</tr>
+<tr>
+<td>Writer coordinates / <code>image.open()</code> parity</td>
+<td>Yes</td>
+<td>CASA image tables</td>
+<td><code>ProductTableBundle</code></td>
+<td>representative <code>.psf</code>, <code>.residual</code>, <code>.image</code>, <code>.sumwt</code></td>
+<td>Wave 5 clean gate is green again on <code>ngc5921.ms</code>; the legacy Stokes coordinate save layout was the blocking interoperability bug</td>
+</tr>
+<tr>
+<td>Standard full-Stokes</td>
+<td>Yes</td>
+<td>CASA imaging + image tables</td>
+<td><code>PreparedVisibilityBlock</code> + <code>DirtyProducts</code> + <code>ProductTableBundle</code></td>
+<td><code>refim_point_linXY.ms</code>, <code>refim_point_stokes.ms</code>, <code>polcal_*</code></td>
+<td>Wave 11 is green on the available local gates: <code>refim_point_linXY.ms</code> dirty, <code>polcal_CIRCULAR_BASIS.ms</code> dirty, and <code>refim_point_stokes.ms</code> Hogbom CLEAN. The frontend now derives <code>I/Q/U/V</code> from the appropriate linear or circular correlation pairs while preserving CASA-style polarized <code>.sumwt</code> reporting. <code>polcal_LINEAR_BASIS.ms</code> remains part of the canonical matrix but is not present in the currently mounted local test-data tree.</td>
+</tr>
+<tr>
+<td>Existing <code>wproject</code> sample planning</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>GridPlan/CFPlan</code></td>
+<td><code>refim_point_wterm_vlad.ms</code>, <code>n2403.short.ms</code></td>
+<td>Wave 12 is green on the pinned gates. <code>WProjectDiagnostics</code> / <code>WProjectTraceBundle</code> now expose plane/support/sample planning, the fixed-plane scaler matches CASA's <code>0.25 / increment</code> fallback when auto scaling is clamped, and kernel conjugation matches <code>wprojgrid.f</code> (<code>uvw(3) &gt; 0</code> uses the conjugated kernel).</td>
+</tr>
+<tr>
+<td>Recentering / faceting</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>GridPlan/CFPlan</code></td>
+<td><code>refim_mawproject*.ms</code></td>
+<td>Wave 13 is green on <code>refim_mawproject.ms</code>, <code>refim_mawproject_offcenter.ms</code>, and <code>refim_mawproject_twopointings.ms</code>. The closing defect was an upstream UVWMachine/MS sign-convention mismatch: CASA flips <code>(u, v)</code> before and after UVWMachine-style phase-center reprojection, and Rust now does the same when deriving rotated UVW coordinates and <code>dphase</code>.</td>
+</tr>
+<tr>
+<td>Mosaic pointing and PB basics</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>GridPlan/CFPlan</code> + <code>NormalizationState</code></td>
+<td><code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic.ms</code>, <code>refim_oneshiftpoint.mosaic.ms</code></td>
+<td>Wave 14 is green on the pinned dirty-mosaic gates. Rust now routes multi-pointing MFS datasets through an explicit mosaic projector, applies telescope-specific common-PB defaults for the current corpus, and mirrors CASA's non-normalized sensitivity division during mosaic dirty/PSF normalization. Slow-test gates now assert the pinned parity envelope on all three datasets.</td>
+</tr>
+<tr>
+<td>AW-style CF planning with precomputed caches</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>GridPlan/CFPlan</code></td>
+<td>first AW-backed mosaic dataset in corpus</td>
+<td>Full antenna-model CF generation is deferred</td>
+</tr>
+<tr>
+<td>Heterogeneous-array mosaic semantics</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>NormalizationState</code> + <code>RestoredProducts</code></td>
+<td><code>refim_heterogeneous_pointings.ms</code>, <code>vla_wideband_2ptg_w_squint.ms</code></td>
+<td>Includes PB-aware restoration/common-beam inputs</td>
+</tr>
+<tr>
+<td>Wideband <code>nterms=1</code> continuity</td>
+<td>Yes</td>
+<td>CASA imaging</td>
+<td><code>DirtyProducts</code> / <code>RestoredProducts</code></td>
+<td><code>vla_wideband_2ptg_w_squint.ms field=0 specmode=mfs gridder=standard weighting=natural</code></td>
+<td>Wave 15 <code>nterms=1</code> gate is green on both dirty and restored products using full-SPW single-field MFS selection</td>
+</tr>
+<tr>
+<td>MTMFS (<code>nterms&gt;1</code>)</td>
+<td>Yes</td>
+<td>CASA imaging + image tables</td>
+<td><code>RestoredProducts</code></td>
+<td><code>ref_vlass_wtsp_creation.ms field=0 spw=0 specmode=mfs gridder=standard weighting=natural</code></td>
+<td>Wave 15 is green on the pinned <code>nterms=2</code> dirty and one-iteration clean gates. Rust now exposes a dedicated MTMFS request/result surface, writes CASA-style <code>.tt*</code>, <code>.alpha</code>, and <code>.alpha.error</code> products, and mirrors CASA's principal-solution residual transform when assembling restored Taylor-term images.</td>
+</tr>
+<tr>
+<td>Widefield/mosaic full-Stokes with DD Mueller-aware correction</td>
+<td>No</td>
+<td>Future issue</td>
+<td>N/A</td>
+<td>N/A</td>
+<td>Deferred after this program; tracked in <code>#40</code></td>
+</tr>
+<tr>
+<td>Full CF generation from antenna models</td>
+<td>No</td>
+<td>Future issue</td>
+<td>N/A</td>
+<td>N/A</td>
+<td>Precomputed CF caches are sufficient for this program unless a gate proves otherwise; tracked in <code>#40</code></td>
+</tr>
+<tr>
+<td>GPU/distributed execution</td>
+<td>No</td>
+<td>Future issue</td>
+<td>N/A</td>
+<td>N/A</td>
+<td>Outside this deterministic parity program; tracked in <code>#40</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="dataset-tiers">Dataset Tiers<a class="headerlink" href="#dataset-tiers" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Tier A: small synthetic fixtures plus one compact real MS per seam</li>
+<li>Tier B: slow gated parity datasets</li>
+<li><code>refim_point_withline.ms</code></li>
+<li><code>refim_Cband.G37line.ms</code></li>
+<li><code>refim_point_wterm_vlad.ms</code></li>
+<li><code>n2403.short.ms</code></li>
+<li><code>refim_alma_mosaic.ms</code></li>
+<li>standard full-Stokes datasets</li>
+<li>Tier C: manual/stress datasets</li>
+<li><code>M51.ms</code></li>
+<li><code>papersky_mosaic.ms</code></li>
+<li><code>refim_oneshiftpoint.mosaic.ms</code></li>
+<li><code>refim_heterogeneous_pointings.ms</code></li>
+<li>wideband stress datasets</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
