@@ -7,6 +7,7 @@ docs_dir: docs
 
 nav:
   - Home: README.md
+  - Install: install.md
   - Rust API: rust-api.md
   - Python:
       - Overview: python/index.md

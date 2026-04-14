@@ -17,6 +17,7 @@ This directory holds stable project documentation.
 
 - MkDocs site root: `https://bglenden.github.io/casa-rs/`
 - Rust API reference: `https://bglenden.github.io/casa-rs/rustdoc/`
+- install guide: [`install.md`](install.md)
 
 ## Planning
 

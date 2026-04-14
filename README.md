@@ -84,6 +84,130 @@ From this repository workspace:
 cargo test --workspace
 ```
 
+## Install on macOS
+
+Current macOS support is `arm64` only.
+
+### Prerequisites
+
+Install the Apple command-line tools and a supported Python:
+
+```bash
+xcode-select --install
+python3 --version
+```
+
+The Python package currently supports Python 3.10 through 3.12.
+
+### Install a stable release
+
+Choose the version you want and run the installer published with that release:
+
+```bash
+version=0.15.0
+curl -fsSL "https://github.com/bglenden/casa-rs/releases/download/v${version}/install-casa-rs.sh" \
+  | bash -s -- --version "$version"
+```
+
+That installs the suite into `~/.local/opt/casa-rs/<version>`, creates a
+suite-local Python environment, and points the default `current` symlink plus
+the generic `casars` and `calibrate` launchers at that install.
+
+### Install a release candidate side by side
+
+Release candidates use the same installer, but by default they update the
+`rc` channel links without taking over the generic `current` installation:
+
+```bash
+version=0.16.0-rc1
+curl -fsSL "https://github.com/bglenden/casa-rs/releases/download/v${version}/install-casa-rs.sh" \
+  | bash -s -- --version "$version"
+```
+
+That leaves the stable `casars` and `calibrate` commands alone while adding
+channel-specific launchers:
+
+- `~/.local/bin/casars-rc`
+- `~/.local/bin/calibrate-rc`
+
+If you do want the RC install to become the default suite, add `--activate` to
+the installer command.
+
+### Put the executables on `PATH`
+
+The installer creates launcher symlinks in `~/.local/bin`. Add that directory
+to your shell `PATH` if it is not already there:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then reload your shell:
+
+```bash
+source ~/.zshrc
+```
+
+### Use Python from the suite
+
+For Python work, activate the suite virtual environment:
+
+```bash
+source "$HOME/.local/opt/casa-rs/current/python/bin/activate"
+python -c "import casars; print(casars.__version__)"
+```
+
+`casars.tasks.calibrate` will discover the sibling suite-installed
+`calibrate` binary automatically in this layout. If you want to target a
+non-default suite root explicitly, set:
+
+```bash
+export CASARS_SUITE_ROOT="$HOME/.local/opt/casa-rs/<version>"
+```
+
+### Stable and RC installs side by side
+
+Stable releases and release candidates can live on the same machine at the same
+time because each install uses its own suite root, for example:
+
+```text
+~/.local/opt/casa-rs/0.15.0/
+~/.local/opt/casa-rs/0.16.0-rc1/
+~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/0.15.0
+~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/0.16.0-rc1
+```
+
+The installer also maintains `~/.local/bin/casars-stable`,
+`~/.local/bin/calibrate-stable`, `~/.local/bin/casars-rc`, and
+`~/.local/bin/calibrate-rc` so both channels can stay runnable at the same
+time. Switch the default CLI/TUI suite by repointing
+`~/.local/opt/casa-rs/current`, reinstalling with `--activate`, or select one
+explicitly with `CASARS_SUITE_ROOT` or that suite's Python environment.
+
+### Build from source instead
+
+If you are working from a local checkout instead of a release asset, install
+Rust and then build the binaries yourself:
+
+```bash
+curl https://sh.rustup.rs -sSf | sh
+source "$HOME/.cargo/env"
+cargo build --release -p casars --bin casars
+cargo build --release -p casa-calibration --bin calibrate
+```
+
+From there you can package a release-style bundle locally with:
+
+```bash
+scripts/build-python-dist.sh dist/python
+scripts/package-suite-bundle.sh \
+  --version "$(sed -n 's/^version = \"\\(.*\\)\"/\\1/p' Cargo.toml | head -n 1)" \
+  --platform "$(scripts/install-suite.sh --print-platform)" \
+  --bin-dir target/release \
+  --wheel-dir dist/python \
+  --out-dir dist/python
+```
+
 ## Terminal Launcher
 
 `casars` is the framework-owned ratatui shell family for supported `casa-rs`
@@ -261,6 +385,9 @@ After `scripts/release.sh ... --push` creates and pushes `v<version>`, the
 - Linux `x86_64` wheels
 - macOS `arm64` wheels
 - one source distribution
+- platform-specific suite bundles named `casa-rs-suite-<version>-<platform>.tar.gz`
+- platform-specific standalone binary bundles named `casa-rs-binaries-<version>-<platform>.tar.gz`
+- an installer script asset named `install-casa-rs.sh`
 
 The workflow uploads those artifacts to the GitHub release for the tag and
 publishes them to PyPI when `PYPI_API_TOKEN` is configured in the repository
@@ -277,7 +404,7 @@ version, for example:
 scripts/release.sh 0.15.0-rc1 --push
 ```
 
-The intended suite install layout is:
+The installer-managed suite layout is:
 
 ```text
 ~/.local/opt/casa-rs/<version>/
@@ -286,10 +413,18 @@ The intended suite install layout is:
     calibrate
   python/
     ...
-~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<version>
+  wheels/
+    ...
+~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/<stable-version>
+~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/<rc-version>
+~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<active-version>
 ~/.local/bin/
   casars -> ~/.local/opt/casa-rs/current/bin/casars
   calibrate -> ~/.local/opt/casa-rs/current/bin/calibrate
+  casars-stable -> ~/.local/opt/casa-rs/stable/bin/casars
+  calibrate-stable -> ~/.local/opt/casa-rs/stable/bin/calibrate
+  casars-rc -> ~/.local/opt/casa-rs/rc/bin/casars
+  calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
 ```
 
 Python task wrappers prefer a sibling suite-installed `calibrate` in that layout

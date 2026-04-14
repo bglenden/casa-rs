@@ -21,6 +21,7 @@ Default local release gates:
   - cargo clippy --workspace --all-targets -- -D warnings
   - cargo test --workspace
   - scripts/test-python-package.sh
+  - scripts/test-install-suite.sh
 
 Use --full to additionally run:
   - scripts/test-slow.sh
@@ -218,6 +219,7 @@ main() {
   run_timed_step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
   run_timed_step "cargo test" cargo test --workspace
   run_timed_step "python package gate" scripts/test-python-package.sh
+  run_timed_step "suite install gate" scripts/test-install-suite.sh
 
   if [[ "$run_full" == "true" ]]; then
     run_timed_step "slow parity gate" scripts/test-slow.sh

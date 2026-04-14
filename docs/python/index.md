@@ -20,3 +20,6 @@ Tagged releases build Python artifacts for:
 - macOS `arm64`
 
 plus a source distribution for environments that need to build from source.
+
+For suite installation and shell `PATH` setup, see the top-level
+[Install](../install.md) guide.

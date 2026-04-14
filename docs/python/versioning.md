@@ -23,7 +23,8 @@ If the binary reports a different protocol name or version, the Python wrapper r
 Release tags also build and publish Python package artifacts separately from the
 Rust binaries:
 
-- GitHub release assets always receive the built wheels and source distribution.
+- GitHub release assets always receive the built wheels, source distribution,
+  suite bundles, standalone binary bundles, and installer script.
 - PyPI publication is attempted from the same workflow when `PYPI_API_TOKEN` is configured.
 
 That means Python package compatibility has two layers:
@@ -39,7 +40,7 @@ The `casars.data` surface has its own narrower stability boundary in v1:
 
 That boundary is intentional. The v1 compatibility promise covers file-backed data access and pixel updates, not the full CASA image-authoring surface.
 
-The intended suite install layout behind steps 4-6 is:
+The installer-managed suite install layout behind steps 4-6 is:
 
 ```text
 ~/.local/opt/casa-rs/<version>/
@@ -48,10 +49,18 @@ The intended suite install layout behind steps 4-6 is:
     calibrate
   python/
     ...
+  wheels/
+    ...
+~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/<stable-version>
+~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/<rc-version>
 ~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<version>
 ~/.local/bin/
   casars -> ~/.local/opt/casa-rs/current/bin/casars
   calibrate -> ~/.local/opt/casa-rs/current/bin/calibrate
+  casars-stable -> ~/.local/opt/casa-rs/stable/bin/casars
+  calibrate-stable -> ~/.local/opt/casa-rs/stable/bin/calibrate
+  casars-rc -> ~/.local/opt/casa-rs/rc/bin/casars
+  calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
 ```
 
 That lets Python, the TUI, and standalone executables behave as one installed suite while keeping `~/.local/bin` as the only `PATH` entry users generally need.

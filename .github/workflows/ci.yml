@@ -58,6 +58,9 @@ jobs:
       - name: Test Python package
         run: scripts/test-python-package.sh
 
+      - name: Test suite installer
+        run: scripts/test-install-suite.sh
+
   coverage:
     runs-on: ubuntu-latest
     steps:

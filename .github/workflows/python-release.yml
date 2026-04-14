@@ -14,19 +14,21 @@ permissions:
 
 jobs:
   build_wheels:
-    name: Build wheels (${{ matrix.artifact_name }})
+    name: Build release assets (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: python-wheels-linux-x86_64
+            artifact_name: release-assets-linux-x86_64
+            platform: linux-x86_64
             target: x86_64-unknown-linux-gnu
             manylinux: auto
             smoke_wheel_glob: dist/*cp312*.whl
           - os: macos-14
-            artifact_name: python-wheels-macos-aarch64
+            artifact_name: release-assets-macos-arm64
+            platform: macos-arm64
             target: aarch64-apple-darwin
             manylinux: off
             smoke_wheel_glob: dist/*cp312*.whl
@@ -49,8 +51,10 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           args: --release --manifest-path crates/casars-python/Cargo.toml --interpreter 3.10 3.11 3.12 --out dist
 
-      - name: Build calibrate binary for smoke test
-        run: cargo build -q -p casa-calibration --bin calibrate
+      - name: Build suite binaries
+        run: |
+          cargo build -q --release -p casars --bin casars
+          cargo build -q --release -p casa-calibration --bin calibrate
 
       - name: Smoke-test built wheel
         shell: bash
@@ -66,7 +70,7 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install "${wheels[0]}"
-          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/debug/calibrate" python - <<'PY'
+          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/release/calibrate" python - <<'PY'
           import casars
           from casars.tasks import calibrate
 
@@ -80,7 +84,19 @@ jobs:
           calibrate.validate_signature_parity()
           PY
 
-      - name: Upload wheel artifacts
+      - name: Package suite and standalone binary bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          scripts/package-suite-bundle.sh \
+            --version "$version" \
+            --platform "${{ matrix.platform }}" \
+            --bin-dir target/release \
+            --wheel-dir dist \
+            --out-dir dist
+
+      - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
@@ -149,17 +165,32 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download Python artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: python-*
-          path: dist
+          pattern: release-assets-*
+          path: release-dist
           merge-multiple: true
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-sdist
+          path: python-dist
+          merge-multiple: true
+
+      - name: Add installer script asset
+        run: |
+          cp scripts/install-suite.sh release-dist/install-casa-rs.sh
+          cp python-dist/* release-dist/
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: release-dist/*
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
 
@@ -181,7 +212,7 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install 'maturin>=1.7,<2'
-          maturin upload --non-interactive dist/*
+          maturin upload --non-interactive python-dist/*
 
       - name: Skip PyPI upload for prerelease tags
         if: ${{ contains(github.ref_name, '-') }}
