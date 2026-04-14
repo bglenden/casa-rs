@@ -169,16 +169,21 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
 
       - name: Set up Python for PyPI upload
-        if: ${{ secrets.PYPI_API_TOKEN != '' && !contains(github.ref_name, '-') }}
+        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Publish to PyPI
-        if: ${{ secrets.PYPI_API_TOKEN != '' && !contains(github.ref_name, '-') }}
+        if: ${{ !contains(github.ref_name, '-') }}
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
+          if [[ -z "${MATURIN_PYPI_TOKEN:-}" ]]; then
+            echo "PYPI_API_TOKEN is not configured; GitHub release assets were published only."
+            exit 0
+          fi
+
           python -m pip install --upgrade pip
           python -m pip install 'maturin>=1.7,<2'
           maturin upload --non-interactive dist/*
@@ -186,7 +191,3 @@ jobs:
       - name: Skip PyPI upload for prerelease tags
         if: ${{ contains(github.ref_name, '-') }}
         run: echo "Prerelease tag detected; GitHub release assets were published but PyPI upload was intentionally skipped."
-
-      - name: Skip PyPI upload when no token is configured
-        if: ${{ secrets.PYPI_API_TOKEN == '' && !contains(github.ref_name, '-') }}
-        run: echo "PYPI_API_TOKEN is not configured; GitHub release assets were published only."
