@@ -909,18 +909,12 @@ every call.</p>
 <ul>
 <li><code>calibrate</code>: task surface</li>
 <li><code>casars-imager</code>: task surface</li>
+<li><code>msexplore</code>: task surface</li>
 <li><code>tablebrowser</code>: session surface</li>
 <li><code>imexplore</code>: session surface</li>
 <li><code>casars.data.Image</code>: object surface</li>
 <li><code>casars.data.Table</code>: object surface</li>
 </ul>
-<p><code>msexplore</code> needs an explicit decision. It should be treated as either:</p>
-<ul>
-<li>a task surface with one-shot plot/export operations, or</li>
-<li>a session surface if the backend owns durable interactive exploration state</li>
-</ul>
-<p>It should not remain indefinitely as only a launcher-oriented <code>--ui-schema</code>
-producer without a clearly identified canonical provider contract.</p>
 <h2 id="implementation-guidance">Implementation Guidance<a class="headerlink" href="#implementation-guidance" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define typed Rust structs and enums that serialize exactly to the canonical

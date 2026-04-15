@@ -598,11 +598,19 @@ without redesigning the wire format.</p>
 <li>Encoding: UTF-8 JSON</li>
 <li>Framing: one object per line</li>
 <li>Versioning: top-level <code>version</code> field in both directions</li>
+<li>Protocol descriptor: <code>tablebrowser --protocol-info</code></li>
+<li>Canonical schema bundle: <code>tablebrowser --json-schema</code></li>
 </ul>
 <p>The committed JSON Schemas live in:</p>
 <ul>
 <li><code>crates/casars-tablebrowser-protocol/schemas/request.schema.json</code></li>
 <li><code>crates/casars-tablebrowser-protocol/schemas/response.schema.json</code></li>
+</ul>
+<p>The canonical schema bundle now wraps those envelope schemas with:</p>
+<ul>
+<li>protocol metadata including <code>surface_kind: "session"</code></li>
+<li>a <code>semantic.transport</code> value of <code>jsonl_stdio</code></li>
+<li>derived projection metadata for the legacy <code>--ui-schema</code> launcher view</li>
 </ul>
 <h2 id="request-envelope">Request Envelope<a class="headerlink" href="#request-envelope" title="Permanent link">&para;</a></h2>
 <p>Every request has:</p>

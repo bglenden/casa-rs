@@ -640,6 +640,12 @@
 
 <h1 id="data-api">Data API<a class="headerlink" href="#data-api" title="Permanent link">&para;</a></h1>
 <p><code>casars.data</code> exposes persistent file-backed objects only.</p>
+<p>The module also publishes its canonical object-surface contract directly from
+Rust:</p>
+<ul>
+<li><code>protocol_info()</code> returns the stable object protocol descriptor</li>
+<li><code>schema_bundle()</code> returns the canonical schema bundle for <code>Image</code> and <code>Table</code></li>
+</ul>
 <h2 id="images">Images<a class="headerlink" href="#images" title="Permanent link">&para;</a></h2>
 <p>Use <code>Image.open(path, writable=False)</code> to open an existing CASA-compatible image. The v1 surface is intentionally narrow:</p>
 <ul>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MSEXPLORE_TASK_PROTOCOL_NAME","MSEXPLORE_TASK_PROTOCOL_VERSION"],"enum":["MsExploreTaskRequest","MsExploreTaskResult"],"struct":["MsExploreFlagEditRequest","MsExplorePlotArtifact","MsExplorePlotExportRequest","MsExploreProtocolInfo","MsExploreRunTaskRequest","MsExploreRunTaskResult","MsExploreTaskSchemaBundle"]};

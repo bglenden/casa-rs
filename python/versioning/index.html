@@ -532,6 +532,7 @@
 <ul>
 <li>protocol name: <code>casa_calibration_task</code></li>
 <li>protocol version: <code>1</code></li>
+<li>surface kind: <code>task</code></li>
 </ul>
 <p>If the binary reports a different protocol name or version, the Python wrapper raises immediately instead of attempting a best-effort invocation. This is the guard against version skew between the Python package and the task binary.</p>
 <p>Release tags also build and publish Python package artifacts separately from the
@@ -551,6 +552,13 @@ Rust binaries:</p>
 <li>stable in v1: reading existing persistent images and tables</li>
 <li>stable in v1: writing pixel slices into existing persistent images with <code>Image.put_slice</code></li>
 <li>deferred from v1: image creation, coordinate-system authoring, and broader image metadata editing</li>
+</ul>
+<p>The direct object-surface contract published by <code>casars.data.protocol_info()</code>
+and <code>casars.data.schema_bundle()</code> is currently:</p>
+<ul>
+<li>protocol name: <code>casars_data_objects</code></li>
+<li>protocol version: <code>1</code></li>
+<li>surface kind: <code>object</code></li>
 </ul>
 <p>That boundary is intentional. The v1 compatibility promise covers file-backed data access and pixel updates, not the full CASA image-authoring surface.</p>
 <p>The installer-managed suite install layout behind steps 4-6 is:</p>
