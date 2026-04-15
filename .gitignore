@@ -9,3 +9,4 @@ casa-*.log
 crates/casa-ms/casa-*.log
 __pycache__/
 *.py[cod]
+.codex/
