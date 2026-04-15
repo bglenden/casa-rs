@@ -74,6 +74,12 @@ pub use listobs::{
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;
+pub use msexplore::task_contract::{
+    MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
+    MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreProtocolInfo,
+    MsExploreRunTaskRequest, MsExploreRunTaskResult, MsExploreTaskRequest, MsExploreTaskResult,
+    MsExploreTaskSchemaBundle,
+};
 pub use msexplore::{
     DEFAULT_MAX_PLOT_POINTS, MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
     MsExportFormat, MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit,

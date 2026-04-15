@@ -8,8 +8,8 @@ use std::process;
 
 use casa_images::{ImageBrowserSession, imexplore_ui_schema_json};
 use casars_imagebrowser_protocol::{
-    ImageBrowserCommand, ImageBrowserRequestEnvelope, ImageBrowserResponseEnvelope,
-    ImageBrowserViewport, PROTOCOL_VERSION,
+    ImageBrowserCommand, ImageBrowserProtocolInfo, ImageBrowserRequestEnvelope,
+    ImageBrowserResponseEnvelope, ImageBrowserViewport, PROTOCOL_VERSION, schema_bundle_json,
 };
 
 fn main() {
@@ -24,6 +24,22 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1).peekable();
+    if args.peek().is_some_and(|arg| arg == "--json-schema") {
+        print!(
+            "{}",
+            schema_bundle_json(ui_schema_value()?)
+                .map_err(|error| format!("serialize imexplore schema bundle: {error}"))?
+        );
+        return Ok(());
+    }
+    if args.peek().is_some_and(|arg| arg == "--protocol-info") {
+        print!(
+            "{}",
+            serde_json::to_string_pretty(&ImageBrowserProtocolInfo::current())
+                .map_err(|error| format!("serialize imexplore protocol info: {error}"))?
+        );
+        return Ok(());
+    }
     if args.peek().is_some_and(|arg| arg == "--ui-schema") {
         print!("{}", imexplore_ui_schema_json("imexplore")?);
         return Ok(());
@@ -45,10 +61,15 @@ fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String>
     let args = args.into_iter().collect::<Vec<_>>();
     if args.len() != 1 {
         return Err(
-            "usage: imexplore <image-path> | imexplore --session | imexplore --ui-schema".into(),
+            "usage: imexplore <image-path> | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
         );
     }
     Ok(PathBuf::from(&args[0]))
+}
+
+fn ui_schema_value() -> Result<serde_json::Value, String> {
+    serde_json::from_str(&imexplore_ui_schema_json("imexplore")?)
+        .map_err(|error| format!("parse imexplore ui schema: {error}"))
 }
 
 fn run_snapshot(path: &PathBuf) -> Result<(), String> {

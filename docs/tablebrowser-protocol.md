@@ -15,11 +15,19 @@ without redesigning the wire format.
 - Encoding: UTF-8 JSON
 - Framing: one object per line
 - Versioning: top-level `version` field in both directions
+- Protocol descriptor: `tablebrowser --protocol-info`
+- Canonical schema bundle: `tablebrowser --json-schema`
 
 The committed JSON Schemas live in:
 
 - `crates/casars-tablebrowser-protocol/schemas/request.schema.json`
 - `crates/casars-tablebrowser-protocol/schemas/response.schema.json`
+
+The canonical schema bundle now wraps those envelope schemas with:
+
+- protocol metadata including `surface_kind: "session"`
+- a `semantic.transport` value of `jsonl_stdio`
+- derived projection metadata for the legacy `--ui-schema` launcher view
 
 ## Request Envelope
 

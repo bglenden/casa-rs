@@ -4,16 +4,23 @@
 use std::path::PathBuf;
 
 use casa_ms::{MsSelectionSpec, selection::MsSelection};
+use casa_provider_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
+    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
+    derived_ui_schema_annotations, merged_components,
+};
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::managed_output::CalibrationTaskResult;
 use crate::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
     BandpassSolveRequest, BandpassType, CalibrationStatsAxis, CalibrationStatsRequest,
     FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveRequest,
-    GainType, RefAntSelector, calibration_stats, execute_apply_from_path, fluxscale,
-    plan_apply_from_path, solve_bandpass_from_path, solve_gain_from_path, summarize_tables,
+    GainType, RefAntSelector, calibration_stats, command_schema, execute_apply_from_path,
+    fluxscale, plan_apply_from_path, solve_bandpass_from_path, solve_gain_from_path,
+    summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -28,6 +35,8 @@ pub struct CalibrationProtocolInfo {
     pub protocol_name: String,
     /// Monotonic protocol version for compatibility checks.
     pub protocol_version: u32,
+    /// Provider surface kind defined by the shared architecture contract.
+    pub surface_kind: ProviderSurfaceKind,
     /// Binary version implementing the protocol.
     pub binary_version: String,
 }
@@ -38,6 +47,7 @@ impl CalibrationProtocolInfo {
         Self {
             protocol_name: CALIBRATION_TASK_PROTOCOL_NAME.to_string(),
             protocol_version: CALIBRATION_TASK_PROTOCOL_VERSION,
+            surface_kind: ProviderSurfaceKind::Task,
             binary_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
@@ -48,6 +58,14 @@ impl CalibrationProtocolInfo {
 pub struct CalibrationTaskSchemaBundle {
     /// Compatibility descriptor for the request/result schemas.
     pub protocol: CalibrationProtocolInfo,
+    /// Canonical semantic task contract.
+    pub semantic: TaskSemanticContract,
+    /// Shared component schemas reusable across projections.
+    pub components: ProviderComponentSchemas,
+    /// Presentation annotations carried with the canonical bundle.
+    pub annotations: JsonValue,
+    /// Derived projection metadata for UI and CLI consumers.
+    pub projections: ProviderProjectionMetadata,
     /// JSON schema for [`CalibrationTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`CalibrationTaskResult`].
@@ -57,12 +75,87 @@ pub struct CalibrationTaskSchemaBundle {
 impl CalibrationTaskSchemaBundle {
     /// Build the current request/result schema bundle.
     pub fn current() -> Self {
+        let request_schema = schema_for!(CalibrationTaskRequest);
+        let result_schema = schema_for!(CalibrationTaskResult);
+        let ui_schema = serde_json::to_value(command_schema("calibrate"))
+            .expect("serialize calibration ui schema projection");
         Self {
             protocol: CalibrationProtocolInfo::current(),
-            request_schema: schema_for!(CalibrationTaskRequest),
-            result_schema: schema_for!(CalibrationTaskResult),
+            semantic: TaskSemanticContract {
+                request_schema: request_schema.clone(),
+                result_schema: result_schema.clone(),
+                operations: calibration_task_operations(),
+            },
+            components: merged_components([&request_schema, &result_schema]),
+            annotations: derived_ui_schema_annotations(),
+            projections: ProviderProjectionMetadata {
+                cli: Some(ProviderCliProjection {
+                    machine_actions: ProviderCliMachineActions {
+                        ui_schema: Some("--ui-schema".to_string()),
+                        json_schema: Some("--json-schema".to_string()),
+                        protocol_info: Some("--protocol-info".to_string()),
+                        json_run: Some("--json-run <SOURCE>".to_string()),
+                        session: None,
+                    },
+                }),
+                ui_schema: Some(ui_schema),
+                python: None,
+            },
+            request_schema,
+            result_schema,
         }
     }
+
+    /// Return the launcher/TUI compatibility view projected from the bundle.
+    pub fn ui_schema_projection(&self) -> Result<casa_ms::ui_schema::UiCommandSchema, String> {
+        let value = self
+            .projections
+            .ui_schema
+            .clone()
+            .ok_or_else(|| "missing ui_schema projection".to_string())?;
+        serde_json::from_value(value)
+            .map_err(|error| format!("parse calibration ui schema: {error}"))
+    }
+}
+
+fn calibration_task_operations() -> Vec<TaskOperationDescriptor> {
+    vec![
+        TaskOperationDescriptor {
+            name: "summary".to_string(),
+            request_kind: "summary".to_string(),
+            result_kind: Some("summary".to_string()),
+        },
+        TaskOperationDescriptor {
+            name: "stats".to_string(),
+            request_kind: "stats".to_string(),
+            result_kind: Some("stats".to_string()),
+        },
+        TaskOperationDescriptor {
+            name: "plan_apply".to_string(),
+            request_kind: "plan_apply".to_string(),
+            result_kind: Some("plan_apply".to_string()),
+        },
+        TaskOperationDescriptor {
+            name: "execute_apply".to_string(),
+            request_kind: "execute_apply".to_string(),
+            result_kind: Some("apply".to_string()),
+        },
+        TaskOperationDescriptor {
+            name: "solve_gain".to_string(),
+            request_kind: "solve_gain".to_string(),
+            result_kind: Some("solve_gain".to_string()),
+        },
+        TaskOperationDescriptor {
+            name: "solve_bandpass".to_string(),
+            request_kind: "solve_bandpass".to_string(),
+            result_kind: Some("solve_bandpass".to_string()),
+        },
+        TaskOperationDescriptor {
+            name: "flux_scale".to_string(),
+            request_kind: "flux_scale".to_string(),
+            result_kind: Some("flux_scale".to_string()),
+        },
+    ]
 }
 
 /// Request for summarizing one or more calibration tables.
@@ -404,6 +497,8 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 mod tests {
     use std::path::PathBuf;
 
+    use casa_provider_contracts::ProviderSurfaceKind;
+
     use super::{
         CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
         CalibrationTaskRequest, CalibrationTaskResult, CalibrationTaskSchemaBundle,
@@ -462,6 +557,7 @@ mod tests {
         let info = CalibrationProtocolInfo::current();
         assert_eq!(info.protocol_name, CALIBRATION_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, CALIBRATION_TASK_PROTOCOL_VERSION);
+        assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);
         assert_eq!(info.binary_version, env!("CARGO_PKG_VERSION"));
     }
 
@@ -496,6 +592,17 @@ mod tests {
             bundle.protocol.protocol_version,
             CALIBRATION_TASK_PROTOCOL_VERSION
         );
+        assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
+        assert_eq!(bundle.semantic.operations.len(), 7);
+        assert!(
+            bundle
+                .semantic
+                .operations
+                .iter()
+                .any(|operation| operation.request_kind == "flux_scale")
+        );
+        assert!(bundle.components.contains_key("SummaryTaskRequest"));
+        assert!(bundle.projections.ui_schema.is_some());
         assert!(
             bundle
                 .request_schema
@@ -526,5 +633,7 @@ mod tests {
                 .definitions
                 .contains_key("CalibrationTableSummary")
         );
+        let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
+        assert_eq!(ui_schema.command_id, "calibrate");
     }
 }

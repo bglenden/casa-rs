@@ -17,6 +17,7 @@ The current protocol contract is:
 
 - protocol name: `casa_calibration_task`
 - protocol version: `1`
+- surface kind: `task`
 
 If the binary reports a different protocol name or version, the Python wrapper raises immediately instead of attempting a best-effort invocation. This is the guard against version skew between the Python package and the task binary.
 
@@ -37,6 +38,13 @@ The `casars.data` surface has its own narrower stability boundary in v1:
 - stable in v1: reading existing persistent images and tables
 - stable in v1: writing pixel slices into existing persistent images with `Image.put_slice`
 - deferred from v1: image creation, coordinate-system authoring, and broader image metadata editing
+
+The direct object-surface contract published by `casars.data.protocol_info()`
+and `casars.data.schema_bundle()` is currently:
+
+- protocol name: `casars_data_objects`
+- protocol version: `1`
+- surface kind: `object`
 
 That boundary is intentional. The v1 compatibility promise covers file-backed data access and pixel updates, not the full CASA image-authoring surface.
 

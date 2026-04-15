@@ -1,10 +1,10 @@
 [package]
-name = "casars-tablebrowser-protocol"
+name = "casa-provider-contracts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Wire protocol for the casacore table browser session"
+description = "Canonical provider contract bundle types shared across casa-rs surfaces"
 repository.workspace = true
 publish = false
 
@@ -12,7 +12,6 @@ publish = false
 workspace = true
 
 [dependencies]
-casa-provider-contracts = { path = "../casa-provider-contracts" }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -2,6 +2,12 @@
 
 `casars.data` exposes persistent file-backed objects only.
 
+The module also publishes its canonical object-surface contract directly from
+Rust:
+
+- `protocol_info()` returns the stable object protocol descriptor
+- `schema_bundle()` returns the canonical schema bundle for `Image` and `Table`
+
 ## Images
 
 Use `Image.open(path, writable=False)` to open an existing CASA-compatible image. The v1 surface is intentionally narrow:

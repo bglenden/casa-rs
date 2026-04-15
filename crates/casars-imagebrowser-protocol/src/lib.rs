@@ -1,11 +1,105 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Wire protocol for the `imagebrowser` subprocess session.
 
+use casa_provider_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
+    ProviderProjectionMetadata, ProviderSurfaceKind, SessionSemanticContract,
+    derived_ui_schema_annotations, merged_components,
+};
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+
+/// Stable protocol name advertised by `imexplore --protocol-info`.
+pub const IMAGEBROWSER_SESSION_PROTOCOL_NAME: &str = "casa_imagebrowser_session";
 
 /// Current JSON protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Version/compatibility information for the imagebrowser session protocol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImageBrowserProtocolInfo {
+    /// Stable protocol identifier.
+    pub protocol_name: String,
+    /// Monotonic protocol version for compatibility checks.
+    pub protocol_version: u32,
+    /// Provider surface kind defined by the shared architecture contract.
+    pub surface_kind: ProviderSurfaceKind,
+    /// Binary version implementing the protocol.
+    pub binary_version: String,
+}
+
+impl ImageBrowserProtocolInfo {
+    /// Build the current imagebrowser session protocol descriptor.
+    pub fn current() -> Self {
+        Self {
+            protocol_name: IMAGEBROWSER_SESSION_PROTOCOL_NAME.to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            surface_kind: ProviderSurfaceKind::Session,
+            binary_version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+}
+
+/// Canonical JSON-schema bundle for the public imagebrowser session protocol.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImageBrowserSessionSchemaBundle {
+    /// Compatibility descriptor for the session protocol.
+    pub protocol: ImageBrowserProtocolInfo,
+    /// Canonical semantic session contract.
+    pub semantic: SessionSemanticContract,
+    /// Shared component schemas reusable across projections.
+    pub components: ProviderComponentSchemas,
+    /// Presentation annotations carried with the canonical bundle.
+    pub annotations: JsonValue,
+    /// Derived projection metadata for UI and CLI consumers.
+    pub projections: ProviderProjectionMetadata,
+    /// JSON schema for [`ImageBrowserRequestEnvelope`].
+    pub request_schema: schemars::schema::RootSchema,
+    /// JSON schema for [`ImageBrowserResponseEnvelope`].
+    pub response_schema: schemars::schema::RootSchema,
+}
+
+impl ImageBrowserSessionSchemaBundle {
+    /// Build the current imagebrowser schema bundle.
+    pub fn current(ui_schema: JsonValue) -> Self {
+        let request_schema = schema_for!(ImageBrowserRequestEnvelope);
+        let response_schema = schema_for!(ImageBrowserResponseEnvelope);
+        Self {
+            protocol: ImageBrowserProtocolInfo::current(),
+            semantic: SessionSemanticContract {
+                transport: "jsonl_stdio".to_string(),
+                request_schema: request_schema.clone(),
+                response_schema: response_schema.clone(),
+            },
+            components: merged_components([&request_schema, &response_schema]),
+            annotations: derived_ui_schema_annotations(),
+            projections: ProviderProjectionMetadata {
+                cli: Some(ProviderCliProjection {
+                    machine_actions: ProviderCliMachineActions {
+                        ui_schema: Some("--ui-schema".to_string()),
+                        json_schema: Some("--json-schema".to_string()),
+                        protocol_info: Some("--protocol-info".to_string()),
+                        json_run: None,
+                        session: Some("--session".to_string()),
+                    },
+                }),
+                ui_schema: Some(ui_schema),
+                python: None,
+            },
+            request_schema,
+            response_schema,
+        }
+    }
+
+    /// Return the launcher/TUI compatibility view projected from the bundle.
+    pub fn ui_schema_projection(&self) -> Result<JsonValue, String> {
+        self.projections
+            .ui_schema
+            .clone()
+            .ok_or_else(|| "missing ui_schema projection".to_string())
+    }
+}
 
 /// Render viewport requested by the consumer.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -512,6 +606,11 @@ pub fn response_schema_json() -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(&schema_for!(ImageBrowserResponseEnvelope))
 }
 
+/// Returns the canonical schema bundle for the public imagebrowser session protocol.
+pub fn schema_bundle_json(ui_schema: JsonValue) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&ImageBrowserSessionSchemaBundle::current(ui_schema))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -681,5 +780,22 @@ mod tests {
                 .unwrap()
                 .contains("ImageBrowserResponseEnvelope")
         );
+    }
+
+    #[test]
+    fn schema_bundle_uses_current_protocol_and_transport() {
+        let bundle = ImageBrowserSessionSchemaBundle::current(serde_json::json!({
+            "schema_version": 1,
+            "command_id": "imexplore",
+        }));
+        assert_eq!(
+            bundle.protocol.protocol_name,
+            IMAGEBROWSER_SESSION_PROTOCOL_NAME
+        );
+        assert_eq!(bundle.protocol.protocol_version, PROTOCOL_VERSION);
+        assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Session);
+        assert_eq!(bundle.semantic.transport, "jsonl_stdio");
+        assert!(bundle.components.contains_key("ImageBrowserCommand"));
+        assert!(bundle.components.contains_key("ImageBrowserResponse"));
     }
 }

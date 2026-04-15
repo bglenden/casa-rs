@@ -6,11 +6,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
 
-use casa_calibration::command_schema as calibrate_command_schema;
+use casa_calibration::CalibrationTaskSchemaBundle;
 use casa_images::imexplore_ui_schema_json;
-use casa_ms::msexplore::cli::command_schema as msexplore_command_schema;
+use casa_ms::MsExploreTaskSchemaBundle;
 use casa_ms::ui_schema::UiCommandSchema;
-use casars_imager::command_schema as imager_command_schema;
+use casars_imagebrowser_protocol::ImageBrowserSessionSchemaBundle;
+use casars_imager::ImagerTaskSchemaBundle;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
@@ -75,22 +76,28 @@ impl ResolvedCommand {
 impl RegistryApp {
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
         if !self.has_explicit_binary_override() && self.id == "msexplore" {
-            return Ok(msexplore_command_schema("msexplore"));
+            return MsExploreTaskSchemaBundle::current().ui_schema_projection();
         }
         if !self.has_explicit_binary_override() && self.id == "calibrate" {
-            return Ok(calibrate_command_schema("calibrate"));
+            return CalibrationTaskSchemaBundle::current().ui_schema_projection();
         }
         if !self.has_explicit_binary_override() && self.id == "imager" {
-            return Ok(imager_command_schema("casars-imager"));
+            return ImagerTaskSchemaBundle::current().ui_schema_projection();
         }
         if !self.has_explicit_binary_override() && self.id == "imexplore" {
-            let json = imexplore_ui_schema_json("imexplore")?;
-            return serde_json::from_str(&json)
-                .map_err(|error| format!("parse embedded imexplore schema: {error}"));
+            let ui_schema = serde_json::from_str(&imexplore_ui_schema_json("imexplore")?)
+                .map_err(|error| format!("parse embedded imexplore schema: {error}"))?;
+            let projected =
+                ImageBrowserSessionSchemaBundle::current(ui_schema).ui_schema_projection()?;
+            return serde_json::from_value(projected)
+                .map_err(|error| format!("parse embedded imexplore schema projection: {error}"));
         }
         match &self.kind {
             RegistryAppKind::Subprocess { binary_name, .. } => {
                 let resolved = self.resolve_command()?;
+                if let Some(schema) = load_canonical_ui_schema(&resolved, binary_name)? {
+                    return Ok(schema);
+                }
                 let output = resolved
                     .command()
                     .arg("--ui-schema")
@@ -225,6 +232,28 @@ impl RegistryApp {
             (_, _) => "Ready. Press r to run the selected command.",
         }
     }
+}
+
+fn load_canonical_ui_schema(
+    resolved: &ResolvedCommand,
+    binary_name: &str,
+) -> Result<Option<UiCommandSchema>, String> {
+    let output = resolved
+        .command()
+        .arg("--json-schema")
+        .output()
+        .map_err(|error| format!("spawn {binary_name} --json-schema: {error}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let bundle = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .map_err(|error| format!("parse {binary_name} --json-schema output: {error}"))?;
+    let Some(ui_schema) = bundle.pointer("/projections/ui_schema").cloned() else {
+        return Ok(None);
+    };
+    serde_json::from_value(ui_schema)
+        .map(Some)
+        .map_err(|error| format!("parse {binary_name} projected ui schema: {error}"))
 }
 
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
@@ -627,7 +656,7 @@ mod tests {
         let error = imexplore_app()
             .load_schema()
             .expect_err("missing override binary should fail");
-        assert!(error.contains("spawn imexplore --ui-schema"));
+        assert!(error.contains("spawn imexplore --json-schema"));
 
         unsafe {
             env::remove_var("CASARS_IMEXPLORE_BIN");
@@ -653,7 +682,7 @@ mod tests {
         let error = imexplore_app()
             .load_schema()
             .expect_err("echo output should not parse as JSON");
-        assert!(error.contains("parse imexplore --ui-schema output"));
+        assert!(error.contains("parse imexplore --json-schema output"));
 
         unsafe {
             env::remove_var("CASARS_IMEXPLORE_BIN");

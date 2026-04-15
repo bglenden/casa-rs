@@ -298,7 +298,7 @@ def fluxscale(
     """Run the first-wave ``fluxscale`` stage."""
 
     return invoke_calibration_task(
-        kind="fluxscale",
+        kind="flux_scale",
         request={
             "input_table": os.fspath(input_table),
             "output_table": os.fspath(output_table),

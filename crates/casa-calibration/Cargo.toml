@@ -12,6 +12,7 @@ default = []
 slow-tests = []
 
 [dependencies]
+casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-ms = { path = "../casa-ms" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }

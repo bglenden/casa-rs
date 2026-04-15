@@ -8,7 +8,8 @@ use std::process;
 
 use casa_tables::{TableBrowser, TableBrowserView};
 use casars_tablebrowser_protocol::{
-    BrowserCommand, BrowserRequestEnvelope, BrowserViewport, PROTOCOL_VERSION,
+    BrowserCommand, BrowserProtocolInfo, BrowserRequestEnvelope, BrowserViewport, PROTOCOL_VERSION,
+    schema_bundle_json,
 };
 use serde_json::json;
 
@@ -72,6 +73,22 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1).peekable();
+    if args.peek().is_some_and(|arg| arg == "--json-schema") {
+        print!(
+            "{}",
+            schema_bundle_json(ui_schema_value())
+                .map_err(|error| format!("serialize tablebrowser schema bundle: {error}"))?
+        );
+        return Ok(());
+    }
+    if args.peek().is_some_and(|arg| arg == "--protocol-info") {
+        print!(
+            "{}",
+            serde_json::to_string_pretty(&BrowserProtocolInfo::current())
+                .map_err(|error| format!("serialize tablebrowser protocol info: {error}"))?
+        );
+        return Ok(());
+    }
     if args.peek().is_some_and(|arg| arg == "--ui-schema") {
         print!("{}", ui_schema_json()?);
         return Ok(());
@@ -443,7 +460,12 @@ fn run_session() -> Result<(), String> {
 }
 
 fn ui_schema_json() -> Result<String, String> {
-    let schema = json!({
+    serde_json::to_string_pretty(&ui_schema_value())
+        .map_err(|error| format!("serialize ui schema: {error}"))
+}
+
+fn ui_schema_value() -> serde_json::Value {
+    json!({
         "schema_version": 1,
         "command_id": "tablebrowser",
         "invocation_name": "tablebrowser",
@@ -487,8 +509,7 @@ fn ui_schema_json() -> Result<String, String> {
             }
         ],
         "managed_output": null
-    });
-    serde_json::to_string_pretty(&schema).map_err(|error| format!("serialize ui schema: {error}"))
+    })
 }
 
 fn print_section(title: &str, lines: &[String]) {
@@ -510,6 +531,8 @@ tablebrowser - inspect arbitrary casacore tables
 Usage:
   tablebrowser [OPTIONS] <table-path>
   tablebrowser --session
+  tablebrowser --json-schema
+  tablebrowser --protocol-info
   tablebrowser --ui-schema
 
 Options:
@@ -519,6 +542,8 @@ Options:
   --open-linked N     follow discovered linked-table index N before rendering
   --inspect TARGET    cell:<row>:<column> | keyword:<path> | column-keyword:<column>:<path>
   --session           run the long-lived JSON Lines browser session on stdio
+  --json-schema       print the canonical session schema bundle
+  --protocol-info     print the tablebrowser session protocol descriptor
   --ui-schema         print the launcher schema consumed by casars
   -h, --help          show this help
 

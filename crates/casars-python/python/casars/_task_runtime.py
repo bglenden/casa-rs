@@ -40,6 +40,7 @@ class ProtocolInfo:
     protocol_name: str
     protocol_version: int
     binary_version: str
+    surface_kind: str | None = None
 
 
 def configure_calibrate_binary(binary: StrPath | None) -> None:
@@ -199,6 +200,7 @@ def _validated_protocol_info(binary: str) -> ProtocolInfo:
         protocol_name=str(payload["protocol_name"]),
         protocol_version=int(payload["protocol_version"]),
         binary_version=str(payload["binary_version"]),
+        surface_kind=str(payload["surface_kind"]) if "surface_kind" in payload else None,
     )
     if info.protocol_name != CALIBRATION_PROTOCOL_NAME:
         raise CalibrationProtocolMismatchError(

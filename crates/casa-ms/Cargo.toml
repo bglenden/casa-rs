@@ -12,6 +12,7 @@ default = []
 slow-tests = []
 
 [dependencies]
+casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 image = { version = "0.25", default-features = false, features = ["png"] }

@@ -30,6 +30,42 @@ fn ui_schema_matches_launcher_contract() {
 }
 
 #[test]
+fn json_schema_emits_canonical_session_bundle() {
+    let output = Command::new(tablebrowser_bin())
+        .arg("--json-schema")
+        .output()
+        .expect("run tablebrowser --json-schema");
+    assert!(output.status.success());
+
+    let schema = serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse schema");
+    assert_eq!(
+        schema["protocol"]["protocol_name"],
+        "casa_tablebrowser_session"
+    );
+    assert_eq!(schema["protocol"]["protocol_version"], 1);
+    assert_eq!(schema["protocol"]["surface_kind"], "session");
+    assert_eq!(schema["semantic"]["transport"], "jsonl_stdio");
+    assert_eq!(
+        schema["projections"]["ui_schema"]["command_id"],
+        "tablebrowser"
+    );
+}
+
+#[test]
+fn protocol_info_reports_session_surface() {
+    let output = Command::new(tablebrowser_bin())
+        .arg("--protocol-info")
+        .output()
+        .expect("run tablebrowser --protocol-info");
+    assert!(output.status.success());
+
+    let info = serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse info");
+    assert_eq!(info["protocol_name"], "casa_tablebrowser_session");
+    assert_eq!(info["protocol_version"], 1);
+    assert_eq!(info["surface_kind"], "session");
+}
+
+#[test]
 fn session_returns_structured_errors_for_invalid_requests() {
     let mut child = Command::new(tablebrowser_bin())
         .arg("--session")
