@@ -2988,8 +2988,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">68</span>
-<span class="normal">69</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">69</span>
 <span class="normal">70</span>
 <span class="normal">71</span>
 <span class="normal">72</span>
@@ -3001,7 +3000,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">78</span>
 <span class="normal">79</span>
 <span class="normal">80</span>
-<span class="normal">81</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="normal">81</span>
+<span class="normal">82</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ApplyTableSelection</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Optional applicability filter for one calibration table in an apply chain.&quot;&quot;&quot;</span>
 
@@ -3069,8 +3069,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 95</span>
-<span class="normal"> 96</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 96</span>
 <span class="normal"> 97</span>
 <span class="normal"> 98</span>
 <span class="normal"> 99</span>
@@ -3088,7 +3087,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">111</span>
 <span class="normal">112</span>
 <span class="normal">113</span>
-<span class="normal">114</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="normal">114</span>
+<span class="normal">115</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">CalibrationTableSpec</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;One calibration table in an apply or solve-preapply chain.&quot;&quot;&quot;</span>
 
@@ -3151,7 +3151,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
 
 
-        <p>Compatibility descriptor advertised by <code>calibrate --protocol-info</code>.</p>
+        <p>Compatibility descriptor advertised by a task provider binary.</p>
 
 
 
@@ -3162,16 +3162,16 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/_task_runtime.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">36</span>
-<span class="normal">37</span>
-<span class="normal">38</span>
-<span class="normal">39</span>
-<span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span>
-<span class="normal">43</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">57</span>
+<span class="normal">58</span>
+<span class="normal">59</span>
+<span class="normal">60</span>
+<span class="normal">61</span>
+<span class="normal">62</span>
+<span class="normal">63</span>
+<span class="normal">64</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ProtocolInfo</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compatibility descriptor advertised by ``calibrate --protocol-info``.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compatibility descriptor advertised by a task provider binary.&quot;&quot;&quot;</span>
 
     <span class="n">protocol_name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">protocol_version</span><span class="p">:</span> <span class="nb">int</span>
@@ -3231,8 +3231,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">32</span>
-<span class="normal">33</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">33</span>
 <span class="normal">34</span>
 <span class="normal">35</span>
 <span class="normal">36</span>
@@ -3264,7 +3263,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">62</span>
 <span class="normal">63</span>
 <span class="normal">64</span>
-<span class="normal">65</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="normal">65</span>
+<span class="normal">66</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">Selection</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Structured MeasurementSet selection shared across calibration stages.&quot;&quot;&quot;</span>
 
@@ -3352,15 +3352,15 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">84</span>
-<span class="normal">85</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">85</span>
 <span class="normal">86</span>
 <span class="normal">87</span>
 <span class="normal">88</span>
 <span class="normal">89</span>
 <span class="normal">90</span>
 <span class="normal">91</span>
-<span class="normal">92</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="normal">92</span>
+<span class="normal">93</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">SolveCombine</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Scan/field combine flags reused by gain and bandpass solves.&quot;&quot;&quot;</span>
 
@@ -3410,10 +3410,10 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">117</span>
-<span class="normal">118</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">118</span>
 <span class="normal">119</span>
-<span class="normal">120</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">configure</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">120</span>
+<span class="normal">121</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">configure</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Configure the default calibrate binary override for this module.&quot;&quot;&quot;</span>
 
     <span class="n">configure_calibrate_binary</span><span class="p">(</span><span class="n">binary</span><span class="p">)</span>
@@ -3439,8 +3439,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">189</span>
-<span class="normal">190</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">190</span>
 <span class="normal">191</span>
 <span class="normal">192</span>
 <span class="normal">193</span>
@@ -3460,7 +3459,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">207</span>
 <span class="normal">208</span>
 <span class="normal">209</span>
-<span class="normal">210</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">execute_apply</span><span class="p">(</span>
+<span class="normal">210</span>
+<span class="normal">211</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">execute_apply</span><span class="p">(</span>
     <span class="n">measurement_set</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="n">calibration_tables</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">CalibrationTableSpec</span> <span class="o">|</span> <span class="n">StrPath</span><span class="p">],</span>
     <span class="o">*</span><span class="p">,</span>
@@ -3504,8 +3504,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">287</span>
-<span class="normal">288</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">288</span>
 <span class="normal">289</span>
 <span class="normal">290</span>
 <span class="normal">291</span>
@@ -3529,7 +3528,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">309</span>
 <span class="normal">310</span>
 <span class="normal">311</span>
-<span class="normal">312</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fluxscale</span><span class="p">(</span>
+<span class="normal">312</span>
+<span class="normal">313</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fluxscale</span><span class="p">(</span>
     <span class="n">input_table</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="n">output_table</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
@@ -3577,8 +3577,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">167</span>
-<span class="normal">168</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">168</span>
 <span class="normal">169</span>
 <span class="normal">170</span>
 <span class="normal">171</span>
@@ -3596,7 +3595,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">183</span>
 <span class="normal">184</span>
 <span class="normal">185</span>
-<span class="normal">186</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plan_apply</span><span class="p">(</span>
+<span class="normal">186</span>
+<span class="normal">187</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plan_apply</span><span class="p">(</span>
     <span class="n">measurement_set</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="n">calibration_tables</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">CalibrationTableSpec</span> <span class="o">|</span> <span class="n">StrPath</span><span class="p">],</span>
     <span class="o">*</span><span class="p">,</span>
@@ -3638,10 +3638,10 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">123</span>
-<span class="normal">124</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">124</span>
 <span class="normal">125</span>
-<span class="normal">126</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">protocol_info</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProtocolInfo</span><span class="p">:</span>
+<span class="normal">126</span>
+<span class="normal">127</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">protocol_info</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProtocolInfo</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return validated protocol information for the selected binary.&quot;&quot;&quot;</span>
 
     <span class="k">return</span> <span class="n">get_protocol_info</span><span class="p">(</span><span class="n">binary</span><span class="o">=</span><span class="n">binary</span><span class="p">)</span>
@@ -3667,10 +3667,10 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">129</span>
-<span class="normal">130</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">130</span>
 <span class="normal">131</span>
-<span class="normal">132</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">schema</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="normal">132</span>
+<span class="normal">133</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">schema</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the Rust-emitted request/result schema bundle.&quot;&quot;&quot;</span>
 
     <span class="k">return</span> <span class="n">fetch_calibration_schema</span><span class="p">(</span><span class="n">binary</span><span class="o">=</span><span class="n">binary</span><span class="p">)</span>
@@ -3696,8 +3696,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">249</span>
-<span class="normal">250</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">250</span>
 <span class="normal">251</span>
 <span class="normal">252</span>
 <span class="normal">253</span>
@@ -3731,7 +3730,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">281</span>
 <span class="normal">282</span>
 <span class="normal">283</span>
-<span class="normal">284</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">solve_bandpass</span><span class="p">(</span>
+<span class="normal">284</span>
+<span class="normal">285</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">solve_bandpass</span><span class="p">(</span>
     <span class="n">measurement_set</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="n">output_table</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
@@ -3789,8 +3789,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">213</span>
-<span class="normal">214</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">214</span>
 <span class="normal">215</span>
 <span class="normal">216</span>
 <span class="normal">217</span>
@@ -3822,7 +3821,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">243</span>
 <span class="normal">244</span>
 <span class="normal">245</span>
-<span class="normal">246</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">solve_gain</span><span class="p">(</span>
+<span class="normal">246</span>
+<span class="normal">247</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">solve_gain</span><span class="p">(</span>
     <span class="n">measurement_set</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="n">output_table</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
@@ -3878,8 +3878,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">145</span>
-<span class="normal">146</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">146</span>
 <span class="normal">147</span>
 <span class="normal">148</span>
 <span class="normal">149</span>
@@ -3897,7 +3896,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">161</span>
 <span class="normal">162</span>
 <span class="normal">163</span>
-<span class="normal">164</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">stats</span><span class="p">(</span>
+<span class="normal">164</span>
+<span class="normal">165</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">stats</span><span class="p">(</span>
     <span class="n">path</span><span class="p">:</span> <span class="n">StrPath</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">axis</span><span class="p">:</span> <span class="n">StatsAxis</span> <span class="o">=</span> <span class="s2">&quot;amp&quot;</span><span class="p">,</span>
@@ -3939,14 +3939,14 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">135</span>
-<span class="normal">136</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">136</span>
 <span class="normal">137</span>
 <span class="normal">138</span>
 <span class="normal">139</span>
 <span class="normal">140</span>
 <span class="normal">141</span>
-<span class="normal">142</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">summary</span><span class="p">(</span><span class="n">paths</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">StrPath</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskResult</span><span class="p">:</span>
+<span class="normal">142</span>
+<span class="normal">143</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">summary</span><span class="p">(</span><span class="n">paths</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">StrPath</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskResult</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Summarize one or more calibration tables.&quot;&quot;&quot;</span>
 
     <span class="k">return</span> <span class="n">invoke_calibration_task</span><span class="p">(</span>
@@ -3976,8 +3976,7 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/calibrate.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">315</span>
-<span class="normal">316</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">316</span>
 <span class="normal">317</span>
 <span class="normal">318</span>
 <span class="normal">319</span>
@@ -4004,7 +4003,8 @@ support for Python-side image creation or coordinate/metadata editing.</p>
 <span class="normal">340</span>
 <span class="normal">341</span>
 <span class="normal">342</span>
-<span class="normal">343</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">validate_signature_parity</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">343</span>
+<span class="normal">344</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">validate_signature_parity</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">binary</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Fail if the Python wrapper metadata drifts from the Rust task schema.&quot;&quot;&quot;</span>
 
     <span class="n">definitions</span> <span class="o">=</span> <span class="n">schema</span><span class="p">(</span><span class="n">binary</span><span class="o">=</span><span class="n">binary</span><span class="p">)[</span><span class="s2">&quot;request_schema&quot;</span><span class="p">][</span><span class="s2">&quot;definitions&quot;</span><span class="p">]</span>

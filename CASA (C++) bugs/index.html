@@ -491,6 +491,56 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#importvla-stale-vlacda-cache-crash-on-old-vla-export-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        importvla stale VLACDA cache crash on old VLA export data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="importvla stale VLACDA cache crash on old VLA export data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#likely-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Likely mechanism
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#proposed-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed fix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#mstransform-channel-mode-transformed-grid-inconsistency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -503,7 +553,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#summary_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Summary
@@ -564,7 +614,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#summary_1" class="md-nav__link">
+  <a href="#summary_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         Summary
@@ -586,7 +636,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#likely-mechanism" class="md-nav__link">
+  <a href="#likely-mechanism_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Likely mechanism
@@ -631,13 +681,36 @@
 
 <h1 id="casa-c-bugs">CASA (C++) bugs<a class="headerlink" href="#casa-c-bugs" title="Permanent link">&para;</a></h1>
 <p>Notes on bugs or likely bugs observed while doing Rust/C++ parity work against CASA.</p>
+<h2 id="importvla-stale-vlacda-cache-crash-on-old-vla-export-data"><code>importvla</code> stale <code>VLACDA</code> cache crash on old VLA export data<a class="headerlink" href="#importvla-stale-vlacda-cache-crash-on-old-vla-export-data" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-04-15</li>
+<li>Status: likely CASA <code>importvla</code> bug</li>
+<li>Affected code:</li>
+<li><code>casatools/src/code/nrao/VLA/VLACDA.cc</code></li>
+<li><code>casatools/src/code/nrao/VLA/VLABaselineRecord.cc</code></li>
+<li>NRAO Archive file: <code>AG189_1_46325.23029_46325.80807.exp</code></li>
+<li>Standalone note: <a href="../casa-importvla-vlacda-offset-zero/">casa-importvla-vlacda-offset-zero.md</a></li>
+</ul>
+<h3 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h3>
+<p><code>importvla</code> can abort on old VLA export data when a CDA is valid in one logical record
+and absent in the next. The immediate failure is the <code>offset != 0</code> assertion in
+<code>VLABaselineRecord::attach()</code>.</p>
+<h3 id="likely-mechanism">Likely mechanism<a class="headerlink" href="#likely-mechanism" title="Permanent link">&para;</a></h3>
+<p><code>VLALogicalRecord::read()</code> reattaches all four CDAs on every logical record. <code>VLACDA</code>
+caches baseline-record objects, so if a CDA was populated on one record and then becomes
+absent on the next, <code>VLACDA::attach()</code> can try to reattach cached baseline objects using
+offset <code>0</code>, which triggers the assertion in <code>VLABaselineRecord</code>.</p>
+<h3 id="proposed-fix">Proposed fix<a class="headerlink" href="#proposed-fix" title="Permanent link">&para;</a></h3>
+<p>In <code>VLACDA::attach()</code>, if the new CDA is invalid (<code>itsOffset == 0</code>, or equivalently no
+baseline data are present), clear the cached baseline objects and return before any
+reattach path runs.</p>
 <h2 id="mstransform-channel-mode-transformed-grid-inconsistency"><code>mstransform</code> channel-mode transformed-grid inconsistency<a class="headerlink" href="#mstransform-channel-mode-transformed-grid-inconsistency" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-04-10</li>
 <li>Status: likely CASA <code>mstransform</code> bug or long-standing implementation quirk</li>
 <li>Affected code: <code>casatools/src/code/mstransform/MSTransform/MSTransformRegridder.cc</code></li>
 </ul>
-<h3 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h3>
+<h3 id="summary_1">Summary<a class="headerlink" href="#summary_1" title="Permanent link">&para;</a></h3>
 <p>In the transformed <code>mode="channel"</code> / <code>regridQuant == "freq"</code> path, CASA appears to anchor
 the output-grid start edge using <code>transCHAN_WIDTH[firstChan]</code>, while it spaces the uniform
 output grid using <code>transCHAN_WIDTH[0]</code>.</p>
@@ -673,7 +746,7 @@ parity work that surfaced this CASA-side issue.</p>
 <li><code>casatools/casacore/scimath_f/hclean.f</code></li>
 <li>Source note: <code>/Users/brianglendenning/Downloads/casa-hogbom-niter-findings (2).pdf</code></li>
 </ul>
-<h3 id="summary_1">Summary<a class="headerlink" href="#summary_1" title="Permanent link">&para;</a></h3>
+<h3 id="summary_2">Summary<a class="headerlink" href="#summary_2" title="Permanent link">&para;</a></h3>
 <p>In the current CASA <code>tclean(..., deconvolver='hogbom')</code> path, <code>niter=1</code> appears able to commit
 two clean components inside a single minor cycle while still reporting <code>iterdone = 1</code>.</p>
 <h3 id="casa-rs-policy">casa-rs policy<a class="headerlink" href="#casa-rs-policy" title="Permanent link">&para;</a></h3>
@@ -690,7 +763,7 @@ intentional divergence against this upstream bug, not as a parity failure to
 <li>observed result: CASA reported <code>iterdone = 1</code>, but the output <code>.model</code> image contained two
   nonzero clean components</li>
 </ul>
-<h3 id="likely-mechanism">Likely mechanism<a class="headerlink" href="#likely-mechanism" title="Permanent link">&para;</a></h3>
+<h3 id="likely-mechanism_1">Likely mechanism<a class="headerlink" href="#likely-mechanism_1" title="Permanent link">&para;</a></h3>
 <p>The note points to an off-by-one style caller/kernel mismatch:</p>
 <ol>
 <li><code>SDAlgorithmHogbomClean::takeOneStep</code> seeds <code>starting_iteration = 0</code></li>
