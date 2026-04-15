@@ -10,6 +10,7 @@ use casa_calibration::CalibrationTaskSchemaBundle;
 use casa_images::imexplore_ui_schema_json;
 use casa_ms::MsExploreTaskSchemaBundle;
 use casa_ms::ui_schema::UiCommandSchema;
+use casa_vla::ImportVlaTaskSchemaBundle;
 use casars_imagebrowser_protocol::ImageBrowserSessionSchemaBundle;
 use casars_imager::ImagerTaskSchemaBundle;
 
@@ -80,6 +81,9 @@ impl RegistryApp {
         }
         if !self.has_explicit_binary_override() && self.id == "calibrate" {
             return CalibrationTaskSchemaBundle::current().ui_schema_projection();
+        }
+        if !self.has_explicit_binary_override() && self.id == "importvla" {
+            return ImportVlaTaskSchemaBundle::current().ui_schema_projection();
         }
         if !self.has_explicit_binary_override() && self.id == "imager" {
             return ImagerTaskSchemaBundle::current().ui_schema_projection();
@@ -179,7 +183,7 @@ impl RegistryApp {
     }
 
     fn prefers_cargo_workspace_fallback_for_stale_sibling(&self) -> bool {
-        matches!(self.id, "msexplore" | "calibrate")
+        matches!(self.id, "msexplore" | "calibrate" | "importvla")
     }
 
     pub(crate) fn is_browser_session(&self) -> bool {
@@ -260,11 +264,12 @@ pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
     match id.unwrap_or("msexplore") {
         "msexplore" => Ok(msexplore_app()),
         "calibrate" => Ok(calibrate_app()),
+        "importvla" => Ok(importvla_app()),
         "imager" => Ok(imager_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: msexplore, calibrate, imager, tablebrowser, imexplore"
+            "unknown casars app {other:?}; expected one of: msexplore, calibrate, importvla, imager, tablebrowser, imexplore"
         )),
     }
 }
@@ -273,6 +278,7 @@ pub(crate) fn registered_apps() -> Vec<RegistryApp> {
     vec![
         msexplore_app(),
         calibrate_app(),
+        importvla_app(),
         imager_app(),
         tablebrowser_app(),
         imexplore_app(),
@@ -289,6 +295,21 @@ pub(crate) fn calibrate_app() -> RegistryApp {
             binary_name: "calibrate",
             cargo_package: "casa-calibration",
             override_env: "CASARS_CALIBRATE_BIN",
+            interaction: AppInteraction::OneShot,
+        },
+    }
+}
+
+pub(crate) fn importvla_app() -> RegistryApp {
+    RegistryApp {
+        id: "importvla",
+        category: "Import",
+        display_name: "ImportVLA",
+        shell_kind: AppShellKind::Workflow,
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "casars-importvla",
+            cargo_package: "casars-importvla",
+            override_env: "CASARS_IMPORTVLA_BIN",
             interaction: AppInteraction::OneShot,
         },
     }
@@ -410,6 +431,7 @@ mod tests {
         assert_eq!(resolve_app(None).unwrap().id, "msexplore");
         assert_eq!(resolve_app(Some("msexplore")).unwrap().id, "msexplore");
         assert_eq!(resolve_app(Some("calibrate")).unwrap().id, "calibrate");
+        assert_eq!(resolve_app(Some("importvla")).unwrap().id, "importvla");
         assert_eq!(
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
@@ -439,6 +461,15 @@ mod tests {
         assert_eq!(calibrate.browser_path_field_id(), None);
         assert_eq!(
             calibrate.ready_status_line(),
+            "Ready. Press r to run the selected workflow stage."
+        );
+
+        let importvla = importvla_app();
+        assert!(!importvla.is_browser_session());
+        assert_eq!(importvla.browser_kind(), None);
+        assert_eq!(importvla.browser_path_field_id(), None);
+        assert_eq!(
+            importvla.ready_status_line(),
             "Ready. Press r to run the selected workflow stage."
         );
 
@@ -594,6 +625,34 @@ mod tests {
             panic!("apply_mode should be an option parser");
         };
         assert_eq!(choices, &["calflag", "calonly", "trial"]);
+    }
+
+    #[test]
+    fn importvla_load_schema_describes_public_workflow_surface() {
+        let schema = importvla_app()
+            .load_schema()
+            .expect("load importvla schema");
+        assert_eq!(schema.command_id, "importvla");
+        assert_eq!(schema.display_name, "ImportVLA");
+        assert_eq!(schema.category, "Import");
+        let archivefiles = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "archivefiles")
+            .expect("archivefiles argument");
+        let UiArgumentParser::Option { choices, .. } = &archivefiles.parser else {
+            panic!("archivefiles should be an option parser");
+        };
+        assert!(choices.is_empty());
+        let antnamescheme = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "antnamescheme")
+            .expect("antnamescheme argument");
+        let UiArgumentParser::Option { choices, .. } = &antnamescheme.parser else {
+            panic!("antnamescheme should be an option parser");
+        };
+        assert_eq!(choices, &["new", "old"]);
     }
 
     #[test]

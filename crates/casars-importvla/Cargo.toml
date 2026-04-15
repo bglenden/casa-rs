@@ -1,0 +1,16 @@
+[package]
+name = "casars-importvla"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Application surface for importvla-style VLA archive workflows"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-vla = { path = "../casa-vla" }
+

@@ -3,11 +3,13 @@ resolver = "2"
 members = [
     "crates/casa-provider-contracts",
     "crates/casars",
+    "crates/casars-importvla",
     "crates/casars-imager",
     "crates/casars-python",
     "crates/casars-imagebrowser-protocol",
     "crates/casars-tablebrowser-protocol",
     "crates/casa-types",
+    "crates/casa-vla",
     "crates/casa-values",
     "crates/casa-aipsio",
     "crates/casa-table-read",

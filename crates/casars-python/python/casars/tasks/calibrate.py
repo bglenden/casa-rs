@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 import inspect
 import os
+from os import PathLike
 from typing import Any, Literal, TypeAlias
 
 from .._task_runtime import (
@@ -15,7 +16,7 @@ from .._task_runtime import (
     get_protocol_info,
     invoke_calibration_task,
 )
-from ..data import StrPath
+StrPath: TypeAlias = str | PathLike[str]
 
 TaskResult: TypeAlias = dict[str, Any]
 ApplyMode: TypeAlias = Literal["calflag", "calonly", "trial"]

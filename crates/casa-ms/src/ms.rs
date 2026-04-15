@@ -144,6 +144,36 @@ impl MeasurementSet {
         Ok(())
     }
 
+    /// Save the MS to its path without re-validating each table against its schema.
+    ///
+    /// This preserves the same on-disk layout as [`save`](Self::save), but
+    /// skips the extra full-table validation pass for the main table and every
+    /// subtable. It is intended for advanced writers that already route all
+    /// mutations through schema-aware code paths and want to avoid rechecking
+    /// every row during the final serialization step.
+    pub fn save_assuming_valid(&mut self) -> MsResult<()> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
+            .clone();
+
+        self.refresh_subtable_paths(&path);
+        self.sync_main_metadata(&path);
+        self.main.save_assuming_valid(TableOptions::new(&path))?;
+
+        for (id, table) in &self.subtables {
+            let subtable_path = self
+                .subtable_paths
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| path.join(id.name()));
+            table.save_assuming_valid(TableOptions::new(&subtable_path))?;
+        }
+
+        Ok(())
+    }
+
     /// Save only the MS main table back to disk.
     ///
     /// This is intended for workflows that mutate only MAIN columns/keywords

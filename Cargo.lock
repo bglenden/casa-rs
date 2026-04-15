@@ -632,6 +632,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-vla"
+version = "0.14.0"
+dependencies = [
+ "casa-ms",
+ "casa-provider-contracts",
+ "casa-tables",
+ "casa-test-support",
+ "casa-types",
+ "ndarray",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "casars"
 version = "0.15.1"
 dependencies = [
@@ -642,6 +659,7 @@ dependencies = [
  "casa-ms",
  "casa-tables",
  "casa-types",
+ "casa-vla",
  "casars-imagebrowser-protocol",
  "casars-imager",
  "casars-tablebrowser-protocol",
@@ -696,6 +714,13 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "casars-importvla"
+version = "0.14.0"
+dependencies = [
+ "casa-vla",
 ]
 
 [[package]]

@@ -99,6 +99,32 @@ impl Table {
         self.finish_write_operation(auto_unlock, result)
     }
 
+    /// Appends a row without re-validating it against the attached schema.
+    ///
+    /// This is intended for advanced callers that already know `row` matches
+    /// the current schema because it was synthesized directly from the schema
+    /// or validated earlier in the same write path. Undefined scalar-column
+    /// tracking is still updated when a schema is attached.
+    ///
+    /// Callers that are not certain the row is schema-valid should keep using
+    /// [`add_row`](Table::add_row).
+    pub fn add_row_assuming_valid(&mut self, row: RecordValue) -> Result<(), TableError> {
+        let auto_unlock = self.begin_write_operation("add_row_assuming_valid")?;
+        let result = (|| {
+            let undefined = self
+                .schema()
+                .map(|schema| undefined_columns_for_row(&row, schema));
+            self.inner.add_row(row)?;
+            if let Some(undefined) = undefined
+                && let Some(set) = self.inner.undefined_for_row_mut(self.row_count() - 1)?
+            {
+                *set = undefined;
+            }
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
     /// Returns a shared reference to the row at `row_index`.
     pub fn row(&self, row_index: usize) -> Result<&RecordValue, TableError> {
         self.inner

@@ -226,6 +226,34 @@ unsafe extern "C" {
         freq_out: *mut f64,
     ) -> i32;
 
+    fn measures_shim_frequency_convert_via_model(
+        freq_hz: f64,
+        ref_in: *const std::ffi::c_char,
+        ref_out: *const std::ffi::c_char,
+        dir_lon: f64,
+        dir_lat: f64,
+        dir_ref: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        freq_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_frequency_convert_via_mutated_model(
+        freq_hz: f64,
+        ref_in: *const std::ffi::c_char,
+        ref_out: *const std::ffi::c_char,
+        dir_lon: f64,
+        dir_lat: f64,
+        dir_ref: *const std::ffi::c_char,
+        epoch_mjd: f64,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        freq_out: *mut f64,
+    ) -> i32;
+
     fn measures_shim_frequency_convert_between_frames(
         freq_hz: f64,
         ref_in: *const std::ffi::c_char,
@@ -1076,6 +1104,96 @@ pub fn cpp_frequency_convert(
         Ok(freq_out)
     } else {
         Err(format!("C++ frequency_convert failed: rc={rc}"))
+    }
+}
+
+/// Convert a frequency using the same persistent-converter pattern used by
+/// CASA `VLAFiller` when converting channel grids.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_frequency_convert_via_model(
+    freq_hz: f64,
+    ref_in: &str,
+    ref_out: &str,
+    dir_lon: f64,
+    dir_lat: f64,
+    dir_ref: &str,
+    epoch_mjd: f64,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<f64, String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let c_out = CString::new(ref_out).unwrap();
+    let c_dir = CString::new(dir_ref).unwrap();
+    let mut freq_out: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_frequency_convert_via_model(
+            freq_hz,
+            c_in.as_ptr(),
+            c_out.as_ptr(),
+            dir_lon,
+            dir_lat,
+            c_dir.as_ptr(),
+            epoch_mjd,
+            obs_lon,
+            obs_lat,
+            obs_h,
+            &mut freq_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok(freq_out)
+    } else {
+        Err(format!("C++ frequency_convert_via_model failed: rc={rc}"))
+    }
+}
+
+/// Convert a frequency using a converter model that is created before the frame
+/// is updated, mirroring the lifecycle of CASA `VLAFiller::itsFreqCtr`.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_frequency_convert_via_mutated_model(
+    freq_hz: f64,
+    ref_in: &str,
+    ref_out: &str,
+    dir_lon: f64,
+    dir_lat: f64,
+    dir_ref: &str,
+    epoch_mjd: f64,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<f64, String> {
+    let c_in = CString::new(ref_in).unwrap();
+    let c_out = CString::new(ref_out).unwrap();
+    let c_dir = CString::new(dir_ref).unwrap();
+    let mut freq_out: f64 = 0.0;
+
+    let rc = unsafe {
+        measures_shim_frequency_convert_via_mutated_model(
+            freq_hz,
+            c_in.as_ptr(),
+            c_out.as_ptr(),
+            dir_lon,
+            dir_lat,
+            c_dir.as_ptr(),
+            epoch_mjd,
+            obs_lon,
+            obs_lat,
+            obs_h,
+            &mut freq_out,
+        )
+    };
+
+    if rc == 0 {
+        Ok(freq_out)
+    } else {
+        Err(format!(
+            "C++ frequency_convert_via_mutated_model failed: rc={rc}"
+        ))
     }
 }
 
