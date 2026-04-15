@@ -184,7 +184,11 @@ fn parse_schema_prefill_args(
                             choices.join(", ")
                         ));
                     }
-                    upsert_value(&mut values, argument.id.clone(), StartupValue::Text(value));
+                    if schema.command_id == "importvla" && argument.id == "archivefiles" {
+                        append_csv_value(&mut values, argument.id.clone(), value);
+                    } else {
+                        upsert_value(&mut values, argument.id.clone(), StartupValue::Text(value));
+                    }
                     saw_prefill = true;
                 }
                 UiArgumentParser::Positional { .. } => {
@@ -251,6 +255,24 @@ fn upsert_value(values: &mut Vec<StartupPrefill>, id: String, value: StartupValu
     } else {
         values.push(StartupPrefill { id, value });
     }
+}
+
+fn append_csv_value(values: &mut Vec<StartupPrefill>, id: String, value: String) {
+    if let Some(existing) = values.iter_mut().find(|entry| entry.id == id) {
+        if let StartupValue::Text(existing_text) = &mut existing.value {
+            if existing_text.is_empty() {
+                *existing_text = value;
+            } else if !value.is_empty() {
+                existing_text.push(',');
+                existing_text.push_str(&value);
+            }
+            return;
+        }
+    }
+    values.push(StartupPrefill {
+        id,
+        value: StartupValue::Text(value),
+    });
 }
 
 fn decode_arg(value: OsString, context: &str) -> Result<String, String> {
@@ -546,6 +568,30 @@ mod tests {
                     entry.id == "archivefiles"
                         && entry.value
                             == StartupValue::Text("/tmp/example.exp,/tmp/other.xp1".to_string())
+                }));
+            }
+            other => panic!("expected startup app selection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn startup_parser_accumulates_repeated_importvla_archivefile_aliases() {
+        match parse_startup_args(vec![
+            OsString::from("importvla"),
+            OsString::from("--archivefile"),
+            OsString::from("/tmp/first.exp"),
+            OsString::from("--archivefile"),
+            OsString::from("/tmp/second.xp1"),
+        ])
+        .expect("importvla startup args")
+        {
+            StartupSelection::App(selection) => {
+                assert_eq!(selection.app.id, "importvla");
+                assert!(selection.auto_run);
+                assert!(selection.prefill.iter().any(|entry| {
+                    entry.id == "archivefiles"
+                        && entry.value
+                            == StartupValue::Text("/tmp/first.exp,/tmp/second.xp1".to_string())
                 }));
             }
             other => panic!("expected startup app selection, got {other:?}"),

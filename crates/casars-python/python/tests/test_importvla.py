@@ -81,6 +81,15 @@ def test_protocol_mismatch_fails_fast(tmp_path: Path) -> None:
         importvla.scan(["archive.exp"], binary=binary)
 
 
+def test_protocol_info_subprocess_failures_raise_importvla_invocation_error(
+    tmp_path: Path,
+) -> None:
+    binary = _write_failing_protocol_binary(tmp_path / "bad-protocol" / "casars-importvla")
+
+    with pytest.raises(_task_runtime.ImportVlaInvocationError, match="protocol-info crashed"):
+        importvla.protocol_info(binary=binary)
+
+
 def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     binary = _write_stub_binary(tmp_path / "ok" / "casars-importvla", version="ok")
 
@@ -174,6 +183,25 @@ def _write_stub_binary(
                 }}
             }}))
             raise SystemExit(0)
+
+        raise SystemExit("unexpected argv: " + " ".join(sys.argv[1:]))
+        """
+    )
+    path.write_text(script, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path
+
+
+def _write_failing_protocol_binary(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    script = textwrap.dedent(
+        """\
+        #!/usr/bin/env python3
+        import sys
+
+        if "--protocol-info" in sys.argv:
+            print("protocol-info crashed", file=sys.stderr)
+            raise SystemExit(7)
 
         raise SystemExit("unexpected argv: " + " ".join(sys.argv[1:]))
         """

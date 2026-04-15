@@ -3,18 +3,9 @@
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 from . import tasks
-
-# Task wrappers do not require the native data extension. Keep `casars.tasks`
-# importable from a source checkout even when `_core` has not been built yet.
-try:
-    from . import data
-    from .data import Image, Table
-except ImportError:  # pragma: no cover - exercised in source-only task tests
-    data = None  # type: ignore[assignment]
-    Image = None  # type: ignore[assignment]
-    Table = None  # type: ignore[assignment]
 
 try:
     __version__ = version("casa-rs-python")
@@ -22,3 +13,17 @@ except PackageNotFoundError:  # pragma: no cover - editable local builds
     __version__ = "0+unknown"
 
 __all__ = ["Image", "Table", "data", "tasks", "__version__"]
+
+
+def __getattr__(name: str) -> Any:
+    """Load the data surface lazily so task wrappers work without `_core`."""
+
+    if name in {"data", "Image", "Table"}:
+        from . import data as data_module
+
+        if name == "data":
+            return data_module
+        if name == "Image":
+            return data_module.Image
+        return data_module.Table
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

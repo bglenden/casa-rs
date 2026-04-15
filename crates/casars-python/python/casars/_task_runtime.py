@@ -113,6 +113,7 @@ def get_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
         protocol_name=CALIBRATION_PROTOCOL_NAME,
         protocol_version=CALIBRATION_PROTOCOL_VERSION,
         mismatch_error_cls=CalibrationProtocolMismatchError,
+        invocation_error_cls=CalibrationInvocationError,
     )
 
 
@@ -125,6 +126,7 @@ def get_importvla_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
         protocol_name=IMPORTVLA_PROTOCOL_NAME,
         protocol_version=IMPORTVLA_PROTOCOL_VERSION,
         mismatch_error_cls=ImportVlaProtocolMismatchError,
+        invocation_error_cls=ImportVlaInvocationError,
     )
 
 
@@ -158,6 +160,7 @@ def invoke_calibration_task(
         protocol_name=CALIBRATION_PROTOCOL_NAME,
         protocol_version=CALIBRATION_PROTOCOL_VERSION,
         mismatch_error_cls=CalibrationProtocolMismatchError,
+        invocation_error_cls=CalibrationInvocationError,
     )
     payload = json.dumps({"kind": kind, "request": request}, sort_keys=True)
     stdout = _run_process(
@@ -182,6 +185,7 @@ def invoke_importvla_task(
         protocol_name=IMPORTVLA_PROTOCOL_NAME,
         protocol_version=IMPORTVLA_PROTOCOL_VERSION,
         mismatch_error_cls=ImportVlaProtocolMismatchError,
+        invocation_error_cls=ImportVlaInvocationError,
     )
     payload = json.dumps({"kind": kind, "request": request}, sort_keys=True)
     stdout = _run_process(
@@ -357,8 +361,9 @@ def _validated_protocol_info(
     protocol_name: str,
     protocol_version: int,
     mismatch_error_cls: type[RuntimeError],
+    invocation_error_cls: type[RuntimeError],
 ) -> ProtocolInfo:
-    stdout = _run_process([binary, "--protocol-info"], error_cls=RuntimeError)
+    stdout = _run_process([binary, "--protocol-info"], error_cls=invocation_error_cls)
     payload = json.loads(stdout)
     info = ProtocolInfo(
         protocol_name=str(payload["protocol_name"]),
