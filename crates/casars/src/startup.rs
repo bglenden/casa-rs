@@ -511,6 +511,48 @@ mod tests {
     }
 
     #[test]
+    fn startup_parser_prefills_importvla_archivefiles_from_bare_path() {
+        match parse_startup_args(vec![
+            OsString::from("importvla"),
+            OsString::from("/tmp/example.exp"),
+        ])
+        .expect("importvla startup args")
+        {
+            StartupSelection::App(selection) => {
+                assert_eq!(selection.app.id, "importvla");
+                assert!(!selection.auto_run);
+                assert!(selection.prefill.iter().any(|entry| {
+                    entry.id == "archivefiles"
+                        && entry.value == StartupValue::Text("/tmp/example.exp".to_string())
+                }));
+            }
+            other => panic!("expected startup app selection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn startup_parser_autoruns_importvla_when_archivefiles_flag_is_explicit() {
+        match parse_startup_args(vec![
+            OsString::from("importvla"),
+            OsString::from("--archivefiles"),
+            OsString::from("/tmp/example.exp,/tmp/other.xp1"),
+        ])
+        .expect("importvla startup args")
+        {
+            StartupSelection::App(selection) => {
+                assert_eq!(selection.app.id, "importvla");
+                assert!(selection.auto_run);
+                assert!(selection.prefill.iter().any(|entry| {
+                    entry.id == "archivefiles"
+                        && entry.value
+                            == StartupValue::Text("/tmp/example.exp,/tmp/other.xp1".to_string())
+                }));
+            }
+            other => panic!("expected startup app selection, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn schema_prefill_rejects_hidden_arguments() {
         let schema = command_schema("msexplore");
         let error = parse_schema_prefill_args(
@@ -556,6 +598,7 @@ mod tests {
         assert!(text.contains("tablebrowser"));
         assert!(text.contains("imexplore"));
         assert!(text.contains("msexplore"));
+        assert!(text.contains("importvla"));
     }
 
     #[test]

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::collections::{HashMap, HashSet};
+
 use casa_types::PrimitiveType;
 use thiserror::Error;
 
@@ -266,6 +268,7 @@ impl ColumnSchema {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableSchema {
     columns: Vec<ColumnSchema>,
+    column_lookup: HashMap<String, usize>,
 }
 
 impl TableSchema {
@@ -276,16 +279,19 @@ impl TableSchema {
     /// [`SchemaError::DuplicateColumn`]. Cf. C++ `TableDesc::addColumn`, which
     /// throws `TableError` on the first duplicate encountered.
     pub fn new(columns: Vec<ColumnSchema>) -> Result<Self, SchemaError> {
-        for i in 0..columns.len() {
-            columns[i].validate_options()?;
-            if columns[(i + 1)..]
-                .iter()
-                .any(|other| other.name == columns[i].name)
-            {
-                return Err(SchemaError::DuplicateColumn(columns[i].name.clone()));
+        let mut column_lookup = HashMap::with_capacity(columns.len());
+        let mut seen = HashSet::with_capacity(columns.len());
+        for (index, column) in columns.iter().enumerate() {
+            column.validate_options()?;
+            if !seen.insert(column.name.clone()) {
+                return Err(SchemaError::DuplicateColumn(column.name.clone()));
             }
+            column_lookup.insert(column.name.clone(), index);
         }
-        Ok(Self { columns })
+        Ok(Self {
+            columns,
+            column_lookup,
+        })
     }
 
     /// Return the ordered slice of column descriptions.
@@ -301,14 +307,16 @@ impl TableSchema {
     /// Returns `None` if no column with the given name exists.
     /// Cf. C++ `TableDesc::columnDesc(name)`, which throws on a missing column.
     pub fn column(&self, name: &str) -> Option<&ColumnSchema> {
-        self.columns.iter().find(|column| column.name == name)
+        self.column_lookup
+            .get(name)
+            .and_then(|index| self.columns.get(*index))
     }
 
     /// Return `true` if a column with the given name exists in this schema.
     ///
     /// Cf. C++ `TableDesc::isColumn(name)`.
     pub fn contains_column(&self, name: &str) -> bool {
-        self.column(name).is_some()
+        self.column_lookup.contains_key(name)
     }
 
     /// Add a column to the schema.
@@ -321,6 +329,8 @@ impl TableSchema {
             return Err(SchemaError::DuplicateColumn(col.name().to_string()));
         }
         col.validate_options()?;
+        self.column_lookup
+            .insert(col.name().to_string(), self.columns.len());
         self.columns.push(col);
         Ok(())
     }
@@ -335,7 +345,9 @@ impl TableSchema {
             .iter()
             .position(|c| c.name == name)
             .ok_or_else(|| SchemaError::ColumnNotFound(name.to_string()))?;
-        Ok(self.columns.remove(pos))
+        let removed = self.columns.remove(pos);
+        self.rebuild_lookup();
+        Ok(removed)
     }
 
     /// Rename a column.
@@ -353,7 +365,18 @@ impl TableSchema {
             .find(|c| c.name == old)
             .ok_or_else(|| SchemaError::ColumnNotFound(old.to_string()))?;
         col.name = new.to_string();
+        self.rebuild_lookup();
         Ok(())
+    }
+
+    fn rebuild_lookup(&mut self) {
+        self.column_lookup.clear();
+        self.column_lookup.extend(
+            self.columns
+                .iter()
+                .enumerate()
+                .map(|(index, column)| (column.name.clone(), index)),
+        );
     }
 }
 

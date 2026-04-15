@@ -2,6 +2,35 @@
 
 Notes on bugs or likely bugs observed while doing Rust/C++ parity work against CASA.
 
+## `importvla` stale `VLACDA` cache crash on old VLA export data
+
+- Date noted: 2026-04-15
+- Status: likely CASA `importvla` bug
+- Affected code:
+  - `casatools/src/code/nrao/VLA/VLACDA.cc`
+  - `casatools/src/code/nrao/VLA/VLABaselineRecord.cc`
+- NRAO Archive file: `AG189_1_46325.23029_46325.80807.exp`
+- Standalone note: [casa-importvla-vlacda-offset-zero.md](casa-importvla-vlacda-offset-zero.md)
+
+### Summary
+
+`importvla` can abort on old VLA export data when a CDA is valid in one logical record
+and absent in the next. The immediate failure is the `offset != 0` assertion in
+`VLABaselineRecord::attach()`.
+
+### Likely mechanism
+
+`VLALogicalRecord::read()` reattaches all four CDAs on every logical record. `VLACDA`
+caches baseline-record objects, so if a CDA was populated on one record and then becomes
+absent on the next, `VLACDA::attach()` can try to reattach cached baseline objects using
+offset `0`, which triggers the assertion in `VLABaselineRecord`.
+
+### Proposed fix
+
+In `VLACDA::attach()`, if the new CDA is invalid (`itsOffset == 0`, or equivalently no
+baseline data are present), clear the cached baseline objects and return before any
+reattach path runs.
+
 ## `mstransform` channel-mode transformed-grid inconsistency
 
 - Date noted: 2026-04-10

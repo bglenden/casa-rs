@@ -16,6 +16,7 @@ arboard = "3"
 casa-calibration = { path = "../casa-calibration" }
 casa-images = { path = "../casa-images" }
 casa-imaging = { path = "../casa-imaging" }
+casa-vla = { path = "../casa-vla" }
 casars-imager = { path = "../casars-imager" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casa-ms = { path = "../casa-ms" }

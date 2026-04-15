@@ -61,7 +61,8 @@ use crate::calibration_workflow::{
 use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
 use crate::registry::{
-    calibrate_app, imager_app, imexplore_app, msexplore_app, registered_apps, tablebrowser_app,
+    calibrate_app, imager_app, imexplore_app, importvla_app, msexplore_app, registered_apps,
+    tablebrowser_app,
 };
 use crate::theme::theme;
 use crate::ui;
@@ -80,6 +81,7 @@ fn launcher_lists_registered_apps_in_expected_order() {
         vec![
             "msexplore",
             "calibrate",
+            "importvla",
             "imager",
             "tablebrowser",
             "imexplore"
@@ -107,11 +109,13 @@ fn launcher_screen_renders_available_apps() {
     assert!(rendered.contains("Select Application"));
     assert!(rendered.contains("msexplore"));
     assert!(rendered.contains("calibrate"));
+    assert!(rendered.contains("importvla"));
     assert!(rendered.contains("imager"));
     assert!(rendered.contains("tablebrowser"));
     assert!(rendered.contains("imexplore"));
     assert!(rendered.contains("MSExplore"));
     assert!(rendered.contains("Calibrate"));
+    assert!(rendered.contains("ImportVLA"));
     assert!(rendered.contains("Imager"));
     assert!(rendered.contains("Table Browser"));
     assert!(rendered.contains("ImExplore"));
@@ -8603,6 +8607,44 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
 }
 
 #[test]
+fn importvla_workflow_runs_against_real_archive_and_renders_stdout() {
+    with_test_env_lock(clear_importvla_launcher_bin);
+
+    let Some(archive_path) = shared_importvla_archive_path() else {
+        eprintln!("skipping importvla workflow regression: missing shared VLA export archive");
+        return;
+    };
+
+    let temp = tempdir().expect("tempdir");
+    let schema = importvla_app()
+        .load_schema()
+        .expect("load importvla schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(importvla_app(), schema, config);
+    app.set_text_value("archivefiles", archive_path.to_string_lossy().as_ref());
+
+    start_run_with_default_importvla_launcher(&mut app);
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
+    assert!(
+        app.stderr_for_test().trim().is_empty(),
+        "status={} stderr={}",
+        app.status_line_for_test(),
+        app.stderr_for_test()
+    );
+    assert_eq!(app.active_result_tab(), ResultTab::Stdout);
+    assert!(
+        matches!(
+            app.active_result_content(),
+            crate::app::ResultContent::Lines(lines)
+                if lines.iter().any(|line| line.contains("importvla disk scan"))
+                    && lines.iter().any(|line| line.contains("logical records"))
+        ),
+        "content={:?}",
+        app.active_result_content()
+    );
+}
+
+#[test]
 fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     let _guard = launcher_env_lock();
     clear_launcher_bin();
@@ -9650,6 +9692,18 @@ fn start_run_with_default_imager_launcher(app: &mut AppState) {
     });
 }
 
+fn start_run_with_default_importvla_launcher(app: &mut AppState) {
+    with_test_env_lock(|| {
+        if let Some(path) = test_workspace_binary("casars-importvla") {
+            set_importvla_launcher_bin(&path);
+        } else {
+            clear_importvla_launcher_bin();
+        }
+        app.start_run_for_test();
+        clear_importvla_launcher_bin();
+    });
+}
+
 fn start_run_with_msexplore_launcher_bin(app: &mut AppState, path: &Path) {
     with_test_env_lock(|| {
         set_launcher_bin(path);
@@ -9694,6 +9748,20 @@ fn shared_ngc5921_ms_path() -> Option<PathBuf> {
         .into_iter()
         .map(|root| root.join("measurementset").join("vla").join("ngc5921.ms"))
         .find(|path| path.exists())
+}
+
+fn shared_importvla_archive_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(root) = env::var_os("CASA_RS_IMPORTVLA_ARCHIVE") {
+        candidates.push(PathBuf::from(root));
+    }
+    candidates.extend([
+        PathBuf::from("/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1"),
+        PathBuf::from("/Users/brianglendenning/SoftwareProjects/casatestdata/unittest/importvla/AS758_C030425.xp1"),
+        PathBuf::from("/Volumes/home/casatestdata/other/AS758_C030425.xp1"),
+        PathBuf::from("/Users/brianglendenning/Desktop/AG189/observation.46182.7646759/AG189_1_46182.76468_46183.09488.exp"),
+    ]);
+    candidates.into_iter().find(|path| path.exists())
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> io::Result<()> {
@@ -9745,6 +9813,18 @@ fn clear_imager_launcher_bin() {
 fn set_imager_launcher_bin(path: &Path) {
     unsafe {
         std::env::set_var("CASARS_IMAGER_BIN", path);
+    }
+}
+
+fn clear_importvla_launcher_bin() {
+    unsafe {
+        std::env::remove_var("CASARS_IMPORTVLA_BIN");
+    }
+}
+
+fn set_importvla_launcher_bin(path: &Path) {
+    unsafe {
+        std::env::set_var("CASARS_IMPORTVLA_BIN", path);
     }
 }
 

@@ -791,6 +791,101 @@ int measures_shim_frequency_convert(
     }
 }
 
+int measures_shim_frequency_convert_via_model(
+    double freq_hz, const char* ref_in, const char* ref_out,
+    double dir_lon, double dir_lat, const char* dir_ref,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_out = parse_frequency_ref(ref_out);
+
+        MeasFrame frame;
+        if (epoch_mjd != 0.0) {
+            MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UTC);
+            frame.set(epoch);
+        }
+        if (obs_lon != 0.0 || obs_lat != 0.0 || obs_h != 0.0) {
+            MPosition obs(MVPosition(Quantity(obs_h, "m"),
+                                      Quantity(obs_lon, "rad"),
+                                      Quantity(obs_lat, "rad")),
+                          MPosition::WGS84);
+            frame.set(obs);
+        }
+        if (strlen(dir_ref) > 0) {
+            auto tp_dir = parse_direction_ref(dir_ref);
+            MDirection dir(MVDirection(Quantity(dir_lon, "rad"),
+                                       Quantity(dir_lat, "rad")), tp_dir);
+            frame.set(dir);
+        }
+
+        MFrequency::Convert converter;
+        converter.setModel(MFrequency(MVFrequency(), MFrequency::Ref(tp_in, frame)));
+        converter.setOut(tp_out);
+
+        Vector<Double> freq_in_hz(1);
+        freq_in_hz = freq_hz;
+        MVFrequency freq_value;
+        freq_value.putVector(freq_in_hz);
+        MFrequency result = converter(freq_value);
+
+        *freq_out = result.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int measures_shim_frequency_convert_via_mutated_model(
+    double freq_hz, const char* ref_in, const char* ref_out,
+    double dir_lon, double dir_lat, const char* dir_ref,
+    double epoch_mjd, double obs_lon, double obs_lat, double obs_h,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_out = parse_frequency_ref(ref_out);
+        auto tp_dir = parse_direction_ref(dir_ref);
+
+        MeasFrame frame;
+        frame.set(MDirection(MVDirection(), tp_dir));
+        frame.set(MEpoch(MVEpoch(), MEpoch::UTC));
+        if (obs_lon != 0.0 || obs_lat != 0.0 || obs_h != 0.0) {
+            MPosition obs(MVPosition(Quantity(obs_h, "m"),
+                                      Quantity(obs_lon, "rad"),
+                                      Quantity(obs_lat, "rad")),
+                          MPosition::WGS84);
+            frame.set(obs);
+        }
+
+        MFrequency::Convert converter;
+        converter.setModel(MFrequency(MVFrequency(), MFrequency::Ref(tp_in, frame)));
+
+        if (epoch_mjd != 0.0) {
+            MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UTC);
+            frame.set(epoch);
+        }
+        if (strlen(dir_ref) > 0) {
+            MDirection dir(MVDirection(Quantity(dir_lon, "rad"),
+                                       Quantity(dir_lat, "rad")), tp_dir);
+            frame.set(dir);
+        }
+        converter.setOut(tp_out);
+
+        Vector<Double> freq_in_hz(1);
+        freq_in_hz = freq_hz;
+        MVFrequency freq_value;
+        freq_value.putVector(freq_in_hz);
+        MFrequency result = converter(freq_value);
+
+        *freq_out = result.getValue().getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
 int measures_shim_frequency_convert_between_frames(
     double freq_hz, const char* ref_in, const char* ref_out,
     double src_dir_lon, double src_dir_lat, const char* src_dir_ref,

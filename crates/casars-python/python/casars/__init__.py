@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from . import data, tasks
-from .data import Image, Table
+from . import tasks
+
+# Task wrappers do not require the native data extension. Keep `casars.tasks`
+# importable from a source checkout even when `_core` has not been built yet.
+try:
+    from . import data
+    from .data import Image, Table
+except ImportError:  # pragma: no cover - exercised in source-only task tests
+    data = None  # type: ignore[assignment]
+    Image = None  # type: ignore[assignment]
+    Table = None  # type: ignore[assignment]
 
 try:
     __version__ = version("casa-rs-python")
