@@ -25,6 +25,7 @@
 //! waves can extend the implementation without redesigning the interface.
 
 pub mod cli;
+pub mod task_contract;
 
 use std::fmt;
 use std::io::Cursor;
@@ -102,7 +103,7 @@ struct ScatterPanelRenderContext<'a> {
 }
 
 /// Stable preset identifiers for common MeasurementSet plots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsPlotPreset {
     /// UV coverage from grouped UVW samples.
@@ -326,7 +327,7 @@ impl fmt::Display for MsPlotPreset {
 }
 
 /// Supported plot axes for MeasurementSet data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsAxis {
     /// Visibility amplitude.
@@ -562,7 +563,7 @@ impl fmt::Display for MsAxis {
 }
 
 /// Visibility data column or derived column expression.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsDataColumn {
     /// MAIN.DATA.
@@ -637,7 +638,7 @@ impl fmt::Display for MsDataColumn {
 }
 
 /// Metadata axis used to group colors or series.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsColorAxis {
     /// Disable metadata grouping.
@@ -688,7 +689,7 @@ impl fmt::Display for MsColorAxis {
 }
 
 /// Plot export format for `msexplore`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsExportFormat {
     /// Raster PNG export.
@@ -796,7 +797,7 @@ impl MsSelectionSpec {
 }
 
 /// Averaging controls modeled after CASA `plotms`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct MsAverageSpec {
     /// Channel bin size used for channel/frequency plots.
     pub avgchannel: Option<usize>,
@@ -817,7 +818,7 @@ pub struct MsAverageSpec {
 }
 
 /// Transform controls modeled after CASA `plotms`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MsTransformSpec {
     /// Enable transform controls.
     pub transform: bool,
@@ -856,7 +857,7 @@ impl Default for MsTransformSpec {
 }
 
 /// Page-layout controls for one plot page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MsLayoutSpec {
     /// Number of grid rows.
     pub gridrows: usize,
@@ -883,7 +884,7 @@ impl Default for MsLayoutSpec {
 }
 
 /// Page export range behavior for multi-plot page composition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MsPageExportRange {
     /// Resolve bounds independently for each occupied page cell.
@@ -910,7 +911,7 @@ impl fmt::Display for MsPageExportRange {
 }
 
 /// Legend placement options accepted by `msexplore`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub enum MsLegendPosition {
     /// Place the legend inside the plot at upper right.
     #[default]
@@ -969,7 +970,7 @@ impl fmt::Display for MsLegendPosition {
 }
 
 /// Page header items accepted by `msexplore`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum MsPageHeaderItem {
     /// MeasurementSet filename.
     #[serde(rename = "filename")]
@@ -1024,7 +1025,7 @@ impl fmt::Display for MsPageHeaderItem {
 }
 
 /// Supported iteration axes for multi-panel plot pages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsIterationAxis {
     /// Iterate one panel per FIELD row.
@@ -1092,7 +1093,7 @@ impl fmt::Display for MsIterationAxis {
 }
 
 /// Iteration controls for multi-plot pages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct MsIterationSpec {
     /// Iteration axis identifier.
     pub iteraxis: Option<MsIterationAxis>,
@@ -1107,7 +1108,7 @@ pub struct MsIterationSpec {
 }
 
 /// Presentation controls for a single plot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MsPlotStyleSpec {
     /// Optional plot title override.
     pub title: Option<String>,
@@ -1140,7 +1141,7 @@ impl Default for MsPlotStyleSpec {
 }
 
 /// One staged flag-edit request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MsFlagEditSpec {
     /// Whether the region should be flagged or unflagged.
     pub action: MsFlagAction,
@@ -1167,7 +1168,7 @@ struct FlagEditPreviewContext<'a> {
 }
 
 /// Inclusive rectangular region used for staged flag editing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MsFlagRegion {
     /// Inclusive minimum X value.
     pub x_min: f64,
@@ -1180,7 +1181,7 @@ pub struct MsFlagRegion {
 }
 
 /// Supported flag-edit actions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsFlagAction {
     /// Mark matching samples as flagged.
@@ -1190,7 +1191,7 @@ pub enum MsFlagAction {
 }
 
 /// One plotted visibility sample selected by a staged flag edit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MsFlagSampleEdit {
     /// MAIN row index.
     pub row: usize,
@@ -1205,7 +1206,7 @@ pub struct MsFlagSampleEdit {
 }
 
 /// One MAIN-row FLAG_ROW transition produced by a staged edit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MsFlagRowEdit {
     /// MAIN row index.
     pub row: usize,
@@ -1218,7 +1219,7 @@ pub struct MsFlagRowEdit {
 }
 
 /// Preview of a staged `msexplore` flag edit before optional writeback.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MsFlagEditPreview {
     /// Plot title associated with the staged edit.
     pub plot_title: String,
@@ -1253,7 +1254,7 @@ pub struct MsFlagEditPreview {
 }
 
 /// One plot request on a page.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MsPlotSpec {
     /// Optional stable preset identifier.
     pub preset: Option<MsPlotPreset>,
@@ -1874,7 +1875,7 @@ impl MsPlotSpec {
 }
 
 /// Top-level `msexplore` request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MsExploreSpec {
     /// MeasurementSet root directory.
     pub ms_path: PathBuf,

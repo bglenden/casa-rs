@@ -250,18 +250,11 @@ This is the intended classification for current and near-term surfaces.
 
 - `calibrate`: task surface
 - `casars-imager`: task surface
+- `msexplore`: task surface
 - `tablebrowser`: session surface
 - `imexplore`: session surface
 - `casars.data.Image`: object surface
 - `casars.data.Table`: object surface
-
-`msexplore` needs an explicit decision. It should be treated as either:
-
-- a task surface with one-shot plot/export operations, or
-- a session surface if the backend owns durable interactive exploration state
-
-It should not remain indefinitely as only a launcher-oriented `--ui-schema`
-producer without a clearly identified canonical provider contract.
 
 ## Implementation Guidance
 

@@ -29,6 +29,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::quanta::{MvAngle, MvTime};
 use ndarray::IxDyn;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::columns::uvw_column::UvwColumn;
@@ -42,7 +43,7 @@ const LISTOBS_UV_SCHEMA_VERSION: u32 = 1;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
 /// Output formats supported by the `listobs` renderers and CLI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ListObsOutputFormat {
     /// CASA-like human-readable text.
     Text,
@@ -55,7 +56,7 @@ pub enum ListObsOutputFormat {
 /// This keeps the application layer thin: callers construct options once and
 /// then reuse the same summary builder and renderers regardless of whether the
 /// entrypoint is a standalone executable or a future Python binding.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ListObsOptions {
     /// Render the verbose CASA-style text layout.
     pub verbose: bool,
@@ -171,7 +172,7 @@ impl ListObsOptions {
 /// `schema_version` is included so JSON consumers can pin their deserializers
 /// to a known shape as this summary grows. New optional fields may be added in
 /// future schema versions without changing the default text output.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ListObsSummary {
     /// Version of the JSON schema emitted by [`render_json_pretty`](Self::render_json_pretty).
     pub schema_version: u32,
@@ -202,7 +203,7 @@ pub struct ListObsSummary {
 /// The payload is intentionally one-sided: it carries the observed baseline
 /// samples only. Consumers can mirror `(-u, -v)` at render time when they want
 /// the usual interferometric coverage display.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ListObsUvCoverage {
     /// Version of the JSON schema emitted by [`render_json_pretty`](Self::render_json_pretty).
     pub schema_version: u32,
@@ -223,7 +224,7 @@ pub struct ListObsUvCoverage {
 }
 
 /// One baseline/field/SPW UV track.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ListObsUvTrack {
     /// Baseline antenna 1 id.
     pub antenna1: i32,
@@ -240,7 +241,7 @@ pub struct ListObsUvTrack {
 }
 
 /// One UVW sample converted to wavelengths.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ListObsUvPoint {
     /// MAIN-table row index.
     pub row: usize,
@@ -255,7 +256,7 @@ pub struct ListObsUvPoint {
 }
 
 /// General metadata about the summarized MeasurementSet.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MeasurementSetInfo {
     /// Filesystem path of the MeasurementSet root, if the MS is disk-backed.
     pub path: Option<String>,
@@ -290,7 +291,7 @@ pub struct MeasurementSetInfo {
 }
 
 /// Summary of one OBSERVATION subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ObservationSummary {
     /// Row index in the OBSERVATION subtable.
     pub observation_id: usize,
@@ -309,7 +310,7 @@ pub struct ObservationSummary {
 }
 
 /// Summary of one MAIN-table scan group.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ScanSummary {
     /// OBSERVATION_ID for the grouped rows.
     pub observation_id: i32,
@@ -348,7 +349,7 @@ pub struct ScanSummary {
 }
 
 /// Summary of one FIELD subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FieldSummary {
     /// Row index in the FIELD subtable.
     pub field_id: usize,
@@ -371,7 +372,7 @@ pub struct FieldSummary {
 }
 
 /// Summary of one POLARIZATION subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PolarizationSummary {
     /// Row index in the POLARIZATION subtable.
     pub polarization_id: usize,
@@ -382,7 +383,7 @@ pub struct PolarizationSummary {
 }
 
 /// Summary of one DATA_DESCRIPTION subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DataDescriptionSummary {
     /// Row index in the DATA_DESCRIPTION subtable.
     pub data_description_id: usize,
@@ -395,7 +396,7 @@ pub struct DataDescriptionSummary {
 }
 
 /// Summary of one SPECTRAL_WINDOW subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SpectralWindowSummary {
     /// Row index in the SPECTRAL_WINDOW subtable.
     pub spectral_window_id: usize,
@@ -428,7 +429,7 @@ pub struct SpectralWindowSummary {
 }
 
 /// Summary of one SOURCE subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceSummary {
     /// SOURCE_ID column value.
     pub source_id: i32,
@@ -453,7 +454,7 @@ pub struct SourceSummary {
 }
 
 /// Summary of one ANTENNA subtable row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AntennaSummary {
     /// Row index in the ANTENNA subtable.
     pub antenna_id: usize,

@@ -435,6 +435,7 @@ name = "casa-calibration"
 version = "0.14.0"
 dependencies = [
  "casa-ms",
+ "casa-provider-contracts",
  "casa-tables",
  "casa-test-support",
  "casa-types",
@@ -536,6 +537,7 @@ dependencies = [
 name = "casa-ms"
 version = "0.14.0"
 dependencies = [
+ "casa-provider-contracts",
  "casa-tables",
  "casa-test-support",
  "casa-types",
@@ -551,6 +553,15 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "casa-provider-contracts"
+version = "0.14.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -657,6 +668,7 @@ dependencies = [
 name = "casars-imagebrowser-protocol"
 version = "0.14.0"
 dependencies = [
+ "casa-provider-contracts",
  "schemars",
  "serde",
  "serde_json",
@@ -670,6 +682,7 @@ dependencies = [
  "casa-images",
  "casa-imaging",
  "casa-ms",
+ "casa-provider-contracts",
  "casa-tables",
  "casa-test-support",
  "casa-types",
@@ -691,17 +704,22 @@ version = "0.14.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
+ "casa-provider-contracts",
  "casa-tables",
  "casa-types",
  "ndarray",
  "numpy",
  "pyo3",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "casars-tablebrowser-protocol"
 version = "0.14.0"
 dependencies = [
+ "casa-provider-contracts",
  "schemars",
  "serde",
  "serde_json",

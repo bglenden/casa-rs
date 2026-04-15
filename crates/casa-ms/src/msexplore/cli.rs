@@ -7,6 +7,9 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use super::task_contract::{
+    MsExploreProtocolInfo, MsExploreTaskRequest, MsExploreTaskSchemaBundle,
+};
 use super::{
     DEFAULT_MAX_PLOT_POINTS, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat,
     MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLegendPosition,
@@ -31,6 +34,9 @@ const SUMMARY: &str = "explore and export common MeasurementSet plotms-style plo
 enum CliAction {
     Help,
     UiSchema,
+    JsonSchema,
+    ProtocolInfo,
+    JsonRun(String),
     Run(Box<CliOptions>),
 }
 
@@ -174,7 +180,7 @@ pub fn run_env(program_name: &str) -> i32 {
     let schema = command_schema(program_name);
     match parse_args(std::env::args_os().skip(1)) {
         Ok(CliAction::Help) => {
-            print!("{}", schema.render_help());
+            print!("{}", render_help(&schema));
             0
         }
         Ok(CliAction::UiSchema) => match schema.render_json_pretty() {
@@ -187,6 +193,37 @@ pub fn run_env(program_name: &str) -> i32 {
                 1
             }
         },
+        Ok(CliAction::JsonSchema) => {
+            match serde_json::to_string_pretty(&MsExploreTaskSchemaBundle::current()) {
+                Ok(json) => {
+                    print!("{json}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("Error: failed to serialize --json-schema output: {error}");
+                    1
+                }
+            }
+        }
+        Ok(CliAction::ProtocolInfo) => {
+            match serde_json::to_string_pretty(&MsExploreProtocolInfo::current()) {
+                Ok(json) => {
+                    print!("{json}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("Error: failed to serialize --protocol-info output: {error}");
+                    1
+                }
+            }
+        }
+        Ok(CliAction::JsonRun(source)) => match run_json_request(&source) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("Error: {error}");
+                1
+            }
+        },
         Ok(CliAction::Run(options)) => match run(*options) {
             Ok(()) => 0,
             Err(error) => {
@@ -196,7 +233,7 @@ pub fn run_env(program_name: &str) -> i32 {
         },
         Err(error) => {
             eprintln!("Error: {error}\n");
-            eprintln!("{}", schema.render_help());
+            eprintln!("{}", render_help(&schema));
             1
         }
     }
@@ -212,7 +249,10 @@ pub fn build_explore_spec_from_args(
     match parse_args(args)? {
         CliAction::Run(options) => build_explore_spec(&options),
         CliAction::Help => Err("help actions do not produce an msexplore spec".to_string()),
-        CliAction::UiSchema => {
+        CliAction::UiSchema
+        | CliAction::JsonSchema
+        | CliAction::ProtocolInfo
+        | CliAction::JsonRun(_) => {
             Err("ui-schema actions do not produce an msexplore spec".to_string())
         }
     }
@@ -1277,6 +1317,15 @@ fn run(options: CliOptions) -> Result<(), String> {
     Ok(())
 }
 
+fn run_json_request(source: &str) -> Result<(), String> {
+    let request = MsExploreTaskRequest::read_from_source(source)?;
+    let result = request.execute()?;
+    let rendered = serde_json::to_string_pretty(&result)
+        .map_err(|error| format!("failed to serialize msexplore task result: {error}"))?;
+    println!("{rendered}");
+    Ok(())
+}
+
 fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
     if let Some(page_spec_path) = &options.page_spec {
         let page_spec = load_page_spec_file(page_spec_path)?;
@@ -1589,6 +1638,19 @@ fn merge_header_items(target: &mut Vec<MsPageHeaderItem>, extra: Vec<MsPageHeade
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
     let args = args.into_iter().collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "--json-schema") {
+        return Ok(CliAction::JsonSchema);
+    }
+    if args.iter().any(|arg| arg == "--protocol-info") {
+        return Ok(CliAction::ProtocolInfo);
+    }
+    if let Some(index) = args.iter().position(|arg| arg == "--json-run") {
+        let source = args
+            .get(index + 1)
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "missing value for --json-run".to_string())?;
+        return Ok(CliAction::JsonRun(source.to_string()));
+    }
     if args.iter().any(|arg| arg == "--ui-schema") {
         return Ok(CliAction::UiSchema);
     }
@@ -2052,6 +2114,13 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         plot_width: plot_width.max(1),
         plot_height: plot_height.max(1),
     })))
+}
+
+fn render_help(schema: &UiCommandSchema) -> String {
+    format!(
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical msexplore task JSON schema\n  --protocol-info          Emit the msexplore task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON MsExploreTaskRequest from SOURCE or - for stdin\n",
+        schema.render_help()
+    )
 }
 
 fn write_output(path: Option<&std::path::Path>, overwrite: bool, text: &str) -> Result<(), String> {

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+mod object_contract;
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -17,6 +19,8 @@ use pyo3::types::{
     PyAny, PyAnyMethods, PyBool, PyComplex, PyDict, PyDictMethods, PyIterator, PyList,
     PyListMethods, PySequence, PyString,
 };
+
+use crate::object_contract::{DataObjectProtocolInfo, DataObjectSchemaBundle};
 
 #[pyclass(name = "Image", module = "casars._core", unsendable)]
 struct PyImage {
@@ -895,9 +899,24 @@ where
     Ok(array.into_pyarray(py).into_any().unbind())
 }
 
+#[pyfunction]
+fn data_protocol_info_json() -> PyResult<String> {
+    serde_json::to_string_pretty(&DataObjectProtocolInfo::current())
+        .map_err(|error| PyRuntimeError::new_err(format!("serialize data protocol info: {error}")))
+}
+
+#[pyfunction]
+fn data_schema_bundle_json() -> PyResult<String> {
+    DataObjectSchemaBundle::current()
+        .to_json_string()
+        .map_err(|error| PyRuntimeError::new_err(format!("serialize data schema bundle: {error}")))
+}
+
 #[pymodule]
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyImage>()?;
     module.add_class::<PyTable>()?;
+    module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
+    module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
     Ok(())
 }

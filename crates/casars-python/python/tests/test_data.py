@@ -1,11 +1,58 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 
 import numpy as np
 
-from casars.data import Image, Table
+from casars.data import Image, Table, protocol_info, schema_bundle
+
+
+def test_data_schema_bundle_reports_object_surface() -> None:
+    info = protocol_info()
+    assert info.protocol_name == "casars_data_objects"
+    assert info.protocol_version == 1
+    assert info.surface_kind == "object"
+
+    bundle = schema_bundle()
+    assert bundle["protocol"]["protocol_name"] == "casars_data_objects"
+    assert bundle["protocol"]["protocol_version"] == 1
+    assert bundle["protocol"]["surface_kind"] == "object"
+    assert bundle["projections"]["python"]["module"] == "casars.data"
+    assert "LogicalInputValue" in bundle["components"]
+    assert "LogicalOutputValue" in bundle["components"]
+    assert "LogicalComplex128" in bundle["components"]
+
+    objects = {entry["name"]: entry for entry in bundle["semantic"]["objects"]}
+    assert set(objects) == {"Image", "Table"}
+    assert {prop["name"] for prop in objects["Image"]["properties"]} == {
+        "shape",
+        "pixel_type",
+        "units",
+        "image_info",
+        "misc_info",
+        "mask_names",
+        "default_mask_name",
+    }
+    assert {method["name"] for method in objects["Image"]["methods"]} == {
+        "get_slice",
+        "put_slice",
+        "get_plane",
+        "get_mask_slice",
+    }
+    assert {method["name"] for method in objects["Table"]["methods"]} == {
+        "column_keywords",
+        "get_cell",
+        "set_cell",
+        "get_column",
+        "put_column",
+        "set_column_keywords",
+    }
+
+    image_methods = {entry["name"]: entry for entry in objects["Image"]["methods"]}
+    mask_result = image_methods["get_mask_slice"]["result_schema"]
+    assert "null" in json.dumps(mask_result)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]

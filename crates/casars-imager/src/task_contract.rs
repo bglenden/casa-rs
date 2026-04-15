@@ -13,13 +13,20 @@ use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
 };
+use casa_provider_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
+    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
+    derived_ui_schema_annotations, merged_components,
+};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::{
-    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode, run_from_config,
+    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode, command_schema,
+    run_from_config,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -34,6 +41,8 @@ pub struct ImagerProtocolInfo {
     pub protocol_name: String,
     /// Monotonic protocol version for compatibility checks.
     pub protocol_version: u32,
+    /// Provider surface kind defined by the shared architecture contract.
+    pub surface_kind: ProviderSurfaceKind,
     /// Binary version implementing the protocol.
     pub binary_version: String,
 }
@@ -44,6 +53,7 @@ impl ImagerProtocolInfo {
         Self {
             protocol_name: IMAGER_TASK_PROTOCOL_NAME.to_string(),
             protocol_version: IMAGER_TASK_PROTOCOL_VERSION,
+            surface_kind: ProviderSurfaceKind::Task,
             binary_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
@@ -54,6 +64,14 @@ impl ImagerProtocolInfo {
 pub struct ImagerTaskSchemaBundle {
     /// Compatibility descriptor for the request/result schemas.
     pub protocol: ImagerProtocolInfo,
+    /// Canonical semantic task contract.
+    pub semantic: TaskSemanticContract,
+    /// Shared component schemas reusable across projections.
+    pub components: ProviderComponentSchemas,
+    /// Presentation annotations carried with the canonical bundle.
+    pub annotations: JsonValue,
+    /// Derived projection metadata for UI and CLI consumers.
+    pub projections: ProviderProjectionMetadata,
     /// JSON schema for [`ImagerTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`ImagerTaskResult`].
@@ -63,11 +81,49 @@ pub struct ImagerTaskSchemaBundle {
 impl ImagerTaskSchemaBundle {
     /// Build the current request/result schema bundle.
     pub fn current() -> Self {
+        let request_schema = schema_for!(ImagerTaskRequest);
+        let result_schema = schema_for!(ImagerTaskResult);
+        let ui_schema = serde_json::to_value(command_schema("casars-imager"))
+            .expect("serialize imager ui schema projection");
         Self {
             protocol: ImagerProtocolInfo::current(),
-            request_schema: schema_for!(ImagerTaskRequest),
-            result_schema: schema_for!(ImagerTaskResult),
+            semantic: TaskSemanticContract {
+                request_schema: request_schema.clone(),
+                result_schema: result_schema.clone(),
+                operations: vec![TaskOperationDescriptor {
+                    name: "run".to_string(),
+                    request_kind: "run".to_string(),
+                    result_kind: Some("run".to_string()),
+                }],
+            },
+            components: merged_components([&request_schema, &result_schema]),
+            annotations: derived_ui_schema_annotations(),
+            projections: ProviderProjectionMetadata {
+                cli: Some(ProviderCliProjection {
+                    machine_actions: ProviderCliMachineActions {
+                        ui_schema: Some("--ui-schema".to_string()),
+                        json_schema: Some("--json-schema".to_string()),
+                        protocol_info: Some("--protocol-info".to_string()),
+                        json_run: Some("--json-run <SOURCE>".to_string()),
+                        session: None,
+                    },
+                }),
+                ui_schema: Some(ui_schema),
+                python: None,
+            },
+            request_schema,
+            result_schema,
         }
+    }
+
+    /// Return the launcher/TUI compatibility view projected from the bundle.
+    pub fn ui_schema_projection(&self) -> Result<casa_ms::ui_schema::UiCommandSchema, String> {
+        let value = self
+            .projections
+            .ui_schema
+            .clone()
+            .ok_or_else(|| "missing ui_schema projection".to_string())?;
+        serde_json::from_value(value).map_err(|error| format!("parse imager ui schema: {error}"))
     }
 }
 
@@ -1208,6 +1264,7 @@ mod tests {
     use std::path::PathBuf;
 
     use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+    use casa_provider_contracts::ProviderSurfaceKind;
 
     use super::{
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerRunTaskRequest,
@@ -1223,10 +1280,17 @@ mod tests {
             bundle.protocol.protocol_version,
             IMAGER_TASK_PROTOCOL_VERSION
         );
+        assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
+        assert_eq!(bundle.semantic.operations.len(), 1);
+        assert_eq!(bundle.semantic.operations[0].request_kind, "run");
+        assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
+        assert!(bundle.projections.ui_schema.is_some());
         let request_schema = serde_json::to_value(&bundle.request_schema).unwrap();
         let result_schema = serde_json::to_value(&bundle.result_schema).unwrap();
         assert!(request_schema.to_string().contains("ImagerTaskRequest"));
         assert!(result_schema.to_string().contains("ImagerTaskResult"));
+        let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
+        assert_eq!(ui_schema.command_id, "imager");
     }
 
     #[test]

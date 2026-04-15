@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from functools import lru_cache
+import json
 from os import PathLike
 from typing import Any, TypeAlias
 
@@ -14,6 +17,38 @@ from . import _core
 StrPath: TypeAlias = str | PathLike[str]
 ArrayLike: TypeAlias = npt.NDArray[Any]
 RecordLike: TypeAlias = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ProtocolInfo:
+    """Compatibility descriptor for the canonical `casars.data` object surface."""
+
+    protocol_name: str
+    protocol_version: int
+    surface_kind: str
+    binding_version: str
+
+
+@lru_cache(maxsize=1)
+def protocol_info() -> ProtocolInfo:
+    """Return the canonical object-surface protocol descriptor emitted by Rust."""
+
+    payload = json.loads(_core.data_protocol_info_json())
+    return ProtocolInfo(
+        protocol_name=str(payload["protocol_name"]),
+        protocol_version=int(payload["protocol_version"]),
+        surface_kind=str(payload["surface_kind"]),
+        binding_version=str(payload["binding_version"]),
+    )
+
+
+@lru_cache(maxsize=1)
+def schema_bundle() -> dict[str, Any]:
+    """Return the canonical object-surface schema bundle emitted by Rust."""
+
+    payload = json.loads(_core.data_schema_bundle_json())
+    assert isinstance(payload, dict)
+    return payload
 
 
 class Image:
@@ -197,4 +232,13 @@ class Table:
         self._inner.set_column_keywords(column, dict(keywords))
 
 
-__all__ = ["ArrayLike", "Image", "RecordLike", "StrPath", "Table"]
+__all__ = [
+    "ArrayLike",
+    "Image",
+    "ProtocolInfo",
+    "RecordLike",
+    "StrPath",
+    "Table",
+    "protocol_info",
+    "schema_bundle",
+]

@@ -148,6 +148,7 @@ def _write_stub_binary(
             print(json.dumps({{
                 "protocol_name": "casa_calibration_task",
                 "protocol_version": {protocol_version},
+                "surface_kind": "task",
                 "binary_version": {version!r},
             }}))
             raise SystemExit(0)
@@ -167,6 +168,7 @@ def _write_stub_binary(
             print(json.dumps({{"request_schema": {{"definitions": {{}}}}, "result_schema": {{}}, "protocol": {{
                 "protocol_name": "casa_calibration_task",
                 "protocol_version": {protocol_version},
+                "surface_kind": "task",
                 "binary_version": {version!r},
             }}}}))
             raise SystemExit(0)

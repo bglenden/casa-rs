@@ -12,7 +12,7 @@ use casa_ms::msexplore::cli::command_schema;
 use casa_ms::msexplore::cli::{UiArgumentParser, UiValueKind};
 use casa_ms::subtables::SubTable;
 use casa_ms::{
-    DEFAULT_MAX_PLOT_POINTS, MeasurementSet, MeasurementSetPlotTheme,
+    DEFAULT_MAX_PLOT_POINTS, MSEXPLORE_TASK_PROTOCOL_NAME, MeasurementSet, MeasurementSetPlotTheme,
     MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
     MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLayoutSpec, MsLegendPosition,
     MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
@@ -82,6 +82,9 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--msselect <EXPR>"));
     assert!(stdout.contains("--page-spec <PATH>"));
     assert!(stdout.contains("--ui-schema"));
+    assert!(stdout.contains("--json-schema"));
+    assert!(stdout.contains("--protocol-info"));
+    assert!(stdout.contains("--json-run <SOURCE>"));
 }
 
 #[test]
@@ -93,7 +96,43 @@ fn msexplore_ui_schema_round_trips_help() {
     assert!(help.status.success());
 
     let help_text = String::from_utf8(help.stdout).expect("utf8 help stdout");
-    assert_eq!(command_schema("msexplore").render_help(), help_text);
+    assert!(help_text.contains(&command_schema("msexplore").render_help()));
+}
+
+#[test]
+fn msexplore_json_schema_emits_canonical_task_bundle() {
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .arg("--json-schema")
+        .output()
+        .expect("run msexplore --json-schema");
+    assert!(output.status.success());
+
+    let schema = serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse schema");
+    assert_eq!(
+        schema["protocol"]["protocol_name"],
+        MSEXPLORE_TASK_PROTOCOL_NAME
+    );
+    assert_eq!(schema["protocol"]["protocol_version"], 1);
+    assert_eq!(schema["protocol"]["surface_kind"], "task");
+    assert_eq!(schema["semantic"]["operations"][0]["request_kind"], "run");
+    assert_eq!(
+        schema["projections"]["ui_schema"]["command_id"],
+        "msexplore"
+    );
+}
+
+#[test]
+fn msexplore_protocol_info_reports_task_surface() {
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .arg("--protocol-info")
+        .output()
+        .expect("run msexplore --protocol-info");
+    assert!(output.status.success());
+
+    let info = serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse info");
+    assert_eq!(info["protocol_name"], MSEXPLORE_TASK_PROTOCOL_NAME);
+    assert_eq!(info["protocol_version"], 1);
+    assert_eq!(info["surface_kind"], "task");
 }
 
 #[test]
