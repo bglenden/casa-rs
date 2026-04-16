@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casa_imaging/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="attr">#![warn(missing_docs)]
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! Pure imaging kernels and CLEAN orchestration for CASA-compatible imaging.
 <a href=#4 id=4 data-nosnippet>4</a>//!
@@ -352,7 +352,7 @@
 <a href=#352 id=352 data-nosnippet>352</a><span class="doccomment">/// Trace the explicit `wproject` CF/grid-planning seam for one imaging plane.
 <a href=#353 id=353 data-nosnippet>353</a></span><span class="kw">pub fn </span>trace_w_project_plan(request: <span class="kw-2">&amp;</span>ImagingRequest) -&gt; <span class="prelude-ty">Result</span>&lt;WProjectDiagnostics, ImagingError&gt; {
 <a href=#354 id=354 data-nosnippet>354</a>    request.validate()<span class="question-mark">?</span>;
-<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">if </span>request.<span class="macro">w_term_mode !</span>= WTermMode::WProject {
+<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">if </span>request.w_term_mode != WTermMode::WProject {
 <a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::InvalidRequest(
 <a href=#357 id=357 data-nosnippet>357</a>            <span class="string">"trace_w_project_plan requires w_term_mode='wproject'"</span>.to_string(),
 <a href=#358 id=358 data-nosnippet>358</a>        ));
@@ -374,7 +374,7 @@
 <a href=#374 id=374 data-nosnippet>374</a>    channel_index: usize,
 <a href=#375 id=375 data-nosnippet>375</a>) -&gt; <span class="prelude-ty">Result</span>&lt;WProjectDiagnostics, ImagingError&gt; {
 <a href=#376 id=376 data-nosnippet>376</a>    request.validate()<span class="question-mark">?</span>;
-<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">if </span>request.<span class="macro">w_term_mode !</span>= WTermMode::WProject {
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">if </span>request.w_term_mode != WTermMode::WProject {
 <a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::InvalidRequest(
 <a href=#379 id=379 data-nosnippet>379</a>            <span class="string">"trace_cube_channel_w_project_plan requires w_term_mode='wproject'"</span>.to_string(),
 <a href=#380 id=380 data-nosnippet>380</a>        ));
@@ -428,7 +428,7 @@
 <a href=#428 id=428 data-nosnippet>428</a>            request.geometry.image_shape,
 <a href=#429 id=429 data-nosnippet>429</a>        )));
 <a href=#430 id=430 data-nosnippet>430</a>    }
-<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">if </span>request.<span class="macro">w_term_mode !</span>= WTermMode::None {
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">if </span>request.w_term_mode != WTermMode::None {
 <a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#433 id=433 data-nosnippet>433</a>            <span class="string">"trace_residual_refresh currently supports only standard 2-D imaging"</span>.to_string(),
 <a href=#434 id=434 data-nosnippet>434</a>        ));
@@ -499,7 +499,7 @@
 <a href=#499 id=499 data-nosnippet>499</a>    prediction_lambda_mode: CubePredictionLambdaMode,
 <a href=#500 id=500 data-nosnippet>500</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResidualRefreshDiagnostics, ImagingError&gt; {
 <a href=#501 id=501 data-nosnippet>501</a>    request.validate()<span class="question-mark">?</span>;
-<a href=#502 id=502 data-nosnippet>502</a>    <span class="kw">if </span>request.<span class="macro">w_term_mode !</span>= WTermMode::None {
+<a href=#502 id=502 data-nosnippet>502</a>    <span class="kw">if </span>request.w_term_mode != WTermMode::None {
 <a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#504 id=504 data-nosnippet>504</a>            <span class="string">"trace_cube_channel_residual_refresh currently supports only standard 2-D imaging"
 <a href=#505 id=505 data-nosnippet>505</a>                </span>.to_string(),
@@ -603,7 +603,7 @@
 <a href=#603 id=603 data-nosnippet>603</a></span><span class="kw">pub fn </span>run_imaging(request: <span class="kw-2">&amp;</span>ImagingRequest) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingResult, ImagingError&gt; {
 <a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">let </span>total_started = Instant::now();
 <a href=#605 id=605 data-nosnippet>605</a>    request.validate()<span class="question-mark">?</span>;
-<a href=#606 id=606 data-nosnippet>606</a>    <span class="kw">if </span>request.<span class="macro">compatibility !</span>= CompatibilityMode::CasaStandardMfs {
+<a href=#606 id=606 data-nosnippet>606</a>    <span class="kw">if </span>request.compatibility != CompatibilityMode::CasaStandardMfs {
 <a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#608 id=608 data-nosnippet>608</a>            <span class="string">"only CASA standard MFS compatibility mode is implemented"</span>.to_string(),
 <a href=#609 id=609 data-nosnippet>609</a>        ));
@@ -770,7 +770,7 @@
 <a href=#770 id=770 data-nosnippet>770</a></span><span class="kw">pub fn </span>run_mtmfs(request: <span class="kw-2">&amp;</span>MtmfsRequest) -&gt; <span class="prelude-ty">Result</span>&lt;MtmfsResult, ImagingError&gt; {
 <a href=#771 id=771 data-nosnippet>771</a>    <span class="kw">let </span>total_started = Instant::now();
 <a href=#772 id=772 data-nosnippet>772</a>    request.validate()<span class="question-mark">?</span>;
-<a href=#773 id=773 data-nosnippet>773</a>    <span class="kw">if </span>request.<span class="macro">compatibility !</span>= CompatibilityMode::CasaStandardMfs {
+<a href=#773 id=773 data-nosnippet>773</a>    <span class="kw">if </span>request.compatibility != CompatibilityMode::CasaStandardMfs {
 <a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#775 id=775 data-nosnippet>775</a>            <span class="string">"only CASA standard MFS compatibility mode is implemented"</span>.to_string(),
 <a href=#776 id=776 data-nosnippet>776</a>        ));
@@ -1065,12 +1065,12 @@
 <a href=#1065 id=1065 data-nosnippet>1065</a>            <span class="string">"mosaic gridder currently supports dirty MFS imaging only"</span>.to_string(),
 <a href=#1066 id=1066 data-nosnippet>1066</a>        ));
 <a href=#1067 id=1067 data-nosnippet>1067</a>    }
-<a href=#1068 id=1068 data-nosnippet>1068</a>    <span class="kw">if </span>request.<span class="macro">w_term_mode !</span>= WTermMode::None {
+<a href=#1068 id=1068 data-nosnippet>1068</a>    <span class="kw">if </span>request.w_term_mode != WTermMode::None {
 <a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#1070 id=1070 data-nosnippet>1070</a>            <span class="string">"mosaic gridder currently supports only w_term_mode='none'"</span>.to_string(),
 <a href=#1071 id=1071 data-nosnippet>1071</a>        ));
 <a href=#1072 id=1072 data-nosnippet>1072</a>    }
-<a href=#1073 id=1073 data-nosnippet>1073</a>    <span class="kw">if </span>request.<span class="macro">weighting !</span>= WeightingMode::Natural {
+<a href=#1073 id=1073 data-nosnippet>1073</a>    <span class="kw">if </span>request.weighting != WeightingMode::Natural {
 <a href=#1074 id=1074 data-nosnippet>1074</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#1075 id=1075 data-nosnippet>1075</a>            <span class="string">"mosaic gridder currently supports natural weighting only"</span>.to_string(),
 <a href=#1076 id=1076 data-nosnippet>1076</a>        ));
@@ -1657,7 +1657,7 @@
 <a href=#1657 id=1657 data-nosnippet>1657</a>    }
 <a href=#1658 id=1658 data-nosnippet>1658</a>    <span class="kw">let </span>total_started = Instant::now();
 <a href=#1659 id=1659 data-nosnippet>1659</a>    request.validate()<span class="question-mark">?</span>;
-<a href=#1660 id=1660 data-nosnippet>1660</a>    <span class="kw">if </span>request.<span class="macro">compatibility !</span>= CompatibilityMode::CasaStandardMfs {
+<a href=#1660 id=1660 data-nosnippet>1660</a>    <span class="kw">if </span>request.compatibility != CompatibilityMode::CasaStandardMfs {
 <a href=#1661 id=1661 data-nosnippet>1661</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#1662 id=1662 data-nosnippet>1662</a>            <span class="string">"only CASA standard cube compatibility mode is implemented"</span>.to_string(),
 <a href=#1663 id=1663 data-nosnippet>1663</a>        ));
@@ -1907,7 +1907,7 @@
 <a href=#1907 id=1907 data-nosnippet>1907</a><span class="kw">fn </span>run_clean_cube(request: <span class="kw-2">&amp;</span>CubeImagingRequest) -&gt; <span class="prelude-ty">Result</span>&lt;CubeImagingResult, ImagingError&gt; {
 <a href=#1908 id=1908 data-nosnippet>1908</a>    <span class="kw">let </span>total_started = Instant::now();
 <a href=#1909 id=1909 data-nosnippet>1909</a>    request.validate()<span class="question-mark">?</span>;
-<a href=#1910 id=1910 data-nosnippet>1910</a>    <span class="kw">if </span>request.<span class="macro">compatibility !</span>= CompatibilityMode::CasaStandardMfs {
+<a href=#1910 id=1910 data-nosnippet>1910</a>    <span class="kw">if </span>request.compatibility != CompatibilityMode::CasaStandardMfs {
 <a href=#1911 id=1911 data-nosnippet>1911</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported(
 <a href=#1912 id=1912 data-nosnippet>1912</a>            <span class="string">"only CASA standard cube compatibility mode is implemented"</span>.to_string(),
 <a href=#1913 id=1913 data-nosnippet>1913</a>        ));
@@ -2644,7 +2644,7 @@
 <a href=#2644 id=2644 data-nosnippet>2644</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(capture) = capture <span class="kw">else </span>{
 <a href=#2645 id=2645 data-nosnippet>2645</a>        <span class="kw">return</span>;
 <a href=#2646 id=2646 data-nosnippet>2646</a>    };
-<a href=#2647 id=2647 data-nosnippet>2647</a>    <span class="kw">if </span>capture.<span class="macro">channel_index !</span>= channel_index || capture.<span class="macro">block_index !</span>= block_index {
+<a href=#2647 id=2647 data-nosnippet>2647</a>    <span class="kw">if </span>capture.channel_index != channel_index || capture.block_index != block_index {
 <a href=#2648 id=2648 data-nosnippet>2648</a>        <span class="kw">return</span>;
 <a href=#2649 id=2649 data-nosnippet>2649</a>    }
 <a href=#2650 id=2650 data-nosnippet>2650</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = write_cube_minor_cycle_capture(
@@ -4272,7 +4272,7 @@
 <a href=#4272 id=4272 data-nosnippet>4272</a>                <span class="string">"MTMFS Hessian is singular at the image center"</span>.to_string(),
 <a href=#4273 id=4273 data-nosnippet>4273</a>            ));
 <a href=#4274 id=4274 data-nosnippet>4274</a>        }
-<a href=#4275 id=4275 data-nosnippet>4275</a>        <span class="kw">if </span><span class="macro">best_row !</span>= pivot {
+<a href=#4275 id=4275 data-nosnippet>4275</a>        <span class="kw">if </span>best_row != pivot {
 <a href=#4276 id=4276 data-nosnippet>4276</a>            augmented.swap(best_row, pivot);
 <a href=#4277 id=4277 data-nosnippet>4277</a>        }
 <a href=#4278 id=4278 data-nosnippet>4278</a>        <span class="kw">let </span>pivot_value = augmented[pivot][pivot];

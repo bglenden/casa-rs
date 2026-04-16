@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-vla/src/disk.rs`."><title>disk.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_vla" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casa_vla/</div>disk.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-vla/src/disk.rs`."><title>disk.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_vla" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_vla/</div>disk.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Disk-based VLA logical-record reassembly.
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::fs::File;
@@ -188,7 +188,7 @@
 <a href=#188 id=188 data-nosnippet>188</a>                <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
 <a href=#189 id=189 data-nosnippet>189</a>            };
 <a href=#190 id=190 data-nosnippet>190</a>            <span class="kw">let </span>header = DiskPhysicalRecordHeader::parse(<span class="kw-2">&amp;</span>first_block);
-<a href=#191 id=191 data-nosnippet>191</a>            <span class="kw">if </span>header.<span class="macro">current !</span>= <span class="number">1 </span>|| header.total == <span class="number">0 </span>|| header.total &gt; <span class="number">39 </span>{
+<a href=#191 id=191 data-nosnippet>191</a>            <span class="kw">if </span>header.current != <span class="number">1 </span>|| header.total == <span class="number">0 </span>|| header.total &gt; <span class="number">39 </span>{
 <a href=#192 id=192 data-nosnippet>192</a>                <span class="kw">continue</span>;
 <a href=#193 id=193 data-nosnippet>193</a>            }
 <a href=#194 id=194 data-nosnippet>194</a>
@@ -228,7 +228,7 @@
 <a href=#228 id=228 data-nosnippet>228</a>                        )
 <a href=#229 id=229 data-nosnippet>229</a>                    })<span class="question-mark">?</span>;
 <a href=#230 id=230 data-nosnippet>230</a>                <span class="kw">let </span>next_header = DiskPhysicalRecordHeader::parse(<span class="kw-2">&amp;</span>block);
-<a href=#231 id=231 data-nosnippet>231</a>                <span class="kw">if </span>next_header.<span class="macro">current !</span>= expected || next_header.<span class="macro">total !</span>= header.total {
+<a href=#231 id=231 data-nosnippet>231</a>                <span class="kw">if </span>next_header.current != expected || next_header.total != header.total {
 <a href=#232 id=232 data-nosnippet>232</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_record(
 <a href=#233 id=233 data-nosnippet>233</a>                        <span class="kw-2">&amp;</span><span class="self">self</span>.path,
 <a href=#234 id=234 data-nosnippet>234</a>                        <span class="macro">format!</span>(
@@ -242,7 +242,7 @@
 <a href=#242 id=242 data-nosnippet>242</a>                written += copy;
 <a href=#243 id=243 data-nosnippet>243</a>            }
 <a href=#244 id=244 data-nosnippet>244</a>
-<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">if </span><span class="macro">written !</span>= logical_len {
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">if </span>written != logical_len {
 <a href=#246 id=246 data-nosnippet>246</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_record(
 <a href=#247 id=247 data-nosnippet>247</a>                    <span class="kw-2">&amp;</span><span class="self">self</span>.path,
 <a href=#248 id=248 data-nosnippet>248</a>                    <span class="macro">format!</span>(<span class="string">"logical record truncated: copied {written} of {logical_len} bytes"</span>),
@@ -264,7 +264,7 @@
 <a href=#264 id=264 data-nosnippet>264</a>                <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
 <a href=#265 id=265 data-nosnippet>265</a>            };
 <a href=#266 id=266 data-nosnippet>266</a>            <span class="kw">let </span>header = DiskPhysicalRecordHeader::parse(<span class="kw-2">&amp;</span>first_sector);
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">if </span>header.<span class="macro">current !</span>= <span class="number">1 </span>|| header.total == <span class="number">0 </span>|| header.total &gt; <span class="number">39 </span>{
+<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">if </span>header.current != <span class="number">1 </span>|| header.total == <span class="number">0 </span>|| header.total &gt; <span class="number">39 </span>{
 <a href=#268 id=268 data-nosnippet>268</a>                <span class="kw">continue</span>;
 <a href=#269 id=269 data-nosnippet>269</a>            }
 <a href=#270 id=270 data-nosnippet>270</a>
@@ -317,7 +317,7 @@
 <a href=#317 id=317 data-nosnippet>317</a>                        })<span class="question-mark">?</span>;
 <a href=#318 id=318 data-nosnippet>318</a>                <span class="kw">let </span>block = <span class="self">self</span>.finish_disk_block(first_sector, record_size)<span class="question-mark">?</span>;
 <a href=#319 id=319 data-nosnippet>319</a>                <span class="kw">let </span>next_header = DiskPhysicalRecordHeader::parse(<span class="kw-2">&amp;</span>block);
-<a href=#320 id=320 data-nosnippet>320</a>                <span class="kw">if </span>next_header.<span class="macro">current !</span>= expected || next_header.<span class="macro">total !</span>= header.total {
+<a href=#320 id=320 data-nosnippet>320</a>                <span class="kw">if </span>next_header.current != expected || next_header.total != header.total {
 <a href=#321 id=321 data-nosnippet>321</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_record(
 <a href=#322 id=322 data-nosnippet>322</a>                        <span class="kw-2">&amp;</span><span class="self">self</span>.path,
 <a href=#323 id=323 data-nosnippet>323</a>                        <span class="macro">format!</span>(
@@ -331,7 +331,7 @@
 <a href=#331 id=331 data-nosnippet>331</a>                written += copy;
 <a href=#332 id=332 data-nosnippet>332</a>            }
 <a href=#333 id=333 data-nosnippet>333</a>
-<a href=#334 id=334 data-nosnippet>334</a>            <span class="kw">if </span><span class="macro">written !</span>= logical_len {
+<a href=#334 id=334 data-nosnippet>334</a>            <span class="kw">if </span>written != logical_len {
 <a href=#335 id=335 data-nosnippet>335</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_record(
 <a href=#336 id=336 data-nosnippet>336</a>                    <span class="kw-2">&amp;</span><span class="self">self</span>.path,
 <a href=#337 id=337 data-nosnippet>337</a>                    <span class="macro">format!</span>(<span class="string">"logical record truncated: copied {written} of {logical_len} bytes"</span>),
@@ -374,7 +374,7 @@
 <a href=#374 id=374 data-nosnippet>374</a>        <span class="kw-2">mut </span>first_sector: Vec&lt;u8&gt;,
 <a href=#375 id=375 data-nosnippet>375</a>        total_size: usize,
 <a href=#376 id=376 data-nosnippet>376</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, VlaError&gt; {
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">if </span>total_size &lt; PHYSICAL_RECORD_SIZE || total_size % <span class="macro">PHYSICAL_RECORD_SIZE !</span>= <span class="number">0 </span>{
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">if </span>total_size &lt; PHYSICAL_RECORD_SIZE || total_size % PHYSICAL_RECORD_SIZE != <span class="number">0 </span>{
 <a href=#378 id=378 data-nosnippet>378</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_record(
 <a href=#379 id=379 data-nosnippet>379</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.path,
 <a href=#380 id=380 data-nosnippet>380</a>                <span class="macro">format!</span>(<span class="string">"invalid disk physical-record size: {total_size} bytes"</span>),
@@ -470,5 +470,164 @@
 <a href=#470 id=470 data-nosnippet>470</a>        <span class="kw">let </span>record = reader.next_record().unwrap().unwrap();
 <a href=#471 id=471 data-nosnippet>471</a>        <span class="macro">assert_eq!</span>(record.bytes(), logical.as_slice());
 <a href=#472 id=472 data-nosnippet>472</a>    }
-<a href=#473 id=473 data-nosnippet>473</a>}
+<a href=#473 id=473 data-nosnippet>473</a>
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="attr">#[test]
+<a href=#475 id=475 data-nosnippet>475</a>    </span><span class="kw">fn </span>fixed_reader_reports_partial_physical_record_and_sequence_errors() {
+<a href=#476 id=476 data-nosnippet>476</a>        <span class="kw">let </span>partial = <span class="macro">vec!</span>[<span class="number">0_u8</span>; PHYSICAL_RECORD_SIZE - <span class="number">1</span>];
+<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span>error = VlaDiskReader::new(<span class="string">"partial.xp1"</span>, Cursor::new(partial))
+<a href=#478 id=478 data-nosnippet>478</a>            .next_record()
+<a href=#479 id=479 data-nosnippet>479</a>            .unwrap_err();
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"partial physical record"</span>));
+<a href=#481 id=481 data-nosnippet>481</a>
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span>logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + <span class="number">10</span>, <span class="number">12</span>, <span class="number">34</span>);
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span>block1 = physical_block(<span class="number">1</span>, <span class="number">2</span>, <span class="kw-2">&amp;</span>logical[..PHYSICAL_RECORD_DATA_BYTES]);
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span>block2 = physical_block(<span class="number">3</span>, <span class="number">2</span>, <span class="kw-2">&amp;</span>logical[PHYSICAL_RECORD_DATA_BYTES..]);
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = Vec::new();
+<a href=#486 id=486 data-nosnippet>486</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>block1);
+<a href=#487 id=487 data-nosnippet>487</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>block2);
+<a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">let </span>error = VlaDiskReader::new(<span class="string">"mismatch.xp1"</span>, Cursor::new(bytes))
+<a href=#489 id=489 data-nosnippet>489</a>            .next_record()
+<a href=#490 id=490 data-nosnippet>490</a>            .unwrap_err();
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="macro">assert!</span>(
+<a href=#492 id=492 data-nosnippet>492</a>            error
+<a href=#493 id=493 data-nosnippet>493</a>                .to_string()
+<a href=#494 id=494 data-nosnippet>494</a>                .contains(<span class="string">"physical-record sequence mismatch"</span>)
+<a href=#495 id=495 data-nosnippet>495</a>        );
+<a href=#496 id=496 data-nosnippet>496</a>    }
+<a href=#497 id=497 data-nosnippet>497</a>
+<a href=#498 id=498 data-nosnippet>498</a>    <span class="attr">#[test]
+<a href=#499 id=499 data-nosnippet>499</a>    </span><span class="kw">fn </span>fixed_reader_reports_truncated_and_oversized_records() {
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + <span class="number">10</span>, <span class="number">12</span>, <span class="number">34</span>);
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>block1 = physical_block(<span class="number">1</span>, <span class="number">2</span>, <span class="kw-2">&amp;</span>logical[..PHYSICAL_RECORD_DATA_BYTES]);
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>error = VlaDiskReader::new(<span class="string">"eof.xp1"</span>, Cursor::new(block1.to_vec()))
+<a href=#503 id=503 data-nosnippet>503</a>            .next_record()
+<a href=#504 id=504 data-nosnippet>504</a>            .unwrap_err();
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="macro">assert!</span>(
+<a href=#506 id=506 data-nosnippet>506</a>            error
+<a href=#507 id=507 data-nosnippet>507</a>                .to_string()
+<a href=#508 id=508 data-nosnippet>508</a>                .contains(<span class="string">"unexpected EOF while reading logical record"</span>)
+<a href=#509 id=509 data-nosnippet>509</a>        );
+<a href=#510 id=510 data-nosnippet>510</a>
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">let </span><span class="kw-2">mut </span>oversized = physical_block(<span class="number">1</span>, <span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0_u8</span>; <span class="number">16</span>]);
+<a href=#512 id=512 data-nosnippet>512</a>        oversized[<span class="number">4</span>..<span class="number">8</span>].copy_from_slice(<span class="kw-2">&amp;</span>((MAX_LOGICAL_RECORD_SIZE <span class="kw">as </span>i32 / <span class="number">2</span>) + <span class="number">1</span>).to_be_bytes());
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span>error = VlaDiskReader::new(<span class="string">"oversized.xp1"</span>, Cursor::new(oversized.to_vec()))
+<a href=#514 id=514 data-nosnippet>514</a>            .next_record()
+<a href=#515 id=515 data-nosnippet>515</a>            .unwrap_err();
+<a href=#516 id=516 data-nosnippet>516</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"logical record exceeds limit"</span>));
+<a href=#517 id=517 data-nosnippet>517</a>    }
+<a href=#518 id=518 data-nosnippet>518</a>
+<a href=#519 id=519 data-nosnippet>519</a>    <span class="attr">#[test]
+<a href=#520 id=520 data-nosnippet>520</a>    </span><span class="kw">fn </span>fixed_reader_skips_nonpositive_logical_lengths_and_exposes_paths() {
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span><span class="kw-2">mut </span>zero_len = physical_block(<span class="number">1</span>, <span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0_u8</span>; <span class="number">8</span>]);
+<a href=#522 id=522 data-nosnippet>522</a>        zero_len[<span class="number">4</span>..<span class="number">8</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="number">0_i32</span>.to_be_bytes());
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">let </span>logical = logical_record_bytes(<span class="number">64</span>, <span class="number">26</span>, <span class="number">49_999</span>);
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>good = physical_block(<span class="number">1</span>, <span class="number">1</span>, <span class="kw-2">&amp;</span>logical);
+<a href=#525 id=525 data-nosnippet>525</a>
+<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = Vec::new();
+<a href=#527 id=527 data-nosnippet>527</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>zero_len);
+<a href=#528 id=528 data-nosnippet>528</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>good);
+<a href=#529 id=529 data-nosnippet>529</a>        <span class="kw">let </span><span class="kw-2">mut </span>reader = VlaDiskReader::new(<span class="string">"synthetic.xp4"</span>, Cursor::new(bytes));
+<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">let </span>record = reader.next_record().unwrap().unwrap();
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="macro">assert_eq!</span>(record.path(), Path::new(<span class="string">"synthetic.xp4"</span>));
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="macro">assert_eq!</span>(record.physical_records(), <span class="number">1</span>);
+<a href=#533 id=533 data-nosnippet>533</a>    }
+<a href=#534 id=534 data-nosnippet>534</a>
+<a href=#535 id=535 data-nosnippet>535</a>    <span class="attr">#[test]
+<a href=#536 id=536 data-nosnippet>536</a>    </span><span class="kw">fn </span>disk_variable_reader_reassembles_single_record_spanning_multiple_sectors() {
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">let </span>logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + <span class="number">300</span>, <span class="number">30</span>, <span class="number">50_555</span>);
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">let </span>sector1 = physical_block(<span class="number">1</span>, <span class="number">1</span>, <span class="kw-2">&amp;</span>logical[..PHYSICAL_RECORD_DATA_BYTES]);
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">let </span><span class="kw-2">mut </span>sector2 = [<span class="number">0_u8</span>; PHYSICAL_RECORD_SIZE];
+<a href=#540 id=540 data-nosnippet>540</a>        sector2[..logical.len() - PHYSICAL_RECORD_DATA_BYTES]
+<a href=#541 id=541 data-nosnippet>541</a>            .copy_from_slice(<span class="kw-2">&amp;</span>logical[PHYSICAL_RECORD_DATA_BYTES..]);
+<a href=#542 id=542 data-nosnippet>542</a>
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = Vec::new();
+<a href=#544 id=544 data-nosnippet>544</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>sector1);
+<a href=#545 id=545 data-nosnippet>545</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>sector2);
+<a href=#546 id=546 data-nosnippet>546</a>
+<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span><span class="kw-2">mut </span>reader = VlaDiskReader::with_physical_record_size(
+<a href=#548 id=548 data-nosnippet>548</a>            <span class="string">"variable.xp1"</span>,
+<a href=#549 id=549 data-nosnippet>549</a>            Cursor::new(bytes),
+<a href=#550 id=550 data-nosnippet>550</a>            PhysicalRecordMode::DiskVariable,
+<a href=#551 id=551 data-nosnippet>551</a>        );
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span>record = reader.next_record().unwrap().unwrap();
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="macro">assert_eq!</span>(record.bytes(), logical.as_slice());
+<a href=#554 id=554 data-nosnippet>554</a>        <span class="macro">assert_eq!</span>(record.path(), Path::new(<span class="string">"variable.xp1"</span>));
+<a href=#555 id=555 data-nosnippet>555</a>    }
+<a href=#556 id=556 data-nosnippet>556</a>
+<a href=#557 id=557 data-nosnippet>557</a>    <span class="attr">#[test]
+<a href=#558 id=558 data-nosnippet>558</a>    </span><span class="kw">fn </span>disk_variable_reader_reports_invalid_sizes_and_missing_remainder() {
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span><span class="kw-2">mut </span>reader = VlaDiskReader::with_physical_record_size(
+<a href=#560 id=560 data-nosnippet>560</a>            <span class="string">"invalid-size.xp1"</span>,
+<a href=#561 id=561 data-nosnippet>561</a>            Cursor::new(Vec::&lt;u8&gt;::new()),
+<a href=#562 id=562 data-nosnippet>562</a>            PhysicalRecordMode::DiskVariable,
+<a href=#563 id=563 data-nosnippet>563</a>        );
+<a href=#564 id=564 data-nosnippet>564</a>        <span class="kw">let </span>error = reader
+<a href=#565 id=565 data-nosnippet>565</a>            .finish_disk_block(<span class="macro">vec!</span>[<span class="number">0_u8</span>; PHYSICAL_RECORD_SIZE], PHYSICAL_RECORD_SIZE + <span class="number">1</span>)
+<a href=#566 id=566 data-nosnippet>566</a>            .unwrap_err();
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="macro">assert!</span>(
+<a href=#568 id=568 data-nosnippet>568</a>            error
+<a href=#569 id=569 data-nosnippet>569</a>                .to_string()
+<a href=#570 id=570 data-nosnippet>570</a>                .contains(<span class="string">"invalid disk physical-record size"</span>)
+<a href=#571 id=571 data-nosnippet>571</a>        );
+<a href=#572 id=572 data-nosnippet>572</a>
+<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">let </span>logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + <span class="number">10</span>, <span class="number">22</span>, <span class="number">44</span>);
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">let </span>sector1 = physical_block(<span class="number">1</span>, <span class="number">1</span>, <span class="kw-2">&amp;</span>logical[..PHYSICAL_RECORD_DATA_BYTES]);
+<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">let </span><span class="kw-2">mut </span>reader = VlaDiskReader::with_physical_record_size(
+<a href=#576 id=576 data-nosnippet>576</a>            <span class="string">"missing-remainder.xp1"</span>,
+<a href=#577 id=577 data-nosnippet>577</a>            Cursor::new(sector1.to_vec()),
+<a href=#578 id=578 data-nosnippet>578</a>            PhysicalRecordMode::DiskVariable,
+<a href=#579 id=579 data-nosnippet>579</a>        );
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">let </span>error = reader.next_record().unwrap_err();
+<a href=#581 id=581 data-nosnippet>581</a>        <span class="macro">assert!</span>(
+<a href=#582 id=582 data-nosnippet>582</a>            error
+<a href=#583 id=583 data-nosnippet>583</a>                .to_string()
+<a href=#584 id=584 data-nosnippet>584</a>                .contains(<span class="string">"unexpected EOF while finishing disk physical record"</span>)
+<a href=#585 id=585 data-nosnippet>585</a>        );
+<a href=#586 id=586 data-nosnippet>586</a>    }
+<a href=#587 id=587 data-nosnippet>587</a>
+<a href=#588 id=588 data-nosnippet>588</a>    <span class="attr">#[test]
+<a href=#589 id=589 data-nosnippet>589</a>    </span><span class="kw">fn </span>disk_variable_reader_reports_sequence_mismatch_for_followup_records() {
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">let </span>logical = logical_record_bytes(DISK_PHYSICAL_RECORD_SIZE + <span class="number">10</span>, <span class="number">21</span>, <span class="number">88</span>);
+<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">let </span><span class="kw-2">mut </span>first_record = <span class="macro">vec!</span>[<span class="number">0_u8</span>; DISK_PHYSICAL_RECORD_SIZE];
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">let </span>first_sector = physical_block(<span class="number">1</span>, <span class="number">2</span>, <span class="kw-2">&amp;</span>logical[..PHYSICAL_RECORD_DATA_BYTES]);
+<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw">let </span>first_record_remainder = DISK_PHYSICAL_RECORD_SIZE - PHYSICAL_RECORD_SIZE;
+<a href=#594 id=594 data-nosnippet>594</a>        first_record[..PHYSICAL_RECORD_SIZE].copy_from_slice(<span class="kw-2">&amp;</span>first_sector);
+<a href=#595 id=595 data-nosnippet>595</a>        first_record[PHYSICAL_RECORD_SIZE..].copy_from_slice(
+<a href=#596 id=596 data-nosnippet>596</a>            <span class="kw-2">&amp;</span>logical
+<a href=#597 id=597 data-nosnippet>597</a>                [PHYSICAL_RECORD_DATA_BYTES..PHYSICAL_RECORD_DATA_BYTES + first_record_remainder],
+<a href=#598 id=598 data-nosnippet>598</a>        );
+<a href=#599 id=599 data-nosnippet>599</a>
+<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">let </span><span class="kw-2">mut </span>second_record = <span class="macro">vec!</span>[<span class="number">0_u8</span>; DISK_PHYSICAL_RECORD_SIZE];
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">let </span>bad_second = physical_block(<span class="number">3</span>, <span class="number">2</span>, <span class="kw-2">&amp;</span>[<span class="number">0_u8</span>; PHYSICAL_RECORD_DATA_BYTES]);
+<a href=#602 id=602 data-nosnippet>602</a>        second_record[..PHYSICAL_RECORD_SIZE].copy_from_slice(<span class="kw-2">&amp;</span>bad_second);
+<a href=#603 id=603 data-nosnippet>603</a>
+<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = Vec::new();
+<a href=#605 id=605 data-nosnippet>605</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>first_record);
+<a href=#606 id=606 data-nosnippet>606</a>        bytes.extend_from_slice(<span class="kw-2">&amp;</span>second_record);
+<a href=#607 id=607 data-nosnippet>607</a>
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span><span class="kw-2">mut </span>reader = VlaDiskReader::with_physical_record_size(
+<a href=#609 id=609 data-nosnippet>609</a>            <span class="string">"variable-mismatch.xp1"</span>,
+<a href=#610 id=610 data-nosnippet>610</a>            Cursor::new(bytes),
+<a href=#611 id=611 data-nosnippet>611</a>            PhysicalRecordMode::DiskVariable,
+<a href=#612 id=612 data-nosnippet>612</a>        );
+<a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">let </span>error = reader.next_record().unwrap_err();
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="macro">assert!</span>(
+<a href=#615 id=615 data-nosnippet>615</a>            error
+<a href=#616 id=616 data-nosnippet>616</a>                .to_string()
+<a href=#617 id=617 data-nosnippet>617</a>                .contains(<span class="string">"physical-record sequence mismatch"</span>)
+<a href=#618 id=618 data-nosnippet>618</a>        );
+<a href=#619 id=619 data-nosnippet>619</a>    }
+<a href=#620 id=620 data-nosnippet>620</a>
+<a href=#621 id=621 data-nosnippet>621</a>    <span class="attr">#[test]
+<a href=#622 id=622 data-nosnippet>622</a>    </span><span class="kw">fn </span>disk_physical_record_size_rounds_up_to_sector_multiple() {
+<a href=#623 id=623 data-nosnippet>623</a>        <span class="macro">assert_eq!</span>(
+<a href=#624 id=624 data-nosnippet>624</a>            disk_physical_record_size_for_payload(<span class="number">1</span>),
+<a href=#625 id=625 data-nosnippet>625</a>            PHYSICAL_RECORD_SIZE
+<a href=#626 id=626 data-nosnippet>626</a>        );
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="macro">assert_eq!</span>(
+<a href=#628 id=628 data-nosnippet>628</a>            disk_physical_record_size_for_payload(PHYSICAL_RECORD_SIZE + <span class="number">1</span>),
+<a href=#629 id=629 data-nosnippet>629</a>            PHYSICAL_RECORD_SIZE * <span class="number">2
+<a href=#630 id=630 data-nosnippet>630</a>        </span>);
+<a href=#631 id=631 data-nosnippet>631</a>    }
+<a href=#632 id=632 data-nosnippet>632</a>}
 </code></pre></div></section></main></body></html>

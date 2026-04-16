@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/storage/tiled_stman.rs`."><title>tiled_stman.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casa_tables/storage/</div>tiled_stman.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/storage/tiled_stman.rs`."><title>tiled_stman.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/storage/</div>tiled_stman.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Tiled storage managers: `TiledColumnStMan`, `TiledShapeStMan`, `TiledCellStMan`.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! These store multi-dimensional array data in rectangular tiles within
@@ -199,7 +199,7 @@
 <a href=#199 id=199 data-nosnippet>199</a>            <span class="kw">let </span>values: Vec&lt;bool&gt; = unpacked
 <a href=#200 id=200 data-nosnippet>200</a>                .iter()
 <a href=#201 id=201 data-nosnippet>201</a>                .take(nrpixels)
-<a href=#202 id=202 data-nosnippet>202</a>                .map(|<span class="kw-2">&amp;</span>value| <span class="macro">value !</span>= <span class="number">0</span>)
+<a href=#202 id=202 data-nosnippet>202</a>                .map(|<span class="kw-2">&amp;</span>value| value != <span class="number">0</span>)
 <a href=#203 id=203 data-nosnippet>203</a>                .collect();
 <a href=#204 id=204 data-nosnippet>204</a>            write_bool_bits(dst, <span class="number">0</span>, <span class="kw-2">&amp;</span>values);
 <a href=#205 id=205 data-nosnippet>205</a>        }
@@ -758,7 +758,7 @@
 <a href=#758 id=758 data-nosnippet>758</a>    <span class="kw">let </span>nelem: usize = shape.iter().product();
 <a href=#759 id=759 data-nosnippet>759</a>    <span class="kw">let </span>av = <span class="kw">match </span>dt {
 <a href=#760 id=760 data-nosnippet>760</a>        CasacoreDataType::TpBool =&gt; {
-<a href=#761 id=761 data-nosnippet>761</a>            <span class="kw">let </span>vals: Vec&lt;bool&gt; = raw[..nelem].iter().map(|<span class="kw-2">&amp;</span>b| <span class="macro">b !</span>= <span class="number">0</span>).collect();
+<a href=#761 id=761 data-nosnippet>761</a>            <span class="kw">let </span>vals: Vec&lt;bool&gt; = raw[..nelem].iter().map(|<span class="kw-2">&amp;</span>b| b != <span class="number">0</span>).collect();
 <a href=#762 id=762 data-nosnippet>762</a>            ArrayValue::Bool(
 <a href=#763 id=763 data-nosnippet>763</a>                ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
 <a href=#764 id=764 data-nosnippet>764</a>                    .map_err(|e| StorageError::FormatMismatch(<span class="macro">format!</span>(<span class="string">"array shape: {e}"</span>)))<span class="question-mark">?</span>,
@@ -1310,7 +1310,7 @@
 <a href=#1310 id=1310 data-nosnippet>1310</a>
 <a href=#1311 id=1311 data-nosnippet>1311</a>    <span class="comment">// Map rows to cubes and extract values.
 <a href=#1312 id=1312 data-nosnippet>1312</a>    </span><span class="kw">let </span>n_intervals = mapping.nr_used_row_map <span class="kw">as </span>usize;
-<a href=#1313 id=1313 data-nosnippet>1313</a>    <span class="kw">if </span><span class="macro">n_intervals !</span>= <span class="number">0 </span>{
+<a href=#1313 id=1313 data-nosnippet>1313</a>    <span class="kw">if </span>n_intervals != <span class="number">0 </span>{
 <a href=#1314 id=1314 data-nosnippet>1314</a>        <span class="kw">let </span>row_map = <span class="kw-2">&amp;</span>mapping.row_map[..n_intervals];
 <a href=#1315 id=1315 data-nosnippet>1315</a>        <span class="kw">let </span>cube_map = <span class="kw-2">&amp;</span>mapping.cube_map[..n_intervals];
 <a href=#1316 id=1316 data-nosnippet>1316</a>        <span class="kw">let </span>pos_map = <span class="kw-2">&amp;</span>mapping.pos_map[..n_intervals];
@@ -2647,7 +2647,7 @@
 <a href=#2647 id=2647 data-nosnippet>2647</a>
 <a href=#2648 id=2648 data-nosnippet>2648</a>        <span class="kw">let </span>tile_strides = fortran_order_strides(tile_shape);
 <a href=#2649 id=2649 data-nosnippet>2649</a>        <span class="kw">let </span>tiles_per_dim_strides = fortran_order_strides(<span class="kw-2">&amp;</span>tiles_per_dim);
-<a href=#2650 id=2650 data-nosnippet>2650</a>        <span class="kw">let </span>needs_swap = <span class="macro">big_endian !</span>= <span class="macro">cfg!</span>(target_endian = <span class="string">"big"</span>);
+<a href=#2650 id=2650 data-nosnippet>2650</a>        <span class="kw">let </span>needs_swap = big_endian != <span class="macro">cfg!</span>(target_endian = <span class="string">"big"</span>);
 <a href=#2651 id=2651 data-nosnippet>2651</a>
 <a href=#2652 id=2652 data-nosnippet>2652</a>        <span class="kw">let </span>total_data_bytes = nr_tiles * file_tile_bytes;
 <a href=#2653 id=2653 data-nosnippet>2653</a>        <span class="kw">let </span>use_lru = max_cache_bytes &gt; <span class="number">0 </span>&amp;&amp; max_cache_bytes &lt; total_data_bytes;
@@ -2764,7 +2764,7 @@
 <a href=#2764 id=2764 data-nosnippet>2764</a>
 <a href=#2765 id=2765 data-nosnippet>2765</a>        <span class="kw">let </span>tile_strides = fortran_order_strides(<span class="kw-2">&amp;</span>cube.tile_shape);
 <a href=#2766 id=2766 data-nosnippet>2766</a>        <span class="kw">let </span>tiles_per_dim_strides = fortran_order_strides(<span class="kw-2">&amp;</span>tiles_per_dim);
-<a href=#2767 id=2767 data-nosnippet>2767</a>        <span class="kw">let </span>needs_swap = header.<span class="macro">big_endian !</span>= <span class="macro">cfg!</span>(target_endian = <span class="string">"big"</span>);
+<a href=#2767 id=2767 data-nosnippet>2767</a>        <span class="kw">let </span>needs_swap = header.big_endian != <span class="macro">cfg!</span>(target_endian = <span class="string">"big"</span>);
 <a href=#2768 id=2768 data-nosnippet>2768</a>
 <a href=#2769 id=2769 data-nosnippet>2769</a>        <span class="kw">let </span>swap_size = <span class="kw">match </span>dt {
 <a href=#2770 id=2770 data-nosnippet>2770</a>            CasacoreDataType::TpComplex =&gt; <span class="number">4</span>,
@@ -3002,7 +3002,7 @@
 <a href=#3002 id=3002 data-nosnippet>3002</a>
 <a href=#3003 id=3003 data-nosnippet>3003</a>                <span class="comment">// Evict: write dirty tile to disk if needed.
 <a href=#3004 id=3004 data-nosnippet>3004</a>                </span><span class="kw">let </span>old_tile = lru.slot_tile[min_slot];
-<a href=#3005 id=3005 data-nosnippet>3005</a>                <span class="kw">if </span><span class="macro">old_tile !</span>= usize::MAX &amp;&amp; lru.slot_dirty[min_slot] {
+<a href=#3005 id=3005 data-nosnippet>3005</a>                <span class="kw">if </span>old_tile != usize::MAX &amp;&amp; lru.slot_dirty[min_slot] {
 <a href=#3006 id=3006 data-nosnippet>3006</a>                    <span class="kw">let </span>off = min_slot * tile_bytes;
 <a href=#3007 id=3007 data-nosnippet>3007</a>                    <span class="kw">let </span>file_pos = (file_offset + old_tile * file_tile_bytes) <span class="kw">as </span>u64;
 <a href=#3008 id=3008 data-nosnippet>3008</a>                    write_tiled_file_tile(
@@ -3017,7 +3017,7 @@
 <a href=#3017 id=3017 data-nosnippet>3017</a>                    )<span class="question-mark">?</span>;
 <a href=#3018 id=3018 data-nosnippet>3018</a>                    <span class="self">self</span>.tile_on_disk[old_tile] = <span class="bool-val">true</span>;
 <a href=#3019 id=3019 data-nosnippet>3019</a>                }
-<a href=#3020 id=3020 data-nosnippet>3020</a>                <span class="kw">if </span><span class="macro">old_tile !</span>= usize::MAX {
+<a href=#3020 id=3020 data-nosnippet>3020</a>                <span class="kw">if </span>old_tile != usize::MAX {
 <a href=#3021 id=3021 data-nosnippet>3021</a>                    lru.tile_to_slot[old_tile] = -<span class="number">1</span>;
 <a href=#3022 id=3022 data-nosnippet>3022</a>                }
 <a href=#3023 id=3023 data-nosnippet>3023</a>                min_slot
@@ -3080,7 +3080,7 @@
 <a href=#3080 id=3080 data-nosnippet>3080</a>        needs_swap: bool,
 <a href=#3081 id=3081 data-nosnippet>3081</a>        swap_size: usize,
 <a href=#3082 id=3082 data-nosnippet>3082</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;bool, StorageError&gt; {
-<a href=#3083 id=3083 data-nosnippet>3083</a>        <span class="kw">if </span><span class="macro">file_tile_bytes !</span>= tile_bytes {
+<a href=#3083 id=3083 data-nosnippet>3083</a>        <span class="kw">if </span>file_tile_bytes != tile_bytes {
 <a href=#3084 id=3084 data-nosnippet>3084</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
 <a href=#3085 id=3085 data-nosnippet>3085</a>        }
 <a href=#3086 id=3086 data-nosnippet>3086</a>        <span class="comment">// All slots must be used and dirty, and tiles must be in sequential
@@ -3088,7 +3088,7 @@
 <a href=#3088 id=3088 data-nosnippet>3088</a>        </span><span class="kw">let </span>max_slots = lru.max_slots;
 <a href=#3089 id=3089 data-nosnippet>3089</a>        <span class="kw">let </span><span class="kw-2">mut </span>all_dirty = <span class="bool-val">true</span>;
 <a href=#3090 id=3090 data-nosnippet>3090</a>        <span class="kw">let </span>base_tile = lru.slot_tile[<span class="number">0</span>];
-<a href=#3091 id=3091 data-nosnippet>3091</a>        <span class="kw">let </span><span class="kw-2">mut </span>contiguous = <span class="macro">base_tile !</span>= usize::MAX;
+<a href=#3091 id=3091 data-nosnippet>3091</a>        <span class="kw">let </span><span class="kw-2">mut </span>contiguous = base_tile != usize::MAX;
 <a href=#3092 id=3092 data-nosnippet>3092</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..max_slots {
 <a href=#3093 id=3093 data-nosnippet>3093</a>            <span class="kw">if </span>!lru.slot_dirty[i] {
 <a href=#3094 id=3094 data-nosnippet>3094</a>                all_dirty = <span class="bool-val">false</span>;
@@ -3146,7 +3146,7 @@
 <a href=#3146 id=3146 data-nosnippet>3146</a>        needs_swap: bool,
 <a href=#3147 id=3147 data-nosnippet>3147</a>        swap_size: usize,
 <a href=#3148 id=3148 data-nosnippet>3148</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;bool, StorageError&gt; {
-<a href=#3149 id=3149 data-nosnippet>3149</a>        <span class="kw">if </span><span class="macro">file_tile_bytes !</span>= tile_bytes {
+<a href=#3149 id=3149 data-nosnippet>3149</a>        <span class="kw">if </span>file_tile_bytes != tile_bytes {
 <a href=#3150 id=3150 data-nosnippet>3150</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
 <a href=#3151 id=3151 data-nosnippet>3151</a>        }
 <a href=#3152 id=3152 data-nosnippet>3152</a>        <span class="kw">let </span>max_slots = lru.max_slots;
@@ -3154,7 +3154,7 @@
 <a href=#3154 id=3154 data-nosnippet>3154</a>        <span class="comment">// Check: current slots hold contiguous clean tiles, and the requested
 <a href=#3155 id=3155 data-nosnippet>3155</a>        // tile continues right after them (sequential scan pattern).
 <a href=#3156 id=3156 data-nosnippet>3156</a>        </span><span class="kw">let </span>base_tile = lru.slot_tile[<span class="number">0</span>];
-<a href=#3157 id=3157 data-nosnippet>3157</a>        <span class="kw">if </span>base_tile == usize::MAX || <span class="macro">tile_index !</span>= base_tile + max_slots {
+<a href=#3157 id=3157 data-nosnippet>3157</a>        <span class="kw">if </span>base_tile == usize::MAX || tile_index != base_tile + max_slots {
 <a href=#3158 id=3158 data-nosnippet>3158</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
 <a href=#3159 id=3159 data-nosnippet>3159</a>        }
 <a href=#3160 id=3160 data-nosnippet>3160</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..max_slots {
@@ -3279,7 +3279,7 @@
 <a href=#3279 id=3279 data-nosnippet>3279</a>                        OpenOptions::new().write(<span class="bool-val">true</span>).open(<span class="kw-2">&amp;</span><span class="self">self</span>.tsm_path)<span class="question-mark">?</span>,
 <a href=#3280 id=3280 data-nosnippet>3280</a>                    );
 <a href=#3281 id=3281 data-nosnippet>3281</a>
-<a href=#3282 id=3282 data-nosnippet>3282</a>                    <span class="kw">if </span><span class="self">self</span>.<span class="macro">file_tile_bytes !</span>= <span class="self">self</span>.tile_bytes || <span class="self">self</span>.needs_swap {
+<a href=#3282 id=3282 data-nosnippet>3282</a>                    <span class="kw">if </span><span class="self">self</span>.file_tile_bytes != <span class="self">self</span>.tile_bytes || <span class="self">self</span>.needs_swap {
 <a href=#3283 id=3283 data-nosnippet>3283</a>                        <span class="kw">let </span>tile_bytes = <span class="self">self</span>.tile_bytes;
 <a href=#3284 id=3284 data-nosnippet>3284</a>                        <span class="kw">let </span>file_tile_bytes = <span class="self">self</span>.file_tile_bytes;
 <a href=#3285 id=3285 data-nosnippet>3285</a>                        <span class="kw">let </span>dt = <span class="self">self</span>.storage_data_type;
@@ -3367,7 +3367,7 @@
 <a href=#3367 id=3367 data-nosnippet>3367</a>                    <span class="comment">// Reset cache state.
 <a href=#3368 id=3368 data-nosnippet>3368</a>                    </span><span class="kw">for </span>slot <span class="kw">in </span><span class="number">0</span>..lru.used_slots {
 <a href=#3369 id=3369 data-nosnippet>3369</a>                        <span class="kw">let </span>tile_idx = lru.slot_tile[slot];
-<a href=#3370 id=3370 data-nosnippet>3370</a>                        <span class="kw">if </span><span class="macro">tile_idx !</span>= usize::MAX {
+<a href=#3370 id=3370 data-nosnippet>3370</a>                        <span class="kw">if </span>tile_idx != usize::MAX {
 <a href=#3371 id=3371 data-nosnippet>3371</a>                            lru.tile_to_slot[tile_idx] = -<span class="number">1</span>;
 <a href=#3372 id=3372 data-nosnippet>3372</a>                        }
 <a href=#3373 id=3373 data-nosnippet>3373</a>                    }
@@ -3530,7 +3530,7 @@
 <a href=#3530 id=3530 data-nosnippet>3530</a>        <span class="kw">for </span>d <span class="kw">in </span><span class="number">0</span>..ndim {
 <a href=#3531 id=3531 data-nosnippet>3531</a>            tile_start_pos[d] = start[d] / tsh[d];
 <a href=#3532 id=3532 data-nosnippet>3532</a>            tile_end_pos[d] = (start[d] + shape[d] - <span class="number">1</span>) / tsh[d] + <span class="number">1</span>;
-<a href=#3533 id=3533 data-nosnippet>3533</a>            <span class="kw">if </span><span class="macro">d !</span>= inner_axis {
+<a href=#3533 id=3533 data-nosnippet>3533</a>            <span class="kw">if </span>d != inner_axis {
 <a href=#3534 id=3534 data-nosnippet>3534</a>                outer_axes[n_outer] = d;
 <a href=#3535 id=3535 data-nosnippet>3535</a>                n_outer += <span class="number">1</span>;
 <a href=#3536 id=3536 data-nosnippet>3536</a>            }
@@ -3790,7 +3790,7 @@
 <a href=#3790 id=3790 data-nosnippet>3790</a>        <span class="kw">for </span>d <span class="kw">in </span><span class="number">0</span>..ndim {
 <a href=#3791 id=3791 data-nosnippet>3791</a>            tile_start[d] = start[d] / tsh[d];
 <a href=#3792 id=3792 data-nosnippet>3792</a>            tile_end_pos[d] = (start[d] + shape[d] - <span class="number">1</span>) / tsh[d] + <span class="number">1</span>;
-<a href=#3793 id=3793 data-nosnippet>3793</a>            <span class="kw">if </span><span class="macro">d !</span>= inner_axis {
+<a href=#3793 id=3793 data-nosnippet>3793</a>            <span class="kw">if </span>d != inner_axis {
 <a href=#3794 id=3794 data-nosnippet>3794</a>                outer_axes[n_outer] = d;
 <a href=#3795 id=3795 data-nosnippet>3795</a>                n_outer += <span class="number">1</span>;
 <a href=#3796 id=3796 data-nosnippet>3796</a>            }

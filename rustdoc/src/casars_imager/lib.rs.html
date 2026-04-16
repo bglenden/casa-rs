@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casars-imager/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casars_imager" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casars_imager/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-5"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casars-imager/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casars_imager" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casars_imager/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-5"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="attr">#![warn(missing_docs)]
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! Thin MeasurementSet-backed frontend for the pure `casa-imaging` core.
 <a href=#4 id=4 data-nosnippet>4</a>
@@ -524,7 +524,7 @@
 <a href=#524 id=524 data-nosnippet>524</a>            index += <span class="number">1</span>;
 <a href=#525 id=525 data-nosnippet>525</a>            <span class="kw">continue</span>;
 <a href=#526 id=526 data-nosnippet>526</a>        };
-<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">if </span><span class="macro">current !</span>= flag {
+<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">if </span>current != flag {
 <a href=#528 id=528 data-nosnippet>528</a>            filtered.push(args[index].clone());
 <a href=#529 id=529 data-nosnippet>529</a>            index += <span class="number">1</span>;
 <a href=#530 id=530 data-nosnippet>530</a>            <span class="kw">continue</span>;
@@ -556,7 +556,7 @@
 <a href=#556 id=556 data-nosnippet>556</a>            index += <span class="number">1</span>;
 <a href=#557 id=557 data-nosnippet>557</a>            <span class="kw">continue</span>;
 <a href=#558 id=558 data-nosnippet>558</a>        };
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">if </span><span class="macro">current !</span>= flag {
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">if </span>current != flag {
 <a href=#560 id=560 data-nosnippet>560</a>            filtered.push(args[index].clone());
 <a href=#561 id=561 data-nosnippet>561</a>            index += <span class="number">1</span>;
 <a href=#562 id=562 data-nosnippet>562</a>            <span class="kw">continue</span>;
@@ -1866,10 +1866,10 @@
 <a href=#1866 id=1866 data-nosnippet>1866</a>        <span class="kw">if </span>phasecenter_field.is_some() &amp;&amp; phasecenter.is_some() {
 <a href=#1867 id=1867 data-nosnippet>1867</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"--phasecenter and --phasecenter-field are mutually exclusive"</span>.to_string());
 <a href=#1868 id=1868 data-nosnippet>1868</a>        }
-<a href=#1869 id=1869 data-nosnippet>1869</a>        <span class="kw">if </span>deconvolver == Deconvolver::Mtmfs &amp;&amp; <span class="macro">spectral_mode !</span>= SpectralMode::Mfs {
+<a href=#1869 id=1869 data-nosnippet>1869</a>        <span class="kw">if </span>deconvolver == Deconvolver::Mtmfs &amp;&amp; spectral_mode != SpectralMode::Mfs {
 <a href=#1870 id=1870 data-nosnippet>1870</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"deconvolver='mtmfs' currently requires --specmode mfs"</span>.to_string());
 <a href=#1871 id=1871 data-nosnippet>1871</a>        }
-<a href=#1872 id=1872 data-nosnippet>1872</a>        <span class="kw">if </span><span class="macro">deconvolver !</span>= Deconvolver::Mtmfs &amp;&amp; <span class="macro">nterms !</span>= <span class="number">1 </span>{
+<a href=#1872 id=1872 data-nosnippet>1872</a>        <span class="kw">if </span>deconvolver != Deconvolver::Mtmfs &amp;&amp; nterms != <span class="number">1 </span>{
 <a href=#1873 id=1873 data-nosnippet>1873</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"nterms &gt; 1 currently requires --deconvolver mtmfs"</span>.to_string());
 <a href=#1874 id=1874 data-nosnippet>1874</a>        }
 <a href=#1875 id=1875 data-nosnippet>1875</a>        <span class="kw">if </span>nterms == <span class="number">0 </span>{
@@ -2414,7 +2414,7 @@
 <a href=#2414 id=2414 data-nosnippet>2414</a>        .map(|pointing| pointing.row_count() &gt; <span class="number">0</span>)
 <a href=#2415 id=2415 data-nosnippet>2415</a>        .unwrap_or(<span class="bool-val">false</span>);
 <a href=#2416 id=2416 data-nosnippet>2416</a>    <span class="kw">let </span>needs_row_times = config.spectral_mode.is_cube_like()
-<a href=#2417 id=2417 data-nosnippet>2417</a>        || config.<span class="macro">w_term_mode !</span>= WTermMode::None
+<a href=#2417 id=2417 data-nosnippet>2417</a>        || config.w_term_mode != WTermMode::None
 <a href=#2418 id=2418 data-nosnippet>2418</a>        || selection_may_require_phase_reprojection(config)
 <a href=#2419 id=2419 data-nosnippet>2419</a>        || needs_pointing_times;
 <a href=#2420 id=2420 data-nosnippet>2420</a>    <span class="kw">let </span>field_column = ms
@@ -2468,7 +2468,7 @@
 <a href=#2468 id=2468 data-nosnippet>2468</a>        {
 <a href=#2469 id=2469 data-nosnippet>2469</a>            <span class="kw">continue</span>;
 <a href=#2470 id=2470 data-nosnippet>2470</a>        }
-<a href=#2471 id=2471 data-nosnippet>2471</a>        <span class="kw">if </span>config.ddid.is_some_and(|value| <span class="macro">value !</span>= ddid) {
+<a href=#2471 id=2471 data-nosnippet>2471</a>        <span class="kw">if </span>config.ddid.is_some_and(|value| value != ddid) {
 <a href=#2472 id=2472 data-nosnippet>2472</a>            <span class="kw">continue</span>;
 <a href=#2473 id=2473 data-nosnippet>2473</a>        }
 <a href=#2474 id=2474 data-nosnippet>2474</a>        <span class="kw">if </span>!allowed_ddids.is_empty() &amp;&amp; !allowed_ddids[ddid <span class="kw">as </span>usize] {
@@ -2529,7 +2529,7 @@
 <a href=#2529 id=2529 data-nosnippet>2529</a>    <span class="kw">let </span>phase_center = resolve_phase_center(ms, <span class="kw-2">&amp;</span>selected_fields, config)<span class="question-mark">?</span>;
 <a href=#2530 id=2530 data-nosnippet>2530</a>    <span class="kw">let </span>selected_ddid = selected_ddid.ok_or_else(|| <span class="string">"selection resolved to no DDID"</span>.to_string())<span class="question-mark">?</span>;
 <a href=#2531 id=2531 data-nosnippet>2531</a>    <span class="kw">let </span>needs_geometry_engine = config.spectral_mode.is_cube_like()
-<a href=#2532 id=2532 data-nosnippet>2532</a>        || config.<span class="macro">w_term_mode !</span>= WTermMode::None
+<a href=#2532 id=2532 data-nosnippet>2532</a>        || config.w_term_mode != WTermMode::None
 <a href=#2533 id=2533 data-nosnippet>2533</a>        || config.phasecenter.is_some()
 <a href=#2534 id=2534 data-nosnippet>2534</a>        || selected_fields
 <a href=#2535 id=2535 data-nosnippet>2535</a>            .iter()
@@ -2614,7 +2614,7 @@
 <a href=#2614 id=2614 data-nosnippet>2614</a>        <span class="kw">let </span>antenna2_id = antenna2
 <a href=#2615 id=2615 data-nosnippet>2615</a>            .get(row)
 <a href=#2616 id=2616 data-nosnippet>2616</a>            .map_err(|error| <span class="macro">format!</span>(<span class="string">"read ANTENNA2 row {row}: {error}"</span>))<span class="question-mark">?</span>;
-<a href=#2617 id=2617 data-nosnippet>2617</a>        <span class="kw">let </span>is_cross = <span class="macro">antenna1_id !</span>= antenna2_id;
+<a href=#2617 id=2617 data-nosnippet>2617</a>        <span class="kw">let </span>is_cross = antenna1_id != antenna2_id;
 <a href=#2618 id=2618 data-nosnippet>2618</a>        <span class="kw">let </span>raw_uvw_m = uvw
 <a href=#2619 id=2619 data-nosnippet>2619</a>            .get(row)
 <a href=#2620 id=2620 data-nosnippet>2620</a>            .map_err(|error| <span class="macro">format!</span>(<span class="string">"read UVW row {row}: {error}"</span>))<span class="question-mark">?</span>;
@@ -2852,7 +2852,7 @@
 <a href=#2852 id=2852 data-nosnippet>2852</a>            </span>));
 <a href=#2853 id=2853 data-nosnippet>2853</a>        }
 <a href=#2854 id=2854 data-nosnippet>2854</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(spw) = selected_spw
-<a href=#2855 id=2855 data-nosnippet>2855</a>            &amp;&amp; ddid_info[ddid <span class="kw">as </span>usize].is_none_or(|(row_spw, <span class="kw">_</span>)| <span class="macro">row_spw !</span>= spw <span class="kw">as </span>usize)
+<a href=#2855 id=2855 data-nosnippet>2855</a>            &amp;&amp; ddid_info[ddid <span class="kw">as </span>usize].is_none_or(|(row_spw, <span class="kw">_</span>)| row_spw != spw <span class="kw">as </span>usize)
 <a href=#2856 id=2856 data-nosnippet>2856</a>        {
 <a href=#2857 id=2857 data-nosnippet>2857</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(<span class="string">"DATA_DESC_ID {ddid} does not map to SPW {spw}"</span>));
 <a href=#2858 id=2858 data-nosnippet>2858</a>        }
@@ -2978,7 +2978,7 @@
 <a href=#2978 id=2978 data-nosnippet>2978</a>    <span class="kw">let </span>reference = parts[<span class="number">0</span>]
 <a href=#2979 id=2979 data-nosnippet>2979</a>        .parse::&lt;DirectionRef&gt;()
 <a href=#2980 id=2980 data-nosnippet>2980</a>        .map_err(|error| <span class="macro">format!</span>(<span class="string">"parse phasecenter reference {:?}: {error}"</span>, parts[<span class="number">0</span>]))<span class="question-mark">?</span>;
-<a href=#2981 id=2981 data-nosnippet>2981</a>    <span class="kw">if </span><span class="macro">reference !</span>= DirectionRef::J2000 {
+<a href=#2981 id=2981 data-nosnippet>2981</a>    <span class="kw">if </span>reference != DirectionRef::J2000 {
 <a href=#2982 id=2982 data-nosnippet>2982</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#2983 id=2983 data-nosnippet>2983</a>            <span class="string">"phasecenter reference {reference:?} is not supported yet; expected J2000"
 <a href=#2984 id=2984 data-nosnippet>2984</a>        </span>));
@@ -5598,7 +5598,7 @@
 <a href=#5598 id=5598 data-nosnippet>5598</a>        (<span class="string">"second_flagged"</span>, paired.second_flagged.len()),
 <a href=#5599 id=5599 data-nosnippet>5599</a>        (<span class="string">"gridable"</span>, paired.gridable.len()),
 <a href=#5600 id=5600 data-nosnippet>5600</a>    ] {
-<a href=#5601 id=5601 data-nosnippet>5601</a>        <span class="kw">if </span><span class="macro">len !</span>= expected {
+<a href=#5601 id=5601 data-nosnippet>5601</a>        <span class="kw">if </span>len != expected {
 <a href=#5602 id=5602 data-nosnippet>5602</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#5603 id=5603 data-nosnippet>5603</a>                <span class="string">"paired batch length mismatch: first_visibility={expected}, {label}={len}"
 <a href=#5604 id=5604 data-nosnippet>5604</a>            </span>));
@@ -9618,7 +9618,7 @@
 <a href=#9618 id=9618 data-nosnippet>9618</a>                <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::Int32(value))) =&gt; <span class="kw-2">*</span>value,
 <a href=#9619 id=9619 data-nosnippet>9619</a>                <span class="kw">_ </span>=&gt; <span class="kw">continue</span>,
 <a href=#9620 id=9620 data-nosnippet>9620</a>            };
-<a href=#9621 id=9621 data-nosnippet>9621</a>            <span class="kw">if </span><span class="macro">field_id !</span>= <span class="number">0 </span>|| <span class="macro">ddid !</span>= <span class="number">0 </span>{
+<a href=#9621 id=9621 data-nosnippet>9621</a>            <span class="kw">if </span>field_id != <span class="number">0 </span>|| ddid != <span class="number">0 </span>{
 <a href=#9622 id=9622 data-nosnippet>9622</a>                <span class="kw">continue</span>;
 <a href=#9623 id=9623 data-nosnippet>9623</a>            }
 <a href=#9624 id=9624 data-nosnippet>9624</a>            <span class="kw">let </span>row_time = time_column.get_mjd_seconds(row).unwrap();
@@ -11107,7 +11107,7 @@
 <a href=#11107 id=11107 data-nosnippet>11107</a>                <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::Int32(value))) =&gt; <span class="kw-2">*</span>value,
 <a href=#11108 id=11108 data-nosnippet>11108</a>                <span class="kw">_ </span>=&gt; <span class="kw">continue</span>,
 <a href=#11109 id=11109 data-nosnippet>11109</a>            };
-<a href=#11110 id=11110 data-nosnippet>11110</a>            <span class="kw">if </span><span class="macro">field_id !</span>= <span class="number">0 </span>|| <span class="macro">ddid !</span>= <span class="number">0 </span>{
+<a href=#11110 id=11110 data-nosnippet>11110</a>            <span class="kw">if </span>field_id != <span class="number">0 </span>|| ddid != <span class="number">0 </span>{
 <a href=#11111 id=11111 data-nosnippet>11111</a>                <span class="kw">continue</span>;
 <a href=#11112 id=11112 data-nosnippet>11112</a>            }
 <a href=#11113 id=11113 data-nosnippet>11113</a>            <span class="kw">let </span>row_time = time_column.get_mjd_seconds(row).unwrap();
@@ -11279,7 +11279,7 @@
 <a href=#11279 id=11279 data-nosnippet>11279</a>                <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::Int32(value))) =&gt; <span class="kw-2">*</span>value,
 <a href=#11280 id=11280 data-nosnippet>11280</a>                <span class="kw">_ </span>=&gt; <span class="kw">continue</span>,
 <a href=#11281 id=11281 data-nosnippet>11281</a>            };
-<a href=#11282 id=11282 data-nosnippet>11282</a>            <span class="kw">if </span><span class="macro">field_id !</span>= <span class="number">0 </span>|| <span class="macro">ddid !</span>= <span class="number">0 </span>{
+<a href=#11282 id=11282 data-nosnippet>11282</a>            <span class="kw">if </span>field_id != <span class="number">0 </span>|| ddid != <span class="number">0 </span>{
 <a href=#11283 id=11283 data-nosnippet>11283</a>                <span class="kw">continue</span>;
 <a href=#11284 id=11284 data-nosnippet>11284</a>            }
 <a href=#11285 id=11285 data-nosnippet>11285</a>            <span class="kw">let </span>row_time = time_column.get_mjd_seconds(row).unwrap();

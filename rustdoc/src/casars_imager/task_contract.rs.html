@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casars-imager/src/task_contract.rs`."><title>task_contract.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casars_imager" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casars_imager/</div>task_contract.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casars-imager/src/task_contract.rs`."><title>task_contract.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casars_imager" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casars_imager/</div>task_contract.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Canonical imager task request/result contracts shared by CLI, shell, and Python.
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::fs;
@@ -760,10 +760,10 @@
 <a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">if </span><span class="self">self</span>.phasecenter_field.is_some() &amp;&amp; <span class="self">self</span>.phasecenter.is_some() {
 <a href=#761 id=761 data-nosnippet>761</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"--phasecenter and --phasecenter-field are mutually exclusive"</span>.to_string());
 <a href=#762 id=762 data-nosnippet>762</a>        }
-<a href=#763 id=763 data-nosnippet>763</a>        <span class="kw">if </span>deconvolver == Deconvolver::Mtmfs &amp;&amp; <span class="macro">spectral_mode !</span>= SpectralMode::Mfs {
+<a href=#763 id=763 data-nosnippet>763</a>        <span class="kw">if </span>deconvolver == Deconvolver::Mtmfs &amp;&amp; spectral_mode != SpectralMode::Mfs {
 <a href=#764 id=764 data-nosnippet>764</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"deconvolver='mtmfs' currently requires specmode='mfs'"</span>.to_string());
 <a href=#765 id=765 data-nosnippet>765</a>        }
-<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">if </span><span class="macro">deconvolver !</span>= Deconvolver::Mtmfs &amp;&amp; <span class="self">self</span>.<span class="macro">nterms !</span>= <span class="number">1 </span>{
+<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">if </span>deconvolver != Deconvolver::Mtmfs &amp;&amp; <span class="self">self</span>.nterms != <span class="number">1 </span>{
 <a href=#767 id=767 data-nosnippet>767</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"nterms &gt; 1 currently requires deconvolver='mtmfs'"</span>.to_string());
 <a href=#768 id=768 data-nosnippet>768</a>        }
 <a href=#769 id=769 data-nosnippet>769</a>        <span class="kw">if </span><span class="self">self</span>.nterms == <span class="number">0 </span>{
@@ -1261,232 +1261,636 @@
 <a href=#1261 id=1261 data-nosnippet>1261</a><span class="attr">#[cfg(test)]
 <a href=#1262 id=1262 data-nosnippet>1262</a></span><span class="kw">mod </span>tests {
 <a href=#1263 id=1263 data-nosnippet>1263</a>    <span class="kw">use </span>std::ffi::OsString;
-<a href=#1264 id=1264 data-nosnippet>1264</a>    <span class="kw">use </span>std::path::PathBuf;
-<a href=#1265 id=1265 data-nosnippet>1265</a>
-<a href=#1266 id=1266 data-nosnippet>1266</a>    <span class="kw">use </span>casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
-<a href=#1267 id=1267 data-nosnippet>1267</a>    <span class="kw">use </span>casa_provider_contracts::ProviderSurfaceKind;
-<a href=#1268 id=1268 data-nosnippet>1268</a>
-<a href=#1269 id=1269 data-nosnippet>1269</a>    <span class="kw">use </span>super::{
-<a href=#1270 id=1270 data-nosnippet>1270</a>        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerRunTaskRequest,
-<a href=#1271 id=1271 data-nosnippet>1271</a>        ImagerTaskSchemaBundle, ImagerWeighting,
-<a href=#1272 id=1272 data-nosnippet>1272</a>    };
-<a href=#1273 id=1273 data-nosnippet>1273</a>    <span class="kw">use </span>crate::{CliConfig, SpectralMode};
-<a href=#1274 id=1274 data-nosnippet>1274</a>
-<a href=#1275 id=1275 data-nosnippet>1275</a>    <span class="attr">#[test]
-<a href=#1276 id=1276 data-nosnippet>1276</a>    </span><span class="kw">fn </span>schema_bundle_uses_current_protocol_and_definitions() {
-<a href=#1277 id=1277 data-nosnippet>1277</a>        <span class="kw">let </span>bundle = ImagerTaskSchemaBundle::current();
-<a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="macro">assert_eq!</span>(bundle.protocol.protocol_name, IMAGER_TASK_PROTOCOL_NAME);
-<a href=#1279 id=1279 data-nosnippet>1279</a>        <span class="macro">assert_eq!</span>(
-<a href=#1280 id=1280 data-nosnippet>1280</a>            bundle.protocol.protocol_version,
-<a href=#1281 id=1281 data-nosnippet>1281</a>            IMAGER_TASK_PROTOCOL_VERSION
-<a href=#1282 id=1282 data-nosnippet>1282</a>        );
-<a href=#1283 id=1283 data-nosnippet>1283</a>        <span class="macro">assert_eq!</span>(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
-<a href=#1284 id=1284 data-nosnippet>1284</a>        <span class="macro">assert_eq!</span>(bundle.semantic.operations.len(), <span class="number">1</span>);
-<a href=#1285 id=1285 data-nosnippet>1285</a>        <span class="macro">assert_eq!</span>(bundle.semantic.operations[<span class="number">0</span>].request_kind, <span class="string">"run"</span>);
-<a href=#1286 id=1286 data-nosnippet>1286</a>        <span class="macro">assert!</span>(bundle.components.contains_key(<span class="string">"ImagerRunTaskRequest"</span>));
-<a href=#1287 id=1287 data-nosnippet>1287</a>        <span class="macro">assert!</span>(bundle.projections.ui_schema.is_some());
-<a href=#1288 id=1288 data-nosnippet>1288</a>        <span class="kw">let </span>request_schema = serde_json::to_value(<span class="kw-2">&amp;</span>bundle.request_schema).unwrap();
-<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="kw">let </span>result_schema = serde_json::to_value(<span class="kw-2">&amp;</span>bundle.result_schema).unwrap();
-<a href=#1290 id=1290 data-nosnippet>1290</a>        <span class="macro">assert!</span>(request_schema.to_string().contains(<span class="string">"ImagerTaskRequest"</span>));
-<a href=#1291 id=1291 data-nosnippet>1291</a>        <span class="macro">assert!</span>(result_schema.to_string().contains(<span class="string">"ImagerTaskResult"</span>));
-<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="kw">let </span>ui_schema = bundle.ui_schema_projection().expect(<span class="string">"ui schema projection"</span>);
-<a href=#1293 id=1293 data-nosnippet>1293</a>        <span class="macro">assert_eq!</span>(ui_schema.command_id, <span class="string">"imager"</span>);
-<a href=#1294 id=1294 data-nosnippet>1294</a>    }
-<a href=#1295 id=1295 data-nosnippet>1295</a>
-<a href=#1296 id=1296 data-nosnippet>1296</a>    <span class="attr">#[test]
-<a href=#1297 id=1297 data-nosnippet>1297</a>    </span><span class="kw">fn </span>run_request_round_trips_cli_config() {
-<a href=#1298 id=1298 data-nosnippet>1298</a>        <span class="kw">let </span>config = CliConfig::parse([
-<a href=#1299 id=1299 data-nosnippet>1299</a>            OsString::from(<span class="string">"--ms"</span>),
-<a href=#1300 id=1300 data-nosnippet>1300</a>            OsString::from(<span class="string">"demo.ms"</span>),
-<a href=#1301 id=1301 data-nosnippet>1301</a>            OsString::from(<span class="string">"--imagename"</span>),
-<a href=#1302 id=1302 data-nosnippet>1302</a>            OsString::from(<span class="string">"out/demo"</span>),
-<a href=#1303 id=1303 data-nosnippet>1303</a>            OsString::from(<span class="string">"--imsize"</span>),
-<a href=#1304 id=1304 data-nosnippet>1304</a>            OsString::from(<span class="string">"64"</span>),
-<a href=#1305 id=1305 data-nosnippet>1305</a>            OsString::from(<span class="string">"--cell-arcsec"</span>),
-<a href=#1306 id=1306 data-nosnippet>1306</a>            OsString::from(<span class="string">"1.5"</span>),
-<a href=#1307 id=1307 data-nosnippet>1307</a>            OsString::from(<span class="string">"--field"</span>),
-<a href=#1308 id=1308 data-nosnippet>1308</a>            OsString::from(<span class="string">"0,2~3"</span>),
-<a href=#1309 id=1309 data-nosnippet>1309</a>            OsString::from(<span class="string">"--phasecenter-field"</span>),
-<a href=#1310 id=1310 data-nosnippet>1310</a>            OsString::from(<span class="string">"2"</span>),
-<a href=#1311 id=1311 data-nosnippet>1311</a>            OsString::from(<span class="string">"--spw"</span>),
-<a href=#1312 id=1312 data-nosnippet>1312</a>            OsString::from(<span class="string">"5:10~19"</span>),
-<a href=#1313 id=1313 data-nosnippet>1313</a>            OsString::from(<span class="string">"--datacolumn"</span>),
-<a href=#1314 id=1314 data-nosnippet>1314</a>            OsString::from(<span class="string">"CORRECTED_DATA"</span>),
-<a href=#1315 id=1315 data-nosnippet>1315</a>            OsString::from(<span class="string">"--corr"</span>),
-<a href=#1316 id=1316 data-nosnippet>1316</a>            OsString::from(<span class="string">"XX"</span>),
-<a href=#1317 id=1317 data-nosnippet>1317</a>            OsString::from(<span class="string">"--specmode"</span>),
-<a href=#1318 id=1318 data-nosnippet>1318</a>            OsString::from(<span class="string">"cube"</span>),
-<a href=#1319 id=1319 data-nosnippet>1319</a>            OsString::from(<span class="string">"--start"</span>),
-<a href=#1320 id=1320 data-nosnippet>1320</a>            OsString::from(<span class="string">"1.1GHz"</span>),
-<a href=#1321 id=1321 data-nosnippet>1321</a>            OsString::from(<span class="string">"--width"</span>),
-<a href=#1322 id=1322 data-nosnippet>1322</a>            OsString::from(<span class="string">"10MHz"</span>),
-<a href=#1323 id=1323 data-nosnippet>1323</a>            OsString::from(<span class="string">"--outframe"</span>),
-<a href=#1324 id=1324 data-nosnippet>1324</a>            OsString::from(<span class="string">"BARY"</span>),
-<a href=#1325 id=1325 data-nosnippet>1325</a>            OsString::from(<span class="string">"--veltype"</span>),
-<a href=#1326 id=1326 data-nosnippet>1326</a>            OsString::from(<span class="string">"optical"</span>),
-<a href=#1327 id=1327 data-nosnippet>1327</a>            OsString::from(<span class="string">"--interpolation"</span>),
-<a href=#1328 id=1328 data-nosnippet>1328</a>            OsString::from(<span class="string">"nearest"</span>),
-<a href=#1329 id=1329 data-nosnippet>1329</a>            OsString::from(<span class="string">"--restfreq"</span>),
-<a href=#1330 id=1330 data-nosnippet>1330</a>            OsString::from(<span class="string">"1.42GHz"</span>),
-<a href=#1331 id=1331 data-nosnippet>1331</a>            OsString::from(<span class="string">"--weighting"</span>),
-<a href=#1332 id=1332 data-nosnippet>1332</a>            OsString::from(<span class="string">"briggs"</span>),
-<a href=#1333 id=1333 data-nosnippet>1333</a>            OsString::from(<span class="string">"--robust"</span>),
-<a href=#1334 id=1334 data-nosnippet>1334</a>            OsString::from(<span class="string">"-1.0"</span>),
-<a href=#1335 id=1335 data-nosnippet>1335</a>            OsString::from(<span class="string">"--perchanweightdensity"</span>),
-<a href=#1336 id=1336 data-nosnippet>1336</a>            OsString::from(<span class="string">"--uvtaper"</span>),
-<a href=#1337 id=1337 data-nosnippet>1337</a>            OsString::from(<span class="string">"10arcsec,8arcsec,45deg"</span>),
-<a href=#1338 id=1338 data-nosnippet>1338</a>            OsString::from(<span class="string">"--restoringbeam"</span>),
-<a href=#1339 id=1339 data-nosnippet>1339</a>            OsString::from(<span class="string">"common"</span>),
-<a href=#1340 id=1340 data-nosnippet>1340</a>            OsString::from(<span class="string">"--deconvolver"</span>),
-<a href=#1341 id=1341 data-nosnippet>1341</a>            OsString::from(<span class="string">"multiscale"</span>),
-<a href=#1342 id=1342 data-nosnippet>1342</a>            OsString::from(<span class="string">"--scales"</span>),
-<a href=#1343 id=1343 data-nosnippet>1343</a>            OsString::from(<span class="string">"0,5,15"</span>),
-<a href=#1344 id=1344 data-nosnippet>1344</a>            OsString::from(<span class="string">"--smallscalebias"</span>),
-<a href=#1345 id=1345 data-nosnippet>1345</a>            OsString::from(<span class="string">"0.25"</span>),
-<a href=#1346 id=1346 data-nosnippet>1346</a>            OsString::from(<span class="string">"--niter"</span>),
-<a href=#1347 id=1347 data-nosnippet>1347</a>            OsString::from(<span class="string">"12"</span>),
-<a href=#1348 id=1348 data-nosnippet>1348</a>            OsString::from(<span class="string">"--gain"</span>),
-<a href=#1349 id=1349 data-nosnippet>1349</a>            OsString::from(<span class="string">"0.2"</span>),
-<a href=#1350 id=1350 data-nosnippet>1350</a>            OsString::from(<span class="string">"--threshold-jy"</span>),
-<a href=#1351 id=1351 data-nosnippet>1351</a>            OsString::from(<span class="string">"0.01"</span>),
-<a href=#1352 id=1352 data-nosnippet>1352</a>            OsString::from(<span class="string">"--nsigma"</span>),
-<a href=#1353 id=1353 data-nosnippet>1353</a>            OsString::from(<span class="string">"4.0"</span>),
-<a href=#1354 id=1354 data-nosnippet>1354</a>            OsString::from(<span class="string">"--psfcutoff"</span>),
-<a href=#1355 id=1355 data-nosnippet>1355</a>            OsString::from(<span class="string">"0.4"</span>),
-<a href=#1356 id=1356 data-nosnippet>1356</a>            OsString::from(<span class="string">"--minor-cycle-length"</span>),
-<a href=#1357 id=1357 data-nosnippet>1357</a>            OsString::from(<span class="string">"11"</span>),
-<a href=#1358 id=1358 data-nosnippet>1358</a>            OsString::from(<span class="string">"--cyclefactor"</span>),
-<a href=#1359 id=1359 data-nosnippet>1359</a>            OsString::from(<span class="string">"1.5"</span>),
-<a href=#1360 id=1360 data-nosnippet>1360</a>            OsString::from(<span class="string">"--minpsffraction"</span>),
-<a href=#1361 id=1361 data-nosnippet>1361</a>            OsString::from(<span class="string">"0.2"</span>),
-<a href=#1362 id=1362 data-nosnippet>1362</a>            OsString::from(<span class="string">"--maxpsffraction"</span>),
-<a href=#1363 id=1363 data-nosnippet>1363</a>            OsString::from(<span class="string">"0.7"</span>),
-<a href=#1364 id=1364 data-nosnippet>1364</a>            OsString::from(<span class="string">"--mask-box"</span>),
-<a href=#1365 id=1365 data-nosnippet>1365</a>            OsString::from(<span class="string">"1,2,10,20"</span>),
-<a href=#1366 id=1366 data-nosnippet>1366</a>            OsString::from(<span class="string">"--mask-image"</span>),
-<a href=#1367 id=1367 data-nosnippet>1367</a>            OsString::from(<span class="string">"demo.mask"</span>),
-<a href=#1368 id=1368 data-nosnippet>1368</a>            OsString::from(<span class="string">"--wterm"</span>),
-<a href=#1369 id=1369 data-nosnippet>1369</a>            OsString::from(<span class="string">"wproject"</span>),
-<a href=#1370 id=1370 data-nosnippet>1370</a>            OsString::from(<span class="string">"--wprojplanes"</span>),
-<a href=#1371 id=1371 data-nosnippet>1371</a>            OsString::from(<span class="string">"8"</span>),
-<a href=#1372 id=1372 data-nosnippet>1372</a>            OsString::from(<span class="string">"--dirty-only"</span>),
-<a href=#1373 id=1373 data-nosnippet>1373</a>            OsString::from(<span class="string">"--no-preview-pngs"</span>),
-<a href=#1374 id=1374 data-nosnippet>1374</a>        ])
-<a href=#1375 id=1375 data-nosnippet>1375</a>        .unwrap();
-<a href=#1376 id=1376 data-nosnippet>1376</a>
-<a href=#1377 id=1377 data-nosnippet>1377</a>        <span class="kw">let </span>request = ImagerRunTaskRequest::from_cli_config(<span class="kw-2">&amp;</span>config);
-<a href=#1378 id=1378 data-nosnippet>1378</a>        <span class="kw">let </span>restored = request.to_cli_config().unwrap();
-<a href=#1379 id=1379 data-nosnippet>1379</a>
-<a href=#1380 id=1380 data-nosnippet>1380</a>        <span class="macro">assert_eq!</span>(restored.ms, PathBuf::from(<span class="string">"demo.ms"</span>));
-<a href=#1381 id=1381 data-nosnippet>1381</a>        <span class="macro">assert_eq!</span>(restored.imagename, PathBuf::from(<span class="string">"out/demo"</span>));
-<a href=#1382 id=1382 data-nosnippet>1382</a>        <span class="macro">assert_eq!</span>(restored.field_ids, <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">2</span>, <span class="number">3</span>]));
-<a href=#1383 id=1383 data-nosnippet>1383</a>        <span class="macro">assert_eq!</span>(restored.phasecenter_field, <span class="prelude-val">Some</span>(<span class="number">2</span>));
-<a href=#1384 id=1384 data-nosnippet>1384</a>        <span class="macro">assert_eq!</span>(restored.spw_selector.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"5:10~19"</span>));
-<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="macro">assert_eq!</span>(restored.datacolumn.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"CORRECTED_DATA"</span>));
-<a href=#1386 id=1386 data-nosnippet>1386</a>        <span class="macro">assert_eq!</span>(restored.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
-<a href=#1387 id=1387 data-nosnippet>1387</a>        <span class="macro">assert_eq!</span>(restored.spectral_mode, SpectralMode::Cube);
-<a href=#1388 id=1388 data-nosnippet>1388</a>        <span class="macro">assert_eq!</span>(restored.weighting, WeightingMode::Briggs { robust: -<span class="number">1.0 </span>});
-<a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="macro">assert!</span>(restored.per_channel_weight_density);
-<a href=#1390 id=1390 data-nosnippet>1390</a>        <span class="macro">assert_eq!</span>(restored.restoring_beam_mode, RestoringBeamMode::Common);
-<a href=#1391 id=1391 data-nosnippet>1391</a>        <span class="macro">assert_eq!</span>(restored.deconvolver, Deconvolver::Multiscale);
-<a href=#1392 id=1392 data-nosnippet>1392</a>        <span class="macro">assert_eq!</span>(restored.w_term_mode, WTermMode::WProject);
-<a href=#1393 id=1393 data-nosnippet>1393</a>        <span class="macro">assert_eq!</span>(restored.w_project_planes, <span class="prelude-val">Some</span>(<span class="number">8</span>));
-<a href=#1394 id=1394 data-nosnippet>1394</a>        <span class="macro">assert!</span>(restored.dirty_only);
-<a href=#1395 id=1395 data-nosnippet>1395</a>        <span class="macro">assert!</span>(!restored.write_preview_pngs);
-<a href=#1396 id=1396 data-nosnippet>1396</a>    }
-<a href=#1397 id=1397 data-nosnippet>1397</a>
-<a href=#1398 id=1398 data-nosnippet>1398</a>    <span class="attr">#[test]
-<a href=#1399 id=1399 data-nosnippet>1399</a>    </span><span class="kw">fn </span>task_request_defaults_match_cli_defaults() {
-<a href=#1400 id=1400 data-nosnippet>1400</a>        <span class="kw">let </span>request = ImagerRunTaskRequest {
-<a href=#1401 id=1401 data-nosnippet>1401</a>            measurement_set: PathBuf::from(<span class="string">"demo.ms"</span>),
-<a href=#1402 id=1402 data-nosnippet>1402</a>            image_name: PathBuf::from(<span class="string">"out/demo"</span>),
-<a href=#1403 id=1403 data-nosnippet>1403</a>            image_size: <span class="number">64</span>,
-<a href=#1404 id=1404 data-nosnippet>1404</a>            cell_arcsec: <span class="number">1.5</span>,
-<a href=#1405 id=1405 data-nosnippet>1405</a>            field_ids: <span class="prelude-val">None</span>,
-<a href=#1406 id=1406 data-nosnippet>1406</a>            phasecenter_field: <span class="prelude-val">None</span>,
-<a href=#1407 id=1407 data-nosnippet>1407</a>            phasecenter: <span class="prelude-val">None</span>,
-<a href=#1408 id=1408 data-nosnippet>1408</a>            ddid: <span class="prelude-val">None</span>,
-<a href=#1409 id=1409 data-nosnippet>1409</a>            spw_selector: <span class="prelude-val">None</span>,
-<a href=#1410 id=1410 data-nosnippet>1410</a>            channel_start: <span class="prelude-val">None</span>,
-<a href=#1411 id=1411 data-nosnippet>1411</a>            channel_count: <span class="prelude-val">None</span>,
-<a href=#1412 id=1412 data-nosnippet>1412</a>            data_column: <span class="prelude-val">None</span>,
-<a href=#1413 id=1413 data-nosnippet>1413</a>            correlation: <span class="prelude-val">None</span>,
-<a href=#1414 id=1414 data-nosnippet>1414</a>            spectral_mode: Default::default(),
-<a href=#1415 id=1415 data-nosnippet>1415</a>            cube_axis: Default::default(),
-<a href=#1416 id=1416 data-nosnippet>1416</a>            weighting: Default::default(),
-<a href=#1417 id=1417 data-nosnippet>1417</a>            per_channel_weight_density: <span class="bool-val">false</span>,
-<a href=#1418 id=1418 data-nosnippet>1418</a>            uv_taper: <span class="prelude-val">None</span>,
-<a href=#1419 id=1419 data-nosnippet>1419</a>            restoring_beam_mode: Default::default(),
-<a href=#1420 id=1420 data-nosnippet>1420</a>            deconvolver: Default::default(),
-<a href=#1421 id=1421 data-nosnippet>1421</a>            nterms: <span class="number">1</span>,
-<a href=#1422 id=1422 data-nosnippet>1422</a>            multiscale_scales: Vec::new(),
-<a href=#1423 id=1423 data-nosnippet>1423</a>            small_scale_bias: <span class="number">0.0</span>,
-<a href=#1424 id=1424 data-nosnippet>1424</a>            niter: <span class="number">0</span>,
-<a href=#1425 id=1425 data-nosnippet>1425</a>            gain: <span class="number">0.1</span>,
-<a href=#1426 id=1426 data-nosnippet>1426</a>            threshold_jy: <span class="number">0.0</span>,
-<a href=#1427 id=1427 data-nosnippet>1427</a>            nsigma: <span class="number">0.0</span>,
-<a href=#1428 id=1428 data-nosnippet>1428</a>            psf_cutoff: <span class="number">0.35</span>,
-<a href=#1429 id=1429 data-nosnippet>1429</a>            minor_cycle_length: <span class="number">8</span>,
-<a href=#1430 id=1430 data-nosnippet>1430</a>            cyclefactor: <span class="number">1.0</span>,
-<a href=#1431 id=1431 data-nosnippet>1431</a>            min_psf_fraction: <span class="number">0.1</span>,
-<a href=#1432 id=1432 data-nosnippet>1432</a>            max_psf_fraction: <span class="number">0.8</span>,
-<a href=#1433 id=1433 data-nosnippet>1433</a>            mask_boxes: Vec::new(),
-<a href=#1434 id=1434 data-nosnippet>1434</a>            mask_image: <span class="prelude-val">None</span>,
-<a href=#1435 id=1435 data-nosnippet>1435</a>            w_term_mode: Default::default(),
-<a href=#1436 id=1436 data-nosnippet>1436</a>            w_project_planes: <span class="prelude-val">None</span>,
-<a href=#1437 id=1437 data-nosnippet>1437</a>            dirty_only: <span class="bool-val">false</span>,
-<a href=#1438 id=1438 data-nosnippet>1438</a>            write_preview_pngs: <span class="bool-val">true</span>,
-<a href=#1439 id=1439 data-nosnippet>1439</a>        };
-<a href=#1440 id=1440 data-nosnippet>1440</a>        <span class="kw">let </span>config = request.to_cli_config().unwrap();
-<a href=#1441 id=1441 data-nosnippet>1441</a>        <span class="macro">assert_eq!</span>(config.weighting, WeightingMode::Natural);
-<a href=#1442 id=1442 data-nosnippet>1442</a>        <span class="macro">assert_eq!</span>(config.deconvolver, Deconvolver::Hogbom);
-<a href=#1443 id=1443 data-nosnippet>1443</a>        <span class="macro">assert_eq!</span>(config.spectral_mode, SpectralMode::Mfs);
-<a href=#1444 id=1444 data-nosnippet>1444</a>    }
-<a href=#1445 id=1445 data-nosnippet>1445</a>
-<a href=#1446 id=1446 data-nosnippet>1446</a>    <span class="attr">#[test]
-<a href=#1447 id=1447 data-nosnippet>1447</a>    </span><span class="kw">fn </span>briggs_weighting_round_trips() {
-<a href=#1448 id=1448 data-nosnippet>1448</a>        <span class="kw">let </span>request = ImagerRunTaskRequest {
-<a href=#1449 id=1449 data-nosnippet>1449</a>            measurement_set: PathBuf::from(<span class="string">"demo.ms"</span>),
-<a href=#1450 id=1450 data-nosnippet>1450</a>            image_name: PathBuf::from(<span class="string">"out/demo"</span>),
-<a href=#1451 id=1451 data-nosnippet>1451</a>            image_size: <span class="number">64</span>,
-<a href=#1452 id=1452 data-nosnippet>1452</a>            cell_arcsec: <span class="number">1.5</span>,
-<a href=#1453 id=1453 data-nosnippet>1453</a>            field_ids: <span class="prelude-val">None</span>,
-<a href=#1454 id=1454 data-nosnippet>1454</a>            phasecenter_field: <span class="prelude-val">None</span>,
-<a href=#1455 id=1455 data-nosnippet>1455</a>            phasecenter: <span class="prelude-val">None</span>,
-<a href=#1456 id=1456 data-nosnippet>1456</a>            ddid: <span class="prelude-val">None</span>,
-<a href=#1457 id=1457 data-nosnippet>1457</a>            spw_selector: <span class="prelude-val">None</span>,
-<a href=#1458 id=1458 data-nosnippet>1458</a>            channel_start: <span class="prelude-val">None</span>,
-<a href=#1459 id=1459 data-nosnippet>1459</a>            channel_count: <span class="prelude-val">None</span>,
-<a href=#1460 id=1460 data-nosnippet>1460</a>            data_column: <span class="prelude-val">None</span>,
-<a href=#1461 id=1461 data-nosnippet>1461</a>            correlation: <span class="prelude-val">None</span>,
-<a href=#1462 id=1462 data-nosnippet>1462</a>            spectral_mode: Default::default(),
-<a href=#1463 id=1463 data-nosnippet>1463</a>            cube_axis: Default::default(),
-<a href=#1464 id=1464 data-nosnippet>1464</a>            weighting: ImagerWeighting::Briggs { robust: <span class="number">0.5 </span>},
-<a href=#1465 id=1465 data-nosnippet>1465</a>            per_channel_weight_density: <span class="bool-val">false</span>,
-<a href=#1466 id=1466 data-nosnippet>1466</a>            uv_taper: <span class="prelude-val">None</span>,
-<a href=#1467 id=1467 data-nosnippet>1467</a>            restoring_beam_mode: Default::default(),
-<a href=#1468 id=1468 data-nosnippet>1468</a>            deconvolver: Default::default(),
-<a href=#1469 id=1469 data-nosnippet>1469</a>            nterms: <span class="number">1</span>,
-<a href=#1470 id=1470 data-nosnippet>1470</a>            multiscale_scales: Vec::new(),
-<a href=#1471 id=1471 data-nosnippet>1471</a>            small_scale_bias: <span class="number">0.0</span>,
-<a href=#1472 id=1472 data-nosnippet>1472</a>            niter: <span class="number">0</span>,
-<a href=#1473 id=1473 data-nosnippet>1473</a>            gain: <span class="number">0.1</span>,
-<a href=#1474 id=1474 data-nosnippet>1474</a>            threshold_jy: <span class="number">0.0</span>,
-<a href=#1475 id=1475 data-nosnippet>1475</a>            nsigma: <span class="number">0.0</span>,
-<a href=#1476 id=1476 data-nosnippet>1476</a>            psf_cutoff: <span class="number">0.35</span>,
-<a href=#1477 id=1477 data-nosnippet>1477</a>            minor_cycle_length: <span class="number">8</span>,
-<a href=#1478 id=1478 data-nosnippet>1478</a>            cyclefactor: <span class="number">1.0</span>,
-<a href=#1479 id=1479 data-nosnippet>1479</a>            min_psf_fraction: <span class="number">0.1</span>,
-<a href=#1480 id=1480 data-nosnippet>1480</a>            max_psf_fraction: <span class="number">0.8</span>,
-<a href=#1481 id=1481 data-nosnippet>1481</a>            mask_boxes: Vec::new(),
-<a href=#1482 id=1482 data-nosnippet>1482</a>            mask_image: <span class="prelude-val">None</span>,
-<a href=#1483 id=1483 data-nosnippet>1483</a>            w_term_mode: Default::default(),
-<a href=#1484 id=1484 data-nosnippet>1484</a>            w_project_planes: <span class="prelude-val">None</span>,
-<a href=#1485 id=1485 data-nosnippet>1485</a>            dirty_only: <span class="bool-val">false</span>,
-<a href=#1486 id=1486 data-nosnippet>1486</a>            write_preview_pngs: <span class="bool-val">true</span>,
-<a href=#1487 id=1487 data-nosnippet>1487</a>        };
-<a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="kw">let </span>config = request.to_cli_config().unwrap();
-<a href=#1489 id=1489 data-nosnippet>1489</a>        <span class="macro">assert_eq!</span>(config.weighting, WeightingMode::Briggs { robust: <span class="number">0.5 </span>});
-<a href=#1490 id=1490 data-nosnippet>1490</a>    }
-<a href=#1491 id=1491 data-nosnippet>1491</a>}
+<a href=#1264 id=1264 data-nosnippet>1264</a>    <span class="kw">use </span>std::fs;
+<a href=#1265 id=1265 data-nosnippet>1265</a>    <span class="kw">use </span>std::path::PathBuf;
+<a href=#1266 id=1266 data-nosnippet>1266</a>
+<a href=#1267 id=1267 data-nosnippet>1267</a>    <span class="kw">use </span>casa_imaging::{
+<a href=#1268 id=1268 data-nosnippet>1268</a>        CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode, UvTaperSize, WTermMode,
+<a href=#1269 id=1269 data-nosnippet>1269</a>        WeightingMode,
+<a href=#1270 id=1270 data-nosnippet>1270</a>    };
+<a href=#1271 id=1271 data-nosnippet>1271</a>    <span class="kw">use </span>casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
+<a href=#1272 id=1272 data-nosnippet>1272</a>    <span class="kw">use </span>casa_provider_contracts::ProviderSurfaceKind;
+<a href=#1273 id=1273 data-nosnippet>1273</a>    <span class="kw">use </span>casa_types::measures::doppler::DopplerRef;
+<a href=#1274 id=1274 data-nosnippet>1274</a>    <span class="kw">use </span>casa_types::measures::frequency::FrequencyRef;
+<a href=#1275 id=1275 data-nosnippet>1275</a>    <span class="kw">use </span>tempfile::{NamedTempFile, tempdir};
+<a href=#1276 id=1276 data-nosnippet>1276</a>
+<a href=#1277 id=1277 data-nosnippet>1277</a>    <span class="kw">use </span>super::{
+<a href=#1278 id=1278 data-nosnippet>1278</a>        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
+<a href=#1279 id=1279 data-nosnippet>1279</a>        ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
+<a href=#1280 id=1280 data-nosnippet>1280</a>        ImagerDeconvolver, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunTaskRequest,
+<a href=#1281 id=1281 data-nosnippet>1281</a>        ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper,
+<a href=#1282 id=1282 data-nosnippet>1282</a>        ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+<a href=#1283 id=1283 data-nosnippet>1283</a>    };
+<a href=#1284 id=1284 data-nosnippet>1284</a>    <span class="kw">use </span>crate::{CliConfig, SpectralMode};
+<a href=#1285 id=1285 data-nosnippet>1285</a>
+<a href=#1286 id=1286 data-nosnippet>1286</a>    <span class="attr">#[test]
+<a href=#1287 id=1287 data-nosnippet>1287</a>    </span><span class="kw">fn </span>schema_bundle_uses_current_protocol_and_definitions() {
+<a href=#1288 id=1288 data-nosnippet>1288</a>        <span class="kw">let </span>bundle = ImagerTaskSchemaBundle::current();
+<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="macro">assert_eq!</span>(bundle.protocol.protocol_name, IMAGER_TASK_PROTOCOL_NAME);
+<a href=#1290 id=1290 data-nosnippet>1290</a>        <span class="macro">assert_eq!</span>(
+<a href=#1291 id=1291 data-nosnippet>1291</a>            bundle.protocol.protocol_version,
+<a href=#1292 id=1292 data-nosnippet>1292</a>            IMAGER_TASK_PROTOCOL_VERSION
+<a href=#1293 id=1293 data-nosnippet>1293</a>        );
+<a href=#1294 id=1294 data-nosnippet>1294</a>        <span class="macro">assert_eq!</span>(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
+<a href=#1295 id=1295 data-nosnippet>1295</a>        <span class="macro">assert_eq!</span>(bundle.semantic.operations.len(), <span class="number">1</span>);
+<a href=#1296 id=1296 data-nosnippet>1296</a>        <span class="macro">assert_eq!</span>(bundle.semantic.operations[<span class="number">0</span>].request_kind, <span class="string">"run"</span>);
+<a href=#1297 id=1297 data-nosnippet>1297</a>        <span class="macro">assert!</span>(bundle.components.contains_key(<span class="string">"ImagerRunTaskRequest"</span>));
+<a href=#1298 id=1298 data-nosnippet>1298</a>        <span class="macro">assert!</span>(bundle.projections.ui_schema.is_some());
+<a href=#1299 id=1299 data-nosnippet>1299</a>        <span class="kw">let </span>request_schema = serde_json::to_value(<span class="kw-2">&amp;</span>bundle.request_schema).unwrap();
+<a href=#1300 id=1300 data-nosnippet>1300</a>        <span class="kw">let </span>result_schema = serde_json::to_value(<span class="kw-2">&amp;</span>bundle.result_schema).unwrap();
+<a href=#1301 id=1301 data-nosnippet>1301</a>        <span class="macro">assert!</span>(request_schema.to_string().contains(<span class="string">"ImagerTaskRequest"</span>));
+<a href=#1302 id=1302 data-nosnippet>1302</a>        <span class="macro">assert!</span>(result_schema.to_string().contains(<span class="string">"ImagerTaskResult"</span>));
+<a href=#1303 id=1303 data-nosnippet>1303</a>        <span class="kw">let </span>ui_schema = bundle.ui_schema_projection().expect(<span class="string">"ui schema projection"</span>);
+<a href=#1304 id=1304 data-nosnippet>1304</a>        <span class="macro">assert_eq!</span>(ui_schema.command_id, <span class="string">"imager"</span>);
+<a href=#1305 id=1305 data-nosnippet>1305</a>    }
+<a href=#1306 id=1306 data-nosnippet>1306</a>
+<a href=#1307 id=1307 data-nosnippet>1307</a>    <span class="attr">#[test]
+<a href=#1308 id=1308 data-nosnippet>1308</a>    </span><span class="kw">fn </span>run_request_round_trips_cli_config() {
+<a href=#1309 id=1309 data-nosnippet>1309</a>        <span class="kw">let </span>config = CliConfig::parse([
+<a href=#1310 id=1310 data-nosnippet>1310</a>            OsString::from(<span class="string">"--ms"</span>),
+<a href=#1311 id=1311 data-nosnippet>1311</a>            OsString::from(<span class="string">"demo.ms"</span>),
+<a href=#1312 id=1312 data-nosnippet>1312</a>            OsString::from(<span class="string">"--imagename"</span>),
+<a href=#1313 id=1313 data-nosnippet>1313</a>            OsString::from(<span class="string">"out/demo"</span>),
+<a href=#1314 id=1314 data-nosnippet>1314</a>            OsString::from(<span class="string">"--imsize"</span>),
+<a href=#1315 id=1315 data-nosnippet>1315</a>            OsString::from(<span class="string">"64"</span>),
+<a href=#1316 id=1316 data-nosnippet>1316</a>            OsString::from(<span class="string">"--cell-arcsec"</span>),
+<a href=#1317 id=1317 data-nosnippet>1317</a>            OsString::from(<span class="string">"1.5"</span>),
+<a href=#1318 id=1318 data-nosnippet>1318</a>            OsString::from(<span class="string">"--field"</span>),
+<a href=#1319 id=1319 data-nosnippet>1319</a>            OsString::from(<span class="string">"0,2~3"</span>),
+<a href=#1320 id=1320 data-nosnippet>1320</a>            OsString::from(<span class="string">"--phasecenter-field"</span>),
+<a href=#1321 id=1321 data-nosnippet>1321</a>            OsString::from(<span class="string">"2"</span>),
+<a href=#1322 id=1322 data-nosnippet>1322</a>            OsString::from(<span class="string">"--spw"</span>),
+<a href=#1323 id=1323 data-nosnippet>1323</a>            OsString::from(<span class="string">"5:10~19"</span>),
+<a href=#1324 id=1324 data-nosnippet>1324</a>            OsString::from(<span class="string">"--datacolumn"</span>),
+<a href=#1325 id=1325 data-nosnippet>1325</a>            OsString::from(<span class="string">"CORRECTED_DATA"</span>),
+<a href=#1326 id=1326 data-nosnippet>1326</a>            OsString::from(<span class="string">"--corr"</span>),
+<a href=#1327 id=1327 data-nosnippet>1327</a>            OsString::from(<span class="string">"XX"</span>),
+<a href=#1328 id=1328 data-nosnippet>1328</a>            OsString::from(<span class="string">"--specmode"</span>),
+<a href=#1329 id=1329 data-nosnippet>1329</a>            OsString::from(<span class="string">"cube"</span>),
+<a href=#1330 id=1330 data-nosnippet>1330</a>            OsString::from(<span class="string">"--start"</span>),
+<a href=#1331 id=1331 data-nosnippet>1331</a>            OsString::from(<span class="string">"1.1GHz"</span>),
+<a href=#1332 id=1332 data-nosnippet>1332</a>            OsString::from(<span class="string">"--width"</span>),
+<a href=#1333 id=1333 data-nosnippet>1333</a>            OsString::from(<span class="string">"10MHz"</span>),
+<a href=#1334 id=1334 data-nosnippet>1334</a>            OsString::from(<span class="string">"--outframe"</span>),
+<a href=#1335 id=1335 data-nosnippet>1335</a>            OsString::from(<span class="string">"BARY"</span>),
+<a href=#1336 id=1336 data-nosnippet>1336</a>            OsString::from(<span class="string">"--veltype"</span>),
+<a href=#1337 id=1337 data-nosnippet>1337</a>            OsString::from(<span class="string">"optical"</span>),
+<a href=#1338 id=1338 data-nosnippet>1338</a>            OsString::from(<span class="string">"--interpolation"</span>),
+<a href=#1339 id=1339 data-nosnippet>1339</a>            OsString::from(<span class="string">"nearest"</span>),
+<a href=#1340 id=1340 data-nosnippet>1340</a>            OsString::from(<span class="string">"--restfreq"</span>),
+<a href=#1341 id=1341 data-nosnippet>1341</a>            OsString::from(<span class="string">"1.42GHz"</span>),
+<a href=#1342 id=1342 data-nosnippet>1342</a>            OsString::from(<span class="string">"--weighting"</span>),
+<a href=#1343 id=1343 data-nosnippet>1343</a>            OsString::from(<span class="string">"briggs"</span>),
+<a href=#1344 id=1344 data-nosnippet>1344</a>            OsString::from(<span class="string">"--robust"</span>),
+<a href=#1345 id=1345 data-nosnippet>1345</a>            OsString::from(<span class="string">"-1.0"</span>),
+<a href=#1346 id=1346 data-nosnippet>1346</a>            OsString::from(<span class="string">"--perchanweightdensity"</span>),
+<a href=#1347 id=1347 data-nosnippet>1347</a>            OsString::from(<span class="string">"--uvtaper"</span>),
+<a href=#1348 id=1348 data-nosnippet>1348</a>            OsString::from(<span class="string">"10arcsec,8arcsec,45deg"</span>),
+<a href=#1349 id=1349 data-nosnippet>1349</a>            OsString::from(<span class="string">"--restoringbeam"</span>),
+<a href=#1350 id=1350 data-nosnippet>1350</a>            OsString::from(<span class="string">"common"</span>),
+<a href=#1351 id=1351 data-nosnippet>1351</a>            OsString::from(<span class="string">"--deconvolver"</span>),
+<a href=#1352 id=1352 data-nosnippet>1352</a>            OsString::from(<span class="string">"multiscale"</span>),
+<a href=#1353 id=1353 data-nosnippet>1353</a>            OsString::from(<span class="string">"--scales"</span>),
+<a href=#1354 id=1354 data-nosnippet>1354</a>            OsString::from(<span class="string">"0,5,15"</span>),
+<a href=#1355 id=1355 data-nosnippet>1355</a>            OsString::from(<span class="string">"--smallscalebias"</span>),
+<a href=#1356 id=1356 data-nosnippet>1356</a>            OsString::from(<span class="string">"0.25"</span>),
+<a href=#1357 id=1357 data-nosnippet>1357</a>            OsString::from(<span class="string">"--niter"</span>),
+<a href=#1358 id=1358 data-nosnippet>1358</a>            OsString::from(<span class="string">"12"</span>),
+<a href=#1359 id=1359 data-nosnippet>1359</a>            OsString::from(<span class="string">"--gain"</span>),
+<a href=#1360 id=1360 data-nosnippet>1360</a>            OsString::from(<span class="string">"0.2"</span>),
+<a href=#1361 id=1361 data-nosnippet>1361</a>            OsString::from(<span class="string">"--threshold-jy"</span>),
+<a href=#1362 id=1362 data-nosnippet>1362</a>            OsString::from(<span class="string">"0.01"</span>),
+<a href=#1363 id=1363 data-nosnippet>1363</a>            OsString::from(<span class="string">"--nsigma"</span>),
+<a href=#1364 id=1364 data-nosnippet>1364</a>            OsString::from(<span class="string">"4.0"</span>),
+<a href=#1365 id=1365 data-nosnippet>1365</a>            OsString::from(<span class="string">"--psfcutoff"</span>),
+<a href=#1366 id=1366 data-nosnippet>1366</a>            OsString::from(<span class="string">"0.4"</span>),
+<a href=#1367 id=1367 data-nosnippet>1367</a>            OsString::from(<span class="string">"--minor-cycle-length"</span>),
+<a href=#1368 id=1368 data-nosnippet>1368</a>            OsString::from(<span class="string">"11"</span>),
+<a href=#1369 id=1369 data-nosnippet>1369</a>            OsString::from(<span class="string">"--cyclefactor"</span>),
+<a href=#1370 id=1370 data-nosnippet>1370</a>            OsString::from(<span class="string">"1.5"</span>),
+<a href=#1371 id=1371 data-nosnippet>1371</a>            OsString::from(<span class="string">"--minpsffraction"</span>),
+<a href=#1372 id=1372 data-nosnippet>1372</a>            OsString::from(<span class="string">"0.2"</span>),
+<a href=#1373 id=1373 data-nosnippet>1373</a>            OsString::from(<span class="string">"--maxpsffraction"</span>),
+<a href=#1374 id=1374 data-nosnippet>1374</a>            OsString::from(<span class="string">"0.7"</span>),
+<a href=#1375 id=1375 data-nosnippet>1375</a>            OsString::from(<span class="string">"--mask-box"</span>),
+<a href=#1376 id=1376 data-nosnippet>1376</a>            OsString::from(<span class="string">"1,2,10,20"</span>),
+<a href=#1377 id=1377 data-nosnippet>1377</a>            OsString::from(<span class="string">"--mask-image"</span>),
+<a href=#1378 id=1378 data-nosnippet>1378</a>            OsString::from(<span class="string">"demo.mask"</span>),
+<a href=#1379 id=1379 data-nosnippet>1379</a>            OsString::from(<span class="string">"--wterm"</span>),
+<a href=#1380 id=1380 data-nosnippet>1380</a>            OsString::from(<span class="string">"wproject"</span>),
+<a href=#1381 id=1381 data-nosnippet>1381</a>            OsString::from(<span class="string">"--wprojplanes"</span>),
+<a href=#1382 id=1382 data-nosnippet>1382</a>            OsString::from(<span class="string">"8"</span>),
+<a href=#1383 id=1383 data-nosnippet>1383</a>            OsString::from(<span class="string">"--dirty-only"</span>),
+<a href=#1384 id=1384 data-nosnippet>1384</a>            OsString::from(<span class="string">"--no-preview-pngs"</span>),
+<a href=#1385 id=1385 data-nosnippet>1385</a>        ])
+<a href=#1386 id=1386 data-nosnippet>1386</a>        .unwrap();
+<a href=#1387 id=1387 data-nosnippet>1387</a>
+<a href=#1388 id=1388 data-nosnippet>1388</a>        <span class="kw">let </span>request = ImagerRunTaskRequest::from_cli_config(<span class="kw-2">&amp;</span>config);
+<a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="kw">let </span>restored = request.to_cli_config().unwrap();
+<a href=#1390 id=1390 data-nosnippet>1390</a>
+<a href=#1391 id=1391 data-nosnippet>1391</a>        <span class="macro">assert_eq!</span>(restored.ms, PathBuf::from(<span class="string">"demo.ms"</span>));
+<a href=#1392 id=1392 data-nosnippet>1392</a>        <span class="macro">assert_eq!</span>(restored.imagename, PathBuf::from(<span class="string">"out/demo"</span>));
+<a href=#1393 id=1393 data-nosnippet>1393</a>        <span class="macro">assert_eq!</span>(restored.field_ids, <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">2</span>, <span class="number">3</span>]));
+<a href=#1394 id=1394 data-nosnippet>1394</a>        <span class="macro">assert_eq!</span>(restored.phasecenter_field, <span class="prelude-val">Some</span>(<span class="number">2</span>));
+<a href=#1395 id=1395 data-nosnippet>1395</a>        <span class="macro">assert_eq!</span>(restored.spw_selector.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"5:10~19"</span>));
+<a href=#1396 id=1396 data-nosnippet>1396</a>        <span class="macro">assert_eq!</span>(restored.datacolumn.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"CORRECTED_DATA"</span>));
+<a href=#1397 id=1397 data-nosnippet>1397</a>        <span class="macro">assert_eq!</span>(restored.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
+<a href=#1398 id=1398 data-nosnippet>1398</a>        <span class="macro">assert_eq!</span>(restored.spectral_mode, SpectralMode::Cube);
+<a href=#1399 id=1399 data-nosnippet>1399</a>        <span class="macro">assert_eq!</span>(restored.weighting, WeightingMode::Briggs { robust: -<span class="number">1.0 </span>});
+<a href=#1400 id=1400 data-nosnippet>1400</a>        <span class="macro">assert!</span>(restored.per_channel_weight_density);
+<a href=#1401 id=1401 data-nosnippet>1401</a>        <span class="macro">assert_eq!</span>(restored.restoring_beam_mode, RestoringBeamMode::Common);
+<a href=#1402 id=1402 data-nosnippet>1402</a>        <span class="macro">assert_eq!</span>(restored.deconvolver, Deconvolver::Multiscale);
+<a href=#1403 id=1403 data-nosnippet>1403</a>        <span class="macro">assert_eq!</span>(restored.w_term_mode, WTermMode::WProject);
+<a href=#1404 id=1404 data-nosnippet>1404</a>        <span class="macro">assert_eq!</span>(restored.w_project_planes, <span class="prelude-val">Some</span>(<span class="number">8</span>));
+<a href=#1405 id=1405 data-nosnippet>1405</a>        <span class="macro">assert!</span>(restored.dirty_only);
+<a href=#1406 id=1406 data-nosnippet>1406</a>        <span class="macro">assert!</span>(!restored.write_preview_pngs);
+<a href=#1407 id=1407 data-nosnippet>1407</a>    }
+<a href=#1408 id=1408 data-nosnippet>1408</a>
+<a href=#1409 id=1409 data-nosnippet>1409</a>    <span class="attr">#[test]
+<a href=#1410 id=1410 data-nosnippet>1410</a>    </span><span class="kw">fn </span>task_request_defaults_match_cli_defaults() {
+<a href=#1411 id=1411 data-nosnippet>1411</a>        <span class="kw">let </span>request = ImagerRunTaskRequest {
+<a href=#1412 id=1412 data-nosnippet>1412</a>            measurement_set: PathBuf::from(<span class="string">"demo.ms"</span>),
+<a href=#1413 id=1413 data-nosnippet>1413</a>            image_name: PathBuf::from(<span class="string">"out/demo"</span>),
+<a href=#1414 id=1414 data-nosnippet>1414</a>            image_size: <span class="number">64</span>,
+<a href=#1415 id=1415 data-nosnippet>1415</a>            cell_arcsec: <span class="number">1.5</span>,
+<a href=#1416 id=1416 data-nosnippet>1416</a>            field_ids: <span class="prelude-val">None</span>,
+<a href=#1417 id=1417 data-nosnippet>1417</a>            phasecenter_field: <span class="prelude-val">None</span>,
+<a href=#1418 id=1418 data-nosnippet>1418</a>            phasecenter: <span class="prelude-val">None</span>,
+<a href=#1419 id=1419 data-nosnippet>1419</a>            ddid: <span class="prelude-val">None</span>,
+<a href=#1420 id=1420 data-nosnippet>1420</a>            spw_selector: <span class="prelude-val">None</span>,
+<a href=#1421 id=1421 data-nosnippet>1421</a>            channel_start: <span class="prelude-val">None</span>,
+<a href=#1422 id=1422 data-nosnippet>1422</a>            channel_count: <span class="prelude-val">None</span>,
+<a href=#1423 id=1423 data-nosnippet>1423</a>            data_column: <span class="prelude-val">None</span>,
+<a href=#1424 id=1424 data-nosnippet>1424</a>            correlation: <span class="prelude-val">None</span>,
+<a href=#1425 id=1425 data-nosnippet>1425</a>            spectral_mode: Default::default(),
+<a href=#1426 id=1426 data-nosnippet>1426</a>            cube_axis: Default::default(),
+<a href=#1427 id=1427 data-nosnippet>1427</a>            weighting: Default::default(),
+<a href=#1428 id=1428 data-nosnippet>1428</a>            per_channel_weight_density: <span class="bool-val">false</span>,
+<a href=#1429 id=1429 data-nosnippet>1429</a>            uv_taper: <span class="prelude-val">None</span>,
+<a href=#1430 id=1430 data-nosnippet>1430</a>            restoring_beam_mode: Default::default(),
+<a href=#1431 id=1431 data-nosnippet>1431</a>            deconvolver: Default::default(),
+<a href=#1432 id=1432 data-nosnippet>1432</a>            nterms: <span class="number">1</span>,
+<a href=#1433 id=1433 data-nosnippet>1433</a>            multiscale_scales: Vec::new(),
+<a href=#1434 id=1434 data-nosnippet>1434</a>            small_scale_bias: <span class="number">0.0</span>,
+<a href=#1435 id=1435 data-nosnippet>1435</a>            niter: <span class="number">0</span>,
+<a href=#1436 id=1436 data-nosnippet>1436</a>            gain: <span class="number">0.1</span>,
+<a href=#1437 id=1437 data-nosnippet>1437</a>            threshold_jy: <span class="number">0.0</span>,
+<a href=#1438 id=1438 data-nosnippet>1438</a>            nsigma: <span class="number">0.0</span>,
+<a href=#1439 id=1439 data-nosnippet>1439</a>            psf_cutoff: <span class="number">0.35</span>,
+<a href=#1440 id=1440 data-nosnippet>1440</a>            minor_cycle_length: <span class="number">8</span>,
+<a href=#1441 id=1441 data-nosnippet>1441</a>            cyclefactor: <span class="number">1.0</span>,
+<a href=#1442 id=1442 data-nosnippet>1442</a>            min_psf_fraction: <span class="number">0.1</span>,
+<a href=#1443 id=1443 data-nosnippet>1443</a>            max_psf_fraction: <span class="number">0.8</span>,
+<a href=#1444 id=1444 data-nosnippet>1444</a>            mask_boxes: Vec::new(),
+<a href=#1445 id=1445 data-nosnippet>1445</a>            mask_image: <span class="prelude-val">None</span>,
+<a href=#1446 id=1446 data-nosnippet>1446</a>            w_term_mode: Default::default(),
+<a href=#1447 id=1447 data-nosnippet>1447</a>            w_project_planes: <span class="prelude-val">None</span>,
+<a href=#1448 id=1448 data-nosnippet>1448</a>            dirty_only: <span class="bool-val">false</span>,
+<a href=#1449 id=1449 data-nosnippet>1449</a>            write_preview_pngs: <span class="bool-val">true</span>,
+<a href=#1450 id=1450 data-nosnippet>1450</a>        };
+<a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="kw">let </span>config = request.to_cli_config().unwrap();
+<a href=#1452 id=1452 data-nosnippet>1452</a>        <span class="macro">assert_eq!</span>(config.weighting, WeightingMode::Natural);
+<a href=#1453 id=1453 data-nosnippet>1453</a>        <span class="macro">assert_eq!</span>(config.deconvolver, Deconvolver::Hogbom);
+<a href=#1454 id=1454 data-nosnippet>1454</a>        <span class="macro">assert_eq!</span>(config.spectral_mode, SpectralMode::Mfs);
+<a href=#1455 id=1455 data-nosnippet>1455</a>    }
+<a href=#1456 id=1456 data-nosnippet>1456</a>
+<a href=#1457 id=1457 data-nosnippet>1457</a>    <span class="attr">#[test]
+<a href=#1458 id=1458 data-nosnippet>1458</a>    </span><span class="kw">fn </span>briggs_weighting_round_trips() {
+<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="kw">let </span>request = ImagerRunTaskRequest {
+<a href=#1460 id=1460 data-nosnippet>1460</a>            measurement_set: PathBuf::from(<span class="string">"demo.ms"</span>),
+<a href=#1461 id=1461 data-nosnippet>1461</a>            image_name: PathBuf::from(<span class="string">"out/demo"</span>),
+<a href=#1462 id=1462 data-nosnippet>1462</a>            image_size: <span class="number">64</span>,
+<a href=#1463 id=1463 data-nosnippet>1463</a>            cell_arcsec: <span class="number">1.5</span>,
+<a href=#1464 id=1464 data-nosnippet>1464</a>            field_ids: <span class="prelude-val">None</span>,
+<a href=#1465 id=1465 data-nosnippet>1465</a>            phasecenter_field: <span class="prelude-val">None</span>,
+<a href=#1466 id=1466 data-nosnippet>1466</a>            phasecenter: <span class="prelude-val">None</span>,
+<a href=#1467 id=1467 data-nosnippet>1467</a>            ddid: <span class="prelude-val">None</span>,
+<a href=#1468 id=1468 data-nosnippet>1468</a>            spw_selector: <span class="prelude-val">None</span>,
+<a href=#1469 id=1469 data-nosnippet>1469</a>            channel_start: <span class="prelude-val">None</span>,
+<a href=#1470 id=1470 data-nosnippet>1470</a>            channel_count: <span class="prelude-val">None</span>,
+<a href=#1471 id=1471 data-nosnippet>1471</a>            data_column: <span class="prelude-val">None</span>,
+<a href=#1472 id=1472 data-nosnippet>1472</a>            correlation: <span class="prelude-val">None</span>,
+<a href=#1473 id=1473 data-nosnippet>1473</a>            spectral_mode: Default::default(),
+<a href=#1474 id=1474 data-nosnippet>1474</a>            cube_axis: Default::default(),
+<a href=#1475 id=1475 data-nosnippet>1475</a>            weighting: ImagerWeighting::Briggs { robust: <span class="number">0.5 </span>},
+<a href=#1476 id=1476 data-nosnippet>1476</a>            per_channel_weight_density: <span class="bool-val">false</span>,
+<a href=#1477 id=1477 data-nosnippet>1477</a>            uv_taper: <span class="prelude-val">None</span>,
+<a href=#1478 id=1478 data-nosnippet>1478</a>            restoring_beam_mode: Default::default(),
+<a href=#1479 id=1479 data-nosnippet>1479</a>            deconvolver: Default::default(),
+<a href=#1480 id=1480 data-nosnippet>1480</a>            nterms: <span class="number">1</span>,
+<a href=#1481 id=1481 data-nosnippet>1481</a>            multiscale_scales: Vec::new(),
+<a href=#1482 id=1482 data-nosnippet>1482</a>            small_scale_bias: <span class="number">0.0</span>,
+<a href=#1483 id=1483 data-nosnippet>1483</a>            niter: <span class="number">0</span>,
+<a href=#1484 id=1484 data-nosnippet>1484</a>            gain: <span class="number">0.1</span>,
+<a href=#1485 id=1485 data-nosnippet>1485</a>            threshold_jy: <span class="number">0.0</span>,
+<a href=#1486 id=1486 data-nosnippet>1486</a>            nsigma: <span class="number">0.0</span>,
+<a href=#1487 id=1487 data-nosnippet>1487</a>            psf_cutoff: <span class="number">0.35</span>,
+<a href=#1488 id=1488 data-nosnippet>1488</a>            minor_cycle_length: <span class="number">8</span>,
+<a href=#1489 id=1489 data-nosnippet>1489</a>            cyclefactor: <span class="number">1.0</span>,
+<a href=#1490 id=1490 data-nosnippet>1490</a>            min_psf_fraction: <span class="number">0.1</span>,
+<a href=#1491 id=1491 data-nosnippet>1491</a>            max_psf_fraction: <span class="number">0.8</span>,
+<a href=#1492 id=1492 data-nosnippet>1492</a>            mask_boxes: Vec::new(),
+<a href=#1493 id=1493 data-nosnippet>1493</a>            mask_image: <span class="prelude-val">None</span>,
+<a href=#1494 id=1494 data-nosnippet>1494</a>            w_term_mode: Default::default(),
+<a href=#1495 id=1495 data-nosnippet>1495</a>            w_project_planes: <span class="prelude-val">None</span>,
+<a href=#1496 id=1496 data-nosnippet>1496</a>            dirty_only: <span class="bool-val">false</span>,
+<a href=#1497 id=1497 data-nosnippet>1497</a>            write_preview_pngs: <span class="bool-val">true</span>,
+<a href=#1498 id=1498 data-nosnippet>1498</a>        };
+<a href=#1499 id=1499 data-nosnippet>1499</a>        <span class="kw">let </span>config = request.to_cli_config().unwrap();
+<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="macro">assert_eq!</span>(config.weighting, WeightingMode::Briggs { robust: <span class="number">0.5 </span>});
+<a href=#1501 id=1501 data-nosnippet>1501</a>    }
+<a href=#1502 id=1502 data-nosnippet>1502</a>
+<a href=#1503 id=1503 data-nosnippet>1503</a>    <span class="attr">#[test]
+<a href=#1504 id=1504 data-nosnippet>1504</a>    </span><span class="kw">fn </span>plane_selection_and_enum_conversions_cover_public_variants() {
+<a href=#1505 id=1505 data-nosnippet>1505</a>        <span class="kw">for </span>(text, plane) <span class="kw">in </span>[
+<a href=#1506 id=1506 data-nosnippet>1506</a>            (<span class="string">"I"</span>, ImagerPlaneSelection::StokesI),
+<a href=#1507 id=1507 data-nosnippet>1507</a>            (<span class="string">"Q"</span>, ImagerPlaneSelection::StokesQ),
+<a href=#1508 id=1508 data-nosnippet>1508</a>            (<span class="string">"U"</span>, ImagerPlaneSelection::StokesU),
+<a href=#1509 id=1509 data-nosnippet>1509</a>            (<span class="string">"V"</span>, ImagerPlaneSelection::StokesV),
+<a href=#1510 id=1510 data-nosnippet>1510</a>            (<span class="string">"XX"</span>, ImagerPlaneSelection::CorrXX),
+<a href=#1511 id=1511 data-nosnippet>1511</a>            (<span class="string">"YY"</span>, ImagerPlaneSelection::CorrYY),
+<a href=#1512 id=1512 data-nosnippet>1512</a>            (<span class="string">"RR"</span>, ImagerPlaneSelection::CorrRR),
+<a href=#1513 id=1513 data-nosnippet>1513</a>            (<span class="string">"LL"</span>, ImagerPlaneSelection::CorrLL),
+<a href=#1514 id=1514 data-nosnippet>1514</a>        ] {
+<a href=#1515 id=1515 data-nosnippet>1515</a>            <span class="macro">assert_eq!</span>(ImagerRunTaskRequest::plane_from_text(text).unwrap(), plane);
+<a href=#1516 id=1516 data-nosnippet>1516</a>            <span class="macro">assert_eq!</span>(plane.as_cli_text(), text);
+<a href=#1517 id=1517 data-nosnippet>1517</a>        }
+<a href=#1518 id=1518 data-nosnippet>1518</a>        <span class="macro">assert!</span>(ImagerRunTaskRequest::plane_from_text(<span class="string">"XY"</span>).is_err());
+<a href=#1519 id=1519 data-nosnippet>1519</a>
+<a href=#1520 id=1520 data-nosnippet>1520</a>        <span class="macro">assert_eq!</span>(
+<a href=#1521 id=1521 data-nosnippet>1521</a>            ImagerSpectralMode::from(SpectralMode::Cubedata),
+<a href=#1522 id=1522 data-nosnippet>1522</a>            ImagerSpectralMode::Cubedata
+<a href=#1523 id=1523 data-nosnippet>1523</a>        );
+<a href=#1524 id=1524 data-nosnippet>1524</a>        <span class="macro">assert_eq!</span>(
+<a href=#1525 id=1525 data-nosnippet>1525</a>            SpectralMode::from(ImagerSpectralMode::Cube),
+<a href=#1526 id=1526 data-nosnippet>1526</a>            SpectralMode::Cube
+<a href=#1527 id=1527 data-nosnippet>1527</a>        );
+<a href=#1528 id=1528 data-nosnippet>1528</a>        <span class="macro">assert_eq!</span>(
+<a href=#1529 id=1529 data-nosnippet>1529</a>            ImagerWeighting::from(WeightingMode::Uniform),
+<a href=#1530 id=1530 data-nosnippet>1530</a>            ImagerWeighting::Uniform
+<a href=#1531 id=1531 data-nosnippet>1531</a>        );
+<a href=#1532 id=1532 data-nosnippet>1532</a>        <span class="macro">assert_eq!</span>(
+<a href=#1533 id=1533 data-nosnippet>1533</a>            WeightingMode::from(ImagerWeighting::Briggs { robust: <span class="number">1.0 </span>}),
+<a href=#1534 id=1534 data-nosnippet>1534</a>            WeightingMode::Briggs { robust: <span class="number">1.0 </span>}
+<a href=#1535 id=1535 data-nosnippet>1535</a>        );
+<a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="macro">assert_eq!</span>(
+<a href=#1537 id=1537 data-nosnippet>1537</a>            ImagerRestoringBeamMode::from(RestoringBeamMode::Common),
+<a href=#1538 id=1538 data-nosnippet>1538</a>            ImagerRestoringBeamMode::Common
+<a href=#1539 id=1539 data-nosnippet>1539</a>        );
+<a href=#1540 id=1540 data-nosnippet>1540</a>        <span class="macro">assert_eq!</span>(
+<a href=#1541 id=1541 data-nosnippet>1541</a>            RestoringBeamMode::from(ImagerRestoringBeamMode::PerPlane),
+<a href=#1542 id=1542 data-nosnippet>1542</a>            RestoringBeamMode::PerPlane
+<a href=#1543 id=1543 data-nosnippet>1543</a>        );
+<a href=#1544 id=1544 data-nosnippet>1544</a>        <span class="macro">assert_eq!</span>(
+<a href=#1545 id=1545 data-nosnippet>1545</a>            ImagerDeconvolver::from(Deconvolver::Clark),
+<a href=#1546 id=1546 data-nosnippet>1546</a>            ImagerDeconvolver::Clark
+<a href=#1547 id=1547 data-nosnippet>1547</a>        );
+<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="macro">assert_eq!</span>(
+<a href=#1549 id=1549 data-nosnippet>1549</a>            Deconvolver::from(ImagerDeconvolver::Multiscale),
+<a href=#1550 id=1550 data-nosnippet>1550</a>            Deconvolver::Multiscale
+<a href=#1551 id=1551 data-nosnippet>1551</a>        );
+<a href=#1552 id=1552 data-nosnippet>1552</a>        <span class="macro">assert_eq!</span>(
+<a href=#1553 id=1553 data-nosnippet>1553</a>            ImagerWTermMode::from(WTermMode::WProject),
+<a href=#1554 id=1554 data-nosnippet>1554</a>            ImagerWTermMode::Wproject
+<a href=#1555 id=1555 data-nosnippet>1555</a>        );
+<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="macro">assert_eq!</span>(WTermMode::from(ImagerWTermMode::Direct), WTermMode::Direct);
+<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="macro">assert_eq!</span>(
+<a href=#1558 id=1558 data-nosnippet>1558</a>            ImagerCubeInterpolation::from(CubeInterpolation::Cubic),
+<a href=#1559 id=1559 data-nosnippet>1559</a>            ImagerCubeInterpolation::Linear
+<a href=#1560 id=1560 data-nosnippet>1560</a>        );
+<a href=#1561 id=1561 data-nosnippet>1561</a>        <span class="macro">assert_eq!</span>(
+<a href=#1562 id=1562 data-nosnippet>1562</a>            CubeInterpolation::from(ImagerCubeInterpolation::Nearest),
+<a href=#1563 id=1563 data-nosnippet>1563</a>            CubeInterpolation::Nearest
+<a href=#1564 id=1564 data-nosnippet>1564</a>        );
+<a href=#1565 id=1565 data-nosnippet>1565</a>        <span class="macro">assert_eq!</span>(
+<a href=#1566 id=1566 data-nosnippet>1566</a>            ImagerUvTaperSize::from(UvTaperSize::ImageFwhmRad(<span class="number">1.5</span>)),
+<a href=#1567 id=1567 data-nosnippet>1567</a>            ImagerUvTaperSize::ImageFwhmRad { value: <span class="number">1.5 </span>}
+<a href=#1568 id=1568 data-nosnippet>1568</a>        );
+<a href=#1569 id=1569 data-nosnippet>1569</a>        <span class="macro">assert_eq!</span>(
+<a href=#1570 id=1570 data-nosnippet>1570</a>            UvTaperSize::from(ImagerUvTaperSize::BaselineHwhmLambda { value: <span class="number">3.0 </span>}),
+<a href=#1571 id=1571 data-nosnippet>1571</a>            UvTaperSize::BaselineHwhmLambda(<span class="number">3.0</span>)
+<a href=#1572 id=1572 data-nosnippet>1572</a>        );
+<a href=#1573 id=1573 data-nosnippet>1573</a>        <span class="macro">assert_eq!</span>(
+<a href=#1574 id=1574 data-nosnippet>1574</a>            ImagerUvTaper::from(GaussianUvTaper {
+<a href=#1575 id=1575 data-nosnippet>1575</a>                major: UvTaperSize::ImageFwhmRad(<span class="number">2.0</span>),
+<a href=#1576 id=1576 data-nosnippet>1576</a>                minor: UvTaperSize::BaselineHwhmLambda(<span class="number">4.0</span>),
+<a href=#1577 id=1577 data-nosnippet>1577</a>                position_angle_rad: <span class="number">0.25</span>,
+<a href=#1578 id=1578 data-nosnippet>1578</a>            }),
+<a href=#1579 id=1579 data-nosnippet>1579</a>            ImagerUvTaper {
+<a href=#1580 id=1580 data-nosnippet>1580</a>                major: ImagerUvTaperSize::ImageFwhmRad { value: <span class="number">2.0 </span>},
+<a href=#1581 id=1581 data-nosnippet>1581</a>                minor: ImagerUvTaperSize::BaselineHwhmLambda { value: <span class="number">4.0 </span>},
+<a href=#1582 id=1582 data-nosnippet>1582</a>                position_angle_rad: <span class="number">0.25</span>,
+<a href=#1583 id=1583 data-nosnippet>1583</a>            }
+<a href=#1584 id=1584 data-nosnippet>1584</a>        );
+<a href=#1585 id=1585 data-nosnippet>1585</a>        <span class="macro">assert_eq!</span>(
+<a href=#1586 id=1586 data-nosnippet>1586</a>            ImagerCleanStopReason::from(CleanStopReason::DivergenceDetected),
+<a href=#1587 id=1587 data-nosnippet>1587</a>            ImagerCleanStopReason::DivergenceDetected
+<a href=#1588 id=1588 data-nosnippet>1588</a>        );
+<a href=#1589 id=1589 data-nosnippet>1589</a>    }
+<a href=#1590 id=1590 data-nosnippet>1590</a>
+<a href=#1591 id=1591 data-nosnippet>1591</a>    <span class="attr">#[test]
+<a href=#1592 id=1592 data-nosnippet>1592</a>    </span><span class="kw">fn </span>cube_axis_values_and_config_validate_runtime_inputs() {
+<a href=#1593 id=1593 data-nosnippet>1593</a>        <span class="macro">assert_eq!</span>(
+<a href=#1594 id=1594 data-nosnippet>1594</a>            ImagerCubeAxisValue::from(<span class="kw-2">&amp;</span>CubeAxisValue::Channel(<span class="number">7</span>))
+<a href=#1595 id=1595 data-nosnippet>1595</a>                .into_runtime()
+<a href=#1596 id=1596 data-nosnippet>1596</a>                .unwrap(),
+<a href=#1597 id=1597 data-nosnippet>1597</a>            CubeAxisValue::Channel(<span class="number">7</span>)
+<a href=#1598 id=1598 data-nosnippet>1598</a>        );
+<a href=#1599 id=1599 data-nosnippet>1599</a>        <span class="macro">assert_eq!</span>(
+<a href=#1600 id=1600 data-nosnippet>1600</a>            ImagerCubeAxisValue::from(<span class="kw-2">&amp;</span>CubeAxisValue::FrequencyHz {
+<a href=#1601 id=1601 data-nosnippet>1601</a>                hz: <span class="number">1.4e9</span>,
+<a href=#1602 id=1602 data-nosnippet>1602</a>                frame: <span class="prelude-val">Some</span>(FrequencyRef::BARY),
+<a href=#1603 id=1603 data-nosnippet>1603</a>            })
+<a href=#1604 id=1604 data-nosnippet>1604</a>            .into_runtime()
+<a href=#1605 id=1605 data-nosnippet>1605</a>            .unwrap(),
+<a href=#1606 id=1606 data-nosnippet>1606</a>            CubeAxisValue::FrequencyHz {
+<a href=#1607 id=1607 data-nosnippet>1607</a>                hz: <span class="number">1.4e9</span>,
+<a href=#1608 id=1608 data-nosnippet>1608</a>                frame: <span class="prelude-val">Some</span>(FrequencyRef::BARY),
+<a href=#1609 id=1609 data-nosnippet>1609</a>            }
+<a href=#1610 id=1610 data-nosnippet>1610</a>        );
+<a href=#1611 id=1611 data-nosnippet>1611</a>        <span class="macro">assert_eq!</span>(
+<a href=#1612 id=1612 data-nosnippet>1612</a>            ImagerCubeAxisValue::from(<span class="kw-2">&amp;</span>CubeAxisValue::VelocityMs {
+<a href=#1613 id=1613 data-nosnippet>1613</a>                ms: <span class="number">12.0</span>,
+<a href=#1614 id=1614 data-nosnippet>1614</a>                frame: <span class="prelude-val">Some</span>(FrequencyRef::LSRK),
+<a href=#1615 id=1615 data-nosnippet>1615</a>            })
+<a href=#1616 id=1616 data-nosnippet>1616</a>            .into_runtime()
+<a href=#1617 id=1617 data-nosnippet>1617</a>            .unwrap(),
+<a href=#1618 id=1618 data-nosnippet>1618</a>            CubeAxisValue::VelocityMs {
+<a href=#1619 id=1619 data-nosnippet>1619</a>                ms: <span class="number">12.0</span>,
+<a href=#1620 id=1620 data-nosnippet>1620</a>                frame: <span class="prelude-val">Some</span>(FrequencyRef::LSRK),
+<a href=#1621 id=1621 data-nosnippet>1621</a>            }
+<a href=#1622 id=1622 data-nosnippet>1622</a>        );
+<a href=#1623 id=1623 data-nosnippet>1623</a>        <span class="macro">assert_eq!</span>(
+<a href=#1624 id=1624 data-nosnippet>1624</a>            ImagerCubeAxisValue::from(<span class="kw-2">&amp;</span>CubeAxisValue::Doppler {
+<a href=#1625 id=1625 data-nosnippet>1625</a>                value: <span class="number">0.25</span>,
+<a href=#1626 id=1626 data-nosnippet>1626</a>                convention: DopplerRef::Z,
+<a href=#1627 id=1627 data-nosnippet>1627</a>            })
+<a href=#1628 id=1628 data-nosnippet>1628</a>            .into_runtime()
+<a href=#1629 id=1629 data-nosnippet>1629</a>            .unwrap(),
+<a href=#1630 id=1630 data-nosnippet>1630</a>            CubeAxisValue::Doppler {
+<a href=#1631 id=1631 data-nosnippet>1631</a>                value: <span class="number">0.25</span>,
+<a href=#1632 id=1632 data-nosnippet>1632</a>                convention: DopplerRef::Z,
+<a href=#1633 id=1633 data-nosnippet>1633</a>            }
+<a href=#1634 id=1634 data-nosnippet>1634</a>        );
+<a href=#1635 id=1635 data-nosnippet>1635</a>
+<a href=#1636 id=1636 data-nosnippet>1636</a>        <span class="kw">let </span>config = ImagerCubeAxisConfig::from(<span class="kw-2">&amp;</span>CubeAxisConfig {
+<a href=#1637 id=1637 data-nosnippet>1637</a>            specmode: SpectralMode::Cube.cube_specmode(),
+<a href=#1638 id=1638 data-nosnippet>1638</a>            outframe: FrequencyRef::BARY,
+<a href=#1639 id=1639 data-nosnippet>1639</a>            veltype: DopplerRef::Z,
+<a href=#1640 id=1640 data-nosnippet>1640</a>            interpolation: CubeInterpolation::Nearest,
+<a href=#1641 id=1641 data-nosnippet>1641</a>            rest_frequency_hz: <span class="prelude-val">Some</span>(<span class="number">1.42e9</span>),
+<a href=#1642 id=1642 data-nosnippet>1642</a>            start: <span class="prelude-val">Some</span>(CubeAxisValue::Channel(<span class="number">3</span>)),
+<a href=#1643 id=1643 data-nosnippet>1643</a>            width: <span class="prelude-val">Some</span>(CubeAxisValue::FrequencyHz {
+<a href=#1644 id=1644 data-nosnippet>1644</a>                hz: <span class="number">1.0e6</span>,
+<a href=#1645 id=1645 data-nosnippet>1645</a>                frame: <span class="prelude-val">Some</span>(FrequencyRef::LSRK),
+<a href=#1646 id=1646 data-nosnippet>1646</a>            }),
+<a href=#1647 id=1647 data-nosnippet>1647</a>        });
+<a href=#1648 id=1648 data-nosnippet>1648</a>        <span class="kw">let </span>runtime = config.clone().into_runtime(SpectralMode::Cube).unwrap();
+<a href=#1649 id=1649 data-nosnippet>1649</a>        <span class="macro">assert_eq!</span>(runtime.outframe, FrequencyRef::BARY);
+<a href=#1650 id=1650 data-nosnippet>1650</a>        <span class="macro">assert_eq!</span>(runtime.veltype, DopplerRef::Z);
+<a href=#1651 id=1651 data-nosnippet>1651</a>        <span class="macro">assert_eq!</span>(runtime.interpolation, CubeInterpolation::Nearest);
+<a href=#1652 id=1652 data-nosnippet>1652</a>        <span class="macro">assert_eq!</span>(runtime.rest_frequency_hz, <span class="prelude-val">Some</span>(<span class="number">1.42e9</span>));
+<a href=#1653 id=1653 data-nosnippet>1653</a>
+<a href=#1654 id=1654 data-nosnippet>1654</a>        <span class="kw">let </span>invalid_frame = ImagerCubeAxisConfig {
+<a href=#1655 id=1655 data-nosnippet>1655</a>            outframe: <span class="string">"bad-frame"</span>.to_string(),
+<a href=#1656 id=1656 data-nosnippet>1656</a>            ..config.clone()
+<a href=#1657 id=1657 data-nosnippet>1657</a>        };
+<a href=#1658 id=1658 data-nosnippet>1658</a>        <span class="macro">assert!</span>(invalid_frame.into_runtime(SpectralMode::Cube).is_err());
+<a href=#1659 id=1659 data-nosnippet>1659</a>
+<a href=#1660 id=1660 data-nosnippet>1660</a>        <span class="kw">let </span>invalid_veltype = ImagerCubeAxisConfig {
+<a href=#1661 id=1661 data-nosnippet>1661</a>            veltype: <span class="string">"bad-doppler"</span>.to_string(),
+<a href=#1662 id=1662 data-nosnippet>1662</a>            ..config.clone()
+<a href=#1663 id=1663 data-nosnippet>1663</a>        };
+<a href=#1664 id=1664 data-nosnippet>1664</a>        <span class="macro">assert!</span>(invalid_veltype.into_runtime(SpectralMode::Cube).is_err());
+<a href=#1665 id=1665 data-nosnippet>1665</a>
+<a href=#1666 id=1666 data-nosnippet>1666</a>        <span class="kw">let </span>invalid_restfreq = ImagerCubeAxisConfig {
+<a href=#1667 id=1667 data-nosnippet>1667</a>            rest_frequency_hz: <span class="prelude-val">Some</span>(f64::NAN),
+<a href=#1668 id=1668 data-nosnippet>1668</a>            ..config
+<a href=#1669 id=1669 data-nosnippet>1669</a>        };
+<a href=#1670 id=1670 data-nosnippet>1670</a>        <span class="macro">assert!</span>(invalid_restfreq.into_runtime(SpectralMode::Cube).is_err());
+<a href=#1671 id=1671 data-nosnippet>1671</a>    }
+<a href=#1672 id=1672 data-nosnippet>1672</a>
+<a href=#1673 id=1673 data-nosnippet>1673</a>    <span class="attr">#[test]
+<a href=#1674 id=1674 data-nosnippet>1674</a>    </span><span class="kw">fn </span>to_cli_config_rejects_invalid_request_combinations() {
+<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="kw">let </span>base = ImagerRunTaskRequest {
+<a href=#1676 id=1676 data-nosnippet>1676</a>            measurement_set: PathBuf::from(<span class="string">"demo.ms"</span>),
+<a href=#1677 id=1677 data-nosnippet>1677</a>            image_name: PathBuf::from(<span class="string">"out/demo"</span>),
+<a href=#1678 id=1678 data-nosnippet>1678</a>            image_size: <span class="number">64</span>,
+<a href=#1679 id=1679 data-nosnippet>1679</a>            cell_arcsec: <span class="number">1.5</span>,
+<a href=#1680 id=1680 data-nosnippet>1680</a>            field_ids: <span class="prelude-val">None</span>,
+<a href=#1681 id=1681 data-nosnippet>1681</a>            phasecenter_field: <span class="prelude-val">None</span>,
+<a href=#1682 id=1682 data-nosnippet>1682</a>            phasecenter: <span class="prelude-val">None</span>,
+<a href=#1683 id=1683 data-nosnippet>1683</a>            ddid: <span class="prelude-val">None</span>,
+<a href=#1684 id=1684 data-nosnippet>1684</a>            spw_selector: <span class="prelude-val">None</span>,
+<a href=#1685 id=1685 data-nosnippet>1685</a>            channel_start: <span class="prelude-val">None</span>,
+<a href=#1686 id=1686 data-nosnippet>1686</a>            channel_count: <span class="prelude-val">None</span>,
+<a href=#1687 id=1687 data-nosnippet>1687</a>            data_column: <span class="prelude-val">None</span>,
+<a href=#1688 id=1688 data-nosnippet>1688</a>            correlation: <span class="prelude-val">None</span>,
+<a href=#1689 id=1689 data-nosnippet>1689</a>            spectral_mode: ImagerSpectralMode::Mfs,
+<a href=#1690 id=1690 data-nosnippet>1690</a>            cube_axis: Default::default(),
+<a href=#1691 id=1691 data-nosnippet>1691</a>            weighting: Default::default(),
+<a href=#1692 id=1692 data-nosnippet>1692</a>            per_channel_weight_density: <span class="bool-val">false</span>,
+<a href=#1693 id=1693 data-nosnippet>1693</a>            uv_taper: <span class="prelude-val">None</span>,
+<a href=#1694 id=1694 data-nosnippet>1694</a>            restoring_beam_mode: Default::default(),
+<a href=#1695 id=1695 data-nosnippet>1695</a>            deconvolver: Default::default(),
+<a href=#1696 id=1696 data-nosnippet>1696</a>            nterms: <span class="number">1</span>,
+<a href=#1697 id=1697 data-nosnippet>1697</a>            multiscale_scales: Vec::new(),
+<a href=#1698 id=1698 data-nosnippet>1698</a>            small_scale_bias: <span class="number">0.0</span>,
+<a href=#1699 id=1699 data-nosnippet>1699</a>            niter: <span class="number">0</span>,
+<a href=#1700 id=1700 data-nosnippet>1700</a>            gain: <span class="number">0.1</span>,
+<a href=#1701 id=1701 data-nosnippet>1701</a>            threshold_jy: <span class="number">0.0</span>,
+<a href=#1702 id=1702 data-nosnippet>1702</a>            nsigma: <span class="number">0.0</span>,
+<a href=#1703 id=1703 data-nosnippet>1703</a>            psf_cutoff: <span class="number">0.35</span>,
+<a href=#1704 id=1704 data-nosnippet>1704</a>            minor_cycle_length: <span class="number">8</span>,
+<a href=#1705 id=1705 data-nosnippet>1705</a>            cyclefactor: <span class="number">1.0</span>,
+<a href=#1706 id=1706 data-nosnippet>1706</a>            min_psf_fraction: <span class="number">0.1</span>,
+<a href=#1707 id=1707 data-nosnippet>1707</a>            max_psf_fraction: <span class="number">0.8</span>,
+<a href=#1708 id=1708 data-nosnippet>1708</a>            mask_boxes: Vec::new(),
+<a href=#1709 id=1709 data-nosnippet>1709</a>            mask_image: <span class="prelude-val">None</span>,
+<a href=#1710 id=1710 data-nosnippet>1710</a>            w_term_mode: Default::default(),
+<a href=#1711 id=1711 data-nosnippet>1711</a>            w_project_planes: <span class="prelude-val">None</span>,
+<a href=#1712 id=1712 data-nosnippet>1712</a>            dirty_only: <span class="bool-val">false</span>,
+<a href=#1713 id=1713 data-nosnippet>1713</a>            write_preview_pngs: <span class="bool-val">true</span>,
+<a href=#1714 id=1714 data-nosnippet>1714</a>        };
+<a href=#1715 id=1715 data-nosnippet>1715</a>
+<a href=#1716 id=1716 data-nosnippet>1716</a>        <span class="macro">assert!</span>(
+<a href=#1717 id=1717 data-nosnippet>1717</a>            base.clone()
+<a href=#1718 id=1718 data-nosnippet>1718</a>                .to_cli_config()
+<a href=#1719 id=1719 data-nosnippet>1719</a>                .expect(<span class="string">"base request converts"</span>)
+<a href=#1720 id=1720 data-nosnippet>1720</a>                .write_preview_pngs
+<a href=#1721 id=1721 data-nosnippet>1721</a>        );
+<a href=#1722 id=1722 data-nosnippet>1722</a>
+<a href=#1723 id=1723 data-nosnippet>1723</a>        <span class="macro">assert!</span>(base.clone().to_cli_config().is_ok());
+<a href=#1724 id=1724 data-nosnippet>1724</a>        <span class="macro">assert!</span>(
+<a href=#1725 id=1725 data-nosnippet>1725</a>            base.clone()
+<a href=#1726 id=1726 data-nosnippet>1726</a>                .to_cli_config()
+<a href=#1727 id=1727 data-nosnippet>1727</a>                .expect(<span class="string">"valid config"</span>)
+<a href=#1728 id=1728 data-nosnippet>1728</a>                .correlation
+<a href=#1729 id=1729 data-nosnippet>1729</a>                .is_none()
+<a href=#1730 id=1730 data-nosnippet>1730</a>        );
+<a href=#1731 id=1731 data-nosnippet>1731</a>
+<a href=#1732 id=1732 data-nosnippet>1732</a>        <span class="kw">let </span>conflict = ImagerRunTaskRequest {
+<a href=#1733 id=1733 data-nosnippet>1733</a>            phasecenter_field: <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#1734 id=1734 data-nosnippet>1734</a>            phasecenter: <span class="prelude-val">Some</span>(<span class="string">"J2000 1rad 2rad"</span>.to_string()),
+<a href=#1735 id=1735 data-nosnippet>1735</a>            ..base.clone()
+<a href=#1736 id=1736 data-nosnippet>1736</a>        };
+<a href=#1737 id=1737 data-nosnippet>1737</a>        <span class="macro">assert!</span>(
+<a href=#1738 id=1738 data-nosnippet>1738</a>            conflict
+<a href=#1739 id=1739 data-nosnippet>1739</a>                .to_cli_config()
+<a href=#1740 id=1740 data-nosnippet>1740</a>                .unwrap_err()
+<a href=#1741 id=1741 data-nosnippet>1741</a>                .contains(<span class="string">"mutually exclusive"</span>)
+<a href=#1742 id=1742 data-nosnippet>1742</a>        );
+<a href=#1743 id=1743 data-nosnippet>1743</a>
+<a href=#1744 id=1744 data-nosnippet>1744</a>        <span class="kw">let </span>mtmfs_cube = ImagerRunTaskRequest {
+<a href=#1745 id=1745 data-nosnippet>1745</a>            spectral_mode: ImagerSpectralMode::Cube,
+<a href=#1746 id=1746 data-nosnippet>1746</a>            deconvolver: ImagerDeconvolver::Mtmfs,
+<a href=#1747 id=1747 data-nosnippet>1747</a>            ..base.clone()
+<a href=#1748 id=1748 data-nosnippet>1748</a>        };
+<a href=#1749 id=1749 data-nosnippet>1749</a>        <span class="macro">assert!</span>(
+<a href=#1750 id=1750 data-nosnippet>1750</a>            mtmfs_cube
+<a href=#1751 id=1751 data-nosnippet>1751</a>                .to_cli_config()
+<a href=#1752 id=1752 data-nosnippet>1752</a>                .unwrap_err()
+<a href=#1753 id=1753 data-nosnippet>1753</a>                .contains(<span class="string">"requires specmode='mfs'"</span>)
+<a href=#1754 id=1754 data-nosnippet>1754</a>        );
+<a href=#1755 id=1755 data-nosnippet>1755</a>
+<a href=#1756 id=1756 data-nosnippet>1756</a>        <span class="kw">let </span>non_mtmfs_nterms = ImagerRunTaskRequest {
+<a href=#1757 id=1757 data-nosnippet>1757</a>            deconvolver: ImagerDeconvolver::Clark,
+<a href=#1758 id=1758 data-nosnippet>1758</a>            nterms: <span class="number">2</span>,
+<a href=#1759 id=1759 data-nosnippet>1759</a>            ..base.clone()
+<a href=#1760 id=1760 data-nosnippet>1760</a>        };
+<a href=#1761 id=1761 data-nosnippet>1761</a>        <span class="macro">assert!</span>(
+<a href=#1762 id=1762 data-nosnippet>1762</a>            non_mtmfs_nterms
+<a href=#1763 id=1763 data-nosnippet>1763</a>                .to_cli_config()
+<a href=#1764 id=1764 data-nosnippet>1764</a>                .unwrap_err()
+<a href=#1765 id=1765 data-nosnippet>1765</a>                .contains(<span class="string">"nterms &gt; 1"</span>)
+<a href=#1766 id=1766 data-nosnippet>1766</a>        );
+<a href=#1767 id=1767 data-nosnippet>1767</a>
+<a href=#1768 id=1768 data-nosnippet>1768</a>        <span class="kw">let </span>zero_nterms = ImagerRunTaskRequest {
+<a href=#1769 id=1769 data-nosnippet>1769</a>            deconvolver: ImagerDeconvolver::Mtmfs,
+<a href=#1770 id=1770 data-nosnippet>1770</a>            nterms: <span class="number">0</span>,
+<a href=#1771 id=1771 data-nosnippet>1771</a>            ..base.clone()
+<a href=#1772 id=1772 data-nosnippet>1772</a>        };
+<a href=#1773 id=1773 data-nosnippet>1773</a>        <span class="macro">assert!</span>(
+<a href=#1774 id=1774 data-nosnippet>1774</a>            zero_nterms
+<a href=#1775 id=1775 data-nosnippet>1775</a>                .to_cli_config()
+<a href=#1776 id=1776 data-nosnippet>1776</a>                .unwrap_err()
+<a href=#1777 id=1777 data-nosnippet>1777</a>                .contains(<span class="string">"at least 1"</span>)
+<a href=#1778 id=1778 data-nosnippet>1778</a>        );
+<a href=#1779 id=1779 data-nosnippet>1779</a>
+<a href=#1780 id=1780 data-nosnippet>1780</a>        <span class="kw">let </span>invalid_scales = ImagerRunTaskRequest {
+<a href=#1781 id=1781 data-nosnippet>1781</a>            multiscale_scales: <span class="macro">vec!</span>[<span class="number">1.0</span>, -<span class="number">1.0</span>],
+<a href=#1782 id=1782 data-nosnippet>1782</a>            ..base
+<a href=#1783 id=1783 data-nosnippet>1783</a>        };
+<a href=#1784 id=1784 data-nosnippet>1784</a>        <span class="macro">assert!</span>(
+<a href=#1785 id=1785 data-nosnippet>1785</a>            invalid_scales
+<a href=#1786 id=1786 data-nosnippet>1786</a>                .to_cli_config()
+<a href=#1787 id=1787 data-nosnippet>1787</a>                .unwrap_err()
+<a href=#1788 id=1788 data-nosnippet>1788</a>                .contains(<span class="string">"invalid multiscale scale"</span>)
+<a href=#1789 id=1789 data-nosnippet>1789</a>        );
+<a href=#1790 id=1790 data-nosnippet>1790</a>    }
+<a href=#1791 id=1791 data-nosnippet>1791</a>
+<a href=#1792 id=1792 data-nosnippet>1792</a>    <span class="attr">#[test]
+<a href=#1793 id=1793 data-nosnippet>1793</a>    </span><span class="kw">fn </span>task_request_read_and_artifact_generation_cover_file_and_layout_branches() {
+<a href=#1794 id=1794 data-nosnippet>1794</a>        <span class="kw">let </span>file = NamedTempFile::new().expect(<span class="string">"temp request"</span>);
+<a href=#1795 id=1795 data-nosnippet>1795</a>        fs::write(
+<a href=#1796 id=1796 data-nosnippet>1796</a>            file.path(),
+<a href=#1797 id=1797 data-nosnippet>1797</a>            <span class="string">r#"{"kind":"run","request":{"measurement_set":"demo.ms","image_name":"out/demo","image_size":64,"cell_arcsec":1.5}}"#</span>,
+<a href=#1798 id=1798 data-nosnippet>1798</a>        )
+<a href=#1799 id=1799 data-nosnippet>1799</a>        .expect(<span class="string">"write request"</span>);
+<a href=#1800 id=1800 data-nosnippet>1800</a>        <span class="kw">match </span>ImagerTaskRequest::read_from_source(file.path().to_str().unwrap()).unwrap() {
+<a href=#1801 id=1801 data-nosnippet>1801</a>            ImagerTaskRequest::Run(request) =&gt; {
+<a href=#1802 id=1802 data-nosnippet>1802</a>                <span class="macro">assert_eq!</span>(request.measurement_set, PathBuf::from(<span class="string">"demo.ms"</span>));
+<a href=#1803 id=1803 data-nosnippet>1803</a>                <span class="macro">assert_eq!</span>(request.image_name, PathBuf::from(<span class="string">"out/demo"</span>));
+<a href=#1804 id=1804 data-nosnippet>1804</a>            }
+<a href=#1805 id=1805 data-nosnippet>1805</a>        }
+<a href=#1806 id=1806 data-nosnippet>1806</a>        <span class="macro">assert!</span>(
+<a href=#1807 id=1807 data-nosnippet>1807</a>            ImagerTaskRequest::read_from_source(<span class="string">"/definitely/missing/imager.json"</span>)
+<a href=#1808 id=1808 data-nosnippet>1808</a>                .unwrap_err()
+<a href=#1809 id=1809 data-nosnippet>1809</a>                .contains(<span class="string">"failed to read JSON request"</span>)
+<a href=#1810 id=1810 data-nosnippet>1810</a>        );
+<a href=#1811 id=1811 data-nosnippet>1811</a>        <span class="kw">let </span>bad = NamedTempFile::new().expect(<span class="string">"bad request"</span>);
+<a href=#1812 id=1812 data-nosnippet>1812</a>        fs::write(bad.path(), <span class="string">"{not-json"</span>).expect(<span class="string">"write bad request"</span>);
+<a href=#1813 id=1813 data-nosnippet>1813</a>        <span class="macro">assert!</span>(
+<a href=#1814 id=1814 data-nosnippet>1814</a>            ImagerTaskRequest::read_from_source(bad.path().to_str().unwrap())
+<a href=#1815 id=1815 data-nosnippet>1815</a>                .unwrap_err()
+<a href=#1816 id=1816 data-nosnippet>1816</a>                .contains(<span class="string">"failed to parse imager task request"</span>)
+<a href=#1817 id=1817 data-nosnippet>1817</a>        );
+<a href=#1818 id=1818 data-nosnippet>1818</a>
+<a href=#1819 id=1819 data-nosnippet>1819</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"artifact dir"</span>);
+<a href=#1820 id=1820 data-nosnippet>1820</a>        <span class="kw">let </span>image_name = temp.path().join(<span class="string">"artifact/demo"</span>);
+<a href=#1821 id=1821 data-nosnippet>1821</a>        fs::create_dir_all(image_name.parent().unwrap()).expect(<span class="string">"artifact parent"</span>);
+<a href=#1822 id=1822 data-nosnippet>1822</a>        fs::write(image_name.with_extension(<span class="string">"psf"</span>), <span class="string">b"psf"</span>).expect(<span class="string">"write psf"</span>);
+<a href=#1823 id=1823 data-nosnippet>1823</a>        fs::write(image_name.with_extension(<span class="string">"psf.png"</span>), <span class="string">b"png"</span>).expect(<span class="string">"write psf png"</span>);
+<a href=#1824 id=1824 data-nosnippet>1824</a>        <span class="kw">let </span>standard = ImagerRunTaskRequest {
+<a href=#1825 id=1825 data-nosnippet>1825</a>            measurement_set: PathBuf::from(<span class="string">"demo.ms"</span>),
+<a href=#1826 id=1826 data-nosnippet>1826</a>            image_name: image_name.clone(),
+<a href=#1827 id=1827 data-nosnippet>1827</a>            image_size: <span class="number">64</span>,
+<a href=#1828 id=1828 data-nosnippet>1828</a>            cell_arcsec: <span class="number">1.5</span>,
+<a href=#1829 id=1829 data-nosnippet>1829</a>            field_ids: <span class="prelude-val">None</span>,
+<a href=#1830 id=1830 data-nosnippet>1830</a>            phasecenter_field: <span class="prelude-val">None</span>,
+<a href=#1831 id=1831 data-nosnippet>1831</a>            phasecenter: <span class="prelude-val">None</span>,
+<a href=#1832 id=1832 data-nosnippet>1832</a>            ddid: <span class="prelude-val">None</span>,
+<a href=#1833 id=1833 data-nosnippet>1833</a>            spw_selector: <span class="prelude-val">Some</span>(<span class="string">"7"</span>.to_string()),
+<a href=#1834 id=1834 data-nosnippet>1834</a>            channel_start: <span class="prelude-val">None</span>,
+<a href=#1835 id=1835 data-nosnippet>1835</a>            channel_count: <span class="prelude-val">None</span>,
+<a href=#1836 id=1836 data-nosnippet>1836</a>            data_column: <span class="prelude-val">None</span>,
+<a href=#1837 id=1837 data-nosnippet>1837</a>            correlation: <span class="prelude-val">Some</span>(ImagerPlaneSelection::CorrXX),
+<a href=#1838 id=1838 data-nosnippet>1838</a>            spectral_mode: ImagerSpectralMode::Mfs,
+<a href=#1839 id=1839 data-nosnippet>1839</a>            cube_axis: Default::default(),
+<a href=#1840 id=1840 data-nosnippet>1840</a>            weighting: Default::default(),
+<a href=#1841 id=1841 data-nosnippet>1841</a>            per_channel_weight_density: <span class="bool-val">false</span>,
+<a href=#1842 id=1842 data-nosnippet>1842</a>            uv_taper: <span class="prelude-val">None</span>,
+<a href=#1843 id=1843 data-nosnippet>1843</a>            restoring_beam_mode: Default::default(),
+<a href=#1844 id=1844 data-nosnippet>1844</a>            deconvolver: Default::default(),
+<a href=#1845 id=1845 data-nosnippet>1845</a>            nterms: <span class="number">1</span>,
+<a href=#1846 id=1846 data-nosnippet>1846</a>            multiscale_scales: Vec::new(),
+<a href=#1847 id=1847 data-nosnippet>1847</a>            small_scale_bias: <span class="number">0.0</span>,
+<a href=#1848 id=1848 data-nosnippet>1848</a>            niter: <span class="number">0</span>,
+<a href=#1849 id=1849 data-nosnippet>1849</a>            gain: <span class="number">0.1</span>,
+<a href=#1850 id=1850 data-nosnippet>1850</a>            threshold_jy: <span class="number">0.0</span>,
+<a href=#1851 id=1851 data-nosnippet>1851</a>            nsigma: <span class="number">0.0</span>,
+<a href=#1852 id=1852 data-nosnippet>1852</a>            psf_cutoff: <span class="number">0.35</span>,
+<a href=#1853 id=1853 data-nosnippet>1853</a>            minor_cycle_length: <span class="number">8</span>,
+<a href=#1854 id=1854 data-nosnippet>1854</a>            cyclefactor: <span class="number">1.0</span>,
+<a href=#1855 id=1855 data-nosnippet>1855</a>            min_psf_fraction: <span class="number">0.1</span>,
+<a href=#1856 id=1856 data-nosnippet>1856</a>            max_psf_fraction: <span class="number">0.8</span>,
+<a href=#1857 id=1857 data-nosnippet>1857</a>            mask_boxes: Vec::new(),
+<a href=#1858 id=1858 data-nosnippet>1858</a>            mask_image: <span class="prelude-val">None</span>,
+<a href=#1859 id=1859 data-nosnippet>1859</a>            w_term_mode: Default::default(),
+<a href=#1860 id=1860 data-nosnippet>1860</a>            w_project_planes: <span class="prelude-val">None</span>,
+<a href=#1861 id=1861 data-nosnippet>1861</a>            dirty_only: <span class="bool-val">false</span>,
+<a href=#1862 id=1862 data-nosnippet>1862</a>            write_preview_pngs: <span class="bool-val">true</span>,
+<a href=#1863 id=1863 data-nosnippet>1863</a>        };
+<a href=#1864 id=1864 data-nosnippet>1864</a>        <span class="kw">let </span>standard_config = standard.to_cli_config().unwrap();
+<a href=#1865 id=1865 data-nosnippet>1865</a>        <span class="macro">assert_eq!</span>(standard_config.spw, <span class="prelude-val">Some</span>(<span class="number">7</span>));
+<a href=#1866 id=1866 data-nosnippet>1866</a>        <span class="macro">assert_eq!</span>(standard_config.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
+<a href=#1867 id=1867 data-nosnippet>1867</a>
+<a href=#1868 id=1868 data-nosnippet>1868</a>        <span class="kw">let </span>standard_artifacts = <span class="kw">super</span>::build_artifacts(<span class="kw-2">&amp;</span>standard);
+<a href=#1869 id=1869 data-nosnippet>1869</a>        <span class="macro">assert_eq!</span>(standard_artifacts.len(), <span class="number">4</span>);
+<a href=#1870 id=1870 data-nosnippet>1870</a>        <span class="macro">assert_eq!</span>(standard_artifacts[<span class="number">0</span>].kind, ImagerArtifactKind::Psf);
+<a href=#1871 id=1871 data-nosnippet>1871</a>        <span class="macro">assert!</span>(standard_artifacts[<span class="number">0</span>].exists);
+<a href=#1872 id=1872 data-nosnippet>1872</a>        <span class="macro">assert!</span>(standard_artifacts[<span class="number">0</span>].preview_png_exists);
+<a href=#1873 id=1873 data-nosnippet>1873</a>
+<a href=#1874 id=1874 data-nosnippet>1874</a>        <span class="kw">let </span>mtmfs = ImagerRunTaskRequest {
+<a href=#1875 id=1875 data-nosnippet>1875</a>            deconvolver: ImagerDeconvolver::Mtmfs,
+<a href=#1876 id=1876 data-nosnippet>1876</a>            nterms: <span class="number">2</span>,
+<a href=#1877 id=1877 data-nosnippet>1877</a>            write_preview_pngs: <span class="bool-val">false</span>,
+<a href=#1878 id=1878 data-nosnippet>1878</a>            ..standard
+<a href=#1879 id=1879 data-nosnippet>1879</a>        };
+<a href=#1880 id=1880 data-nosnippet>1880</a>        <span class="kw">let </span>mtmfs_artifacts = <span class="kw">super</span>::build_artifacts(<span class="kw-2">&amp;</span>mtmfs);
+<a href=#1881 id=1881 data-nosnippet>1881</a>        <span class="macro">assert_eq!</span>(mtmfs_artifacts.len(), <span class="number">9</span>);
+<a href=#1882 id=1882 data-nosnippet>1882</a>        <span class="macro">assert_eq!</span>(
+<a href=#1883 id=1883 data-nosnippet>1883</a>            mtmfs_artifacts
+<a href=#1884 id=1884 data-nosnippet>1884</a>                .iter()
+<a href=#1885 id=1885 data-nosnippet>1885</a>                .filter(|artifact| artifact.kind == ImagerArtifactKind::Alpha)
+<a href=#1886 id=1886 data-nosnippet>1886</a>                .count(),
+<a href=#1887 id=1887 data-nosnippet>1887</a>            <span class="number">1
+<a href=#1888 id=1888 data-nosnippet>1888</a>        </span>);
+<a href=#1889 id=1889 data-nosnippet>1889</a>        <span class="macro">assert!</span>(
+<a href=#1890 id=1890 data-nosnippet>1890</a>            mtmfs_artifacts
+<a href=#1891 id=1891 data-nosnippet>1891</a>                .iter()
+<a href=#1892 id=1892 data-nosnippet>1892</a>                .all(|artifact| artifact.preview_png_path.is_none())
+<a href=#1893 id=1893 data-nosnippet>1893</a>        );
+<a href=#1894 id=1894 data-nosnippet>1894</a>    }
+<a href=#1895 id=1895 data-nosnippet>1895</a>}
 </code></pre></div></section></main></body></html>

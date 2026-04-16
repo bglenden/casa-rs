@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/demo.rs`."><title>demo.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casa_tables/</div>demo.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/demo.rs`."><title>demo.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/</div>demo.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Demo helpers and runnable outputs for `casa-tables`.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! This module mirrors the C++ casacore `tTable.cc` test program. It
@@ -211,32 +211,32 @@
 <a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..nrow {
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="comment">// Scalar checks.
 <a href=#213 id=213 data-nosnippet>213</a>        </span><span class="kw">let </span>ab = reopened.get_scalar_cell(i, <span class="string">"ab"</span>)<span class="question-mark">?</span>;
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">ab !</span>= ScalarValue::Int32(i <span class="kw">as </span>i32) {
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">if </span><span class="kw-2">*</span>ab != ScalarValue::Int32(i <span class="kw">as </span>i32) {
 <a href=#215 id=215 data-nosnippet>215</a>            appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"MISMATCH ab row {i}: {ab:?}"</span>));
 <a href=#216 id=216 data-nosnippet>216</a>        }
 <a href=#217 id=217 data-nosnippet>217</a>        cells_verified += <span class="number">1</span>;
 <a href=#218 id=218 data-nosnippet>218</a>
 <a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span>ad = reopened.get_scalar_cell(i, <span class="string">"ad"</span>)<span class="question-mark">?</span>;
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">ad !</span>= ScalarValue::UInt32(i <span class="kw">as </span>u32 + <span class="number">2</span>) {
+<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">if </span><span class="kw-2">*</span>ad != ScalarValue::UInt32(i <span class="kw">as </span>u32 + <span class="number">2</span>) {
 <a href=#221 id=221 data-nosnippet>221</a>            appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"MISMATCH ad row {i}: {ad:?}"</span>));
 <a href=#222 id=222 data-nosnippet>222</a>        }
 <a href=#223 id=223 data-nosnippet>223</a>        cells_verified += <span class="number">1</span>;
 <a href=#224 id=224 data-nosnippet>224</a>
 <a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>ag = reopened.get_scalar_cell(i, <span class="string">"ag"</span>)<span class="question-mark">?</span>;
 <a href=#226 id=226 data-nosnippet>226</a>        <span class="kw">let </span>expected_ag = ScalarValue::Complex64(Complex64::new(i <span class="kw">as </span>f64 + <span class="number">3.0</span>, -(i <span class="kw">as </span>f64 + <span class="number">1.0</span>)));
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">ag !</span>= expected_ag {
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">if </span><span class="kw-2">*</span>ag != expected_ag {
 <a href=#228 id=228 data-nosnippet>228</a>            appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"MISMATCH ag row {i}: {ag:?}"</span>));
 <a href=#229 id=229 data-nosnippet>229</a>        }
 <a href=#230 id=230 data-nosnippet>230</a>        cells_verified += <span class="number">1</span>;
 <a href=#231 id=231 data-nosnippet>231</a>
 <a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>ae = reopened.get_scalar_cell(i, <span class="string">"ae"</span>)<span class="question-mark">?</span>;
-<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">ae !</span>= ScalarValue::Float32(i <span class="kw">as </span>f32 + <span class="number">3.0</span>) {
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">if </span><span class="kw-2">*</span>ae != ScalarValue::Float32(i <span class="kw">as </span>f32 + <span class="number">3.0</span>) {
 <a href=#234 id=234 data-nosnippet>234</a>            appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"MISMATCH ae row {i}: {ae:?}"</span>));
 <a href=#235 id=235 data-nosnippet>235</a>        }
 <a href=#236 id=236 data-nosnippet>236</a>        cells_verified += <span class="number">1</span>;
 <a href=#237 id=237 data-nosnippet>237</a>
 <a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>af = reopened.get_scalar_cell(i, <span class="string">"af"</span>)<span class="question-mark">?</span>;
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">af !</span>= ScalarValue::String(<span class="macro">format!</span>(<span class="string">"V{i}"</span>)) {
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">if </span><span class="kw-2">*</span>af != ScalarValue::String(<span class="macro">format!</span>(<span class="string">"V{i}"</span>)) {
 <a href=#240 id=240 data-nosnippet>240</a>            appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"MISMATCH af row {i}: {af:?}"</span>));
 <a href=#241 id=241 data-nosnippet>241</a>        }
 <a href=#242 id=242 data-nosnippet>242</a>        cells_verified += <span class="number">1</span>;
@@ -248,7 +248,7 @@
 <a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">let </span>expected_arr = Array::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]), expected)
 <a href=#249 id=249 data-nosnippet>249</a>            .expect(<span class="string">"shape matches element count"</span>);
 <a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">if let </span>ArrayValue::Float32(actual) = arr {
-<a href=#251 id=251 data-nosnippet>251</a>            <span class="kw">if </span><span class="kw-2">*</span><span class="macro">actual !</span>= expected_arr {
+<a href=#251 id=251 data-nosnippet>251</a>            <span class="kw">if </span><span class="kw-2">*</span>actual != expected_arr {
 <a href=#252 id=252 data-nosnippet>252</a>                appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"MISMATCH arr1 row {i}"</span>));
 <a href=#253 id=253 data-nosnippet>253</a>            }
 <a href=#254 id=254 data-nosnippet>254</a>        } <span class="kw">else </span>{
@@ -970,7 +970,7 @@
 <a href=#970 id=970 data-nosnippet>970</a>            <span class="kw">let </span>expected_arr =
 <a href=#971 id=971 data-nosnippet>971</a>                ndarray::Array::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">3</span>]).f(), expected).unwrap();
 <a href=#972 id=972 data-nosnippet>972</a>            <span class="kw">if let </span>ArrayValue::Float32(actual) = arr {
-<a href=#973 id=973 data-nosnippet>973</a>                <span class="kw">if </span><span class="kw-2">*</span><span class="macro">actual !</span>= expected_arr {
+<a href=#973 id=973 data-nosnippet>973</a>                <span class="kw">if </span><span class="kw-2">*</span>actual != expected_arr {
 <a href=#974 id=974 data-nosnippet>974</a>                    appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"  MISMATCH row {i}"</span>));
 <a href=#975 id=975 data-nosnippet>975</a>                    ok = <span class="bool-val">false</span>;
 <a href=#976 id=976 data-nosnippet>976</a>                }
@@ -1024,7 +1024,7 @@
 <a href=#1024 id=1024 data-nosnippet>1024</a>            <span class="kw">let </span>expected: Vec&lt;f32&gt; = (<span class="number">0</span>..nelem).map(|k| base + k <span class="kw">as </span>f32).collect();
 <a href=#1025 id=1025 data-nosnippet>1025</a>            <span class="kw">let </span>expected_arr = ndarray::Array::from_shape_vec(IxDyn(shape).f(), expected).unwrap();
 <a href=#1026 id=1026 data-nosnippet>1026</a>            <span class="kw">if let </span>ArrayValue::Float32(actual) = arr {
-<a href=#1027 id=1027 data-nosnippet>1027</a>                <span class="kw">if </span><span class="kw-2">*</span><span class="macro">actual !</span>= expected_arr {
+<a href=#1027 id=1027 data-nosnippet>1027</a>                <span class="kw">if </span><span class="kw-2">*</span>actual != expected_arr {
 <a href=#1028 id=1028 data-nosnippet>1028</a>                    appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"  MISMATCH row {i}"</span>));
 <a href=#1029 id=1029 data-nosnippet>1029</a>                    ok = <span class="bool-val">false</span>;
 <a href=#1030 id=1030 data-nosnippet>1030</a>                }
@@ -1078,7 +1078,7 @@
 <a href=#1078 id=1078 data-nosnippet>1078</a>            <span class="kw">let </span>expected: Vec&lt;f32&gt; = (<span class="number">0</span>..nelem).map(|k| base + k <span class="kw">as </span>f32).collect();
 <a href=#1079 id=1079 data-nosnippet>1079</a>            <span class="kw">let </span>expected_arr = ndarray::Array::from_shape_vec(IxDyn(shape).f(), expected).unwrap();
 <a href=#1080 id=1080 data-nosnippet>1080</a>            <span class="kw">if let </span>ArrayValue::Float32(actual) = arr {
-<a href=#1081 id=1081 data-nosnippet>1081</a>                <span class="kw">if </span><span class="kw-2">*</span><span class="macro">actual !</span>= expected_arr {
+<a href=#1081 id=1081 data-nosnippet>1081</a>                <span class="kw">if </span><span class="kw-2">*</span>actual != expected_arr {
 <a href=#1082 id=1082 data-nosnippet>1082</a>                    appendln(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"  MISMATCH row {i}"</span>));
 <a href=#1083 id=1083 data-nosnippet>1083</a>                    ok = <span class="bool-val">false</span>;
 <a href=#1084 id=1084 data-nosnippet>1084</a>                }
@@ -1178,17 +1178,17 @@
 <a href=#1178 id=1178 data-nosnippet>1178</a>        <span class="kw">let </span><span class="kw-2">mut </span>ok = <span class="bool-val">true</span>;
 <a href=#1179 id=1179 data-nosnippet>1179</a>        <span class="kw">for </span>(i, (id, name, arr)) <span class="kw">in </span>base_data.iter().enumerate() {
 <a href=#1180 id=1180 data-nosnippet>1180</a>            <span class="kw">let </span>got_id = reopened.get_scalar_cell(i, <span class="string">"id"</span>)<span class="question-mark">?</span>;
-<a href=#1181 id=1181 data-nosnippet>1181</a>            <span class="kw">if </span><span class="kw-2">*</span><span class="macro">got_id !</span>= ScalarValue::Int32(<span class="kw-2">*</span>id) {
+<a href=#1181 id=1181 data-nosnippet>1181</a>            <span class="kw">if </span><span class="kw-2">*</span>got_id != ScalarValue::Int32(<span class="kw-2">*</span>id) {
 <a href=#1182 id=1182 data-nosnippet>1182</a>                ok = <span class="bool-val">false</span>;
 <a href=#1183 id=1183 data-nosnippet>1183</a>            }
 <a href=#1184 id=1184 data-nosnippet>1184</a>            <span class="kw">let </span>got_name = reopened.get_scalar_cell(i, <span class="string">"name"</span>)<span class="question-mark">?</span>;
-<a href=#1185 id=1185 data-nosnippet>1185</a>            <span class="kw">if </span><span class="kw-2">*</span><span class="macro">got_name !</span>= ScalarValue::String(name.to_string()) {
+<a href=#1185 id=1185 data-nosnippet>1185</a>            <span class="kw">if </span><span class="kw-2">*</span>got_name != ScalarValue::String(name.to_string()) {
 <a href=#1186 id=1186 data-nosnippet>1186</a>                ok = <span class="bool-val">false</span>;
 <a href=#1187 id=1187 data-nosnippet>1187</a>            }
 <a href=#1188 id=1188 data-nosnippet>1188</a>            <span class="kw">let </span>got_data = reopened.get_array_cell(i, <span class="string">"data"</span>)<span class="question-mark">?</span>;
 <a href=#1189 id=1189 data-nosnippet>1189</a>            <span class="kw">let </span>expected = Array::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">3</span>]), arr.to_vec()).unwrap();
 <a href=#1190 id=1190 data-nosnippet>1190</a>            <span class="kw">if let </span>ArrayValue::Float32(v) = got_data {
-<a href=#1191 id=1191 data-nosnippet>1191</a>                <span class="kw">if </span><span class="kw-2">*</span><span class="macro">v !</span>= expected {
+<a href=#1191 id=1191 data-nosnippet>1191</a>                <span class="kw">if </span><span class="kw-2">*</span>v != expected {
 <a href=#1192 id=1192 data-nosnippet>1192</a>                    ok = <span class="bool-val">false</span>;
 <a href=#1193 id=1193 data-nosnippet>1193</a>                }
 <a href=#1194 id=1194 data-nosnippet>1194</a>            }

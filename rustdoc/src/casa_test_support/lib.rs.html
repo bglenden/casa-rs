@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-test-support/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_test_support" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casa_test_support/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-test-support/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_test_support" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_test_support/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="kw">pub mod </span>gridder_interop;
 <a href=#3 id=3 data-nosnippet>3</a><span class="kw">pub mod </span>hogbom_interop;
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">pub mod </span>measures_interop;
@@ -81,7 +81,7 @@
 <a href=#81 id=81 data-nosnippet>81</a>        .open(<span class="kw-2">&amp;</span>path)
 <a href=#82 id=82 data-nosnippet>82</a>        .unwrap_or_else(|err| <span class="macro">panic!</span>(<span class="string">"open global casacore lock {}: {err}"</span>, path.display()));
 <a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">let </span>rc = <span class="kw">unsafe </span>{ libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">if </span><span class="macro">rc !</span>= <span class="number">0 </span>{
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">if </span>rc != <span class="number">0 </span>{
 <a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">let </span>err = std::io::Error::last_os_error();
 <a href=#86 id=86 data-nosnippet>86</a>        <span class="macro">panic!</span>(<span class="string">"lock global casacore file {}: {err}"</span>, path.display());
 <a href=#87 id=87 data-nosnippet>87</a>    }
@@ -630,7 +630,7 @@
 <a href=#630 id=630 data-nosnippet>630</a>            .ok_or(AipsIoCrossError::UnsupportedValue(<span class="string">"array shape overflow"</span>))
 <a href=#631 id=631 data-nosnippet>631</a>    })<span class="question-mark">?</span>;
 <a href=#632 id=632 data-nosnippet>632</a>
-<a href=#633 id=633 data-nosnippet>633</a>    <span class="kw">if </span><span class="macro">expected_len !</span>= fortran_values.len() {
+<a href=#633 id=633 data-nosnippet>633</a>    <span class="kw">if </span>expected_len != fortran_values.len() {
 <a href=#634 id=634 data-nosnippet>634</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(AipsIoCrossError::UnsupportedValue(
 <a href=#635 id=635 data-nosnippet>635</a>            <span class="string">"decoded array length does not match expected shape"</span>,
 <a href=#636 id=636 data-nosnippet>636</a>        ));
@@ -713,7 +713,7 @@
 <a href=#713 id=713 data-nosnippet>713</a>                    message,
 <a href=#714 id=714 data-nosnippet>714</a>                })<span class="question-mark">?</span>;
 <a href=#715 id=715 data-nosnippet>715</a>
-<a href=#716 id=716 data-nosnippet>716</a>            <span class="kw">if </span><span class="macro">rust_wire !</span>= cpp_wire {
+<a href=#716 id=716 data-nosnippet>716</a>            <span class="kw">if </span>rust_wire != cpp_wire {
 <a href=#717 id=717 data-nosnippet>717</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(AipsIoCrossError::WireMismatch { label, byte_order });
 <a href=#718 id=718 data-nosnippet>718</a>            }
 <a href=#719 id=719 data-nosnippet>719</a>
@@ -746,28 +746,28 @@
 <a href=#746 id=746 data-nosnippet>746</a>                })
 <a href=#747 id=747 data-nosnippet>747</a>                .and_then(|value| restore_decoded_shape(value, case.original_shape.as_deref()))<span class="question-mark">?</span>;
 <a href=#748 id=748 data-nosnippet>748</a>
-<a href=#749 id=749 data-nosnippet>749</a>            <span class="kw">if </span><span class="macro">rr !</span>= case.expected_value {
+<a href=#749 id=749 data-nosnippet>749</a>            <span class="kw">if </span>rr != case.expected_value {
 <a href=#750 id=750 data-nosnippet>750</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(AipsIoCrossError::DecodeMismatch {
 <a href=#751 id=751 data-nosnippet>751</a>                    path: <span class="string">"rust-&gt;rust"</span>,
 <a href=#752 id=752 data-nosnippet>752</a>                    label: <span class="macro">format!</span>(<span class="string">"{value:?}"</span>),
 <a href=#753 id=753 data-nosnippet>753</a>                    byte_order,
 <a href=#754 id=754 data-nosnippet>754</a>                });
 <a href=#755 id=755 data-nosnippet>755</a>            }
-<a href=#756 id=756 data-nosnippet>756</a>            <span class="kw">if </span><span class="macro">rc !</span>= case.expected_value {
+<a href=#756 id=756 data-nosnippet>756</a>            <span class="kw">if </span>rc != case.expected_value {
 <a href=#757 id=757 data-nosnippet>757</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(AipsIoCrossError::DecodeMismatch {
 <a href=#758 id=758 data-nosnippet>758</a>                    path: <span class="string">"rust-&gt;cpp"</span>,
 <a href=#759 id=759 data-nosnippet>759</a>                    label: <span class="macro">format!</span>(<span class="string">"{value:?}"</span>),
 <a href=#760 id=760 data-nosnippet>760</a>                    byte_order,
 <a href=#761 id=761 data-nosnippet>761</a>                });
 <a href=#762 id=762 data-nosnippet>762</a>            }
-<a href=#763 id=763 data-nosnippet>763</a>            <span class="kw">if </span><span class="macro">cr !</span>= case.expected_value {
+<a href=#763 id=763 data-nosnippet>763</a>            <span class="kw">if </span>cr != case.expected_value {
 <a href=#764 id=764 data-nosnippet>764</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(AipsIoCrossError::DecodeMismatch {
 <a href=#765 id=765 data-nosnippet>765</a>                    path: <span class="string">"cpp-&gt;rust"</span>,
 <a href=#766 id=766 data-nosnippet>766</a>                    label: <span class="macro">format!</span>(<span class="string">"{value:?}"</span>),
 <a href=#767 id=767 data-nosnippet>767</a>                    byte_order,
 <a href=#768 id=768 data-nosnippet>768</a>                });
 <a href=#769 id=769 data-nosnippet>769</a>            }
-<a href=#770 id=770 data-nosnippet>770</a>            <span class="kw">if </span><span class="macro">cc !</span>= case.expected_value {
+<a href=#770 id=770 data-nosnippet>770</a>            <span class="kw">if </span>cc != case.expected_value {
 <a href=#771 id=771 data-nosnippet>771</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(AipsIoCrossError::DecodeMismatch {
 <a href=#772 id=772 data-nosnippet>772</a>                    path: <span class="string">"cpp-&gt;cpp"</span>,
 <a href=#773 id=773 data-nosnippet>773</a>                    label: <span class="macro">format!</span>(<span class="string">"{value:?}"</span>),
@@ -1101,7 +1101,7 @@
 <a href=#1101 id=1101 data-nosnippet>1101</a>    <span class="kw">if </span>is_array {
 <a href=#1102 id=1102 data-nosnippet>1102</a>        <span class="kw">let </span>array = <span class="kw">match </span>primitive {
 <a href=#1103 id=1103 data-nosnippet>1103</a>            PrimitiveType::Bool =&gt; {
-<a href=#1104 id=1104 data-nosnippet>1104</a>                ArrayValue::from_bool_vec(payload.iter().map(|b| <span class="kw-2">*</span><span class="macro">b !</span>= <span class="number">0</span>).collect())
+<a href=#1104 id=1104 data-nosnippet>1104</a>                ArrayValue::from_bool_vec(payload.iter().map(|b| <span class="kw-2">*</span>b != <span class="number">0</span>).collect())
 <a href=#1105 id=1105 data-nosnippet>1105</a>            }
 <a href=#1106 id=1106 data-nosnippet>1106</a>            PrimitiveType::UInt8 =&gt; ArrayValue::from_u8_vec(payload.to_vec()),
 <a href=#1107 id=1107 data-nosnippet>1107</a>            PrimitiveType::UInt16 =&gt; {
@@ -2273,7 +2273,7 @@
 <a href=#2273 id=2273 data-nosnippet>2273</a>        )
 <a href=#2274 id=2274 data-nosnippet>2274</a>    };
 <a href=#2275 id=2275 data-nosnippet>2275</a>
-<a href=#2276 id=2276 data-nosnippet>2276</a>    <span class="kw">if </span><span class="macro">status !</span>= <span class="number">0 </span>{
+<a href=#2276 id=2276 data-nosnippet>2276</a>    <span class="kw">if </span>status != <span class="number">0 </span>{
 <a href=#2277 id=2277 data-nosnippet>2277</a>        <span class="kw">let </span>err = <span class="kw">if </span>out_err.is_null() {
 <a href=#2278 id=2278 data-nosnippet>2278</a>            <span class="string">"unknown C++ encode error"</span>.to_string()
 <a href=#2279 id=2279 data-nosnippet>2279</a>        } <span class="kw">else </span>{
@@ -2320,7 +2320,7 @@
 <a href=#2320 id=2320 data-nosnippet>2320</a>        )
 <a href=#2321 id=2321 data-nosnippet>2321</a>    };
 <a href=#2322 id=2322 data-nosnippet>2322</a>
-<a href=#2323 id=2323 data-nosnippet>2323</a>    <span class="kw">if </span><span class="macro">status !</span>= <span class="number">0 </span>{
+<a href=#2323 id=2323 data-nosnippet>2323</a>    <span class="kw">if </span>status != <span class="number">0 </span>{
 <a href=#2324 id=2324 data-nosnippet>2324</a>        <span class="kw">let </span>err = <span class="kw">if </span>out_err.is_null() {
 <a href=#2325 id=2325 data-nosnippet>2325</a>            <span class="string">"unknown C++ decode error"</span>.to_string()
 <a href=#2326 id=2326 data-nosnippet>2326</a>        } <span class="kw">else </span>{
@@ -2338,7 +2338,7 @@
 <a href=#2338 id=2338 data-nosnippet>2338</a>        casacore_cpp_aipsio_free_offsets(out_offsets_ptr);
 <a href=#2339 id=2339 data-nosnippet>2339</a>    }
 <a href=#2340 id=2340 data-nosnippet>2340</a>
-<a href=#2341 id=2341 data-nosnippet>2341</a>    payload_to_value(type_tag.primitive, <span class="macro">is_array !</span>= <span class="number">0</span>, <span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>offsets)
+<a href=#2341 id=2341 data-nosnippet>2341</a>    payload_to_value(type_tag.primitive, is_array != <span class="number">0</span>, <span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>offsets)
 <a href=#2342 id=2342 data-nosnippet>2342</a>}
 <a href=#2343 id=2343 data-nosnippet>2343</a>
 <a href=#2344 id=2344 data-nosnippet>2344</a><span class="attr">#[cfg(test)]
@@ -3017,7 +3017,7 @@
 <a href=#3017 id=3017 data-nosnippet>3017</a>        }
 <a href=#3018 id=3018 data-nosnippet>3018</a>    };
 <a href=#3019 id=3019 data-nosnippet>3019</a>
-<a href=#3020 id=3020 data-nosnippet>3020</a>    <span class="kw">if </span><span class="macro">rc !</span>= <span class="number">0 </span>{
+<a href=#3020 id=3020 data-nosnippet>3020</a>    <span class="kw">if </span>rc != <span class="number">0 </span>{
 <a href=#3021 id=3021 data-nosnippet>3021</a>        <span class="kw">let </span>msg = <span class="kw">if </span>error.is_null() {
 <a href=#3022 id=3022 data-nosnippet>3022</a>            <span class="string">"unknown C++ error"</span>.to_string()
 <a href=#3023 id=3023 data-nosnippet>3023</a>        } <span class="kw">else </span>{
@@ -3201,7 +3201,7 @@
 <a href=#3201 id=3201 data-nosnippet>3201</a>        }
 <a href=#3202 id=3202 data-nosnippet>3202</a>    };
 <a href=#3203 id=3203 data-nosnippet>3203</a>
-<a href=#3204 id=3204 data-nosnippet>3204</a>    <span class="kw">if </span><span class="macro">rc !</span>= <span class="number">0 </span>{
+<a href=#3204 id=3204 data-nosnippet>3204</a>    <span class="kw">if </span>rc != <span class="number">0 </span>{
 <a href=#3205 id=3205 data-nosnippet>3205</a>        <span class="kw">let </span>msg = <span class="kw">if </span>error.is_null() {
 <a href=#3206 id=3206 data-nosnippet>3206</a>            <span class="string">"unknown C++ error"</span>.to_string()
 <a href=#3207 id=3207 data-nosnippet>3207</a>        } <span class="kw">else </span>{
@@ -3253,7 +3253,7 @@
 <a href=#3253 id=3253 data-nosnippet>3253</a>        )
 <a href=#3254 id=3254 data-nosnippet>3254</a>    };
 <a href=#3255 id=3255 data-nosnippet>3255</a>
-<a href=#3256 id=3256 data-nosnippet>3256</a>    <span class="kw">if </span><span class="macro">rc !</span>= <span class="number">0 </span>{
+<a href=#3256 id=3256 data-nosnippet>3256</a>    <span class="kw">if </span>rc != <span class="number">0 </span>{
 <a href=#3257 id=3257 data-nosnippet>3257</a>        <span class="kw">let </span>msg = <span class="kw">if </span>error.is_null() {
 <a href=#3258 id=3258 data-nosnippet>3258</a>            <span class="string">"unknown C++ error"</span>.to_string()
 <a href=#3259 id=3259 data-nosnippet>3259</a>        } <span class="kw">else </span>{
@@ -3539,7 +3539,7 @@
 <a href=#3539 id=3539 data-nosnippet>3539</a>            <span class="kw-2">&amp;mut </span>error,
 <a href=#3540 id=3540 data-nosnippet>3540</a>        )
 <a href=#3541 id=3541 data-nosnippet>3541</a>    };
-<a href=#3542 id=3542 data-nosnippet>3542</a>    <span class="kw">if </span><span class="macro">rc !</span>= <span class="number">0 </span>{
+<a href=#3542 id=3542 data-nosnippet>3542</a>    <span class="kw">if </span>rc != <span class="number">0 </span>{
 <a href=#3543 id=3543 data-nosnippet>3543</a>        <span class="kw">let </span>msg = <span class="kw">if </span>error.is_null() {
 <a href=#3544 id=3544 data-nosnippet>3544</a>            <span class="string">"unknown C++ error"</span>.to_string()
 <a href=#3545 id=3545 data-nosnippet>3545</a>        } <span class="kw">else </span>{
@@ -3583,7 +3583,7 @@
 <a href=#3583 id=3583 data-nosnippet>3583</a>            <span class="kw-2">&amp;mut </span>error,
 <a href=#3584 id=3584 data-nosnippet>3584</a>        )
 <a href=#3585 id=3585 data-nosnippet>3585</a>    };
-<a href=#3586 id=3586 data-nosnippet>3586</a>    <span class="kw">if </span><span class="macro">rc !</span>= <span class="number">0 </span>{
+<a href=#3586 id=3586 data-nosnippet>3586</a>    <span class="kw">if </span>rc != <span class="number">0 </span>{
 <a href=#3587 id=3587 data-nosnippet>3587</a>        <span class="kw">let </span>msg = <span class="kw">if </span>error.is_null() {
 <a href=#3588 id=3588 data-nosnippet>3588</a>            <span class="string">"unknown C++ error"</span>.to_string()
 <a href=#3589 id=3589 data-nosnippet>3589</a>        } <span class="kw">else </span>{
@@ -4206,7 +4206,7 @@
 <a href=#4206 id=4206 data-nosnippet>4206</a>    };
 <a href=#4207 id=4207 data-nosnippet>4207</a>    <span class="kw">if </span>rc == <span class="number">0 </span>{
 <a href=#4208 id=4208 data-nosnippet>4208</a>        data.truncate(nread <span class="kw">as </span>usize);
-<a href=#4209 id=4209 data-nosnippet>4209</a>        <span class="prelude-val">Ok</span>(data.into_iter().map(|value| <span class="macro">value !</span>= <span class="number">0</span>).collect())
+<a href=#4209 id=4209 data-nosnippet>4209</a>        <span class="prelude-val">Ok</span>(data.into_iter().map(|value| value != <span class="number">0</span>).collect())
 <a href=#4210 id=4210 data-nosnippet>4210</a>    } <span class="kw">else </span>{
 <a href=#4211 id=4211 data-nosnippet>4211</a>        <span class="prelude-val">Err</span>(take_cpp_error_message(error))
 <a href=#4212 id=4212 data-nosnippet>4212</a>    }
@@ -4851,7 +4851,7 @@
 <a href=#4851 id=4851 data-nosnippet>4851</a>    };
 <a href=#4852 id=4852 data-nosnippet>4852</a>    <span class="kw">if </span>rc == <span class="number">0 </span>{
 <a href=#4853 id=4853 data-nosnippet>4853</a>        data.truncate(nread <span class="kw">as </span>usize);
-<a href=#4854 id=4854 data-nosnippet>4854</a>        <span class="prelude-val">Ok</span>(data.into_iter().map(|value| <span class="macro">value !</span>= <span class="number">0</span>).collect())
+<a href=#4854 id=4854 data-nosnippet>4854</a>        <span class="prelude-val">Ok</span>(data.into_iter().map(|value| value != <span class="number">0</span>).collect())
 <a href=#4855 id=4855 data-nosnippet>4855</a>    } <span class="kw">else </span>{
 <a href=#4856 id=4856 data-nosnippet>4856</a>        <span class="prelude-val">Err</span>(take_cpp_error_message(error))
 <a href=#4857 id=4857 data-nosnippet>4857</a>    }
@@ -5069,7 +5069,7 @@
 <a href=#5069 id=5069 data-nosnippet>5069</a>    <span class="kw">if </span>rc == <span class="number">0 </span>{
 <a href=#5070 id=5070 data-nosnippet>5070</a>        data.truncate(nread <span class="kw">as </span>usize);
 <a href=#5071 id=5071 data-nosnippet>5071</a>        shape.truncate(ndim <span class="kw">as </span>usize);
-<a href=#5072 id=5072 data-nosnippet>5072</a>        <span class="kw">let </span>bools: Vec&lt;bool&gt; = data.into_iter().map(|v| <span class="macro">v !</span>= <span class="number">0</span>).collect();
+<a href=#5072 id=5072 data-nosnippet>5072</a>        <span class="kw">let </span>bools: Vec&lt;bool&gt; = data.into_iter().map(|v| v != <span class="number">0</span>).collect();
 <a href=#5073 id=5073 data-nosnippet>5073</a>        <span class="prelude-val">Ok</span>((bools, shape))
 <a href=#5074 id=5074 data-nosnippet>5074</a>    } <span class="kw">else </span>{
 <a href=#5075 id=5075 data-nosnippet>5075</a>        <span class="prelude-val">Err</span>(take_cpp_error_message(error))
@@ -5403,7 +5403,7 @@
 <a href=#5403 id=5403 data-nosnippet>5403</a>        )
 <a href=#5404 id=5404 data-nosnippet>5404</a>    };
 <a href=#5405 id=5405 data-nosnippet>5405</a>
-<a href=#5406 id=5406 data-nosnippet>5406</a>    <span class="kw">if </span><span class="macro">rc !</span>= <span class="number">0 </span>{
+<a href=#5406 id=5406 data-nosnippet>5406</a>    <span class="kw">if </span>rc != <span class="number">0 </span>{
 <a href=#5407 id=5407 data-nosnippet>5407</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(take_cpp_error_message(error));
 <a href=#5408 id=5408 data-nosnippet>5408</a>    }
 <a href=#5409 id=5409 data-nosnippet>5409</a>

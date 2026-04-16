@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-ms/src/msexplore.rs`."><title>msexplore.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casa_ms/</div>msexplore.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-ms/src/msexplore.rs`."><title>msexplore.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_ms/</div>msexplore.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Generic MeasurementSet plotting specifications and export helpers.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! `msexplore` is the next plotting layer above the curated MeasurementSet
@@ -1593,13 +1593,13 @@
 <a href=#1593 id=1593 data-nosnippet>1593</a>    <span class="doccomment">/// Validate the current plot specification against the current engine.
 <a href=#1594 id=1594 data-nosnippet>1594</a>    </span><span class="kw">pub fn </span>validate(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
 <a href=#1595 id=1595 data-nosnippet>1595</a>        <span class="self">self</span>.validate_common()<span class="question-mark">?</span>;
-<a href=#1596 id=1596 data-nosnippet>1596</a>        <span class="kw">if </span><span class="self">self</span>.layout.<span class="macro">rowindex !</span>= <span class="number">0 </span>|| <span class="self">self</span>.layout.<span class="macro">colindex !</span>= <span class="number">0 </span>|| <span class="self">self</span>.layout.<span class="macro">plotindex !</span>= <span class="number">0 </span>{
+<a href=#1596 id=1596 data-nosnippet>1596</a>        <span class="kw">if </span><span class="self">self</span>.layout.rowindex != <span class="number">0 </span>|| <span class="self">self</span>.layout.colindex != <span class="number">0 </span>|| <span class="self">self</span>.layout.plotindex != <span class="number">0 </span>{
 <a href=#1597 id=1597 data-nosnippet>1597</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(
 <a href=#1598 id=1598 data-nosnippet>1598</a>                <span class="string">"msexplore per-plot rowindex/colindex/plotindex placement is reserved for multi-plot page composition"</span>.to_string(),
 <a href=#1599 id=1599 data-nosnippet>1599</a>            );
 <a href=#1600 id=1600 data-nosnippet>1600</a>        }
 <a href=#1601 id=1601 data-nosnippet>1601</a>        <span class="kw">let </span>iterated = <span class="self">self</span>.iteration.iteraxis.is_some();
-<a href=#1602 id=1602 data-nosnippet>1602</a>        <span class="kw">if </span>!iterated &amp;&amp; (<span class="self">self</span>.layout.<span class="macro">gridrows !</span>= <span class="number">1 </span>|| <span class="self">self</span>.layout.<span class="macro">gridcols !</span>= <span class="number">1</span>) {
+<a href=#1602 id=1602 data-nosnippet>1602</a>        <span class="kw">if </span>!iterated &amp;&amp; (<span class="self">self</span>.layout.gridrows != <span class="number">1 </span>|| <span class="self">self</span>.layout.gridcols != <span class="number">1</span>) {
 <a href=#1603 id=1603 data-nosnippet>1603</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(
 <a href=#1604 id=1604 data-nosnippet>1604</a>                <span class="string">"msexplore gridrows/gridcols require --iteraxis; non-iterated standalone plots still render a single panel"</span>.to_string(),
 <a href=#1605 id=1605 data-nosnippet>1605</a>            );
@@ -1719,7 +1719,7 @@
 <a href=#1719 id=1719 data-nosnippet>1719</a>                        </span>.to_string(),
 <a href=#1720 id=1720 data-nosnippet>1720</a>                );
 <a href=#1721 id=1721 data-nosnippet>1721</a>            }
-<a href=#1722 id=1722 data-nosnippet>1722</a>            <span class="kw">if </span><span class="self">self</span>.<span class="macro">preset !</span>= <span class="prelude-val">Some</span>(MsPlotPreset::AmplitudePhaseVsTimeStacked)
+<a href=#1722 id=1722 data-nosnippet>1722</a>            <span class="kw">if </span><span class="self">self</span>.preset != <span class="prelude-val">Some</span>(MsPlotPreset::AmplitudePhaseVsTimeStacked)
 <a href=#1723 id=1723 data-nosnippet>1723</a>                &amp;&amp; flag_edit.plot_index.is_some()
 <a href=#1724 id=1724 data-nosnippet>1724</a>            {
 <a href=#1725 id=1725 data-nosnippet>1725</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(
@@ -1925,7 +1925,7 @@
 <a href=#1925 id=1925 data-nosnippet>1925</a>            <span class="kw">match </span>expected_grid {
 <a href=#1926 id=1926 data-nosnippet>1926</a>                <span class="prelude-val">None </span>=&gt; expected_grid = <span class="prelude-val">Some</span>((layout.gridrows, layout.gridcols)),
 <a href=#1927 id=1927 data-nosnippet>1927</a>                <span class="prelude-val">Some</span>((gridrows, gridcols))
-<a href=#1928 id=1928 data-nosnippet>1928</a>                    <span class="kw">if </span><span class="macro">gridrows !</span>= layout.gridrows || <span class="macro">gridcols !</span>= layout.gridcols =&gt;
+<a href=#1928 id=1928 data-nosnippet>1928</a>                    <span class="kw">if </span>gridrows != layout.gridrows || gridcols != layout.gridcols =&gt;
 <a href=#1929 id=1929 data-nosnippet>1929</a>                {
 <a href=#1930 id=1930 data-nosnippet>1930</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(
 <a href=#1931 id=1931 data-nosnippet>1931</a>                        <span class="string">"msexplore multi-plot page composition requires all child plots to agree on gridrows/gridcols"</span>.to_string(),
@@ -2648,7 +2648,7 @@
 <a href=#2648 id=2648 data-nosnippet>2648</a>                MsFlagAction::Flag =&gt; <span class="bool-val">true</span>,
 <a href=#2649 id=2649 data-nosnippet>2649</a>                MsFlagAction::Unflag =&gt; <span class="bool-val">false</span>,
 <a href=#2650 id=2650 data-nosnippet>2650</a>            };
-<a href=#2651 id=2651 data-nosnippet>2651</a>            <span class="kw">if </span><span class="macro">old_flag !</span>= new_flag {
+<a href=#2651 id=2651 data-nosnippet>2651</a>            <span class="kw">if </span>old_flag != new_flag {
 <a href=#2652 id=2652 data-nosnippet>2652</a>                new_matrix[(corr, chan)] = new_flag;
 <a href=#2653 id=2653 data-nosnippet>2653</a>                sample_edits.push(MsFlagSampleEdit {
 <a href=#2654 id=2654 data-nosnippet>2654</a>                    row,
@@ -2661,7 +2661,7 @@
 <a href=#2661 id=2661 data-nosnippet>2661</a>            }
 <a href=#2662 id=2662 data-nosnippet>2662</a>        }
 <a href=#2663 id=2663 data-nosnippet>2663</a>        <span class="kw">let </span>new_flag_row = new_matrix.iter().all(|value| <span class="kw-2">*</span>value);
-<a href=#2664 id=2664 data-nosnippet>2664</a>        <span class="kw">if </span>changed_samples &gt; <span class="number">0 </span>|| <span class="macro">old_flag_row !</span>= new_flag_row {
+<a href=#2664 id=2664 data-nosnippet>2664</a>        <span class="kw">if </span>changed_samples &gt; <span class="number">0 </span>|| old_flag_row != new_flag_row {
 <a href=#2665 id=2665 data-nosnippet>2665</a>            row_edits.push(MsFlagRowEdit {
 <a href=#2666 id=2666 data-nosnippet>2666</a>                row,
 <a href=#2667 id=2667 data-nosnippet>2667</a>                old_flag_row,
@@ -3456,7 +3456,7 @@
 <a href=#3456 id=3456 data-nosnippet>3456</a>            (<span class="string">"SIGMA_SPECTRUM"</span>, sigma_spectrum_grid.as_ref()),
 <a href=#3457 id=3457 data-nosnippet>3457</a>        ] {
 <a href=#3458 id=3458 data-nosnippet>3458</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(grid) = grid {
-<a href=#3459 id=3459 data-nosnippet>3459</a>                <span class="kw">if </span>grid.<span class="macro">corr_count !</span>= corr_count || grid.<span class="macro">chan_count !</span>= chan_count {
+<a href=#3459 id=3459 data-nosnippet>3459</a>                <span class="kw">if </span>grid.corr_count != corr_count || grid.chan_count != chan_count {
 <a href=#3460 id=3460 data-nosnippet>3460</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#3461 id=3461 data-nosnippet>3461</a>                        <span class="string">"{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]"</span>,
 <a href=#3462 id=3462 data-nosnippet>3462</a>                        grid.corr_count, grid.chan_count
@@ -3938,7 +3938,7 @@
 <a href=#3938 id=3938 data-nosnippet>3938</a>    antenna2: i32,
 <a href=#3939 id=3939 data-nosnippet>3939</a>) -&gt; Vec&lt;Complex64&gt; {
 <a href=#3940 id=3940 data-nosnippet>3940</a>    <span class="kw">match </span>baseline_token {
-<a href=#3941 id=3941 data-nosnippet>3941</a>        AveragingBaselineToken::Antenna(target) <span class="kw">if </span><span class="macro">antenna1 !</span>= antenna2 &amp;&amp; <span class="kw-2">*</span>target == antenna2 =&gt; {
+<a href=#3941 id=3941 data-nosnippet>3941</a>        AveragingBaselineToken::Antenna(target) <span class="kw">if </span>antenna1 != antenna2 &amp;&amp; <span class="kw-2">*</span>target == antenna2 =&gt; {
 <a href=#3942 id=3942 data-nosnippet>3942</a>            samples.iter().map(|value| value.conj()).collect()
 <a href=#3943 id=3943 data-nosnippet>3943</a>        }
 <a href=#3944 id=3944 data-nosnippet>3944</a>        <span class="kw">_ </span>=&gt; samples.to_vec(),
@@ -4247,7 +4247,7 @@
 <a href=#4247 id=4247 data-nosnippet>4247</a>            (<span class="string">"SIGMA_SPECTRUM"</span>, sigma_spectrum_grid.as_ref()),
 <a href=#4248 id=4248 data-nosnippet>4248</a>        ] {
 <a href=#4249 id=4249 data-nosnippet>4249</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(grid) = grid
-<a href=#4250 id=4250 data-nosnippet>4250</a>                &amp;&amp; (grid.<span class="macro">corr_count !</span>= corr_count || grid.<span class="macro">chan_count !</span>= chan_count)
+<a href=#4250 id=4250 data-nosnippet>4250</a>                &amp;&amp; (grid.corr_count != corr_count || grid.chan_count != chan_count)
 <a href=#4251 id=4251 data-nosnippet>4251</a>            {
 <a href=#4252 id=4252 data-nosnippet>4252</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#4253 id=4253 data-nosnippet>4253</a>                    <span class="string">"{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]"</span>,
@@ -4765,11 +4765,11 @@
 <a href=#4765 id=4765 data-nosnippet>4765</a>            <span class="string">"msexplore stacked paired presets already define their subplot pairing"</span>.to_string(),
 <a href=#4766 id=4766 data-nosnippet>4766</a>        );
 <a href=#4767 id=4767 data-nosnippet>4767</a>    }
-<a href=#4768 id=4768 data-nosnippet>4768</a>    <span class="kw">if </span>spec.layout.<span class="macro">gridrows !</span>= <span class="number">1
-<a href=#4769 id=4769 data-nosnippet>4769</a>        </span>|| spec.layout.<span class="macro">gridcols !</span>= <span class="number">1
-<a href=#4770 id=4770 data-nosnippet>4770</a>        </span>|| spec.layout.<span class="macro">rowindex !</span>= <span class="number">0
-<a href=#4771 id=4771 data-nosnippet>4771</a>        </span>|| spec.layout.<span class="macro">colindex !</span>= <span class="number">0
-<a href=#4772 id=4772 data-nosnippet>4772</a>        </span>|| spec.layout.<span class="macro">plotindex !</span>= <span class="number">0
+<a href=#4768 id=4768 data-nosnippet>4768</a>    <span class="kw">if </span>spec.layout.gridrows != <span class="number">1
+<a href=#4769 id=4769 data-nosnippet>4769</a>        </span>|| spec.layout.gridcols != <span class="number">1
+<a href=#4770 id=4770 data-nosnippet>4770</a>        </span>|| spec.layout.rowindex != <span class="number">0
+<a href=#4771 id=4771 data-nosnippet>4771</a>        </span>|| spec.layout.colindex != <span class="number">0
+<a href=#4772 id=4772 data-nosnippet>4772</a>        </span>|| spec.layout.plotindex != <span class="number">0
 <a href=#4773 id=4773 data-nosnippet>4773</a>    </span>{
 <a href=#4774 id=4774 data-nosnippet>4774</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(
 <a href=#4775 id=4775 data-nosnippet>4775</a>            <span class="string">"msexplore stacked paired presets currently manage their own fixed two-row page layout"
@@ -5916,7 +5916,7 @@
 <a href=#5916 id=5916 data-nosnippet>5916</a><span class="kw">where
 <a href=#5917 id=5917 data-nosnippet>5917</a>    </span>F: FnMut(Complex64, Complex64) -&gt; Complex64,
 <a href=#5918 id=5918 data-nosnippet>5918</a>{
-<a href=#5919 id=5919 data-nosnippet>5919</a>    <span class="kw">if </span>left.<span class="macro">corr_count !</span>= right.corr_count || left.<span class="macro">chan_count !</span>= right.chan_count {
+<a href=#5919 id=5919 data-nosnippet>5919</a>    <span class="kw">if </span>left.corr_count != right.corr_count || left.chan_count != right.chan_count {
 <a href=#5920 id=5920 data-nosnippet>5920</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#5921 id=5921 data-nosnippet>5921</a>            <span class="string">"msexplore data columns have mismatched shapes [{}, {}] and [{}, {}]"</span>,
 <a href=#5922 id=5922 data-nosnippet>5922</a>            left.corr_count, left.chan_count, right.corr_count, right.chan_count
@@ -6384,23 +6384,23 @@
 <a href=#6384 id=6384 data-nosnippet>6384</a>        <span class="kw">let </span>first = <span class="kw-2">&amp;</span>items[<span class="number">0</span>].plot;
 <a href=#6385 id=6385 data-nosnippet>6385</a>        <span class="kw">let </span>legend_position = first.legend_position;
 <a href=#6386 id=6386 data-nosnippet>6386</a>        <span class="kw">for </span>item <span class="kw">in </span>items.iter().skip(<span class="number">1</span>) {
-<a href=#6387 id=6387 data-nosnippet>6387</a>            <span class="kw">if </span>item.plot.<span class="macro">x_axis !</span>= first.x_axis
-<a href=#6388 id=6388 data-nosnippet>6388</a>                || item.plot.<span class="macro">y_axis !</span>= first.y_axis
-<a href=#6389 id=6389 data-nosnippet>6389</a>                || item.plot.<span class="macro">secondary_y_axis !</span>= first.secondary_y_axis
+<a href=#6387 id=6387 data-nosnippet>6387</a>            <span class="kw">if </span>item.plot.x_axis != first.x_axis
+<a href=#6388 id=6388 data-nosnippet>6388</a>                || item.plot.y_axis != first.y_axis
+<a href=#6389 id=6389 data-nosnippet>6389</a>                || item.plot.secondary_y_axis != first.secondary_y_axis
 <a href=#6390 id=6390 data-nosnippet>6390</a>            {
 <a href=#6391 id=6391 data-nosnippet>6391</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#6392 id=6392 data-nosnippet>6392</a>                    <span class="string">"scatter page cell ({rowindex}, {colindex}) mixes incompatible axes; overplots currently require matching x/y axis configurations"
 <a href=#6393 id=6393 data-nosnippet>6393</a>                </span>));
 <a href=#6394 id=6394 data-nosnippet>6394</a>            }
-<a href=#6395 id=6395 data-nosnippet>6395</a>            <span class="kw">if </span>item.plot.<span class="macro">fixed_x_bounds !</span>= first.fixed_x_bounds
-<a href=#6396 id=6396 data-nosnippet>6396</a>                || item.plot.<span class="macro">fixed_y_bounds !</span>= first.fixed_y_bounds
-<a href=#6397 id=6397 data-nosnippet>6397</a>                || item.plot.<span class="macro">secondary_fixed_y_bounds !</span>= first.secondary_fixed_y_bounds
+<a href=#6395 id=6395 data-nosnippet>6395</a>            <span class="kw">if </span>item.plot.fixed_x_bounds != first.fixed_x_bounds
+<a href=#6396 id=6396 data-nosnippet>6396</a>                || item.plot.fixed_y_bounds != first.fixed_y_bounds
+<a href=#6397 id=6397 data-nosnippet>6397</a>                || item.plot.secondary_fixed_y_bounds != first.secondary_fixed_y_bounds
 <a href=#6398 id=6398 data-nosnippet>6398</a>            {
 <a href=#6399 id=6399 data-nosnippet>6399</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#6400 id=6400 data-nosnippet>6400</a>                    <span class="string">"scatter page cell ({rowindex}, {colindex}) mixes incompatible fixed axis bounds"
 <a href=#6401 id=6401 data-nosnippet>6401</a>                </span>));
 <a href=#6402 id=6402 data-nosnippet>6402</a>            }
-<a href=#6403 id=6403 data-nosnippet>6403</a>            <span class="kw">if </span>item.plot.<span class="macro">legend_position !</span>= legend_position {
+<a href=#6403 id=6403 data-nosnippet>6403</a>            <span class="kw">if </span>item.plot.legend_position != legend_position {
 <a href=#6404 id=6404 data-nosnippet>6404</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#6405 id=6405 data-nosnippet>6405</a>                    <span class="string">"scatter page cell ({rowindex}, {colindex}) mixes incompatible legend positions"
 <a href=#6406 id=6406 data-nosnippet>6406</a>                </span>));
@@ -7098,7 +7098,7 @@
 <a href=#7098 id=7098 data-nosnippet>7098</a>    theme: ListObsPlotTheme,
 <a href=#7099 id=7099 data-nosnippet>7099</a>) -&gt; RGBColor {
 <a href=#7100 id=7100 data-nosnippet>7100</a>    <span class="kw">let </span>offset =
-<a href=#7101 id=7101 data-nosnippet>7101</a>        <span class="kw">if </span>secondary_y_axis.is_some_and(|secondary| axis == secondary &amp;&amp; <span class="macro">axis !</span>= primary_y_axis) {
+<a href=#7101 id=7101 data-nosnippet>7101</a>        <span class="kw">if </span>secondary_y_axis.is_some_and(|secondary| axis == secondary &amp;&amp; axis != primary_y_axis) {
 <a href=#7102 id=7102 data-nosnippet>7102</a>            <span class="number">1
 <a href=#7103 id=7103 data-nosnippet>7103</a>        </span>} <span class="kw">else </span>{
 <a href=#7104 id=7104 data-nosnippet>7104</a>            <span class="number">0
@@ -7113,7 +7113,7 @@
 <a href=#7113 id=7113 data-nosnippet>7113</a>    theme: ListObsPlotTheme,
 <a href=#7114 id=7114 data-nosnippet>7114</a>) -&gt; ScatterSeriesRenderStyle {
 <a href=#7115 id=7115 data-nosnippet>7115</a>    <span class="kw">let </span>offset = <span class="kw">if </span>secondary_y_axis
-<a href=#7116 id=7116 data-nosnippet>7116</a>        .is_some_and(|secondary| series.y_axis == secondary &amp;&amp; <span class="macro">secondary !</span>= primary_y_axis)
+<a href=#7116 id=7116 data-nosnippet>7116</a>        .is_some_and(|secondary| series.y_axis == secondary &amp;&amp; secondary != primary_y_axis)
 <a href=#7117 id=7117 data-nosnippet>7117</a>    {
 <a href=#7118 id=7118 data-nosnippet>7118</a>        <span class="number">1
 <a href=#7119 id=7119 data-nosnippet>7119</a>    </span>} <span class="kw">else </span>{

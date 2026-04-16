@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-aipsio/src/demo.rs`."><title>demo.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_aipsio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">casa_aipsio/</div>demo.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-aipsio/src/demo.rs`."><title>demo.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_aipsio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_aipsio/</div>demo.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Demo helpers and runnable outputs for `casa-aipsio`.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! This module intentionally keeps demonstration code outside the core
@@ -215,43 +215,43 @@
 <a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">let </span>too = io.get_complex32()<span class="question-mark">?</span>;
 <a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>tdoo = io.get_complex64()<span class="question-mark">?</span>;
 <a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">if </span><span class="macro">tbo !</span>= tbi {
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">if </span>tbo != tbi {
 <a href=#219 id=219 data-nosnippet>219</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"Bool {tbi} {tbo}"</span>));
 <a href=#220 id=220 data-nosnippet>220</a>    }
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">if </span><span class="macro">tco !</span>= tci {
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">if </span>tco != tci {
 <a href=#222 id=222 data-nosnippet>222</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"Char {tci} {tco}"</span>));
 <a href=#223 id=223 data-nosnippet>223</a>    }
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">if </span><span class="macro">tuco !</span>= tuci {
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">if </span>tuco != tuci {
 <a href=#225 id=225 data-nosnippet>225</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"uChar {tuci} {tuco}"</span>));
 <a href=#226 id=226 data-nosnippet>226</a>    }
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">if </span><span class="macro">tso !</span>= tsi {
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">if </span>tso != tsi {
 <a href=#228 id=228 data-nosnippet>228</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"short {tsi} {tso}"</span>));
 <a href=#229 id=229 data-nosnippet>229</a>    }
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">if </span><span class="macro">tuso !</span>= tusi {
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">if </span>tuso != tusi {
 <a href=#231 id=231 data-nosnippet>231</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"ushort {tusi} {tuso}"</span>));
 <a href=#232 id=232 data-nosnippet>232</a>    }
-<a href=#233 id=233 data-nosnippet>233</a>    <span class="kw">if </span><span class="macro">tio !</span>= tii {
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="kw">if </span>tio != tii {
 <a href=#234 id=234 data-nosnippet>234</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"int {tii} {tio}"</span>));
 <a href=#235 id=235 data-nosnippet>235</a>    }
-<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">if </span><span class="macro">tuio !</span>= tuii {
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">if </span>tuio != tuii {
 <a href=#237 id=237 data-nosnippet>237</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"uint {tuii} {tuio}"</span>));
 <a href=#238 id=238 data-nosnippet>238</a>    }
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">if </span><span class="macro">tlo !</span>= tli {
+<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">if </span>tlo != tli {
 <a href=#240 id=240 data-nosnippet>240</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"long {tli} {tlo}"</span>));
 <a href=#241 id=241 data-nosnippet>241</a>    }
-<a href=#242 id=242 data-nosnippet>242</a>    <span class="kw">if </span><span class="macro">tulo !</span>= tuli {
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="kw">if </span>tulo != tuli {
 <a href=#243 id=243 data-nosnippet>243</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"ulong {tuli} {tulo}"</span>));
 <a href=#244 id=244 data-nosnippet>244</a>    }
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">if </span><span class="macro">tfo !</span>= tfi {
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">if </span>tfo != tfi {
 <a href=#246 id=246 data-nosnippet>246</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"float {tfi} {tfo}"</span>));
 <a href=#247 id=247 data-nosnippet>247</a>    }
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">if </span><span class="macro">tdo !</span>= tdi {
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">if </span>tdo != tdi {
 <a href=#249 id=249 data-nosnippet>249</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"double {tdi} {tdo}"</span>));
 <a href=#250 id=250 data-nosnippet>250</a>    }
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">if </span><span class="macro">too !</span>= toi {
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">if </span>too != toi {
 <a href=#252 id=252 data-nosnippet>252</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"Complex {:?} {:?}"</span>, toi, too));
 <a href=#253 id=253 data-nosnippet>253</a>    }
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">if </span><span class="macro">tdoo !</span>= tdoi {
+<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">if </span>tdoo != tdoi {
 <a href=#255 id=255 data-nosnippet>255</a>        append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"DComplex {:?} {:?}"</span>, tdoi, tdoo));
 <a href=#256 id=256 data-nosnippet>256</a>    }
 <a href=#257 id=257 data-nosnippet>257</a>
@@ -311,7 +311,7 @@
 <a href=#311 id=311 data-nosnippet>311</a>
 <a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">for </span>(idx, expected) <span class="kw">in </span>arr.iter().take(<span class="number">250_000</span>).enumerate() {
 <a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">let </span>lo = io.get_i32()<span class="question-mark">?</span>;
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">if </span><span class="macro">lo !</span>= <span class="kw-2">*</span>expected {
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">if </span>lo != <span class="kw-2">*</span>expected {
 <a href=#315 id=315 data-nosnippet>315</a>            append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{lo} {idx}"</span>));
 <a href=#316 id=316 data-nosnippet>316</a>        }
 <a href=#317 id=317 data-nosnippet>317</a>    }
@@ -321,7 +321,7 @@
 <a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">let </span><span class="kw-2">mut </span>arr_read = <span class="macro">vec!</span>[<span class="number">0_i32</span>; len];
 <a href=#322 id=322 data-nosnippet>322</a>    io.get_i32_into(<span class="kw-2">&amp;mut </span>arr_read)<span class="question-mark">?</span>;
 <a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">for </span>(idx, value) <span class="kw">in </span>arr_read.iter().enumerate() {
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">value !</span>= idx <span class="kw">as </span>i32 {
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">if </span><span class="kw-2">*</span>value != idx <span class="kw">as </span>i32 {
 <a href=#325 id=325 data-nosnippet>325</a>            append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{idx} not equal"</span>));
 <a href=#326 id=326 data-nosnippet>326</a>        }
 <a href=#327 id=327 data-nosnippet>327</a>    }
@@ -331,7 +331,7 @@
 <a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">let </span><span class="kw-2">mut </span>barri = <span class="macro">vec!</span>[<span class="bool-val">false</span>; len];
 <a href=#332 id=332 data-nosnippet>332</a>    io.get_bool_into(<span class="kw-2">&amp;mut </span>barri)<span class="question-mark">?</span>;
 <a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">for </span>(idx, value) <span class="kw">in </span>barri.iter().enumerate() {
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">value !</span>= barr[idx] {
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">if </span><span class="kw-2">*</span>value != barr[idx] {
 <a href=#335 id=335 data-nosnippet>335</a>            append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{idx} barri not equal"</span>));
 <a href=#336 id=336 data-nosnippet>336</a>        }
 <a href=#337 id=337 data-nosnippet>337</a>    }
@@ -339,7 +339,7 @@
 <a href=#339 id=339 data-nosnippet>339</a>    <span class="kw">let </span>lp = io.getnew_i32()<span class="question-mark">?</span>;
 <a href=#340 id=340 data-nosnippet>340</a>    append_line(out, <span class="kw-2">&amp;</span>lp.len().to_string());
 <a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">for </span>(idx, value) <span class="kw">in </span>lp.iter().enumerate() {
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">value !</span>= idx <span class="kw">as </span>i32 {
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">if </span><span class="kw-2">*</span>value != idx <span class="kw">as </span>i32 {
 <a href=#343 id=343 data-nosnippet>343</a>            append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{idx} not equal"</span>));
 <a href=#344 id=344 data-nosnippet>344</a>        }
 <a href=#345 id=345 data-nosnippet>345</a>    }
@@ -347,7 +347,7 @@
 <a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">let </span>barrp = io.getnew_bool()<span class="question-mark">?</span>;
 <a href=#348 id=348 data-nosnippet>348</a>    append_line(out, <span class="kw-2">&amp;</span>barrp.len().to_string());
 <a href=#349 id=349 data-nosnippet>349</a>    <span class="kw">for </span>(idx, value) <span class="kw">in </span>barrp.iter().enumerate() {
-<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw">if </span><span class="kw-2">*</span><span class="macro">value !</span>= barr[idx] {
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw">if </span><span class="kw-2">*</span>value != barr[idx] {
 <a href=#351 id=351 data-nosnippet>351</a>            append_line(out, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{idx} barrp not equal"</span>));
 <a href=#352 id=352 data-nosnippet>352</a>        }
 <a href=#353 id=353 data-nosnippet>353</a>    }
