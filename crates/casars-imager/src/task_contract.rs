@@ -1261,16 +1261,128 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::fs;
     use std::path::PathBuf;
+    use std::time::Duration;
 
-    use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+    use casa_imaging::{
+        BeamFitDebugSummary, CleanStopReason, Deconvolver, ImagingStageTimings, RestoringBeamMode,
+        WTermMode, WeightingMode,
+    };
     use casa_provider_contracts::ProviderSurfaceKind;
+    use tempfile::TempDir;
 
     use super::{
-        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerRunTaskRequest,
-        ImagerTaskSchemaBundle, ImagerWeighting,
+        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerCleanStopReason,
+        ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerDeconvolver, ImagerPlaneSelection,
+        ImagerRunTaskRequest, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerWeighting,
+        default_cyclefactor, default_doppler_ref, default_frequency_ref, default_gain,
+        default_max_psf_fraction, default_min_psf_fraction, default_minor_cycle_length,
+        default_nterms, default_psf_cutoff, default_write_preview_pngs,
     };
-    use crate::{CliConfig, SpectralMode};
+    use crate::{ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode};
+
+    fn sample_run_summary() -> RunSummary {
+        RunSummary {
+            warnings: vec!["warn".to_string()],
+            gridded_samples: 42,
+            major_cycles: 3,
+            minor_iterations: 9,
+            clean_stop_reason: Some(CleanStopReason::IterationLimitReached),
+            channel_summaries: vec![ChannelRunSummary {
+                channel_index: 2,
+                major_cycles: 4,
+                minor_iterations: 7,
+                clean_stop_reason: Some(CleanStopReason::CycleThresholdReached),
+                initial_residual_peak_jy_per_beam: 1.5,
+                final_residual_peak_jy_per_beam: 0.25,
+                final_cycle_threshold_jy_per_beam: 0.1,
+                minor_cycle_traces: Vec::new(),
+                beam_fit_debug: Some(BeamFitDebugSummary {
+                    peak_index: (1, 2),
+                    peak_value: 1.0,
+                    first_pass_points: 4,
+                    first_pass_blc: (0, 0),
+                    first_pass_trc: (3, 3),
+                    expanded_window_shape: (5, 5),
+                    oversampling: 2,
+                    resampled_shape: (10, 10),
+                    second_pass_points: 8,
+                    second_pass_blc: (1, 1),
+                    second_pass_trc: (8, 8),
+                }),
+            }],
+            stage_timings: ImagingStageTimings {
+                controller_overhead: Duration::from_nanos(10),
+                weighting: Duration::from_nanos(20),
+                psf_grid: Duration::from_nanos(30),
+                psf_fft: Duration::from_nanos(40),
+                psf_normalize: Duration::from_nanos(45),
+                model_fft: Duration::from_nanos(46),
+                residual_degrid_grid: Duration::from_nanos(50),
+                residual_fft: Duration::from_nanos(60),
+                residual_normalize: Duration::from_nanos(70),
+                minor_cycle: Duration::from_nanos(80),
+                minor_cycle_solve: Duration::from_nanos(90),
+                major_cycle_refresh: Duration::from_nanos(100),
+                beam_fit: Duration::from_nanos(101),
+                restore: Duration::from_nanos(102),
+                total: Duration::from_nanos(110),
+            },
+            frontend_timings: FrontendStageTimings {
+                open_measurement_set: Duration::from_nanos(11),
+                prepare_plane_input: Duration::from_nanos(22),
+                extract_phase_center: Duration::from_nanos(33),
+                run_imaging: Duration::from_nanos(44),
+                build_coordinate_system: Duration::from_nanos(55),
+                write_products: Duration::from_nanos(66),
+                total: Duration::from_nanos(77),
+            },
+        }
+    }
+
+    fn default_request() -> ImagerRunTaskRequest {
+        ImagerRunTaskRequest {
+            measurement_set: PathBuf::from("demo.ms"),
+            image_name: PathBuf::from("out/demo"),
+            image_size: 64,
+            cell_arcsec: 1.5,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            data_column: None,
+            correlation: None,
+            spectral_mode: Default::default(),
+            cube_axis: Default::default(),
+            weighting: Default::default(),
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: Default::default(),
+            deconvolver: Default::default(),
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 8,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: Default::default(),
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        }
+    }
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
@@ -1446,46 +1558,256 @@ mod tests {
     #[test]
     fn briggs_weighting_round_trips() {
         let request = ImagerRunTaskRequest {
-            measurement_set: PathBuf::from("demo.ms"),
-            image_name: PathBuf::from("out/demo"),
-            image_size: 64,
-            cell_arcsec: 1.5,
-            field_ids: None,
-            phasecenter_field: None,
-            phasecenter: None,
-            ddid: None,
-            spw_selector: None,
-            channel_start: None,
-            channel_count: None,
-            data_column: None,
-            correlation: None,
-            spectral_mode: Default::default(),
-            cube_axis: Default::default(),
             weighting: ImagerWeighting::Briggs { robust: 0.5 },
-            per_channel_weight_density: false,
-            uv_taper: None,
-            restoring_beam_mode: Default::default(),
-            deconvolver: Default::default(),
-            nterms: 1,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            niter: 0,
-            gain: 0.1,
-            threshold_jy: 0.0,
-            nsigma: 0.0,
-            psf_cutoff: 0.35,
-            minor_cycle_length: 8,
-            cyclefactor: 1.0,
-            min_psf_fraction: 0.1,
-            max_psf_fraction: 0.8,
-            mask_boxes: Vec::new(),
-            mask_image: None,
-            w_term_mode: Default::default(),
-            w_project_planes: None,
-            dirty_only: false,
-            write_preview_pngs: true,
+            ..default_request()
         };
         let config = request.to_cli_config().unwrap();
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
+    }
+
+    #[test]
+    fn plane_selection_and_enum_conversions_cover_public_variants() {
+        let cases = [
+            (ImagerPlaneSelection::StokesI, "I"),
+            (ImagerPlaneSelection::StokesQ, "Q"),
+            (ImagerPlaneSelection::StokesU, "U"),
+            (ImagerPlaneSelection::StokesV, "V"),
+            (ImagerPlaneSelection::CorrXX, "XX"),
+            (ImagerPlaneSelection::CorrYY, "YY"),
+            (ImagerPlaneSelection::CorrRR, "RR"),
+            (ImagerPlaneSelection::CorrLL, "LL"),
+        ];
+        for (selection, text) in cases {
+            assert_eq!(selection.as_cli_text(), text);
+            assert_eq!(
+                ImagerRunTaskRequest::plane_from_text(text).unwrap(),
+                selection
+            );
+        }
+        assert!(ImagerRunTaskRequest::plane_from_text("XY").is_err());
+
+        let all_reasons = [
+            CleanStopReason::GlobalThresholdReached,
+            CleanStopReason::NsigmaThresholdReached,
+            CleanStopReason::CycleThresholdReached,
+            CleanStopReason::IterationLimitReached,
+            CleanStopReason::NoCleanablePixels,
+            CleanStopReason::DivergenceDetected,
+        ];
+        for reason in all_reasons {
+            let stable: ImagerCleanStopReason = reason.into();
+            match (reason, stable) {
+                (
+                    CleanStopReason::GlobalThresholdReached,
+                    ImagerCleanStopReason::GlobalThresholdReached,
+                )
+                | (
+                    CleanStopReason::NsigmaThresholdReached,
+                    ImagerCleanStopReason::NsigmaThresholdReached,
+                )
+                | (
+                    CleanStopReason::CycleThresholdReached,
+                    ImagerCleanStopReason::CycleThresholdReached,
+                )
+                | (
+                    CleanStopReason::IterationLimitReached,
+                    ImagerCleanStopReason::IterationLimitReached,
+                )
+                | (CleanStopReason::NoCleanablePixels, ImagerCleanStopReason::NoCleanablePixels)
+                | (
+                    CleanStopReason::DivergenceDetected,
+                    ImagerCleanStopReason::DivergenceDetected,
+                ) => {}
+                other => panic!("unexpected stop-reason mapping {other:?}"),
+            }
+        }
+
+        assert_eq!(default_frequency_ref(), "LSRK");
+        assert_eq!(default_doppler_ref(), "RADIO");
+        assert_eq!(default_nterms(), 1);
+        assert_eq!(default_gain(), 0.1);
+        assert_eq!(default_psf_cutoff(), 0.35);
+        assert_eq!(default_minor_cycle_length(), 8);
+        assert_eq!(default_cyclefactor(), 1.0);
+        assert_eq!(default_min_psf_fraction(), 0.1);
+        assert_eq!(default_max_psf_fraction(), 0.8);
+        assert!(default_write_preview_pngs());
+    }
+
+    #[test]
+    fn cube_axis_values_and_config_validate_runtime_inputs() {
+        let config = ImagerCubeAxisConfig {
+            outframe: "BARY".to_string(),
+            veltype: "optical".to_string(),
+            interpolation: super::ImagerCubeInterpolation::Nearest,
+            rest_frequency_hz: Some(1.42e9),
+            start: Some(ImagerCubeAxisValue::FrequencyHz {
+                hz: 1.1e9,
+                frame: Some("LSRK".to_string()),
+            }),
+            width: Some(ImagerCubeAxisValue::VelocityMs {
+                ms: 123.0,
+                frame: Some("BARY".to_string()),
+            }),
+        };
+        let runtime = config.clone().into_runtime(SpectralMode::Cube).unwrap();
+        assert_eq!(runtime.outframe.to_string(), "BARY");
+        assert_eq!(runtime.veltype.to_string(), "Z");
+        assert_eq!(runtime.rest_frequency_hz, Some(1.42e9));
+        assert!(matches!(
+            runtime.start,
+            Some(casa_ms::CubeAxisValue::FrequencyHz { hz, .. }) if (hz - 1.1e9).abs() < 1.0
+        ));
+        assert!(matches!(
+            runtime.width,
+            Some(casa_ms::CubeAxisValue::VelocityMs { ms, .. }) if (ms - 123.0).abs() < 1e-6
+        ));
+
+        let bad_config = ImagerCubeAxisConfig {
+            outframe: "INVALID".to_string(),
+            ..Default::default()
+        };
+        assert!(bad_config.into_runtime(SpectralMode::Cube).is_err());
+
+        let bad_value = ImagerCubeAxisValue::Doppler {
+            value: 0.1,
+            convention: "not-a-convention".to_string(),
+        };
+        assert!(bad_value.into_runtime().is_err());
+    }
+
+    #[test]
+    fn to_cli_config_rejects_invalid_request_combinations() {
+        let both_phase_centers = ImagerRunTaskRequest {
+            phasecenter_field: Some(1),
+            phasecenter: Some("J2000 00:00:00 00.00.00".to_string()),
+            ..default_request()
+        };
+        assert!(
+            both_phase_centers
+                .to_cli_config()
+                .unwrap_err()
+                .contains("mutually exclusive")
+        );
+
+        let mtmfs_cube = ImagerRunTaskRequest {
+            spectral_mode: super::ImagerSpectralMode::Cube,
+            deconvolver: ImagerDeconvolver::Mtmfs,
+            ..default_request()
+        };
+        assert!(
+            mtmfs_cube
+                .to_cli_config()
+                .unwrap_err()
+                .contains("requires specmode='mfs'")
+        );
+
+        let nterms_without_mtmfs = ImagerRunTaskRequest {
+            nterms: 2,
+            ..default_request()
+        };
+        assert!(
+            nterms_without_mtmfs
+                .to_cli_config()
+                .unwrap_err()
+                .contains("nterms > 1")
+        );
+
+        let zero_nterms = ImagerRunTaskRequest {
+            nterms: 0,
+            ..default_request()
+        };
+        assert!(
+            zero_nterms
+                .to_cli_config()
+                .unwrap_err()
+                .contains("nterms > 1")
+        );
+
+        let invalid_scale = ImagerRunTaskRequest {
+            multiscale_scales: vec![f32::NAN],
+            ..default_request()
+        };
+        assert!(
+            invalid_scale
+                .to_cli_config()
+                .unwrap_err()
+                .contains("invalid multiscale scale")
+        );
+    }
+
+    #[test]
+    fn task_request_read_and_artifact_generation_cover_file_and_layout_branches() {
+        let dir = TempDir::new().expect("tempdir");
+        let base = dir.path().join("demo");
+        for suffix in [
+            "psf.tt0",
+            "residual.tt0",
+            "model.tt0",
+            "image.tt0",
+            "psf.tt1",
+            "residual.tt1",
+            "model.tt1",
+            "image.tt1",
+            "alpha",
+            "psf.tt0.png",
+            "residual.tt0.png",
+            "model.tt0.png",
+            "image.tt0.png",
+            "alpha.png",
+        ] {
+            fs::write(dir.path().join(format!("demo.{suffix}")), []).unwrap();
+        }
+
+        let request = ImagerRunTaskRequest {
+            measurement_set: PathBuf::from("demo.ms"),
+            image_name: base.clone(),
+            deconvolver: ImagerDeconvolver::Mtmfs,
+            nterms: 2,
+            ..default_request()
+        };
+        let task_request = ImagerTaskRequest::Run(request.clone());
+        let path = dir.path().join("request.json");
+        fs::write(&path, serde_json::to_string(&task_request).unwrap()).unwrap();
+
+        let decoded = ImagerTaskRequest::read_from_source(path.to_str().unwrap()).unwrap();
+        assert_eq!(decoded, task_request);
+
+        let missing_error =
+            ImagerTaskRequest::read_from_source(dir.path().join("missing.json").to_str().unwrap())
+                .unwrap_err();
+        assert!(missing_error.contains("failed to read JSON request"));
+
+        let result = super::ImagerRunTaskResult::from_run(request, &sample_run_summary());
+        assert_eq!(result.run.stage_timings.total_ns, 110);
+        assert_eq!(result.run.stage_timings.beam_fit_ns, 101);
+        assert_eq!(result.run.frontend_timings.total_ns, 77);
+        assert_eq!(result.run.channels.len(), 1);
+        assert!(result.run.channels[0].beam_fit_available);
+        assert_eq!(
+            result.run.clean_stop_reason,
+            Some(ImagerCleanStopReason::IterationLimitReached)
+        );
+        assert_eq!(result.artifacts.len(), 9);
+        assert!(
+            result
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.kind == super::ImagerArtifactKind::Alpha
+                    && artifact.preview_png_exists)
+        );
+
+        let no_preview_request = ImagerRunTaskRequest {
+            image_name: dir.path().join("simple"),
+            write_preview_pngs: false,
+            ..default_request()
+        };
+        let no_preview_result =
+            super::ImagerRunTaskResult::from_run(no_preview_request, &sample_run_summary());
+        assert_eq!(no_preview_result.artifacts.len(), 4);
+        assert!(no_preview_result
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.preview_png_path.is_none() && !artifact.preview_png_exists));
     }
 }

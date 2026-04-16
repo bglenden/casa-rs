@@ -1,3 +1,5 @@
+#![cfg(has_casacore_cpp)]
+
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::path::Path;
 use std::process::Command;

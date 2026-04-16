@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "casa-vla"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "casa-ms",
  "casa-provider-contracts",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "casars-importvla"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "casa-vla",
 ]

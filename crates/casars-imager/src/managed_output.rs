@@ -505,3 +505,195 @@ fn artifact(
         preview_png_path: preview.map(|path| path.display().to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::Duration;
+
+    use casa_imaging::{BeamFitDebugSummary, CleanStopReason, ImagingStageTimings};
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn sample_run_summary() -> RunSummary {
+        RunSummary {
+            warnings: vec!["warn".to_string()],
+            gridded_samples: 42,
+            major_cycles: 3,
+            minor_iterations: 9,
+            clean_stop_reason: Some(CleanStopReason::IterationLimitReached),
+            channel_summaries: vec![ChannelRunSummary {
+                channel_index: 2,
+                major_cycles: 4,
+                minor_iterations: 7,
+                clean_stop_reason: Some(CleanStopReason::CycleThresholdReached),
+                initial_residual_peak_jy_per_beam: 1.5,
+                final_residual_peak_jy_per_beam: 0.25,
+                final_cycle_threshold_jy_per_beam: 0.1,
+                minor_cycle_traces: Vec::new(),
+                beam_fit_debug: Some(BeamFitDebugSummary {
+                    peak_index: (1, 2),
+                    peak_value: 1.0,
+                    first_pass_points: 4,
+                    first_pass_blc: (0, 0),
+                    first_pass_trc: (3, 3),
+                    expanded_window_shape: (5, 5),
+                    oversampling: 2,
+                    resampled_shape: (10, 10),
+                    second_pass_points: 8,
+                    second_pass_blc: (1, 1),
+                    second_pass_trc: (8, 8),
+                }),
+            }],
+            stage_timings: ImagingStageTimings {
+                controller_overhead: Duration::from_nanos(10),
+                weighting: Duration::from_nanos(20),
+                psf_grid: Duration::from_nanos(30),
+                psf_fft: Duration::from_nanos(40),
+                psf_normalize: Duration::ZERO,
+                model_fft: Duration::ZERO,
+                residual_degrid_grid: Duration::from_nanos(50),
+                residual_fft: Duration::from_nanos(60),
+                residual_normalize: Duration::from_nanos(70),
+                minor_cycle: Duration::from_nanos(80),
+                minor_cycle_solve: Duration::from_nanos(90),
+                major_cycle_refresh: Duration::from_nanos(100),
+                beam_fit: Duration::ZERO,
+                restore: Duration::ZERO,
+                total: Duration::from_nanos(110),
+            },
+            frontend_timings: FrontendStageTimings {
+                open_measurement_set: Duration::from_nanos(11),
+                prepare_plane_input: Duration::from_nanos(22),
+                extract_phase_center: Duration::from_nanos(33),
+                run_imaging: Duration::from_nanos(44),
+                build_coordinate_system: Duration::from_nanos(55),
+                write_products: Duration::from_nanos(66),
+                total: Duration::from_nanos(77),
+            },
+        }
+    }
+
+    #[test]
+    fn from_run_reports_mtmfs_artifacts_and_preview_sidecars() {
+        let dir = TempDir::new().expect("tempdir");
+        let base = dir.path().join("mtmfs");
+        for suffix in [
+            "psf.tt0",
+            "residual.tt0",
+            "model.tt0",
+            "image.tt0",
+            "psf.tt1",
+            "residual.tt1",
+            "model.tt1",
+            "image.tt1",
+            "alpha",
+            "psf.tt0.png",
+            "residual.tt0.png",
+            "model.tt0.png",
+            "image.tt0.png",
+            "alpha.png",
+        ] {
+            fs::write(dir.path().join(format!("mtmfs.{suffix}")), []).unwrap();
+        }
+
+        let config = CliConfig::parse([
+            "--ms".into(),
+            "demo.ms".into(),
+            "--imagename".into(),
+            base.as_os_str().to_os_string(),
+            "--imsize".into(),
+            "64".into(),
+            "--cell-arcsec".into(),
+            "1.5".into(),
+            "--deconvolver".into(),
+            "mtmfs".into(),
+            "--nterms".into(),
+            "2".into(),
+        ])
+        .unwrap();
+
+        let output = ManagedImagingOutput::from_run(&config, &sample_run_summary());
+        assert_eq!(output.request.spectral_mode, "mfs");
+        assert_eq!(output.request.deconvolver, "mtmfs");
+        assert_eq!(output.request.output_channels, 1);
+        assert_eq!(
+            output.run.clean_stop_reason.as_deref(),
+            Some("IterationLimitReached")
+        );
+        assert_eq!(
+            output.run.stage_timings.values_ns[0],
+            ("controller_total".to_string(), 110)
+        );
+        assert_eq!(
+            output.run.frontend_timings.values_ns[6],
+            ("total".to_string(), 77)
+        );
+        assert_eq!(
+            output.run.channels[0].clean_stop_reason.as_deref(),
+            Some("CycleThresholdReached")
+        );
+        assert!(output.run.channels[0].beam_fit_available);
+        assert_eq!(output.artifacts.len(), 9);
+        assert!(
+            output
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.kind == "alpha" && artifact.preview_png_exists)
+        );
+    }
+
+    #[test]
+    fn from_task_result_serializes_contract_values() {
+        let dir = TempDir::new().expect("tempdir");
+        let base = dir.path().join("cube");
+        for suffix in ["psf", "residual", "model", "image"] {
+            fs::write(dir.path().join(format!("cube.{suffix}")), []).unwrap();
+        }
+
+        let config = CliConfig::parse([
+            "--ms".into(),
+            "demo.ms".into(),
+            "--imagename".into(),
+            base.as_os_str().to_os_string(),
+            "--imsize".into(),
+            "64".into(),
+            "--cell-arcsec".into(),
+            "1.5".into(),
+            "--specmode".into(),
+            "cube".into(),
+            "--corr".into(),
+            "XX".into(),
+            "--weighting".into(),
+            "briggs".into(),
+            "--robust".into(),
+            "0.5".into(),
+            "--wterm".into(),
+            "wproject".into(),
+            "--wprojplanes".into(),
+            "8".into(),
+            "--restoringbeam".into(),
+            "common".into(),
+            "--dirty-only".into(),
+            "--no-preview-pngs".into(),
+        ])
+        .unwrap();
+        let request = crate::task_contract::ImagerRunTaskRequest::from_cli_config(&config);
+        let result =
+            crate::task_contract::ImagerRunTaskResult::from_run(request, &sample_run_summary());
+
+        let output = ManagedImagingOutput::from_task_result(&result);
+        assert_eq!(output.request.spectral_mode, "cube");
+        assert_eq!(output.request.weighting, "briggs:0.5");
+        assert_eq!(output.request.w_term_mode, "wproject");
+        assert_eq!(output.request.correlation.as_deref(), Some("XX"));
+        assert_eq!(output.request.restoring_beam_mode, "common");
+        assert!(output.request.dirty_only);
+        assert!(!output.request.write_preview_pngs);
+        assert_eq!(output.run.channels.len(), 1);
+        assert_eq!(output.run.channels[0].channel_index, 2);
+        assert_eq!(output.artifacts.len(), 4);
+        assert!(output.artifacts.iter().all(|artifact| artifact.exists));
+    }
+}

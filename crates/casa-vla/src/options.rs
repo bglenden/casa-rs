@@ -181,3 +181,118 @@ impl ImportVlaOptions {
         Ok(&self.archivefiles)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn band_name_tokens_and_parsing_cover_all_supported_bands() {
+        let cases = [
+            ("4", BandName::Four, "4"),
+            ("P", BandName::P, "P"),
+            ("l", BandName::L, "L"),
+            ("S", BandName::S, "S"),
+            ("c", BandName::C, "C"),
+            ("X", BandName::X, "X"),
+            ("u", BandName::U, "U"),
+            ("K", BandName::K, "K"),
+            ("ka", BandName::Ka, "Ka"),
+            ("Q", BandName::Q, "Q"),
+        ];
+
+        for (raw, expected, token) in cases {
+            let parsed = raw.parse::<BandName>().expect("parse band");
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.as_task_token(), token);
+        }
+    }
+
+    #[test]
+    fn band_name_rejects_unknown_values() {
+        let error = "notaband".parse::<BandName>().expect_err("invalid band");
+        assert!(matches!(
+            error,
+            VlaError::InvalidArgument {
+                argument: "bandname",
+                ..
+            }
+        ));
+        assert!(error.to_string().contains("unsupported VLA band"));
+    }
+
+    #[test]
+    fn antenna_name_scheme_parses_and_rejects_unknown_values() {
+        assert_eq!(
+            "new".parse::<AntennaNameScheme>().unwrap(),
+            AntennaNameScheme::New
+        );
+        assert_eq!(
+            "OLD".parse::<AntennaNameScheme>().unwrap(),
+            AntennaNameScheme::Old
+        );
+
+        let error = "legacy"
+            .parse::<AntennaNameScheme>()
+            .expect_err("invalid naming mode");
+        assert!(matches!(
+            error,
+            VlaError::InvalidArgument {
+                argument: "antnamescheme",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn import_vla_defaults_match_task_defaults() {
+        let defaults = ImportVlaOptions::default();
+        assert!(defaults.archivefiles.is_empty());
+        assert!(defaults.vis.is_none());
+        assert!(defaults.bandname.is_none());
+        assert_eq!(defaults.frequencytol_hz, 150_000.0);
+        assert!(defaults.applytsys);
+        assert!(!defaults.autocorr);
+        assert_eq!(defaults.antnamescheme, AntennaNameScheme::New);
+        assert!(!defaults.keepblanks);
+        assert!(!defaults.evlabands);
+    }
+
+    #[test]
+    fn parse_frequencytol_converts_units_and_reports_invalid_values() {
+        assert_eq!(
+            ImportVlaOptions::parse_frequencytol("150000Hz").unwrap(),
+            150_000.0
+        );
+        assert_eq!(
+            ImportVlaOptions::parse_frequencytol("150kHz").unwrap(),
+            150_000.0
+        );
+
+        let error = ImportVlaOptions::parse_frequencytol("bogus").expect_err("invalid quantity");
+        assert!(matches!(
+            error,
+            VlaError::InvalidArgument {
+                argument: "frequencytol",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn require_archivefiles_rejects_empty_lists_and_returns_configured_paths() {
+        let error = ImportVlaOptions::default()
+            .require_archivefiles()
+            .expect_err("missing archives");
+        assert!(matches!(error, VlaError::NoArchiveFiles));
+
+        let options = ImportVlaOptions {
+            archivefiles: vec![PathBuf::from("a.exp"), PathBuf::from("b.xp1")],
+            ..ImportVlaOptions::default()
+        };
+        assert_eq!(
+            options.require_archivefiles().unwrap(),
+            &[PathBuf::from("a.exp"), PathBuf::from("b.xp1")]
+        );
+    }
+}

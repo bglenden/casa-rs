@@ -470,4 +470,155 @@ mod tests {
         let record = reader.next_record().unwrap().unwrap();
         assert_eq!(record.bytes(), logical.as_slice());
     }
+
+    #[test]
+    fn rejects_partial_physical_record() {
+        let logical = logical_record_bytes(64, 26, 49_999);
+        let block = physical_block(1, 1, &logical);
+        let mut reader = VlaDiskReader::new("partial.xp1", Cursor::new(block[..100].to_vec()));
+        let error = reader
+            .next_record()
+            .expect_err("partial record should fail");
+        assert!(error.to_string().contains("partial physical record"));
+    }
+
+    #[test]
+    fn rejects_sequence_mismatch_for_fixed_records() {
+        let logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + 32, 27, 50_123);
+        let block1 = physical_block(1, 2, &logical[..PHYSICAL_RECORD_DATA_BYTES]);
+        let block2 = physical_block(3, 2, &logical[PHYSICAL_RECORD_DATA_BYTES..]);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&block1);
+        bytes.extend_from_slice(&block2);
+
+        let mut reader = VlaDiskReader::new("mismatch.xp2", Cursor::new(bytes));
+        let error = reader
+            .next_record()
+            .expect_err("mismatched sequence should fail");
+        assert!(error.to_string().contains("sequence mismatch"));
+    }
+
+    #[test]
+    fn rejects_oversized_logical_record() {
+        let mut payload = vec![0_u8; 32];
+        payload[0..4].copy_from_slice(&(((MAX_LOGICAL_RECORD_SIZE / 2) as i32) + 1).to_be_bytes());
+        let block = physical_block(1, 1, &payload);
+        let mut reader = VlaDiskReader::new("oversized.xp1", Cursor::new(block.to_vec()));
+        let error = reader
+            .next_record()
+            .expect_err("oversized record should fail");
+        assert!(error.to_string().contains("exceeds limit"));
+    }
+
+    #[test]
+    fn skips_nonpositive_logical_lengths() {
+        let mut payload = vec![0_u8; 32];
+        payload[0..4].copy_from_slice(&0_i32.to_be_bytes());
+        let skipped = physical_block(1, 1, &payload);
+        let logical = logical_record_bytes(64, 25, 49_500);
+        let valid = physical_block(1, 1, &logical);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&skipped);
+        bytes.extend_from_slice(&valid);
+
+        let mut reader = VlaDiskReader::new("skip-zero.xp1", Cursor::new(bytes));
+        let record = reader.next_record().unwrap().unwrap();
+        assert_eq!(record.bytes(), logical.as_slice());
+    }
+
+    #[test]
+    fn disk_record_size_rounds_up_to_sector_boundaries() {
+        assert_eq!(
+            disk_physical_record_size_for_payload(PHYSICAL_RECORD_SIZE),
+            PHYSICAL_RECORD_SIZE
+        );
+        assert_eq!(
+            disk_physical_record_size_for_payload(PHYSICAL_RECORD_SIZE + 1),
+            PHYSICAL_RECORD_SIZE * 2
+        );
+        assert_eq!(
+            disk_physical_record_size_for_payload(PHYSICAL_RECORD_SIZE * 2),
+            PHYSICAL_RECORD_SIZE * 2
+        );
+    }
+
+    #[test]
+    fn finish_disk_block_rejects_invalid_sizes() {
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "diskvar.xp1",
+            Cursor::new(Vec::<u8>::new()),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let error = reader
+            .finish_disk_block(vec![0_u8; PHYSICAL_RECORD_SIZE], PHYSICAL_RECORD_SIZE + 1)
+            .expect_err("non-sector multiple should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid disk physical-record size")
+        );
+    }
+
+    #[test]
+    fn finish_disk_block_reports_missing_remainder() {
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "diskvar.xp1",
+            Cursor::new(Vec::<u8>::new()),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let error = reader
+            .finish_disk_block(vec![0_u8; PHYSICAL_RECORD_SIZE], PHYSICAL_RECORD_SIZE * 2)
+            .expect_err("missing remainder should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("unexpected EOF while finishing disk physical record")
+        );
+    }
+
+    #[test]
+    fn finish_disk_block_reads_remainder_for_disk_variable_records() {
+        let remainder = vec![7_u8; PHYSICAL_RECORD_SIZE];
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "diskvar.xp1",
+            Cursor::new(remainder.clone()),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let block = reader
+            .finish_disk_block(vec![1_u8; PHYSICAL_RECORD_SIZE], PHYSICAL_RECORD_SIZE * 2)
+            .expect("read remainder");
+        assert_eq!(block.len(), PHYSICAL_RECORD_SIZE * 2);
+        assert_eq!(
+            &block[..PHYSICAL_RECORD_SIZE],
+            vec![1_u8; PHYSICAL_RECORD_SIZE].as_slice()
+        );
+        assert_eq!(&block[PHYSICAL_RECORD_SIZE..], remainder.as_slice());
+    }
+
+    #[test]
+    fn disk_variable_reader_reassembles_multi_sector_single_record() {
+        let logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + 300, 28, 50_500);
+        let total_size = disk_physical_record_size_for_payload(logical.len());
+        assert_eq!(total_size, PHYSICAL_RECORD_SIZE * 2);
+
+        let mut first_sector = physical_block(1, 1, &logical[..PHYSICAL_RECORD_DATA_BYTES]);
+        let remainder_len = logical.len() - PHYSICAL_RECORD_DATA_BYTES;
+        let remainder = &logical[PHYSICAL_RECORD_DATA_BYTES..];
+        let mut tail = vec![0_u8; PHYSICAL_RECORD_SIZE];
+        tail[..remainder_len].copy_from_slice(remainder);
+        first_sector[4..8].copy_from_slice(&((logical.len() / 2) as i32).to_be_bytes());
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&first_sector);
+        bytes.extend_from_slice(&tail);
+
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "diskvar.xp1",
+            Cursor::new(bytes),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let record = reader.next_record().unwrap().unwrap();
+        assert_eq!(record.bytes(), logical.as_slice());
+    }
 }

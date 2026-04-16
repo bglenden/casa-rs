@@ -118,3 +118,84 @@ fn scan_one(path: &Path) -> Result<ArchiveFileSummary, VlaError> {
         used_cda_histogram,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    const PHYSICAL_RECORD_SIZE: usize = 2048;
+
+    fn physical_block(current: u16, total: u16, payload: &[u8]) -> [u8; PHYSICAL_RECORD_SIZE] {
+        let mut block = [0_u8; PHYSICAL_RECORD_SIZE];
+        block[0..2].copy_from_slice(&current.to_be_bytes());
+        block[2..4].copy_from_slice(&total.to_be_bytes());
+        block[4..4 + payload.len()].copy_from_slice(payload);
+        block
+    }
+
+    fn logical_record_bytes(length_bytes: usize, revision: u16, obs_day: u32) -> Vec<u8> {
+        let mut bytes = vec![0_u8; length_bytes];
+        bytes[0..4].copy_from_slice(&((length_bytes / 2) as i32).to_be_bytes());
+        bytes[2 * 3..2 * 3 + 2].copy_from_slice(&revision.to_be_bytes());
+        bytes[2 * 4..2 * 4 + 4].copy_from_slice(&obs_day.to_be_bytes());
+        bytes[2 * 17..2 * 17 + 2].copy_from_slice(&27_u16.to_be_bytes());
+        bytes[2 * 18..2 * 18 + 4].copy_from_slice(&32_u32.to_be_bytes());
+        bytes
+    }
+
+    fn synthetic_archive_file(dir: &TempDir, name: &str) -> PathBuf {
+        let path = dir.path().join(name);
+        let logical = logical_record_bytes(64, 26, 49_999);
+        let block = physical_block(1, 1, &logical);
+        fs::write(&path, block).expect("write synthetic archive");
+        path
+    }
+
+    #[test]
+    fn scan_disk_archive_files_rejects_empty_inputs() {
+        let error = scan_disk_archive_files(&[]).expect_err("missing archives");
+        assert!(matches!(error, VlaError::NoArchiveFiles));
+    }
+
+    #[test]
+    fn scan_disk_archive_files_summarizes_real_archive_when_available() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = synthetic_archive_file(&dir, "synthetic.xp1");
+
+        let summary = scan_disk_archive_files(std::slice::from_ref(&path)).expect("scan summary");
+        assert_eq!(summary.vis, None);
+        assert_eq!(summary.logical_records, 1);
+        assert_eq!(summary.logical_bytes, 64);
+        assert_eq!(summary.files.len(), 1);
+
+        let file = &summary.files[0];
+        assert_eq!(file.path, path);
+        assert_eq!(file.logical_records, 1);
+        assert_eq!(file.logical_bytes, 64);
+        assert_eq!(file.revision_range, Some((26, 26)));
+        assert_eq!(file.obs_day_range, Some((49_999, 49_999)));
+        assert_eq!(file.max_antennas, 27);
+        assert_eq!(file.used_cda_histogram.get(&1), Some(&1));
+    }
+
+    #[test]
+    fn scan_disk_archive_files_from_options_propagates_vis_when_available() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = synthetic_archive_file(&dir, "synthetic.xp5");
+        let vis = dir.path().join("out.ms");
+        let options = ImportVlaOptions {
+            archivefiles: vec![path],
+            vis: Some(vis.clone()),
+            ..ImportVlaOptions::default()
+        };
+
+        let summary = scan_disk_archive_files_from_options(&options).expect("scan summary");
+        assert_eq!(summary.vis, Some(vis));
+        assert_eq!(summary.logical_records, 1);
+        assert_eq!(summary.files.len(), 1);
+    }
+}

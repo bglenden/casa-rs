@@ -688,7 +688,37 @@ fn action_argument(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_contract::ImportVlaScanTaskRequest;
+    use crate::task_contract::{ImportVlaScanTaskRequest, ImportVlaTaskRequest};
+    use std::fs;
+    use tempfile::TempDir;
+
+    const PHYSICAL_RECORD_SIZE: usize = 2048;
+
+    fn physical_block(current: u16, total: u16, payload: &[u8]) -> [u8; PHYSICAL_RECORD_SIZE] {
+        let mut block = [0_u8; PHYSICAL_RECORD_SIZE];
+        block[0..2].copy_from_slice(&current.to_be_bytes());
+        block[2..4].copy_from_slice(&total.to_be_bytes());
+        block[4..4 + payload.len()].copy_from_slice(payload);
+        block
+    }
+
+    fn logical_record_bytes(length_bytes: usize, revision: u16, obs_day: u32) -> Vec<u8> {
+        let mut bytes = vec![0_u8; length_bytes];
+        bytes[0..4].copy_from_slice(&((length_bytes / 2) as i32).to_be_bytes());
+        bytes[2 * 3..2 * 3 + 2].copy_from_slice(&revision.to_be_bytes());
+        bytes[2 * 4..2 * 4 + 4].copy_from_slice(&obs_day.to_be_bytes());
+        bytes[2 * 17..2 * 17 + 2].copy_from_slice(&27_u16.to_be_bytes());
+        bytes[2 * 18..2 * 18 + 4].copy_from_slice(&32_u32.to_be_bytes());
+        bytes
+    }
+
+    fn synthetic_archive_file(dir: &TempDir, name: &str) -> PathBuf {
+        let path = dir.path().join(name);
+        let logical = logical_record_bytes(64, 26, 49_999);
+        let block = physical_block(1, 1, &logical);
+        fs::write(&path, block).expect("write synthetic archive");
+        path
+    }
 
     #[test]
     fn command_schema_describes_public_importvla_surface() {
@@ -779,5 +809,116 @@ mod tests {
             }
             other => panic!("expected scan request, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn append_archivefiles_and_next_value_cover_cli_helpers() {
+        let mut options = ImportVlaOptions::default();
+        append_archivefiles(&mut options, "a.exp, b.xp1 ,, c.exp ");
+        assert_eq!(
+            options.archivefiles,
+            vec![
+                PathBuf::from("a.exp"),
+                PathBuf::from("b.xp1"),
+                PathBuf::from("c.exp")
+            ]
+        );
+
+        let mut args = vec![OsString::from("value")].into_iter();
+        assert_eq!(next_value(&mut args, "archivefiles").unwrap(), "value");
+        let error = next_value(&mut std::iter::empty(), "archivefiles").expect_err("missing");
+        assert!(matches!(
+            error,
+            VlaError::InvalidArgument {
+                argument: "archivefiles",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn render_options_json_serializes_task_style_values() {
+        let options = ImportVlaOptions {
+            archivefiles: vec![PathBuf::from("a.exp")],
+            vis: Some(PathBuf::from("out.ms")),
+            bandname: Some(BandName::X),
+            frequencytol_hz: 250_000.0,
+            project: Some("AG123".to_string()),
+            starttime: Some("1990/01/01/00:00:00".to_string()),
+            stoptime: Some("1990/01/01/01:00:00".to_string()),
+            applytsys: false,
+            autocorr: true,
+            antnamescheme: AntennaNameScheme::Old,
+            keepblanks: true,
+            evlabands: true,
+        };
+        let rendered = render_options_json(&options);
+        assert_eq!(rendered["bandname"], "X");
+        assert_eq!(rendered["antnamescheme"], "old");
+        assert_eq!(rendered["frequencytol_hz"], 250000.0);
+        assert_eq!(rendered["autocorr"], true);
+    }
+
+    #[test]
+    fn read_json_source_reads_from_file() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("request.json");
+        fs::write(&path, "{\"kind\":\"scan\",\"request\":{\"options\":{\"archivefiles\":[\"a.exp\"],\"vis\":null,\"bandname\":null,\"frequencytol_hz\":150000.0,\"project\":null,\"starttime\":null,\"stoptime\":null,\"applytsys\":true,\"autocorr\":false,\"antnamescheme\":\"New\",\"keepblanks\":false,\"evlabands\":false}}}").unwrap();
+        let payload = read_json_source(path.to_str().unwrap()).expect("read json");
+        assert!(payload.contains("\"kind\":\"scan\""));
+    }
+
+    #[test]
+    fn run_scan_and_json_request_cover_real_archive_paths_when_available() {
+        let dir = TempDir::new().expect("tempdir");
+        let archive = synthetic_archive_file(&dir, "synthetic.xp1");
+        let options = ImportVlaOptions {
+            archivefiles: vec![archive.clone()],
+            ..ImportVlaOptions::default()
+        };
+        run(options, false).expect("scan run");
+
+        let request = ImportVlaTaskRequest::Scan(ImportVlaScanTaskRequest {
+            options: ImportVlaOptions {
+                archivefiles: vec![archive],
+                ..ImportVlaOptions::default()
+            },
+        });
+        let path = dir.path().join("scan.json");
+        fs::write(&path, serde_json::to_string(&request).unwrap()).unwrap();
+        run_json_request(path.to_str().unwrap()).expect("json scan run");
+    }
+
+    #[test]
+    fn render_text_and_import_text_cover_human_output_paths() {
+        let options = ImportVlaOptions {
+            archivefiles: vec![PathBuf::from("a.exp")],
+            vis: Some(PathBuf::from("out.ms")),
+            ..ImportVlaOptions::default()
+        };
+        let summary = crate::ArchiveSummary {
+            vis: Some(PathBuf::from("out.ms")),
+            files: vec![crate::ArchiveFileSummary {
+                path: PathBuf::from("a.exp"),
+                logical_records: 2,
+                logical_bytes: 128,
+                revision_range: Some((25, 26)),
+                obs_day_range: Some((49_000, 49_100)),
+                max_antennas: 27,
+                used_cda_histogram: std::iter::once((1_usize, 2_u64)).collect(),
+            }],
+            logical_records: 2,
+            logical_bytes: 128,
+        };
+        let report = crate::ImportReport {
+            vis: PathBuf::from("out.ms"),
+            logical_records_seen: 2,
+            logical_records_imported: 1,
+            logical_records_skipped: 1,
+            main_rows_written: 8,
+        };
+
+        render_text(&options, &summary);
+        render_import_text(&options, &report);
     }
 }
