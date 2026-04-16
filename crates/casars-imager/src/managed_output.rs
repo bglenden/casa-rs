@@ -505,3 +505,315 @@ fn artifact(
         preview_png_path: preview.map(|path| path.display().to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ManagedImagingOutput;
+    use crate::task_contract::{
+        ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
+        ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
+        ImagerRunTaskResult, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+    };
+    use crate::{
+        ChannelRunSummary, CliConfig, CubeAxisConfig, FrontendStageTimings, RunSummary,
+        SpectralMode,
+    };
+    use casa_imaging::{
+        CleanStopReason, Deconvolver, ImagingStageTimings, RestoringBeamMode, WTermMode,
+        WeightingMode,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    fn sample_cli_config(imagename: PathBuf) -> CliConfig {
+        CliConfig {
+            ms: PathBuf::from("/tmp/demo.ms"),
+            imagename,
+            imsize: 256,
+            cell_arcsec: 1.5,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: Some("CORRECTED_DATA".to_string()),
+            correlation: Some("XX".to_string()),
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: true,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::Common,
+            deconvolver: Deconvolver::Mtmfs,
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 50,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 8,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::Direct,
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        }
+    }
+
+    fn sample_run_summary() -> RunSummary {
+        let stage_timings = ImagingStageTimings {
+            controller_overhead: Duration::from_nanos(11),
+            weighting: Duration::from_nanos(12),
+            psf_grid: Duration::from_nanos(13),
+            psf_fft: Duration::from_nanos(14),
+            psf_normalize: Duration::ZERO,
+            model_fft: Duration::ZERO,
+            residual_degrid_grid: Duration::from_nanos(15),
+            residual_fft: Duration::from_nanos(16),
+            residual_normalize: Duration::from_nanos(17),
+            minor_cycle: Duration::from_nanos(18),
+            minor_cycle_solve: Duration::from_nanos(19),
+            major_cycle_refresh: Duration::from_nanos(20),
+            beam_fit: Duration::ZERO,
+            restore: Duration::ZERO,
+            total: Duration::from_nanos(21),
+        };
+
+        RunSummary {
+            warnings: vec!["warning-a".to_string()],
+            gridded_samples: 42,
+            major_cycles: 3,
+            minor_iterations: 9,
+            clean_stop_reason: Some(CleanStopReason::CycleThresholdReached),
+            channel_summaries: vec![ChannelRunSummary {
+                channel_index: 7,
+                major_cycles: 4,
+                minor_iterations: 10,
+                clean_stop_reason: Some(CleanStopReason::IterationLimitReached),
+                initial_residual_peak_jy_per_beam: 3.5,
+                final_residual_peak_jy_per_beam: 1.5,
+                final_cycle_threshold_jy_per_beam: 0.25,
+                minor_cycle_traces: Vec::new(),
+                beam_fit_debug: None,
+            }],
+            stage_timings,
+            frontend_timings: FrontendStageTimings {
+                open_measurement_set: Duration::from_nanos(31),
+                prepare_plane_input: Duration::from_nanos(32),
+                extract_phase_center: Duration::from_nanos(33),
+                run_imaging: Duration::from_nanos(34),
+                build_coordinate_system: Duration::from_nanos(35),
+                write_products: Duration::from_nanos(36),
+                total: Duration::from_nanos(37),
+            },
+        }
+    }
+
+    #[test]
+    fn from_run_reports_mtmfs_artifacts_and_preview_sidecars() {
+        let tempdir = tempdir().unwrap();
+        let imagename = tempdir.path().join("managed-output");
+        fs::write(imagename.with_extension("psf.tt0"), b"psf").unwrap();
+        fs::write(imagename.with_extension("psf.tt0.png"), b"png").unwrap();
+        fs::write(imagename.with_extension("alpha"), b"alpha").unwrap();
+        fs::write(imagename.with_extension("alpha.png"), b"png").unwrap();
+
+        let output =
+            ManagedImagingOutput::from_run(&sample_cli_config(imagename), &sample_run_summary());
+
+        assert_eq!(output.request.spectral_mode, "mfs");
+        assert_eq!(output.request.weighting, "natural");
+        assert_eq!(output.request.deconvolver, "mtmfs");
+        assert_eq!(output.request.w_term_mode, "direct");
+        assert_eq!(output.request.restoring_beam_mode, "common");
+        assert_eq!(output.request.output_channels, 1);
+        assert_eq!(output.request.correlation.as_deref(), Some("XX"));
+
+        assert_eq!(
+            output.run.clean_stop_reason.as_deref(),
+            Some("CycleThresholdReached")
+        );
+        assert_eq!(
+            output.run.stage_timings.values_ns[0],
+            ("controller_total".to_string(), 21)
+        );
+        assert_eq!(
+            output.run.frontend_timings.values_ns[0],
+            ("open_measurement_set".to_string(), 31)
+        );
+        assert_eq!(output.run.channels.len(), 1);
+        assert_eq!(output.run.channels[0].channel_index, 7);
+        assert_eq!(
+            output.run.channels[0].clean_stop_reason.as_deref(),
+            Some("IterationLimitReached")
+        );
+        assert!(!output.run.channels[0].beam_fit_available);
+
+        assert_eq!(output.artifacts.len(), 9);
+        assert_eq!(output.artifacts[0].label, "PSF TT0");
+        assert_eq!(output.artifacts[0].kind, "psf");
+        assert!(output.artifacts[0].exists);
+        assert!(output.artifacts[0].preview_png_exists);
+        assert!(
+            output.artifacts[0]
+                .preview_png_path
+                .as_deref()
+                .unwrap()
+                .ends_with(".psf.tt0.png")
+        );
+        assert_eq!(output.artifacts[4].label, "PSF TT1");
+        assert_eq!(output.artifacts[4].preview_png_path, None);
+        assert_eq!(output.artifacts[8].label, "Spectral Index");
+        assert_eq!(output.artifacts[8].kind, "alpha");
+        assert!(output.artifacts[8].exists);
+        assert!(output.artifacts[8].preview_png_exists);
+    }
+
+    #[test]
+    fn from_task_result_serializes_contract_values() {
+        let result = ImagerRunTaskResult {
+            request: ImagerRunTaskRequest {
+                measurement_set: PathBuf::from("/tmp/from-task.ms"),
+                image_name: PathBuf::from("/tmp/from-task"),
+                image_size: 512,
+                cell_arcsec: 2.5,
+                field_ids: Some(vec![3]),
+                phasecenter_field: None,
+                phasecenter: Some("J2000 00:00:00.0 +00.00.00.0".to_string()),
+                ddid: Some(1),
+                spw_selector: Some("2".to_string()),
+                channel_start: Some(4),
+                channel_count: Some(8),
+                data_column: Some("MODEL_DATA".to_string()),
+                correlation: Some(ImagerPlaneSelection::CorrXX),
+                spectral_mode: ImagerSpectralMode::Cube,
+                cube_axis: Default::default(),
+                weighting: ImagerWeighting::Briggs { robust: -0.25 },
+                per_channel_weight_density: true,
+                uv_taper: None,
+                restoring_beam_mode: ImagerRestoringBeamMode::PerPlane,
+                deconvolver: ImagerDeconvolver::Clark,
+                nterms: 1,
+                multiscale_scales: vec![0.0, 5.0],
+                small_scale_bias: 0.3,
+                niter: 100,
+                gain: 0.2,
+                threshold_jy: 0.01,
+                nsigma: 5.0,
+                psf_cutoff: 0.4,
+                minor_cycle_length: 16,
+                cyclefactor: 1.2,
+                min_psf_fraction: 0.15,
+                max_psf_fraction: 0.9,
+                mask_boxes: vec![[1, 2, 3, 4]],
+                mask_image: None,
+                w_term_mode: ImagerWTermMode::Wproject,
+                w_project_planes: Some(32),
+                dirty_only: true,
+                write_preview_pngs: false,
+            },
+            run: ImagerRunReport {
+                warnings: vec!["watch residuals".to_string()],
+                gridded_samples: 1024,
+                major_cycles: 6,
+                minor_iterations: 24,
+                clean_stop_reason: Some(ImagerCleanStopReason::DivergenceDetected),
+                stage_timings: crate::ImagerCoreStageTimings {
+                    controller_overhead_ns: 1,
+                    weighting_ns: 2,
+                    psf_grid_ns: 3,
+                    psf_fft_ns: 4,
+                    psf_normalize_ns: 5,
+                    model_fft_ns: 6,
+                    residual_degrid_grid_ns: 7,
+                    residual_fft_ns: 8,
+                    residual_normalize_ns: 9,
+                    minor_cycle_ns: 10,
+                    minor_cycle_solve_ns: 11,
+                    major_cycle_refresh_ns: 12,
+                    beam_fit_ns: 13,
+                    restore_ns: 14,
+                    total_ns: 15,
+                },
+                frontend_timings: crate::ImagerFrontendTaskStageTimings {
+                    open_measurement_set_ns: 16,
+                    prepare_plane_input_ns: 17,
+                    extract_phase_center_ns: 18,
+                    run_imaging_ns: 19,
+                    build_coordinate_system_ns: 20,
+                    write_products_ns: 21,
+                    total_ns: 22,
+                },
+                channels: vec![crate::ImagerChannelRunResult {
+                    channel_index: 2,
+                    major_cycles: 5,
+                    minor_iterations: 9,
+                    clean_stop_reason: Some(ImagerCleanStopReason::NoCleanablePixels),
+                    initial_residual_peak_jy_per_beam: 4.0,
+                    final_residual_peak_jy_per_beam: 2.0,
+                    final_cycle_threshold_jy_per_beam: 0.4,
+                    beam_fit_available: true,
+                }],
+            },
+            artifacts: vec![ImagerArtifact {
+                kind: ImagerArtifactKind::Alpha,
+                label: "Spectral Index".to_string(),
+                path: "/tmp/from-task.alpha".to_string(),
+                exists: true,
+                preview_png_path: Some("/tmp/from-task.alpha.png".to_string()),
+                preview_png_exists: false,
+            }],
+        };
+
+        let output = ManagedImagingOutput::from_task_result(&result);
+
+        assert_eq!(output.request.spectral_mode, "cube");
+        assert_eq!(output.request.weighting, "briggs:-0.25");
+        assert_eq!(output.request.deconvolver, "clark");
+        assert_eq!(output.request.w_term_mode, "wproject");
+        assert_eq!(output.request.restoring_beam_mode, "per_plane");
+        assert_eq!(output.request.output_channels, 1);
+        assert_eq!(output.request.correlation.as_deref(), Some("XX"));
+        assert!(output.request.dirty_only);
+        assert!(!output.request.write_preview_pngs);
+
+        assert_eq!(
+            output.run.clean_stop_reason.as_deref(),
+            Some("DivergenceDetected")
+        );
+        assert_eq!(
+            output.run.stage_timings.values_ns[0],
+            ("controller_total".to_string(), 15)
+        );
+        assert_eq!(
+            output.run.frontend_timings.values_ns[6],
+            ("total".to_string(), 22)
+        );
+        assert!(output.run.channels[0].beam_fit_available);
+        assert_eq!(
+            output.run.channels[0].clean_stop_reason.as_deref(),
+            Some("NoCleanablePixels")
+        );
+
+        assert_eq!(output.artifacts.len(), 1);
+        assert_eq!(output.artifacts[0].kind, "alpha");
+        assert_eq!(output.artifacts[0].label, "Spectral Index");
+        assert!(output.artifacts[0].exists);
+        assert_eq!(
+            output.artifacts[0].preview_png_path.as_deref(),
+            Some("/tmp/from-task.alpha.png")
+        );
+        assert!(!output.artifacts[0].preview_png_exists);
+    }
+}

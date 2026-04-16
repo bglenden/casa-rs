@@ -470,4 +470,163 @@ mod tests {
         let record = reader.next_record().unwrap().unwrap();
         assert_eq!(record.bytes(), logical.as_slice());
     }
+
+    #[test]
+    fn fixed_reader_reports_partial_physical_record_and_sequence_errors() {
+        let partial = vec![0_u8; PHYSICAL_RECORD_SIZE - 1];
+        let error = VlaDiskReader::new("partial.xp1", Cursor::new(partial))
+            .next_record()
+            .unwrap_err();
+        assert!(error.to_string().contains("partial physical record"));
+
+        let logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + 10, 12, 34);
+        let block1 = physical_block(1, 2, &logical[..PHYSICAL_RECORD_DATA_BYTES]);
+        let block2 = physical_block(3, 2, &logical[PHYSICAL_RECORD_DATA_BYTES..]);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&block1);
+        bytes.extend_from_slice(&block2);
+        let error = VlaDiskReader::new("mismatch.xp1", Cursor::new(bytes))
+            .next_record()
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("physical-record sequence mismatch")
+        );
+    }
+
+    #[test]
+    fn fixed_reader_reports_truncated_and_oversized_records() {
+        let logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + 10, 12, 34);
+        let block1 = physical_block(1, 2, &logical[..PHYSICAL_RECORD_DATA_BYTES]);
+        let error = VlaDiskReader::new("eof.xp1", Cursor::new(block1.to_vec()))
+            .next_record()
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unexpected EOF while reading logical record")
+        );
+
+        let mut oversized = physical_block(1, 1, &[0_u8; 16]);
+        oversized[4..8].copy_from_slice(&((MAX_LOGICAL_RECORD_SIZE as i32 / 2) + 1).to_be_bytes());
+        let error = VlaDiskReader::new("oversized.xp1", Cursor::new(oversized.to_vec()))
+            .next_record()
+            .unwrap_err();
+        assert!(error.to_string().contains("logical record exceeds limit"));
+    }
+
+    #[test]
+    fn fixed_reader_skips_nonpositive_logical_lengths_and_exposes_paths() {
+        let mut zero_len = physical_block(1, 1, &[0_u8; 8]);
+        zero_len[4..8].copy_from_slice(&0_i32.to_be_bytes());
+        let logical = logical_record_bytes(64, 26, 49_999);
+        let good = physical_block(1, 1, &logical);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&zero_len);
+        bytes.extend_from_slice(&good);
+        let mut reader = VlaDiskReader::new("synthetic.xp4", Cursor::new(bytes));
+        let record = reader.next_record().unwrap().unwrap();
+        assert_eq!(record.path(), Path::new("synthetic.xp4"));
+        assert_eq!(record.physical_records(), 1);
+    }
+
+    #[test]
+    fn disk_variable_reader_reassembles_single_record_spanning_multiple_sectors() {
+        let logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + 300, 30, 50_555);
+        let sector1 = physical_block(1, 1, &logical[..PHYSICAL_RECORD_DATA_BYTES]);
+        let mut sector2 = [0_u8; PHYSICAL_RECORD_SIZE];
+        sector2[..logical.len() - PHYSICAL_RECORD_DATA_BYTES]
+            .copy_from_slice(&logical[PHYSICAL_RECORD_DATA_BYTES..]);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&sector1);
+        bytes.extend_from_slice(&sector2);
+
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "variable.xp1",
+            Cursor::new(bytes),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let record = reader.next_record().unwrap().unwrap();
+        assert_eq!(record.bytes(), logical.as_slice());
+        assert_eq!(record.path(), Path::new("variable.xp1"));
+    }
+
+    #[test]
+    fn disk_variable_reader_reports_invalid_sizes_and_missing_remainder() {
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "invalid-size.xp1",
+            Cursor::new(Vec::<u8>::new()),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let error = reader
+            .finish_disk_block(vec![0_u8; PHYSICAL_RECORD_SIZE], PHYSICAL_RECORD_SIZE + 1)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalid disk physical-record size")
+        );
+
+        let logical = logical_record_bytes(PHYSICAL_RECORD_DATA_BYTES + 10, 22, 44);
+        let sector1 = physical_block(1, 1, &logical[..PHYSICAL_RECORD_DATA_BYTES]);
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "missing-remainder.xp1",
+            Cursor::new(sector1.to_vec()),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let error = reader.next_record().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unexpected EOF while finishing disk physical record")
+        );
+    }
+
+    #[test]
+    fn disk_variable_reader_reports_sequence_mismatch_for_followup_records() {
+        let logical = logical_record_bytes(DISK_PHYSICAL_RECORD_SIZE + 10, 21, 88);
+        let mut first_record = vec![0_u8; DISK_PHYSICAL_RECORD_SIZE];
+        let first_sector = physical_block(1, 2, &logical[..PHYSICAL_RECORD_DATA_BYTES]);
+        let first_record_remainder = DISK_PHYSICAL_RECORD_SIZE - PHYSICAL_RECORD_SIZE;
+        first_record[..PHYSICAL_RECORD_SIZE].copy_from_slice(&first_sector);
+        first_record[PHYSICAL_RECORD_SIZE..].copy_from_slice(
+            &logical
+                [PHYSICAL_RECORD_DATA_BYTES..PHYSICAL_RECORD_DATA_BYTES + first_record_remainder],
+        );
+
+        let mut second_record = vec![0_u8; DISK_PHYSICAL_RECORD_SIZE];
+        let bad_second = physical_block(3, 2, &[0_u8; PHYSICAL_RECORD_DATA_BYTES]);
+        second_record[..PHYSICAL_RECORD_SIZE].copy_from_slice(&bad_second);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&first_record);
+        bytes.extend_from_slice(&second_record);
+
+        let mut reader = VlaDiskReader::with_physical_record_size(
+            "variable-mismatch.xp1",
+            Cursor::new(bytes),
+            PhysicalRecordMode::DiskVariable,
+        );
+        let error = reader.next_record().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("physical-record sequence mismatch")
+        );
+    }
+
+    #[test]
+    fn disk_physical_record_size_rounds_up_to_sector_multiple() {
+        assert_eq!(
+            disk_physical_record_size_for_payload(1),
+            PHYSICAL_RECORD_SIZE
+        );
+        assert_eq!(
+            disk_physical_record_size_for_payload(PHYSICAL_RECORD_SIZE + 1),
+            PHYSICAL_RECORD_SIZE * 2
+        );
+    }
 }

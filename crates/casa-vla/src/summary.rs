@@ -118,3 +118,75 @@ fn scan_one(path: &Path) -> Result<ArchiveFileSummary, VlaError> {
         used_cda_histogram,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn physical_block(
+        current: u16,
+        total: u16,
+        payload: &[u8],
+    ) -> [u8; crate::PHYSICAL_RECORD_SIZE] {
+        let mut block = [0_u8; crate::PHYSICAL_RECORD_SIZE];
+        block[0..2].copy_from_slice(&current.to_be_bytes());
+        block[2..4].copy_from_slice(&total.to_be_bytes());
+        block[4..4 + payload.len()].copy_from_slice(payload);
+        block
+    }
+
+    fn logical_record_bytes(length_bytes: usize, revision: u16, obs_day: u32) -> Vec<u8> {
+        let mut bytes = vec![0_u8; length_bytes];
+        bytes[0..4].copy_from_slice(&((length_bytes / 2) as i32).to_be_bytes());
+        bytes[2 * 3..2 * 3 + 2].copy_from_slice(&revision.to_be_bytes());
+        bytes[2 * 4..2 * 4 + 4].copy_from_slice(&obs_day.to_be_bytes());
+        bytes[2 * 17..2 * 17 + 2].copy_from_slice(&27_u16.to_be_bytes());
+        bytes
+    }
+
+    fn synthetic_archive_file() -> NamedTempFile {
+        let logical = logical_record_bytes(64, 26, 49_999);
+        let block = physical_block(1, 1, &logical);
+        let file = NamedTempFile::new().expect("temp archive");
+        std::fs::write(file.path(), block).expect("write temp archive");
+        file
+    }
+
+    #[test]
+    fn scan_disk_archive_files_rejects_empty_inputs() {
+        assert!(matches!(
+            scan_disk_archive_files(&[]).unwrap_err(),
+            VlaError::NoArchiveFiles
+        ));
+    }
+
+    #[test]
+    fn scan_disk_archive_files_summarizes_real_archive_when_available() {
+        let file = synthetic_archive_file();
+        let path = file.path().to_path_buf();
+        let summary = scan_disk_archive_files(std::slice::from_ref(&path)).expect("scan archive");
+        assert_eq!(summary.files.len(), 1);
+        assert_eq!(summary.logical_records, summary.files[0].logical_records);
+        assert_eq!(summary.logical_bytes, summary.files[0].logical_bytes);
+        assert!(summary.logical_records > 0);
+        assert!(summary.logical_bytes > 0);
+        assert!(summary.files[0].revision_range.is_some());
+        assert!(summary.files[0].obs_day_range.is_some());
+        assert!(summary.files[0].max_antennas > 0);
+        assert!(!summary.files[0].used_cda_histogram.is_empty());
+    }
+
+    #[test]
+    fn scan_disk_archive_files_from_options_propagates_vis_when_available() {
+        let file = synthetic_archive_file();
+        let options = ImportVlaOptions {
+            archivefiles: vec![file.path().to_path_buf()],
+            vis: Some(PathBuf::from("planned.ms")),
+            ..ImportVlaOptions::default()
+        };
+        let summary = scan_disk_archive_files_from_options(&options).expect("scan from options");
+        assert_eq!(summary.vis, Some(PathBuf::from("planned.ms")));
+        assert_eq!(summary.files.len(), 1);
+    }
+}

@@ -1261,14 +1261,25 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::fs;
     use std::path::PathBuf;
 
-    use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+    use casa_imaging::{
+        CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode, UvTaperSize, WTermMode,
+        WeightingMode,
+    };
+    use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
     use casa_provider_contracts::ProviderSurfaceKind;
+    use casa_types::measures::doppler::DopplerRef;
+    use casa_types::measures::frequency::FrequencyRef;
+    use tempfile::{NamedTempFile, tempdir};
 
     use super::{
-        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerRunTaskRequest,
-        ImagerTaskSchemaBundle, ImagerWeighting,
+        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
+        ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
+        ImagerDeconvolver, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunTaskRequest,
+        ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper,
+        ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
     };
     use crate::{CliConfig, SpectralMode};
 
@@ -1487,5 +1498,398 @@ mod tests {
         };
         let config = request.to_cli_config().unwrap();
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
+    }
+
+    #[test]
+    fn plane_selection_and_enum_conversions_cover_public_variants() {
+        for (text, plane) in [
+            ("I", ImagerPlaneSelection::StokesI),
+            ("Q", ImagerPlaneSelection::StokesQ),
+            ("U", ImagerPlaneSelection::StokesU),
+            ("V", ImagerPlaneSelection::StokesV),
+            ("XX", ImagerPlaneSelection::CorrXX),
+            ("YY", ImagerPlaneSelection::CorrYY),
+            ("RR", ImagerPlaneSelection::CorrRR),
+            ("LL", ImagerPlaneSelection::CorrLL),
+        ] {
+            assert_eq!(ImagerRunTaskRequest::plane_from_text(text).unwrap(), plane);
+            assert_eq!(plane.as_cli_text(), text);
+        }
+        assert!(ImagerRunTaskRequest::plane_from_text("XY").is_err());
+
+        assert_eq!(
+            ImagerSpectralMode::from(SpectralMode::Cubedata),
+            ImagerSpectralMode::Cubedata
+        );
+        assert_eq!(
+            SpectralMode::from(ImagerSpectralMode::Cube),
+            SpectralMode::Cube
+        );
+        assert_eq!(
+            ImagerWeighting::from(WeightingMode::Uniform),
+            ImagerWeighting::Uniform
+        );
+        assert_eq!(
+            WeightingMode::from(ImagerWeighting::Briggs { robust: 1.0 }),
+            WeightingMode::Briggs { robust: 1.0 }
+        );
+        assert_eq!(
+            ImagerRestoringBeamMode::from(RestoringBeamMode::Common),
+            ImagerRestoringBeamMode::Common
+        );
+        assert_eq!(
+            RestoringBeamMode::from(ImagerRestoringBeamMode::PerPlane),
+            RestoringBeamMode::PerPlane
+        );
+        assert_eq!(
+            ImagerDeconvolver::from(Deconvolver::Clark),
+            ImagerDeconvolver::Clark
+        );
+        assert_eq!(
+            Deconvolver::from(ImagerDeconvolver::Multiscale),
+            Deconvolver::Multiscale
+        );
+        assert_eq!(
+            ImagerWTermMode::from(WTermMode::WProject),
+            ImagerWTermMode::Wproject
+        );
+        assert_eq!(WTermMode::from(ImagerWTermMode::Direct), WTermMode::Direct);
+        assert_eq!(
+            ImagerCubeInterpolation::from(CubeInterpolation::Cubic),
+            ImagerCubeInterpolation::Linear
+        );
+        assert_eq!(
+            CubeInterpolation::from(ImagerCubeInterpolation::Nearest),
+            CubeInterpolation::Nearest
+        );
+        assert_eq!(
+            ImagerUvTaperSize::from(UvTaperSize::ImageFwhmRad(1.5)),
+            ImagerUvTaperSize::ImageFwhmRad { value: 1.5 }
+        );
+        assert_eq!(
+            UvTaperSize::from(ImagerUvTaperSize::BaselineHwhmLambda { value: 3.0 }),
+            UvTaperSize::BaselineHwhmLambda(3.0)
+        );
+        assert_eq!(
+            ImagerUvTaper::from(GaussianUvTaper {
+                major: UvTaperSize::ImageFwhmRad(2.0),
+                minor: UvTaperSize::BaselineHwhmLambda(4.0),
+                position_angle_rad: 0.25,
+            }),
+            ImagerUvTaper {
+                major: ImagerUvTaperSize::ImageFwhmRad { value: 2.0 },
+                minor: ImagerUvTaperSize::BaselineHwhmLambda { value: 4.0 },
+                position_angle_rad: 0.25,
+            }
+        );
+        assert_eq!(
+            ImagerCleanStopReason::from(CleanStopReason::DivergenceDetected),
+            ImagerCleanStopReason::DivergenceDetected
+        );
+    }
+
+    #[test]
+    fn cube_axis_values_and_config_validate_runtime_inputs() {
+        assert_eq!(
+            ImagerCubeAxisValue::from(&CubeAxisValue::Channel(7))
+                .into_runtime()
+                .unwrap(),
+            CubeAxisValue::Channel(7)
+        );
+        assert_eq!(
+            ImagerCubeAxisValue::from(&CubeAxisValue::FrequencyHz {
+                hz: 1.4e9,
+                frame: Some(FrequencyRef::BARY),
+            })
+            .into_runtime()
+            .unwrap(),
+            CubeAxisValue::FrequencyHz {
+                hz: 1.4e9,
+                frame: Some(FrequencyRef::BARY),
+            }
+        );
+        assert_eq!(
+            ImagerCubeAxisValue::from(&CubeAxisValue::VelocityMs {
+                ms: 12.0,
+                frame: Some(FrequencyRef::LSRK),
+            })
+            .into_runtime()
+            .unwrap(),
+            CubeAxisValue::VelocityMs {
+                ms: 12.0,
+                frame: Some(FrequencyRef::LSRK),
+            }
+        );
+        assert_eq!(
+            ImagerCubeAxisValue::from(&CubeAxisValue::Doppler {
+                value: 0.25,
+                convention: DopplerRef::Z,
+            })
+            .into_runtime()
+            .unwrap(),
+            CubeAxisValue::Doppler {
+                value: 0.25,
+                convention: DopplerRef::Z,
+            }
+        );
+
+        let config = ImagerCubeAxisConfig::from(&CubeAxisConfig {
+            specmode: SpectralMode::Cube.cube_specmode(),
+            outframe: FrequencyRef::BARY,
+            veltype: DopplerRef::Z,
+            interpolation: CubeInterpolation::Nearest,
+            rest_frequency_hz: Some(1.42e9),
+            start: Some(CubeAxisValue::Channel(3)),
+            width: Some(CubeAxisValue::FrequencyHz {
+                hz: 1.0e6,
+                frame: Some(FrequencyRef::LSRK),
+            }),
+        });
+        let runtime = config.clone().into_runtime(SpectralMode::Cube).unwrap();
+        assert_eq!(runtime.outframe, FrequencyRef::BARY);
+        assert_eq!(runtime.veltype, DopplerRef::Z);
+        assert_eq!(runtime.interpolation, CubeInterpolation::Nearest);
+        assert_eq!(runtime.rest_frequency_hz, Some(1.42e9));
+
+        let invalid_frame = ImagerCubeAxisConfig {
+            outframe: "bad-frame".to_string(),
+            ..config.clone()
+        };
+        assert!(invalid_frame.into_runtime(SpectralMode::Cube).is_err());
+
+        let invalid_veltype = ImagerCubeAxisConfig {
+            veltype: "bad-doppler".to_string(),
+            ..config.clone()
+        };
+        assert!(invalid_veltype.into_runtime(SpectralMode::Cube).is_err());
+
+        let invalid_restfreq = ImagerCubeAxisConfig {
+            rest_frequency_hz: Some(f64::NAN),
+            ..config
+        };
+        assert!(invalid_restfreq.into_runtime(SpectralMode::Cube).is_err());
+    }
+
+    #[test]
+    fn to_cli_config_rejects_invalid_request_combinations() {
+        let base = ImagerRunTaskRequest {
+            measurement_set: PathBuf::from("demo.ms"),
+            image_name: PathBuf::from("out/demo"),
+            image_size: 64,
+            cell_arcsec: 1.5,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            data_column: None,
+            correlation: None,
+            spectral_mode: ImagerSpectralMode::Mfs,
+            cube_axis: Default::default(),
+            weighting: Default::default(),
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: Default::default(),
+            deconvolver: Default::default(),
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 8,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: Default::default(),
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        };
+
+        assert!(
+            base.clone()
+                .to_cli_config()
+                .expect("base request converts")
+                .write_preview_pngs
+        );
+
+        assert!(base.clone().to_cli_config().is_ok());
+        assert!(
+            base.clone()
+                .to_cli_config()
+                .expect("valid config")
+                .correlation
+                .is_none()
+        );
+
+        let conflict = ImagerRunTaskRequest {
+            phasecenter_field: Some(1),
+            phasecenter: Some("J2000 1rad 2rad".to_string()),
+            ..base.clone()
+        };
+        assert!(
+            conflict
+                .to_cli_config()
+                .unwrap_err()
+                .contains("mutually exclusive")
+        );
+
+        let mtmfs_cube = ImagerRunTaskRequest {
+            spectral_mode: ImagerSpectralMode::Cube,
+            deconvolver: ImagerDeconvolver::Mtmfs,
+            ..base.clone()
+        };
+        assert!(
+            mtmfs_cube
+                .to_cli_config()
+                .unwrap_err()
+                .contains("requires specmode='mfs'")
+        );
+
+        let non_mtmfs_nterms = ImagerRunTaskRequest {
+            deconvolver: ImagerDeconvolver::Clark,
+            nterms: 2,
+            ..base.clone()
+        };
+        assert!(
+            non_mtmfs_nterms
+                .to_cli_config()
+                .unwrap_err()
+                .contains("nterms > 1")
+        );
+
+        let zero_nterms = ImagerRunTaskRequest {
+            deconvolver: ImagerDeconvolver::Mtmfs,
+            nterms: 0,
+            ..base.clone()
+        };
+        assert!(
+            zero_nterms
+                .to_cli_config()
+                .unwrap_err()
+                .contains("at least 1")
+        );
+
+        let invalid_scales = ImagerRunTaskRequest {
+            multiscale_scales: vec![1.0, -1.0],
+            ..base
+        };
+        assert!(
+            invalid_scales
+                .to_cli_config()
+                .unwrap_err()
+                .contains("invalid multiscale scale")
+        );
+    }
+
+    #[test]
+    fn task_request_read_and_artifact_generation_cover_file_and_layout_branches() {
+        let file = NamedTempFile::new().expect("temp request");
+        fs::write(
+            file.path(),
+            r#"{"kind":"run","request":{"measurement_set":"demo.ms","image_name":"out/demo","image_size":64,"cell_arcsec":1.5}}"#,
+        )
+        .expect("write request");
+        match ImagerTaskRequest::read_from_source(file.path().to_str().unwrap()).unwrap() {
+            ImagerTaskRequest::Run(request) => {
+                assert_eq!(request.measurement_set, PathBuf::from("demo.ms"));
+                assert_eq!(request.image_name, PathBuf::from("out/demo"));
+            }
+        }
+        assert!(
+            ImagerTaskRequest::read_from_source("/definitely/missing/imager.json")
+                .unwrap_err()
+                .contains("failed to read JSON request")
+        );
+        let bad = NamedTempFile::new().expect("bad request");
+        fs::write(bad.path(), "{not-json").expect("write bad request");
+        assert!(
+            ImagerTaskRequest::read_from_source(bad.path().to_str().unwrap())
+                .unwrap_err()
+                .contains("failed to parse imager task request")
+        );
+
+        let temp = tempdir().expect("artifact dir");
+        let image_name = temp.path().join("artifact/demo");
+        fs::create_dir_all(image_name.parent().unwrap()).expect("artifact parent");
+        fs::write(image_name.with_extension("psf"), b"psf").expect("write psf");
+        fs::write(image_name.with_extension("psf.png"), b"png").expect("write psf png");
+        let standard = ImagerRunTaskRequest {
+            measurement_set: PathBuf::from("demo.ms"),
+            image_name: image_name.clone(),
+            image_size: 64,
+            cell_arcsec: 1.5,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw_selector: Some("7".to_string()),
+            channel_start: None,
+            channel_count: None,
+            data_column: None,
+            correlation: Some(ImagerPlaneSelection::CorrXX),
+            spectral_mode: ImagerSpectralMode::Mfs,
+            cube_axis: Default::default(),
+            weighting: Default::default(),
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: Default::default(),
+            deconvolver: Default::default(),
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 8,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: Default::default(),
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        };
+        let standard_config = standard.to_cli_config().unwrap();
+        assert_eq!(standard_config.spw, Some(7));
+        assert_eq!(standard_config.correlation.as_deref(), Some("XX"));
+
+        let standard_artifacts = super::build_artifacts(&standard);
+        assert_eq!(standard_artifacts.len(), 4);
+        assert_eq!(standard_artifacts[0].kind, ImagerArtifactKind::Psf);
+        assert!(standard_artifacts[0].exists);
+        assert!(standard_artifacts[0].preview_png_exists);
+
+        let mtmfs = ImagerRunTaskRequest {
+            deconvolver: ImagerDeconvolver::Mtmfs,
+            nterms: 2,
+            write_preview_pngs: false,
+            ..standard
+        };
+        let mtmfs_artifacts = super::build_artifacts(&mtmfs);
+        assert_eq!(mtmfs_artifacts.len(), 9);
+        assert_eq!(
+            mtmfs_artifacts
+                .iter()
+                .filter(|artifact| artifact.kind == ImagerArtifactKind::Alpha)
+                .count(),
+            1
+        );
+        assert!(
+            mtmfs_artifacts
+                .iter()
+                .all(|artifact| artifact.preview_png_path.is_none())
+        );
     }
 }

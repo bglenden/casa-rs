@@ -689,6 +689,85 @@ fn action_argument(
 mod tests {
     use super::*;
     use crate::task_contract::ImportVlaScanTaskRequest;
+    use crate::{ArchiveFileSummary, ArchiveSummary, ImportReport};
+    use std::collections::BTreeMap;
+    use tempfile::{NamedTempFile, tempdir};
+
+    fn sample_options() -> ImportVlaOptions {
+        ImportVlaOptions {
+            archivefiles: vec![PathBuf::from("/tmp/a.exp"), PathBuf::from("/tmp/b.xp1")],
+            vis: Some(PathBuf::from("/tmp/out.ms")),
+            bandname: Some(BandName::Ka),
+            frequencytol_hz: 12.5,
+            project: Some("proj".to_string()),
+            starttime: Some("start".to_string()),
+            stoptime: Some("stop".to_string()),
+            applytsys: false,
+            autocorr: true,
+            antnamescheme: AntennaNameScheme::Old,
+            keepblanks: true,
+            evlabands: true,
+        }
+    }
+
+    fn sample_summary() -> ArchiveSummary {
+        let mut histogram = BTreeMap::new();
+        histogram.insert(1, 2);
+        histogram.insert(3, 4);
+        ArchiveSummary {
+            vis: Some(PathBuf::from("/tmp/out.ms")),
+            files: vec![ArchiveFileSummary {
+                path: PathBuf::from("/tmp/a.exp"),
+                logical_records: 7,
+                logical_bytes: 1024,
+                revision_range: Some((3, 5)),
+                obs_day_range: Some((10, 20)),
+                max_antennas: 27,
+                used_cda_histogram: histogram,
+            }],
+            logical_records: 7,
+            logical_bytes: 1024,
+        }
+    }
+
+    fn sample_report() -> ImportReport {
+        ImportReport {
+            vis: PathBuf::from("/tmp/out.ms"),
+            logical_records_seen: 10,
+            logical_records_imported: 8,
+            logical_records_skipped: 2,
+            main_rows_written: 16,
+        }
+    }
+
+    fn physical_block(
+        current: u16,
+        total: u16,
+        payload: &[u8],
+    ) -> [u8; crate::PHYSICAL_RECORD_SIZE] {
+        let mut block = [0_u8; crate::PHYSICAL_RECORD_SIZE];
+        block[0..2].copy_from_slice(&current.to_be_bytes());
+        block[2..4].copy_from_slice(&total.to_be_bytes());
+        block[4..4 + payload.len()].copy_from_slice(payload);
+        block
+    }
+
+    fn logical_record_bytes(length_bytes: usize, revision: u16, obs_day: u32) -> Vec<u8> {
+        let mut bytes = vec![0_u8; length_bytes];
+        bytes[0..4].copy_from_slice(&((length_bytes / 2) as i32).to_be_bytes());
+        bytes[2 * 3..2 * 3 + 2].copy_from_slice(&revision.to_be_bytes());
+        bytes[2 * 4..2 * 4 + 4].copy_from_slice(&obs_day.to_be_bytes());
+        bytes[2 * 17..2 * 17 + 2].copy_from_slice(&27_u16.to_be_bytes());
+        bytes
+    }
+
+    fn synthetic_archive_file() -> NamedTempFile {
+        let logical = logical_record_bytes(64, 26, 49_999);
+        let block = physical_block(1, 1, &logical);
+        let file = NamedTempFile::new().expect("temp archive");
+        fs::write(file.path(), block).expect("write temp archive");
+        file
+    }
 
     #[test]
     fn command_schema_describes_public_importvla_surface() {
@@ -752,6 +831,190 @@ mod tests {
             }
             other => panic!("expected run action, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_run_args_covers_supported_option_branches() {
+        match parse_run_args(vec![
+            OsString::from("--json"),
+            OsString::from("--archivefile"),
+            OsString::from("one.xp1"),
+            OsString::from("--archivefiles"),
+            OsString::from("two.xp5, ,three.exp"),
+            OsString::from("--vis"),
+            OsString::from("out.ms"),
+            OsString::from("--bandname"),
+            OsString::from("Ka"),
+            OsString::from("--frequencytol"),
+            OsString::from("1.25MHz"),
+            OsString::from("--project"),
+            OsString::from("proj"),
+            OsString::from("--starttime"),
+            OsString::from("2020/01/01"),
+            OsString::from("--stoptime"),
+            OsString::from("2020/01/02"),
+            OsString::from("--autocorr"),
+            OsString::from("--no-applytsys"),
+            OsString::from("--keepblanks"),
+            OsString::from("--evlabands"),
+            OsString::from("--antnamescheme"),
+            OsString::from("old"),
+        ])
+        .expect("parse run args")
+        {
+            CliAction::Run { options, json } => {
+                assert!(json);
+                assert_eq!(
+                    options.archivefiles,
+                    vec![
+                        PathBuf::from("one.xp1"),
+                        PathBuf::from("two.xp5"),
+                        PathBuf::from("three.exp")
+                    ]
+                );
+                assert_eq!(options.vis, Some(PathBuf::from("out.ms")));
+                assert_eq!(options.bandname, Some(BandName::Ka));
+                assert_eq!(options.frequencytol_hz, 1_250_000.0);
+                assert_eq!(options.project.as_deref(), Some("proj"));
+                assert_eq!(options.starttime.as_deref(), Some("2020/01/01"));
+                assert_eq!(options.stoptime.as_deref(), Some("2020/01/02"));
+                assert!(!options.applytsys);
+                assert!(options.autocorr);
+                assert_eq!(options.antnamescheme, AntennaNameScheme::Old);
+                assert!(options.keepblanks);
+                assert!(options.evlabands);
+            }
+            other => panic!("expected run action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_args_and_helpers_report_expected_errors() {
+        assert!(matches!(
+            parse_args([OsString::from("--json-run")]).unwrap_err(),
+            VlaError::InvalidArgument {
+                argument: "json-run",
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_run_args(vec![
+                OsString::from("--archivefiles"),
+                OsString::from("a.xp1"),
+                OsString::from("--bogus")
+            ])
+            .unwrap_err(),
+            VlaError::InvalidArgument {
+                argument: "argv",
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_run_args(vec![OsString::from("--archivefiles")]).unwrap_err(),
+            VlaError::InvalidArgument {
+                argument: "archivefiles",
+                ..
+            }
+        ));
+        assert!(matches!(
+            next_value(&mut std::iter::empty(), "archivefile").unwrap_err(),
+            VlaError::InvalidArgument {
+                argument: "archivefile",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn append_archivefiles_and_render_options_json_cover_legacy_shapes() {
+        let mut options = ImportVlaOptions::default();
+        append_archivefiles(&mut options, "one.xp1, , two.xp5 ,,three.exp");
+        assert_eq!(
+            options.archivefiles,
+            vec![
+                PathBuf::from("one.xp1"),
+                PathBuf::from("two.xp5"),
+                PathBuf::from("three.exp")
+            ]
+        );
+
+        let payload = render_options_json(&sample_options());
+        assert_eq!(
+            payload["archivefiles"]
+                .as_array()
+                .expect("archivefiles")
+                .len(),
+            2
+        );
+        assert_eq!(payload["bandname"], "Ka");
+        assert_eq!(payload["antnamescheme"], "old");
+        assert_eq!(payload["applytsys"], false);
+        assert_eq!(payload["evlabands"], true);
+    }
+
+    #[test]
+    fn read_json_source_reads_files_and_reports_missing_paths() {
+        let file = NamedTempFile::new().expect("temp json");
+        fs::write(file.path(), "{\"kind\":\"scan\",\"request\":{}}").expect("write temp json");
+        let payload =
+            read_json_source(file.path().to_str().expect("utf8 path")).expect("read file");
+        assert!(payload.contains("\"kind\":\"scan\""));
+
+        let missing = read_json_source("/definitely/missing/importvla.json").unwrap_err();
+        assert!(missing.contains("read importvla task request from"));
+    }
+
+    #[test]
+    fn render_text_paths_cover_scan_and_import_output_shapes() {
+        let options = sample_options();
+        let summary = sample_summary();
+        let report = sample_report();
+
+        render_text(&options, &summary);
+        render_import_text(&options, &report);
+
+        let help = render_help(&command_schema("importvla-test"));
+        assert!(help.contains("Machine-readable:"));
+        assert!(help.contains("Compatibility:"));
+    }
+
+    #[test]
+    fn run_scan_and_json_request_cover_real_archive_paths_when_available() {
+        let archive = synthetic_archive_file();
+        let path = archive.path().to_path_buf();
+        let options = ImportVlaOptions {
+            archivefiles: vec![path.clone()],
+            ..ImportVlaOptions::default()
+        };
+        run(options.clone(), false).expect("run text scan");
+        run(options, true).expect("run json scan");
+
+        let request_file = NamedTempFile::new().expect("request file");
+        let request = ImportVlaTaskRequest::Scan(ImportVlaScanTaskRequest {
+            options: ImportVlaOptions {
+                archivefiles: vec![path],
+                ..ImportVlaOptions::default()
+            },
+        });
+        fs::write(
+            request_file.path(),
+            serde_json::to_string(&request).expect("serialize scan request"),
+        )
+        .expect("write request file");
+        run_json_request(request_file.path().to_str().expect("utf8 request path"))
+            .expect("run json request");
+    }
+
+    #[test]
+    fn run_import_json_covers_import_execution_branch_when_archive_is_available() {
+        let path = synthetic_archive_file().path().to_path_buf();
+        let temp = tempdir().expect("temp import dir");
+        let options = ImportVlaOptions {
+            archivefiles: vec![path],
+            vis: Some(temp.path().join("import.ms")),
+            ..ImportVlaOptions::default()
+        };
+        assert!(run(options, true).is_err());
     }
 
     #[test]
