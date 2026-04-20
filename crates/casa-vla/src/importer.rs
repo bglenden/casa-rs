@@ -142,19 +142,13 @@ struct SpectralWindowEntry {
 ///
 /// The current implementation accepts the task-style `importvla` option shape,
 /// but this wave only supports disk-file input plus the subset of selectors
-/// needed by the native writer: `archivefiles`, `vis`, `project`,
+/// needed by the native writer: `archivefiles`, optional `vis`, `project`,
 /// `antnamescheme`, `autocorr`, `applytsys`, and `keepblanks`.
 pub fn import_archive_files_to_measurement_set_from_options(
     options: &ImportVlaOptions,
 ) -> Result<ImportReport, VlaError> {
     validate_import_options(options)?;
-    let vis = options
-        .vis
-        .clone()
-        .ok_or_else(|| VlaError::InvalidArgument {
-            argument: "vis",
-            message: "a MeasurementSet output path is required for import".to_string(),
-        })?;
+    let vis = options.effective_vis_for_import()?;
     if vis.exists() {
         return Err(VlaError::InvalidArgument {
             argument: "vis",

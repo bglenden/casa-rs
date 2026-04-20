@@ -8749,6 +8749,8 @@ fn importvla_workflow_runs_against_real_archive_and_renders_stdout() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(importvla_app(), schema, config);
     app.set_text_value("archivefiles", archive_path.to_string_lossy().as_ref());
+    let vis_path = temp.path().join("workflow-import.ms");
+    app.set_text_value("vis", vis_path.to_string_lossy().as_ref());
 
     start_run_with_default_importvla_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -8763,8 +8765,9 @@ fn importvla_workflow_runs_against_real_archive_and_renders_stdout() {
         matches!(
             app.active_result_content(),
             crate::app::ResultContent::Lines(lines)
-                if lines.iter().any(|line| line.contains("importvla disk scan"))
-                    && lines.iter().any(|line| line.contains("logical records"))
+                if lines.iter().any(|line| line.contains("importvla disk import"))
+                    && lines.iter().any(|line| line.contains("logical records imported"))
+                    && lines.iter().any(|line| line.contains(vis_path.to_string_lossy().as_ref()))
         ),
         "content={:?}",
         app.active_result_content()
