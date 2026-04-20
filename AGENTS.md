@@ -152,7 +152,7 @@ A change is not done until:
 - GitHub PR CI runs the lighter `lint_test` and Python package checks; version-tag pushes additionally run the smoke, suite-install, and CI-like coverage gates.
 - `scripts/test-slow.sh` is opt-in for heavy CASA parity suites and must stay outside the default `cargo test --workspace` path.
 - Coverage changes should maintain a safety margin above the CI threshold; with the current 75% requirement, target at least 78%.
-- To reproduce GitHub Actions locally, use `scripts/ci-local.sh build`, then `scripts/ci-local.sh lint_test`, `scripts/ci-local.sh coverage`, or `scripts/ci-local.sh all`.
+- To reproduce GitHub Actions locally, use `scripts/ci-local.sh build`, then `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs. Individual job repro commands are `lint_test`, `python_package`, `smoke`, `suite_install`, and `coverage`.
 - For imaging-program work, wave closure still means implementation, gate verification, and end-of-wave review/fix pass once the GitHub wave is approved.
 - Release tags must be cut with `scripts/release.sh`; do not create release tags directly with `git tag`.
 

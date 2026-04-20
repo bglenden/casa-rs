@@ -27,6 +27,7 @@ The repo uses tiered verification:
 - `scripts/test-release-perf.sh` is informational release evidence by default; perf thresholds only become blocking when `CASA_RS_ENFORCE_PERF=1`
 - `scripts/test-install-suite.sh` and `scripts/run-coverage.sh --ci-like` are release-oriented heavy gates kept outside `just verify` and run explicitly or by `scripts/release.sh`
 - GitHub pull requests run the lighter CI subset, while version-tag pushes run the release-oriented CI gates
+- `scripts/ci-local.sh` mirrors that split with explicit `pr` and `tag` reproduction commands instead of folding smoke or coverage work back into the default PR path
 - `scripts/test-slow.sh` is the explicit opt-in gate for heavy CASA parity suites
 - `scripts/run-coverage.sh --ci-like` remains the canonical coverage command because it matches GitHub Actions behavior more closely than ad hoc local runs
 

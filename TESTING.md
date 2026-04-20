@@ -40,7 +40,7 @@ Verification: just verify
 - Release install gate: `scripts/test-install-suite.sh`
 - Heavy parity suites: `scripts/test-slow.sh`
 - CI-like coverage: `scripts/run-coverage.sh --ci-like`
-- GitHub Actions reproduction: `scripts/ci-local.sh ...`
+- GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
 

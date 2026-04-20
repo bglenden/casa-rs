@@ -4,22 +4,29 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ci-local.sh [build|lint_test|coverage|all|shell]
+Usage: scripts/ci-local.sh [build|lint_test|python_package|smoke|suite_install|coverage|pr|tag|all|shell]
 
 Local reproduction helper for the minimal GitHub Actions CI environment.
 
 Commands:
-  build      Build the local ci-minimal image
-  lint_test  Run the lint_test job commands in the container
-  coverage   Run the coverage job commands in the container
-  all        Run lint_test followed by coverage
-  shell      Open an interactive shell in the container
+  build           Build the local ci-minimal image
+  lint_test       Run the lint_test job commands in the container
+  python_package  Run the python_package job commands in the container
+  smoke           Run the smoke tag job commands in the container
+  suite_install   Run the suite_install tag job commands in the container
+  coverage        Run the coverage tag job commands in the container
+  pr              Run the pull request CI jobs locally
+  tag             Run the version-tag CI jobs locally
+  all             Alias for pr
+  shell           Open an interactive shell in the container
 
 Examples:
   scripts/ci-local.sh build
   scripts/ci-local.sh lint_test
+  scripts/ci-local.sh python_package
+  scripts/ci-local.sh pr
+  scripts/ci-local.sh tag
   scripts/ci-local.sh coverage
-  scripts/ci-local.sh all
 EOF
 }
 
@@ -27,7 +34,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 git_dir="$(git rev-parse --git-dir)"
 git_common_dir="$(git rev-parse --git-common-dir)"
 image_name="casa-rs-ci-minimal"
-command="${1:-all}"
+command="${1:-pr}"
 
 abspath_from_repo_root() {
   case "$1" in
@@ -74,6 +81,13 @@ run_in_container() {
     bash -lc "$script"
 }
 
+run_host_sequence() {
+  local step
+  for step in "$@"; do
+    "$0" "$step"
+  done
+}
+
 case "$command" in
   build)
     docker build -f "$repo_root/Dockerfile.ci-minimal" -t "$image_name" "$repo_root"
@@ -83,9 +97,22 @@ case "$command" in
       ./scripts/check-spdx.sh &&
       cargo fmt --all -- --check &&
       cargo clippy --workspace --all-targets -- -D warnings &&
-      cargo test --workspace &&
-      cargo run -p casa-aipsio --example t_aipsio &&
-      cargo run -p casa-tables --example t_table
+      cargo test --workspace
+    '
+    ;;
+  python_package)
+    run_in_container '
+      ./scripts/test-python-package.sh
+    '
+    ;;
+  smoke)
+    run_in_container '
+      ./scripts/test-smoke.sh
+    '
+    ;;
+  suite_install)
+    run_in_container '
+      ./scripts/test-install-suite.sh
     '
     ;;
   coverage)
@@ -93,16 +120,14 @@ case "$command" in
       ./scripts/run-coverage.sh --ci-like
     '
     ;;
+  pr)
+    run_host_sequence lint_test python_package
+    ;;
+  tag)
+    run_host_sequence lint_test python_package smoke suite_install coverage
+    ;;
   all)
-    run_in_container '
-      ./scripts/check-spdx.sh &&
-      cargo fmt --all -- --check &&
-      cargo clippy --workspace --all-targets -- -D warnings &&
-      cargo test --workspace &&
-      cargo run -p casa-aipsio --example t_aipsio &&
-      cargo run -p casa-tables --example t_table &&
-      ./scripts/run-coverage.sh --ci-like
-    '
+    run_host_sequence pr
     ;;
   shell)
     mounts=()
