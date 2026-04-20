@@ -21,7 +21,7 @@
     
     
       
-        <title>Phase 4 Implementation Rules - casa-rs</title>
+        <title>ADR-0004: Tiered verification and heavy parity gates - casa-rs</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#phase-4-implementation-rules" class="md-skip">
+        <a href="#adr-0004-tiered-verification-and-heavy-parity-gates" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Phase 4 Implementation Rules
+              ADR-0004: Tiered verification and heavy parity gates
             
           </span>
         </div>
@@ -491,10 +491,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#purpose" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Purpose
+        Context
       
     </span>
   </a>
@@ -502,10 +502,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#historical-status-model" class="md-nav__link">
+  <a href="#decision" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Historical status model
+        Decision
       
     </span>
   </a>
@@ -513,10 +513,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#historical-wave-lifecycle" class="md-nav__link">
+  <a href="#consequences" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Historical wave lifecycle
+        Consequences
       
     </span>
   </a>
@@ -524,10 +524,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#wave-sizing-rules" class="md-nav__link">
+  <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Wave sizing rules
+        Alternatives considered
       
     </span>
   </a>
@@ -535,10 +535,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#required-tests-per-wave" class="md-nav__link">
+  <a href="#enforcement" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Required tests per wave
+        Enforcement
       
     </span>
   </a>
@@ -546,32 +546,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#performance-rule" class="md-nav__link">
+  <a href="#drift-detection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Performance rule
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#closeout-gates-canonical" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Closeout gates (canonical)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#required-evidence-in-wave-results" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Required evidence in wave Results
+        Drift detection
       
     </span>
   </a>
@@ -595,71 +573,69 @@
 
 
 
-<h1 id="phase-4-implementation-rules">Phase 4 Implementation Rules<a class="headerlink" href="#phase-4-implementation-rules" title="Permanent link">&para;</a></h1>
-<p>Truth class: historical
-Last reality check: 2026-04-19
-Verification: none</p>
-<p>This file is retained as historical process context for archived Phase 4 wave
-work. Canonical active planning and wave status now live in GitHub Issues /
-Project.</p>
-<p><strong>Required first step:</strong> read <code>/AGENTS.md</code>. When this file conflicts with
-current repo policy, <code>AGENTS.md</code> wins.</p>
-<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
-<p>Deliver practical MeasurementSet APIs and workflows on top of Phase 1-3 table,
-quanta, measures, and coordinate foundations.</p>
-<h2 id="historical-status-model">Historical status model<a class="headerlink" href="#historical-status-model" title="Permanent link">&para;</a></h2>
-<p>While Phase 4 was active, wave file names were used as the local status model:
-- <code>Wave N - &lt;name&gt;.md</code> =&gt; planned
-- <code>Wave N - &lt;name&gt; - TAKEN.md</code> =&gt; in progress
-- <code>Wave N - &lt;name&gt; - FINISHED.md</code> =&gt; closed</p>
-<h2 id="historical-wave-lifecycle">Historical wave lifecycle<a class="headerlink" href="#historical-wave-lifecycle" title="Permanent link">&para;</a></h2>
+<h1 id="adr-0004-tiered-verification-and-heavy-parity-gates">ADR-0004: Tiered verification and heavy parity gates<a class="headerlink" href="#adr-0004-tiered-verification-and-heavy-parity-gates" title="Permanent link">&para;</a></h1>
+<p>Status: accepted
+Date: 2026-04-19
+Truth class: normative
+Supersedes:
+Superseded by:</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>The repo has a broad workspace test surface, editable and wheel-based Python
+package checks, demos, Rust/C++ interop suites, performance probes, coverage
+collection, and heavy CASA parity suites. Running every slow interop, parity,
+packaging, and performance workload in the default loop would make daily
+iteration too slow, but pretending those suites do not matter would weaken
+interoperability and release confidence.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>The repo uses tiered verification:</p>
+<ul>
+<li><code>just quick</code> is the fast local iteration gate</li>
+<li><code>just verify</code> is the default full wave gate for workspace tests and editable Python package verification</li>
+<li><code>just smoke</code> is the named smoke/release gate for Python wheel-install checks and Rust demo verification</li>
+<li>Python-facing scripts resolve Python <code>&gt;=3.10</code> through a repo-level resolver instead of assuming the shell's <code>python3</code></li>
+<li><code>scripts/test-release-cpp-interop.sh</code> is the blocking release gate for Rust/C++ interop suites and remains outside the default <code>cargo test --workspace</code> path</li>
+<li><code>scripts/test-release-perf.sh</code> is informational release evidence by default; perf thresholds only become blocking when <code>CASA_RS_ENFORCE_PERF=1</code></li>
+<li><code>scripts/test-install-suite.sh</code> and <code>scripts/run-coverage.sh --ci-like</code> are release-oriented heavy gates kept outside <code>just verify</code> and run explicitly or by <code>scripts/release.sh</code></li>
+<li>GitHub pull requests run the lighter CI subset, while version-tag pushes run the release-oriented CI gates</li>
+<li><code>scripts/ci-local.sh</code> mirrors that split with explicit <code>pr</code> and <code>tag</code> reproduction commands instead of folding smoke or coverage work back into the default PR path</li>
+<li><code>scripts/test-slow.sh</code> is the explicit opt-in gate for heavy CASA parity suites</li>
+<li><code>scripts/run-coverage.sh --ci-like</code> remains the canonical coverage command because it matches GitHub Actions behavior more closely than ad hoc local runs</li>
+</ul>
+<p>Heavy interop, parity, performance, and release-only checks remain important,
+but they do not live in the default <code>cargo test --workspace</code> path.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<p>Positive:
+- the common local loop stays productive
+- heavy interop/parity suites still have a clear home and remain part of release confidence
+- the Python package gate stops depending on which shell startup files happened to run
+- wheel-install and demo smoke checks keep a named home without slowing normal wave closeout
+- commands used by humans, agents, CI, and release scripts become more consistent</p>
+<p>Negative:
+- contributors must understand which gate is appropriate for a given wave
+- some correctness or performance evidence still requires explicit extra commands
+- GitHub tag CI does not fully replace local release-time interop evidence on machines that have the required C++ stack installed</p>
+<p>Neutral / tradeoffs:
+- <code>just verify</code> is intentionally heavier than <code>just quick</code>, but lighter than named smoke/release packaging and coverage work</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Choose one GitHub issue (or one tightly coupled issue pair).</li>
-<li>Create <code>Wave N - &lt;name&gt;.md</code> from <code>WAVE_TEMPLATE.md</code>.</li>
-<li>Copy the issue scope into the wave file and link the issue number/title.</li>
-<li>Pass the wave's Definition of Ready checklist before coding.</li>
-<li>On implementation start, append <code>- TAKEN</code> to the filename.</li>
-<li>At closeout, fill <code>Results</code> and <code>Lessons learned</code>, then append <code>- FINISHED</code>.</li>
+<li>Put all slow interop and parity suites into the default workspace test path.</li>
+<li>Treat slow parity, interop, and coverage work as optional ad hoc work with no named gate.</li>
 </ol>
-<h2 id="wave-sizing-rules">Wave sizing rules<a class="headerlink" href="#wave-sizing-rules" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Target work that touches 3-8 source files plus tests/support.</li>
-<li>Split schema, storage, selection, and derived-calculation concerns.</li>
-<li>Keep explicit <code>Non-goals</code> in every wave file.</li>
-<li>Prefer idiomatic Rust wrappers over direct C++ class mirroring.</li>
-</ul>
-<h2 id="required-tests-per-wave">Required tests per wave<a class="headerlink" href="#required-tests-per-wave" title="Permanent link">&para;</a></h2>
-<ul>
-<li>2x2 interop matrix where on-disk metadata/bytes are touched: RR, RC, CR, CC.</li>
-<li>Endian matrix when binary serialization is touched.</li>
-<li>Edge cases: undefined cells, empty subtables, variable-shape arrays, missing
-  required columns/keywords.</li>
-<li>C++-dependent tests must skip cleanly when <code>pkg-config casacore</code> is missing.</li>
-<li>Data-dependent tests must skip cleanly when measures tables are unavailable.</li>
-</ul>
-<h2 id="performance-rule">Performance rule<a class="headerlink" href="#performance-rule" title="Permanent link">&para;</a></h2>
-<ul>
-<li>If row/column scans, selection, or array I/O paths change, run release-mode
-  smoke benchmarks.</li>
-<li>Flag and document follow-up when Rust is slower than 2x C++.</li>
-</ul>
-<h2 id="closeout-gates-canonical">Closeout gates (canonical)<a class="headerlink" href="#closeout-gates-canonical" title="Permanent link">&para;</a></h2>
-<p>Run all before <code>-FINISHED</code>:</p>
-<ul>
-<li><code>cargo fmt --all -- --check</code></li>
-<li><code>cargo clippy --workspace --all-targets -- -D warnings</code></li>
-<li><code>cargo test --workspace</code></li>
-<li><code>cargo tarpaulin --workspace --timeout 120 --out Stdout --fail-under 75</code></li>
-<li><code>RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps</code></li>
-</ul>
-<h2 id="required-evidence-in-wave-results">Required evidence in wave <code>Results</code><a class="headerlink" href="#required-evidence-in-wave-results" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Date and commit SHA.</li>
-<li>Commands run with pass/fail summary.</li>
-<li>Interop matrix outcomes.</li>
-<li>Benchmark numbers + Rust/C++ ratio (if performance applies).</li>
-<li>Data/measures-table availability, skips, blockers, and follow-up items.</li>
-</ul>
+<h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
+<p>This decision is enforced by:
+- tests: default and slow suites stay separated by command surface
+- lint/import/dependency rules: <code>justfile</code> and release/CI scripts define the named gate boundaries
+- CI checks: GitHub pull requests run the lighter subset; version tags additionally run <code>scripts/test-smoke.sh</code>, <code>scripts/test-install-suite.sh</code>, and <code>scripts/run-coverage.sh --ci-like</code>
+- review trigger: stop for review when moving heavy interop/parity work into the default loop or weakening named gates
+- none / guidance only:</p>
+<h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
+<p>Suspect drift if:
+- C++ interop or slow parity suites re-enter the default <code>cargo test --workspace</code> path
+- wheel-install or demo smoke checks re-enter <code>just verify</code> without an explicit decision
+- release-only install or coverage gates re-enter <code>just verify</code> without an explicit decision
+- Python package checks start depending on ambient shell <code>python3</code> resolution again
+- contributors start using ad hoc one-off command bundles instead of the named repo gates
+- coverage expectations diverge from the CI-like coverage script</p>
 
 
 
