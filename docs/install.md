@@ -147,3 +147,9 @@ scripts/package-suite-bundle.sh \
   --wheel-dir dist/python \
   --out-dir dist/python
 ```
+
+To build, bundle, and install the current checkout in one step, run:
+
+```bash
+just install-local
+```
