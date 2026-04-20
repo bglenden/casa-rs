@@ -6,6 +6,11 @@ license.workspace = true
 rust-version.workspace = true
 description = "Native VLA archive disk-reader support for importvla-style workflows"
 repository.workspace = true
+autotests = false
+
+[features]
+default = []
+cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 
 [lints]
 workspace = true
@@ -24,3 +29,43 @@ thiserror.workspace = true
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 tempfile = "3"
+
+[build-dependencies]
+pkg-config = "0.3"
+
+[[test]]
+name = "cpp_first_record_parity"
+path = "tests/cpp_first_record_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "cpp_import_ms_parity"
+path = "tests/cpp_import_ms_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "cpp_import_ms_parity_matrix"
+path = "tests/cpp_import_ms_parity_matrix.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "cpp_vlafiller_spw_seed_debug"
+path = "tests/cpp_vlafiller_spw_seed_debug.rs"
+
+[[test]]
+name = "real_archive_inventory"
+path = "tests/real_archive_inventory.rs"
+
+[[test]]
+name = "real_archive_smoke"
+path = "tests/real_archive_smoke.rs"
+
+[[test]]
+name = "real_importvla_parity"
+path = "tests/real_importvla_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "spectral_conversion_xp1_debug"
+path = "tests/spectral_conversion_xp1_debug.rs"
+required-features = ["cpp-interop-tests"]

@@ -4,7 +4,7 @@
 //! Use `cargo test --release` for meaningful ratios. The 2x threshold triggers
 //! a warning (not a hard failure) so CI captures the ratio.
 
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
 use casa_test_support::quanta_interop::{cpp_bench_convert, cpp_bench_parse};
 use casa_types::quanta::{Quantity, Unit};

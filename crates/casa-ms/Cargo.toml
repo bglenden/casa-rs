@@ -6,10 +6,13 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+autotests = false
 
 [features]
 default = []
 slow-tests = []
+cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
+performance-tests = ["casa-test-support/performance-tests"]
 
 [dependencies]
 casa-provider-contracts = { path = "../casa-provider-contracts" }
@@ -42,3 +45,48 @@ plotters = { version = "0.3.7", default-features = false, features = ["bitmap_ba
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series", "point_series", "full_palette", "ab_glyph"] }
+
+[[test]]
+name = "ms_create_roundtrip"
+path = "tests/ms_create_roundtrip.rs"
+
+[[test]]
+name = "ms_data_interop"
+path = "tests/ms_data_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "ms_full_verify_vs_cpp"
+path = "tests/ms_full_verify_vs_cpp.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "ms_library_coverage"
+path = "tests/ms_library_coverage.rs"
+
+[[test]]
+name = "ms_perf_vs_cpp"
+path = "tests/ms_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "msexplore_casa_parity"
+path = "tests/msexplore_casa_parity.rs"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "msexplore_cli"
+path = "tests/msexplore_cli.rs"
+
+[[test]]
+name = "pointing_subtable_regression"
+path = "tests/pointing_subtable_regression.rs"
+
+[[test]]
+name = "source_subtable_regression"
+path = "tests/source_subtable_regression.rs"
+
+[[test]]
+name = "spectral_frame_parity"
+path = "tests/spectral_frame_parity.rs"
+required-features = ["cpp-interop-tests"]

@@ -2,6 +2,8 @@
 //! Wave 17: mixed-schema interop fixture combining scalar, fixed array,
 //! variable array, record column, table keywords, and column keywords.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_tables::{ColumnOptions, ColumnSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{

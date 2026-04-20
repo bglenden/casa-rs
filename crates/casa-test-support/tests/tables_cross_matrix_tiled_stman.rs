@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_tables::{ColumnOptions, ColumnSchema, TableSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{

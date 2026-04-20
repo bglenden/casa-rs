@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_ms::MeasurementSet;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::derived::engine::MsCalEngine;

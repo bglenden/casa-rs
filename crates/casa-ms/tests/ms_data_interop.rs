@@ -5,6 +5,8 @@
 //! ANTENNA, FIELD, POLARIZATION, SPECTRAL_WINDOW, and DATA_DESCRIPTION
 //! subtables plus a Complex32 `DATA` column in the main table.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 mod common;
 
 use casa_ms::builder::MeasurementSetBuilder;

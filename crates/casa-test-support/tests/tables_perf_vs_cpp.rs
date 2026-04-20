@@ -7,6 +7,8 @@
 //! Use `cargo test --release` for a meaningful comparison. The 2× threshold
 //! triggers a warning (not a hard failure) so CI captures the ratio.
 
+#![cfg(feature = "performance-tests")]
+
 use casa_tables::{ColumnSchema, Slicer, Table, TableOptions, TableSchema};
 use casa_test_support::{
     CellSliceBenchParams, cpp_backend_available, cpp_bulk_scalar_io_bench, cpp_cell_slice_bench,

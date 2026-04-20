@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Temporary diagnostic test to compare C++ vs Rust table binary output.
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_test_support::CppTableFixture;
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};

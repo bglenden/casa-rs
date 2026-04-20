@@ -3,7 +3,7 @@
 //!
 //! All tests require C++ casacore to be available (`has_casacore_cpp`).
 
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
 use casa_tables::table_quantum::{ArrayQuantColumn, ScalarQuantColumn, TableQuantumDesc};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};

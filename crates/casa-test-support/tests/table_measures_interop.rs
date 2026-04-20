@@ -3,7 +3,7 @@
 //!
 //! All C++-dependent tests require `has_casacore_cpp`.
 
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
 use casa_tables::table_measures::*;
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};

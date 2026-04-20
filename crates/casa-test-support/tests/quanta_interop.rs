@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Cross-validation tests: compare Rust unit parsing against C++ casacore.
 
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
 use casa_test_support::quanta_interop::{
     cpp_conformant, cpp_mvangle_format_angle, cpp_mvangle_format_angle_dig2,

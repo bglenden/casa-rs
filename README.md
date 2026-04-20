@@ -1,11 +1,24 @@
 # casa-rs
 
+Truth class: current descriptive
+Last reality check: 2026-04-19
+Verification: just verify
+
 casa-rs is a native Rust implementation of casacore-compatible persistent data
 and related workflows. The workspace now includes both reusable `casa-*`
 libraries and terminal applications built on top of them.
 
 This README is for users of the repo's libraries and applications.
 Contributor/developer policy is in `AGENTS.md`.
+
+## Project Process
+
+- `AGENTS.md` is the canonical agent operating contract.
+- `ARCHITECTURE.md` is the current workspace map and boundary summary.
+- `TESTING.md` defines the test strategy and done gate.
+- `docs/adr/` holds accepted architecture decisions.
+- GitHub Issues / Project are the canonical planning and wave-status surface.
+- `docs/Planning/` is retained as historical or program-reference material only.
 
 ## Documentation
 
@@ -71,17 +84,33 @@ Status legend:
 | `python`, `python3` | Deferred until needed | No current parity target for casacore Python converters/bindings. |
 | `mirlib` | Deferred/Not planned | Out of scope for this Rust implementation. |
 
-Detailed phase and backlog tracking still lives in the phase-specific
-`docs/Planning/Phase */` directories. This README table is the current
-high-level coverage summary of the implementation that exists in the repo
-today.
+Active planning and current wave status now live in GitHub Issues / Project.
+The `docs/Planning/Phase */` tree is retained for historical context and
+program reference, including the imaging parity material that still describes
+current proof boundaries.
 
 ## Quick Start
 
-From this repository workspace:
+From this repository workspace, the raw Cargo path is:
 
 ```bash
 cargo test --workspace
+```
+
+For the stable repo command surface, use:
+
+```bash
+just quick
+just verify
+just smoke
+```
+
+Install `just` with either:
+
+```bash
+brew install just
+# or
+cargo install just
 ```
 
 ## Install on macOS

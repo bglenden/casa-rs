@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! C++ interop checks for lazy `ImageExpr` (Waves 11a + 11b + 12a parser + 12b persistence).
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use std::collections::HashMap;
 
 use casa_coordinates::CoordinateSystem;

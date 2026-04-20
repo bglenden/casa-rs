@@ -7,6 +7,8 @@
 //! all row values. Any additional linked tables reachable through `TpTable`
 //! keyword references are also included.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 mod common;
 
 use std::collections::BTreeSet;

@@ -4,6 +4,8 @@
 //! Verifies that `table.info` metadata (type + subType) round-trips correctly
 //! between Rust and C++ casacore.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_tables::{Table, TableInfo, TableOptions};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{ManagerKind, TableFixture};

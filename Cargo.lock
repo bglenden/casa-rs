@@ -641,6 +641,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "ndarray",
+ "pkg-config",
  "schemars",
  "serde",
  "serde_json",

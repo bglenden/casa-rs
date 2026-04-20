@@ -8,7 +8,7 @@
 //!   (the C++-produced `table.lock` is readable)
 //!
 //! These tests are skipped when `pkg-config casacore` is not available.
-#![cfg(unix)]
+#![cfg(all(feature = "cpp-interop-tests", unix))]
 
 use casa_test_support::{
     CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,

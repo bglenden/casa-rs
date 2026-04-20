@@ -10,6 +10,8 @@
 //! Use `cargo test --release -p casa-test-support --test lattice_statistics_perf_vs_cpp -- --nocapture`
 //! for meaningful performance ratios.
 
+#![cfg(feature = "performance-tests")]
+
 use std::time::Instant;
 
 use casa_lattices::{

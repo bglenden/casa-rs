@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_test_support::{
     AipsIoCrossError, cpp_backend_available, primitive_cross_check_values, run_aipsio_cross_matrix,
 };

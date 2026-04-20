@@ -7,6 +7,12 @@ rust-version.workspace = true
 description = "Cross-language test infrastructure (internal)"
 repository.workspace = true
 publish = false
+autotests = false
+
+[features]
+default = []
+cpp-interop-tests = []
+performance-tests = []
 
 [lints]
 workspace = true
@@ -31,3 +37,198 @@ pkg-config = "0.3"
 
 [dev-dependencies]
 casa-ms = { path = "../casa-ms" }
+
+[[test]]
+name = "aipsio_cross_matrix"
+path = "tests/aipsio_cross_matrix.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "aipsio_demo_parity"
+path = "tests/aipsio_demo_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "dump_table_format"
+path = "tests/dump_table_format.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "image_expr_interop"
+path = "tests/image_expr_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "images_interop"
+path = "tests/images_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "images_perf_vs_cpp"
+path = "tests/images_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "lattice_statistics_perf_vs_cpp"
+path = "tests/lattice_statistics_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "measures_interop"
+path = "tests/measures_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "measures_perf_vs_cpp"
+path = "tests/measures_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "quanta_interop"
+path = "tests/quanta_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "quanta_perf_vs_cpp"
+path = "tests/quanta_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "spectral_frame_exact_interop"
+path = "tests/spectral_frame_exact_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "table_measures_interop"
+path = "tests/table_measures_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "table_measures_perf_vs_cpp"
+path = "tests/table_measures_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "table_quantum_interop"
+path = "tests/table_quantum_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "table_quantum_perf_vs_cpp"
+path = "tests/table_quantum_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "tables_columns_index_interop"
+path = "tests/tables_columns_index_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_concat_table_interop"
+path = "tests/tables_concat_table_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_cross_matrix_empty"
+path = "tests/tables_cross_matrix_empty.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_cross_matrix_incremental_stman"
+path = "tests/tables_cross_matrix_incremental_stman.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_cross_matrix_standard_stman"
+path = "tests/tables_cross_matrix_standard_stman.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_cross_matrix_stman_aipsio"
+path = "tests/tables_cross_matrix_stman_aipsio.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_cross_matrix_stman_aipsio_undefined"
+path = "tests/tables_cross_matrix_stman_aipsio_undefined.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_cross_matrix_tiled_stman"
+path = "tests/tables_cross_matrix_tiled_stman.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_cross_matrix_variable_arrays"
+path = "tests/tables_cross_matrix_variable_arrays.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_deep_copy_interop"
+path = "tests/tables_deep_copy_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_locking_interop"
+path = "tests/tables_locking_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_mixed_schema_interop"
+path = "tests/tables_mixed_schema_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_perf_vs_cpp"
+path = "tests/tables_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "tables_ref_table_interop"
+path = "tests/tables_ref_table_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_sorted_ref_table_interop"
+path = "tests/tables_sorted_ref_table_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_table_info_interop"
+path = "tests/tables_table_info_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_virtual_column_interop"
+path = "tests/tables_virtual_column_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "taql_cross_matrix"
+path = "tests/taql_cross_matrix.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "taql_meas_column_interop"
+path = "tests/taql_meas_column_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "taql_meas_interop"
+path = "tests/taql_meas_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "taql_meas_perf_vs_cpp"
+path = "tests/taql_meas_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "taql_perf_threshold"
+path = "tests/taql_perf_threshold.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "temp_image_interop"
+path = "tests/temp_image_interop.rs"
+required-features = ["cpp-interop-tests"]

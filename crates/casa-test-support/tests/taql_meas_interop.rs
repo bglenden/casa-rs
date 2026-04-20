@@ -7,7 +7,7 @@
 //!
 //! These tests verify that the Rust TaQL meas UDF layer produces results
 //! consistent with C++ casacore's measure conversion engine.
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
 use casa_tables::taql::ast::IndexStyle;
 use casa_tables::taql::eval::{EvalContext, ExprValue};

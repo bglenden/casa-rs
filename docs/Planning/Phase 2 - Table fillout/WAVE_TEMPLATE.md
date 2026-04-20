@@ -1,5 +1,12 @@
 # Wave N - <Title>
 
+Truth class: historical
+Last reality check: 2026-04-19
+Verification: none
+
+Historical local wave template retained for reference. Do not start new active
+work from this template; use the GitHub wave issue template instead.
+
 ## Origin
 
 - Backlog item(s):

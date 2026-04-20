@@ -9,6 +9,16 @@ import numpy as np
 from casars.data import Image, Table, protocol_info, schema_bundle
 
 
+def test_top_level_lazy_data_surface_imports() -> None:
+    import casars
+
+    assert hasattr(casars, "Image")
+    assert hasattr(casars, "Table")
+    assert casars.data is not None
+    assert casars.Image is casars.data.Image
+    assert casars.Table is casars.data.Table
+
+
 def test_data_schema_bundle_reports_object_surface() -> None:
     info = protocol_info()
     assert info.protocol_name == "casars_data_objects"

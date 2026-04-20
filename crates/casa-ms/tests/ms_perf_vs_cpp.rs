@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Performance comparison for MeasurementSet create/open/read workloads.
 
+#![cfg(feature = "performance-tests")]
+
 mod common;
 
 use std::time::Instant;
