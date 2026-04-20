@@ -44,7 +44,8 @@ use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::Rect;
 use ratatui_graphics::{
-    KittyAnimationControl, KittyAnimationGap, ProtocolType, TerminalCapabilities,
+    KittyAnimationControl, KittyAnimationGap, KittyStoredImageStore, ProtocolType,
+    TerminalCapabilities,
 };
 use tar::Archive;
 use tempfile::tempdir;
@@ -67,7 +68,8 @@ use crate::registry::{
 use crate::theme::theme;
 use crate::ui;
 use crate::{
-    KittyMovieOverlay, KittyMovieOverlayMode, first_movie_frame, kitty_movie_overlay_mode,
+    KITTY_MOVIE_OVERLAY_ID_BASE, KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE, KittyMovieOverlay,
+    KittyMovieOverlayMode, SoftwareMovieSlots, first_movie_frame, kitty_movie_overlay_mode,
     loop_forever, movie_debug_log, movie_frame_number, movie_gap, run_with_app, run_with_cli_args,
     terminal_picker, test_env_lock,
 };
@@ -1890,6 +1892,131 @@ fn disabled_overlay_runtime_helpers_are_safe_noops() {
     overlay
         .control_animation_with(&mut backend, KittyAnimationControl::default())
         .expect("noop animation control");
+}
+
+#[cfg(unix)]
+#[test]
+fn software_direct_overlay_refresh_uploads_reuses_and_clears_movie_frames() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(
+        temp.path(),
+        &[fake_imexplore_snapshot_json_with_profile(
+            ProtocolImageView::Plane,
+            ProtocolImageFocus::Content,
+            "Image ready",
+            vec!["raster".to_string()],
+            vec![
+                "View: Plane".to_string(),
+                "Hidden axis Frequency (2): 0/2".to_string(),
+                "Value: 1".to_string(),
+            ],
+            Some(ImageBrowserProbe {
+                pixel_indices: vec![0, 0, 0],
+                pixel_axes: vec![],
+                value: 1.0,
+                masked: false,
+                finite: true,
+                world_axes: vec![],
+            }),
+            Some(fake_image_profile_payload()),
+            Some(ImageNonDisplayAxisState {
+                axis: 2,
+                label: "Frequency".to_string(),
+                index: 0,
+                length: 3,
+                pixel: 0,
+            }),
+            image_parameters("0,0,0", "3,3,2", "1,1,1"),
+        )],
+        None,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image_path", "/tmp/fake.image");
+    app.start_run_for_test();
+    app.prepare_graphics_for_test(140, 32);
+    app.on_tick();
+    app.note_image_plane_presented();
+    app.seed_image_spectrum_content_for_test((320, 120));
+    app.set_text_value_and_apply("fps", "10");
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+
+    let layout = ui::compute_layout(Rect::new(0, 0, 140, 32), &app);
+    let bundle = app
+        .current_direct_image_movie_bundle_info(&layout)
+        .expect("direct movie bundle info");
+
+    let mut store = KittyStoredImageStore::with_starting_ids(
+        KITTY_MOVIE_OVERLAY_IMAGE_ID_BASE,
+        KITTY_MOVIE_OVERLAY_ID_BASE,
+    )
+    .expect("kitty stored image store");
+    let slots = SoftwareMovieSlots {
+        plane: store.allocate_slot().expect("plane slot"),
+        spectrum: store.allocate_slot().expect("spectrum slot"),
+    };
+    let mut overlay = KittyMovieOverlay {
+        mode: KittyMovieOverlayMode::SoftwareDirect,
+        manager: None,
+        software_store: Some(store),
+        software_slots: Some(slots),
+        handle: None,
+        software_images: Vec::new(),
+        active_movie_key: None,
+        active_axis: None,
+        active_axis_index: None,
+        active_canvas: None,
+        uploaded_axis_indices: Vec::new(),
+        seen_axis_indices: Vec::new(),
+        active_fps: 0.0,
+        seeding_started_at: None,
+        looping_started_at: None,
+        looping: false,
+    };
+    let mut backend = CrosstermBackend::new(io::stdout());
+
+    overlay
+        .refresh_software_frame(&mut backend, &mut app, &layout, Some(bundle.clone()))
+        .expect("refresh software direct overlay");
+    assert!(app.image_movie_direct_overlay_active());
+    assert_eq!(overlay.active_movie_key, Some(bundle.movie_key));
+    assert_eq!(overlay.software_images.len(), bundle.axis_length);
+    let first_plane = overlay.software_images[bundle.axis_index]
+        .plane
+        .expect("plane image id");
+    let first_spectrum = overlay.software_images[bundle.axis_index]
+        .spectrum
+        .expect("spectrum image id");
+
+    let repeated_bundle = app
+        .current_direct_image_movie_bundle_info(&layout)
+        .expect("repeat direct movie bundle info");
+    overlay
+        .refresh_software_frame(&mut backend, &mut app, &layout, Some(repeated_bundle))
+        .expect("refresh software direct overlay from cache");
+    assert_eq!(
+        overlay.software_images[bundle.axis_index].plane,
+        Some(first_plane)
+    );
+    assert_eq!(
+        overlay.software_images[bundle.axis_index].spectrum,
+        Some(first_spectrum)
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert!(!app.image_movie_playing_for_test());
+    overlay
+        .refresh_software_frame(&mut backend, &mut app, &layout, None)
+        .expect("clear software direct overlay");
+    assert!(!app.image_movie_direct_overlay_active());
+    assert_eq!(overlay.active_movie_key, None);
+    assert!(overlay.software_images.is_empty());
 }
 
 #[test]

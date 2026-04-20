@@ -2318,8 +2318,11 @@ impl PointingDirectionResolver {
             };
         };
         let lower = entries.partition_point(|entry| entry.time_mjd_seconds < time_mjd_seconds);
-        for candidate_index in [lower.checked_sub(1), Some(lower)].into_iter().flatten() {
-            let entry = entries[candidate_index];
+        for entry in [lower.checked_sub(1), Some(lower)]
+            .into_iter()
+            .flatten()
+            .filter_map(|candidate_index| entries.get(candidate_index).copied())
+        {
             if time_mjd_seconds >= entry.time_mjd_seconds - entry.interval_seconds
                 && time_mjd_seconds <= entry.time_mjd_seconds + entry.interval_seconds
             {
@@ -7852,6 +7855,136 @@ mod tests {
     }
 
     #[test]
+    fn prepare_geometry_trace_uses_pointing_rows_when_time_window_matches() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("geometry_pointing.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        add_pointing_row(&mut ms, 0, [1.2, 0.4], TEST_TIME_MJD_SEC, 5.0);
+        add_pointing_row(&mut ms, 1, [1.3, 0.45], TEST_TIME_MJD_SEC, 5.0);
+        ms.save().unwrap();
+
+        let config = CliConfig {
+            ms: ms_path,
+            imagename: PathBuf::from("unused"),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            correlation: Some("XX".to_string()),
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        };
+
+        let trace = build_prepare_geometry_trace_from_config(&config).unwrap();
+
+        assert_eq!(trace.rows.len(), 1);
+        assert_eq!(trace.rows[0].antenna1_pointing_row, Some(0));
+        assert_eq!(trace.rows[0].antenna2_pointing_row, Some(1));
+        assert!(!trace.rows[0].antenna1_pointing_used_fallback);
+        assert!(!trace.rows[0].antenna2_pointing_used_fallback);
+        assert_eq!(trace.rows[0].antenna1_pointing_direction_rad, [1.2, 0.4]);
+        assert_eq!(trace.rows[0].antenna2_pointing_direction_rad, [1.3, 0.45]);
+    }
+
+    #[test]
+    fn pointing_direction_resolver_prefers_row_ids_and_falls_back_when_needed() {
+        let first = PointingDirectionRow {
+            row_index: 0,
+            antenna_id: 0,
+            time_mjd_seconds: TEST_TIME_MJD_SEC,
+            interval_seconds: 5.0,
+            angles_rad: [1.2, 0.4],
+        };
+        let second = PointingDirectionRow {
+            row_index: 1,
+            antenna_id: 0,
+            time_mjd_seconds: TEST_TIME_MJD_SEC + 30.0,
+            interval_seconds: 5.0,
+            angles_rad: [1.25, 0.45],
+        };
+        let other_antenna = PointingDirectionRow {
+            row_index: 2,
+            antenna_id: 1,
+            time_mjd_seconds: TEST_TIME_MJD_SEC,
+            interval_seconds: 5.0,
+            angles_rad: [1.3, 0.5],
+        };
+        let resolver = PointingDirectionResolver {
+            by_antenna: BTreeMap::from([(0, vec![first, second]), (1, vec![other_antenna])]),
+            by_row_index: HashMap::from([(0, first), (1, second), (2, other_antenna)]),
+        };
+
+        let fallback_angles = [0.9, 0.1];
+        let explicit = resolver.resolve(Some(0), 0, TEST_TIME_MJD_SEC + 100.0, fallback_angles);
+        assert_eq!(explicit.source_row_index, Some(0));
+        assert!(!explicit.used_fallback);
+        assert_eq!(explicit.angles_rad, [1.2, 0.4]);
+
+        let nearest = resolver.resolve(None, 0, TEST_TIME_MJD_SEC + 31.0, fallback_angles);
+        assert_eq!(nearest.source_row_index, Some(1));
+        assert!(!nearest.used_fallback);
+        assert_eq!(nearest.angles_rad, [1.25, 0.45]);
+
+        let no_matching_window =
+            resolver.resolve(Some(2), 0, TEST_TIME_MJD_SEC + 500.0, fallback_angles);
+        assert_eq!(no_matching_window.source_row_index, None);
+        assert!(no_matching_window.used_fallback);
+        assert_eq!(no_matching_window.angles_rad, fallback_angles);
+
+        let missing_antenna = resolver.resolve(None, 9, TEST_TIME_MJD_SEC, fallback_angles);
+        assert_eq!(missing_antenna.source_row_index, None);
+        assert!(missing_antenna.used_fallback);
+        assert_eq!(missing_antenna.angles_rad, fallback_angles);
+    }
+
+    #[test]
     fn prepare_plane_trace_records_weight_spectrum_for_stokes_i_collapse() {
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("trace_weight_spectrum.ms");
@@ -8399,6 +8532,209 @@ mod tests {
             2
         );
         assert!((trace.samples[1].source_contributions[0].factor - 1.0).abs() < 1.0e-6);
+    }
+
+    fn synthetic_cube_trace_config(ms_path: PathBuf) -> CliConfig {
+        CliConfig {
+            ms: ms_path,
+            imagename: PathBuf::from("unused"),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: Some(0),
+            spw_selector: Some("0".to_string()),
+            channel_start: None,
+            channel_count: Some(1),
+            datacolumn: None,
+            correlation: Some("XX".to_string()),
+            spectral_mode: SpectralMode::Cube,
+            cube_axis: CubeAxisConfig {
+                specmode: CubeSpecMode::Cube,
+                outframe: FrequencyRef::TOPO,
+                veltype: DopplerRef::RADIO,
+                interpolation: CubeInterpolation::Linear,
+                rest_frequency_hz: Some(1.25e9),
+                start: Some(CubeAxisValue::FrequencyHz {
+                    hz: 1.1e9,
+                    frame: None,
+                }),
+                width: Some(CubeAxisValue::FrequencyHz {
+                    hz: 1.0e8,
+                    frame: None,
+                }),
+            },
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        }
+    }
+
+    fn write_synthetic_cube_trace_ms(ms_path: &Path) {
+        let mut ms = MeasurementSet::create(
+            ms_path,
+            MeasurementSetBuilder::new()
+                .with_main_column(OptionalMainColumn::Data)
+                .with_main_column(OptionalMainColumn::WeightSpectrum),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.0e9, 1.2e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels_and_weight_spectrum(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(3.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+            ],
+            &[2.0, 4.0, 1.0, 1.0],
+        );
+        ms.save().unwrap();
+    }
+
+    #[test]
+    fn cube_channel_w_project_trace_wrapper_emits_cube_channel_metadata() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("trace_cube_wproject.ms");
+        write_synthetic_cube_trace_ms(&ms_path);
+
+        let mut config = synthetic_cube_trace_config(ms_path);
+        config.w_term_mode = WTermMode::WProject;
+        config.w_project_planes = Some(4);
+
+        let trace = build_cube_channel_w_project_trace_from_config(&config, 0).unwrap();
+
+        assert_eq!(trace.schema_version, ORACLE_SCHEMA_VERSION);
+        assert_eq!(trace.spectral_mode, "cube");
+        assert_eq!(trace.channel_index, Some(0));
+        assert_eq!(trace.requested_plane_count, Some(4));
+        assert!(trace.channel_frequency_hz.is_some());
+        assert!(trace.plane_count >= 1);
+        assert_eq!(trace.gridded_samples, 1);
+        assert_eq!(trace.samples.len(), 1);
+        assert!(trace.skipped_samples.is_empty());
+    }
+
+    #[test]
+    fn cube_residual_refresh_wrappers_trace_single_plane_models() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("trace_cube_residual.ms");
+        write_synthetic_cube_trace_ms(&ms_path);
+
+        let config = synthetic_cube_trace_config(ms_path);
+        let mut model = Array2::<f32>::zeros((config.imsize, config.imsize));
+        model[(config.imsize / 2, config.imsize / 2)] = 2.0;
+
+        let single_plane =
+            trace_cube_channel_residual_refresh_from_config(&config, 0, &model).unwrap();
+        let model_cube = vec![model.clone()];
+        let explicit_cube = trace_cube_channel_residual_refresh_from_config_with_model_cube(
+            &config,
+            0,
+            &model_cube,
+        )
+        .unwrap();
+        let model_lambda =
+            trace_cube_channel_residual_refresh_from_config_with_model_cube_model_channel_lambda(
+                &config,
+                0,
+                &model_cube,
+            )
+            .unwrap();
+
+        for trace in [&single_plane, &explicit_cube, &model_lambda] {
+            assert_eq!(trace.samples.len(), 1);
+            assert_eq!(trace.gridded_samples, 1);
+            assert_eq!(trace.skipped_samples, 0);
+            assert_eq!(trace.residual_image.dim(), (config.imsize, config.imsize));
+            assert!(trace.psf_peak.is_finite());
+            assert!(trace.normalization_sumwt.is_finite());
+            assert!(trace.reported_sumwt.is_finite());
+            assert!(trace.samples[0].gridable);
+        }
+
+        assert_eq!(single_plane.samples, explicit_cube.samples);
+        assert_eq!(single_plane.residual_image, explicit_cube.residual_image);
+        assert_eq!(single_plane.samples, model_lambda.samples);
+        assert_eq!(single_plane.residual_image, model_lambda.residual_image);
+    }
+
+    #[test]
+    fn cube_trace_wrappers_reject_non_cube_requests_and_invalid_models() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("trace_cube_wrapper_errors.ms");
+        write_synthetic_cube_trace_ms(&ms_path);
+
+        let cube_config = synthetic_cube_trace_config(ms_path.clone());
+        let invalid_shape = Array2::<f32>::zeros((8, 8));
+        assert!(
+            trace_cube_channel_residual_refresh_from_config(&cube_config, 0, &invalid_shape)
+                .unwrap_err()
+                .contains("model shape")
+        );
+        assert!(build_cube_channel_w_project_trace_from_config(&cube_config, 99).is_err());
+        assert!(
+            trace_cube_channel_residual_refresh_from_config_with_model_cube(&cube_config, 0, &[],)
+                .unwrap_err()
+                .contains("model plane count 0")
+        );
+
+        let mut mfs_config = synthetic_cube_trace_config(ms_path);
+        mfs_config.spectral_mode = SpectralMode::Mfs;
+        mfs_config.channel_count = None;
+        mfs_config.channel_start = None;
+        mfs_config.w_term_mode = WTermMode::None;
+        mfs_config.w_project_planes = None;
+        let model = Array2::<f32>::zeros((mfs_config.imsize, mfs_config.imsize));
+        assert!(
+            build_cube_channel_w_project_trace_from_config(&mfs_config, 0)
+                .unwrap_err()
+                .contains("requires cube input")
+        );
+        assert!(
+            trace_cube_channel_residual_refresh_from_config(&mfs_config, 0, &model)
+                .unwrap_err()
+                .contains("requires cube input")
+        );
+        assert!(
+            trace_cube_channel_residual_refresh_from_config_with_model_cube(
+                &mfs_config,
+                0,
+                &[model],
+            )
+            .unwrap_err()
+            .contains("requires cube input")
+        );
     }
 
     #[test]
@@ -11444,6 +11780,41 @@ mod tests {
                         .unwrap(),
                     )),
                 ),
+            ]))
+            .unwrap();
+    }
+
+    fn add_pointing_row(
+        ms: &mut MeasurementSet,
+        antenna_id: i32,
+        direction_rad: [f64; 2],
+        time_mjd_sec: f64,
+        interval_seconds: f64,
+    ) {
+        let table = ms.subtable_mut(SubtableId::Pointing).unwrap();
+        let direction = ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![2, 1], direction_rad.to_vec()).unwrap(),
+        );
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("ANTENNA_ID", Value::Scalar(ScalarValue::Int32(antenna_id))),
+                RecordField::new("DIRECTION", Value::Array(direction.clone())),
+                RecordField::new(
+                    "INTERVAL",
+                    Value::Scalar(ScalarValue::Float64(interval_seconds)),
+                ),
+                RecordField::new(
+                    "NAME",
+                    Value::Scalar(ScalarValue::String(format!("pointing-{antenna_id}"))),
+                ),
+                RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+                RecordField::new("TARGET", Value::Array(direction)),
+                RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time_mjd_sec))),
+                RecordField::new(
+                    "TIME_ORIGIN",
+                    Value::Scalar(ScalarValue::Float64(time_mjd_sec)),
+                ),
+                RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
             ]))
             .unwrap();
     }

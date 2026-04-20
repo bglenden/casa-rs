@@ -7164,6 +7164,61 @@ impl ListObsPlotRenderStyle {
 mod tests {
     use super::*;
     use plotters::style::Color;
+    use tempfile::tempdir;
+
+    fn scatter_point_ref(row: usize) -> MsScatterPointRef {
+        MsScatterPointRef {
+            row,
+            corr: 0,
+            chan_start: 0,
+            chan_end: 1,
+        }
+    }
+
+    fn scatter_series(
+        label: &str,
+        color_group: &str,
+        y_axis: MsAxis,
+        points: &[(f64, f64)],
+        row_base: usize,
+    ) -> MsScatterSeries {
+        MsScatterSeries {
+            label: label.to_string(),
+            color_group: color_group.to_string(),
+            y_axis,
+            points: points.to_vec(),
+            provenance: (0..points.len())
+                .map(|offset| scatter_point_ref(row_base + offset))
+                .collect(),
+        }
+    }
+
+    fn scatter_plot_payload(
+        title: &str,
+        secondary_y_axis: Option<MsAxis>,
+        legend_position: MsLegendPosition,
+        series: Vec<MsScatterSeries>,
+    ) -> MsScatterPlotPayload {
+        MsScatterPlotPayload {
+            title: title.to_string(),
+            x_axis: MsAxis::Time,
+            y_axis: MsAxis::Amplitude,
+            secondary_y_axis,
+            x_label: "Time".to_string(),
+            y_label: "Amplitude".to_string(),
+            secondary_y_label: secondary_y_axis.map(|axis| axis.display_name().to_string()),
+            fixed_x_bounds: None,
+            fixed_y_bounds: None,
+            secondary_fixed_y_bounds: None,
+            showlegend: true,
+            legend_position,
+            showmajorgrid: true,
+            showminorgrid: true,
+            series,
+            header_lines: vec!["Synthetic header".to_string()],
+            summary: "Synthetic scatter payload".to_string(),
+        }
+    }
 
     #[test]
     fn preset_enum_surfaces_round_trip_and_cover_aliases() {
@@ -8129,5 +8184,282 @@ mod tests {
             "unexpectedly wide zero-span padding: {}",
             max - min
         );
+    }
+
+    #[test]
+    fn scatter_rendering_covers_dual_axis_and_grid_legend_paths() {
+        let dual_axis = scatter_plot_payload(
+            "Dual Axis Scatter",
+            Some(MsAxis::Phase),
+            MsLegendPosition::ExteriorRight,
+            vec![
+                scatter_series(
+                    "Amplitude A",
+                    "amp-a",
+                    MsAxis::Amplitude,
+                    &[(4_304_481_700.0, 1.0), (4_304_481_760.0, 2.5)],
+                    0,
+                ),
+                scatter_series(
+                    "Amplitude B",
+                    "amp-b",
+                    MsAxis::Amplitude,
+                    &[(4_304_481_700.0, 0.5), (4_304_481_760.0, 1.8)],
+                    10,
+                ),
+                scatter_series(
+                    "Phase",
+                    "phase",
+                    MsAxis::Phase,
+                    &[(4_304_481_700.0, -30.0), (4_304_481_760.0, 45.0)],
+                    20,
+                ),
+            ],
+        );
+        let image = render_scatter_image(&dual_axis, ListObsPlotTheme::light(), 960, 640)
+            .expect("render dual-axis scatter image");
+        assert_eq!(image.width(), 960);
+        assert_eq!(image.height(), 640);
+
+        let grid = MsScatterGridPayload {
+            title: "Grid Scatter".to_string(),
+            x_axis: MsAxis::Channel,
+            y_axis: MsAxis::Amplitude,
+            x_label: "Channel".to_string(),
+            y_label: "Amplitude".to_string(),
+            fixed_x_bounds: None,
+            fixed_y_bounds: None,
+            showlegend: true,
+            legend_position: MsLegendPosition::ExteriorBottom,
+            showmajorgrid: true,
+            showminorgrid: false,
+            iteraxis: MsIterationAxis::Field,
+            gridrows: 1,
+            gridcols: 2,
+            share_x_bounds: true,
+            share_y_bounds: true,
+            panels: vec![
+                MsScatterPanelPayload {
+                    key: "field=0".to_string(),
+                    label: "Field 0".to_string(),
+                    series: vec![
+                        scatter_series(
+                            "Field 0 RR",
+                            "rr",
+                            MsAxis::Amplitude,
+                            &[(0.0, 1.0), (1.0, 1.5), (2.0, 2.0)],
+                            30,
+                        ),
+                        scatter_series(
+                            "Field 0 LL",
+                            "ll",
+                            MsAxis::Amplitude,
+                            &[(0.0, 0.8), (1.0, 1.1), (2.0, 1.4)],
+                            40,
+                        ),
+                    ],
+                    summary: "Field 0".to_string(),
+                },
+                MsScatterPanelPayload {
+                    key: "field=1".to_string(),
+                    label: "Field 1".to_string(),
+                    series: vec![
+                        scatter_series(
+                            "Field 1 RR",
+                            "rr",
+                            MsAxis::Amplitude,
+                            &[(0.0, 2.5), (1.0, 2.0), (2.0, 1.7)],
+                            50,
+                        ),
+                        scatter_series(
+                            "Field 1 LL",
+                            "ll",
+                            MsAxis::Amplitude,
+                            &[(0.0, 2.2), (1.0, 1.8), (2.0, 1.3)],
+                            60,
+                        ),
+                    ],
+                    summary: "Field 1".to_string(),
+                },
+            ],
+            header_lines: vec!["Grid header".to_string()],
+            summary: "Grid summary".to_string(),
+        };
+        let image = render_scatter_grid_image(&grid, ListObsPlotTheme::dark(), 1280, 720)
+            .expect("render scatter grid image");
+        assert_eq!(image.width(), 1280);
+        assert_eq!(image.height(), 720);
+    }
+
+    #[test]
+    fn scatter_page_rendering_overplots_matching_cells_and_exports() {
+        let shared_series = vec![scatter_series(
+            "Amplitude",
+            "amp",
+            MsAxis::Amplitude,
+            &[(0.0, 1.0), (1.0, 1.5), (2.0, 1.75)],
+            70,
+        )];
+        let phase_series = vec![scatter_series(
+            "Phase",
+            "phase",
+            MsAxis::Phase,
+            &[(0.0, -15.0), (1.0, 5.0), (2.0, 30.0)],
+            80,
+        )];
+        let page = MsScatterPagePayload {
+            title: "Composite Page".to_string(),
+            exprange: MsPageExportRange::All,
+            gridrows: 1,
+            gridcols: 2,
+            header_lines: vec!["Composite header".to_string()],
+            items: vec![
+                MsScatterPageItemPayload {
+                    plotindex: 0,
+                    rowindex: 0,
+                    colindex: 0,
+                    plot: scatter_plot_payload(
+                        "Amplitude",
+                        None,
+                        MsLegendPosition::ExteriorTop,
+                        shared_series.clone(),
+                    ),
+                },
+                MsScatterPageItemPayload {
+                    plotindex: 1,
+                    rowindex: 0,
+                    colindex: 0,
+                    plot: scatter_plot_payload(
+                        "Phase",
+                        None,
+                        MsLegendPosition::ExteriorTop,
+                        phase_series.clone(),
+                    ),
+                },
+                MsScatterPageItemPayload {
+                    plotindex: 2,
+                    rowindex: 0,
+                    colindex: 1,
+                    plot: scatter_plot_payload(
+                        "Amplitude Detail",
+                        None,
+                        MsLegendPosition::UpperRight,
+                        vec![scatter_series(
+                            "Amplitude Detail",
+                            "detail",
+                            MsAxis::Amplitude,
+                            &[(0.0, 0.4), (1.0, 0.6), (2.0, 1.2)],
+                            90,
+                        )],
+                    ),
+                },
+            ],
+            summary: "Composite summary".to_string(),
+        };
+
+        let resolved = resolve_scatter_page_cells(&page).expect("resolve scatter page cells");
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0].title, "Amplitude, Phase");
+        assert_eq!(resolved[0].series.len(), 2);
+
+        let image = render_scatter_page_image(&page, ListObsPlotTheme::light(), 1440, 720)
+            .expect("render scatter page image");
+        assert_eq!(image.width(), 1440);
+        assert_eq!(image.height(), 720);
+
+        let output_dir = tempdir().expect("tempdir");
+        let txt_path = output_dir.path().join("page.txt");
+        let png_path = output_dir.path().join("page.png");
+        let pdf_path = output_dir.path().join("page.pdf");
+        let payload = MsPlotPayload::ScatterPage(page.clone());
+        export_msexplore_plot(
+            &payload,
+            ListObsPlotTheme::light(),
+            &txt_path,
+            MsExportFormat::Txt,
+            1440,
+            720,
+        )
+        .expect("export scatter manifest");
+        export_msexplore_plot(
+            &payload,
+            ListObsPlotTheme::light(),
+            &png_path,
+            MsExportFormat::Png,
+            1440,
+            720,
+        )
+        .expect("export scatter png");
+        export_msexplore_plot(
+            &payload,
+            ListObsPlotTheme::light(),
+            &pdf_path,
+            MsExportFormat::Pdf,
+            1440,
+            720,
+        )
+        .expect("export scatter pdf");
+
+        let manifest = std::fs::read_to_string(&txt_path).expect("read manifest");
+        assert!(manifest.contains("# msexplore-manifest-v1"));
+        assert!(manifest.contains("Composite Page"));
+        assert!(png_path.exists());
+        assert!(pdf_path.exists());
+        assert!(std::fs::metadata(&pdf_path).expect("pdf metadata").len() > 0);
+    }
+
+    #[test]
+    fn scatter_page_rejects_mismatched_overplot_axes() {
+        let page = MsScatterPagePayload {
+            title: "Bad Page".to_string(),
+            exprange: MsPageExportRange::Current,
+            gridrows: 1,
+            gridcols: 1,
+            header_lines: Vec::new(),
+            items: vec![
+                MsScatterPageItemPayload {
+                    plotindex: 0,
+                    rowindex: 0,
+                    colindex: 0,
+                    plot: scatter_plot_payload(
+                        "Amplitude",
+                        None,
+                        MsLegendPosition::ExteriorRight,
+                        vec![scatter_series(
+                            "Amplitude",
+                            "amp",
+                            MsAxis::Amplitude,
+                            &[(0.0, 1.0), (1.0, 1.5)],
+                            100,
+                        )],
+                    ),
+                },
+                MsScatterPageItemPayload {
+                    plotindex: 1,
+                    rowindex: 0,
+                    colindex: 0,
+                    plot: MsScatterPlotPayload {
+                        x_axis: MsAxis::Channel,
+                        x_label: "Channel".to_string(),
+                        ..scatter_plot_payload(
+                            "Weight",
+                            None,
+                            MsLegendPosition::ExteriorRight,
+                            vec![scatter_series(
+                                "Weight",
+                                "weight",
+                                MsAxis::Weight,
+                                &[(0.0, 2.0), (1.0, 3.0)],
+                                110,
+                            )],
+                        )
+                    },
+                },
+            ],
+            summary: "Bad summary".to_string(),
+        };
+
+        let error = resolve_scatter_page_cells(&page).expect_err("mismatched page should fail");
+        assert!(error.contains("mixes incompatible axes"));
     }
 }
