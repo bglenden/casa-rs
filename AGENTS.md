@@ -50,8 +50,8 @@ Architecture style: layered workspace crates with explicit persistence and inter
 - Graphs/maps: `just graph`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
-- Release install gate: `scripts/test-install-suite.sh`
-- CI-like coverage gate: `scripts/run-coverage.sh --ci-like`
+- Release-only install gate: `scripts/test-install-suite.sh`
+- Release/tag-only CI-like coverage gate: `scripts/run-coverage.sh --ci-like`
 - Slow parity suites: `scripts/test-slow.sh`
 - Release: `scripts/release.sh <version>`
 
@@ -149,6 +149,7 @@ A change is not done until:
 - `scripts/test-release-cpp-interop.sh` is the blocking release gate for Rust/C++ interop suites and stays outside the default `cargo test --workspace` path.
 - `scripts/test-release-perf.sh` is informational release evidence by default; set `CASA_RS_ENFORCE_PERF=1` to turn named perf thresholds back into hard failures.
 - `scripts/test-install-suite.sh` and `scripts/run-coverage.sh --ci-like` are release-oriented heavy gates excluded from `just verify`; releases and version-tag CI run them explicitly.
+- Routine branch merges should not run `scripts/test-install-suite.sh` or `scripts/run-coverage.sh --ci-like` unless the user explicitly asks for release/tag-equivalent validation or for direct reproduction of those heavy gates.
 - GitHub PR CI runs the lighter `lint_test` and Python package checks; version-tag pushes additionally run the smoke, suite-install, and CI-like coverage gates.
 - `scripts/test-slow.sh` is opt-in for heavy CASA parity suites and must stay outside the default `cargo test --workspace` path.
 - Coverage changes should maintain a safety margin above the CI threshold; with the current 75% requirement, target at least 78%.

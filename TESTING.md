@@ -37,9 +37,9 @@ Verification: just verify
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
-- Release install gate: `scripts/test-install-suite.sh`
+- Release-only install gate: `scripts/test-install-suite.sh`
 - Heavy parity suites: `scripts/test-slow.sh`
-- CI-like coverage: `scripts/run-coverage.sh --ci-like`
+- Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
@@ -50,6 +50,7 @@ Verification: just verify
 - Local goal is at least 78% to preserve a safety margin.
 - Explain coverage regressions rather than hiding them.
 - Do not trade meaningful behavioral tests for raw numeric coverage.
+- Do not run `scripts/run-coverage.sh --ci-like` for routine branch merges unless the user explicitly asks for release/tag-level validation or direct reproduction of the heavy coverage gate.
 
 ## Wave expectations
 
@@ -60,6 +61,7 @@ For each wave:
 - medium/high-risk work gets architecture review and test-adversary review
 - reality-sync happens when docs, interfaces, or boundaries changed
 - release work also runs the smoke gate, the blocking C++ interop gate, plus the suite-install and CI-like coverage gates
+- ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
 - slow CASA parity checks run when the wave touches those concerns
 
