@@ -469,7 +469,25 @@ fn read_json_source(source: &str) -> Result<String, String> {
 }
 
 fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
-    let report = import_archive_files_to_measurement_set_from_options(&options)?;
+    let cleanup_vis = if options.vis.is_none() {
+        Some(options.effective_vis_for_import()?)
+    } else {
+        None
+    };
+    let report = match import_archive_files_to_measurement_set_from_options(&options) {
+        Ok(report) => report,
+        Err(error) => {
+            if let Some(path) = cleanup_vis.as_deref().filter(|path| path.exists()) {
+                cleanup_failed_import_output(path).map_err(|cleanup_error| {
+                    VlaError::import(format!(
+                        "{error}; cleanup failed for {}: {cleanup_error}",
+                        path.display()
+                    ))
+                })?;
+            }
+            return Err(error);
+        }
+    };
     if json_output {
         let payload = json!({
             "mode": "disk-import",
@@ -487,6 +505,14 @@ fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
         render_import_text(&report);
     }
     Ok(())
+}
+
+fn cleanup_failed_import_output(path: &std::path::Path) -> Result<(), std::io::Error> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
 }
 
 fn render_options_json(options: &ImportVlaOptions) -> serde_json::Value {
@@ -1010,7 +1036,7 @@ mod tests {
     }
 
     #[test]
-    fn run_without_vis_uses_import_path_with_default_output_name() {
+    fn run_without_vis_cleans_up_failed_default_output_path() {
         let path = synthetic_archive_file().path().to_path_buf();
         let result = with_temp_cwd(|temp| {
             let expected_vis = temp.join(
@@ -1028,8 +1054,8 @@ mod tests {
                 true,
             );
             assert!(
-                expected_vis.exists(),
-                "default import path should be created in temp cwd"
+                !expected_vis.exists(),
+                "failed implicit imports should clean up the derived temp cwd output"
             );
             result
         });
