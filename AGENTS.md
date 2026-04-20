@@ -83,6 +83,38 @@ Use repository skills in `.agents/skills/` for repeated WDAD procedures.
 Skills may define checklists and output formats.
 Skills must not be the only source of architectural policy or planning state.
 
+## Board transition map
+
+Primary WDAD entry points should match the GitHub Project transition being performed:
+
+- `Backlog -> Shaped`: use `wdad-wave-shaping`
+- `Shaped -> Current Wave / Implementing`: use `wdad-wave-execution`
+- `Implementing -> Review`: use `wdad-wave-closeout`
+- `Review -> Done`: use `wdad-wave-closeout`
+
+Use the specialist sidecar skills only when the transition skill calls for them or
+when the user asks for the narrower review directly:
+
+- `wdad-implementation-preflight` is the planning gate used inside
+  `wdad-wave-execution` when a wave is risky enough to require preflight.
+- `wdad-architecture-review`, `wdad-test-adversary-review`, and
+  `wdad-reality-sync` are closeout sidecars used by `wdad-wave-closeout`.
+- `wdad-stabilization-wave` is the specialized shaping/start path for no-feature
+  entropy-reduction waves.
+- `wdad-project-board-setup` exists for creating or repairing the GitHub Project
+  surface itself, not for ordinary wave progression.
+
+### PR linkage contract
+
+Every wave PR must include an explicit board link in the PR body:
+
+`Wave issue: #N`
+
+Use `Closes #N` only for issues that should auto-close on merge. Do not use
+`Closes #N` for the wave issue unless the merge itself is intended to close the
+wave. The project-sync automation uses the explicit `Wave issue: #N` marker to
+drive board transitions.
+
 ## Decision authority
 
 Agents may decide:

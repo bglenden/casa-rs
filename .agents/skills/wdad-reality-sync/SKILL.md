@@ -1,6 +1,6 @@
 ---
 name: wdad-reality-sync
-description: Use at wave closeout or architecture checkpoints to compare actual code behavior against ARCHITECTURE.md, TESTING.md, ADRs, and generated artifacts. Proposes minimal doc/code follow-up actions.
+description: Closeout sidecar used by `wdad-wave-closeout` or architecture checkpoints to compare actual code behavior against ARCHITECTURE.md, TESTING.md, ADRs, and generated artifacts. Proposes minimal doc/code follow-up actions.
 ---
 
 # Skill: Reality sync

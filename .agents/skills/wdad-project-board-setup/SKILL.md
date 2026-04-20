@@ -1,6 +1,6 @@
 ---
 name: wdad-project-board-setup
-description: Use when creating or repairing the GitHub Issues/Projects planning surface for the methodology. Guides statuses, fields, labels, and first issue setup.
+description: Use when creating or repairing the GitHub Issues/Projects planning surface for the methodology, including board fields, transition semantics, and automation support.
 ---
 
 # Skill: Project board setup

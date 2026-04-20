@@ -1,12 +1,13 @@
 ---
 name: wdad-stabilization-wave
-description: "Use to plan and execute a no-feature wave focused on entropy reduction: refactoring hotspots, tightening tests, removing dead code, updating diagrams, or strengthening architecture checks."
+description: "Specialized transition skill for stabilization work. Use it to shape and start a no-feature wave focused on entropy reduction: refactoring hotspots, tightening tests, removing dead code, updating diagrams, or strengthening architecture checks."
 ---
 
 # Skill: Stabilization wave
 
 ## Purpose
-Run a bounded no-feature wave to reduce entropy and improve maintainability.
+Run a bounded no-feature wave to reduce entropy and improve maintainability
+without mixing in feature delivery.
 
 ## Mode
 Start in planning mode. Implementation may proceed after the stabilization wave issue is approved.

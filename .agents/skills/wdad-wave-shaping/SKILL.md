@@ -1,12 +1,12 @@
 ---
 name: wdad-wave-shaping
-description: Use when turning a backlog idea or rough GitHub issue into a wave-ready issue with outcome, non-goals, acceptance checks, architecture impact, and test plan. Does not edit code.
+description: Primary board-transition skill for `Backlog -> Shaped`. Turns a backlog idea or rough GitHub issue into a wave-ready issue with outcome, non-goals, acceptance checks, architecture impact, and test plan. Does not edit code.
 ---
 
 # Skill: Wave shaping
 
 ## Purpose
-Turn rough work into a wave-ready issue.
+Turn rough work into a wave-ready issue and move it to the board's `Shaped` state.
 
 ## Mode
 Planning/read-only mode. Do not edit code.

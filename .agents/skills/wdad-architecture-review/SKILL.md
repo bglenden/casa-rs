@@ -1,6 +1,6 @@
 ---
 name: wdad-architecture-review
-description: Use to review a branch or diff for architecture drift, boundary violations, unapproved dependencies, public API changes, duplication, or entropy risks. Read-only by default.
+description: Closeout sidecar used by `wdad-wave-closeout` to review a branch or diff for architecture drift, boundary violations, unapproved dependencies, public API changes, duplication, or entropy risks. Read-only by default.
 ---
 
 # Skill: Architecture review

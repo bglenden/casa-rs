@@ -1,6 +1,6 @@
 ---
 name: wdad-test-adversary-review
-description: Use to review tests skeptically after implementation. Assumes the implementation may be wrong and identifies shallow, tautological, over-mocked, or missing tests. Read-only by default.
+description: Closeout sidecar used by `wdad-wave-closeout` to review tests skeptically after implementation. Assumes the implementation may be wrong and identifies shallow, tautological, over-mocked, or missing tests. Read-only by default.
 ---
 
 # Skill: Test-adversary review

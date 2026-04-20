@@ -1,12 +1,13 @@
 ---
 name: wdad-implementation-preflight
-description: Use immediately before coding an approved wave, especially for first waves, cross-module work, public API/data format changes, dependencies, performance-sensitive work, or ambiguity. Produces a compact plan and stop conditions without editing files.
+description: Specialist planning gate used by `wdad-wave-execution` immediately before coding a risky approved wave. Use it for first waves, cross-module work, public API/data format changes, dependencies, performance-sensitive work, or ambiguity. Produces a compact plan and stop conditions without editing files.
 ---
 
 # Skill: Implementation preflight
 
 ## Purpose
-Inspect before coding and expose architecture/test risks.
+Inspect before coding and expose architecture/test risks when a `Shaped` item is
+about to become active implementation.
 
 ## Mode
 Planning/read-only mode. Do not edit files.

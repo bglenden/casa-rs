@@ -1,0 +1,338 @@
+name: WDAD Project Sync
+
+on:
+  issues:
+    types:
+      - closed
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - ready_for_review
+      - converted_to_draft
+      - closed
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  repository-projects: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reconcile WDAD project fields
+        uses: actions/github-script@v7
+        env:
+          PROJECT_ID: PVT_kwHOAP83_84BVGAw
+          FIELD_STATUS_ID: PVTSSF_lAHOAP83_84BVGAwzhQkIE8
+          FIELD_WDAD_ID: PVTSSF_lAHOAP83_84BVGAwzhQkIJw
+          STATUS_TODO_ID: f75ad846
+          STATUS_IN_PROGRESS_ID: 47fc9ee4
+          STATUS_DONE_ID: 98236657
+          WDAD_BACKLOG_ID: 8c12cc92
+          WDAD_SHAPED_ID: 680f7fd3
+          WDAD_CURRENT_WAVE_ID: 15a3970e
+          WDAD_IMPLEMENTING_ID: 1c615d51
+          WDAD_REVIEW_ID: 0f85e95f
+          WDAD_STABILIZE_ID: 55970135
+          WDAD_DONE_ID: 807b5b80
+          WDAD_PARKED_ID: e2507da6
+        with:
+          script: |
+            const projectId = process.env.PROJECT_ID;
+            const fieldStatusId = process.env.FIELD_STATUS_ID;
+            const fieldWdadId = process.env.FIELD_WDAD_ID;
+
+            const statusOption = {
+              todo: process.env.STATUS_TODO_ID,
+              inProgress: process.env.STATUS_IN_PROGRESS_ID,
+              done: process.env.STATUS_DONE_ID,
+            };
+
+            const wdadOption = {
+              backlog: process.env.WDAD_BACKLOG_ID,
+              shaped: process.env.WDAD_SHAPED_ID,
+              currentWave: process.env.WDAD_CURRENT_WAVE_ID,
+              implementing: process.env.WDAD_IMPLEMENTING_ID,
+              review: process.env.WDAD_REVIEW_ID,
+              stabilize: process.env.WDAD_STABILIZE_ID,
+              done: process.env.WDAD_DONE_ID,
+              parked: process.env.WDAD_PARKED_ID,
+            };
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const waveRegexes = [
+              /^Wave issue:\s*#(\d+)\s*$/im,
+              /\bimplements wave\s+#(\d+)\b/i,
+              /\bwave\s+#(\d+)\b/i,
+            ];
+
+            function extractWaveIssueNumber(text) {
+              if (!text) return null;
+              for (const regex of waveRegexes) {
+                const match = text.match(regex);
+                if (match) return Number(match[1]);
+              }
+              return null;
+            }
+
+            async function getIssueProjectItem(issueNumber) {
+              const result = await github.graphql(
+                `
+                  query($owner: String!, $repo: String!, $number: Int!) {
+                    repository(owner: $owner, name: $repo) {
+                      issue(number: $number) {
+                        state
+                        projectItems(first: 50) {
+                          nodes {
+                            id
+                            project {
+                              id
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `,
+                { owner, repo, number: issueNumber }
+              );
+
+              const issue = result.repository.issue;
+              if (!issue) {
+                console.log(`Issue #${issueNumber} does not exist in ${owner}/${repo}`);
+                return null;
+              }
+
+              const item = issue.projectItems.nodes.find((node) => node.project.id === projectId);
+              return {
+                state: issue.state,
+                itemId: item ? item.id : null,
+              };
+            }
+
+            async function updateSingleSelect(itemId, fieldId, optionId) {
+              await github.graphql(
+                `
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(
+                      input: {
+                        projectId: $projectId
+                        itemId: $itemId
+                        fieldId: $fieldId
+                        value: { singleSelectOptionId: $optionId }
+                      }
+                    ) {
+                      projectV2Item {
+                        id
+                      }
+                    }
+                  }
+                `,
+                { projectId, itemId, fieldId, optionId }
+              );
+            }
+
+            async function syncIssueBoard(issueNumber, target, reason) {
+              const info = await getIssueProjectItem(issueNumber);
+              if (!info || !info.itemId) {
+                console.log(`Issue #${issueNumber} is not on the WDAD project; skipping (${reason})`);
+                return;
+              }
+
+              const wantsDoneState =
+                target.statusOptionId === statusOption.done &&
+                target.wdadOptionId === wdadOption.done;
+
+              if (info.state === "CLOSED" && !wantsDoneState) {
+                console.log(`Issue #${issueNumber} is closed; refusing to move it out of Done during ${reason}`);
+                return;
+              }
+
+              if (target.statusOptionId) {
+                await updateSingleSelect(info.itemId, fieldStatusId, target.statusOptionId);
+              }
+              if (target.wdadOptionId) {
+                await updateSingleSelect(info.itemId, fieldWdadId, target.wdadOptionId);
+              }
+
+              console.log(
+                `Synced issue #${issueNumber}: status=${target.statusLabel ?? "-"} wdad=${target.wdadLabel ?? "-"} (${reason})`
+              );
+            }
+
+            async function syncClosedProjectIssuesToDone() {
+              const project = await github.graphql(
+                `
+                  query($projectId: ID!) {
+                    node(id: $projectId) {
+                      ... on ProjectV2 {
+                        items(first: 100) {
+                          nodes {
+                            id
+                            content {
+                              __typename
+                              ... on Issue {
+                                number
+                                state
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `,
+                { projectId }
+              );
+
+              const nodes = project.node?.items?.nodes ?? [];
+              for (const node of nodes) {
+                const content = node.content;
+                if (!content || content.__typename !== "Issue") continue;
+                if (content.state !== "CLOSED") continue;
+                await syncIssueBoard(
+                  content.number,
+                  {
+                    statusOptionId: statusOption.done,
+                    wdadOptionId: wdadOption.done,
+                    statusLabel: "Done",
+                    wdadLabel: "Done",
+                  },
+                  "closed-issue reconciliation"
+                );
+              }
+            }
+
+            async function reconcileWaveIssueFromPullRequest(pr, source) {
+              const waveIssueNumber = extractWaveIssueNumber(pr.body || "");
+              if (!waveIssueNumber) {
+                console.log(`PR #${pr.number} has no explicit wave marker; skipping (${source})`);
+                return;
+              }
+
+              if (pr.merged_at) {
+                await syncIssueBoard(
+                  waveIssueNumber,
+                  {
+                    statusOptionId: statusOption.inProgress,
+                    wdadOptionId: wdadOption.review,
+                    statusLabel: "In Progress",
+                    wdadLabel: "Review",
+                  },
+                  `${source}: merged PR #${pr.number} awaiting wave closure`
+                );
+                return;
+              }
+
+              if (pr.state !== "open") {
+                console.log(`PR #${pr.number} is not open or merged; skipping (${source})`);
+                return;
+              }
+
+              if (pr.draft) {
+                await syncIssueBoard(
+                  waveIssueNumber,
+                  {
+                    statusOptionId: statusOption.inProgress,
+                    wdadOptionId: wdadOption.implementing,
+                    statusLabel: "In Progress",
+                    wdadLabel: "Implementing",
+                  },
+                  `${source}: draft PR #${pr.number}`
+                );
+              } else {
+                await syncIssueBoard(
+                  waveIssueNumber,
+                  {
+                    statusOptionId: statusOption.inProgress,
+                    wdadOptionId: wdadOption.review,
+                    statusLabel: "In Progress",
+                    wdadLabel: "Review",
+                  },
+                  `${source}: non-draft PR #${pr.number}`
+                );
+              }
+            }
+
+            async function reconcileOpenPullRequests() {
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: "open",
+                per_page: 100,
+              });
+
+              for (const pr of pulls) {
+                await reconcileWaveIssueFromPullRequest(pr, "scheduled open-pr reconciliation");
+              }
+            }
+
+            async function reconcileRecentMergedPullRequests() {
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: "closed",
+                sort: "updated",
+                direction: "desc",
+                per_page: 100,
+              });
+
+              const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+              for (const pr of pulls) {
+                if (!pr.merged_at) continue;
+                if (Date.parse(pr.merged_at) < cutoff) continue;
+                await reconcileWaveIssueFromPullRequest(pr, "scheduled merged-pr reconciliation");
+              }
+            }
+
+            if (context.eventName === "issues") {
+              if (context.payload.action === "closed") {
+                await syncIssueBoard(
+                  context.payload.issue.number,
+                  {
+                    statusOptionId: statusOption.done,
+                    wdadOptionId: wdadOption.done,
+                    statusLabel: "Done",
+                    wdadLabel: "Done",
+                  },
+                  "issue closed event"
+                );
+              } else {
+                console.log(`Ignoring issues action ${context.payload.action}`);
+              }
+              return;
+            }
+
+            if (context.eventName === "pull_request_target") {
+              const pr = context.payload.pull_request;
+
+              if (context.payload.action === "closed" && !pr.merged_at) {
+                console.log(`PR #${pr.number} closed without merge; leaving board state unchanged`);
+                return;
+              }
+
+              await reconcileWaveIssueFromPullRequest(pr, `pull_request_target:${context.payload.action}`);
+              return;
+            }
+
+            if (context.eventName === "workflow_dispatch" || context.eventName === "schedule") {
+              await syncClosedProjectIssuesToDone();
+              await reconcileOpenPullRequests();
+              await reconcileRecentMergedPullRequests();
+              return;
+            }
+
+            console.log(`No sync handler for event ${context.eventName}`);

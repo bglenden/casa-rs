@@ -16,6 +16,8 @@
 - `just verify`:
 - Additional checks:
 
-## Issue linkage
+## WDAD linkage
 
-Closes #
+- Wave issue: #
+- Additional issue closures:
+  Closes #
