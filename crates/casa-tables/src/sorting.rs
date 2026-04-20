@@ -245,13 +245,12 @@ pub(crate) fn validate_sort_column(table: &Table, col_name: &str) -> Result<(), 
     // Without schema, check the first row dynamically.
     if table.row_count() > 0 {
         match table.cell(0, col_name)? {
-            Some(Value::Scalar(sv)) => {
-                if sv.sort_cmp(sv).is_none() {
-                    return Err(TableError::SortKeyUnsortable {
-                        column: col_name.to_string(),
-                    });
-                }
+            Some(Value::Scalar(sv)) if sv.sort_cmp(sv).is_none() => {
+                return Err(TableError::SortKeyUnsortable {
+                    column: col_name.to_string(),
+                });
             }
+            Some(Value::Scalar(_)) => {}
             Some(_) => {
                 return Err(TableError::SortKeyNotScalar {
                     column: col_name.to_string(),

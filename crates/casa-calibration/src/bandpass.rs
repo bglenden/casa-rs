@@ -1574,10 +1574,7 @@ fn solve_linear_system(matrix: &mut [Vec<f64>], rhs: &mut [f64]) -> Option<Vec<f
                 continue;
             }
             let pivot_tail = matrix[pivot][pivot..size].to_vec();
-            for (row_value, pivot_value) in matrix[row][pivot..size]
-                .iter_mut()
-                .zip(pivot_tail.into_iter())
-            {
+            for (row_value, pivot_value) in matrix[row][pivot..size].iter_mut().zip(pivot_tail) {
                 *row_value -= factor * pivot_value;
             }
             rhs[row] -= factor * rhs[pivot];
