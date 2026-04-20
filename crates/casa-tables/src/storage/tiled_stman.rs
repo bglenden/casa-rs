@@ -3332,6 +3332,7 @@ impl TiledFileIO {
                                 self.needs_swap,
                                 self.swap_size,
                             )?;
+                            self.tile_on_disk[tile_index] = true;
                         }
                     } else {
                         let tile_bytes = self.tile_bytes;
@@ -3347,6 +3348,9 @@ impl TiledFileIO {
                                     let src_end = tile_index * tile_bytes;
                                     f.seek(SeekFrom::Start(byte_start as u64))?;
                                     f.write_all(&flat.data[src_start..src_end])?;
+                                    for written_tile in start..tile_index {
+                                        self.tile_on_disk[written_tile] = true;
+                                    }
                                     run_start = None;
                                 }
                             }
@@ -4093,6 +4097,34 @@ mod tests {
             0,
             "bool_flush",
             1,
+        )
+        .unwrap();
+
+        let first_tile = make_bool_tile_pattern(0);
+        let second_tile = make_bool_tile_pattern(4);
+        io.put_slice_fortran(&first_tile, &[0], &[4]).unwrap();
+        io.put_slice_fortran(&second_tile, &[4], &[4]).unwrap();
+
+        io.flush().unwrap();
+
+        let all = io.get_all::<bool>().unwrap();
+        let expected: Vec<bool> = first_tile.into_iter().chain(second_tile).collect();
+        assert_eq!(all.iter().copied().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn bool_flat_flush_keeps_tiles_readable_in_same_session() {
+        let dir = tempdir().unwrap();
+        let table_path = dir.path().join("bool_flat_flush.table");
+        std::fs::create_dir_all(&table_path).unwrap();
+        let mut io = TiledFileIO::create(
+            &table_path,
+            &[8],
+            &[4],
+            PrimitiveType::Bool,
+            false,
+            0,
+            "bool_flat_flush",
         )
         .unwrap();
 
