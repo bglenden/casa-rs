@@ -2,13 +2,14 @@
 //! TaQL performance threshold tests.
 //!
 //! Measures Rust query execution time and compares against the C++ baseline
-//! (via `cpp_taql_query` which returns wall-clock nanoseconds). Asserts that
-//! Rust is within the allowed performance ratio.
+//! (via `cpp_taql_query` which returns wall-clock nanoseconds). Reports
+//! threshold regressions by default and only enforces them when
+//! `CASA_RS_ENFORCE_PERF` is set.
 //!
 //! These tests are only compiled when C++ casacore is available and only run
 //! in release mode (debug-mode Rust vs optimized C++ is not a fair comparison).
 
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
 use std::path::Path;
 use std::time::Instant;
@@ -68,11 +69,19 @@ fn run_threshold(
         max_ratio,
     );
 
-    assert!(
-        ratio <= max_ratio,
-        "{label}: Rust/C++ ratio {ratio:.2}x exceeds threshold {max_ratio:.1}x \
-         (Rust={rust_ns}ns, C++={cpp_ns}ns)",
-    );
+    if ratio > max_ratio {
+        eprintln!(
+            "WARNING: {label}: Rust/C++ ratio {ratio:.2}x exceeds threshold {max_ratio:.1}x \
+             (Rust={rust_ns}ns, C++={cpp_ns}ns)"
+        );
+    }
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= max_ratio,
+            "{label}: Rust/C++ ratio {ratio:.2}x exceeds threshold {max_ratio:.1}x \
+             (Rust={rust_ns}ns, C++={cpp_ns}ns)",
+        );
+    }
 }
 
 /// Save a bench table to disk for C++ to read.

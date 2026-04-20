@@ -1663,12 +1663,11 @@ pub(crate) fn save_tiled_columns(
 fn default_tile_shape_for(cell_shape: &[usize], nrow: usize) -> Vec<usize> {
     // Use the full cell shape with a row tile size that keeps tiles ~32KB.
     let cell_nelem: usize = cell_shape.iter().product();
-    let target_elements = 8192; // ~32KB for 4-byte elements
-    let row_tile = if cell_nelem > 0 {
-        (target_elements / cell_nelem).max(1)
-    } else {
-        nrow
-    };
+    let target_elements: usize = 8192; // ~32KB for 4-byte elements
+    let row_tile = target_elements
+        .checked_div(cell_nelem)
+        .unwrap_or(nrow)
+        .max(1);
     let mut shape: Vec<usize> = cell_shape.to_vec();
     shape.push(row_tile.min(nrow).max(1));
     shape

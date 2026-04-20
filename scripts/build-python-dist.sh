@@ -5,7 +5,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-python_bin="${PYTHON_BIN:-python3}"
+python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 out_dir="${1:-dist/python}"
 tmp_root="$(mktemp -d)"
 cleanup() {

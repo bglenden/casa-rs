@@ -20,12 +20,15 @@ Default local release gates:
   - cargo fmt --all -- --check
   - cargo clippy --workspace --all-targets -- -D warnings
   - cargo test --workspace
+  - scripts/test-release-cpp-interop.sh
   - scripts/test-python-package.sh
+  - scripts/test-smoke.sh
   - scripts/test-install-suite.sh
+  - scripts/run-coverage.sh --ci-like
 
 Use --full to additionally run:
+  - scripts/test-release-perf.sh
   - scripts/test-slow.sh
-  - scripts/run-coverage.sh --ci-like
   - scripts/build-python-docs.sh
 
 Examples:
@@ -218,12 +221,15 @@ main() {
   run_timed_step "cargo fmt" cargo fmt --all -- --check
   run_timed_step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
   run_timed_step "cargo test" cargo test --workspace
+  run_timed_step "C++ interop release gate" bash scripts/test-release-cpp-interop.sh
   run_timed_step "python package gate" scripts/test-python-package.sh
+  run_timed_step "smoke gate" bash scripts/test-smoke.sh
   run_timed_step "suite install gate" scripts/test-install-suite.sh
+  run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
 
   if [[ "$run_full" == "true" ]]; then
+    run_timed_step "release performance suite" bash scripts/test-release-perf.sh
     run_timed_step "slow parity gate" scripts/test-slow.sh
-    run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
     run_timed_step "python docs build" scripts/build-python-docs.sh
   fi
 

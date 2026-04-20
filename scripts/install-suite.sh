@@ -16,7 +16,8 @@ Options:
   --bundle <path-or-url>    Local bundle path or explicit bundle URL
   --repo <owner/name>       GitHub repository to download from
                             (default: bglenden/casa-rs)
-  --python <python>         Python interpreter to use (default: python3)
+  --python <python>         Python interpreter to use
+                            (default: repo resolver for Python >=3.10)
   --install-root <dir>      Suite install root (default: ~/.local/opt/casa-rs)
   --bin-dir <dir>           PATH-facing symlink directory (default: ~/.local/bin)
   --activate                Update the generic current/bin links to this install
@@ -131,7 +132,7 @@ select_wheel() {
 version=""
 bundle_source=""
 repo="${CASARS_INSTALL_REPOSITORY:-bglenden/casa-rs}"
-python_bin="${PYTHON_BIN:-python3}"
+python_bin="${PYTHON_BIN:-}"
 install_root="$HOME/.local/opt/casa-rs"
 bin_dir="$HOME/.local/bin"
 activate=""
@@ -202,7 +203,13 @@ if [[ -z "$version" && -z "$bundle_source" ]]; then
   die "one of --version or --bundle is required"
 fi
 
-command -v "$python_bin" >/dev/null 2>&1 || die "python interpreter not found: $python_bin"
+if [[ -z "$python_bin" ]]; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  python_bin="$("$script_dir/resolve-python.sh" 3.10)"
+else
+  command -v "$python_bin" >/dev/null 2>&1 || die "python interpreter not found: $python_bin"
+fi
+
 command -v curl >/dev/null 2>&1 || die "curl is required"
 command -v tar >/dev/null 2>&1 || die "tar is required"
 

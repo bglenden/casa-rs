@@ -1,7 +1,12 @@
 # Deterministic Imaging Parity Program
 
-This document is the single active implementation plan for CASA-compatible
-synthesis imaging in this repository.
+Truth class: current descriptive
+Last reality check: 2026-04-19
+Verification: none
+
+This document is the current descriptive program reference for
+CASA-compatible synthesis imaging in this repository. Canonical active
+planning and wave status now live in GitHub Issues / Project.
 
 - Numeric parity uses CASA/casacore imaging behavior as the truth oracle.
 - Metadata, serialization, and `image.open()` parity use CASA/casacore image

@@ -4,7 +4,7 @@
 //! These tests benchmark measure conversions called N times through the Rust
 //! TaQL `meas.*` UDF layer and compare against C++ casacore's batch conversion
 //! benchmark functions. Only runs in release mode.
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
 use std::time::Instant;
 
@@ -69,11 +69,15 @@ fn perf_epoch_conversion() {
         ratio,
     );
 
-    // Allow up to 5x overhead (Rust is pure, not using cached conversion engine)
-    assert!(
-        ratio <= 5.0,
-        "epoch perf: Rust/C++ ratio {ratio:.2}x exceeds 5.0x threshold"
-    );
+    if ratio > 5.0 {
+        eprintln!("WARNING: epoch perf ratio {ratio:.2}x exceeds the 5.0x threshold");
+    }
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= 5.0,
+            "epoch perf: Rust/C++ ratio {ratio:.2}x exceeds 5.0x threshold"
+        );
+    }
 }
 
 #[test]
@@ -112,9 +116,13 @@ fn perf_direction_conversion() {
         ratio,
     );
 
-    // Allow up to 5x overhead
-    assert!(
-        ratio <= 5.0,
-        "direction perf: Rust/C++ ratio {ratio:.2}x exceeds 5.0x threshold"
-    );
+    if ratio > 5.0 {
+        eprintln!("WARNING: direction perf ratio {ratio:.2}x exceeds the 5.0x threshold");
+    }
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= 5.0,
+            "direction perf: Rust/C++ ratio {ratio:.2}x exceeds 5.0x threshold"
+        );
+    }
 }

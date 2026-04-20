@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

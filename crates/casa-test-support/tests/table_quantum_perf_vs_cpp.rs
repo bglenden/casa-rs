@@ -3,7 +3,7 @@
 //!
 //! Use `cargo test --release` for meaningful ratios.
 
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
 use casa_tables::table_quantum::{ArrayQuantColumn, ScalarQuantColumn, TableQuantumDesc};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};

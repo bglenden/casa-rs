@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! TempImage Rust/C++ interop checks for Wave 13.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_coordinates::{CoordinateSystem, LinearCoordinate};
 use casa_images::{Image, ImageInfo, ImageType, TempImage};
 use casa_test_support::{

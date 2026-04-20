@@ -9,7 +9,7 @@
 //!
 //! The parity checks below compare those two calling models on the same
 //! persisted fixture tables.
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
 use tempfile::TempDir;
 

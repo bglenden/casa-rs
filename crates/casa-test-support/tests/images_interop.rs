@@ -4,6 +4,8 @@
 //! Verifies that Rust `Image` and C++ `PagedImage<Float>` produce identical
 //! on-disk formats and can read each other's images.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
 use casa_images::{Image, OpenedImageView, PagedImage};
 use casa_test_support::{CppUnsupportedRegionKind, cpp_backend_available, discover_casa_python};

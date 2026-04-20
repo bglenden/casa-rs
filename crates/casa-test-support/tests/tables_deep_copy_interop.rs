@@ -9,6 +9,8 @@
 //!
 //! These tests are skipped when `pkg-config casacore` is not available.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_test_support::{
     CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,
 };

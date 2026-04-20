@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
@@ -19,7 +20,7 @@ def __getattr__(name: str) -> Any:
     """Load the data surface lazily so task wrappers work without `_core`."""
 
     if name in {"data", "Image", "Table"}:
-        from . import data as data_module
+        data_module = import_module(".data", __name__)
 
         if name == "data":
             return data_module

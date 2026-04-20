@@ -120,10 +120,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
 
         if event::poll(Duration::from_millis(poll_interval))? {
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if app.handle_key(key.code)? {
-                        break;
-                    }
+                Event::Key(key)
+                    if key.kind == KeyEventKind::Press && app.handle_key(key.code)? =>
+                {
+                    break;
                 }
                 Event::Mouse(mouse) => app.handle_mouse(mouse),
                 Event::Resize(_, _) => app.graphics_dirty = true,
@@ -368,15 +368,13 @@ impl App {
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if rect_contains(self.last_layout.divider, mouse.column, mouse.row) {
-                    self.dragging_divider = true;
-                }
+            MouseEventKind::Down(MouseButton::Left)
+                if rect_contains(self.last_layout.divider, mouse.column, mouse.row) =>
+            {
+                self.dragging_divider = true;
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if self.dragging_divider {
-                    self.update_panel_width(mouse.column);
-                }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging_divider => {
+                self.update_panel_width(mouse.column);
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.dragging_divider = false;

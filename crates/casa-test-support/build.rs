@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::env;
+
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(has_casacore_cpp)");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/cpp");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CPP_INTEROP_TESTS");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_PERFORMANCE_TESTS");
+
+    let enable_cpp = env::var_os("CARGO_FEATURE_CPP_INTEROP_TESTS").is_some()
+        || env::var_os("CARGO_FEATURE_PERFORMANCE_TESTS").is_some();
+    if !enable_cpp {
+        return;
+    }
 
     let casacore = pkg_config::Config::new().probe("casacore");
     let casacore = match casacore {

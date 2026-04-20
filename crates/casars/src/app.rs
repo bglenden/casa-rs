@@ -8658,11 +8658,9 @@ impl AppState {
             .saturating_sub(track.y)
             .min(track.height.saturating_sub(1)) as usize;
         let denominator = track.height.saturating_sub(1) as usize;
-        let scroll = if denominator == 0 {
-            0
-        } else {
-            (row_offset * max_scroll + denominator / 2) / denominator
-        };
+        let scroll = (row_offset * max_scroll + denominator / 2)
+            .checked_div(denominator)
+            .unwrap_or(0);
         if self.browser_result_uses_live_navigation() {
             self.set_active_browser_scroll(scroll);
         } else {

@@ -1,5 +1,9 @@
 # Documentation Index
 
+Truth class: current descriptive
+Last reality check: 2026-04-19
+Verification: just docs-check
+
 This directory holds stable project documentation.
 
 ## `casars` TUI
@@ -23,18 +27,19 @@ This directory holds stable project documentation.
 - CASA VLA parity runbook:
   [`casa-vla-importvla-parity.md`](casa-vla-importvla-parity.md)
 
-## Planning
+## Planning And Program Reference
 
-Phase plans live under:
+Historical phase plans and program-reference docs live under:
 
 - `docs/Planning/Phase 2 - Table fillout/`
 - `docs/Planning/Phase 3 - Quanta Measures Coordinates/`
 - `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`
 - `docs/Planning/Phase 5 - Lattices Coordinates Images/`
 
-Canonical backlog tracking for the migrated non-imaging phases now lives in GitHub issues.
-Use the issue tracker for active deferred work, and treat the planning directories as
-process/history docs rather than the live backlog.
+Canonical active planning and wave status live in GitHub Issues / Project.
+Treat the planning directories as historical or program-reference docs rather
+than the live backlog. The imaging parity program remains useful reference
+material, but it is not the canonical status surface.
 
 ## Documentation conventions
 

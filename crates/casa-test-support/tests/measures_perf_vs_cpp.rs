@@ -4,9 +4,9 @@
 //! The historical Phase 3 slow routes were:
 //! `UTC -> TAI`, `TT -> TDB`, `UT1 -> GAST`, `J2000 -> ITRF`, and `BARY -> GEO`.
 //! These benchmarks keep those paths reproducible in-tree. The named slow-route
-//! tests below now enforce a `<= 2x` regression threshold; if they fail, treat
-//! it as a frame-state reuse regression rather than an accepted algorithmic gap.
-#![cfg(has_casacore_cpp)]
+//! tests below report threshold regressions by default and only enforce them
+//! when `CASA_RS_ENFORCE_PERF` is set.
+#![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
 use casa_test_support::measures_interop::{
     cpp_bench_direction_convert, cpp_bench_doppler_convert, cpp_bench_epoch_convert,
@@ -106,10 +106,12 @@ fn bench_position(ref_in: PositionRef, ref_out: PositionRef) {
 #[test]
 fn perf_epoch_utc_to_tai() {
     let ratio = bench_epoch(EpochRef::UTC, EpochRef::TAI);
-    assert!(
-        ratio <= 2.0,
-        "UTC->TAI ratio {ratio:.2}x exceeds 2.0x threshold"
-    );
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= 2.0,
+            "UTC->TAI ratio {ratio:.2}x exceeds 2.0x threshold"
+        );
+    }
 }
 
 #[test]
@@ -120,10 +122,12 @@ fn perf_epoch_utc_to_tt() {
 #[test]
 fn perf_epoch_tt_to_tdb() {
     let ratio = bench_epoch(EpochRef::TT, EpochRef::TDB);
-    assert!(
-        ratio <= 2.0,
-        "TT->TDB ratio {ratio:.2}x exceeds 2.0x threshold"
-    );
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= 2.0,
+            "TT->TDB ratio {ratio:.2}x exceeds 2.0x threshold"
+        );
+    }
 }
 
 #[test]
@@ -407,10 +411,12 @@ fn perf_radvel_lsrk_to_bary() {
 #[test]
 fn perf_radvel_bary_to_geo() {
     let ratio = bench_radvel(RadialVelocityRef::BARY, RadialVelocityRef::GEO);
-    assert!(
-        ratio <= 2.0,
-        "BARY->GEO ratio {ratio:.2}x exceeds 2.0x threshold"
-    );
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= 2.0,
+            "BARY->GEO ratio {ratio:.2}x exceeds 2.0x threshold"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -425,10 +431,12 @@ fn perf_direction_j2000_to_b1950() {
 #[test]
 fn perf_direction_j2000_to_itrf() {
     let ratio = bench_direction(DirectionRef::J2000, DirectionRef::ITRF, J2000_MJD);
-    assert!(
-        ratio <= 2.0,
-        "J2000->ITRF ratio {ratio:.2}x exceeds 2.0x threshold"
-    );
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= 2.0,
+            "J2000->ITRF ratio {ratio:.2}x exceeds 2.0x threshold"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -479,8 +487,10 @@ fn perf_epoch_ut1_to_gast() {
     if ratio > 2.0 {
         eprintln!("WARNING: Rust is >2x slower than C++ for Epoch UT1→GAST");
     }
-    assert!(
-        ratio <= 2.0,
-        "UT1->GAST ratio {ratio:.2}x exceeds 2.0x threshold"
-    );
+    if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
+        assert!(
+            ratio <= 2.0,
+            "UT1->GAST ratio {ratio:.2}x exceeds 2.0x threshold"
+        );
+    }
 }

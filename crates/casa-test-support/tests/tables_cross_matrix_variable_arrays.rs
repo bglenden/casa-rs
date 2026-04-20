@@ -2,6 +2,8 @@
 //! 2×2 cross-matrix tests for variable-shape (indirect) array columns,
 //! covering both StManAipsIO and StandardStMan storage managers.
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{

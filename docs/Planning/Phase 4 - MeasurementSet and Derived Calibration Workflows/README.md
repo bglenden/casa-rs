@@ -1,21 +1,29 @@
 # Phase 4 Implementation Rules
 
-**Required first step:** read `/AGENTS.md`. It is mandatory and overrides this
-file when rules conflict.
+Truth class: historical
+Last reality check: 2026-04-19
+Verification: none
+
+This file is retained as historical process context for archived Phase 4 wave
+work. Canonical active planning and wave status now live in GitHub Issues /
+Project.
+
+**Required first step:** read `/AGENTS.md`. When this file conflicts with
+current repo policy, `AGENTS.md` wins.
 
 ## Purpose
 
 Deliver practical MeasurementSet APIs and workflows on top of Phase 1-3 table,
 quanta, measures, and coordinate foundations.
 
-## Status source of truth
+## Historical status model
 
-Wave file names are the only status source of truth:
+While Phase 4 was active, wave file names were used as the local status model:
 - `Wave N - <name>.md` => planned
 - `Wave N - <name> - TAKEN.md` => in progress
 - `Wave N - <name> - FINISHED.md` => closed
 
-## Wave lifecycle
+## Historical wave lifecycle
 
 1. Choose one GitHub issue (or one tightly coupled issue pair).
 2. Create `Wave N - <name>.md` from `WAVE_TEMPLATE.md`.

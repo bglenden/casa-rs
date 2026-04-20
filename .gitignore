@@ -10,3 +10,4 @@ crates/casa-ms/casa-*.log
 __pycache__/
 *.py[cod]
 .codex/
+docs/generated/cargo-metadata.json

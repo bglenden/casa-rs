@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! 2x2 interop tests for measures: Rust vs C++ casacore.
-#![cfg(has_casacore_cpp)]
+#![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
 use casa_test_support::measures_interop::{
     cpp_direction_convert, cpp_direction_convert_iau2000a, cpp_doppler_convert, cpp_earth_velocity,

@@ -1,141 +1,173 @@
-# AGENTS.md
+# Agent Operating Contract
 
-Developer notes for this repo. Keep this file short.
+Truth class: normative
+Last reality check: 2026-04-19
+Verification: just verify
 
-## Goal
+## Project purpose
 
-Implement Rust APIs that can read/write casacore-compatible persistent data.
-Use modern Rust crates where appropriate, but keep on-disk interoperability.
+Implement native Rust libraries and applications that read, write, and
+manipulate casacore-compatible persistent data while preserving on-disk
+interoperability.
+
+## Project profile
+
+Primary language: Rust
+Secondary languages: Python and shell for packaging, docs, test harnesses, and automation
+Project type: workspace libraries + CLI/TUI apps + Python package
+Architecture style: layered workspace crates with explicit persistence and interoperability boundaries
+
+## Truth hierarchy
+
+1. Code, tests, CI, and on-disk interoperability behavior are operational truth.
+2. Accepted ADRs are architectural decision truth.
+3. `ARCHITECTURE.md` describes the current workspace structure and must match reality.
+4. GitHub Issues / Project record planning and history, not current architecture.
+5. `docs/Planning/` is historical or program-reference material unless a file explicitly says otherwise.
 
 ## References
 
 - C++ source: `~/SoftwareProjects/casacore`
+- CASA app/source reference: `~/SoftwareProjects/casa`
 - Upstream: `https://github.com/casacore/casacore`
 - Local C++ headers/libs installed via Homebrew.
 
 ## Worktrees
 
-- Worktrees should go in ../casa-rs-worktrees
-- main is in ~/SoftwareProjects/casa-rs
+- `main` is in `~/SoftwareProjects/casa-rs`.
 
-## Rules
+## Standard commands
+
+- Setup: `just setup`
+- Fast check: `just quick`
+- Full wave verification: `just verify`
+- Smoke gate: `just smoke`
+- Lint: `just lint`
+- Typecheck: `just typecheck`
+- Test: `just test`
+- Architecture checks: `just arch-check`
+- Docs check: `just docs-check`
+- Graphs/maps: `just graph`
+- Blocking C++ interop release gate: `just release-cpp-interop`
+- Informational release performance suite: `just release-perf`
+- Release install gate: `scripts/test-install-suite.sh`
+- CI-like coverage gate: `scripts/run-coverage.sh --ci-like`
+- Slow parity suites: `scripts/test-slow.sh`
+- Release: `scripts/release.sh <version>`
+
+## Planning mode policy
+
+Use planning/read-only mode before editing when:
+
+- adopting or changing the methodology surface
+- shaping a wave
+- crossing crate/package boundaries
+- changing public APIs, file formats, schemas, provider contracts, dependencies, concurrency, or performance-sensitive algorithms
+- diagnosing repeated CI failures
+- performing architecture review, test-adversary review, or reality sync
+
+Planning output must include:
+
+- files/modules likely touched
+- tests to add/update
+- architecture impact
+- stop conditions
+- commands to run
+
+Planning mode may draft ADRs and issue updates.
+Planning mode may not approve architecture changes.
+
+## Skills policy
+
+Use repository skills in `.agents/skills/` for repeated WDAD procedures.
+Skills may define checklists and output formats.
+Skills must not be the only source of architectural policy or planning state.
+
+## Decision authority
+
+Agents may decide:
+
+- implementation details inside an existing crate or module boundary
+- local refactors that preserve public behavior
+- test structure for approved behavior
+- small private helper APIs
+
+Agents must stop before:
+
+- adding a new top-level crate, package, or app family
+- changing public APIs or persisted data formats
+- changing versioned provider-contract bundles or other external contracts
+- adding substantial dependencies
+- changing dependency direction between major crate layers
+- changing concurrency or runtime model
+- changing major performance-sensitive algorithms
+- weakening or deleting tests without replacement
+- editing accepted ADRs except to add supersession metadata when explicitly asked
+
+## Project-specific rules
 
 - Prefer idiomatic Rust APIs over direct C++ API mirroring.
-- Do not reimplement commodity infrastructure (for example use `ndarray`).
-- Use `casa-*` names for reusable libraries and `casars-*` names for app/runtime
-  crates. The repo is a native Rust implementation of casacore-compatible data,
-  not a Rust wrapper around casacore C++.
+- Use `casa-*` names for reusable libraries and `casars-*` names for app/runtime crates. This repo is a native Rust implementation, not a Rust wrapper around casacore C++.
+- Do not reimplement commodity infrastructure when a good Rust crate already exists; for example prefer `ndarray`.
 - API docs belong in source (`///`, `//!`) and are rendered by `cargo doc`.
-- For `casars` TUI work, follow `docs/casars-tui-framework.md`; new apps must
-  conform to its shell-family conventions instead of inventing app-local UI
-  structure.
-- For functionality-provider contracts, follow `docs/provider-contracts.md`.
-  Treat the versioned schema bundle as the boundary contract; UI views are
-  derived projections, not separate sources of truth.
-- Prefer red/green development: add failing regression test first.
-- C++-dependent tests must skip cleanly when `pkg-config casacore` is missing.
-- Shared CASA dataset root defaults to `../casatestdata`.
-- Override the shared dataset root with `CASA_RS_TESTDATA_ROOT`.
-- Canonical measures runtime data lives in a CASA-compatible table tree rooted
-  at `~/.casa/data`.
-- Override the measures runtime root with `CASA_RS_MEASURESPATH`.
-- `CASA_RS_DATA` is a deprecated compatibility alias; do not introduce new
-  code or docs that prefer it over `CASA_RS_MEASURESPATH`.
-- Reuse upstream CASA/casaconfig tables and bundle layouts for measures data;
-  do not introduce new embedded/raw measures assets when the CASA-table runtime
-  model can be used instead.
+- For `casars` TUI work, follow `docs/casars-tui-framework.md`; new apps must conform to its shell-family conventions instead of inventing app-local UI structure.
+- For functionality-provider contracts, follow `docs/provider-contracts.md`. Treat the versioned schema bundle as the boundary contract; UI views are derived projections, not separate sources of truth.
+- Prefer red/green development: add a failing regression test first when practical.
+- If C++ has a demo for a supported module, provide a Rust equivalent demo.
+- When implementing new casacore-c++ functionality, document public items at roughly the corresponding C++ doxygen level and reference the upstream class or function names.
+- Shared CASA dataset root defaults to `../casatestdata`; override with `CASA_RS_TESTDATA_ROOT`.
+- Canonical measures runtime data lives in a CASA-compatible table tree rooted at `~/.casa/data`; override with `CASA_RS_MEASURESPATH`.
+- `CASA_RS_DATA` is deprecated compatibility only; do not prefer it in new code or docs.
+- Reuse upstream CASA/casaconfig tables and bundle layouts for measures data; do not introduce new embedded/raw measures assets when the CASA-table runtime model can be used instead.
 - Do not treat `/private/tmp` as the canonical home for shared CASA datasets.
 - Small bundled real-MS CI fixtures live in `crates/casa-ms/tests/fixtures/`.
-- If C++ has a demo for a supported module, provide a Rust equivalent demo.
-- When implementing new casacore-c++ functionality, document all public types and
-  methods at a level comparable to the C++ doxygen in the corresponding .h files.
-  Use `///` for items and `//!` for modules. Reference the C++ class/function names
-  so users can cross-reference.
+- Do not introduce new backlog-style `TODO`, `FIXME`, `XXX`, or `HACK` comments as source of truth. If a code comment needs a backlog reference, point at a GitHub issue.
 
-## Backlog Tracking
+## Merge policy
 
-- Canonical backlog tracking lives in GitHub issues, not local `BACKLOG.md` files.
-- Use GitHub issue titles and bodies as the source of truth for deferred work.
-- Legacy phase backlog files may remain temporarily in areas that have not been migrated yet; do not add new items to them.
-- Do not introduce new backlog-style `TODO` / `FIXME` / `XXX` / `HACK` comments as the source of truth.
-- If a local code comment is still useful, keep it brief and reference the GitHub issue instead.
+- Squash-on-merge into `main`: one commit per wave or PR.
+- During development, checkpoint commits are fine.
+- Use `git merge --squash` locally or GitHub's "Squash and merge".
 
-## Merge Policy
+## Definition of Done
 
-- Squash-on-merge into main: one commit per wave/PR.
-- During development, commit freely (checkpoints, incremental progress).
-- Use `git merge --squash` locally or "Squash and merge" on GitHub PRs.
+A change is not done until:
 
-## Wave Execution
+- `just verify` passes, or any intentional exclusion is called out explicitly in the wave closeout
+- relevant tests were added or updated
+- bug fixes include regression coverage
+- docs or ADRs were updated if reality changed
+- issue closeout records actual outcome, verification evidence, and remaining risks
+- no new backlog comments were added without an issue reference
 
-- For imaging-plan work, the wave is the execution unit.
-- Once a wave starts, carry it through to wave closure without pausing for
-  intermediate user check-ins.
-- Wave closure includes implementation, verification against the wave gates,
-  and the end-of-wave code-review/fix pass.
-- Only stop before wave closure if there is a real blocker, ambiguity, or
-  tradeoff that needs explicit discussion with the user.
-- If an active wave gate becomes too slow to support productive iteration,
-  insert an explicit performance wave ahead of the remaining correctness waves
-  and rebaseline before resuming feature/correctness expansion.
+## Verification policy
 
-## Quality Gates
+- `just quick` is the normal local iteration gate.
+- `just verify` is the default full wave gate: SPDX, format, lint, workspace tests, and the editable Python package test surface.
+- `just smoke` is the named smoke/release gate for Python wheel-install checks and Rust demo/example verification.
+- Python-facing scripts must resolve Python `>=3.10` through the repo resolver rather than assuming `python3` in the current shell.
+- `scripts/test-release-cpp-interop.sh` is the blocking release gate for Rust/C++ interop suites and stays outside the default `cargo test --workspace` path.
+- `scripts/test-release-perf.sh` is informational release evidence by default; set `CASA_RS_ENFORCE_PERF=1` to turn named perf thresholds back into hard failures.
+- `scripts/test-install-suite.sh` and `scripts/run-coverage.sh --ci-like` are release-oriented heavy gates excluded from `just verify`; releases and version-tag CI run them explicitly.
+- GitHub PR CI runs the lighter `lint_test` and Python package checks; version-tag pushes additionally run the smoke, suite-install, and CI-like coverage gates.
+- `scripts/test-slow.sh` is opt-in for heavy CASA parity suites and must stay outside the default `cargo test --workspace` path.
+- Coverage changes should maintain a safety margin above the CI threshold; with the current 75% requirement, target at least 78%.
+- To reproduce GitHub Actions locally, use `scripts/ci-local.sh build`, then `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs. Individual job repro commands are `lint_test`, `python_package`, `smoke`, `suite_install`, and `coverage`.
+- For imaging-program work, wave closure still means implementation, gate verification, and end-of-wave review/fix pass once the GitHub wave is approved.
+- Release tags must be cut with `scripts/release.sh`; do not create release tags directly with `git tag`.
 
-- `cargo fmt --all -- --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace`
-- `scripts/test-slow.sh`
-- `scripts/run-coverage.sh --ci-like`
-- Evaluate coverage with `scripts/run-coverage.sh --ci-like`, because plain
-  local coverage can drift from what GitHub Actions measures.
-- Coverage changes should maintain a safety margin of at least 3 percentage
-  points above the enforced CI threshold; with the current 75% requirement,
-  target at least 78% rather than barely passing.
-- Small performance guards stay in the default `cargo test --workspace` path.
-- Long parity/coverage/perf work should run less often, usually via CI,
-  daily automation, or explicit full runs.
-- Heavy CASA parity suites must not stay in the default `cargo test --workspace`
-  path. Gate them behind an explicit opt-in like the `slow-tests` feature and
-  run them via `scripts/test-slow.sh`.
-- To reproduce the GitHub Actions environment locally, use
-  `scripts/ci-local.sh build` and then `scripts/ci-local.sh lint_test`,
-  `scripts/ci-local.sh coverage`, or `scripts/ci-local.sh all`.
+## Documentation rules
 
-## Releases
+- Use GitHub Issues / Project for active wave planning.
+- Do not create new local markdown planning files unless explicitly asked.
+- Treat `docs/Planning/` as historical or program-reference material, not canonical wave status.
+- Use ADRs only for architecturally significant decisions.
+- Mark generated docs as generated and obsolete docs as historical or delete them.
 
-- Use `scripts/release.sh <version>` for every release tag; do not create release
-  tags directly with `git tag`.
-- Common bumps:
-  `scripts/release.sh --patch` and `scripts/release.sh --minor`.
-- The default release script runs the fast local gates:
-  `fmt`, `clippy`, and `cargo test --workspace`.
-- Use `scripts/release.sh <version> --full` to additionally run
-  `scripts/test-slow.sh` and CI-like coverage.
-- Use `scripts/release.sh <version> --push` to push the release commit and tag.
-- If measures/runtime changes land near a release, refresh or verify the
-  packaged CASA-table snapshot in `crates/casa-measures-data/data/` and keep
-  `casa-measures-runtime.provenance.json` aligned with it.
-- When asking for a release, say something like `use the release script to cut
-  and push release 0.3.1` or `use the release script to cut the next patch
-  release` rather than `tag as 0.3.1`.
-- To mirror the full suite locally, run:
-  `cargo fmt --all -- --check`
-  `cargo clippy --workspace --all-targets -- -D warnings`
-  `cargo test --workspace`
-  `scripts/test-slow.sh`
-  `scripts/run-coverage.sh --ci-like`
-  `cargo run -p casa-aipsio --example t_aipsio`
-  `cargo run -p casa-tables --example t_table`
+## Review rules
 
-## Architecture Decisions (Condensed)
+Before finalizing:
 
-- Public API surface: `casa-types` and `casa-tables`.
-- Internal implementation crates:
-  - `casa-values` (`publish = false`)
-  - `casa-aipsio` (`publish = false`)
-  - `casa-table-read` (`publish = false`)
-  - `casa-test-support` (`publish = false`)
-- `casa-values` owns the generic scalar/array/record model below measures/quanta.
-- `casa-table-read` owns the minimal read-only CASA table loader shared by runtime data loaders.
-- `casa-tables` keeps the broader codec/storage/write path crate-internal.
-- `casa-aipsio` provides full AipsIO-style framing + `tAipsIO` parity demo/tests.
+1. perform an independent architecture review pass for medium/high-risk work
+2. perform a test-adversary review for medium/high-risk work
+3. perform a reality-sync review against `ARCHITECTURE.md`, `TESTING.md`, ADRs, and generated artifacts when reality changed

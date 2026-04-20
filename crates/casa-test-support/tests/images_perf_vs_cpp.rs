@@ -5,6 +5,8 @@
 //! ratio. Use `cargo test --release` for meaningful comparisons. The 2×
 //! threshold triggers a warning (not a hard failure).
 
+#![cfg(feature = "performance-tests")]
+
 use std::collections::HashMap;
 
 use casa_coordinates::CoordinateSystem;

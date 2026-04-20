@@ -5,6 +5,8 @@
 //! Queries use compatible syntax for both Rust and C++ TaQL (Rust omits FROM,
 //! C++ uses `$1`).
 
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_test_support::taql_interop::*;
 
 /// Assert all cells in the cross-matrix passed.

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Task 1.7: Empty table cross-matrix tests — schema with columns but zero rows.
+#![cfg(feature = "cpp-interop-tests")]
+
 use casa_tables::{ColumnOptions, ColumnSchema, TableSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{ManagerKind, TableFixture, run_full_cross_matrix};

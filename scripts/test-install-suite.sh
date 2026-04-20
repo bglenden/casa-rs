@@ -5,7 +5,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-python_bin="${PYTHON_BIN:-python3}"
+python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d)"
 cleanup() {
   rm -rf "$tmp_root"
@@ -49,6 +49,7 @@ bundle_path="$wheel_dir/casa-rs-suite-$version-$platform.tar.gz"
 echo "==> Installing suite bundle into temporary root"
 scripts/install-suite.sh \
   --bundle "$bundle_path" \
+  --python "$python_bin" \
   --install-root "$install_root" \
   --bin-dir "$bin_dir" \
   --activate
