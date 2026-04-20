@@ -3001,21 +3001,18 @@ impl TiledFileIO {
 
                 // Evict: write dirty tile to disk if needed.
                 let old_tile = lru.slot_tile[min_slot];
-                if old_tile != usize::MAX && lru.slot_dirty[min_slot] {
-                    let off = min_slot * tile_bytes;
-                    let file_pos = (file_offset + old_tile * file_tile_bytes) as u64;
-                    write_tiled_file_tile(
-                        &mut lru.file,
-                        file_pos,
-                        &lru.data[off..off + tile_bytes],
-                        file_tile_bytes,
-                        dt,
-                        tile_nelem,
-                        needs_swap,
-                        swap_size,
-                    )?;
-                    self.tile_on_disk[old_tile] = true;
-                }
+                Self::flush_lru_slot_inner(
+                    lru,
+                    &mut self.tile_on_disk,
+                    min_slot,
+                    tile_bytes,
+                    file_tile_bytes,
+                    file_offset,
+                    dt,
+                    tile_nelem,
+                    needs_swap,
+                    swap_size,
+                )?;
                 if old_tile != usize::MAX {
                     lru.tile_to_slot[old_tile] = -1;
                 }
@@ -3125,6 +3122,42 @@ impl TiledFileIO {
         lru.used_slots = 0;
         lru.access_counter = 0;
         Ok(true)
+    }
+
+    /// Flush one dirty LRU slot and mark that tile as persisted on disk.
+    #[allow(clippy::too_many_arguments)]
+    fn flush_lru_slot_inner(
+        lru: &mut LruTileCache,
+        tile_on_disk: &mut [bool],
+        slot: usize,
+        tile_bytes: usize,
+        file_tile_bytes: usize,
+        file_offset: usize,
+        dt: CasacoreDataType,
+        tile_nelem: usize,
+        needs_swap: bool,
+        swap_size: usize,
+    ) -> Result<(), StorageError> {
+        let tile_idx = lru.slot_tile[slot];
+        if tile_idx == usize::MAX || !lru.slot_dirty[slot] {
+            return Ok(());
+        }
+
+        let off = slot * tile_bytes;
+        let file_pos = (file_offset + tile_idx * file_tile_bytes) as u64;
+        write_tiled_file_tile(
+            &mut lru.file,
+            file_pos,
+            &lru.data[off..off + tile_bytes],
+            file_tile_bytes,
+            dt,
+            tile_nelem,
+            needs_swap,
+            swap_size,
+        )?;
+        lru.slot_dirty[slot] = false;
+        tile_on_disk[tile_idx] = true;
+        Ok(())
     }
 
     /// Batch-loads a contiguous range of tiles into the LRU cache with a
@@ -3299,6 +3332,7 @@ impl TiledFileIO {
                                 self.needs_swap,
                                 self.swap_size,
                             )?;
+                            self.tile_on_disk[tile_index] = true;
                         }
                     } else {
                         let tile_bytes = self.tile_bytes;
@@ -3314,6 +3348,9 @@ impl TiledFileIO {
                                     let src_end = tile_index * tile_bytes;
                                     f.seek(SeekFrom::Start(byte_start as u64))?;
                                     f.write_all(&flat.data[src_start..src_end])?;
+                                    for written_tile in start..tile_index {
+                                        self.tile_on_disk[written_tile] = true;
+                                    }
                                     run_start = None;
                                 }
                             }
@@ -3345,23 +3382,18 @@ impl TiledFileIO {
                 )? {
                     // Fall back to per-tile flush.
                     for slot in 0..lru.used_slots {
-                        let tile_idx = lru.slot_tile[slot];
-                        if tile_idx == usize::MAX || !lru.slot_dirty[slot] {
-                            continue;
-                        }
-                        let off = slot * tile_bytes;
-                        let file_pos = (file_offset + tile_idx * file_tile_bytes) as u64;
-                        write_tiled_file_tile(
-                            &mut lru.file,
-                            file_pos,
-                            &lru.data[off..off + tile_bytes],
+                        Self::flush_lru_slot_inner(
+                            lru,
+                            &mut self.tile_on_disk,
+                            slot,
+                            tile_bytes,
                             file_tile_bytes,
+                            file_offset,
                             dt,
                             tile_nelem,
                             needs_swap,
                             swap_size,
                         )?;
-                        lru.slot_dirty[slot] = false;
                     }
                     // Reset cache state.
                     for slot in 0..lru.used_slots {
@@ -3990,6 +4022,11 @@ fn dot_product(a: &[usize], b: &[usize]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+
+    fn make_bool_tile_pattern(base: usize) -> Vec<bool> {
+        (0..4).map(|i| (base + i) % 3 == 0).collect()
+    }
 
     #[test]
     fn tile_element_sizes() {
@@ -4014,6 +4051,93 @@ mod tests {
     fn bool_tile_storage_is_bit_packed() {
         assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 4), 1);
         assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 9), 2);
+    }
+
+    #[test]
+    fn bool_lru_eviction_round_trips_after_reopen() {
+        let dir = tempdir().unwrap();
+        let table_path = dir.path().join("bool_eviction.table");
+        std::fs::create_dir_all(&table_path).unwrap();
+        let mut io = TiledFileIO::create_with_cache_limit(
+            &table_path,
+            &[8],
+            &[4],
+            PrimitiveType::Bool,
+            false,
+            0,
+            "bool_eviction",
+            1,
+        )
+        .unwrap();
+
+        let first_tile = make_bool_tile_pattern(0);
+        let second_tile = make_bool_tile_pattern(4);
+        io.put_slice_fortran(&first_tile, &[0], &[4]).unwrap();
+        io.put_slice_fortran(&second_tile, &[4], &[4]).unwrap();
+        io.flush().unwrap();
+        drop(io);
+
+        let mut reopened = TiledFileIO::open_with_cache_limit(&table_path, 0, 1).unwrap();
+        let all = reopened.get_all::<bool>().unwrap();
+        let expected: Vec<bool> = first_tile.into_iter().chain(second_tile).collect();
+        assert_eq!(all.iter().copied().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn bool_lru_flush_keeps_tiles_readable_in_same_session() {
+        let dir = tempdir().unwrap();
+        let table_path = dir.path().join("bool_flush.table");
+        std::fs::create_dir_all(&table_path).unwrap();
+        let mut io = TiledFileIO::create_with_cache_limit(
+            &table_path,
+            &[8],
+            &[4],
+            PrimitiveType::Bool,
+            false,
+            0,
+            "bool_flush",
+            1,
+        )
+        .unwrap();
+
+        let first_tile = make_bool_tile_pattern(0);
+        let second_tile = make_bool_tile_pattern(4);
+        io.put_slice_fortran(&first_tile, &[0], &[4]).unwrap();
+        io.put_slice_fortran(&second_tile, &[4], &[4]).unwrap();
+
+        io.flush().unwrap();
+
+        let all = io.get_all::<bool>().unwrap();
+        let expected: Vec<bool> = first_tile.into_iter().chain(second_tile).collect();
+        assert_eq!(all.iter().copied().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn bool_flat_flush_keeps_tiles_readable_in_same_session() {
+        let dir = tempdir().unwrap();
+        let table_path = dir.path().join("bool_flat_flush.table");
+        std::fs::create_dir_all(&table_path).unwrap();
+        let mut io = TiledFileIO::create(
+            &table_path,
+            &[8],
+            &[4],
+            PrimitiveType::Bool,
+            false,
+            0,
+            "bool_flat_flush",
+        )
+        .unwrap();
+
+        let first_tile = make_bool_tile_pattern(0);
+        let second_tile = make_bool_tile_pattern(4);
+        io.put_slice_fortran(&first_tile, &[0], &[4]).unwrap();
+        io.put_slice_fortran(&second_tile, &[4], &[4]).unwrap();
+
+        io.flush().unwrap();
+
+        let all = io.get_all::<bool>().unwrap();
+        let expected: Vec<bool> = first_tile.into_iter().chain(second_tile).collect();
+        assert_eq!(all.iter().copied().collect::<Vec<_>>(), expected);
     }
 
     #[test]
