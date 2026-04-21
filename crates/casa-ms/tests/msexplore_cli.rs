@@ -328,7 +328,7 @@ fn msexplore_avgchannel_bins_channel_plot_manifest() {
 }
 
 #[test]
-fn msexplore_rejects_exports_that_exceed_max_points() {
+fn msexplore_decimates_exports_that_exceed_max_points() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());
     let plot_path = temp.path().join("too-many-points.txt");
@@ -346,10 +346,16 @@ fn msexplore_rejects_exports_that_exceed_max_points() {
         .arg(&ms_path)
         .output()
         .expect("run msexplore");
-    assert!(!output.status.success(), "{output:?}");
-    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
-    assert!(stderr.contains("more than 10 points"), "{stderr}");
-    assert!(stderr.contains("--max-points"), "{stderr}");
+    assert!(output.status.success(), "{output:?}");
+    let manifest = std::fs::read_to_string(&plot_path).expect("read manifest");
+    assert!(manifest.contains("Downsampled plot"), "{manifest}");
+    let plotted_rows = manifest
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with('#'))
+        .filter(|line| !line.starts_with("series_key\t"))
+        .count();
+    assert_eq!(plotted_rows, 10, "{manifest}");
 }
 
 #[test]

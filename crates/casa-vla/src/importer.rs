@@ -3,7 +3,10 @@
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
+use std::fs::{File, OpenOptions, create_dir_all};
+use std::io::Write;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
@@ -32,6 +35,8 @@ const DEFAULT_FLAG_CATEGORIES: usize = 6;
 const DEFAULT_TELESCOPE_NAME: &str = "VLA";
 const SECONDS_PER_JULIAN_YEAR: f64 = 365.25 * 86_400.0;
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+const PERF_ENV: &str = "CASA_RS_IMPORTVLA_PERF";
+const PERF_DIR_ENV: &str = "CASA_RS_IMPORTVLA_PERF_DIR";
 const FLAG_CATEGORY_NAMES: [&str; DEFAULT_FLAG_CATEGORIES] = [
     "ONLINE_1", "ONLINE_2", "ONLINE_4", "ONLINE_8", "SHADOW", "FLAG_CMD",
 ];
@@ -49,6 +54,161 @@ pub struct ImportReport {
     pub logical_records_skipped: usize,
     /// Number of rows written to the main table.
     pub main_rows_written: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ImportPerfEventKind {
+    ImportCompleted,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct ImportPerfEvent {
+    kind: ImportPerfEventKind,
+    monotonic_ns: u64,
+    vis: String,
+    logical_records_seen: usize,
+    logical_records_imported: usize,
+    logical_records_skipped: usize,
+    main_rows_written: usize,
+    create_measurement_set_ns: u64,
+    normalize_record_ns: u64,
+    push_record_ns: u64,
+    reorder_baseline_ns: u64,
+    flag_row_ns: u64,
+    make_main_row_ns: u64,
+    append_main_row_ns: u64,
+    finish_metadata_ns: u64,
+    save_ns: u64,
+    total_ns: u64,
+    unattributed_ns: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ImportPerfSummary {
+    create_measurement_set_ns: u64,
+    normalize_record_ns: u64,
+    push_record_ns: u64,
+    reorder_baseline_ns: u64,
+    flag_row_ns: u64,
+    make_main_row_ns: u64,
+    append_main_row_ns: u64,
+    finish_metadata_ns: u64,
+    save_ns: u64,
+}
+
+struct ImportPerfTracer {
+    started_at: Option<Instant>,
+    json_file: Option<File>,
+    log_file: Option<File>,
+}
+
+impl ImportPerfTracer {
+    fn from_env() -> Self {
+        if std::env::var_os(PERF_ENV).is_none() {
+            return Self::disabled();
+        }
+        let output_dir = std::env::var_os(PERF_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        if create_dir_all(&output_dir).is_err() {
+            return Self::disabled();
+        }
+        let pid = std::process::id();
+        let json_path = output_dir.join(format!("casa-vla-import-perf-{pid}.jsonl"));
+        let log_path = output_dir.join(format!("casa-vla-import-perf-{pid}.log"));
+        let json_file = open_append_file(&json_path);
+        let log_file = open_append_file(&log_path);
+        if json_file.is_none() && log_file.is_none() {
+            return Self::disabled();
+        }
+        Self {
+            started_at: Some(Instant::now()),
+            json_file,
+            log_file,
+        }
+    }
+
+    const fn disabled() -> Self {
+        Self {
+            started_at: None,
+            json_file: None,
+            log_file: None,
+        }
+    }
+
+    fn monotonic_ns(&self) -> u64 {
+        self.started_at
+            .map(|started| started.elapsed().as_nanos() as u64)
+            .unwrap_or_default()
+    }
+
+    fn emit_import_completed(
+        &mut self,
+        vis: &std::path::Path,
+        report: &ImportReport,
+        summary: ImportPerfSummary,
+        total_ns: u64,
+    ) {
+        if self.started_at.is_none() {
+            return;
+        }
+        let attributed_ns = summary.create_measurement_set_ns
+            + summary.normalize_record_ns
+            + summary.push_record_ns
+            + summary.finish_metadata_ns
+            + summary.save_ns;
+        let event = ImportPerfEvent {
+            kind: ImportPerfEventKind::ImportCompleted,
+            monotonic_ns: self.monotonic_ns(),
+            vis: vis.display().to_string(),
+            logical_records_seen: report.logical_records_seen,
+            logical_records_imported: report.logical_records_imported,
+            logical_records_skipped: report.logical_records_skipped,
+            main_rows_written: report.main_rows_written,
+            create_measurement_set_ns: summary.create_measurement_set_ns,
+            normalize_record_ns: summary.normalize_record_ns,
+            push_record_ns: summary.push_record_ns,
+            reorder_baseline_ns: summary.reorder_baseline_ns,
+            flag_row_ns: summary.flag_row_ns,
+            make_main_row_ns: summary.make_main_row_ns,
+            append_main_row_ns: summary.append_main_row_ns,
+            finish_metadata_ns: summary.finish_metadata_ns,
+            save_ns: summary.save_ns,
+            total_ns,
+            unattributed_ns: total_ns.saturating_sub(attributed_ns),
+        };
+        if let Some(file) = self.json_file.as_mut() {
+            let _ = serde_json::to_writer(&mut *file, &event);
+            let _ = writeln!(file);
+            let _ = file.flush();
+        }
+        if let Some(file) = self.log_file.as_mut() {
+            let _ = writeln!(
+                file,
+                "[+{:>7} ms] kind={:?} rows={} total_ms={:.2} create_ms={:.2} normalize_ms={:.2} push_ms={:.2} reorder_ms={:.2} flag_row_ms={:.2} make_row_ms={:.2} append_row_ms={:.2} finish_metadata_ms={:.2} save_ms={:.2} unattributed_ms={:.2}",
+                event.monotonic_ns / 1_000_000,
+                event.kind,
+                event.main_rows_written,
+                event.total_ns as f64 / 1_000_000.0,
+                event.create_measurement_set_ns as f64 / 1_000_000.0,
+                event.normalize_record_ns as f64 / 1_000_000.0,
+                event.push_record_ns as f64 / 1_000_000.0,
+                event.reorder_baseline_ns as f64 / 1_000_000.0,
+                event.flag_row_ns as f64 / 1_000_000.0,
+                event.make_main_row_ns as f64 / 1_000_000.0,
+                event.append_main_row_ns as f64 / 1_000_000.0,
+                event.finish_metadata_ns as f64 / 1_000_000.0,
+                event.save_ns as f64 / 1_000_000.0,
+                event.unattributed_ns as f64 / 1_000_000.0
+            );
+            let _ = file.flush();
+        }
+    }
+}
+
+fn open_append_file(path: &std::path::Path) -> Option<File> {
+    OpenOptions::new().create(true).append(true).open(path).ok()
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +307,8 @@ struct SpectralWindowEntry {
 pub fn import_archive_files_to_measurement_set_from_options(
     options: &ImportVlaOptions,
 ) -> Result<ImportReport, VlaError> {
+    let total_started = Instant::now();
+    let mut perf_tracer = ImportPerfTracer::from_env();
     validate_import_options(options)?;
     let vis = options.effective_vis_for_import()?;
     if vis.exists() {
@@ -162,33 +324,49 @@ pub fn import_archive_files_to_measurement_set_from_options(
         .with_main_column(OptionalMainColumn::ModelData)
         .with_optional_subtable(SubtableId::Source)
         .with_optional_subtable(SubtableId::Doppler);
+    let create_started = Instant::now();
     let ms = MeasurementSet::create(&vis, builder).map_err(|error| {
         VlaError::import(format!("create MeasurementSet {}: {error}", vis.display()))
     })?;
 
     let mut writer = MsImportWriter::new(options.clone(), ms)?;
+    writer.perf_summary.create_measurement_set_ns = create_started.elapsed().as_nanos() as u64;
     set_flag_category_names(writer.ms.main_table_mut())?;
     for path in options.require_archivefiles()? {
         let mut reader = VlaDiskReader::open(path)?;
         while let Some(record) = reader.next_record()? {
             writer.logical_records_seen += 1;
+            let normalize_started = Instant::now();
             if let Some(normalized) = normalize_record(&record, options)? {
+                writer.perf_summary.normalize_record_ns +=
+                    normalize_started.elapsed().as_nanos() as u64;
                 writer.logical_records_imported += 1;
+                let push_started = Instant::now();
                 writer.push_record(normalized)?;
+                writer.perf_summary.push_record_ns += push_started.elapsed().as_nanos() as u64;
             } else {
+                writer.perf_summary.normalize_record_ns +=
+                    normalize_started.elapsed().as_nanos() as u64;
                 writer.logical_records_skipped += 1;
                 writer.note_skipped_record();
             }
         }
     }
     writer.finish()?;
-    Ok(ImportReport {
+    let report = ImportReport {
         vis,
         logical_records_seen: writer.logical_records_seen,
         logical_records_imported: writer.logical_records_imported,
         logical_records_skipped: writer.logical_records_skipped,
         main_rows_written: writer.main_rows_written,
-    })
+    };
+    perf_tracer.emit_import_completed(
+        &report.vis,
+        &report,
+        writer.perf_summary,
+        total_started.elapsed().as_nanos() as u64,
+    );
+    Ok(report)
 }
 
 fn validate_import_options(options: &ImportVlaOptions) -> Result<(), VlaError> {
@@ -1014,6 +1192,7 @@ struct MsImportWriter {
     logical_records_imported: usize,
     logical_records_skipped: usize,
     main_rows_written: usize,
+    perf_summary: ImportPerfSummary,
     antenna_rows: HashMap<String, i32>,
     field_rows: HashMap<FieldKey, i32>,
     source_rows: HashMap<FieldKey, i32>,
@@ -1043,6 +1222,7 @@ impl MsImportWriter {
             logical_records_imported: 0,
             logical_records_skipped: 0,
             main_rows_written: 0,
+            perf_summary: ImportPerfSummary::default(),
             antenna_rows: HashMap::new(),
             field_rows: HashMap::new(),
             source_rows: HashMap::new(),
@@ -1237,6 +1417,7 @@ impl MsImportWriter {
     }
 
     fn finish(&mut self) -> Result<(), VlaError> {
+        let finish_started = Instant::now();
         for (&row, &(start, end)) in &self.observation_ranges {
             let mut obs = self.ms.observation_mut().map_err(|error| {
                 VlaError::import(format!("open OBSERVATION for update: {error}"))
@@ -1262,9 +1443,14 @@ impl MsImportWriter {
                 VlaError::import(format!("update OBSERVATION.RELEASE_DATE: {error}"))
             })?;
         }
-        self.ms
+        self.perf_summary.finish_metadata_ns = finish_started.elapsed().as_nanos() as u64;
+        let save_started = Instant::now();
+        let result = self
+            .ms
             .save_assuming_valid()
-            .map_err(|error| VlaError::import(format!("save MeasurementSet: {error}")))
+            .map_err(|error| VlaError::import(format!("save MeasurementSet: {error}")));
+        self.perf_summary.save_ns = save_started.elapsed().as_nanos() as u64;
+        result
     }
 
     fn ensure_direction_epoch(
@@ -1899,82 +2085,99 @@ impl MsImportWriter {
             row_weight,
             row_sigma,
             _row_corr_types,
-        ) = reorder_baseline_for_ms(
-            antenna1_id,
-            antenna2_id,
-            data,
-            corrected_data,
-            model_data,
-            flag,
-            flag_category,
-            weight,
-            sigma,
-            &corr_types,
-        )?;
+        ) = {
+            let reorder_started = Instant::now();
+            let result = reorder_baseline_for_ms(
+                antenna1_id,
+                antenna2_id,
+                data,
+                corrected_data,
+                model_data,
+                flag,
+                flag_category,
+                weight,
+                sigma,
+                &corr_types,
+            )?;
+            self.perf_summary.reorder_baseline_ns += reorder_started.elapsed().as_nanos() as u64;
+            result
+        };
         let row_uvw = if row_ant1 == antenna1_id && row_ant2 == antenna2_id {
             uvw_m
         } else {
             [-uvw_m[0], -uvw_m[1], -uvw_m[2]]
         };
-        let row_flag_row = flag_row_value(&row_flag)?;
-        let row = make_main_row(
-            &self.ms,
-            &[
-                ("ANTENNA1", Value::Scalar(ScalarValue::Int32(row_ant1))),
-                ("ANTENNA2", Value::Scalar(ScalarValue::Int32(row_ant2))),
-                ("ARRAY_ID", Value::Scalar(ScalarValue::Int32(array_id))),
-                (
-                    "DATA_DESC_ID",
-                    Value::Scalar(ScalarValue::Int32(data_desc_id)),
-                ),
-                (
-                    "EXPOSURE",
-                    Value::Scalar(ScalarValue::Float64(integration_seconds)),
-                ),
-                ("FEED1", Value::Scalar(ScalarValue::Int32(0))),
-                ("FEED2", Value::Scalar(ScalarValue::Int32(0))),
-                ("FIELD_ID", Value::Scalar(ScalarValue::Int32(field_id))),
-                ("FLAG", Value::Array(row_flag)),
-                ("FLAG_CATEGORY", Value::Array(row_flag_category)),
-                ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(row_flag_row))),
-                (
-                    "INTERVAL",
-                    Value::Scalar(ScalarValue::Float64(integration_seconds)),
-                ),
-                (
-                    "OBSERVATION_ID",
-                    Value::Scalar(ScalarValue::Int32(observation_id)),
-                ),
-                ("PROCESSOR_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                (
-                    "SCAN_NUMBER",
-                    Value::Scalar(ScalarValue::Int32(scan_number)),
-                ),
-                ("SIGMA", Value::Array(row_sigma)),
-                ("STATE_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                ("TIME", Value::Scalar(ScalarValue::Float64(time_seconds))),
-                (
-                    "TIME_CENTROID",
-                    Value::Scalar(ScalarValue::Float64(time_seconds)),
-                ),
-                (
-                    "UVW",
-                    Value::Array(ArrayValue::Float64(
-                        ArrayD::from_shape_vec(IxDyn(&[3]).f(), row_uvw.to_vec()).map_err(
-                            |error| VlaError::import(format!("shape UVW array: {error}")),
-                        )?,
-                    )),
-                ),
-                ("WEIGHT", Value::Array(row_weight)),
-                ("DATA", Value::Array(row_data)),
-                ("CORRECTED_DATA", Value::Array(row_corrected)),
-                ("MODEL_DATA", Value::Array(row_model)),
-            ],
-        )?;
+        let row_flag_row = {
+            let flag_started = Instant::now();
+            let value = flag_row_value(&row_flag)?;
+            self.perf_summary.flag_row_ns += flag_started.elapsed().as_nanos() as u64;
+            value
+        };
+        let row = {
+            let make_started = Instant::now();
+            let row = make_main_row(
+                &self.ms,
+                &[
+                    ("ANTENNA1", Value::Scalar(ScalarValue::Int32(row_ant1))),
+                    ("ANTENNA2", Value::Scalar(ScalarValue::Int32(row_ant2))),
+                    ("ARRAY_ID", Value::Scalar(ScalarValue::Int32(array_id))),
+                    (
+                        "DATA_DESC_ID",
+                        Value::Scalar(ScalarValue::Int32(data_desc_id)),
+                    ),
+                    (
+                        "EXPOSURE",
+                        Value::Scalar(ScalarValue::Float64(integration_seconds)),
+                    ),
+                    ("FEED1", Value::Scalar(ScalarValue::Int32(0))),
+                    ("FEED2", Value::Scalar(ScalarValue::Int32(0))),
+                    ("FIELD_ID", Value::Scalar(ScalarValue::Int32(field_id))),
+                    ("FLAG", Value::Array(row_flag)),
+                    ("FLAG_CATEGORY", Value::Array(row_flag_category)),
+                    ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(row_flag_row))),
+                    (
+                        "INTERVAL",
+                        Value::Scalar(ScalarValue::Float64(integration_seconds)),
+                    ),
+                    (
+                        "OBSERVATION_ID",
+                        Value::Scalar(ScalarValue::Int32(observation_id)),
+                    ),
+                    ("PROCESSOR_ID", Value::Scalar(ScalarValue::Int32(-1))),
+                    (
+                        "SCAN_NUMBER",
+                        Value::Scalar(ScalarValue::Int32(scan_number)),
+                    ),
+                    ("SIGMA", Value::Array(row_sigma)),
+                    ("STATE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+                    ("TIME", Value::Scalar(ScalarValue::Float64(time_seconds))),
+                    (
+                        "TIME_CENTROID",
+                        Value::Scalar(ScalarValue::Float64(time_seconds)),
+                    ),
+                    (
+                        "UVW",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(IxDyn(&[3]).f(), row_uvw.to_vec()).map_err(
+                                |error| VlaError::import(format!("shape UVW array: {error}")),
+                            )?,
+                        )),
+                    ),
+                    ("WEIGHT", Value::Array(row_weight)),
+                    ("DATA", Value::Array(row_data)),
+                    ("CORRECTED_DATA", Value::Array(row_corrected)),
+                    ("MODEL_DATA", Value::Array(row_model)),
+                ],
+            )?;
+            self.perf_summary.make_main_row_ns += make_started.elapsed().as_nanos() as u64;
+            row
+        };
+        let append_started = Instant::now();
         self.ms
             .main_table_mut()
             .add_row_assuming_valid(row)
             .map_err(|error| VlaError::import(format!("add MAIN row: {error}")))?;
+        self.perf_summary.append_main_row_ns += append_started.elapsed().as_nanos() as u64;
         self.main_rows_written += 1;
         Ok(())
     }
@@ -2614,6 +2817,73 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::VlaDiskReader;
+    use tempfile::tempdir;
+
+    #[test]
+    fn import_perf_tracer_from_env_writes_jsonl_and_summary_log() {
+        let tempdir = tempdir().expect("create perf tempdir");
+        // SAFETY: test configures process-local env before constructing the tracer and
+        // clears it before returning; tests in this crate do not read these keys concurrently.
+        unsafe {
+            std::env::set_var(PERF_ENV, "1");
+            std::env::set_var(PERF_DIR_ENV, tempdir.path());
+        }
+
+        let mut tracer = ImportPerfTracer::from_env();
+        let report = ImportReport {
+            vis: PathBuf::from("/tmp/example.ms"),
+            logical_records_seen: 10,
+            logical_records_imported: 9,
+            logical_records_skipped: 1,
+            main_rows_written: 42,
+        };
+        tracer.emit_import_completed(
+            &report.vis,
+            &report,
+            ImportPerfSummary {
+                create_measurement_set_ns: 1,
+                normalize_record_ns: 2,
+                push_record_ns: 3,
+                reorder_baseline_ns: 4,
+                flag_row_ns: 5,
+                make_main_row_ns: 6,
+                append_main_row_ns: 7,
+                finish_metadata_ns: 8,
+                save_ns: 9,
+            },
+            40,
+        );
+
+        // SAFETY: paired cleanup for the test-local env configuration above.
+        unsafe {
+            std::env::remove_var(PERF_ENV);
+            std::env::remove_var(PERF_DIR_ENV);
+        }
+
+        let mut json_paths = Vec::new();
+        let mut log_paths = Vec::new();
+        for entry in std::fs::read_dir(tempdir.path()).expect("read perf dir") {
+            let path = entry.expect("read dir entry").path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+            {
+                json_paths.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "log") {
+                log_paths.push(path);
+            }
+        }
+        assert_eq!(json_paths.len(), 1, "expected one jsonl perf trace");
+        assert_eq!(log_paths.len(), 1, "expected one log perf trace");
+
+        let json = std::fs::read_to_string(&json_paths[0]).expect("read perf jsonl");
+        assert!(json.contains("\"kind\":\"import_completed\""));
+        assert!(json.contains("\"main_rows_written\":42"));
+
+        let log = std::fs::read_to_string(&log_paths[0]).expect("read perf log");
+        assert!(log.contains("rows=42"));
+        assert!(log.contains("save_ms="));
+    }
 
     #[test]
     fn reorders_cross_hand_correlations_when_antennas_swap() {

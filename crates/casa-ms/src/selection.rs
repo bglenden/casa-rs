@@ -22,9 +22,10 @@
 
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
-use crate::subtables::{get_f64, get_i32};
 use casa_tables::Table;
 use std::collections::HashSet;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 /// Builder for MS row selection criteria.
 ///
@@ -150,23 +151,41 @@ impl MsSelection {
     /// If antenna names were specified, they are resolved against the ANTENNA
     /// subtable first.
     pub fn apply(&self, ms: &MeasurementSet) -> MsResult<Vec<usize>> {
+        let apply_started_at = Instant::now();
         let mut sel = self.clone();
 
         // Resolve antenna names to IDs
+        let resolve_antenna_started_at = Instant::now();
         if !sel.antenna_names.is_empty() {
             let resolved = resolve_antenna_names(ms, &sel.antenna_names)?;
             sel.antenna_ids.extend(resolved);
             sel.antenna_names.clear();
         }
+        let resolve_antenna_ns = resolve_antenna_started_at.elapsed().as_nanos() as u64;
 
         // Resolve SPW IDs to DATA_DESC_IDs
         let mut effective_ddids = Vec::new();
+        let resolve_spw_started_at = Instant::now();
         if !sel.spw_ids.is_empty() {
             effective_ddids = resolve_spw_to_ddid(ms, &sel.spw_ids)?;
         }
+        let resolve_spw_ns = resolve_spw_started_at.elapsed().as_nanos() as u64;
 
         if sel.taql_exprs.is_empty() {
-            return apply_structured_selection(&sel, ms, &effective_ddids);
+            let structured_started_at = Instant::now();
+            let rows = apply_structured_selection(&sel, ms, &effective_ddids)?;
+            log_selection_profile(
+                "apply_structured",
+                apply_started_at.elapsed().as_nanos() as u64,
+                Some(format!(
+                    "rows={} resolve_antenna={:.3}s resolve_spw={:.3}s structured={:.3}s",
+                    rows.len(),
+                    resolve_antenna_ns as f64 / 1_000_000_000.0,
+                    resolve_spw_ns as f64 / 1_000_000_000.0,
+                    structured_started_at.elapsed().as_nanos() as f64 / 1_000_000_000.0,
+                )),
+            );
+            return Ok(rows);
         }
 
         let taql = if sel.spw_ids.is_empty() {
@@ -195,8 +214,21 @@ impl MsSelection {
             }
         };
 
+        let taql_started_at = Instant::now();
         let view = ms.main_table().query(&taql)?;
-        Ok(view.row_numbers().to_vec())
+        let rows = view.row_numbers().to_vec();
+        log_selection_profile(
+            "apply_taql",
+            apply_started_at.elapsed().as_nanos() as u64,
+            Some(format!(
+                "rows={} resolve_antenna={:.3}s resolve_spw={:.3}s taql={:.3}s",
+                rows.len(),
+                resolve_antenna_ns as f64 / 1_000_000_000.0,
+                resolve_spw_ns as f64 / 1_000_000_000.0,
+                taql_started_at.elapsed().as_nanos() as f64 / 1_000_000_000.0,
+            )),
+        );
+        Ok(rows)
     }
 
     fn where_clauses(&self) -> Vec<String> {
@@ -268,6 +300,7 @@ fn apply_structured_selection(
     ms: &MeasurementSet,
     effective_ddids: &[i32],
 ) -> MsResult<Vec<usize>> {
+    let setup_started_at = Instant::now();
     let field_ids: HashSet<i32> = sel.field_ids.iter().copied().collect();
     let spw_ddids: HashSet<i32> = effective_ddids.iter().copied().collect();
     let data_desc_ids: HashSet<i32> = sel.data_desc_ids.iter().copied().collect();
@@ -283,6 +316,7 @@ fn apply_structured_selection(
     }
 
     let table = ms.main_table();
+    let load_columns_started_at = Instant::now();
     let columns = load_structured_selection_columns(
         table,
         StructuredSelectionColumnRequest {
@@ -297,8 +331,10 @@ fn apply_structured_selection(
             array: !array_ids.is_empty(),
         },
     )?;
+    let load_columns_ns = load_columns_started_at.elapsed().as_nanos() as u64;
     let mut rows = Vec::new();
 
+    let filter_rows_started_at = Instant::now();
     for row in 0..table.row_count() {
         if let Some(field_column) = columns.field.as_ref() {
             if !field_ids.contains(&field_column[row]) {
@@ -363,7 +399,58 @@ fn apply_structured_selection(
         rows.push(row);
     }
 
+    log_selection_profile(
+        "structured_selection",
+        setup_started_at.elapsed().as_nanos() as u64,
+        Some(format!(
+            "rows={} row_count={} load_columns={:.3}s filter_rows={:.3}s requested=field:{} data_desc:{} antenna:{} time:{} scan:{} state:{} observation:{} array:{}",
+            rows.len(),
+            table.row_count(),
+            load_columns_ns as f64 / 1_000_000_000.0,
+            filter_rows_started_at.elapsed().as_nanos() as f64 / 1_000_000_000.0,
+            !field_ids.is_empty(),
+            !spw_ddids.is_empty() || !data_desc_ids.is_empty(),
+            !antenna_ids.is_empty() || !baselines.is_empty(),
+            sel.time_range.is_some(),
+            !scan_numbers.is_empty(),
+            !state_ids.is_empty(),
+            !observation_ids.is_empty(),
+            !array_ids.is_empty(),
+        )),
+    );
+
     Ok(rows)
+}
+
+fn selection_profile_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("CASA_RS_SELECTION_PROFILE") {
+        Ok(value) => {
+            let trimmed = value.trim();
+            !trimmed.is_empty()
+                && trimmed != "0"
+                && !trimmed.eq_ignore_ascii_case("false")
+                && !trimmed.eq_ignore_ascii_case("off")
+        }
+        Err(_) => false,
+    })
+}
+
+fn log_selection_profile(phase: &str, total_ns: u64, detail: Option<String>) {
+    if !selection_profile_enabled() {
+        return;
+    }
+    let mut line = format!(
+        "[casa-ms selection] phase={phase} dt={:.3}s",
+        total_ns as f64 / 1_000_000_000.0
+    );
+    if let Some(detail) = detail
+        && !detail.is_empty()
+    {
+        line.push(' ');
+        line.push_str(&detail);
+    }
+    eprintln!("{line}");
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -462,19 +549,45 @@ fn load_structured_selection_columns(
 }
 
 fn load_i32_column(table: &Table, column: &str) -> MsResult<Vec<i32>> {
-    let mut values = Vec::with_capacity(table.row_count());
-    for row in 0..table.row_count() {
-        values.push(get_i32(table, row, column)?);
-    }
-    Ok(values)
+    table
+        .get_scalar_cells_owned(column)?
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(casa_types::ScalarValue::Int32(v)) => Ok(v),
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Int32".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
 }
 
 fn load_f64_column(table: &Table, column: &str) -> MsResult<Vec<f64>> {
-    let mut values = Vec::with_capacity(table.row_count());
-    for row in 0..table.row_count() {
-        values.push(get_f64(table, row, column)?);
-    }
-    Ok(values)
+    table
+        .get_scalar_cells_owned(column)?
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(casa_types::ScalarValue::Float64(v)) => Ok(v),
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Float64".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
 }
 
 fn int_list(ids: &[i32]) -> String {

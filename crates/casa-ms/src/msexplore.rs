@@ -31,6 +31,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use casa_tables::Table;
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::{MvAngle, MvTime};
@@ -58,7 +59,6 @@ use crate::plot::{
     ListObsPlotSpec, ListObsPlotTheme, VisibilityScatterPlotPayload, VisibilityScatterSeries,
     build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, export_listobs_plot,
 };
-use crate::schema::main_table::VisibilityDataColumn;
 use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
 };
@@ -2164,20 +2164,263 @@ impl PointBudget {
     }
 
     fn record_points(&mut self, additional_points: usize, context: &str) -> Result<(), String> {
-        let next_points = self
+        self.rendered_points = self
             .rendered_points
             .checked_add(additional_points)
             .ok_or_else(|| format!("{context} exceeded the supported plotted-point range"))?;
-        if let Some(max_plot_points) = self.max_plot_points
-            && next_points > max_plot_points
-        {
-            return Err(format!(
-                "{context} would render more than {max_plot_points} points; narrow the selection, add averaging, or raise --max-points"
-            ));
-        }
-        self.rendered_points = next_points;
         Ok(())
     }
+}
+
+fn allocate_series_point_quotas(lengths: &[usize], budget: usize) -> Vec<usize> {
+    let total_points = lengths.iter().sum::<usize>();
+    if total_points <= budget {
+        return lengths.to_vec();
+    }
+    if budget == 0 {
+        return vec![0; lengths.len()];
+    }
+
+    let mut quotas = vec![0usize; lengths.len()];
+    let mut remainders = Vec::new();
+    let mut assigned = 0usize;
+    for (index, &length) in lengths.iter().enumerate() {
+        if length == 0 {
+            continue;
+        }
+        let scaled = length.saturating_mul(budget);
+        let base = scaled / total_points;
+        let remainder = scaled % total_points;
+        quotas[index] = base;
+        assigned += base;
+        remainders.push((index, remainder, length));
+    }
+
+    remainders.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.2.cmp(&left.2)));
+    let mut remaining = budget.saturating_sub(assigned);
+    for (index, _, _) in remainders {
+        if remaining == 0 {
+            break;
+        }
+        quotas[index] += 1;
+        remaining -= 1;
+    }
+
+    quotas
+}
+
+fn sampled_indices(length: usize, take: usize) -> Vec<usize> {
+    if take >= length {
+        return (0..length).collect();
+    }
+    if take == 0 {
+        return Vec::new();
+    }
+    if take == 1 {
+        return vec![length / 2];
+    }
+
+    (0..take)
+        .map(|slot| slot.saturating_mul(length.saturating_sub(1)) / (take - 1))
+        .collect()
+}
+
+fn compact_scatter_series(
+    series: Vec<MsScatterSeries>,
+    max_plot_points: usize,
+) -> (Vec<MsScatterSeries>, usize, usize) {
+    let lengths = series
+        .iter()
+        .map(|entry| entry.points.len())
+        .collect::<Vec<_>>();
+    let total_points = lengths.iter().sum::<usize>();
+    if total_points <= max_plot_points {
+        return (series, total_points, total_points);
+    }
+
+    let quotas = allocate_series_point_quotas(&lengths, max_plot_points);
+    let mut kept_points = 0usize;
+    let compacted = series
+        .into_iter()
+        .zip(quotas)
+        .filter_map(|(entry, quota)| {
+            if quota == 0 || entry.points.is_empty() {
+                return None;
+            }
+            let indices = sampled_indices(entry.points.len(), quota);
+            kept_points += indices.len();
+            let points = indices.iter().map(|&index| entry.points[index]).collect();
+            let provenance = indices
+                .iter()
+                .map(|&index| entry.provenance[index].clone())
+                .collect();
+            Some(MsScatterSeries {
+                label: entry.label,
+                color_group: entry.color_group,
+                y_axis: entry.y_axis,
+                points,
+                provenance,
+            })
+        })
+        .collect();
+
+    (compacted, total_points, kept_points)
+}
+
+fn compact_payload_to_budget(
+    payload: MsPlotPayload,
+    point_budget: &PointBudget,
+) -> Result<MsPlotPayload, String> {
+    let Some(max_plot_points) = point_budget.max_plot_points else {
+        return Ok(payload);
+    };
+    if point_budget.rendered_points <= max_plot_points {
+        return Ok(payload);
+    }
+
+    let warning = format!(
+        "Downsampled plot from {} to at most {} points using evenly spaced per-series decimation.",
+        point_budget.rendered_points, max_plot_points
+    );
+
+    let payload = match payload {
+        MsPlotPayload::ListObs(payload) => MsPlotPayload::ListObs(payload),
+        MsPlotPayload::Scatter(mut payload) => {
+            let (series, original_points, kept_points) =
+                compact_scatter_series(payload.series, max_plot_points);
+            if kept_points == 0 {
+                return Err(format!(
+                    "{} produced no drawable points after point-budget decimation",
+                    payload.title
+                ));
+            }
+            payload.series = series;
+            payload.header_lines.push(warning.clone());
+            payload.summary = format!(
+                "{} Decimated points from {} to {}.",
+                payload.summary, original_points, kept_points
+            );
+            MsPlotPayload::Scatter(payload)
+        }
+        MsPlotPayload::ScatterGrid(mut payload) => {
+            let total_points = payload
+                .panels
+                .iter()
+                .map(|panel| {
+                    panel
+                        .series
+                        .iter()
+                        .map(|series| series.points.len())
+                        .sum::<usize>()
+                })
+                .sum::<usize>();
+            let lengths = payload
+                .panels
+                .iter()
+                .flat_map(|panel| panel.series.iter().map(|series| series.points.len()))
+                .collect::<Vec<_>>();
+            let quotas = allocate_series_point_quotas(&lengths, max_plot_points);
+            let mut quota_iter = quotas.into_iter();
+            let mut kept_points = 0usize;
+            let mut kept_panels = Vec::new();
+            for panel in std::mem::take(&mut payload.panels) {
+                let mut kept_series = Vec::new();
+                for series in panel.series {
+                    let quota = quota_iter.next().unwrap_or(0);
+                    let (mut compacted, _, kept) = compact_scatter_series(vec![series], quota);
+                    kept_points += kept;
+                    kept_series.append(&mut compacted);
+                }
+                if !kept_series.is_empty() {
+                    let panel_point_count = kept_series
+                        .iter()
+                        .map(|series| series.points.len())
+                        .sum::<usize>();
+                    kept_panels.push(MsScatterPanelPayload {
+                        key: panel.key,
+                        label: panel.label,
+                        summary: format!(
+                            "{} Decimated points to {}.",
+                            panel.summary, panel_point_count
+                        ),
+                        series: kept_series,
+                    });
+                }
+            }
+            if kept_points == 0 {
+                return Err(format!(
+                    "{} produced no drawable panels after point-budget decimation",
+                    payload.title
+                ));
+            }
+            payload.panels = kept_panels;
+            payload.header_lines.push(warning.clone());
+            payload.summary = format!(
+                "{} Decimated points from {} to {}.",
+                payload.summary, total_points, kept_points
+            );
+            MsPlotPayload::ScatterGrid(payload)
+        }
+        MsPlotPayload::ScatterPage(mut payload) => {
+            let total_points = payload
+                .items
+                .iter()
+                .map(|item| {
+                    item.plot
+                        .series
+                        .iter()
+                        .map(|series| series.points.len())
+                        .sum::<usize>()
+                })
+                .sum::<usize>();
+            let lengths = payload
+                .items
+                .iter()
+                .flat_map(|item| item.plot.series.iter().map(|series| series.points.len()))
+                .collect::<Vec<_>>();
+            let quotas = allocate_series_point_quotas(&lengths, max_plot_points);
+            let mut quota_iter = quotas.into_iter();
+            let mut kept_points = 0usize;
+            let mut kept_items = Vec::new();
+            for mut item in std::mem::take(&mut payload.items) {
+                let mut kept_series = Vec::new();
+                for series in item.plot.series {
+                    let quota = quota_iter.next().unwrap_or(0);
+                    let (mut compacted, _, kept) = compact_scatter_series(vec![series], quota);
+                    kept_points += kept;
+                    kept_series.append(&mut compacted);
+                }
+                if !kept_series.is_empty() {
+                    item.plot.series = kept_series;
+                    item.plot.summary = format!(
+                        "{} Decimated points to {}.",
+                        item.plot.summary,
+                        item.plot
+                            .series
+                            .iter()
+                            .map(|series| series.points.len())
+                            .sum::<usize>()
+                    );
+                    kept_items.push(item);
+                }
+            }
+            if kept_points == 0 {
+                return Err(format!(
+                    "{} produced no drawable plots after point-budget decimation",
+                    payload.title
+                ));
+            }
+            payload.items = kept_items;
+            payload.header_lines.push(warning);
+            payload.summary = format!(
+                "{} Decimated points from {} to {}.",
+                payload.summary, total_points, kept_points
+            );
+            MsPlotPayload::ScatterPage(payload)
+        }
+    };
+
+    Ok(payload)
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -2216,10 +2459,10 @@ fn build_msexplore_plot_payload_validated(
     build_generic_visibility_scatter(ms, selection, spec, point_budget)
 }
 
-/// Build a plot payload from a full `msexplore` request.
-pub fn build_msexplore_payload(
+fn build_msexplore_payload_internal(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,
+    allow_decimation: bool,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
     let mut point_budget = PointBudget::limited(spec.max_plot_points);
@@ -2232,7 +2475,20 @@ pub fn build_msexplore_payload(
             &mut point_budget,
         )?;
         apply_page_header_lines(&mut payload, header_lines);
-        return Ok(payload);
+        return if allow_decimation {
+            compact_payload_to_budget(payload, &point_budget)
+        } else if point_budget.rendered_points > spec.max_plot_points {
+            Err(format!(
+                "{} would render more than {}; narrow the selection, add averaging, or raise --max-points",
+                spec.plots[0]
+                    .preset
+                    .map(MsPlotPreset::display_name)
+                    .unwrap_or("Requested plot"),
+                spec.max_plot_points
+            ))
+        } else {
+            Ok(payload)
+        };
     }
 
     let (gridrows, gridcols) = {
@@ -2277,7 +2533,7 @@ pub fn build_msexplore_payload(
         .clone()
         .unwrap_or_else(|| "MeasurementSet Multi-Plot Page".to_string());
 
-    Ok(MsPlotPayload::ScatterPage(MsScatterPagePayload {
+    let payload = MsPlotPayload::ScatterPage(MsScatterPagePayload {
         title,
         exprange: spec.exprange,
         gridrows,
@@ -2296,7 +2552,25 @@ pub fn build_msexplore_payload(
             spec.exprange
         ),
         items,
-    }))
+    });
+    if allow_decimation {
+        compact_payload_to_budget(payload, &point_budget)
+    } else if point_budget.rendered_points > spec.max_plot_points {
+        Err(format!(
+            "MeasurementSet multi-plot page would render more than {}; narrow the selection, add averaging, or raise --max-points",
+            spec.max_plot_points
+        ))
+    } else {
+        Ok(payload)
+    }
+}
+
+/// Build a plot payload from a full `msexplore` request.
+pub fn build_msexplore_payload(
+    ms: &MeasurementSet,
+    spec: &MsExploreSpec,
+) -> Result<MsPlotPayload, String> {
+    build_msexplore_payload_internal(ms, spec, true)
 }
 
 /// Open a MeasurementSet path from a full `msexplore` request and build the
@@ -2343,7 +2617,7 @@ pub fn preview_msexplore_flag_edit_for_request(
 ) -> Result<MsFlagEditPreview, String> {
     spec.validate()?;
     validate_flag_edit_request(flag_edit)?;
-    let payload = build_msexplore_payload(ms, spec)?;
+    let payload = build_msexplore_payload_internal(ms, spec, false)?;
     preview_msexplore_flag_edit_from_payload(ms, payload, flag_edit)
 }
 
@@ -3279,16 +3553,18 @@ fn build_generic_visibility_scatter(
             .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let data_source = if needs_visibility_grid {
-        Some(PreparedDataSource::new(ms, spec.data_column)?)
+        Some(PreparedSelectedDataSource::new(
+            ms,
+            spec.data_column,
+            &row_numbers,
+        )?)
     } else {
         None
     };
-    let flag = ms.flag_column();
     let flag_row = ms.flag_row_column();
-    let weight = ms.weight_column();
-    let sigma = ms.sigma_column();
-    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).ok();
-    let sigma_spectrum = SigmaSpectrumColumn::new(ms.main_table()).ok();
+    let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
+    let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
+    let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
     let time = TimeColumn::new(ms.main_table());
     let uvw = UvwColumn::new(ms.main_table());
     let derived_engine = if spec.x_axis.uses_derived_geometry()
@@ -3354,8 +3630,24 @@ fn build_generic_visibility_scatter(
             .iter()
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
+    let selected_weight_spectrum = if needs_weight_spectrum {
+        WeightSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "WEIGHT_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
+    let selected_sigma_spectrum = if needs_sigma_spectrum {
+        SigmaSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "SIGMA_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
 
-    for row in row_numbers {
+    for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
         if flag_row_value && !include_row_flagged_points {
             continue;
@@ -3380,7 +3672,7 @@ fn build_generic_visibility_scatter(
             Vec::new()
         };
 
-        let flags = match flag.get(row).map_err(|error| error.to_string())? {
+        let flags = match selected_flags.get(row_slot)? {
             ArrayValue::Bool(values) => {
                 values.view().into_dimensionality::<Ix2>().map_err(|_| {
                     "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
@@ -3395,7 +3687,7 @@ fn build_generic_visibility_scatter(
         };
         let grid = data_source
             .as_ref()
-            .map(|source| source.row(row))
+            .map(|source| source.row(row_slot))
             .transpose()?;
         let (corr_count, chan_count) = grid
             .as_ref()
@@ -3409,26 +3701,14 @@ fn build_generic_visibility_scatter(
                 chan_count
             ));
         }
-        let weight_values = float_axis_values(
-            weight.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "WEIGHT",
-        )?;
-        let sigma_values = float_axis_values(
-            sigma.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "SIGMA",
-        )?;
+        let weight_values =
+            float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
+        let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
         let weight_spectrum_grid = if needs_weight_spectrum {
             Some(
-                weight_spectrum
+                selected_weight_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "WEIGHT_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
             )
@@ -3437,14 +3717,9 @@ fn build_generic_visibility_scatter(
         };
         let sigma_spectrum_grid = if needs_sigma_spectrum {
             Some(
-                sigma_spectrum
+                selected_sigma_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "SIGMA_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "SIGMA_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
             )
@@ -4016,17 +4291,19 @@ fn build_generic_visibility_scatter_with_averaging(
             .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let data_source = if needs_visibility_grid {
-        Some(PreparedDataSource::new(ms, spec.data_column)?)
+        Some(PreparedSelectedDataSource::new(
+            ms,
+            spec.data_column,
+            &row_numbers,
+        )?)
     } else {
         None
     };
-    let flag = ms.flag_column();
     let flag_row = ms.flag_row_column();
-    let weight = ms.weight_column();
-    let sigma = ms.sigma_column();
     let interval = IntervalColumn::new(ms.main_table());
-    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).ok();
-    let sigma_spectrum = SigmaSpectrumColumn::new(ms.main_table()).ok();
+    let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
+    let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
+    let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
     let time = TimeColumn::new(ms.main_table());
     let uvw = UvwColumn::new(ms.main_table());
     let derived_engine = if spec.x_axis.uses_derived_geometry()
@@ -4080,6 +4357,22 @@ fn build_generic_visibility_scatter_with_averaging(
             .iter()
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
+    let selected_weight_spectrum = if needs_weight_spectrum {
+        WeightSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "WEIGHT_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
+    let selected_sigma_spectrum = if needs_sigma_spectrum {
+        SigmaSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "SIGMA_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
     let use_shared_time_scope_midpoint = spec.averaging.avgtime.is_some()
         && (spec.averaging.avgfield || spec.averaging.avgscan || spec.averaging.avgspw);
 
@@ -4146,7 +4439,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut panels = std::collections::BTreeMap::<String, AveragedPanelAccumulator>::new();
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
 
-    for row in row_numbers {
+    for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
         if flag_row_value && !include_row_flagged_points {
             continue;
@@ -4171,7 +4464,7 @@ fn build_generic_visibility_scatter_with_averaging(
             Vec::new()
         };
 
-        let flags = match flag.get(row).map_err(|error| error.to_string())? {
+        let flags = match selected_flags.get(row_slot)? {
             ArrayValue::Bool(values) => {
                 values.view().into_dimensionality::<Ix2>().map_err(|_| {
                     "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
@@ -4186,7 +4479,7 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let grid = data_source
             .as_ref()
-            .map(|source| source.row(row))
+            .map(|source| source.row(row_slot))
             .transpose()?;
         let (corr_count, chan_count) = grid
             .as_ref()
@@ -4200,26 +4493,14 @@ fn build_generic_visibility_scatter_with_averaging(
                 chan_count
             ));
         }
-        let weight_values = float_axis_values(
-            weight.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "WEIGHT",
-        )?;
-        let sigma_values = float_axis_values(
-            sigma.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "SIGMA",
-        )?;
+        let weight_values =
+            float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
+        let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
         let weight_spectrum_grid = if needs_weight_spectrum {
             Some(
-                weight_spectrum
+                selected_weight_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "WEIGHT_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
             )
@@ -4228,14 +4509,9 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let sigma_spectrum_grid = if needs_sigma_spectrum {
             Some(
-                sigma_spectrum
+                selected_sigma_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "SIGMA_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "SIGMA_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
             )
@@ -5679,124 +5955,129 @@ struct FloatGrid {
     values: Vec<f64>,
 }
 
-enum PreparedDataSource<'a> {
-    Single(crate::columns::data_columns::DataColumn<'a>),
+struct SelectedArrayColumn {
+    column: &'static str,
+    values: Vec<Option<ArrayValue>>,
+}
+
+impl SelectedArrayColumn {
+    fn load(table: &Table, column: &'static str, row_indices: &[usize]) -> Result<Self, String> {
+        let values = table
+            .get_array_cells_owned(column, row_indices)
+            .map_err(|error| error.to_string())?;
+        Ok(Self { column, values })
+    }
+
+    fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
+        self.values
+            .get(row_slot)
+            .and_then(|value| value.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "msexplore requires {} data for selected row slot {}",
+                    self.column, row_slot
+                )
+            })
+    }
+}
+
+enum PreparedSelectedDataSource {
+    Single(SelectedArrayColumn),
     Difference {
-        left: crate::columns::data_columns::DataColumn<'a>,
-        right: crate::columns::data_columns::DataColumn<'a>,
+        left: SelectedArrayColumn,
+        right: SelectedArrayColumn,
         scalar: bool,
     },
     Ratio {
-        numerator: crate::columns::data_columns::DataColumn<'a>,
-        denominator: crate::columns::data_columns::DataColumn<'a>,
+        numerator: SelectedArrayColumn,
+        denominator: SelectedArrayColumn,
         scalar: bool,
     },
 }
 
-impl<'a> PreparedDataSource<'a> {
-    fn new(ms: &'a MeasurementSet, column: MsDataColumn) -> Result<Self, String> {
+impl PreparedSelectedDataSource {
+    fn new(
+        ms: &MeasurementSet,
+        column: MsDataColumn,
+        row_indices: &[usize],
+    ) -> Result<Self, String> {
         match column {
-            MsDataColumn::Data => Ok(Self::Single(
-                ms.data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-            )),
-            MsDataColumn::Corrected => Ok(Self::Single(
-                ms.data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-            )),
-            MsDataColumn::Model => Ok(Self::Single(
-                ms.data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
-            )),
+            MsDataColumn::Data => Ok(Self::Single(SelectedArrayColumn::load(
+                ms.main_table(),
+                "DATA",
+                row_indices,
+            )?)),
+            MsDataColumn::Corrected => Ok(Self::Single(SelectedArrayColumn::load(
+                ms.main_table(),
+                "CORRECTED_DATA",
+                row_indices,
+            )?)),
+            MsDataColumn::Model => Ok(Self::Single(SelectedArrayColumn::load(
+                ms.main_table(),
+                "MODEL_DATA",
+                row_indices,
+            )?)),
             MsDataColumn::CorrectedMinusModel => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "CORRECTED_DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::CorrectedMinusModelScalar => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "CORRECTED_DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
             MsDataColumn::DataMinusModel => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::DataMinusModelScalar => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
             MsDataColumn::CorrectedDivModel => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(
+                    ms.main_table(),
+                    "CORRECTED_DATA",
+                    row_indices,
+                )?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::CorrectedDivModelScalar => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(
+                    ms.main_table(),
+                    "CORRECTED_DATA",
+                    row_indices,
+                )?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
             MsDataColumn::DataDivModel => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::DataDivModelScalar => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
         }
     }
 
-    fn row(&self, row: usize) -> Result<ComplexGrid, String> {
+    fn row(&self, row_slot: usize) -> Result<ComplexGrid, String> {
         match self {
-            Self::Single(column) => {
-                complex_grid_from_array(column.get(row).map_err(|error| error.to_string())?)
-            }
+            Self::Single(column) => complex_grid_from_array(column.get(row_slot)?),
             Self::Difference {
                 left,
                 right,
                 scalar,
             } => {
-                let left =
-                    complex_grid_from_array(left.get(row).map_err(|error| error.to_string())?)?;
-                let right =
-                    complex_grid_from_array(right.get(row).map_err(|error| error.to_string())?)?;
+                let left = complex_grid_from_array(left.get(row_slot)?)?;
+                let right = complex_grid_from_array(right.get(row_slot)?)?;
                 combine_grids(left, right, |left, right| {
                     if *scalar {
                         Complex64::new(left.norm() - right.norm(), 0.0)
@@ -5810,12 +6091,8 @@ impl<'a> PreparedDataSource<'a> {
                 denominator,
                 scalar,
             } => {
-                let numerator = complex_grid_from_array(
-                    numerator.get(row).map_err(|error| error.to_string())?,
-                )?;
-                let denominator = complex_grid_from_array(
-                    denominator.get(row).map_err(|error| error.to_string())?,
-                )?;
+                let numerator = complex_grid_from_array(numerator.get(row_slot)?)?;
+                let denominator = complex_grid_from_array(denominator.get(row_slot)?)?;
                 combine_grids(numerator, denominator, |left, right| {
                     if *scalar {
                         if right.norm() == 0.0 {
@@ -7163,6 +7440,11 @@ impl ListObsPlotRenderStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::default_value;
+    use crate::{MeasurementSetBuilder, OptionalMainColumn};
+    use casa_types::{RecordField, RecordValue};
+    use ndarray::ArrayD;
+    use num_complex::Complex32;
     use plotters::style::Color;
     use tempfile::tempdir;
 
@@ -7218,6 +7500,54 @@ mod tests {
             header_lines: vec!["Synthetic header".to_string()],
             summary: "Synthetic scatter payload".to_string(),
         }
+    }
+
+    #[test]
+    fn prepared_selected_data_source_preserves_selected_row_order() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .expect("create in-memory MS");
+        let schema = ms.main_table().schema().expect("main schema").clone();
+
+        for amplitude in [10.0_f32, 20.0_f32, 30.0_f32] {
+            let data = ArrayValue::Complex32(
+                ArrayD::from_shape_vec(
+                    vec![1, 2],
+                    vec![
+                        Complex32::new(amplitude, 0.0),
+                        Complex32::new(amplitude + 1.0, 0.0),
+                    ],
+                )
+                .expect("data shape"),
+            );
+            let fields = schema
+                .columns()
+                .iter()
+                .map(|column| {
+                    if column.name() == "DATA" {
+                        RecordField::new("DATA", Value::Array(data.clone()))
+                    } else {
+                        RecordField::new(column.name(), default_value(column.name()))
+                    }
+                })
+                .collect::<Vec<_>>();
+            ms.main_table_mut()
+                .add_row(RecordValue::new(fields))
+                .expect("add main row");
+        }
+
+        let source =
+            PreparedSelectedDataSource::new(&ms, MsDataColumn::Data, &[2, 0]).expect("prefetch");
+        let first = source.row(0).expect("selected row 0");
+        let second = source.row(1).expect("selected row 1");
+
+        assert_eq!(first.corr_count, 1);
+        assert_eq!(first.chan_count, 2);
+        assert_eq!(first.values[0], Complex64::new(30.0, 0.0));
+        assert_eq!(first.values[1], Complex64::new(31.0, 0.0));
+        assert_eq!(second.values[0], Complex64::new(10.0, 0.0));
+        assert_eq!(second.values[1], Complex64::new(11.0, 0.0));
     }
 
     #[test]
@@ -8122,6 +8452,113 @@ mod tests {
                 .unwrap_err()
                 .contains("share the same x/y axis configuration")
         );
+    }
+
+    #[test]
+    fn compact_scatter_series_evenly_decimates_points() {
+        let series = vec![MsScatterSeries {
+            label: "Amplitude".to_string(),
+            color_group: "all".to_string(),
+            y_axis: MsAxis::Amplitude,
+            points: (0..5).map(|index| (index as f64, index as f64)).collect(),
+            provenance: (0..5)
+                .map(|index| MsScatterPointRef {
+                    row: index,
+                    corr: 0,
+                    chan_start: index,
+                    chan_end: index + 1,
+                })
+                .collect(),
+        }];
+
+        let (compacted, original_points, kept_points) = compact_scatter_series(series, 3);
+        assert_eq!(original_points, 5);
+        assert_eq!(kept_points, 3);
+        assert_eq!(compacted.len(), 1);
+        assert_eq!(
+            compacted[0].points,
+            vec![(0.0, 0.0), (2.0, 2.0), (4.0, 4.0)]
+        );
+        assert_eq!(
+            compacted[0]
+                .provenance
+                .iter()
+                .map(|point| point.row)
+                .collect::<Vec<_>>(),
+            vec![0, 2, 4]
+        );
+    }
+
+    #[test]
+    fn compact_payload_to_budget_downsamples_scatter_payload_and_warns() {
+        let payload = MsPlotPayload::Scatter(MsScatterPlotPayload {
+            title: "Dense plot".to_string(),
+            x_axis: MsAxis::Time,
+            y_axis: MsAxis::Amplitude,
+            secondary_y_axis: None,
+            x_label: "Time".to_string(),
+            y_label: "Amplitude".to_string(),
+            secondary_y_label: None,
+            fixed_x_bounds: None,
+            fixed_y_bounds: None,
+            secondary_fixed_y_bounds: None,
+            showlegend: true,
+            legend_position: MsLegendPosition::UpperRight,
+            showmajorgrid: true,
+            showminorgrid: false,
+            series: vec![
+                MsScatterSeries {
+                    label: "A".to_string(),
+                    color_group: "a".to_string(),
+                    y_axis: MsAxis::Amplitude,
+                    points: (0..5).map(|index| (index as f64, index as f64)).collect(),
+                    provenance: (0..5)
+                        .map(|index| MsScatterPointRef {
+                            row: index,
+                            corr: 0,
+                            chan_start: index,
+                            chan_end: index + 1,
+                        })
+                        .collect(),
+                },
+                MsScatterSeries {
+                    label: "B".to_string(),
+                    color_group: "b".to_string(),
+                    y_axis: MsAxis::Amplitude,
+                    points: (5..10).map(|index| (index as f64, index as f64)).collect(),
+                    provenance: (5..10)
+                        .map(|index| MsScatterPointRef {
+                            row: index,
+                            corr: 0,
+                            chan_start: index,
+                            chan_end: index + 1,
+                        })
+                        .collect(),
+                },
+            ],
+            header_lines: Vec::new(),
+            summary: "Dense plot summary.".to_string(),
+        });
+        let point_budget = PointBudget {
+            max_plot_points: Some(6),
+            rendered_points: 10,
+        };
+
+        let compacted = compact_payload_to_budget(payload, &point_budget).unwrap();
+        let MsPlotPayload::Scatter(compacted) = compacted else {
+            panic!("expected scatter payload");
+        };
+        assert_eq!(
+            compacted
+                .series
+                .iter()
+                .map(|series| series.points.len())
+                .sum::<usize>(),
+            6
+        );
+        assert_eq!(compacted.header_lines.len(), 1);
+        assert!(compacted.header_lines[0].contains("Downsampled plot"));
+        assert!(compacted.summary.contains("Decimated points from 10 to 6"));
     }
 
     #[test]

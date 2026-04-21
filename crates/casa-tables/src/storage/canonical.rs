@@ -163,6 +163,22 @@ pub(crate) fn write_bool_bits(dst: &mut [u8], bit_offset: usize, values: &[bool]
     }
 }
 
+/// Pack boolean bytes into `dst` starting at `bit_offset`.
+///
+/// Non-zero input bytes are treated as `true`.
+pub(crate) fn write_bool_bits_from_bytes(dst: &mut [u8], bit_offset: usize, values: &[u8]) {
+    for (i, &value) in values.iter().enumerate() {
+        let bit = bit_offset + i;
+        let byte_idx = bit / 8;
+        let bit_idx = bit % 8;
+        if value != 0 {
+            dst[byte_idx] |= 1 << bit_idx;
+        } else {
+            dst[byte_idx] &= !(1 << bit_idx);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Little-endian scalar reads
 // ---------------------------------------------------------------------------
@@ -319,6 +335,19 @@ mod tests {
         write_bool_bits(&mut buf, 3, &values);
         let read_back = read_bool_bits(&buf, 3, 3);
         assert_eq!(read_back, values);
+    }
+
+    #[test]
+    fn bool_byte_bit_packing_round_trip() {
+        let values = vec![1u8, 0, 7, 0, 0, 2, 9, 0, 1];
+        let byte_count = values.len().div_ceil(8);
+        let mut buf = vec![0u8; byte_count];
+        write_bool_bits_from_bytes(&mut buf, 0, &values);
+        let read_back = read_bool_bits(&buf, 0, values.len());
+        assert_eq!(
+            read_back,
+            values.iter().map(|value| *value != 0).collect::<Vec<_>>()
+        );
     }
 
     #[test]

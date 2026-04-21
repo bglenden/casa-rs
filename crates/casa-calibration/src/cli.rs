@@ -3746,6 +3746,7 @@ mod tests {
                 planning_measurement_set_spectral_windows_ns: 750_000,
                 planning_calibration_table_plans_ns: 900_000,
                 open_measurement_set_ns: 2_000_000,
+                row_field_index_lookup_ns: 2_500,
                 ensure_corrected_data_ns: 3_000,
                 correlation_lookup_ns: 4_000,
                 calibration_load_ns: 5_000,

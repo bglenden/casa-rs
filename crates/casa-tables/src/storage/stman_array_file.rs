@@ -31,7 +31,7 @@
 //! - `casacore::StManArrayFile`  (`StArrayFile.h / StArrayFile.cc`)
 //! - `casacore::StIndArray`      (`StIndArray.h / StIndArray.cc`)
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -503,6 +503,27 @@ impl StManArrayFileWriter {
 
         Ok(Self {
             file,
+            bo,
+            version,
+            file_length,
+        })
+    }
+
+    /// Open an existing array file and append new array records.
+    pub(crate) fn open_append(path: &Path, big_endian: bool) -> Result<Self, StorageError> {
+        let bo = if big_endian {
+            ArrayFileByteOrder::Big
+        } else {
+            ArrayFileByteOrder::Little
+        };
+        let mut raw = OpenOptions::new().read(true).write(true).open(path)?;
+        let version = read_u32(&mut raw, bo)?;
+        let file_length = read_i64(&mut raw, bo)?;
+        let mut pad = [0u8; 4];
+        raw.read_exact(&mut pad)?;
+        raw.seek(SeekFrom::Start(file_length as u64))?;
+        Ok(Self {
+            file: BufWriter::new(raw),
             bo,
             version,
             file_length,
