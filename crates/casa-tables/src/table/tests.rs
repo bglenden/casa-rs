@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use casa_types::{Array2, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{
+    Array2, ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
 
 use crate::schema::{ColumnSchema, TableSchema};
 
-use super::{DataManagerKind, EndianFormat, RowRange, SortOrder, Table, TableError, TableOptions};
+use super::{
+    ColumnBinding, DataManagerKind, EndianFormat, RowRange, SortOrder, Table, TableError,
+    TableOptions,
+};
 
 #[test]
 fn table_keeps_rows_in_order() {
@@ -1238,6 +1244,152 @@ fn ssm_be_round_trip() {
     let reopened = Table::open(TableOptions::new(&root)).expect("open BE");
     verify_endian_test_table(&reopened);
     std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn save_with_bindings_keeps_different_tiled_array_dims_in_separate_groups() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_variable("FLAG", PrimitiveType::Bool, Some(2)),
+        ColumnSchema::array_variable("FLAG_CATEGORY", PrimitiveType::Bool, Some(3)),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new(
+                "FLAG",
+                Value::Array(ArrayValue::Bool(
+                    ArrayD::from_shape_vec(vec![4, 1], vec![false; 4]).expect("shape FLAG"),
+                )),
+            ),
+            RecordField::new(
+                "FLAG_CATEGORY",
+                Value::Array(ArrayValue::Bool(
+                    ArrayD::from_shape_vec(vec![4, 1, 6], vec![false; 24])
+                        .expect("shape FLAG_CATEGORY"),
+                )),
+            ),
+        ]))
+        .expect("add row");
+
+    let root = unique_test_dir("save_with_bindings_tiled_dims");
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut bindings = HashMap::new();
+    for column in ["FLAG", "FLAG_CATEGORY"] {
+        bindings.insert(
+            column.to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::TiledShapeStMan,
+                tile_shape: None,
+            },
+        );
+    }
+
+    table
+        .save_with_bindings(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+        )
+        .expect("save with tiled bindings");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    let tiled_groups: Vec<_> = reopened
+        .data_manager_info()
+        .iter()
+        .filter(|dm| dm.dm_type == "TiledShapeStMan")
+        .collect();
+    assert_eq!(tiled_groups.len(), 2);
+    assert!(tiled_groups.iter().all(|dm| dm.columns.len() == 1));
+    assert!(
+        tiled_groups
+            .iter()
+            .any(|dm| dm.columns.iter().any(|column| column == "FLAG"))
+    );
+    assert!(
+        tiled_groups
+            .iter()
+            .any(|dm| dm.columns.iter().any(|column| column == "FLAG_CATEGORY"))
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+fn assert_save_with_bindings_preserves_scalar_values_when_row_field_order_varies(
+    dm_kind: DataManagerKind,
+    label: &str,
+) {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("A", PrimitiveType::Int32),
+        ColumnSchema::scalar("B", PrimitiveType::Int32),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("A", Value::Scalar(ScalarValue::Int32(10))),
+            RecordField::new("B", Value::Scalar(ScalarValue::Int32(20))),
+        ]))
+        .expect("add row 0");
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("B", Value::Scalar(ScalarValue::Int32(40))),
+            RecordField::new("A", Value::Scalar(ScalarValue::Int32(30))),
+        ]))
+        .expect("add row 1");
+
+    let root = unique_test_dir(label);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let bindings = HashMap::from([
+        (
+            "A".to_string(),
+            ColumnBinding {
+                data_manager: dm_kind,
+                tile_shape: None,
+            },
+        ),
+        (
+            "B".to_string(),
+            ColumnBinding {
+                data_manager: dm_kind,
+                tile_shape: None,
+            },
+        ),
+    ]);
+
+    table
+        .save_with_bindings(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+        )
+        .expect("save with bindings");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    let row0 = reopened.row(0).expect("row 0");
+    let row1 = reopened.row(1).expect("row 1");
+    assert_eq!(row0.get("A"), Some(&Value::Scalar(ScalarValue::Int32(10))));
+    assert_eq!(row0.get("B"), Some(&Value::Scalar(ScalarValue::Int32(20))));
+    assert_eq!(row1.get("A"), Some(&Value::Scalar(ScalarValue::Int32(30))));
+    assert_eq!(row1.get("B"), Some(&Value::Scalar(ScalarValue::Int32(40))));
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn save_with_bindings_ssm_preserves_scalar_values_when_row_field_order_varies() {
+    assert_save_with_bindings_preserves_scalar_values_when_row_field_order_varies(
+        DataManagerKind::StandardStMan,
+        "save_with_bindings_reordered_rows_ssm",
+    );
+}
+
+#[test]
+fn save_with_bindings_ism_preserves_scalar_values_when_row_field_order_varies() {
+    assert_save_with_bindings_preserves_scalar_values_when_row_field_order_varies(
+        DataManagerKind::IncrementalStMan,
+        "save_with_bindings_reordered_rows_ism",
+    );
 }
 
 #[test]

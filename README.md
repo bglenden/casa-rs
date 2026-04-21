@@ -237,6 +237,13 @@ scripts/package-suite-bundle.sh \
   --out-dir dist/python
 ```
 
+Or use the convenience wrapper to build, bundle, and install the current
+checkout in one step:
+
+```bash
+just install-local
+```
+
 ## Terminal Launcher
 
 `casars` is the framework-owned ratatui shell family for supported `casa-rs`

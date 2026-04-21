@@ -2,6 +2,7 @@
 use super::*;
 #[cfg(unix)]
 use crate::lock::read_sync_data_from_table_dir;
+use crate::storage::StorageProfiler;
 
 impl Table {
     /// Opens an existing table from disk.
@@ -165,6 +166,18 @@ impl Table {
     /// This allows mixing storage managers within one table, for example
     /// scalars in StandardStMan and arrays in TiledColumnStMan.
     ///
+    /// For large heterogeneous tables, this is usually the preferred public
+    /// save entrypoint because it gives the storage layer enough information to
+    /// take specialized per-column write paths instead of pushing every column
+    /// through one generic layout. In practice that matters most for workloads
+    /// such as MeasurementSet writes, where slowly changing scalars, ordinary
+    /// scalars, and large array columns benefit from different storage
+    /// managers.
+    ///
+    /// If the table state is already known to be schema-valid, prefer
+    /// [`save_with_bindings_assuming_valid`](Self::save_with_bindings_assuming_valid)
+    /// to avoid the extra full-table validation pass before serialization.
+    ///
     /// # Example
     ///
     /// ```rust,no_run
@@ -191,27 +204,59 @@ impl Table {
         bindings: &std::collections::HashMap<String, ColumnBinding>,
     ) -> Result<(), TableError> {
         self.validate()?;
-        let snapshot = StorageSnapshot {
-            row_count: self.inner.row_count(),
-            rows: self.inner.rows()?.to_vec(),
-            undefined_cells: self.inner.undefined_cells()?.to_vec(),
-            keywords: self.inner.keywords().clone(),
-            column_keywords: self.inner.all_column_keywords().clone(),
-            schema: self.inner.schema().cloned(),
-            table_info: self.table_info.clone(),
-            virtual_columns: self.virtual_columns.clone(),
-            virtual_bindings: self.virtual_bindings.clone(),
-            dm_info: vec![],
-        };
+        self.save_with_bindings_assuming_valid(options, bindings)
+    }
+
+    /// Save the table with per-column data manager bindings without re-validating rows.
+    ///
+    /// This is the bindings-aware counterpart to [`save_assuming_valid`](Self::save_assuming_valid).
+    /// It preserves the same on-disk layout as [`save_with_bindings`](Self::save_with_bindings),
+    /// but skips the extra full-table validation pass and avoids cloning the entire row set
+    /// before serialization.
+    ///
+    /// This entrypoint is intended for high-volume writers that already know
+    /// their table contents satisfy the schema through validated construction.
+    /// On large tables it avoids a measurable amount of redundant work while
+    /// still using the same bindings-driven storage-manager layout as
+    /// [`save_with_bindings`](Self::save_with_bindings).
+    pub fn save_with_bindings_assuming_valid(
+        &self,
+        options: TableOptions,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+    ) -> Result<(), TableError> {
+        let mut profiler = StorageProfiler::start(format!(
+            "Table::save_with_bindings path={}",
+            options.path.display()
+        ));
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "validate",
+                Some(format!(
+                    "rows={} bindings={} skipped=true",
+                    self.inner.row_count(),
+                    bindings.len()
+                )),
+            );
+        }
         let storage = CompositeStorage;
-        storage.save_with_bindings(
+        storage.save_with_bindings_borrowed(
             &options.path,
-            &snapshot,
+            self.inner.rows()?,
+            self.inner.undefined_cells()?,
+            self.inner.keywords(),
+            self.inner.all_column_keywords(),
+            self.inner.schema(),
+            &self.table_info,
+            &self.virtual_columns,
+            &self.virtual_bindings,
             options.data_manager,
             options.endian_format.is_big_endian(),
             options.tile_shape.as_deref(),
             bindings,
         )?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark("storage_save");
+        }
         Ok(())
     }
 

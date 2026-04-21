@@ -193,6 +193,21 @@ pub enum DataManagerKind {
 /// Columns not listed in the bindings map use the default DM from
 /// [`TableOptions`].
 ///
+/// This is the main public hook for steering large-write performance.
+/// For heterogeneous tables such as MeasurementSets, explicit bindings let
+/// the save path serialize compact column groups with storage-manager-specific
+/// code paths instead of treating the entire row as one generic record payload.
+///
+/// As a rule of thumb:
+/// - use tiled storage managers for large array-valued columns
+/// - use [`DataManagerKind::IncrementalStMan`] for slowly changing scalar
+///   columns
+/// - use [`DataManagerKind::StandardStMan`] for scalar columns that do not
+///   compress well under ISM
+///
+/// Callers writing large tables should prefer explicit bindings over relying
+/// on a single default data manager for every column.
+///
 /// # Example
 ///
 /// ```rust

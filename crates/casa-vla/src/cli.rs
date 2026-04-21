@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
@@ -12,7 +12,7 @@ use crate::task_contract::{
 };
 use crate::{
     AntennaNameScheme, BandName, ImportVlaOptions, VlaError,
-    import_archive_files_to_measurement_set_from_options, scan_disk_archive_files_from_options,
+    import_archive_files_to_measurement_set_from_options,
 };
 pub use casa_ms::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
@@ -136,7 +136,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 value_kind: UiValueKind::Path,
                 default: None,
                 choices: &[],
-                help: "Output MeasurementSet path; leave blank to run a scan only",
+                help: "Output MeasurementSet path; defaults to ./<first-archive-stem>.ms for imports",
                 group: "Output",
                 required: false,
                 advanced: false,
@@ -469,48 +469,50 @@ fn read_json_source(source: &str) -> Result<String, String> {
 }
 
 fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
-    if options.vis.is_some() {
-        let report = import_archive_files_to_measurement_set_from_options(&options)?;
-        if json_output {
-            let payload = json!({
-                "mode": "disk-import",
-                "options": render_options_json(&options),
-                "report": report,
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&payload).map_err(|error| {
-                    VlaError::InvalidArgument {
-                        argument: "json",
-                        message: error.to_string(),
-                    }
-                })?
-            );
-        } else {
-            render_import_text(&options, &report);
-        }
+    let cleanup_vis = if options.vis.is_none() {
+        Some(options.effective_vis_for_import()?)
     } else {
-        let summary = scan_disk_archive_files_from_options(&options)?;
-        if json_output {
-            let payload = json!({
-                "mode": "disk-scan",
-                "options": render_options_json(&options),
-                "summary": summary,
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&payload).map_err(|error| {
-                    VlaError::InvalidArgument {
-                        argument: "json",
-                        message: error.to_string(),
-                    }
-                })?
-            );
-        } else {
-            render_text(&options, &summary);
+        None
+    };
+    let report = match import_archive_files_to_measurement_set_from_options(&options) {
+        Ok(report) => report,
+        Err(error) => {
+            if let Some(path) = cleanup_vis.as_deref().filter(|path| path.exists()) {
+                cleanup_failed_import_output(path).map_err(|cleanup_error| {
+                    VlaError::import(format!(
+                        "{error}; cleanup failed for {}: {cleanup_error}",
+                        path.display()
+                    ))
+                })?;
+            }
+            return Err(error);
         }
+    };
+    if json_output {
+        let payload = json!({
+            "mode": "disk-import",
+            "options": render_options_json(&options),
+            "report": report,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload).map_err(|error| VlaError::InvalidArgument {
+                argument: "json",
+                message: error.to_string(),
+            })?
+        );
+    } else {
+        render_import_text(&report);
     }
     Ok(())
+}
+
+fn cleanup_failed_import_output(path: &Path) -> Result<(), std::io::Error> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
 }
 
 fn render_options_json(options: &ImportVlaOptions) -> serde_json::Value {
@@ -533,6 +535,7 @@ fn render_options_json(options: &ImportVlaOptions) -> serde_json::Value {
     })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn render_text(options: &ImportVlaOptions, summary: &crate::ArchiveSummary) {
     println!("importvla disk scan");
     if let Some(vis) = &options.vis {
@@ -565,12 +568,9 @@ fn render_text(options: &ImportVlaOptions, summary: &crate::ArchiveSummary) {
     println!("note: this first wave scans disk archive files and reassembles logical records.");
 }
 
-fn render_import_text(options: &ImportVlaOptions, report: &crate::ImportReport) {
+fn render_import_text(report: &crate::ImportReport) {
     println!("importvla disk import");
-    if let Some(vis) = &options.vis {
-        println!("vis: {}", vis.display());
-    }
-    println!("archive files: {}", options.archivefiles.len());
+    println!("vis: {}", report.vis.display());
     println!("logical records seen: {}", report.logical_records_seen);
     println!(
         "logical records imported: {}",
@@ -691,6 +691,8 @@ mod tests {
     use crate::task_contract::ImportVlaScanTaskRequest;
     use crate::{ArchiveFileSummary, ArchiveSummary, ImportReport};
     use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::{NamedTempFile, tempdir};
 
     fn sample_options() -> ImportVlaOptions {
@@ -769,6 +771,29 @@ mod tests {
         file
     }
 
+    struct CurrentDirGuard(PathBuf);
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+
+    fn cwd_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_temp_cwd<T>(f: impl FnOnce(&Path) -> T) -> T {
+        let _lock = cwd_lock().lock().expect("cwd lock");
+        let restore = CurrentDirGuard(std::env::current_dir().expect("original cwd"));
+        let temp = tempdir().expect("temp cwd");
+        std::env::set_current_dir(temp.path()).expect("set temp cwd");
+        let result = f(temp.path());
+        drop(restore);
+        result
+    }
+
     #[test]
     fn command_schema_describes_public_importvla_surface() {
         let schema = command_schema("importvla");
@@ -806,7 +831,7 @@ mod tests {
             OsString::from("--archivefiles"),
             OsString::from("a.exp,b.xp1"),
         ])
-        .expect("scan args")
+        .expect("implicit vis args")
         {
             CliAction::Run { options, json } => {
                 assert_eq!(options.archivefiles.len(), 2);
@@ -971,7 +996,7 @@ mod tests {
         let report = sample_report();
 
         render_text(&options, &summary);
-        render_import_text(&options, &report);
+        render_import_text(&report);
 
         let help = render_help(&command_schema("importvla-test"));
         assert!(help.contains("Machine-readable:"));
@@ -979,16 +1004,9 @@ mod tests {
     }
 
     #[test]
-    fn run_scan_and_json_request_cover_real_archive_paths_when_available() {
+    fn run_json_request_covers_explicit_scan_operation_when_archive_is_available() {
         let archive = synthetic_archive_file();
         let path = archive.path().to_path_buf();
-        let options = ImportVlaOptions {
-            archivefiles: vec![path.clone()],
-            ..ImportVlaOptions::default()
-        };
-        run(options.clone(), false).expect("run text scan");
-        run(options, true).expect("run json scan");
-
         let request_file = NamedTempFile::new().expect("request file");
         let request = ImportVlaTaskRequest::Scan(ImportVlaScanTaskRequest {
             options: ImportVlaOptions {
@@ -1015,6 +1033,36 @@ mod tests {
             ..ImportVlaOptions::default()
         };
         assert!(run(options, true).is_err());
+    }
+
+    #[test]
+    fn run_without_vis_cleans_up_failed_default_output_path() {
+        let path = synthetic_archive_file().path().to_path_buf();
+        let result = with_temp_cwd(|temp| {
+            let expected_vis = temp.join(
+                path.file_stem()
+                    .expect("archive stem")
+                    .to_string_lossy()
+                    .to_string()
+                    + ".ms",
+            );
+            let result = run(
+                ImportVlaOptions {
+                    archivefiles: vec![path.clone()],
+                    ..ImportVlaOptions::default()
+                },
+                true,
+            );
+            assert!(
+                !expected_vis.exists(),
+                "failed implicit imports should clean up the derived temp cwd output"
+            );
+            result
+        });
+
+        let error = result.expect_err("synthetic archive import should fail later in import");
+        assert!(!error.to_string().contains("scan"));
+        assert!(!error.to_string().contains("required for import"));
     }
 
     #[test]
