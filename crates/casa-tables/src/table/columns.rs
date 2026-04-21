@@ -532,6 +532,23 @@ impl Table {
         row_index: usize,
         column: &str,
     ) -> Result<&ArrayValue, TableError> {
+        self.require_column(column)?;
+        if row_index >= self.row_count() {
+            return Err(TableError::RowOutOfBounds {
+                row_index,
+                row_count: self.row_count(),
+            });
+        }
+        match self.inner.array_cell(row_index, column)? {
+            crate::table_impl::LazyArrayLookup::Hit(array) => return Ok(array),
+            crate::table_impl::LazyArrayLookup::Missing => {
+                return Err(TableError::ColumnNotFound {
+                    row_index,
+                    column: column.to_string(),
+                });
+            }
+            crate::table_impl::LazyArrayLookup::Unknown => {}
+        }
         match self.cell(row_index, column)? {
             Some(Value::Array(array)) => Ok(array),
             Some(value) => Err(TableError::ColumnTypeMismatch {
@@ -553,6 +570,23 @@ impl Table {
         row_index: usize,
         column: &str,
     ) -> Result<&ScalarValue, TableError> {
+        self.require_column(column)?;
+        if row_index >= self.row_count() {
+            return Err(TableError::RowOutOfBounds {
+                row_index,
+                row_count: self.row_count(),
+            });
+        }
+        match self.inner.scalar_cell(row_index, column)? {
+            crate::table_impl::LazyScalarLookup::Hit(scalar) => return Ok(scalar),
+            crate::table_impl::LazyScalarLookup::Missing => {
+                return Err(TableError::ColumnNotFound {
+                    row_index,
+                    column: column.to_string(),
+                });
+            }
+            crate::table_impl::LazyScalarLookup::Unknown => {}
+        }
         match self.cell(row_index, column)? {
             Some(Value::Scalar(scalar)) => Ok(scalar),
             Some(value) => Err(TableError::ColumnTypeMismatch {

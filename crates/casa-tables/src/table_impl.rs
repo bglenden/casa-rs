@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use casa_types::RecordValue;
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
-use crate::schema::TableSchema;
+use crate::schema::{ColumnType, TableSchema};
 use crate::storage::CompositeStorage;
 use crate::table::TableError;
 
@@ -20,6 +20,34 @@ struct LazyRowsSource {
 struct LoadedRows {
     rows: Vec<RecordValue>,
     undefined_cells: Vec<HashSet<String>>,
+}
+
+#[derive(Debug)]
+struct LoadedScalarColumns {
+    columns: HashMap<String, Vec<Option<ScalarValue>>>,
+}
+
+pub(crate) enum LazyScalarLookup<'a> {
+    Hit(&'a ScalarValue),
+    Missing,
+    Unknown,
+}
+
+pub(crate) enum LazyArrayLookup<'a> {
+    Hit(&'a ArrayValue),
+    Missing,
+    Unknown,
+}
+
+fn lazy_array_column_store(
+    schema: Option<&TableSchema>,
+) -> HashMap<String, OnceCell<Vec<Option<ArrayValue>>>> {
+    schema
+        .into_iter()
+        .flat_map(|schema| schema.columns())
+        .filter(|column| matches!(column.column_type(), ColumnType::Array(_)))
+        .map(|column| (column.name().to_string(), OnceCell::new()))
+        .collect()
 }
 
 fn eager_loaded_rows(
@@ -38,6 +66,8 @@ fn eager_loaded_rows(
 #[derive(Debug, Default)]
 pub(crate) struct TableImpl {
     loaded_rows: OnceCell<LoadedRows>,
+    loaded_scalar_columns: OnceCell<LoadedScalarColumns>,
+    loaded_array_columns: HashMap<String, OnceCell<Vec<Option<ArrayValue>>>>,
     lazy_rows: Option<LazyRowsSource>,
     persisted_row_count: usize,
     keywords: RecordValue,
@@ -56,6 +86,8 @@ impl TableImpl {
             .expect("initialize empty row store");
         Self {
             loaded_rows,
+            loaded_scalar_columns: OnceCell::new(),
+            loaded_array_columns: HashMap::new(),
             lazy_rows: None,
             persisted_row_count: 0,
             keywords: RecordValue::default(),
@@ -72,6 +104,8 @@ impl TableImpl {
             .expect("initialize eager row store");
         Self {
             loaded_rows,
+            loaded_scalar_columns: OnceCell::new(),
+            loaded_array_columns: HashMap::new(),
             lazy_rows: None,
             persisted_row_count,
             keywords: RecordValue::default(),
@@ -94,6 +128,8 @@ impl TableImpl {
             .expect("initialize eager row store");
         Self {
             loaded_rows,
+            loaded_scalar_columns: OnceCell::new(),
+            loaded_array_columns: lazy_array_column_store(schema.as_ref()),
             lazy_rows: None,
             persisted_row_count,
             keywords,
@@ -111,6 +147,8 @@ impl TableImpl {
     ) -> Self {
         Self {
             loaded_rows: OnceCell::new(),
+            loaded_scalar_columns: OnceCell::new(),
+            loaded_array_columns: lazy_array_column_store(schema.as_ref()),
             lazy_rows: Some(LazyRowsSource {
                 path,
                 row_count_hint: row_count,
@@ -133,6 +171,40 @@ impl TableImpl {
                 ))
             })?;
         Ok(eager_loaded_rows(snapshot.rows, snapshot.undefined_cells))
+    }
+
+    fn load_scalar_columns_now(source: &LazyRowsSource) -> Result<LoadedScalarColumns, TableError> {
+        let storage = CompositeStorage;
+        let snapshot = storage
+            .load_scalar_columns_with_row_hint(&source.path, Some(source.row_count_hint as u64))
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load scalar columns for table {}: {err}",
+                    source.path.display()
+                ))
+            })?;
+        Ok(LoadedScalarColumns {
+            columns: snapshot.columns,
+        })
+    }
+
+    fn load_array_column_now(
+        source: &LazyRowsSource,
+        column: &str,
+    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+        let storage = CompositeStorage;
+        storage
+            .load_array_column_with_row_hint(
+                &source.path,
+                column,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load array column '{column}' for table {}: {err}",
+                    source.path.display()
+                ))
+            })
     }
 
     fn ensure_loaded(&self) -> Result<&LoadedRows, TableError> {
@@ -203,6 +275,78 @@ impl TableImpl {
 
     pub(crate) fn row(&self, row_index: usize) -> Result<Option<&RecordValue>, TableError> {
         Ok(self.ensure_loaded()?.rows.get(row_index))
+    }
+
+    pub(crate) fn scalar_cell(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<LazyScalarLookup<'_>, TableError> {
+        if let Some(loaded) = self.loaded_rows.get() {
+            let Some(row) = loaded.rows.get(row_index) else {
+                return Ok(LazyScalarLookup::Missing);
+            };
+            return Ok(match row.get(column) {
+                Some(Value::Scalar(scalar)) => LazyScalarLookup::Hit(scalar),
+                Some(_) => LazyScalarLookup::Unknown,
+                None => LazyScalarLookup::Missing,
+            });
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(LazyScalarLookup::Unknown);
+        };
+
+        if self.loaded_scalar_columns.get().is_none() {
+            let loaded = Self::load_scalar_columns_now(source)?;
+            let _ = self.loaded_scalar_columns.set(loaded);
+        }
+        let columns = self
+            .loaded_scalar_columns
+            .get()
+            .expect("scalar columns initialized before access");
+        let Some(values) = columns.columns.get(column) else {
+            return Ok(LazyScalarLookup::Unknown);
+        };
+        match values.get(row_index) {
+            Some(Some(value)) => Ok(LazyScalarLookup::Hit(value)),
+            Some(None) | None => Ok(LazyScalarLookup::Missing),
+        }
+    }
+
+    pub(crate) fn array_cell(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<LazyArrayLookup<'_>, TableError> {
+        if let Some(loaded) = self.loaded_rows.get() {
+            let Some(row) = loaded.rows.get(row_index) else {
+                return Ok(LazyArrayLookup::Missing);
+            };
+            return Ok(match row.get(column) {
+                Some(Value::Array(array)) => LazyArrayLookup::Hit(array),
+                Some(_) => LazyArrayLookup::Unknown,
+                None => LazyArrayLookup::Missing,
+            });
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(LazyArrayLookup::Unknown);
+        };
+        let Some(cached_column) = self.loaded_array_columns.get(column) else {
+            return Ok(LazyArrayLookup::Unknown);
+        };
+        if cached_column.get().is_none() {
+            let loaded = Self::load_array_column_now(source, column)?;
+            let _ = cached_column.set(loaded);
+        }
+        let values = cached_column
+            .get()
+            .expect("array column initialized before access");
+        match values.get(row_index) {
+            Some(Some(value)) => Ok(LazyArrayLookup::Hit(value)),
+            Some(None) | None => Ok(LazyArrayLookup::Missing),
+        }
     }
 
     pub(crate) fn row_mut(
@@ -298,10 +442,17 @@ impl TableImpl {
                 .expect("replace eager row store");
             loaded_rows
         };
+        self.loaded_scalar_columns = OnceCell::new();
+        self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
         self.persisted_row_count = self.loaded_rows.get().map_or(0, |loaded| loaded.rows.len());
         self.lazy_rows = None;
         self.keywords = keywords;
         self.column_keywords = column_keywords;
         self.schema = schema;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_loaded_rows(&self) -> bool {
+        self.loaded_rows.get().is_some()
     }
 }

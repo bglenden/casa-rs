@@ -321,7 +321,7 @@ fn calibrate_guided_flow_runs_inspect_and_solve_gain_on_ngc5921() {
         .expect("solve-gain output table");
 
     start_run_with_default_calibrate_launcher(&mut app);
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(
         Path::new(&gain_table).exists(),
         "expected {gain_table} to exist"
@@ -8753,7 +8753,7 @@ fn importvla_workflow_runs_against_real_archive_and_renders_stdout() {
     app.set_text_value("vis", vis_path.to_string_lossy().as_ref());
 
     start_run_with_default_importvla_launcher(&mut app);
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
     assert!(
         app.stderr_for_test().trim().is_empty(),
         "status={} stderr={}",

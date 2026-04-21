@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use casa_aipsio::ByteOrder;
-use casa_types::{RecordField, RecordValue, Value};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
@@ -227,6 +227,12 @@ pub(crate) struct StorageSnapshot {
     pub(crate) virtual_bindings: Vec<virtual_engine::VirtualColumnBinding>,
     /// Data manager info extracted from table.dat (empty for memory tables).
     pub(crate) dm_info: Vec<DataManagerInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ScalarColumnSnapshot {
+    pub(crate) row_count: usize,
+    pub(crate) columns: HashMap<String, Vec<Option<ScalarValue>>>,
 }
 
 pub(crate) trait StorageManager {
@@ -921,6 +927,55 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn load_scalar_columns_with_row_hint(
+        &self,
+        table_path: &Path,
+        row_hint: Option<u64>,
+    ) -> Result<ScalarColumnSnapshot, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => {
+                self.load_plain_scalar_columns(table_path, &table_dat, row_hint)
+            }
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
+                Ok(scalar_columns_from_snapshot(&snapshot))
+            }
+        }
+    }
+
+    pub(crate) fn load_array_column_with_row_hint(
+        &self,
+        table_path: &Path,
+        column: &str,
+        row_hint: Option<u64>,
+    ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => {
+                self.load_plain_array_column(table_path, &table_dat, column, row_hint)
+            }
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
+                array_column_from_snapshot(&snapshot, column)
+            }
+        }
+    }
+
     /// Load a PlainTable from table.dat contents and data files.
     ///
     /// Uses two-pass loading:
@@ -1125,6 +1180,243 @@ impl CompositeStorage {
             virtual_bindings: Vec::new(),
             dm_info,
         })
+    }
+
+    fn load_plain_scalar_columns(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        row_hint: Option<u64>,
+    ) -> Result<ScalarColumnSnapshot, StorageError> {
+        let nrrow = table_dat
+            .nrrow
+            .max(table_dat.column_set.nrrow)
+            .max(row_hint.unwrap_or(0)) as usize;
+
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+            return Ok(scalar_columns_from_snapshot(&snapshot));
+        }
+
+        let mut columns = HashMap::new();
+
+        for dm in &table_dat.column_set.data_managers {
+            let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+            let bound_cols: Vec<(usize, &_)> = table_dat
+                .column_set
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+                .collect();
+
+            match dm.type_name.as_str() {
+                "StManAipsIO" => {
+                    if !data_path.is_file() {
+                        return Err(StorageError::MissingDataFile(data_path));
+                    }
+                    collect_stman_scalar_columns(
+                        &data_path,
+                        &table_dat.table_desc.columns,
+                        &bound_cols,
+                        nrrow,
+                        ByteOrder::BigEndian,
+                        &mut columns,
+                    )?;
+                }
+                "StandardStMan" => {
+                    if !data_path.is_file() {
+                        return Err(StorageError::MissingDataFile(data_path));
+                    }
+                    collect_ssm_scalar_columns(
+                        &data_path,
+                        &dm.data,
+                        &table_dat.table_desc.columns,
+                        &bound_cols,
+                        nrrow,
+                        &mut columns,
+                    )?;
+                }
+                "IncrementalStMan" => {
+                    if !data_path.is_file() {
+                        return Err(StorageError::MissingDataFile(data_path));
+                    }
+                    collect_ism_scalar_columns(
+                        &data_path,
+                        &dm.data,
+                        &table_dat.table_desc.columns,
+                        &bound_cols,
+                        nrrow,
+                        &mut columns,
+                    )?;
+                }
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
+                    if bound_cols
+                        .iter()
+                        .any(|(desc_idx, _)| !table_dat.table_desc.columns[*desc_idx].is_array)
+                    {
+                        let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+                        return Ok(scalar_columns_from_snapshot(&snapshot));
+                    }
+                }
+                other => {
+                    return Err(StorageError::UnsupportedDataManager(other.to_string()));
+                }
+            }
+        }
+
+        Ok(ScalarColumnSnapshot {
+            row_count: nrrow,
+            columns,
+        })
+    }
+
+    fn load_plain_array_column(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        row_hint: Option<u64>,
+    ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        let desc_idx = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .position(|desc| desc.col_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("array column '{column}' not found"))
+            })?;
+        let col_desc = &table_dat.table_desc.columns[desc_idx];
+        if !col_desc.is_array {
+            return Err(StorageError::FormatMismatch(format!(
+                "column '{column}' is not an array column"
+            )));
+        }
+
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+            return array_column_from_snapshot(&snapshot, column);
+        }
+
+        let nrrow = table_dat
+            .nrrow
+            .max(table_dat.column_set.nrrow)
+            .max(row_hint.unwrap_or(0)) as usize;
+        let dm_seq_nr = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing ColumnSet binding"
+                ))
+            })?
+            .dm_seq_nr;
+        let dm = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data manager {dm_seq_nr}"
+                ))
+            })?;
+        let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+        let bound_cols: Vec<(usize, &_)> = table_dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+            .collect();
+        let mut rows: Vec<RecordValue> = (0..nrrow).map(|_| RecordValue::default()).collect();
+        let mut undefined_cells: Vec<HashSet<String>> =
+            (0..nrrow).map(|_| HashSet::new()).collect();
+
+        match dm.type_name.as_str() {
+            "StManAipsIO" => {
+                if !data_path.is_file() {
+                    return Err(StorageError::MissingDataFile(data_path));
+                }
+                load_stman_aipsio_columns(
+                    &data_path,
+                    &table_dat.table_desc.columns,
+                    &bound_cols,
+                    &mut rows,
+                    &mut undefined_cells,
+                    nrrow,
+                    ByteOrder::BigEndian,
+                )?;
+            }
+            "StandardStMan" => {
+                if !data_path.is_file() {
+                    return Err(StorageError::MissingDataFile(data_path));
+                }
+                load_ssm_columns(
+                    &data_path,
+                    &dm.data,
+                    &table_dat.table_desc.columns,
+                    &bound_cols,
+                    &mut rows,
+                    &mut undefined_cells,
+                    nrrow,
+                )?;
+            }
+            "IncrementalStMan" => {
+                if !data_path.is_file() {
+                    return Err(StorageError::MissingDataFile(data_path));
+                }
+                load_ism_columns(
+                    &data_path,
+                    &dm.data,
+                    &table_dat.table_desc.columns,
+                    &bound_cols,
+                    &mut rows,
+                    &mut undefined_cells,
+                    nrrow,
+                )?;
+            }
+            "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
+                tiled_stman::load_tiled_columns(
+                    table_path,
+                    dm,
+                    &table_dat.table_desc.columns,
+                    &bound_cols,
+                    &mut rows,
+                    &mut undefined_cells,
+                    nrrow,
+                )?;
+            }
+            other => {
+                return Err(StorageError::UnsupportedDataManager(other.to_string()));
+            }
+        }
+
+        let snapshot = StorageSnapshot {
+            row_count: nrrow,
+            rows,
+            undefined_cells,
+            keywords: RecordValue::default(),
+            column_keywords: HashMap::new(),
+            schema: None,
+            table_info: TableInfo::default(),
+            virtual_columns: HashSet::new(),
+            virtual_bindings: Vec::new(),
+            dm_info: Vec::new(),
+        };
+        array_column_from_snapshot(&snapshot, column)
     }
 
     fn load_plain_table_metadata(
@@ -1832,6 +2124,249 @@ impl CompositeStorage {
             default_tile_shape,
             bindings,
         )
+    }
+}
+
+fn scalar_columns_from_snapshot(snapshot: &StorageSnapshot) -> ScalarColumnSnapshot {
+    let mut columns: HashMap<String, Vec<Option<ScalarValue>>> = HashMap::new();
+    for (row_index, row) in snapshot.rows.iter().enumerate() {
+        for (name, values) in &mut columns {
+            values.push(match row.get(name) {
+                Some(Value::Scalar(value)) => Some(value.clone()),
+                _ => None,
+            });
+        }
+        for field in row.fields() {
+            if let Value::Scalar(value) = &field.value {
+                let entry = columns
+                    .entry(field.name.clone())
+                    .or_insert_with(|| vec![None; row_index]);
+                entry.push(Some(value.clone()));
+            }
+        }
+    }
+    for values in columns.values_mut() {
+        if values.len() < snapshot.row_count {
+            values.resize(snapshot.row_count, None);
+        }
+    }
+    ScalarColumnSnapshot {
+        row_count: snapshot.row_count,
+        columns,
+    }
+}
+
+fn array_column_from_snapshot(
+    snapshot: &StorageSnapshot,
+    column: &str,
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    snapshot
+        .rows
+        .iter()
+        .map(|row| match row.get(column) {
+            Some(Value::Array(value)) => Ok(Some(value.clone())),
+            Some(other) => Err(StorageError::FormatMismatch(format!(
+                "column '{column}' expected array value, found {:?}",
+                other.kind()
+            ))),
+            None => Ok(None),
+        })
+        .collect()
+}
+
+fn collect_stman_scalar_columns(
+    data_path: &Path,
+    all_col_descs: &[table_control::ColumnDescContents],
+    bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    nrrow: usize,
+    byte_order: ByteOrder,
+    columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
+) -> Result<(), StorageError> {
+    let col_info: Vec<StManColumnInfo> = bound_cols
+        .iter()
+        .map(|(desc_idx, _)| {
+            let c = &all_col_descs[*desc_idx];
+            let nrelem = if c.is_array && !c.shape.is_empty() {
+                c.shape.iter().map(|&s| s as usize).product()
+            } else {
+                0
+            };
+            StManColumnInfo {
+                is_array: c.is_array,
+                nrelem,
+            }
+        })
+        .collect();
+    let stman_data = read_stman_file(data_path, &col_info, byte_order)?;
+    for (stman_col_idx, (desc_idx, _)) in bound_cols.iter().enumerate() {
+        if stman_col_idx >= stman_data.columns.len() {
+            break;
+        }
+        let col_desc = &all_col_descs[*desc_idx];
+        if col_desc.is_array || col_desc.is_record() {
+            continue;
+        }
+        let values =
+            scalar_values_from_stman_data(&stman_data.columns[stman_col_idx], col_desc, nrrow)?;
+        columns.insert(col_desc.col_name.clone(), values);
+    }
+    Ok(())
+}
+
+fn collect_ssm_scalar_columns(
+    data_path: &Path,
+    dm_blob: &[u8],
+    all_col_descs: &[table_control::ColumnDescContents],
+    bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    nrrow: usize,
+    columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
+) -> Result<(), StorageError> {
+    let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
+        .iter()
+        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .collect();
+    let ssm_columns = read_ssm_file(data_path, dm_blob, &col_descs, nrrow)?;
+    for (col_name, col_result) in &ssm_columns {
+        let col_desc = col_descs
+            .iter()
+            .find(|c| c.col_name == *col_name)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "SSM returned column '{col_name}' not in descriptor"
+                ))
+            })?;
+        if col_desc.is_array || col_desc.is_record() {
+            continue;
+        }
+        let values = scalar_values_from_ssm_data(col_result, col_desc, nrrow)?;
+        columns.insert(col_name.clone(), values);
+    }
+    Ok(())
+}
+
+fn collect_ism_scalar_columns(
+    data_path: &Path,
+    dm_blob: &[u8],
+    all_col_descs: &[table_control::ColumnDescContents],
+    bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    nrrow: usize,
+    columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
+) -> Result<(), StorageError> {
+    let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
+        .iter()
+        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .collect();
+    let ism_columns = read_ism_file(data_path, dm_blob, &col_descs, nrrow)?;
+    for (col_name, col_result) in &ism_columns {
+        let col_desc = col_descs
+            .iter()
+            .find(|c| c.col_name == *col_name)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "ISM returned column '{col_name}' not in descriptor"
+                ))
+            })?;
+        if col_desc.is_array || col_desc.is_record() {
+            continue;
+        }
+        let values = scalar_values_from_ism_data(col_result, col_desc, nrrow)?;
+        columns.insert(col_name.clone(), values);
+    }
+    Ok(())
+}
+
+fn scalar_values_from_stman_data(
+    data: &StManColumnData,
+    col_desc: &table_control::ColumnDescContents,
+    nrrow: usize,
+) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+    match data {
+        StManColumnData::Flat(raw) => {
+            let mut values = Vec::with_capacity(nrrow);
+            for row_idx in 0..nrrow {
+                let value = extract_row_value(raw, col_desc, row_idx, nrrow)?;
+                let scalar = scalar_value_from_value(value, &col_desc.col_name)?;
+                if (col_desc.option & 2) != 0
+                    && scalar_value_is_default(
+                        &Value::Scalar(scalar.clone()),
+                        col_desc.require_primitive_type()?,
+                    )
+                {
+                    values.push(None);
+                } else {
+                    values.push(Some(scalar));
+                }
+            }
+            Ok(values)
+        }
+        StManColumnData::Indirect(per_row) => {
+            scalar_values_from_indirect(per_row, &col_desc.col_name)
+        }
+    }
+}
+
+fn scalar_values_from_ssm_data(
+    data: &standard_stman::SsmColumnResult,
+    col_desc: &table_control::ColumnDescContents,
+    nrrow: usize,
+) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+    match data {
+        standard_stman::SsmColumnResult::Flat(raw) => {
+            let mut values = Vec::with_capacity(nrrow);
+            for row_idx in 0..nrrow {
+                let value = extract_row_value(raw, col_desc, row_idx, nrrow)?;
+                values.push(Some(scalar_value_from_value(value, &col_desc.col_name)?));
+            }
+            Ok(values)
+        }
+        standard_stman::SsmColumnResult::Indirect(per_row) => {
+            scalar_values_from_indirect(per_row, &col_desc.col_name)
+        }
+    }
+}
+
+fn scalar_values_from_ism_data(
+    data: &IsmColumnResult,
+    col_desc: &table_control::ColumnDescContents,
+    nrrow: usize,
+) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+    match data {
+        IsmColumnResult::Flat(raw) => {
+            let mut values = Vec::with_capacity(nrrow);
+            for row_idx in 0..nrrow {
+                let value = extract_row_value(raw, col_desc, row_idx, nrrow)?;
+                values.push(Some(scalar_value_from_value(value, &col_desc.col_name)?));
+            }
+            Ok(values)
+        }
+        IsmColumnResult::Indirect(per_row) => {
+            scalar_values_from_indirect(per_row, &col_desc.col_name)
+        }
+    }
+}
+
+fn scalar_values_from_indirect(
+    per_row: &[Option<Value>],
+    column: &str,
+) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+    per_row
+        .iter()
+        .map(|value| {
+            value
+                .clone()
+                .map(|value| scalar_value_from_value(value, column))
+                .transpose()
+        })
+        .collect()
+}
+
+fn scalar_value_from_value(value: Value, column: &str) -> Result<ScalarValue, StorageError> {
+    match value {
+        Value::Scalar(scalar) => Ok(scalar),
+        other => Err(StorageError::FormatMismatch(format!(
+            "column '{column}' expected scalar value, found {:?}",
+            other.kind()
+        ))),
     }
 }
 

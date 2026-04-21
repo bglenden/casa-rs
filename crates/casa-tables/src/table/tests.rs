@@ -1096,6 +1096,55 @@ fn get_scalar_cell_returns_borrow() {
 }
 
 #[test]
+fn lazy_disk_open_reads_cells_without_materializing_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(42))),
+                RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))),
+            ]))
+            .expect("push row");
+
+        let root = unique_test_dir(&format!("lazy_scalar_open_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        assert!(!reopened.inner.has_loaded_rows());
+        assert_eq!(
+            reopened.get_scalar_cell(0, "id").expect("scalar access"),
+            &ScalarValue::Int32(42)
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "scalar access should not force row materialization for {dm:?}"
+        );
+
+        let array = reopened.get_array_cell(0, "data").expect("array access");
+        assert_eq!(array, &ArrayValue::from_i32_vec(vec![7, 9]));
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "array access should not force row materialization for {dm:?}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
 fn get_scalar_cell_rejects_non_scalar() {
     let table = Table::from_rows(vec![RecordValue::new(vec![RecordField::new(
         "data",
