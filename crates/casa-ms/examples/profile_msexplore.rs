@@ -118,8 +118,8 @@ fn run() -> Result<(), String> {
     })?;
 
     let open_ms = MeasurementSet::open(&options.ms_path).map_err(|error| error.to_string())?;
-    let summary = measure(
-        "summary_from_open_ms",
+    let summary_reused = measure(
+        "summary_reused_open_ms",
         options.repeats,
         options.warmups,
         || {
@@ -128,6 +128,21 @@ fn run() -> Result<(), String> {
                 &selection.to_summary_options(),
             )
             .map_err(|error| error.to_string())?;
+            let rendered = summary
+                .render(MeasurementSetSummaryOutputFormat::Json)
+                .map_err(|error| error.to_string())?;
+            Ok(rendered.len())
+        },
+    )?;
+    let summary_fresh = measure(
+        "summary_fresh_open_ms",
+        options.repeats,
+        options.warmups,
+        || {
+            let ms = MeasurementSet::open(&options.ms_path).map_err(|error| error.to_string())?;
+            let summary =
+                MeasurementSetSummary::from_ms_with_options(&ms, &selection.to_summary_options())
+                    .map_err(|error| error.to_string())?;
             let rendered = summary
                 .render(MeasurementSetSummaryOutputFormat::Json)
                 .map_err(|error| error.to_string())?;
@@ -146,12 +161,31 @@ fn run() -> Result<(), String> {
     );
 
     if options.stage == ProfileStage::Build {
-        let build = measure("build_payload", options.repeats, options.warmups, || {
-            let payload = build_msexplore_plot_payload(&open_ms, &selection, &spec)?;
-            Ok(payload_point_count(&payload))
-        })?;
+        let build = measure(
+            "build_reused_open_ms",
+            options.repeats,
+            options.warmups,
+            || {
+                let payload = build_msexplore_plot_payload(&open_ms, &selection, &spec)?;
+                Ok(payload_point_count(&payload))
+            },
+        )?;
+        let build_fresh = measure(
+            "build_fresh_open_ms",
+            options.repeats,
+            options.warmups,
+            || {
+                let ms =
+                    MeasurementSet::open(&options.ms_path).map_err(|error| error.to_string())?;
+                let payload = build_msexplore_plot_payload(&ms, &selection, &spec)?;
+                Ok(payload_point_count(&payload))
+            },
+        )?;
         println!();
-        println!("build-only median={:.2} ms", build.median_ms);
+        println!(
+            "build-only median reused={:.2} ms fresh={:.2} ms",
+            build.median_ms, build_fresh.median_ms
+        );
         return Ok(());
     }
 
@@ -170,10 +204,25 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    let build = measure("build_payload", options.repeats, options.warmups, || {
-        let payload = build_msexplore_plot_payload(&open_ms, &selection, &spec)?;
-        Ok(payload_point_count(&payload))
-    })?;
+    let build_reused = measure(
+        "build_reused_open_ms",
+        options.repeats,
+        options.warmups,
+        || {
+            let payload = build_msexplore_plot_payload(&open_ms, &selection, &spec)?;
+            Ok(payload_point_count(&payload))
+        },
+    )?;
+    let build_fresh = measure(
+        "build_fresh_open_ms",
+        options.repeats,
+        options.warmups,
+        || {
+            let ms = MeasurementSet::open(&options.ms_path).map_err(|error| error.to_string())?;
+            let payload = build_msexplore_plot_payload(&ms, &selection, &spec)?;
+            Ok(payload_point_count(&payload))
+        },
+    )?;
 
     let render = measure("render_bitmap", options.repeats, options.warmups, || {
         let image = render_msexplore_plot_image(
@@ -203,9 +252,36 @@ fn run() -> Result<(), String> {
             Ok(bytes.len())
         },
     )?;
+    let full_reused = measure(
+        "full_reused_open_ms",
+        options.repeats,
+        options.warmups,
+        || {
+            let summary = MeasurementSetSummary::from_ms_with_options(
+                &open_ms,
+                &selection.to_summary_options(),
+            )
+            .map_err(|error| error.to_string())?;
+            let rendered_summary = summary
+                .render(MeasurementSetSummaryOutputFormat::Json)
+                .map_err(|error| error.to_string())?;
+            let payload = build_msexplore_plot_payload(&open_ms, &selection, &spec)?;
+            let image = render_msexplore_plot_image(
+                &payload,
+                MeasurementSetPlotTheme::light(),
+                options.plot_width,
+                options.plot_height,
+            )?;
+            let mut bytes = Vec::new();
+            image
+                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+                .map_err(|error| error.to_string())?;
+            Ok(rendered_summary.len() ^ bytes.len() ^ payload_point_count(&payload))
+        },
+    )?;
 
     let full = measure(
-        "full_pipeline_in_memory",
+        "full_fresh_open_ms",
         options.repeats,
         options.warmups,
         || {
@@ -233,22 +309,32 @@ fn run() -> Result<(), String> {
 
     if options.stage == ProfileStage::Full {
         println!();
-        println!("full-only median={:.2} ms", full.median_ms);
+        println!(
+            "full-only median reused={:.2} ms fresh={:.2} ms",
+            full_reused.median_ms, full.median_ms
+        );
         return Ok(());
     }
 
     println!();
     println!(
-        "stage shares of full pipeline: open={:.1}% summary={:.1}% build={:.1}% render={:.1}% encode={:.1}%",
+        "stage shares of fresh full pipeline: open={:.1}% summary(reused/fresh)={:.1}%/{:.1}% build(reused/fresh)={:.1}%/{:.1}% render={:.1}% encode={:.1}%",
         percent(open.median_ms, full.median_ms),
-        percent(summary.median_ms, full.median_ms),
-        percent(build.median_ms, full.median_ms),
+        percent(summary_reused.median_ms, full.median_ms),
+        percent(summary_fresh.median_ms, full.median_ms),
+        percent(build_reused.median_ms, full.median_ms),
+        percent(build_fresh.median_ms, full.median_ms),
         percent(render.median_ms, full.median_ms),
         percent(encode.median_ms, full.median_ms),
     );
     println!(
-        "render_vs_library ratio: render / (open + summary + build) = {:.2}x",
-        render.median_ms / (open.median_ms + summary.median_ms + build.median_ms).max(0.001)
+        "full pipeline reused/fresh ratio = {:.2}x",
+        full_reused.median_ms / full.median_ms.max(0.001)
+    );
+    println!(
+        "render_vs_reused_library ratio: render / (open + summary + build) = {:.2}x",
+        render.median_ms
+            / (open.median_ms + summary_reused.median_ms + build_reused.median_ms).max(0.001)
     );
 
     Ok(())

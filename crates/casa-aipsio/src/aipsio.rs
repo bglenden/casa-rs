@@ -195,7 +195,7 @@
 
 use std::any::Any;
 use std::fs::{File, OpenOptions, remove_file};
-use std::io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use ndarray::{ArrayD, IxDyn};
@@ -208,21 +208,49 @@ use crate::{
 
 pub type AipsIoObjectResult<T> = Result<T, AipsIoObjectError>;
 
-/// A file wrapper that buffers writes while supporting both Read and Write.
+/// A file wrapper for read-only AipsIO streams with buffered reads.
+struct ReadBufferedFile(BufReader<File>);
+
+impl Read for ReadBufferedFile {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for ReadBufferedFile {
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            ErrorKind::PermissionDenied,
+            "AipsIo stream is not writable",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Seek for ReadBufferedFile {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.0.seek(pos)
+    }
+}
+
+/// A file wrapper that buffers writes while still allowing occasional reads.
 ///
 /// `BufWriter<File>` only implements `Write + Seek`, not `Read`.
 /// This wrapper flushes the write buffer before reads so the file position
 /// is consistent, and delegates reads to the underlying `File`.
-struct BufferedFile(BufWriter<File>);
+struct WriteBufferedFile(BufWriter<File>);
 
-impl Read for BufferedFile {
+impl Read for WriteBufferedFile {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.0.flush()?;
         self.0.get_mut().read(buf)
     }
 }
 
-impl Write for BufferedFile {
+impl Write for WriteBufferedFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.write(buf)
     }
@@ -231,7 +259,7 @@ impl Write for BufferedFile {
     }
 }
 
-impl Seek for BufferedFile {
+impl Seek for WriteBufferedFile {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.0.seek(pos)
     }
@@ -1036,8 +1064,11 @@ impl AipsIo {
     ///
     /// See [`get_bool_into`](Self::get_bool_into) for details.
     pub fn get_i8_into(&mut self, values: &mut [i8]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_i8()?;
+        self.test_get()?;
+        let mut buf = vec![0_u8; values.len()];
+        self.read_counted(&mut buf)?;
+        for (value, byte) in values.iter_mut().zip(buf) {
+            *value = byte as i8;
         }
         Ok(())
     }
@@ -1050,80 +1081,110 @@ impl AipsIo {
 
     /// Read exactly `values.len()` signed 16-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i16_into(&mut self, values: &mut [i16]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_i16()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| match order {
+            ByteOrder::BigEndian => i16::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
+        })
     }
 
     /// Read exactly `values.len()` unsigned 16-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u16_into(&mut self, values: &mut [u16]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_u16()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| match order {
+            ByteOrder::BigEndian => u16::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => u16::from_le_bytes(bytes),
+        })
     }
 
     /// Read exactly `values.len()` signed 32-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i32_into(&mut self, values: &mut [i32]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_i32()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| match order {
+            ByteOrder::BigEndian => i32::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => i32::from_le_bytes(bytes),
+        })
     }
 
     /// Read exactly `values.len()` unsigned 32-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u32_into(&mut self, values: &mut [u32]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_u32()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| match order {
+            ByteOrder::BigEndian => u32::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
+        })
     }
 
     /// Read exactly `values.len()` signed 64-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i64_into(&mut self, values: &mut [i64]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_i64()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| match order {
+            ByteOrder::BigEndian => i64::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => i64::from_le_bytes(bytes),
+        })
     }
 
     /// Read exactly `values.len()` unsigned 64-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u64_into(&mut self, values: &mut [u64]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_u64()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| match order {
+            ByteOrder::BigEndian => u64::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
+        })
     }
 
     /// Read exactly `values.len()` 32-bit float values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_f32_into(&mut self, values: &mut [f32]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_f32()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| {
+            let bits = match order {
+                ByteOrder::BigEndian => u32::from_be_bytes(bytes),
+                ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
+            };
+            f32::from_bits(bits)
+        })
     }
 
     /// Read exactly `values.len()` 64-bit float values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_f64_into(&mut self, values: &mut [f64]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_f64()?;
-        }
-        Ok(())
+        let order = self.byte_order;
+        self.read_fixed_width_into(values, move |bytes| {
+            let bits = match order {
+                ByteOrder::BigEndian => u64::from_be_bytes(bytes),
+                ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
+            };
+            f64::from_bits(bits)
+        })
     }
 
     /// Read exactly `values.len()` 32-bit complex values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_complex32_into(&mut self, values: &mut [Complex32]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_complex32()?;
+        let mut scalars = vec![
+            0_f32;
+            values
+                .len()
+                .checked_mul(2)
+                .ok_or(AipsIoObjectError::LengthOverflow)?
+        ];
+        self.get_f32_into(&mut scalars)?;
+        for (value, pair) in values.iter_mut().zip(scalars.chunks_exact(2)) {
+            *value = Complex32::new(pair[0], pair[1]);
         }
         Ok(())
     }
 
     /// Read exactly `values.len()` 64-bit complex values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_complex64_into(&mut self, values: &mut [Complex64]) -> AipsIoObjectResult<()> {
-        for value in values {
-            *value = self.get_complex64()?;
+        let mut scalars = vec![
+            0_f64;
+            values
+                .len()
+                .checked_mul(2)
+                .ok_or(AipsIoObjectError::LengthOverflow)?
+        ];
+        self.get_f64_into(&mut scalars)?;
+        for (value, pair) in values.iter_mut().zip(scalars.chunks_exact(2)) {
+            *value = Complex64::new(pair[0], pair[1]);
         }
         Ok(())
     }
@@ -1643,6 +1704,26 @@ impl AipsIo {
         }
     }
 
+    fn read_fixed_width_into<T, const N: usize>(
+        &mut self,
+        values: &mut [T],
+        decode: impl Fn([u8; N]) -> T,
+    ) -> AipsIoObjectResult<()> {
+        self.test_get()?;
+        let byte_len = values
+            .len()
+            .checked_mul(N)
+            .ok_or(AipsIoObjectError::LengthOverflow)?;
+        let mut buf = vec![0_u8; byte_len];
+        self.read_counted(&mut buf)?;
+        for (value, chunk) in values.iter_mut().zip(buf.chunks_exact(N)) {
+            let mut bytes = [0_u8; N];
+            bytes.copy_from_slice(chunk);
+            *value = decode(bytes);
+        }
+        Ok(())
+    }
+
     fn ensure_level(&mut self) {
         if self.level >= self.objlen.len() {
             self.objlen.resize(self.level + 10, 0);
@@ -1727,8 +1808,12 @@ impl AipsIo {
     ) -> AipsIoObjectResult<Self> {
         let path = path.as_ref();
         let (file, readable, writable, delete_on_close) = open_file_with_option(path, option)?;
-        let buffered = BufferedFile(BufWriter::new(file));
-        let mut io = Self::with_access(Box::new(buffered), readable, writable, true, byte_order);
+        let buffered: Box<dyn AipsIoStream> = if readable && !writable {
+            Box::new(ReadBufferedFile(BufReader::new(file)))
+        } else {
+            Box::new(WriteBufferedFile(BufWriter::new(file)))
+        };
+        let mut io = Self::with_access(buffered, readable, writable, true, byte_order);
         if option == AipsOpenOption::Append {
             let inner = io.inner_mut()?;
             inner.seek(SeekFrom::End(0))?;
