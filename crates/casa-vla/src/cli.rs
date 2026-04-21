@@ -693,6 +693,8 @@ mod tests {
     use crate::task_contract::ImportVlaScanTaskRequest;
     use crate::{ArchiveFileSummary, ArchiveSummary, ImportReport};
     use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::{NamedTempFile, tempdir};
 
     fn sample_options() -> ImportVlaOptions {

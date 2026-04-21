@@ -47,3 +47,6 @@ docs-check:
 
 graph:
     bash scripts/generate-graphs.sh
+
+install-local:
+    bash scripts/install-local-suite.sh
