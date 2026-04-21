@@ -195,14 +195,7 @@ fn read_tile_storage(src: &[u8], dt: CasacoreDataType, nrpixels: usize) -> Vec<u
 
 fn write_tile_storage(dst: &mut [u8], dt: CasacoreDataType, unpacked: &[u8], nrpixels: usize) {
     match dt {
-        CasacoreDataType::TpBool => {
-            let values: Vec<bool> = unpacked
-                .iter()
-                .take(nrpixels)
-                .map(|&value| value != 0)
-                .collect();
-            write_bool_bits(dst, 0, &values);
-        }
+        CasacoreDataType::TpBool => write_bool_bits_from_bytes(dst, 0, &unpacked[..nrpixels]),
         _ => dst.copy_from_slice(unpacked),
     }
 }

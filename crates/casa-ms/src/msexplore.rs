@@ -31,6 +31,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use casa_tables::Table;
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::{MvAngle, MvTime};
@@ -58,7 +59,6 @@ use crate::plot::{
     ListObsPlotSpec, ListObsPlotTheme, VisibilityScatterPlotPayload, VisibilityScatterSeries,
     build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, export_listobs_plot,
 };
-use crate::schema::main_table::VisibilityDataColumn;
 use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
 };
@@ -3553,16 +3553,18 @@ fn build_generic_visibility_scatter(
             .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let data_source = if needs_visibility_grid {
-        Some(PreparedDataSource::new(ms, spec.data_column)?)
+        Some(PreparedSelectedDataSource::new(
+            ms,
+            spec.data_column,
+            &row_numbers,
+        )?)
     } else {
         None
     };
-    let flag = ms.flag_column();
     let flag_row = ms.flag_row_column();
-    let weight = ms.weight_column();
-    let sigma = ms.sigma_column();
-    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).ok();
-    let sigma_spectrum = SigmaSpectrumColumn::new(ms.main_table()).ok();
+    let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
+    let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
+    let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
     let time = TimeColumn::new(ms.main_table());
     let uvw = UvwColumn::new(ms.main_table());
     let derived_engine = if spec.x_axis.uses_derived_geometry()
@@ -3628,8 +3630,24 @@ fn build_generic_visibility_scatter(
             .iter()
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
+    let selected_weight_spectrum = if needs_weight_spectrum {
+        WeightSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "WEIGHT_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
+    let selected_sigma_spectrum = if needs_sigma_spectrum {
+        SigmaSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "SIGMA_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
 
-    for row in row_numbers {
+    for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
         if flag_row_value && !include_row_flagged_points {
             continue;
@@ -3654,7 +3672,7 @@ fn build_generic_visibility_scatter(
             Vec::new()
         };
 
-        let flags = match flag.get(row).map_err(|error| error.to_string())? {
+        let flags = match selected_flags.get(row_slot)? {
             ArrayValue::Bool(values) => {
                 values.view().into_dimensionality::<Ix2>().map_err(|_| {
                     "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
@@ -3669,7 +3687,7 @@ fn build_generic_visibility_scatter(
         };
         let grid = data_source
             .as_ref()
-            .map(|source| source.row(row))
+            .map(|source| source.row(row_slot))
             .transpose()?;
         let (corr_count, chan_count) = grid
             .as_ref()
@@ -3683,26 +3701,14 @@ fn build_generic_visibility_scatter(
                 chan_count
             ));
         }
-        let weight_values = float_axis_values(
-            weight.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "WEIGHT",
-        )?;
-        let sigma_values = float_axis_values(
-            sigma.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "SIGMA",
-        )?;
+        let weight_values =
+            float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
+        let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
         let weight_spectrum_grid = if needs_weight_spectrum {
             Some(
-                weight_spectrum
+                selected_weight_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "WEIGHT_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
             )
@@ -3711,14 +3717,9 @@ fn build_generic_visibility_scatter(
         };
         let sigma_spectrum_grid = if needs_sigma_spectrum {
             Some(
-                sigma_spectrum
+                selected_sigma_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "SIGMA_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "SIGMA_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
             )
@@ -4290,17 +4291,19 @@ fn build_generic_visibility_scatter_with_averaging(
             .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let data_source = if needs_visibility_grid {
-        Some(PreparedDataSource::new(ms, spec.data_column)?)
+        Some(PreparedSelectedDataSource::new(
+            ms,
+            spec.data_column,
+            &row_numbers,
+        )?)
     } else {
         None
     };
-    let flag = ms.flag_column();
     let flag_row = ms.flag_row_column();
-    let weight = ms.weight_column();
-    let sigma = ms.sigma_column();
     let interval = IntervalColumn::new(ms.main_table());
-    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).ok();
-    let sigma_spectrum = SigmaSpectrumColumn::new(ms.main_table()).ok();
+    let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
+    let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
+    let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
     let time = TimeColumn::new(ms.main_table());
     let uvw = UvwColumn::new(ms.main_table());
     let derived_engine = if spec.x_axis.uses_derived_geometry()
@@ -4354,6 +4357,22 @@ fn build_generic_visibility_scatter_with_averaging(
             .iter()
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
+    let selected_weight_spectrum = if needs_weight_spectrum {
+        WeightSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "WEIGHT_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
+    let selected_sigma_spectrum = if needs_sigma_spectrum {
+        SigmaSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| SelectedArrayColumn::load(ms.main_table(), "SIGMA_SPECTRUM", &row_numbers))
+            .transpose()?
+    } else {
+        None
+    };
     let use_shared_time_scope_midpoint = spec.averaging.avgtime.is_some()
         && (spec.averaging.avgfield || spec.averaging.avgscan || spec.averaging.avgspw);
 
@@ -4420,7 +4439,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut panels = std::collections::BTreeMap::<String, AveragedPanelAccumulator>::new();
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
 
-    for row in row_numbers {
+    for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
         if flag_row_value && !include_row_flagged_points {
             continue;
@@ -4445,7 +4464,7 @@ fn build_generic_visibility_scatter_with_averaging(
             Vec::new()
         };
 
-        let flags = match flag.get(row).map_err(|error| error.to_string())? {
+        let flags = match selected_flags.get(row_slot)? {
             ArrayValue::Bool(values) => {
                 values.view().into_dimensionality::<Ix2>().map_err(|_| {
                     "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
@@ -4460,7 +4479,7 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let grid = data_source
             .as_ref()
-            .map(|source| source.row(row))
+            .map(|source| source.row(row_slot))
             .transpose()?;
         let (corr_count, chan_count) = grid
             .as_ref()
@@ -4474,26 +4493,14 @@ fn build_generic_visibility_scatter_with_averaging(
                 chan_count
             ));
         }
-        let weight_values = float_axis_values(
-            weight.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "WEIGHT",
-        )?;
-        let sigma_values = float_axis_values(
-            sigma.get(row).map_err(|error| error.to_string())?,
-            corr_count,
-            "SIGMA",
-        )?;
+        let weight_values =
+            float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
+        let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
         let weight_spectrum_grid = if needs_weight_spectrum {
             Some(
-                weight_spectrum
+                selected_weight_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "WEIGHT_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
             )
@@ -4502,14 +4509,9 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let sigma_spectrum_grid = if needs_sigma_spectrum {
             Some(
-                sigma_spectrum
+                selected_sigma_spectrum
                     .as_ref()
-                    .map(|column| {
-                        float_grid_from_array(
-                            column.get(row).map_err(|error| error.to_string())?,
-                            "SIGMA_SPECTRUM",
-                        )
-                    })
+                    .map(|column| float_grid_from_array(column.get(row_slot)?, "SIGMA_SPECTRUM"))
                     .transpose()?
                     .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
             )
@@ -5953,124 +5955,129 @@ struct FloatGrid {
     values: Vec<f64>,
 }
 
-enum PreparedDataSource<'a> {
-    Single(crate::columns::data_columns::DataColumn<'a>),
+struct SelectedArrayColumn {
+    column: &'static str,
+    values: Vec<Option<ArrayValue>>,
+}
+
+impl SelectedArrayColumn {
+    fn load(table: &Table, column: &'static str, row_indices: &[usize]) -> Result<Self, String> {
+        let values = table
+            .get_array_cells_owned(column, row_indices)
+            .map_err(|error| error.to_string())?;
+        Ok(Self { column, values })
+    }
+
+    fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
+        self.values
+            .get(row_slot)
+            .and_then(|value| value.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "msexplore requires {} data for selected row slot {}",
+                    self.column, row_slot
+                )
+            })
+    }
+}
+
+enum PreparedSelectedDataSource {
+    Single(SelectedArrayColumn),
     Difference {
-        left: crate::columns::data_columns::DataColumn<'a>,
-        right: crate::columns::data_columns::DataColumn<'a>,
+        left: SelectedArrayColumn,
+        right: SelectedArrayColumn,
         scalar: bool,
     },
     Ratio {
-        numerator: crate::columns::data_columns::DataColumn<'a>,
-        denominator: crate::columns::data_columns::DataColumn<'a>,
+        numerator: SelectedArrayColumn,
+        denominator: SelectedArrayColumn,
         scalar: bool,
     },
 }
 
-impl<'a> PreparedDataSource<'a> {
-    fn new(ms: &'a MeasurementSet, column: MsDataColumn) -> Result<Self, String> {
+impl PreparedSelectedDataSource {
+    fn new(
+        ms: &MeasurementSet,
+        column: MsDataColumn,
+        row_indices: &[usize],
+    ) -> Result<Self, String> {
         match column {
-            MsDataColumn::Data => Ok(Self::Single(
-                ms.data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-            )),
-            MsDataColumn::Corrected => Ok(Self::Single(
-                ms.data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-            )),
-            MsDataColumn::Model => Ok(Self::Single(
-                ms.data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
-            )),
+            MsDataColumn::Data => Ok(Self::Single(SelectedArrayColumn::load(
+                ms.main_table(),
+                "DATA",
+                row_indices,
+            )?)),
+            MsDataColumn::Corrected => Ok(Self::Single(SelectedArrayColumn::load(
+                ms.main_table(),
+                "CORRECTED_DATA",
+                row_indices,
+            )?)),
+            MsDataColumn::Model => Ok(Self::Single(SelectedArrayColumn::load(
+                ms.main_table(),
+                "MODEL_DATA",
+                row_indices,
+            )?)),
             MsDataColumn::CorrectedMinusModel => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "CORRECTED_DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::CorrectedMinusModelScalar => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "CORRECTED_DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
             MsDataColumn::DataMinusModel => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::DataMinusModelScalar => Ok(Self::Difference {
-                left: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                right: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                left: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
             MsDataColumn::CorrectedDivModel => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(
+                    ms.main_table(),
+                    "CORRECTED_DATA",
+                    row_indices,
+                )?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::CorrectedDivModelScalar => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::CorrectedData)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(
+                    ms.main_table(),
+                    "CORRECTED_DATA",
+                    row_indices,
+                )?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
             MsDataColumn::DataDivModel => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: false,
             }),
             MsDataColumn::DataDivModelScalar => Ok(Self::Ratio {
-                numerator: ms
-                    .data_column(VisibilityDataColumn::Data)
-                    .map_err(|error| error.to_string())?,
-                denominator: ms
-                    .data_column(VisibilityDataColumn::ModelData)
-                    .map_err(|error| error.to_string())?,
+                numerator: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
+                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
                 scalar: true,
             }),
         }
     }
 
-    fn row(&self, row: usize) -> Result<ComplexGrid, String> {
+    fn row(&self, row_slot: usize) -> Result<ComplexGrid, String> {
         match self {
-            Self::Single(column) => {
-                complex_grid_from_array(column.get(row).map_err(|error| error.to_string())?)
-            }
+            Self::Single(column) => complex_grid_from_array(column.get(row_slot)?),
             Self::Difference {
                 left,
                 right,
                 scalar,
             } => {
-                let left =
-                    complex_grid_from_array(left.get(row).map_err(|error| error.to_string())?)?;
-                let right =
-                    complex_grid_from_array(right.get(row).map_err(|error| error.to_string())?)?;
+                let left = complex_grid_from_array(left.get(row_slot)?)?;
+                let right = complex_grid_from_array(right.get(row_slot)?)?;
                 combine_grids(left, right, |left, right| {
                     if *scalar {
                         Complex64::new(left.norm() - right.norm(), 0.0)
@@ -6084,12 +6091,8 @@ impl<'a> PreparedDataSource<'a> {
                 denominator,
                 scalar,
             } => {
-                let numerator = complex_grid_from_array(
-                    numerator.get(row).map_err(|error| error.to_string())?,
-                )?;
-                let denominator = complex_grid_from_array(
-                    denominator.get(row).map_err(|error| error.to_string())?,
-                )?;
+                let numerator = complex_grid_from_array(numerator.get(row_slot)?)?;
+                let denominator = complex_grid_from_array(denominator.get(row_slot)?)?;
                 combine_grids(numerator, denominator, |left, right| {
                     if *scalar {
                         if right.norm() == 0.0 {
@@ -7437,6 +7440,11 @@ impl ListObsPlotRenderStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::default_value;
+    use crate::{MeasurementSetBuilder, OptionalMainColumn};
+    use casa_types::{RecordField, RecordValue};
+    use ndarray::ArrayD;
+    use num_complex::Complex32;
     use plotters::style::Color;
     use tempfile::tempdir;
 
@@ -7492,6 +7500,54 @@ mod tests {
             header_lines: vec!["Synthetic header".to_string()],
             summary: "Synthetic scatter payload".to_string(),
         }
+    }
+
+    #[test]
+    fn prepared_selected_data_source_preserves_selected_row_order() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .expect("create in-memory MS");
+        let schema = ms.main_table().schema().expect("main schema").clone();
+
+        for amplitude in [10.0_f32, 20.0_f32, 30.0_f32] {
+            let data = ArrayValue::Complex32(
+                ArrayD::from_shape_vec(
+                    vec![1, 2],
+                    vec![
+                        Complex32::new(amplitude, 0.0),
+                        Complex32::new(amplitude + 1.0, 0.0),
+                    ],
+                )
+                .expect("data shape"),
+            );
+            let fields = schema
+                .columns()
+                .iter()
+                .map(|column| {
+                    if column.name() == "DATA" {
+                        RecordField::new("DATA", Value::Array(data.clone()))
+                    } else {
+                        RecordField::new(column.name(), default_value(column.name()))
+                    }
+                })
+                .collect::<Vec<_>>();
+            ms.main_table_mut()
+                .add_row(RecordValue::new(fields))
+                .expect("add main row");
+        }
+
+        let source =
+            PreparedSelectedDataSource::new(&ms, MsDataColumn::Data, &[2, 0]).expect("prefetch");
+        let first = source.row(0).expect("selected row 0");
+        let second = source.row(1).expect("selected row 1");
+
+        assert_eq!(first.corr_count, 1);
+        assert_eq!(first.chan_count, 2);
+        assert_eq!(first.values[0], Complex64::new(30.0, 0.0));
+        assert_eq!(first.values[1], Complex64::new(31.0, 0.0));
+        assert_eq!(second.values[0], Complex64::new(10.0, 0.0));
+        assert_eq!(second.values[1], Complex64::new(11.0, 0.0));
     }
 
     #[test]

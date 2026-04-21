@@ -33,11 +33,9 @@ use casa_imaging::{
     trace_w_project_plan,
 };
 use casa_ms::MeasurementSet;
-use casa_ms::columns::data_columns::DataColumn;
-use casa_ms::columns::flag_columns::{FlagColumn, FlagRowColumn};
+use casa_ms::columns::flag_columns::FlagRowColumn;
 use casa_ms::columns::main_ids;
 use casa_ms::columns::time_columns::TimeColumn;
-use casa_ms::columns::uvw_column::UvwColumn;
 use casa_ms::columns::weight_columns::WeightSpectrumColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
 use casa_ms::schema::main_table::VisibilityDataColumn;
@@ -2121,6 +2119,71 @@ impl RunProducts {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+struct SelectedMainArrayColumn {
+    column_name: &'static str,
+    values: Vec<Option<ArrayValue>>,
+}
+
+impl SelectedMainArrayColumn {
+    fn load(
+        ms: &MeasurementSet,
+        column_name: &'static str,
+        row_indices: &[usize],
+    ) -> Result<Self, String> {
+        let values = ms
+            .main_table()
+            .get_array_cells_owned(column_name, row_indices)
+            .map_err(|error| format!("load selected {column_name} rows: {error}"))?;
+        Ok(Self {
+            column_name,
+            values,
+        })
+    }
+
+    fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
+        self.values
+            .get(row_slot)
+            .and_then(|value| value.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "{} data missing for selected row slot {}",
+                    self.column_name, row_slot
+                )
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum SelectedMainDataSource {
+    Single(SelectedMainArrayColumn),
+}
+
+impl SelectedMainDataSource {
+    fn load(
+        ms: &MeasurementSet,
+        column: VisibilityDataColumn,
+        row_indices: &[usize],
+    ) -> Result<Self, String> {
+        let column_name = match column {
+            VisibilityDataColumn::Data => "DATA",
+            VisibilityDataColumn::CorrectedData => "CORRECTED_DATA",
+            VisibilityDataColumn::ModelData => "MODEL_DATA",
+        };
+        Ok(Self::Single(SelectedMainArrayColumn::load(
+            ms,
+            column_name,
+            row_indices,
+        )?))
+    }
+
+    fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
+        match self {
+            Self::Single(column) => column.get(row_slot),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct PhaseCenter {
     field_id: Option<usize>,
     angles_rad: [f64; 2],
@@ -2596,20 +2659,61 @@ fn extract_constant_direction_angles(
     }
 }
 
+fn extract_uvw_from_array(value: &ArrayValue, row_index: usize) -> Result<[f64; 3], String> {
+    match value {
+        ArrayValue::Float64(values) => {
+            let slice = values
+                .as_slice()
+                .ok_or_else(|| format!("UVW row {row_index} must be contiguous Float64[3] data"))?;
+            if slice.len() != 3 {
+                return Err(format!(
+                    "UVW row {row_index} must have shape [3], found length {}",
+                    slice.len()
+                ));
+            }
+            Ok([slice[0], slice[1], slice[2]])
+        }
+        other => Err(format!(
+            "UVW row {row_index} must be Float64 array, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
 fn build_prepared_geometry_rows(
     ms: &MeasurementSet,
     selected_rows: &[SelectedMainRow],
     phase_center: &PhaseCenter,
     derived_engine: Option<&MsCalEngine>,
 ) -> Result<Vec<PreparedGeometryRow>, String> {
-    let uvw = UvwColumn::new(ms.main_table());
+    let geometry_started_at = Instant::now();
     let antenna1 = main_ids::antenna1(ms.main_table());
     let antenna2 = main_ids::antenna2(ms.main_table());
+    let selected_row_indices = selected_rows
+        .iter()
+        .map(|selected_row| selected_row.row_index)
+        .collect::<Vec<_>>();
+    let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw",
+        geometry_started_at.elapsed(),
+        geometry_started_at.elapsed(),
+    );
     let pointing_ids = load_optional_i32_main_column(ms, "POINTING_ID")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows/load_pointing_ids",
+        geometry_started_at.elapsed(),
+        geometry_started_at.elapsed(),
+    );
     let pointing_resolver = PointingDirectionResolver::new(ms)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
+        geometry_started_at.elapsed(),
+        geometry_started_at.elapsed(),
+    );
     let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
     let mut rows = Vec::with_capacity(selected_rows.len());
-    for selected_row in selected_rows {
+    for (row_slot, selected_row) in selected_rows.iter().enumerate() {
         let row = selected_row.row_index;
         let antenna1_id = antenna1
             .get(row)
@@ -2618,9 +2722,7 @@ fn build_prepared_geometry_rows(
             .get(row)
             .map_err(|error| format!("read ANTENNA2 row {row}: {error}"))?;
         let is_cross = antenna1_id != antenna2_id;
-        let raw_uvw_m = uvw
-            .get(row)
-            .map_err(|error| format!("read UVW row {row}: {error}"))?;
+        let raw_uvw_m = extract_uvw_from_array(selected_uvw.get(row_slot)?, row)?;
         let transform = row_imaging_transform(
             row,
             selected_row.field_id,
@@ -2706,6 +2808,11 @@ fn build_prepared_geometry_rows(
             transform,
         });
     }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows/row_loop",
+        geometry_started_at.elapsed(),
+        geometry_started_at.elapsed(),
+    );
     Ok(rows)
 }
 
@@ -2722,6 +2829,7 @@ fn prepare_plane_input_with_trace(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
 ) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
+    let prepare_started_at = Instant::now();
     let data_description = ms
         .data_description()
         .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
@@ -2732,14 +2840,25 @@ fn prepare_plane_input_with_trace(
     let polarization = ms
         .polarization()
         .map_err(|error| format!("open POLARIZATION: {error}"))?;
-    let data_column = ms
-        .data_column(data_column_kind)
-        .map_err(|error| format!("open data column: {error}"))?;
-    let flag_column = ms.flag_column();
-    let flag_row = ms.flag_row_column();
-    let weight_column = ms.weight_column();
-    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).ok();
     let selection = select_main_rows(ms, config, &ddid_info)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows",
+        prepare_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let selected_row_indices = selection
+        .selected_rows
+        .iter()
+        .map(|selected_row| selected_row.row_index)
+        .collect::<Vec<_>>();
+    let data_column = SelectedMainDataSource::load(ms, data_column_kind, &selected_row_indices)?;
+    let flag_column = SelectedMainArrayColumn::load(ms, "FLAG", &selected_row_indices)?;
+    let flag_row = ms.flag_row_column();
+    let weight_column = SelectedMainArrayColumn::load(ms, "WEIGHT", &selected_row_indices)?;
+    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
+        .ok()
+        .map(|_| SelectedMainArrayColumn::load(ms, "WEIGHT_SPECTRUM", &selected_row_indices))
+        .transpose()?;
     let derived_engine = if selection.needs_geometry_engine {
         Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
     } else {
@@ -2751,6 +2870,11 @@ fn prepare_plane_input_with_trace(
         &selection.phase_center,
         derived_engine.as_ref(),
     )?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows",
+        prepare_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
     let cube_context = if config.spectral_mode.is_cube_like() {
         Some(CubeSetupContext {
             phase_center_field_id: selection.phase_center.field_id.ok_or_else(|| {
@@ -2786,7 +2910,7 @@ fn prepare_plane_input_with_trace(
         .iter()
         .map(SelectedMainRow::trace)
         .collect::<Vec<_>>();
-    for row in &geometry_rows {
+    for (row_slot, row) in geometry_rows.iter().enumerate() {
         prepared.accumulate_row(
             row,
             &data_column,
@@ -2795,8 +2919,14 @@ fn prepare_plane_input_with_trace(
             &weight_column,
             weight_spectrum.as_ref(),
             derived_engine.as_ref(),
+            row_slot,
         )?;
     }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/accumulate_rows",
+        prepare_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
     prepared.finish_with_trace(
         ms,
         config.ms.display().to_string(),
@@ -3578,12 +3708,13 @@ impl PreparedSelection {
     fn accumulate_row(
         &mut self,
         geometry_row: &PreparedGeometryRow,
-        data_column: &DataColumn<'_>,
-        flag_column: &FlagColumn<'_>,
+        data_column: &SelectedMainDataSource,
+        flag_column: &SelectedMainArrayColumn,
         flag_row: &FlagRowColumn<'_>,
-        weight_column: &casa_ms::columns::weight_columns::WeightColumn<'_>,
-        weight_spectrum: Option<&WeightSpectrumColumn<'_>>,
+        weight_column: &SelectedMainArrayColumn,
+        weight_spectrum: Option<&SelectedMainArrayColumn>,
         derived_engine: Option<&MsCalEngine>,
+        row_slot: usize,
     ) -> Result<(), String> {
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
@@ -3594,15 +3725,18 @@ impl PreparedSelection {
             return Ok(());
         }
         let data = data_column
-            .get(row)
+            .get(row_slot)
             .map_err(|error| format!("read data row {row}: {error}"))?;
         let flags = flag_column
-            .get(row)
+            .get(row_slot)
             .map_err(|error| format!("read FLAG row {row}: {error}"))?;
         let row_weights = weight_column
-            .get(row)
+            .get(row_slot)
             .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
-        let weight_spectrum_row = weight_spectrum.and_then(|column| column.get(row).ok());
+        let weight_spectrum_row = weight_spectrum
+            .map(|column| column.get(row_slot))
+            .transpose()
+            .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
         let antenna1_id = geometry_row.antenna1_id;
         let antenna2_id = geometry_row.antenna2_id;
         let is_cross = geometry_row.is_cross;
@@ -5298,7 +5432,19 @@ fn infer_mfs_gridder_mode(
         direction_separation_rad(sample.pointing_direction_rad, phase_center_direction_rad) > 1.0e-8
     });
     if !needs_mosaic {
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=infer_mfs_gridder_mode mode=standard samples={}",
+                samples.len()
+            );
+        }
         return Ok(GridderMode::Standard);
+    }
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=infer_mfs_gridder_mode mode=mosaic samples={}",
+            samples.len()
+        );
     }
     Ok(GridderMode::Mosaic(MosaicGridderConfig {
         phase_center_direction_rad,
