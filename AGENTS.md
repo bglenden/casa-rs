@@ -160,6 +160,10 @@ Agents must stop before:
 - Squash-on-merge into `main`: one commit per wave or PR.
 - During development, checkpoint commits are fine.
 - Use `git merge --squash` locally or GitHub's "Squash and merge".
+- WDAD closeout should fast-forward the local `main` checkout in `~/SoftwareProjects/casa-rs`
+  to `origin/main` after a successful GitHub merge when that can be done safely.
+  If unrelated local changes or branch state block a safe fast-forward, report the
+  blocker instead of forcing the update.
 
 ## Definition of Done
 
