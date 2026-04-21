@@ -1129,6 +1129,102 @@ pub(crate) fn load_tiled_columns(
     }
 }
 
+pub(crate) fn load_tiled_column_rows(
+    table_path: &Path,
+    dm: &DataManagerEntry,
+    all_col_descs: &[ColumnDescContents],
+    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    target_desc_idx: usize,
+    selected_rows: &[usize],
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    let Some(target_col_idx) = bound_cols
+        .iter()
+        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
+    else {
+        return Err(StorageError::FormatMismatch(format!(
+            "tiled column desc index {target_desc_idx} not bound to data manager {}",
+            dm.seq_nr
+        )));
+    };
+    if target_col_idx >= header.col_data_types.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "tiled column index {target_col_idx} out of range for data manager {}",
+            dm.seq_nr
+        )));
+    }
+    let col_desc = &all_col_descs[target_desc_idx];
+    let dt = header.col_data_types[target_col_idx];
+    let elem_size = tile_element_size(dt);
+    if elem_size == 0 {
+        return Ok(vec![None; selected_rows.len()]);
+    }
+
+    match variant {
+        TiledVariant::Column { .. } => load_tiled_column_rows_column_variant(
+            table_path,
+            dm.seq_nr,
+            &header,
+            target_col_idx,
+            col_desc,
+            dt,
+            elem_size,
+            selected_rows,
+        ),
+        TiledVariant::Shape {
+            nr_used_row_map,
+            ref row_map,
+            ref cube_map,
+            ref pos_map,
+            ..
+        } => load_tiled_column_rows_shape_variant(
+            table_path,
+            dm.seq_nr,
+            &header,
+            target_col_idx,
+            col_desc,
+            dt,
+            elem_size,
+            selected_rows,
+            &ShapeRowMapping {
+                nr_used_row_map,
+                row_map,
+                cube_map,
+                pos_map,
+            },
+        ),
+        TiledVariant::Cell { .. } => load_tiled_column_rows_cell_variant(
+            table_path,
+            dm.seq_nr,
+            &header,
+            target_col_idx,
+            col_desc,
+            dt,
+            elem_size,
+            selected_rows,
+        ),
+        TiledVariant::Data {
+            ref row_map,
+            ref cube_map,
+            ref pos_map,
+            ..
+        } => load_tiled_column_rows_data_variant(
+            table_path,
+            dm.seq_nr,
+            &header,
+            target_col_idx,
+            col_desc,
+            dt,
+            elem_size,
+            selected_rows,
+            row_map,
+            cube_map,
+            pos_map,
+        ),
+    }
+}
+
 /// Load columns from a `TiledColumnStMan` (single hypercube for all rows).
 fn load_tiled_column_stman(
     table_path: &Path,
@@ -1198,6 +1294,56 @@ fn load_tiled_column_stman(
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_tiled_column_rows_column_variant(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected_rows: &[usize],
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    if header.cubes.is_empty() {
+        return Ok(vec![None; selected_rows.len()]);
+    }
+    let cube = &header.cubes[0];
+    if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+        return Ok(vec![None; selected_rows.len()]);
+    }
+    let tsm_file_name = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
+    let file_data = std::fs::read(&tsm_file_name).map_err(|e| {
+        StorageError::FormatMismatch(format!("cannot read {}: {e}", tsm_file_name.display()))
+    })?;
+    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+    let cube_raw = reconstruct_cube_column(
+        &file_data,
+        cube.file_offset as usize,
+        &cube.cube_shape,
+        &cube.tile_shape,
+        col_offsets[target_col_idx],
+        bucket_size,
+        dt,
+        elem_size,
+    )?;
+    extract_selected_rows_from_cube_raw(
+        &cube_raw,
+        &cube.cube_shape,
+        selected_rows
+            .iter()
+            .enumerate()
+            .map(|(out_idx, &row_idx)| SelectedCubeRow {
+                out_idx,
+                pos_in_cube: row_idx,
+            }),
+        col_desc,
+        dt,
+        header.big_endian,
+        selected_rows.len(),
+    )
 }
 
 /// Row-to-cube mapping tables extracted from `TiledShapeStMan` variant data.
@@ -1380,6 +1526,68 @@ fn load_tiled_shape_stman(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SelectedCubeRow {
+    out_idx: usize,
+    pos_in_cube: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_tiled_column_rows_shape_variant(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected_rows: &[usize],
+    mapping: &ShapeRowMapping<'_>,
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    let n_intervals = mapping.nr_used_row_map as usize;
+    if n_intervals == 0 {
+        return Ok(vec![None; selected_rows.len()]);
+    }
+
+    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
+        std::collections::BTreeMap::new();
+    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
+        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
+        if interval >= n_intervals {
+            continue;
+        }
+        let cube_idx = mapping.cube_map[interval] as usize;
+        if cube_idx == 0 || cube_idx >= header.cubes.len() {
+            continue;
+        }
+        let diff = mapping.row_map[interval] as usize - row_idx;
+        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
+            return Err(StorageError::FormatMismatch(format!(
+                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
+                mapping.pos_map[interval]
+            )));
+        };
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SelectedCubeRow {
+                out_idx,
+                pos_in_cube,
+            });
+    }
+    load_selected_rows_from_touched_cubes(
+        table_path,
+        dm_seq_nr,
+        header,
+        target_col_idx,
+        col_desc,
+        dt,
+        elem_size,
+        selected_rows.len(),
+        patches_by_cube,
+    )
+}
+
 /// Load columns from a `TiledDataStMan` (user-controlled hypercube assignment).
 ///
 /// Uses binary search in `row_map` to find the chunk index for each row.
@@ -1537,6 +1745,63 @@ fn load_tiled_data_stman(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn load_tiled_column_rows_data_variant(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected_rows: &[usize],
+    row_map: &[u64],
+    cube_map: &[u32],
+    pos_map: &[u32],
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
+        std::collections::BTreeMap::new();
+    let n_chunks = row_map.len();
+    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
+        let chunk = match row_map.binary_search(&(row_idx as u64)) {
+            Ok(i) => i,
+            Err(i) => {
+                if i == 0 {
+                    continue;
+                }
+                i - 1
+            }
+        };
+        if chunk >= n_chunks {
+            continue;
+        }
+        let cube_idx = cube_map[chunk] as usize;
+        if cube_idx >= header.cubes.len() {
+            continue;
+        }
+        let chunk_start = row_map[chunk] as usize;
+        let pos_in_cube = pos_map[chunk] as usize + (row_idx - chunk_start);
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SelectedCubeRow {
+                out_idx,
+                pos_in_cube,
+            });
+    }
+    load_selected_rows_from_touched_cubes(
+        table_path,
+        dm_seq_nr,
+        header,
+        target_col_idx,
+        col_desc,
+        dt,
+        elem_size,
+        selected_rows.len(),
+        patches_by_cube,
+    )
+}
+
 /// Load columns from a `TiledCellStMan` (one hypercube per row).
 fn load_tiled_cell_stman(
     table_path: &Path,
@@ -1595,6 +1860,168 @@ fn load_tiled_cell_stman(
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_tiled_column_rows_cell_variant(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected_rows: &[usize],
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    let mut outputs = vec![None; selected_rows.len()];
+    let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();
+
+    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
+        let Some(cube) = header.cubes.get(row_idx) else {
+            continue;
+        };
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            continue;
+        }
+        let file_seq_nr = cube.file_seq_nr as u32;
+        let file_data = match file_cache.entry(file_seq_nr) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
+                let data = std::fs::read(&path).map_err(|err| {
+                    StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
+                })?;
+                entry.insert(data)
+            }
+        };
+        let (bucket_size, col_offsets) =
+            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+        let raw = reconstruct_cube_column(
+            file_data,
+            cube.file_offset as usize,
+            &cube.cube_shape,
+            &cube.tile_shape,
+            col_offsets[target_col_idx],
+            bucket_size,
+            dt,
+            elem_size,
+        )?;
+        let mut decoded = extract_selected_rows_from_cube_raw(
+            &raw,
+            &cube.cube_shape,
+            std::iter::once(SelectedCubeRow {
+                out_idx: 0,
+                pos_in_cube: 0,
+            }),
+            col_desc,
+            dt,
+            header.big_endian,
+            1,
+        )?;
+        outputs[out_idx] = decoded.pop().flatten();
+    }
+    Ok(outputs)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_selected_rows_from_touched_cubes(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    output_len: usize,
+    patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    let mut outputs = vec![None; output_len];
+    let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();
+
+    for (cube_idx, patches) in patches_by_cube {
+        let Some(cube) = header.cubes.get(cube_idx) else {
+            continue;
+        };
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            continue;
+        }
+        let file_seq_nr = cube.file_seq_nr as u32;
+        let file_data = match file_cache.entry(file_seq_nr) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
+                let data = std::fs::read(&path).map_err(|err| {
+                    StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
+                })?;
+                entry.insert(data)
+            }
+        };
+        let (bucket_size, col_offsets) =
+            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+        let cube_raw = reconstruct_cube_column(
+            file_data,
+            cube.file_offset as usize,
+            &cube.cube_shape,
+            &cube.tile_shape,
+            col_offsets[target_col_idx],
+            bucket_size,
+            dt,
+            elem_size,
+        )?;
+        let decoded = extract_selected_rows_from_cube_raw(
+            &cube_raw,
+            &cube.cube_shape,
+            patches.iter().copied(),
+            col_desc,
+            dt,
+            header.big_endian,
+            output_len,
+        )?;
+        for (out_idx, value) in decoded.into_iter().enumerate() {
+            if value.is_some() {
+                outputs[out_idx] = value;
+            }
+        }
+    }
+
+    Ok(outputs)
+}
+
+fn extract_selected_rows_from_cube_raw(
+    cube_raw: &[u8],
+    cube_shape: &[usize],
+    selected_rows: impl IntoIterator<Item = SelectedCubeRow>,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    big_endian: bool,
+    output_len: usize,
+) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+    let cell_ndim = cube_shape.len().saturating_sub(1);
+    let cell_shape: Vec<usize> = cube_shape[..cell_ndim].to_vec();
+    let cell_nelem: usize = cell_shape.iter().product();
+    let elem_size = tile_element_size(dt);
+    let row_bytes = cell_nelem * elem_size;
+    let mut outputs = vec![None; output_len];
+
+    for selected in selected_rows {
+        let start = selected.pos_in_cube * row_bytes;
+        let end = start + row_bytes;
+        if end > cube_raw.len() {
+            continue;
+        }
+        let value = decode_array_value(&cube_raw[start..end], &cell_shape, dt, big_endian)?;
+        match value {
+            Value::Array(array) => outputs[selected.out_idx] = Some(array),
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "tiled array column {} decoded as non-array value {:?}",
+                    col_desc.col_name, other
+                )));
+            }
+        }
+    }
+
+    Ok(outputs)
 }
 
 /// Construct the path to a TSM data file.
@@ -1726,6 +2153,298 @@ pub(crate) fn save_tiled_single_column_values(
             )
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SingleColumnCubeRowPatch {
+    global_row_idx: usize,
+    pos_in_cube: usize,
+}
+
+pub(crate) fn save_tiled_single_column_rows_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_desc: &ColumnDescContents,
+    values: &[Option<&Value>],
+    changed_rows: &[usize],
+    options: SingleColumnTiledSaveOptions<'_>,
+) -> Result<bool, StorageError> {
+    if changed_rows.is_empty() {
+        return Ok(true);
+    }
+    match options.dm_type_name {
+        "TiledColumnStMan" => save_single_column_tiled_column_rows_in_place(
+            table_path,
+            dm_seq_nr,
+            col_desc,
+            values,
+            changed_rows,
+            options.big_endian,
+        ),
+        "TiledShapeStMan" => save_single_column_tiled_shape_rows_in_place(
+            table_path,
+            dm_seq_nr,
+            col_desc,
+            values,
+            changed_rows,
+            options.big_endian,
+        ),
+        _ => Ok(false),
+    }
+}
+
+fn save_single_column_tiled_column_rows_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_desc: &ColumnDescContents,
+    values: &[Option<&Value>],
+    changed_rows: &[usize],
+    big_endian: bool,
+) -> Result<bool, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    if !matches!(variant, TiledVariant::Column { .. }) || header.col_data_types.len() != 1 {
+        return Ok(false);
+    }
+    let Some(cube) = header.cubes.first() else {
+        return Ok(false);
+    };
+    if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+        return Ok(false);
+    }
+    let row_axis = cube.cube_shape.len() - 1;
+    let row_count = cube.cube_shape[row_axis];
+    let row_patches: Vec<_> = changed_rows
+        .iter()
+        .copied()
+        .filter(|&row_idx| row_idx < values.len() && row_idx < row_count)
+        .map(|row_idx| SingleColumnCubeRowPatch {
+            global_row_idx: row_idx,
+            pos_in_cube: row_idx,
+        })
+        .collect();
+    if row_patches.is_empty() {
+        return Ok(true);
+    }
+    patch_single_column_tiled_cube_rows(
+        table_path,
+        dm_seq_nr,
+        col_desc,
+        values,
+        big_endian,
+        header.col_data_types[0],
+        cube,
+        &row_patches,
+    )?;
+    Ok(true)
+}
+
+fn save_single_column_tiled_shape_rows_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_desc: &ColumnDescContents,
+    values: &[Option<&Value>],
+    changed_rows: &[usize],
+    big_endian: bool,
+) -> Result<bool, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    let TiledVariant::Shape {
+        nr_used_row_map,
+        row_map,
+        cube_map,
+        pos_map,
+        ..
+    } = variant
+    else {
+        return Ok(false);
+    };
+    if header.col_data_types.len() != 1 {
+        return Ok(false);
+    }
+    let n_intervals = nr_used_row_map as usize;
+    if n_intervals == 0 {
+        return Ok(false);
+    }
+
+    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SingleColumnCubeRowPatch>> =
+        std::collections::BTreeMap::new();
+    for &row_idx in changed_rows {
+        if row_idx >= values.len() {
+            continue;
+        }
+        let interval = row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
+        if interval >= n_intervals {
+            continue;
+        }
+        let cube_idx = cube_map[interval] as usize;
+        if cube_idx == 0 || cube_idx >= header.cubes.len() {
+            continue;
+        }
+        let diff = row_map[interval] as usize - row_idx;
+        let Some(pos_in_cube) = (pos_map[interval] as usize).checked_sub(diff) else {
+            return Err(StorageError::FormatMismatch(format!(
+                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
+                pos_map[interval]
+            )));
+        };
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SingleColumnCubeRowPatch {
+                global_row_idx: row_idx,
+                pos_in_cube,
+            });
+    }
+    if patches_by_cube.is_empty() {
+        return Ok(true);
+    }
+
+    for (cube_idx, row_patches) in patches_by_cube {
+        let cube = &header.cubes[cube_idx];
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            continue;
+        }
+        patch_single_column_tiled_cube_rows(
+            table_path,
+            dm_seq_nr,
+            col_desc,
+            values,
+            big_endian,
+            header.col_data_types[0],
+            cube,
+            &row_patches,
+        )?;
+    }
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn patch_single_column_tiled_cube_rows(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_desc: &ColumnDescContents,
+    values: &[Option<&Value>],
+    big_endian: bool,
+    col_data_type: CasacoreDataType,
+    cube: &TsmCubeInfo,
+    row_patches: &[SingleColumnCubeRowPatch],
+) -> Result<(), StorageError> {
+    let ndim = cube.cube_shape.len();
+    if ndim == 0 {
+        return Ok(());
+    }
+    let row_axis = ndim - 1;
+    if row_axis == 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "single-column tiled sparse save requires array cells for {}",
+            col_desc.col_name
+        )));
+    }
+
+    let cell_shape = &cube.cube_shape[..row_axis];
+    let tile_cell_shape = &cube.tile_shape[..row_axis];
+    let row_tile_len = cube.tile_shape[row_axis].max(1);
+    let row_block_pixels: usize = tile_cell_shape.iter().product();
+    let elem_size = tile_element_size(col_data_type);
+    let expected_row_bytes = cell_shape.iter().product::<usize>() * elem_size;
+    let row_block_bytes = row_block_pixels * elem_size;
+    let nrpixels: usize = cube.tile_shape.iter().product();
+    let (bucket_size, col_offsets) =
+        compute_tile_layout(std::slice::from_ref(&col_data_type), &cube.tile_shape);
+    let col_offset = col_offsets[0];
+    let tiles_per_dim: Vec<usize> = cube
+        .cube_shape
+        .iter()
+        .zip(cube.tile_shape.iter())
+        .map(|(&cube_len, &tile_len)| cube_len.div_ceil(tile_len))
+        .collect();
+    let cell_tiles_per_dim = &tiles_per_dim[..row_axis];
+    let cell_tile_total = cell_tiles_per_dim.iter().product::<usize>().max(1);
+
+    let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SingleColumnCubeRowPatch>> =
+        std::collections::BTreeMap::new();
+    for &patch in row_patches {
+        patches_by_row_tile
+            .entry(patch.pos_in_cube / row_tile_len)
+            .or_default()
+            .push(patch);
+    }
+
+    let tsm_path = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
+    let mut file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
+    let tile_storage_len = tile_storage_bytes(col_data_type, nrpixels);
+    for (row_tile_idx, row_tile_patches) in patches_by_row_tile {
+        if row_tile_idx >= tiles_per_dim[row_axis] {
+            continue;
+        }
+        for cell_tile_linear in 0..cell_tile_total {
+            let cell_tile_pos = if cell_tiles_per_dim.is_empty() {
+                Vec::new()
+            } else {
+                linear_to_nd(cell_tile_linear, cell_tiles_per_dim)
+            };
+            let mut tile_pos = cell_tile_pos.clone();
+            tile_pos.push(row_tile_idx);
+            let tile_idx = nd_to_linear(&tile_pos, &tiles_per_dim);
+            let tile_start = cube.file_offset as usize + tile_idx * bucket_size + col_offset;
+            let mut packed_tile = vec![0u8; tile_storage_len];
+            file.seek(SeekFrom::Start(tile_start as u64))?;
+            file.read_exact(&mut packed_tile)?;
+            let mut unpacked_tile = read_tile_storage(&packed_tile, col_data_type, nrpixels);
+
+            let cell_cube_start: Vec<usize> = (0..row_axis)
+                .map(|dim| cell_tile_pos.get(dim).copied().unwrap_or(0) * cube.tile_shape[dim])
+                .collect();
+            let actual_cell_extent: Vec<usize> = (0..row_axis)
+                .map(|dim| {
+                    std::cmp::min(cube.tile_shape[dim], cell_shape[dim] - cell_cube_start[dim])
+                })
+                .collect();
+
+            for patch in &row_tile_patches {
+                let local_row = patch.pos_in_cube % row_tile_len;
+                let row_slice_start = local_row * row_block_bytes;
+                let row_slice_end = row_slice_start + row_block_bytes;
+                let row_tile = &mut unpacked_tile[row_slice_start..row_slice_end];
+                let encoded_row = match values.get(patch.global_row_idx).copied().flatten() {
+                    Some(value) => {
+                        let (encoded, dt) = encode_array_value(value, big_endian)?;
+                        if dt != col_data_type {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "tiled sparse save column {} expected {:?} but encoded {:?}",
+                                col_desc.col_name, col_data_type, dt
+                            )));
+                        }
+                        if encoded.len() != expected_row_bytes {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "tiled sparse save column {} expected {expected_row_bytes} row bytes but encoded {}",
+                                col_desc.col_name,
+                                encoded.len()
+                            )));
+                        }
+                        encoded
+                    }
+                    None => vec![0u8; expected_row_bytes],
+                };
+                copy_cube_to_tile(
+                    &encoded_row,
+                    cell_shape,
+                    row_tile,
+                    tile_cell_shape,
+                    &cell_cube_start,
+                    &actual_cell_extent,
+                    elem_size,
+                );
+            }
+
+            write_tile_storage(&mut packed_tile, col_data_type, &unpacked_tile, nrpixels);
+            file.seek(SeekFrom::Start(tile_start as u64))?;
+            file.write_all(&packed_tile)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn format_shape(shape: &[usize]) -> String {

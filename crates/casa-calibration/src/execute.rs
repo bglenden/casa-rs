@@ -21,7 +21,10 @@
 //! - solver output beyond the existing planner surface
 
 use std::collections::{BTreeSet, HashMap};
+use std::fs::{File, OpenOptions, create_dir_all};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use casa_ms::column_def::build_table_schema;
@@ -46,6 +49,271 @@ use crate::plan::{
     ApplyCalibrationTablePlan, ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplyPlanError,
     ApplyPlanRequest, ApplyRowPlan, plan_apply_with_timings,
 };
+
+const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
+const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
+
+fn calibration_profile_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("CASA_RS_CALIBRATION_PROFILE") {
+        Ok(value) => {
+            let trimmed = value.trim();
+            !trimmed.is_empty()
+                && trimmed != "0"
+                && !trimmed.eq_ignore_ascii_case("false")
+                && !trimmed.eq_ignore_ascii_case("off")
+        }
+        Err(_) => false,
+    })
+}
+
+fn log_calibration_profile(phase: &str, seconds: f64, detail: impl Into<Option<String>>) {
+    let mut line = format!("[casa-calibration profile] phase={phase} dt={seconds:.3}s");
+    if let Some(detail) = detail.into() {
+        if !detail.is_empty() {
+            line.push(' ');
+            line.push_str(&detail);
+        }
+    }
+    eprintln!("{line}");
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum CalibrationPerfEventKind {
+    ApplyPlanSummary,
+    ApplyCompleted,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct CalibrationPerfEvent {
+    kind: CalibrationPerfEventKind,
+    monotonic_ns: u64,
+    ms_path: String,
+    apply_mode: String,
+    selected_row_count: usize,
+    calibration_table_count: usize,
+    parang: bool,
+    created_corrected_data_column: bool,
+    updated_row_count: usize,
+    flagged_row_count: usize,
+    flagged_sample_count: usize,
+    planning_ns: u64,
+    planning_selection_ns: u64,
+    planning_selected_rows_ns: u64,
+    planning_measurement_set_spectral_windows_ns: u64,
+    planning_calibration_table_plans_ns: u64,
+    open_measurement_set_ns: u64,
+    row_field_index_lookup_ns: u64,
+    ensure_corrected_data_ns: u64,
+    correlation_lookup_ns: u64,
+    calibration_load_ns: u64,
+    row_loop_ns: u64,
+    row_read_total_ns: u64,
+    row_fetch_ns: u64,
+    row_compute_ns: u64,
+    row_read_overhead_ns: u64,
+    row_writeback_ns: u64,
+    save_ns: u64,
+    execute_apply_plan_ns: u64,
+    execute_apply_plan_unattributed_ns: u64,
+    drop_ns: u64,
+    total_ns: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ExecuteApplyPlanTraceSummary {
+    selected_row_count: usize,
+    calibration_table_count: usize,
+    parang: bool,
+    created_corrected_data_column: bool,
+    updated_row_count: usize,
+    flagged_row_count: usize,
+    flagged_sample_count: usize,
+    row_field_index_lookup_ns: u64,
+    ensure_corrected_data_ns: u64,
+    correlation_lookup_ns: u64,
+    calibration_load_ns: u64,
+    row_loop_ns: u64,
+    row_read_total_ns: u64,
+    row_fetch_ns: u64,
+    row_compute_ns: u64,
+    row_read_overhead_ns: u64,
+    row_writeback_ns: u64,
+    save_ns: u64,
+    execute_apply_plan_ns: u64,
+    execute_apply_plan_unattributed_ns: u64,
+}
+
+struct CalibrationPerfTracer {
+    started_at: Option<Instant>,
+    json_file: Option<File>,
+    log_file: Option<File>,
+}
+
+impl CalibrationPerfTracer {
+    fn from_env() -> Self {
+        if std::env::var_os(PERF_ENV).is_none() {
+            return Self::disabled();
+        }
+        let output_dir = std::env::var_os(PERF_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        if create_dir_all(&output_dir).is_err() {
+            return Self::disabled();
+        }
+        let pid = std::process::id();
+        let json_path = output_dir.join(format!("casa-calibration-perf-{pid}.jsonl"));
+        let log_path = output_dir.join(format!("casa-calibration-perf-{pid}.log"));
+        let json_file = open_append_file(&json_path);
+        let log_file = open_append_file(&log_path);
+        if json_file.is_none() && log_file.is_none() {
+            return Self::disabled();
+        }
+        Self {
+            started_at: Some(Instant::now()),
+            json_file,
+            log_file,
+        }
+    }
+
+    const fn disabled() -> Self {
+        Self {
+            started_at: None,
+            json_file: None,
+            log_file: None,
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.started_at.is_some()
+    }
+
+    fn monotonic_ns(&self) -> u64 {
+        self.started_at
+            .map(|started| started.elapsed().as_nanos() as u64)
+            .unwrap_or_default()
+    }
+
+    fn write_event(&mut self, event: &CalibrationPerfEvent) {
+        if let Some(file) = self.json_file.as_mut() {
+            let _ = serde_json::to_writer(&mut *file, event);
+            let _ = writeln!(file);
+            let _ = file.flush();
+        }
+        if let Some(file) = self.log_file.as_mut() {
+            let _ = writeln!(
+                file,
+                "[+{:>7} ms] kind={:?} rows={} total_ms={:.2} planning_ms={:.2} row_field_index_ms={:.2} row_read_ms={:.2} row_read_overhead_ms={:.2} row_write_ms={:.2} save_ms={:.2} unattributed_ms={:.2}",
+                event.monotonic_ns / 1_000_000,
+                event.kind,
+                event.selected_row_count,
+                event.total_ns as f64 / 1_000_000.0,
+                event.planning_ns as f64 / 1_000_000.0,
+                event.row_field_index_lookup_ns as f64 / 1_000_000.0,
+                event.row_read_total_ns as f64 / 1_000_000.0,
+                event.row_read_overhead_ns as f64 / 1_000_000.0,
+                event.row_writeback_ns as f64 / 1_000_000.0,
+                event.save_ns as f64 / 1_000_000.0,
+                event.execute_apply_plan_unattributed_ns as f64 / 1_000_000.0
+            );
+            let _ = file.flush();
+        }
+    }
+
+    fn emit_apply_plan_summary(
+        &mut self,
+        ms_path: &str,
+        plan: &ApplyPlan,
+        summary: ExecuteApplyPlanTraceSummary,
+    ) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.write_event(&CalibrationPerfEvent {
+            kind: CalibrationPerfEventKind::ApplyPlanSummary,
+            monotonic_ns: self.monotonic_ns(),
+            ms_path: ms_path.to_string(),
+            apply_mode: format!("{:?}", plan.apply_mode),
+            selected_row_count: summary.selected_row_count,
+            calibration_table_count: summary.calibration_table_count,
+            parang: summary.parang,
+            created_corrected_data_column: summary.created_corrected_data_column,
+            updated_row_count: summary.updated_row_count,
+            flagged_row_count: summary.flagged_row_count,
+            flagged_sample_count: summary.flagged_sample_count,
+            planning_ns: 0,
+            planning_selection_ns: 0,
+            planning_selected_rows_ns: 0,
+            planning_measurement_set_spectral_windows_ns: 0,
+            planning_calibration_table_plans_ns: 0,
+            open_measurement_set_ns: 0,
+            row_field_index_lookup_ns: summary.row_field_index_lookup_ns,
+            ensure_corrected_data_ns: summary.ensure_corrected_data_ns,
+            correlation_lookup_ns: summary.correlation_lookup_ns,
+            calibration_load_ns: summary.calibration_load_ns,
+            row_loop_ns: summary.row_loop_ns,
+            row_read_total_ns: summary.row_read_total_ns,
+            row_fetch_ns: summary.row_fetch_ns,
+            row_compute_ns: summary.row_compute_ns,
+            row_read_overhead_ns: summary.row_read_overhead_ns,
+            row_writeback_ns: summary.row_writeback_ns,
+            save_ns: summary.save_ns,
+            execute_apply_plan_ns: summary.execute_apply_plan_ns,
+            execute_apply_plan_unattributed_ns: summary.execute_apply_plan_unattributed_ns,
+            drop_ns: 0,
+            total_ns: summary.execute_apply_plan_ns,
+        });
+    }
+
+    fn emit_apply_completed(
+        &mut self,
+        ms_path: &str,
+        report: &ApplyExecutionReport,
+        drop_ns: u64,
+        summary: ExecuteApplyPlanTraceSummary,
+    ) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.write_event(&CalibrationPerfEvent {
+            kind: CalibrationPerfEventKind::ApplyCompleted,
+            monotonic_ns: self.monotonic_ns(),
+            ms_path: ms_path.to_string(),
+            apply_mode: format!("{:?}", report.plan.apply_mode),
+            selected_row_count: summary.selected_row_count,
+            calibration_table_count: summary.calibration_table_count,
+            parang: summary.parang,
+            created_corrected_data_column: report.created_corrected_data_column,
+            updated_row_count: report.updated_row_count,
+            flagged_row_count: report.flagged_row_count,
+            flagged_sample_count: report.flagged_sample_count,
+            planning_ns: report.timings.planning_ns,
+            planning_selection_ns: report.timings.planning_selection_ns,
+            planning_selected_rows_ns: report.timings.planning_selected_rows_ns,
+            planning_measurement_set_spectral_windows_ns: report
+                .timings
+                .planning_measurement_set_spectral_windows_ns,
+            planning_calibration_table_plans_ns: report.timings.planning_calibration_table_plans_ns,
+            open_measurement_set_ns: report.timings.open_measurement_set_ns,
+            row_field_index_lookup_ns: summary.row_field_index_lookup_ns,
+            ensure_corrected_data_ns: summary.ensure_corrected_data_ns,
+            correlation_lookup_ns: summary.correlation_lookup_ns,
+            calibration_load_ns: summary.calibration_load_ns,
+            row_loop_ns: summary.row_loop_ns,
+            row_read_total_ns: summary.row_read_total_ns,
+            row_fetch_ns: summary.row_fetch_ns,
+            row_compute_ns: summary.row_compute_ns,
+            row_read_overhead_ns: summary.row_read_overhead_ns,
+            row_writeback_ns: summary.row_writeback_ns,
+            save_ns: summary.save_ns,
+            execute_apply_plan_ns: summary.execute_apply_plan_ns,
+            execute_apply_plan_unattributed_ns: summary.execute_apply_plan_unattributed_ns,
+            drop_ns,
+            total_ns: report.timings.total_ns,
+        });
+    }
+}
 
 /// Outcome summary for one executor run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -81,6 +349,8 @@ pub struct ApplyExecutionTimings {
     pub planning_calibration_table_plans_ns: u64,
     /// Time spent opening the MeasurementSet from disk.
     pub open_measurement_set_ns: u64,
+    /// Time spent resolving cached field indices for the MS main-table row record.
+    pub row_field_index_lookup_ns: u64,
     /// Time spent creating or seeding `CORRECTED_DATA` when needed.
     pub ensure_corrected_data_ns: u64,
     /// Time spent loading per-DDID correlation metadata.
@@ -247,30 +517,36 @@ pub(crate) fn evaluate_apply_rows(
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
-
-        let data = ms
-            .main_table()
-            .get_array_cell(row.row_index, VisibilityDataColumn::Data.name())
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+        let main_row = ms.main_table().row(row.row_index).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
-            })?
-            .clone();
-        let original_flags = ms
-            .main_table()
-            .get_array_cell(row.row_index, "FLAG")
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            })?
-            .clone();
+            }
+        })?;
+        let data = array_row_value(
+            main_row,
+            row.row_index,
+            VisibilityDataColumn::Data.name(),
+            None,
+        )
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            path: ms_path.clone(),
+            source: MsError::from(source),
+        })?;
+        let original_flags =
+            array_row_value(main_row, row.row_index, "FLAG", None).map_err(|source| {
+                ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                }
+            })?;
 
         let result = apply_row(
             row,
             ExecutionRowInputs {
                 correlation_types,
-                data: &data,
-                original_flags: &original_flags,
+                data,
+                original_flags,
                 original_weight: None,
                 has_weight_spectrum: false,
             },
@@ -282,7 +558,9 @@ pub(crate) fn evaluate_apply_rows(
             row.row_index,
             EvaluatedApplyRow {
                 corrected_data: result.corrected_data,
-                flags: result.updated_flags.unwrap_or(original_flags),
+                flags: result
+                    .updated_flags
+                    .unwrap_or_else(|| original_flags.clone()),
             },
         );
     }
@@ -297,47 +575,84 @@ pub fn execute_apply_from_path(
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
     let path = path.as_ref().to_path_buf();
     let total_started_at = Instant::now();
-    let open_started_at = Instant::now();
-    let mut ms =
-        MeasurementSet::open(&path).map_err(|source| ApplyExecutionError::OpenMeasurementSet {
-            path: path.display().to_string(),
-            source,
+    let mut perf_tracer = CalibrationPerfTracer::from_env();
+    let (mut report, plan_trace_summary, pre_drop_total_ns) = {
+        let open_started_at = Instant::now();
+        let mut ms = MeasurementSet::open(&path).map_err(|source| {
+            ApplyExecutionError::OpenMeasurementSet {
+                path: path.display().to_string(),
+                source,
+            }
         })?;
-    let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
-    let planning_started_at = Instant::now();
-    let (plan, plan_timings) = plan_apply_with_timings(&ms, request)?;
-    let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
-    if plan.apply_mode == ApplyMode::Trial {
-        return Ok(ApplyExecutionReport {
-            plan,
-            created_corrected_data_column: false,
-            wrote_measurement_set: false,
-            updated_row_count: 0,
-            flagged_row_count: 0,
-            flagged_sample_count: 0,
-            timings: ApplyExecutionTimings {
-                planning_ns,
-                planning_selection_ns: plan_timings.selection_ns,
-                planning_selected_rows_ns: plan_timings.selected_rows_ns,
-                planning_measurement_set_spectral_windows_ns: plan_timings
-                    .measurement_set_spectral_windows_ns,
-                planning_calibration_table_plans_ns: plan_timings.calibration_table_plans_ns,
-                open_measurement_set_ns,
-                total_ns: total_started_at.elapsed().as_nanos() as u64,
-                ..ApplyExecutionTimings::default()
-            },
-        });
-    }
+        let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
+        let planning_started_at = Instant::now();
+        let (plan, plan_timings) = plan_apply_with_timings(&ms, request)?;
+        let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
+        if plan.apply_mode == ApplyMode::Trial {
+            return Ok(ApplyExecutionReport {
+                plan,
+                created_corrected_data_column: false,
+                wrote_measurement_set: false,
+                updated_row_count: 0,
+                flagged_row_count: 0,
+                flagged_sample_count: 0,
+                timings: ApplyExecutionTimings {
+                    planning_ns,
+                    planning_selection_ns: plan_timings.selection_ns,
+                    planning_selected_rows_ns: plan_timings.selected_rows_ns,
+                    planning_measurement_set_spectral_windows_ns: plan_timings
+                        .measurement_set_spectral_windows_ns,
+                    planning_calibration_table_plans_ns: plan_timings.calibration_table_plans_ns,
+                    open_measurement_set_ns,
+                    total_ns: total_started_at.elapsed().as_nanos() as u64,
+                    ..ApplyExecutionTimings::default()
+                },
+            });
+        }
 
-    let mut report = execute_apply_plan(&mut ms, plan)?;
-    report.timings.planning_ns = planning_ns;
-    report.timings.planning_selection_ns = plan_timings.selection_ns;
-    report.timings.planning_selected_rows_ns = plan_timings.selected_rows_ns;
-    report.timings.planning_measurement_set_spectral_windows_ns =
-        plan_timings.measurement_set_spectral_windows_ns;
-    report.timings.planning_calibration_table_plans_ns = plan_timings.calibration_table_plans_ns;
-    report.timings.open_measurement_set_ns = open_measurement_set_ns;
-    report.timings.total_ns = total_started_at.elapsed().as_nanos() as u64;
+        let (mut report, trace_summary) =
+            execute_apply_plan(&mut ms, plan, Some(&mut perf_tracer))?;
+        report.timings.planning_ns = planning_ns;
+        report.timings.planning_selection_ns = plan_timings.selection_ns;
+        report.timings.planning_selected_rows_ns = plan_timings.selected_rows_ns;
+        report.timings.planning_measurement_set_spectral_windows_ns =
+            plan_timings.measurement_set_spectral_windows_ns;
+        report.timings.planning_calibration_table_plans_ns =
+            plan_timings.calibration_table_plans_ns;
+        report.timings.open_measurement_set_ns = open_measurement_set_ns;
+        let pre_drop_total_ns = total_started_at.elapsed().as_nanos() as u64;
+        if calibration_profile_enabled() {
+            log_calibration_profile(
+                "execute_apply_from_path.pre_drop",
+                pre_drop_total_ns as f64 / 1_000_000_000.0,
+                Some(format!(
+                    "rows={} report_total_so_far={:.3}s",
+                    report.updated_row_count,
+                    pre_drop_total_ns as f64 / 1_000_000_000.0
+                )),
+            );
+        }
+        (report, trace_summary, pre_drop_total_ns)
+    };
+    let after_drop_ns = total_started_at.elapsed().as_nanos() as u64;
+    let drop_ns = after_drop_ns.saturating_sub(pre_drop_total_ns);
+    if calibration_profile_enabled() {
+        log_calibration_profile(
+            "execute_apply_from_path.drop",
+            drop_ns as f64 / 1_000_000_000.0,
+            Some(format!(
+                "total_after_drop={:.3}s",
+                after_drop_ns as f64 / 1_000_000_000.0
+            )),
+        );
+    }
+    report.timings.total_ns = after_drop_ns;
+    perf_tracer.emit_apply_completed(
+        &path.display().to_string(),
+        &report,
+        drop_ns,
+        plan_trace_summary,
+    );
     Ok(report)
 }
 
@@ -347,6 +662,7 @@ pub fn execute_apply(
     request: &ApplyPlanRequest,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
     let total_started_at = Instant::now();
+    let mut perf_tracer = CalibrationPerfTracer::from_env();
     let planning_started_at = Instant::now();
     let (plan, plan_timings) = plan_apply_with_timings(ms, request)?;
     let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
@@ -370,7 +686,8 @@ pub fn execute_apply(
             },
         });
     }
-    let mut report = execute_apply_plan(ms, plan)?;
+    let ms_path = display_ms_path(ms);
+    let (mut report, trace_summary) = execute_apply_plan(ms, plan, Some(&mut perf_tracer))?;
     report.timings.planning_ns = planning_ns;
     report.timings.planning_selection_ns = plan_timings.selection_ns;
     report.timings.planning_selected_rows_ns = plan_timings.selected_rows_ns;
@@ -378,14 +695,17 @@ pub fn execute_apply(
         plan_timings.measurement_set_spectral_windows_ns;
     report.timings.planning_calibration_table_plans_ns = plan_timings.calibration_table_plans_ns;
     report.timings.total_ns = total_started_at.elapsed().as_nanos() as u64;
+    perf_tracer.emit_apply_completed(&ms_path, &report, 0, trace_summary);
     Ok(report)
 }
 
 fn execute_apply_plan(
     ms: &mut MeasurementSet,
     plan: ApplyPlan,
-) -> Result<ApplyExecutionReport, ApplyExecutionError> {
+    perf_tracer: Option<&mut CalibrationPerfTracer>,
+) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
+    let execute_apply_plan_started_at = Instant::now();
     let ensure_corrected_data_started_at = Instant::now();
     let created_corrected_data_column = ensure_corrected_data_column(ms).map_err(|source| {
         ApplyExecutionError::CreateCorrectedData {
@@ -424,6 +744,8 @@ fn execute_apply_plan(
     let mut updated_row_count = 0;
     let mut flagged_row_count = 0;
     let mut flagged_sample_count = 0;
+    let mut row_read_total_ns = 0_u64;
+    let mut row_fetch_ns = 0_u64;
     let mut row_compute_ns = 0_u64;
     let mut row_writeback_ns = 0_u64;
     let any_calwt = plan
@@ -435,44 +757,120 @@ fn execute_apply_plan(
         .main_table()
         .schema()
         .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
+    let use_partial_main_save = !created_corrected_data_column;
+    let mut changed_columns: Vec<&'static str> = vec![VisibilityDataColumn::CorrectedData.name()];
+    let row_field_index_lookup_started_at = Instant::now();
+    let row_field_indices = plan
+        .selected_rows
+        .first()
+        .map(|row| cached_apply_row_field_indices(ms.main_table(), row.row_index))
+        .transpose()
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            path: ms_path.clone(),
+            source: MsError::from(source),
+        })?
+        .unwrap_or_default();
+    let row_field_index_lookup_ns = row_field_index_lookup_started_at.elapsed().as_nanos() as u64;
+    let row_loop_started_at = Instant::now();
+    if use_partial_main_save {
+        let anticipated_updates = plan.selected_rows.len();
+        ms.main_table_mut().reserve_array_cell_updates(
+            VisibilityDataColumn::CorrectedData.name(),
+            anticipated_updates,
+        );
+        ms.main_table_mut()
+            .reserve_array_cell_updates("FLAG", anticipated_updates);
+        ms.main_table_mut()
+            .reserve_array_cell_updates("WEIGHT", anticipated_updates);
+        ms.main_table_mut()
+            .reserve_array_cell_updates("WEIGHT_SPECTRUM", anticipated_updates);
+    }
 
-    for row in &plan.selected_rows {
+    let prefetched_inputs = {
+        let selected_row_indices: Vec<usize> =
+            plan.selected_rows.iter().map(|row| row.row_index).collect();
+        let row_read_started_at = Instant::now();
+        let row_fetch_started_at = Instant::now();
+        let data_values = ms
+            .main_table()
+            .get_array_cells_owned(VisibilityDataColumn::Data.name(), &selected_row_indices)
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            })?;
+        let flag_values = ms
+            .main_table()
+            .get_array_cells_owned("FLAG", &selected_row_indices)
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            })?;
+        let weight_values = if any_calwt {
+            Some(
+                ms.main_table()
+                    .get_array_cells_owned("WEIGHT", &selected_row_indices)
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?,
+            )
+        } else {
+            None
+        };
+        row_fetch_ns += row_fetch_started_at.elapsed().as_nanos() as u64;
+        row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
+        let mut prefetched_inputs = Vec::with_capacity(plan.selected_rows.len());
+
+        for (prefetch_idx, row) in plan.selected_rows.iter().enumerate() {
+            let data = data_values[prefetch_idx].clone().ok_or_else(|| {
+                ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(TableError::ColumnNotFound {
+                        row_index: row.row_index,
+                        column: VisibilityDataColumn::Data.name().to_string(),
+                    }),
+                }
+            })?;
+            let original_flags = flag_values[prefetch_idx].clone().ok_or_else(|| {
+                ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(TableError::ColumnNotFound {
+                        row_index: row.row_index,
+                        column: "FLAG".to_string(),
+                    }),
+                }
+            })?;
+            let original_weight = weight_values
+                .as_ref()
+                .map(|weights| {
+                    weights[prefetch_idx].clone().ok_or_else(|| {
+                        ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::from(TableError::ColumnNotFound {
+                                row_index: row.row_index,
+                                column: "WEIGHT".to_string(),
+                            }),
+                        }
+                    })
+                })
+                .transpose()?;
+            prefetched_inputs.push(PrefetchedExecutionRowInputs {
+                data,
+                original_flags,
+                original_weight,
+            });
+        }
+
+        prefetched_inputs
+    };
+
+    for (row, prefetched_inputs) in plan.selected_rows.iter().zip(&prefetched_inputs) {
         let correlation_types = correlation_types_by_ddid
             .get(&row.data_desc_id)
             .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
-
-        let data = ms
-            .main_table()
-            .get_array_cell(row.row_index, VisibilityDataColumn::Data.name())
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            })?
-            .clone();
-        let original_flags = ms
-            .main_table()
-            .get_array_cell(row.row_index, "FLAG")
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            })?
-            .clone();
-        let original_weight = any_calwt.then(|| {
-            ms.main_table()
-                .get_array_cell(row.row_index, "WEIGHT")
-                .cloned()
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                })
-        });
-        let original_weight = match original_weight {
-            Some(result) => Some(result?),
-            None => None,
-        };
         let row_compute_started_at = Instant::now();
         let ExecutionRowResult {
             corrected_data,
@@ -481,15 +879,11 @@ fn execute_apply_plan(
             updated_weight_spectrum,
             newly_flagged_samples,
             row_became_fully_flagged,
-        } = apply_row(
+        } = apply_row_prefetched(
             row,
-            ExecutionRowInputs {
-                correlation_types,
-                data: &data,
-                original_flags: &original_flags,
-                original_weight: original_weight.as_ref(),
-                has_weight_spectrum: any_calwt && has_weight_spectrum,
-            },
+            correlation_types,
+            prefetched_inputs,
+            any_calwt && has_weight_spectrum,
             &plan,
             &loaded_tables,
             parang_state.as_ref(),
@@ -497,93 +891,230 @@ fn execute_apply_plan(
         row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
 
         let row_writeback_started_at = Instant::now();
-        ms.main_table_mut()
-            .set_cell(
-                row.row_index,
-                VisibilityDataColumn::CorrectedData.name(),
-                Value::Array(corrected_data),
-            )
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            })?;
-
-        if let Some(updated_flags) = updated_flags {
+        if use_partial_main_save {
             ms.main_table_mut()
-                .set_cell(row.row_index, "FLAG", Value::Array(updated_flags))
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                })?;
-            if row_became_fully_flagged {
-                ms.main_table_mut()
-                    .set_cell(
-                        row.row_index,
-                        "FLAG_ROW",
-                        Value::Scalar(ScalarValue::Bool(true)),
-                    )
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: ms_path.clone(),
-                        source: MsError::from(source),
-                    })?;
-                flagged_row_count += 1;
-            }
-            flagged_sample_count += newly_flagged_samples;
-        }
-        if let Some(updated_weight) = updated_weight {
-            ms.main_table_mut()
-                .set_cell(row.row_index, "WEIGHT", Value::Array(updated_weight))
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                })?;
-        }
-        if let Some(updated_weight_spectrum) = updated_weight_spectrum {
-            ms.main_table_mut()
-                .set_cell(
+                .set_array_cell_assuming_valid(
                     row.row_index,
-                    "WEIGHT_SPECTRUM",
-                    Value::Array(updated_weight_spectrum),
+                    VisibilityDataColumn::CorrectedData.name(),
+                    corrected_data,
                 )
                 .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                     path: ms_path.clone(),
                     source: MsError::from(source),
                 })?;
-        }
 
+            if let Some(updated_flags) = updated_flags {
+                if !changed_columns.contains(&"FLAG") {
+                    changed_columns.push("FLAG");
+                }
+                ms.main_table_mut()
+                    .set_array_cell_assuming_valid(row.row_index, "FLAG", updated_flags)
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?;
+                if row_became_fully_flagged {
+                    if !changed_columns.contains(&"FLAG_ROW") {
+                        changed_columns.push("FLAG_ROW");
+                    }
+                    ms.main_table_mut()
+                        .set_scalar_cell_assuming_valid(
+                            row.row_index,
+                            "FLAG_ROW",
+                            ScalarValue::Bool(true),
+                        )
+                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::from(source),
+                        })?;
+                    flagged_row_count += 1;
+                }
+                flagged_sample_count += newly_flagged_samples;
+            }
+            if let Some(updated_weight) = updated_weight {
+                if !changed_columns.contains(&"WEIGHT") {
+                    changed_columns.push("WEIGHT");
+                }
+                ms.main_table_mut()
+                    .set_array_cell_assuming_valid(row.row_index, "WEIGHT", updated_weight)
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?;
+            }
+            if let Some(updated_weight_spectrum) = updated_weight_spectrum {
+                if !changed_columns.contains(&"WEIGHT_SPECTRUM") {
+                    changed_columns.push("WEIGHT_SPECTRUM");
+                }
+                ms.main_table_mut()
+                    .set_array_cell_assuming_valid(
+                        row.row_index,
+                        "WEIGHT_SPECTRUM",
+                        updated_weight_spectrum,
+                    )
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?;
+            }
+        } else {
+            let row_record = ms
+                .main_table_mut()
+                .row_mut(row.row_index)
+                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                })?;
+            write_row_value(
+                row_record,
+                VisibilityDataColumn::CorrectedData.name(),
+                row_field_indices.corrected_data,
+                Value::Array(corrected_data),
+            );
+
+            if let Some(updated_flags) = updated_flags {
+                write_row_value(
+                    row_record,
+                    "FLAG",
+                    row_field_indices.flag,
+                    Value::Array(updated_flags),
+                );
+                if row_became_fully_flagged {
+                    write_row_value(
+                        row_record,
+                        "FLAG_ROW",
+                        row_field_indices.flag_row,
+                        Value::Scalar(ScalarValue::Bool(true)),
+                    );
+                    flagged_row_count += 1;
+                }
+                flagged_sample_count += newly_flagged_samples;
+            }
+            if let Some(updated_weight) = updated_weight {
+                write_row_value(
+                    row_record,
+                    "WEIGHT",
+                    row_field_indices.weight,
+                    Value::Array(updated_weight),
+                );
+            }
+            if let Some(updated_weight_spectrum) = updated_weight_spectrum {
+                write_row_value(
+                    row_record,
+                    "WEIGHT_SPECTRUM",
+                    row_field_indices.weight_spectrum,
+                    Value::Array(updated_weight_spectrum),
+                );
+            }
+        }
         updated_row_count += 1;
         row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
     }
+    let row_loop_ns = row_loop_started_at.elapsed().as_nanos() as u64;
 
     let save_started_at = Instant::now();
-    ms.save_main_table_only_assuming_valid().map_err(|source| {
-        ApplyExecutionError::MutateMeasurementSet {
-            path: ms_path,
-            source,
-        }
-    })?;
+    if use_partial_main_save {
+        let changed_row_indices: Vec<usize> =
+            plan.selected_rows.iter().map(|row| row.row_index).collect();
+        ms.main_table()
+            .save_selected_rows_in_place_assuming_valid(&changed_columns, &changed_row_indices)
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            })?;
+    } else {
+        ms.save_main_table_only_assuming_valid().map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source,
+            }
+        })?;
+    }
     let save_ns = save_started_at.elapsed().as_nanos() as u64;
-
-    Ok(ApplyExecutionReport {
-        plan,
+    let row_read_overhead_ns = row_read_total_ns.saturating_sub(row_fetch_ns);
+    let execute_apply_plan_ns = execute_apply_plan_started_at.elapsed().as_nanos() as u64;
+    let bucketed_ns = ensure_corrected_data_ns
+        + correlation_lookup_ns
+        + calibration_load_ns
+        + row_field_index_lookup_ns
+        + row_read_total_ns
+        + row_compute_ns
+        + row_writeback_ns
+        + save_ns;
+    let execute_apply_plan_unattributed_ns = execute_apply_plan_ns.saturating_sub(bucketed_ns);
+    let trace_summary = ExecuteApplyPlanTraceSummary {
+        selected_row_count: plan.selected_rows.len(),
+        calibration_table_count: plan.calibration_tables.len(),
+        parang: plan.parang,
         created_corrected_data_column,
-        wrote_measurement_set: true,
         updated_row_count,
         flagged_row_count,
         flagged_sample_count,
-        timings: ApplyExecutionTimings {
-            planning_ns: 0,
-            open_measurement_set_ns: 0,
-            ensure_corrected_data_ns,
-            correlation_lookup_ns,
-            calibration_load_ns,
-            row_compute_ns,
-            row_writeback_ns,
-            save_ns,
-            total_ns: 0,
-            ..ApplyExecutionTimings::default()
+        row_field_index_lookup_ns,
+        ensure_corrected_data_ns,
+        correlation_lookup_ns,
+        calibration_load_ns,
+        row_loop_ns,
+        row_read_total_ns,
+        row_fetch_ns,
+        row_compute_ns,
+        row_read_overhead_ns,
+        row_writeback_ns,
+        save_ns,
+        execute_apply_plan_ns,
+        execute_apply_plan_unattributed_ns,
+    };
+    if let Some(perf_tracer) = perf_tracer {
+        perf_tracer.emit_apply_plan_summary(&ms_path, &plan, trace_summary);
+    }
+    if calibration_profile_enabled() {
+        log_calibration_profile(
+            "execute_apply_plan",
+            execute_apply_plan_ns as f64 / 1_000_000_000.0,
+            Some(format!(
+                "rows={} row_loop={:.3}s bucketed={:.3}s unattributed={:.3}s ensure_corrected_data={:.3}s correlation_lookup={:.3}s calibration_load={:.3}s row_field_index_lookup={:.3}s row_read_total={:.3}s row_fetch={:.3}s row_compute={:.3}s row_read_overhead={:.3}s row_writeback={:.3}s save={:.3}s",
+                plan.selected_rows.len(),
+                row_loop_ns as f64 / 1_000_000_000.0,
+                bucketed_ns as f64 / 1_000_000_000.0,
+                execute_apply_plan_unattributed_ns as f64 / 1_000_000_000.0,
+                ensure_corrected_data_ns as f64 / 1_000_000_000.0,
+                correlation_lookup_ns as f64 / 1_000_000_000.0,
+                calibration_load_ns as f64 / 1_000_000_000.0,
+                row_field_index_lookup_ns as f64 / 1_000_000_000.0,
+                row_read_total_ns as f64 / 1_000_000_000.0,
+                row_fetch_ns as f64 / 1_000_000_000.0,
+                row_compute_ns as f64 / 1_000_000_000.0,
+                row_read_overhead_ns as f64 / 1_000_000_000.0,
+                row_writeback_ns as f64 / 1_000_000_000.0,
+                save_ns as f64 / 1_000_000_000.0
+            )),
+        );
+    }
+
+    Ok((
+        ApplyExecutionReport {
+            plan,
+            created_corrected_data_column,
+            wrote_measurement_set: true,
+            updated_row_count,
+            flagged_row_count,
+            flagged_sample_count,
+            timings: ApplyExecutionTimings {
+                planning_ns: 0,
+                open_measurement_set_ns: 0,
+                row_field_index_lookup_ns,
+                ensure_corrected_data_ns,
+                correlation_lookup_ns,
+                calibration_load_ns,
+                row_compute_ns,
+                row_writeback_ns,
+                save_ns,
+                total_ns: 0,
+                ..ApplyExecutionTimings::default()
+            },
         },
-    })
+        trace_summary,
+    ))
 }
 
 struct ExecutionRowResult {
@@ -601,6 +1132,12 @@ struct ExecutionRowInputs<'a> {
     original_flags: &'a ArrayValue,
     original_weight: Option<&'a ArrayValue>,
     has_weight_spectrum: bool,
+}
+
+struct PrefetchedExecutionRowInputs {
+    data: ArrayValue,
+    original_flags: ArrayValue,
+    original_weight: Option<ArrayValue>,
 }
 
 struct ParallacticAngleState {
@@ -868,6 +1405,30 @@ fn apply_row(
         newly_flagged_samples,
         row_became_fully_flagged,
     })
+}
+
+fn apply_row_prefetched(
+    row: &ApplyRowPlan,
+    correlation_types: &[i32],
+    inputs: &PrefetchedExecutionRowInputs,
+    has_weight_spectrum: bool,
+    plan: &ApplyPlan,
+    loaded_tables: &[LoadedCalibrationTable],
+    parang_state: Option<&ParallacticAngleState>,
+) -> Result<ExecutionRowResult, ApplyExecutionError> {
+    apply_row(
+        row,
+        ExecutionRowInputs {
+            correlation_types,
+            data: &inputs.data,
+            original_flags: &inputs.original_flags,
+            original_weight: inputs.original_weight.as_ref(),
+            has_weight_spectrum,
+        },
+        plan,
+        loaded_tables,
+        parang_state,
+    )
 }
 
 impl ParallacticAngleState {
@@ -1953,10 +2514,125 @@ fn ensure_corrected_data_column(ms: &mut MeasurementSet) -> Result<bool, TableEr
     Ok(true)
 }
 
+#[derive(Clone, Copy, Default)]
+struct ApplyRowFieldIndices {
+    data: Option<usize>,
+    corrected_data: Option<usize>,
+    flag: Option<usize>,
+    flag_row: Option<usize>,
+    weight: Option<usize>,
+    weight_spectrum: Option<usize>,
+}
+
+fn cached_apply_row_field_indices(
+    table: &Table,
+    row_index: usize,
+) -> Result<ApplyRowFieldIndices, TableError> {
+    if let Some(schema) = table.schema() {
+        let mut indices = ApplyRowFieldIndices::default();
+        for (field_index, column) in schema.columns().iter().enumerate() {
+            match column.name() {
+                name if name == VisibilityDataColumn::Data.name() => {
+                    indices.data = Some(field_index);
+                }
+                name if name == VisibilityDataColumn::CorrectedData.name() => {
+                    indices.corrected_data = Some(field_index);
+                }
+                "FLAG" => indices.flag = Some(field_index),
+                "FLAG_ROW" => indices.flag_row = Some(field_index),
+                "WEIGHT" => indices.weight = Some(field_index),
+                "WEIGHT_SPECTRUM" => indices.weight_spectrum = Some(field_index),
+                _ => {}
+            }
+        }
+        return Ok(indices);
+    }
+
+    let row = table.row(row_index)?;
+    let mut indices = ApplyRowFieldIndices::default();
+    for (field_index, field) in row.fields().iter().enumerate() {
+        match field.name.as_str() {
+            name if name == VisibilityDataColumn::Data.name() => {
+                indices.data = Some(field_index);
+            }
+            name if name == VisibilityDataColumn::CorrectedData.name() => {
+                indices.corrected_data = Some(field_index);
+            }
+            "FLAG" => indices.flag = Some(field_index),
+            "FLAG_ROW" => indices.flag_row = Some(field_index),
+            "WEIGHT" => indices.weight = Some(field_index),
+            "WEIGHT_SPECTRUM" => indices.weight_spectrum = Some(field_index),
+            _ => {}
+        }
+    }
+    Ok(indices)
+}
+
+fn cached_row_value<'a>(
+    row: &'a casa_types::RecordValue,
+    column: &str,
+    field_index: Option<usize>,
+) -> Option<&'a Value> {
+    if let Some(field_index) = field_index {
+        if let Some(field) = row.fields().get(field_index) {
+            if field.name == column {
+                return Some(&field.value);
+            }
+        }
+    }
+    row.get(column)
+}
+
+fn array_row_value<'a>(
+    row: &'a casa_types::RecordValue,
+    row_index: usize,
+    column: &str,
+    field_index: Option<usize>,
+) -> Result<&'a ArrayValue, TableError> {
+    match cached_row_value(row, column, field_index) {
+        Some(Value::Array(array)) => Ok(array),
+        Some(value) => Err(TableError::ColumnTypeMismatch {
+            row_index,
+            column: column.to_string(),
+            expected: "array",
+            found: value.kind(),
+        }),
+        None => Err(TableError::ColumnNotFound {
+            row_index,
+            column: column.to_string(),
+        }),
+    }
+}
+
+fn write_row_value(
+    row: &mut casa_types::RecordValue,
+    column: &str,
+    field_index: Option<usize>,
+    value: Value,
+) {
+    if let Some(field_index) = field_index {
+        if let Some(field) = row.fields_mut().get_mut(field_index) {
+            if field.name == column {
+                field.value = value;
+                return;
+            }
+        }
+    }
+    if let Some(existing) = row.get_mut(column) {
+        *existing = value;
+    } else {
+        row.upsert(column, value);
+    }
+}
+
 fn display_ms_path(ms: &MeasurementSet) -> String {
     ms.path()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<in-memory>".to_string())
+}
+
+fn open_append_file(path: &Path) -> Option<File> {
+    OpenOptions::new().create(true).append(true).open(path).ok()
 }
 
 fn median_f32(values: &[f32]) -> f32 {
@@ -2128,6 +2804,9 @@ fn get_f64_array(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::sync::{Mutex, OnceLock};
+
     use casa_ms::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
     use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
     use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -2136,6 +2815,12 @@ mod tests {
         ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
     };
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+    use tempfile::TempDir;
+
+    fn perf_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn row(fields: Vec<RecordField>) -> RecordValue {
         RecordValue::new(fields)
@@ -2143,6 +2828,106 @@ mod tests {
 
     fn scalar_table(fields: Vec<RecordField>) -> Table {
         Table::from_rows_memory(vec![row(fields)])
+    }
+
+    #[test]
+    fn calibration_perf_tracer_from_env_writes_jsonl_and_summary_log() {
+        let _guard = perf_env_lock().lock().expect("perf env lock");
+        let tempdir = TempDir::new().expect("tempdir");
+        unsafe {
+            std::env::set_var(PERF_ENV, "1");
+            std::env::set_var(PERF_DIR_ENV, tempdir.path());
+        }
+
+        let mut tracer = CalibrationPerfTracer::from_env();
+        assert!(tracer.is_enabled());
+        tracer.write_event(&CalibrationPerfEvent {
+            kind: CalibrationPerfEventKind::ApplyCompleted,
+            monotonic_ns: 42,
+            ms_path: "/tmp/test.ms".to_string(),
+            apply_mode: "CalFlag".to_string(),
+            selected_row_count: 8,
+            calibration_table_count: 1,
+            parang: false,
+            created_corrected_data_column: true,
+            updated_row_count: 8,
+            flagged_row_count: 2,
+            flagged_sample_count: 5,
+            planning_ns: 11,
+            planning_selection_ns: 12,
+            planning_selected_rows_ns: 13,
+            planning_measurement_set_spectral_windows_ns: 14,
+            planning_calibration_table_plans_ns: 15,
+            open_measurement_set_ns: 16,
+            row_field_index_lookup_ns: 17,
+            ensure_corrected_data_ns: 18,
+            correlation_lookup_ns: 19,
+            calibration_load_ns: 20,
+            row_loop_ns: 21,
+            row_read_total_ns: 22,
+            row_fetch_ns: 23,
+            row_compute_ns: 24,
+            row_read_overhead_ns: 25,
+            row_writeback_ns: 26,
+            save_ns: 27,
+            execute_apply_plan_ns: 28,
+            execute_apply_plan_unattributed_ns: 29,
+            drop_ns: 30,
+            total_ns: 31,
+        });
+        drop(tracer);
+
+        unsafe {
+            std::env::remove_var(PERF_ENV);
+            std::env::remove_var(PERF_DIR_ENV);
+        }
+
+        let mut json_paths = fs::read_dir(tempdir.path())
+            .expect("read perf dir")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "jsonl")
+            })
+            .collect::<Vec<_>>();
+        json_paths.sort();
+        let mut log_paths = fs::read_dir(tempdir.path())
+            .expect("read perf dir")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "log"))
+            .collect::<Vec<_>>();
+        log_paths.sort();
+        assert_eq!(json_paths.len(), 1);
+        assert_eq!(log_paths.len(), 1);
+
+        let json = fs::read_to_string(json_paths[0].clone()).expect("json trace");
+        assert!(json.contains("\"kind\":\"apply_completed\""));
+        assert!(json.contains("\"row_read_overhead_ns\":25"));
+
+        let log = fs::read_to_string(log_paths[0].clone()).expect("summary log");
+        assert!(log.contains("kind=ApplyCompleted"));
+        assert!(log.contains("row_read_overhead_ms=0.00"));
+    }
+
+    #[test]
+    fn cached_apply_row_field_indices_uses_schema_without_rows() {
+        let main_schema = MeasurementSetBuilder::new()
+            .with_main_column(OptionalMainColumn::Data)
+            .with_main_column(OptionalMainColumn::CorrectedData)
+            .with_main_column(OptionalMainColumn::WeightSpectrum)
+            .build_schemas()
+            .expect("schemas")
+            .main;
+        let table = Table::with_schema(main_schema);
+
+        let indices = cached_apply_row_field_indices(&table, 0).expect("schema lookup");
+
+        assert!(indices.data.is_some());
+        assert!(indices.corrected_data.is_some());
+        assert!(indices.flag.is_some());
+        assert!(indices.flag_row.is_some());
+        assert!(indices.weight.is_some());
+        assert!(indices.weight_spectrum.is_some());
     }
 
     fn default_main_value(column: &ColumnSchema) -> Value {

@@ -564,6 +564,67 @@ impl Table {
         }
     }
 
+    /// Returns owned array values for the selected rows in `column`.
+    ///
+    /// The output preserves the order of `row_indices`. Missing cells are
+    /// returned as `None`.
+    pub fn get_array_cells_owned(
+        &self,
+        column: &str,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+        self.require_column(column)?;
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        if let Some(values) = self.inner.array_cells_owned(row_indices, column)? {
+            return Ok(values);
+        }
+        row_indices
+            .iter()
+            .map(|&row_index| match self.cell(row_index, column)? {
+                Some(Value::Array(array)) => Ok(Some(array.clone())),
+                Some(value) => Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: column.to_string(),
+                    expected: "array",
+                    found: value.kind(),
+                }),
+                None => Ok(None),
+            })
+            .collect()
+    }
+
+    /// Returns owned scalar values for every row in `column`.
+    ///
+    /// Missing cells are returned as `None`.
+    pub fn get_scalar_cells_owned(
+        &self,
+        column: &str,
+    ) -> Result<Vec<Option<ScalarValue>>, TableError> {
+        self.require_column(column)?;
+        if let Some(values) = self.inner.scalar_cells_owned(column)? {
+            return Ok(values);
+        }
+        (0..self.row_count())
+            .map(|row_index| match self.cell(row_index, column)? {
+                Some(Value::Scalar(scalar)) => Ok(Some(scalar.clone())),
+                Some(value) => Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: column.to_string(),
+                    expected: "scalar",
+                    found: value.kind(),
+                }),
+                None => Ok(None),
+            })
+            .collect()
+    }
+
     /// Returns a reference to the scalar value in a cell without cloning.
     pub fn get_scalar_cell(
         &self,
@@ -600,6 +661,59 @@ impl Table {
                 column: column.to_string(),
             }),
         }
+    }
+
+    /// Updates a scalar cell while preserving lazy column-backed state when possible.
+    ///
+    /// This is an advanced path for callers that already know the replacement
+    /// value satisfies the schema. When the table is still in lazy mode, it
+    /// updates the cached scalar column rather than forcing full-row
+    /// materialization. If rows are already loaded, it mutates the row in
+    /// memory directly.
+    pub fn set_scalar_cell_assuming_valid(
+        &mut self,
+        row_index: usize,
+        column: &str,
+        value: ScalarValue,
+    ) -> Result<(), TableError> {
+        self.require_column(column)?;
+        self.require_row_index_without_loading_rows(row_index)?;
+        let Some(value) = self
+            .inner
+            .set_cached_scalar_cell(row_index, column, value)?
+        else {
+            return Ok(());
+        };
+        self.set_cell_impl(row_index, column, Value::Scalar(value))
+    }
+
+    /// Updates an array cell while preserving lazy column-backed state when possible.
+    ///
+    /// This is an advanced path for callers that already know the replacement
+    /// value satisfies the schema. When the table is still in lazy mode, it
+    /// updates the cached array column rather than forcing full-row
+    /// materialization. If rows are already loaded, it mutates the row in
+    /// memory directly.
+    pub fn set_array_cell_assuming_valid(
+        &mut self,
+        row_index: usize,
+        column: &str,
+        value: ArrayValue,
+    ) -> Result<(), TableError> {
+        self.require_column(column)?;
+        self.require_row_index_without_loading_rows(row_index)?;
+        let Some(value) = self.inner.set_cached_array_cell(row_index, column, value)? else {
+            return Ok(());
+        };
+        self.set_cell_impl(row_index, column, Value::Array(value))
+    }
+
+    /// Reserves sparse lazy-update capacity for repeated array-cell writes.
+    ///
+    /// This is useful when a caller knows it will update many rows of the same
+    /// array column while keeping the table in lazy disk-backed mode.
+    pub fn reserve_array_cell_updates(&mut self, column: &str, additional: usize) {
+        self.inner.reserve_pending_array_cells(column, additional);
     }
 
     /// Returns the table-level keyword record.
@@ -654,6 +768,16 @@ impl Table {
         {
             return Err(TableError::SchemaColumnUnknown {
                 column: column.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn require_row_index_without_loading_rows(&self, row_index: usize) -> Result<(), TableError> {
+        if row_index >= self.row_count() {
+            return Err(TableError::RowOutOfBounds {
+                row_index,
+                row_count: self.row_count(),
             });
         }
         Ok(())

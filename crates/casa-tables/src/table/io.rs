@@ -3,6 +3,7 @@ use super::*;
 #[cfg(unix)]
 use crate::lock::read_sync_data_from_table_dir;
 use crate::storage::StorageProfiler;
+use casa_types::ScalarValue;
 
 impl Table {
     /// Opens an existing table from disk.
@@ -256,6 +257,326 @@ impl Table {
         )?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("storage_save");
+        }
+        Ok(())
+    }
+
+    /// Rewrites only the existing data-manager groups that contain `changed_columns`.
+    ///
+    /// This is a narrow in-place optimization for schema-stable disk-backed
+    /// tables. It preserves untouched `table.f*` payloads and rewrites only
+    /// the groups that contain one or more changed columns, updating `table.dat`
+    /// when the rewritten storage manager carries a data blob (for example
+    /// `StandardStMan` / `IncrementalStMan`).
+    ///
+    /// Callers must ensure that:
+    /// - the table schema and column-keyword layout are unchanged
+    /// - all modified values already satisfy the schema
+    /// - the table was opened from disk and still points at its source path
+    ///
+    /// If those conditions do not hold, use the normal save path instead.
+    pub fn save_selected_columns_in_place_assuming_valid(
+        &self,
+        changed_columns: &[&str],
+    ) -> Result<(), TableError> {
+        self.save_selected_rows_in_place_assuming_valid(changed_columns, &[])
+    }
+
+    /// Saves only the affected storage-manager groups for the given columns,
+    /// using row hints when available to avoid rewriting untouched tiled rows.
+    ///
+    /// `changed_rows` may be empty, in which case the save falls back to
+    /// column-only invalidation semantics.
+    pub fn save_selected_rows_in_place_assuming_valid(
+        &self,
+        changed_columns: &[&str],
+        changed_rows: &[usize],
+    ) -> Result<(), TableError> {
+        if changed_columns.is_empty() {
+            return Ok(());
+        }
+        if self.kind != TableKind::Plain {
+            return Err(TableError::Storage(
+                "partial in-place save requires a plain disk-backed table".to_string(),
+            ));
+        }
+        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+            return Err(TableError::Storage(
+                "partial in-place save does not support virtual columns".to_string(),
+            ));
+        }
+
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?;
+        let changed_rows = if changed_rows.is_empty() {
+            None
+        } else {
+            let mut rows: Vec<usize> = changed_rows
+                .iter()
+                .copied()
+                .filter(|&row_idx| row_idx < self.row_count())
+                .collect();
+            rows.sort_unstable();
+            rows.dedup();
+            Some(rows)
+        };
+        let changed_set: std::collections::HashSet<&str> =
+            changed_columns.iter().copied().collect();
+        let affected_groups: Vec<_> = self
+            .dm_info
+            .iter()
+            .filter(|dm| {
+                dm.columns
+                    .iter()
+                    .any(|column| changed_set.contains(column.as_str()))
+            })
+            .cloned()
+            .collect();
+        if affected_groups.is_empty() {
+            return Ok(());
+        }
+
+        let control_path = source_path.join(crate::storage::TABLE_CONTROL_FILE);
+        let mut table_dat =
+            match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
+                crate::storage::table_control::TableDatResult::Plain(table_dat) => table_dat,
+                _ => {
+                    return Err(TableError::Storage(
+                        "partial in-place save only supports plain tables".to_string(),
+                    ));
+                }
+            };
+
+        let mut profiler = StorageProfiler::start(format!(
+            "Table::save_selected_columns_in_place path={}",
+            source_path.display()
+        ));
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "start",
+                Some(format!(
+                    "rows={} changed_columns={} affected_groups={} changed_rows={}",
+                    self.row_count(),
+                    changed_columns.len(),
+                    affected_groups.len(),
+                    changed_rows.as_ref().map_or(0, |rows| rows.len())
+                )),
+            );
+        }
+
+        for group in affected_groups {
+            let data_path = source_path.join(format!(
+                "{}{}",
+                crate::storage::TABLE_DATA_FILE_PREFIX,
+                group.seq_nr
+            ));
+            let group_col_set: std::collections::HashSet<&str> =
+                group.columns.iter().map(|column| column.as_str()).collect();
+            let group_col_descs: Vec<_> = table_dat
+                .table_desc
+                .columns
+                .iter()
+                .filter(|desc| group_col_set.contains(desc.col_name.as_str()))
+                .cloned()
+                .collect();
+            if group_col_descs.is_empty() {
+                return Err(TableError::Storage(format!(
+                    "data manager group {} has no columns in current table.dat",
+                    group.seq_nr
+                )));
+            }
+
+            match group.dm_type.as_str() {
+                "StManAipsIO" => {
+                    let group_changed_columns: Vec<&str> = group_col_descs
+                        .iter()
+                        .filter_map(|desc| {
+                            changed_set
+                                .contains(desc.col_name.as_str())
+                                .then_some(desc.col_name.as_str())
+                        })
+                        .collect();
+                    let sparse_saved = match changed_rows.as_ref() {
+                        Some(rows) => {
+                            let sparse_values = collect_sparse_column_values_from_current_cells(
+                                self,
+                                rows,
+                                &group_col_descs,
+                                &group_changed_columns,
+                            )?;
+                            crate::storage::stman_aipsio::save_stman_file_rows_in_place(
+                                &data_path,
+                                &group_col_descs,
+                                &sparse_values,
+                                casa_aipsio::ByteOrder::BigEndian,
+                            )?
+                        }
+                        None => false,
+                    };
+                    if !sparse_saved {
+                        let rows = build_group_rows_from_current_cells(
+                            self,
+                            self.row_count(),
+                            &group_col_descs,
+                        )?;
+                        crate::storage::stman_aipsio::write_stman_file(
+                            &data_path,
+                            &group_col_descs,
+                            &rows,
+                            casa_aipsio::ByteOrder::BigEndian,
+                        )?;
+                    }
+                }
+                "StandardStMan" => {
+                    let rows = build_group_rows_from_current_cells(
+                        self,
+                        self.row_count(),
+                        &group_col_descs,
+                    )?;
+                    let dm_data = crate::storage::standard_stman::write_ssm_file(
+                        &data_path,
+                        &group_col_descs,
+                        &rows,
+                        table_dat.big_endian,
+                    )?;
+                    if let Some(entry) = table_dat
+                        .column_set
+                        .data_managers
+                        .iter_mut()
+                        .find(|entry| entry.seq_nr == group.seq_nr)
+                    {
+                        entry.data = dm_data;
+                    }
+                }
+                "IncrementalStMan" => {
+                    let sparse_saved = if let (Some(rows), Some(scalar_group_columns)) = (
+                        changed_rows.as_ref(),
+                        borrow_scalar_group_columns_from_current_cells(self, &group_col_descs)?,
+                    ) {
+                        crate::storage::incremental_stman::save_ism_file_scalar_columns_rows_in_place(
+                            &data_path,
+                            &group_col_descs,
+                            &scalar_group_columns,
+                            rows,
+                            table_dat.big_endian,
+                        )?
+                    } else {
+                        false
+                    };
+                    let dm_data = if sparse_saved {
+                        None
+                    } else if let Some(scalar_group_columns) =
+                        borrow_scalar_group_columns_from_current_cells(self, &group_col_descs)?
+                    {
+                        Some(
+                            crate::storage::incremental_stman::write_ism_file_scalar_columns(
+                                &data_path,
+                                &group_col_descs,
+                                &scalar_group_columns,
+                                table_dat.big_endian,
+                            )?,
+                        )
+                    } else {
+                        let rows = build_group_rows_from_current_cells(
+                            self,
+                            self.row_count(),
+                            &group_col_descs,
+                        )?;
+                        Some(crate::storage::incremental_stman::write_ism_file(
+                            &data_path,
+                            &group_col_descs,
+                            &rows,
+                            table_dat.big_endian,
+                        )?)
+                    };
+                    if let Some(dm_data) = dm_data {
+                        if let Some(entry) = table_dat
+                            .column_set
+                            .data_managers
+                            .iter_mut()
+                            .find(|entry| entry.seq_nr == group.seq_nr)
+                        {
+                            entry.data = dm_data;
+                        }
+                    }
+                }
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
+                    if group_col_descs.len() != 1 {
+                        return Err(TableError::Storage(format!(
+                            "partial in-place save only supports single-column tiled groups; seq {} has {} columns",
+                            group.seq_nr,
+                            group_col_descs.len()
+                        )));
+                    }
+                    let values = collect_column_values_from_current_cells(
+                        self,
+                        self.row_count(),
+                        &group_col_descs[0],
+                    )?;
+                    let value_refs: Vec<_> = values.iter().map(|value| value.as_ref()).collect();
+                    let dm_name = if group_col_descs[0].data_manager_group.is_empty() {
+                        group_col_descs[0].col_name.as_str()
+                    } else {
+                        group_col_descs[0].data_manager_group.as_str()
+                    };
+                    let sparse_saved = match changed_rows.as_ref() {
+                        Some(rows) => {
+                            crate::storage::tiled_stman::save_tiled_single_column_rows_in_place(
+                                source_path,
+                                group.seq_nr,
+                                &group_col_descs[0],
+                                &value_refs,
+                                rows,
+                                crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
+                                    dm_type_name: &group.dm_type,
+                                    big_endian: table_dat.big_endian,
+                                    default_tile_shape: None,
+                                    dm_name,
+                                },
+                            )?
+                        }
+                        None => false,
+                    };
+                    if !sparse_saved {
+                        crate::storage::tiled_stman::save_tiled_single_column_values(
+                            source_path,
+                            group.seq_nr,
+                            &group_col_descs[0],
+                            &value_refs,
+                            crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
+                                dm_type_name: &group.dm_type,
+                                big_endian: table_dat.big_endian,
+                                default_tile_shape: None,
+                                dm_name,
+                            },
+                        )?;
+                    }
+                }
+                other => {
+                    return Err(TableError::Storage(format!(
+                        "partial in-place save does not support data manager type {other}"
+                    )));
+                }
+            }
+
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.mark_with_detail(
+                    "group_save",
+                    Some(format!(
+                        "seq={} dm={} cols={}",
+                        group.seq_nr,
+                        group.dm_type,
+                        group.columns.len()
+                    )),
+                );
+            }
+        }
+
+        crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark("write_control_file");
         }
         Ok(())
     }
@@ -538,5 +859,115 @@ impl Table {
             opts.tile_shape.as_deref(),
         )?;
         Ok(())
+    }
+}
+
+fn build_group_rows_from_current_cells(
+    table: &Table,
+    row_count: usize,
+    col_descs: &[crate::storage::table_control::ColumnDescContents],
+) -> Result<Vec<RecordValue>, TableError> {
+    (0..row_count)
+        .map(|row_index| {
+            let mut fields = Vec::with_capacity(col_descs.len());
+            for col_desc in col_descs {
+                if let Some(value) = current_value_for_column(table, row_index, col_desc)? {
+                    fields.push(RecordField::new(col_desc.col_name.clone(), value));
+                }
+            }
+            Ok(RecordValue::new(fields))
+        })
+        .collect()
+}
+
+fn collect_column_values_from_current_cells(
+    table: &Table,
+    row_count: usize,
+    col_desc: &crate::storage::table_control::ColumnDescContents,
+) -> Result<Vec<Option<Value>>, TableError> {
+    (0..row_count)
+        .map(|row_index| current_value_for_column(table, row_index, col_desc))
+        .collect()
+}
+
+type SparseCurrentColumnValues<'a> =
+    std::collections::HashMap<&'a str, Vec<(usize, Option<Value>)>>;
+
+fn collect_sparse_column_values_from_current_cells<'a>(
+    table: &Table,
+    row_indices: &[usize],
+    col_descs: &[crate::storage::table_control::ColumnDescContents],
+    changed_columns: &[&'a str],
+) -> Result<SparseCurrentColumnValues<'a>, TableError> {
+    let mut patches = std::collections::HashMap::with_capacity(changed_columns.len());
+    for &column in changed_columns {
+        let Some(col_desc) = col_descs.iter().find(|desc| desc.col_name == column) else {
+            continue;
+        };
+        if !col_desc.is_array
+            && let Some(pending_values) = table.inner.pending_scalar_cell_values(column)
+        {
+            let values = pending_values
+                .into_iter()
+                .map(|(row_index, value)| (row_index, Some(Value::Scalar(value))))
+                .collect();
+            patches.insert(column, values);
+            continue;
+        }
+        let mut values = Vec::with_capacity(row_indices.len());
+        for &row_index in row_indices {
+            values.push((
+                row_index,
+                current_value_for_column(table, row_index, col_desc)?,
+            ));
+        }
+        patches.insert(column, values);
+    }
+    Ok(patches)
+}
+
+fn borrow_scalar_group_columns_from_current_cells<'a>(
+    table: &'a Table,
+    col_descs: &[crate::storage::table_control::ColumnDescContents],
+) -> Result<Option<Vec<&'a [Option<ScalarValue>]>>, TableError> {
+    let mut values = Vec::with_capacity(col_descs.len());
+    for col_desc in col_descs {
+        if col_desc.is_array || col_desc.is_record() {
+            return Ok(None);
+        }
+        if table.inner.has_pending_scalar_cells(&col_desc.col_name) {
+            return Ok(None);
+        }
+        let Some(column_values) = table.inner.scalar_column_values(&col_desc.col_name)? else {
+            return Ok(None);
+        };
+        values.push(column_values);
+    }
+    Ok(Some(values))
+}
+
+fn current_value_for_column(
+    table: &Table,
+    row_index: usize,
+    col_desc: &crate::storage::table_control::ColumnDescContents,
+) -> Result<Option<Value>, TableError> {
+    if col_desc.is_record() {
+        return Err(TableError::Storage(format!(
+            "partial in-place save does not support record column {}",
+            col_desc.col_name
+        )));
+    }
+    if col_desc.is_array {
+        match table.get_array_cell(row_index, &col_desc.col_name) {
+            Ok(value) => Ok(Some(Value::Array(value.clone()))),
+            Err(TableError::ColumnNotFound { .. }) => Ok(None),
+            Err(err) => Err(err),
+        }
+    } else {
+        match table.get_scalar_cell(row_index, &col_desc.col_name) {
+            Ok(value) => Ok(Some(Value::Scalar(value.clone()))),
+            Err(TableError::ColumnNotFound { .. }) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 }

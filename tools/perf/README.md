@@ -4,6 +4,9 @@ This directory holds reusable performance-analysis tooling for the repository.
 
 ## Layout
 
+- `calibrate/`
+  - `README.md`: apply-path tracing and analysis notes
+  - `report.py`: JSONL-to-summary report script
 - `imexplore/`
   - `README.md`: feature-specific tracing and analysis notes
   - `report.py`: JSONL-to-summary report script

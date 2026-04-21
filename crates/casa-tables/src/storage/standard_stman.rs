@@ -1301,9 +1301,15 @@ fn row_value_at_index<'a>(
     field_index: usize,
     field_name: &str,
 ) -> Option<&'a casa_types::Value> {
-    let field = row.fields().get(field_index)?;
-    debug_assert_eq!(field.name, field_name);
-    Some(&field.value)
+    if let Some(field) = row.fields().get(field_index) {
+        if field.name == field_name {
+            return Some(&field.value);
+        }
+    }
+    row.fields()
+        .iter()
+        .find(|field| field.name == field_name)
+        .map(|field| &field.value)
 }
 
 fn write_ssm_file_impl(

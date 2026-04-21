@@ -15,7 +15,7 @@
 //! C++ equivalent: `casacore/tables/DataMan/ISMBase`, `ISMBucket`, `ISMIndex`,
 //! `ISMColumn`.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -1587,14 +1587,245 @@ pub(crate) fn write_ism_file_indexed(
     write_ism_file_impl(file_path, col_descs, rows, Some(field_indices), big_endian)
 }
 
+pub(crate) fn write_ism_file_scalar_columns(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &[&[Option<casa_types::ScalarValue>]],
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    let nrrow = scalar_columns.first().map_or(0, |values| values.len());
+    if scalar_columns.len() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "ISM scalar column count mismatch: expected {}, got {}",
+            col_descs.len(),
+            scalar_columns.len()
+        )));
+    }
+    for values in scalar_columns.iter().skip(1) {
+        if values.len() != nrrow {
+            return Err(StorageError::FormatMismatch(
+                "ISM scalar columns have inconsistent row counts".to_string(),
+            ));
+        }
+    }
+    if col_descs
+        .iter()
+        .any(|col_desc| col_desc.is_array || col_desc.is_record())
+    {
+        return Err(StorageError::FormatMismatch(
+            "ISM scalar column writer only supports scalar non-record columns".to_string(),
+        ));
+    }
+
+    let ncol = col_descs.len();
+    let col_info: Vec<(CasacoreDataType, usize)> = col_descs
+        .iter()
+        .map(|c| {
+            let dt = CasacoreDataType::from_primitive_type(c.require_primitive_type()?, false);
+            Ok((dt, 1usize))
+        })
+        .collect::<Result<_, StorageError>>()?;
+
+    let fixed_bytes_per_row: usize = col_info
+        .iter()
+        .map(|&(dt, _)| {
+            if dt == CasacoreDataType::TpBool {
+                1
+            } else {
+                let elem = ism_element_size(dt);
+                if elem > 0 { elem } else { 12 }
+            }
+        })
+        .sum();
+    let index_overhead_per_row = ncol * 8;
+    let bytes_per_row = fixed_bytes_per_row + index_overhead_per_row;
+    let bucket_size = if bytes_per_row == 0 {
+        128u32
+    } else {
+        let target = (bytes_per_row * 32 + 4) as u32;
+        target.clamp(128, 327680)
+    };
+
+    struct BucketBuilder {
+        data: Vec<u8>,
+        col_indices: Vec<(Vec<u32>, Vec<u32>)>,
+    }
+
+    let mut buckets: Vec<BucketBuilder> = Vec::new();
+    let mut bucket_start_rows: Vec<usize> = Vec::new();
+    let mut last_values: Vec<Vec<u8>> = vec![Vec::new(); ncol];
+
+    if nrrow > 0 {
+        let mut current = BucketBuilder {
+            data: Vec::new(),
+            col_indices: (0..ncol).map(|_| (Vec::new(), Vec::new())).collect(),
+        };
+        bucket_start_rows.push(0);
+
+        for (row_idx, _) in scalar_columns[0].iter().enumerate().take(nrrow) {
+            let rel_row = (row_idx - *bucket_start_rows.last().unwrap()) as u32;
+
+            let mut new_data_estimate = 0usize;
+            for col_idx in 0..ncol {
+                let (dt, nrelem) = col_info[col_idx];
+                let temp_value = scalar_columns[col_idx][row_idx]
+                    .as_ref()
+                    .cloned()
+                    .map(casa_types::Value::Scalar);
+                let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
+                if rel_row == 0 || encoded != last_values[col_idx] {
+                    new_data_estimate += encoded.len();
+                }
+            }
+
+            let current_index_size: usize = current
+                .col_indices
+                .iter()
+                .map(|(row_nrs, _)| 4 + (row_nrs.len() + 1) * 4 + (row_nrs.len() + 1) * 4)
+                .sum();
+            let total_estimate =
+                4 + current.data.len() + new_data_estimate + current_index_size + ncol * 12;
+
+            if rel_row > 0 && total_estimate > bucket_size as usize {
+                buckets.push(current);
+                current = BucketBuilder {
+                    data: Vec::new(),
+                    col_indices: (0..ncol).map(|_| (Vec::new(), Vec::new())).collect(),
+                };
+                bucket_start_rows.push(row_idx);
+                for col_idx in 0..ncol {
+                    let (dt, nrelem) = col_info[col_idx];
+                    let bytes = if last_values[col_idx].is_empty() {
+                        let temp_value = scalar_columns[col_idx][row_idx]
+                            .as_ref()
+                            .cloned()
+                            .map(casa_types::Value::Scalar);
+                        encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian)
+                    } else {
+                        last_values[col_idx].clone()
+                    };
+                    let offset = current.data.len() as u32;
+                    current.data.extend_from_slice(&bytes);
+                    current.col_indices[col_idx].0.push(0);
+                    current.col_indices[col_idx].1.push(offset);
+                }
+                for col_idx in 0..ncol {
+                    let (dt, nrelem) = col_info[col_idx];
+                    let temp_value = scalar_columns[col_idx][row_idx]
+                        .as_ref()
+                        .cloned()
+                        .map(casa_types::Value::Scalar);
+                    let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
+                    if encoded != last_values[col_idx] {
+                        let offset = current.data.len() as u32;
+                        current.data.extend_from_slice(&encoded);
+                        let idx = &mut current.col_indices[col_idx];
+                        idx.0[0] = 0;
+                        idx.1[0] = offset;
+                        last_values[col_idx] = encoded;
+                    }
+                }
+                continue;
+            }
+
+            for col_idx in 0..ncol {
+                let (dt, nrelem) = col_info[col_idx];
+                let temp_value = scalar_columns[col_idx][row_idx]
+                    .as_ref()
+                    .cloned()
+                    .map(casa_types::Value::Scalar);
+                let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
+
+                if rel_row == 0 || encoded != last_values[col_idx] {
+                    let offset = current.data.len() as u32;
+                    current.data.extend_from_slice(&encoded);
+                    current.col_indices[col_idx].0.push(rel_row);
+                    current.col_indices[col_idx].1.push(offset);
+                    last_values[col_idx] = encoded;
+                }
+            }
+        }
+
+        buckets.push(current);
+    }
+
+    let nr_buckets = buckets.len();
+    let mut raw_buckets: Vec<Vec<u8>> = Vec::with_capacity(nr_buckets);
+    for bucket in &buckets {
+        let mut raw = vec![0u8; bucket_size as usize];
+        let data_len = bucket.data.len().min(bucket_size as usize - 4);
+        raw[4..4 + data_len].copy_from_slice(&bucket.data[..data_len]);
+
+        let mut index_area = Vec::new();
+        for (row_nrs, offsets) in &bucket.col_indices {
+            let n = row_nrs.len() as u32;
+            if big_endian {
+                index_area.extend_from_slice(&n.to_be_bytes());
+                for &r in row_nrs {
+                    index_area.extend_from_slice(&r.to_be_bytes());
+                }
+                for &o in offsets {
+                    index_area.extend_from_slice(&o.to_be_bytes());
+                }
+            } else {
+                index_area.extend_from_slice(&n.to_le_bytes());
+                for &r in row_nrs {
+                    index_area.extend_from_slice(&r.to_le_bytes());
+                }
+                for &o in offsets {
+                    index_area.extend_from_slice(&o.to_le_bytes());
+                }
+            }
+        }
+
+        let index_start = bucket_size as usize - index_area.len();
+        let index_offset = index_start as u32;
+        if big_endian {
+            raw[0..4].copy_from_slice(&index_offset.to_be_bytes());
+        } else {
+            raw[0..4].copy_from_slice(&index_offset.to_le_bytes());
+        }
+        if index_start + index_area.len() <= raw.len() {
+            raw[index_start..index_start + index_area.len()].copy_from_slice(&index_area);
+        }
+        raw_buckets.push(raw);
+    }
+
+    let mut ism_rows: Vec<u64> = Vec::with_capacity(nr_buckets + 1);
+    let mut ism_bucket_nrs: Vec<u32> = Vec::with_capacity(nr_buckets);
+    for (i, &start) in bucket_start_rows.iter().enumerate() {
+        ism_rows.push(start as u64);
+        ism_bucket_nrs.push(i as u32);
+    }
+    ism_rows.push(nrrow as u64);
+
+    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian);
+    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian);
+
+    let mut file = File::create(file_path)?;
+    file.write_all(&header_buf)?;
+    for raw in &raw_buckets {
+        file.write_all(raw)?;
+    }
+    file.write_all(&index_data)?;
+
+    serialize_ism_dm_blob("ISM")
+}
+
 fn row_value_at_index<'a>(
     row: &'a casa_types::RecordValue,
     field_index: usize,
     field_name: &str,
 ) -> Option<&'a casa_types::Value> {
-    let field = row.fields().get(field_index)?;
-    debug_assert_eq!(field.name, field_name);
-    Some(&field.value)
+    if let Some(field) = row.fields().get(field_index) {
+        if field.name == field_name {
+            return Some(&field.value);
+        }
+    }
+    row.fields()
+        .iter()
+        .find(|field| field.name == field_name)
+        .map(|field| &field.value)
 }
 
 fn row_value_for_column<'a>(
@@ -1850,6 +2081,213 @@ fn write_ism_file_impl(
     let dm_blob = serialize_ism_dm_blob("ISM")?;
 
     Ok(dm_blob)
+}
+
+pub(crate) fn save_ism_file_scalar_columns_rows_in_place(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &[&[Option<casa_types::ScalarValue>]],
+    changed_rows: &[usize],
+    big_endian: bool,
+) -> Result<bool, StorageError> {
+    let nrrow = scalar_columns.first().map_or(0, |values| values.len());
+    if scalar_columns.len() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "ISM scalar column count mismatch: expected {}, got {}",
+            col_descs.len(),
+            scalar_columns.len()
+        )));
+    }
+    for values in scalar_columns.iter().skip(1) {
+        if values.len() != nrrow {
+            return Err(StorageError::FormatMismatch(
+                "ISM scalar columns have inconsistent row counts".to_string(),
+            ));
+        }
+    }
+    if changed_rows.is_empty() || nrrow == 0 {
+        return Ok(false);
+    }
+    if col_descs
+        .iter()
+        .any(|col_desc| col_desc.is_array || col_desc.is_record())
+    {
+        return Ok(false);
+    }
+
+    let col_info: Vec<(CasacoreDataType, usize)> = col_descs
+        .iter()
+        .map(|c| {
+            let dt = CasacoreDataType::from_primitive_type(c.require_primitive_type()?, false);
+            Ok((dt, 1usize))
+        })
+        .collect::<Result<_, StorageError>>()?;
+
+    let mut file = OpenOptions::new().read(true).write(true).open(file_path)?;
+    let header = parse_ism_header(&mut file)?;
+    if header.big_endian != big_endian {
+        return Err(StorageError::FormatMismatch(format!(
+            "ISM endian mismatch for sparse save: file={}, requested={}",
+            header.big_endian, big_endian
+        )));
+    }
+    let index = parse_ism_index(&mut file, &header)?;
+    if index.rows.len() < 2 || index.bucket_nrs.is_empty() {
+        return Ok(false);
+    }
+
+    let mut changed_intervals = Vec::new();
+    let mut last_interval = None;
+    for &row_idx in changed_rows {
+        if row_idx >= nrrow {
+            continue;
+        }
+        let interval = index.rows.partition_point(|&start| start <= row_idx as u64);
+        if interval == 0 {
+            continue;
+        }
+        let interval_idx = interval - 1;
+        if interval_idx >= index.bucket_nrs.len() {
+            continue;
+        }
+        if last_interval != Some(interval_idx) {
+            changed_intervals.push(interval_idx);
+            last_interval = Some(interval_idx);
+        }
+    }
+    if changed_intervals.is_empty() {
+        return Ok(false);
+    }
+
+    let mut patched_buckets = Vec::with_capacity(changed_intervals.len());
+    for interval_idx in changed_intervals {
+        let bucket_start = index.rows[interval_idx] as usize;
+        let bucket_end = index.rows[interval_idx + 1] as usize;
+        let bucket_nr = index.bucket_nrs[interval_idx];
+        let Some(raw) = build_ism_scalar_bucket_for_row_range(
+            &col_info,
+            scalar_columns,
+            bucket_start,
+            bucket_end,
+            header.bucket_size,
+            big_endian,
+        )?
+        else {
+            return Ok(false);
+        };
+        patched_buckets.push((bucket_nr, raw));
+    }
+
+    for (bucket_nr, raw) in patched_buckets {
+        let offset = ISM_HEADER_SIZE + (bucket_nr as u64) * (header.bucket_size as u64);
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&raw)?;
+    }
+
+    Ok(true)
+}
+
+fn build_ism_scalar_bucket_for_row_range(
+    col_info: &[(CasacoreDataType, usize)],
+    scalar_columns: &[&[Option<casa_types::ScalarValue>]],
+    row_start: usize,
+    row_end: usize,
+    bucket_size: u32,
+    big_endian: bool,
+) -> Result<Option<Vec<u8>>, StorageError> {
+    if row_end <= row_start {
+        return Ok(Some(vec![0u8; bucket_size as usize]));
+    }
+
+    let ncol = scalar_columns.len();
+    let mut data = Vec::new();
+    let mut col_indices: Vec<(Vec<u32>, Vec<u32>)> =
+        (0..ncol).map(|_| (Vec::new(), Vec::new())).collect();
+    let mut last_values: Vec<Vec<u8>> = vec![Vec::new(); ncol];
+
+    for (row_idx, _) in scalar_columns[0]
+        .iter()
+        .enumerate()
+        .take(row_end)
+        .skip(row_start)
+    {
+        let rel_row = (row_idx - row_start) as u32;
+        for col_idx in 0..ncol {
+            let (dt, nrelem) = col_info[col_idx];
+            let temp_value = scalar_columns[col_idx][row_idx]
+                .as_ref()
+                .cloned()
+                .map(casa_types::Value::Scalar);
+            let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
+            if rel_row == 0 || encoded != last_values[col_idx] {
+                let offset = data.len() as u32;
+                data.extend_from_slice(&encoded);
+                col_indices[col_idx].0.push(rel_row);
+                col_indices[col_idx].1.push(offset);
+                last_values[col_idx] = encoded;
+            }
+        }
+    }
+
+    serialize_ism_bucket(bucket_size, &data, &col_indices, big_endian)
+}
+
+fn serialize_ism_bucket(
+    bucket_size: u32,
+    data: &[u8],
+    col_indices: &[(Vec<u32>, Vec<u32>)],
+    big_endian: bool,
+) -> Result<Option<Vec<u8>>, StorageError> {
+    if bucket_size < 4 {
+        return Err(StorageError::FormatMismatch(
+            "ISM bucket size too small".to_string(),
+        ));
+    }
+
+    let mut index_area = Vec::new();
+    for (row_nrs, offsets) in col_indices {
+        if row_nrs.len() != offsets.len() {
+            return Err(StorageError::FormatMismatch(
+                "ISM bucket row/offset index length mismatch".to_string(),
+            ));
+        }
+        let n = row_nrs.len() as u32;
+        if big_endian {
+            index_area.extend_from_slice(&n.to_be_bytes());
+            for &r in row_nrs {
+                index_area.extend_from_slice(&r.to_be_bytes());
+            }
+            for &o in offsets {
+                index_area.extend_from_slice(&o.to_be_bytes());
+            }
+        } else {
+            index_area.extend_from_slice(&n.to_le_bytes());
+            for &r in row_nrs {
+                index_area.extend_from_slice(&r.to_le_bytes());
+            }
+            for &o in offsets {
+                index_area.extend_from_slice(&o.to_le_bytes());
+            }
+        }
+    }
+
+    let bucket_size = bucket_size as usize;
+    if 4 + data.len() + index_area.len() > bucket_size {
+        return Ok(None);
+    }
+
+    let mut raw = vec![0u8; bucket_size];
+    raw[4..4 + data.len()].copy_from_slice(data);
+
+    let index_start = bucket_size - index_area.len();
+    let index_offset = index_start as u32;
+    if big_endian {
+        raw[0..4].copy_from_slice(&index_offset.to_be_bytes());
+    } else {
+        raw[0..4].copy_from_slice(&index_offset.to_le_bytes());
+    }
+    raw[index_start..].copy_from_slice(&index_area);
+    Ok(Some(raw))
 }
 
 // ---------------------------------------------------------------------------
@@ -2115,6 +2553,103 @@ mod tests {
                 val,
                 casa_types::Value::Scalar(casa_types::ScalarValue::Int32(expected)),
                 "row {rel_row}"
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_column_writer_matches_row_writer_for_scalar_columns() {
+        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        use tempfile::TempDir;
+
+        let schema = vec![
+            ColumnDescContents {
+                class_name: "ScalarColumnDesc".to_string(),
+                col_name: "flag_row".to_string(),
+                comment: String::new(),
+                data_manager_type: String::new(),
+                data_manager_group: String::new(),
+                shape: vec![],
+                data_type: CasacoreDataType::TpBool,
+                option: 0,
+                nrdim: 0,
+                max_length: 0,
+                keywords: RecordValue::default(),
+                is_array: false,
+                primitive_type: Some(casa_types::PrimitiveType::Bool),
+            },
+            ColumnDescContents {
+                class_name: "ScalarColumnDesc".to_string(),
+                col_name: "scan".to_string(),
+                comment: String::new(),
+                data_manager_type: String::new(),
+                data_manager_group: String::new(),
+                shape: vec![],
+                data_type: CasacoreDataType::TpInt,
+                option: 0,
+                nrdim: 0,
+                max_length: 0,
+                keywords: RecordValue::default(),
+                is_array: false,
+                primitive_type: Some(casa_types::PrimitiveType::Int32),
+            },
+        ];
+
+        let rows = vec![
+            RecordValue::new(vec![
+                RecordField::new("flag_row", Value::Scalar(ScalarValue::Bool(false))),
+                RecordField::new("scan", Value::Scalar(ScalarValue::Int32(1))),
+            ]),
+            RecordValue::new(vec![
+                RecordField::new("flag_row", Value::Scalar(ScalarValue::Bool(false))),
+                RecordField::new("scan", Value::Scalar(ScalarValue::Int32(1))),
+            ]),
+            RecordValue::new(vec![
+                RecordField::new("flag_row", Value::Scalar(ScalarValue::Bool(true))),
+                RecordField::new("scan", Value::Scalar(ScalarValue::Int32(2))),
+            ]),
+            RecordValue::new(vec![
+                RecordField::new("flag_row", Value::Scalar(ScalarValue::Bool(true))),
+                RecordField::new("scan", Value::Scalar(ScalarValue::Int32(2))),
+            ]),
+        ];
+
+        let flag_values = vec![
+            Some(ScalarValue::Bool(false)),
+            Some(ScalarValue::Bool(false)),
+            Some(ScalarValue::Bool(true)),
+            Some(ScalarValue::Bool(true)),
+        ];
+        let scan_values = vec![
+            Some(ScalarValue::Int32(1)),
+            Some(ScalarValue::Int32(1)),
+            Some(ScalarValue::Int32(2)),
+            Some(ScalarValue::Int32(2)),
+        ];
+        let scalar_columns = vec![flag_values.as_slice(), scan_values.as_slice()];
+
+        for big_endian in [true, false] {
+            let dir = TempDir::new().expect("tempdir");
+            let row_path = dir.path().join(if big_endian {
+                "row_be.ism"
+            } else {
+                "row_le.ism"
+            });
+            let scalar_path = dir.path().join(if big_endian {
+                "scalar_be.ism"
+            } else {
+                "scalar_le.ism"
+            });
+
+            let row_dm = write_ism_file(&row_path, &schema, &rows, big_endian).expect("row writer");
+            let scalar_dm =
+                write_ism_file_scalar_columns(&scalar_path, &schema, &scalar_columns, big_endian)
+                    .expect("scalar writer");
+
+            assert_eq!(row_dm, scalar_dm);
+            assert_eq!(
+                std::fs::read(&row_path).expect("read row file"),
+                std::fs::read(&scalar_path).expect("read scalar file")
             );
         }
     }

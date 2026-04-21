@@ -500,11 +500,20 @@ fn build_selected_rows(
         .data_description()
         .map_err(|source| ApplyPlanError::Selection { source })?;
     let table = ms.main_table();
+    let data_desc_ids = load_i32_column(table, "DATA_DESC_ID")?;
+    let field_ids = load_i32_column(table, "FIELD_ID")?;
+    let observation_ids = load_i32_column(table, "OBSERVATION_ID")?;
+    let antenna1s = load_i32_column(table, "ANTENNA1")?;
+    let antenna2s = load_i32_column(table, "ANTENNA2")?;
+    let feed1s = load_i32_column(table, "FEED1")?;
+    let feed2s = load_i32_column(table, "FEED2")?;
+    let times = load_f64_column(table, "TIME")?;
+    let intervals = load_f64_column(table, "INTERVAL")?;
 
     row_indices
         .iter()
         .map(|&row_index| {
-            let data_desc_id = get_i32(table, row_index, "DATA_DESC_ID")?;
+            let data_desc_id = value_at_i32(&data_desc_ids, row_index, "DATA_DESC_ID")?;
             let ddid_index = usize::try_from(data_desc_id).map_err(|_| {
                 ApplyPlanError::MissingDataDescription {
                     row_index,
@@ -520,8 +529,8 @@ fn build_selected_rows(
 
             Ok(ApplyRowPlan {
                 row_index,
-                field_id: get_i32(table, row_index, "FIELD_ID")?,
-                observation_id: get_i32(table, row_index, "OBSERVATION_ID")?,
+                field_id: value_at_i32(&field_ids, row_index, "FIELD_ID")?,
+                observation_id: value_at_i32(&observation_ids, row_index, "OBSERVATION_ID")?,
                 data_desc_id,
                 data_spw_id: dd
                     .spectral_window_id(ddid_index)
@@ -529,15 +538,87 @@ fn build_selected_rows(
                 polarization_id: dd
                     .polarization_id(ddid_index)
                     .map_err(|source| ApplyPlanError::Selection { source })?,
-                antenna1: get_i32(table, row_index, "ANTENNA1")?,
-                antenna2: get_i32(table, row_index, "ANTENNA2")?,
-                feed1: get_i32(table, row_index, "FEED1")?,
-                feed2: get_i32(table, row_index, "FEED2")?,
-                time_seconds: get_f64(table, row_index, "TIME")?,
-                interval_seconds: get_f64(table, row_index, "INTERVAL")?,
+                antenna1: value_at_i32(&antenna1s, row_index, "ANTENNA1")?,
+                antenna2: value_at_i32(&antenna2s, row_index, "ANTENNA2")?,
+                feed1: value_at_i32(&feed1s, row_index, "FEED1")?,
+                feed2: value_at_i32(&feed2s, row_index, "FEED2")?,
+                time_seconds: value_at_f64(&times, row_index, "TIME")?,
+                interval_seconds: value_at_f64(&intervals, row_index, "INTERVAL")?,
             })
         })
         .collect()
+}
+
+fn load_i32_column(table: &Table, column: &str) -> Result<Vec<Option<i32>>, ApplyPlanError> {
+    table
+        .get_scalar_cells_owned(column)
+        .map_err(|source| ApplyPlanError::Selection {
+            source: MsError::from(source),
+        })?
+        .into_iter()
+        .enumerate()
+        .map(|(row_index, value)| match value {
+            Some(casa_types::ScalarValue::Int32(v)) => Ok(Some(v)),
+            Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
+                context: format!("{column} row {row_index}"),
+                expected: "Int32",
+                found: scalar_kind(&other),
+            }),
+            None => Ok(None),
+        })
+        .collect()
+}
+
+fn load_f64_column(table: &Table, column: &str) -> Result<Vec<Option<f64>>, ApplyPlanError> {
+    table
+        .get_scalar_cells_owned(column)
+        .map_err(|source| ApplyPlanError::Selection {
+            source: MsError::from(source),
+        })?
+        .into_iter()
+        .enumerate()
+        .map(|(row_index, value)| match value {
+            Some(casa_types::ScalarValue::Float64(v)) => Ok(Some(v)),
+            Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
+                context: format!("{column} row {row_index}"),
+                expected: "Float64",
+                found: scalar_kind(&other),
+            }),
+            None => Ok(None),
+        })
+        .collect()
+}
+
+fn value_at_i32(
+    values: &[Option<i32>],
+    row_index: usize,
+    column: &str,
+) -> Result<i32, ApplyPlanError> {
+    values
+        .get(row_index)
+        .and_then(|value| *value)
+        .ok_or_else(|| ApplyPlanError::Selection {
+            source: MsError::MissingColumn {
+                column: column.to_string(),
+                table: format!("MAIN row {row_index}"),
+            },
+        })
+}
+
+fn value_at_f64(
+    values: &[Option<f64>],
+    row_index: usize,
+    column: &str,
+) -> Result<f64, ApplyPlanError> {
+    values
+        .get(row_index)
+        .and_then(|value| *value)
+        .ok_or_else(|| ApplyPlanError::Selection {
+            source: MsError::MissingColumn {
+                column: column.to_string(),
+                table: format!("MAIN row {row_index}"),
+            },
+        })
 }
 
 fn load_ms_spectral_windows(
@@ -1032,6 +1113,7 @@ fn get_string(table: &Table, row_index: usize, column: &str) -> Result<String, A
     }
 }
 
+#[cfg(test)]
 fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyPlanError> {
     match table
         .get_scalar_cell(row_index, column)
@@ -1047,6 +1129,7 @@ fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyPl
     }
 }
 
+#[cfg(test)]
 fn get_f64(table: &Table, row_index: usize, column: &str) -> Result<f64, ApplyPlanError> {
     match table
         .get_scalar_cell(row_index, column)
