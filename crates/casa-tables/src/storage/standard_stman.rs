@@ -1283,6 +1283,36 @@ pub(crate) fn write_ssm_file(
     rows: &[casa_types::RecordValue],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
+    write_ssm_file_impl(file_path, col_descs, rows, None, big_endian)
+}
+
+pub(crate) fn write_ssm_file_indexed(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    field_indices: &[usize],
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    write_ssm_file_impl(file_path, col_descs, rows, Some(field_indices), big_endian)
+}
+
+fn row_value_at_index<'a>(
+    row: &'a casa_types::RecordValue,
+    field_index: usize,
+    field_name: &str,
+) -> Option<&'a casa_types::Value> {
+    let field = row.fields().get(field_index)?;
+    debug_assert_eq!(field.name, field_name);
+    Some(&field.value)
+}
+
+fn write_ssm_file_impl(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    field_indices: Option<&[usize]>,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
     let nrrow = rows.len();
     let ncol = col_descs.len();
 
@@ -1410,11 +1440,15 @@ pub(crate) fn write_ssm_file(
                 let bucket = &mut buckets[bucket_idx];
                 let byte_off = col_off + row_in_bucket * 8;
 
-                let value = row_record
-                    .fields()
-                    .iter()
-                    .find(|f| f.name == col_desc.col_name)
-                    .map(|f| &f.value);
+                let value = if let Some(indices) = field_indices {
+                    row_value_at_index(row_record, indices[col_idx], &col_desc.col_name)
+                } else {
+                    row_record
+                        .fields()
+                        .iter()
+                        .find(|f| f.name == col_desc.col_name)
+                        .map(|f| &f.value)
+                };
 
                 let offset: i64 =
                     match value {
@@ -1455,11 +1489,15 @@ pub(crate) fn write_ssm_file(
                 let row_in_bucket = row % rows_per_bucket as usize;
                 let bucket = &mut buckets[bucket_idx];
 
-                let value = row_record
-                    .fields()
-                    .iter()
-                    .find(|f| f.name == col_desc.col_name)
-                    .map(|f| &f.value);
+                let value = if let Some(indices) = field_indices {
+                    row_value_at_index(row_record, indices[col_idx], &col_desc.col_name)
+                } else {
+                    row_record
+                        .fields()
+                        .iter()
+                        .find(|f| f.name == col_desc.col_name)
+                        .map(|f| &f.value)
+                };
 
                 write_cell_to_bucket(
                     bucket,

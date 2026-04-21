@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Integration test: create an MS, save, reopen, validate, and verify data.
 
+use std::sync::{Mutex, OnceLock};
+
+use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
@@ -14,6 +17,7 @@ use ndarray::ArrayD;
 fn add_main_row(ms: &mut MeasurementSet, overrides: &[(&str, Value)]) {
     use casa_ms::column_def::{ColumnDef, ColumnKind};
     use casa_ms::schema::main_table;
+    use num_complex::Complex32;
 
     let schema = ms.main_table().schema().unwrap().clone();
     let all_cols: Vec<&ColumnDef> = main_table::REQUIRED_COLUMNS
@@ -59,6 +63,15 @@ fn add_main_row(ms: &mut MeasurementSet, overrides: &[(&str, Value)]) {
                                     ArrayD::from_shape_vec(shape, vec![1.0; total]).unwrap(),
                                 ))
                             }
+                            casa_types::PrimitiveType::Complex32 => {
+                                Value::Array(ArrayValue::Complex32(
+                                    ArrayD::from_shape_vec(
+                                        shape,
+                                        vec![Complex32::new(0.0, 0.0); total],
+                                    )
+                                    .unwrap(),
+                                ))
+                            }
                             _ => Value::Array(ArrayValue::Float64(
                                 ArrayD::from_shape_vec(shape, vec![0.0; total]).unwrap(),
                             )),
@@ -76,8 +89,22 @@ fn add_main_row(ms: &mut MeasurementSet, overrides: &[(&str, Value)]) {
         .unwrap();
 }
 
+fn main_dm_types(ms: &MeasurementSet) -> Vec<String> {
+    ms.main_table()
+        .data_manager_info()
+        .iter()
+        .map(|dm| dm.dm_type.clone())
+        .collect()
+}
+
+fn storage_policy_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 #[test]
 fn round_trip_create_save_open_validate() {
+    let _guard = storage_policy_env_lock().lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ms_path = dir.path().join("roundtrip.ms");
 
@@ -146,7 +173,95 @@ fn round_trip_create_save_open_validate() {
         // Check unique antenna IDs
         let ids = selection_helpers::unique_antenna_ids(&ms).unwrap();
         assert_eq!(ids, vec![0, 1, 2]);
+
+        let main_dm_types = main_dm_types(&ms);
+        assert!(main_dm_types.iter().any(|dm| dm == "IncrementalStMan"));
+        assert!(main_dm_types.iter().any(|dm| dm == "StandardStMan"));
+        assert!(main_dm_types.iter().any(|dm| dm == "TiledColumnStMan"));
+        assert!(main_dm_types.iter().any(|dm| dm == "TiledShapeStMan"));
+        assert!(
+            ms.antenna()
+                .unwrap()
+                .table()
+                .data_manager_info()
+                .iter()
+                .all(|dm| dm.dm_type == "StandardStMan")
+        );
     }
+}
+
+#[test]
+fn save_preserves_existing_measure_reference_keywords() {
+    let _guard = storage_policy_env_lock().lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("measure-refs.ms");
+
+    let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
+    let time_keywords = ms.main_table().column_keywords("TIME").unwrap();
+    let measinfo = match time_keywords.get("MEASINFO").unwrap() {
+        Value::Record(record) => record,
+        other => panic!("expected TIME.MEASINFO record, got {other:?}"),
+    };
+    assert_eq!(
+        measinfo.get("Ref"),
+        Some(&Value::Scalar(ScalarValue::String("UTC".to_string())))
+    );
+
+    let mut updated = time_keywords.clone();
+    let mut updated_measinfo = measinfo.clone();
+    updated_measinfo.upsert("Ref", Value::Scalar(ScalarValue::String("TAI".to_string())));
+    updated.upsert("MEASINFO", Value::Record(updated_measinfo));
+    ms.main_table_mut().set_column_keywords("TIME", updated);
+
+    ms.save_assuming_valid().unwrap();
+
+    let reopened = MeasurementSet::open(&ms_path).unwrap();
+    let time_keywords = reopened.main_table().column_keywords("TIME").unwrap();
+    let measinfo = match time_keywords.get("MEASINFO").unwrap() {
+        Value::Record(record) => record,
+        other => panic!("expected TIME.MEASINFO record after save, got {other:?}"),
+    };
+    assert_eq!(
+        measinfo.get("Ref"),
+        Some(&Value::Scalar(ScalarValue::String("TAI".to_string())))
+    );
+}
+
+#[test]
+fn save_honors_standard_storage_policy_override() {
+    let _guard = storage_policy_env_lock().lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("standard-override.ms");
+
+    unsafe {
+        std::env::set_var("CASA_RS_MS_STORAGE_POLICY", "standard");
+    }
+    let result = std::panic::catch_unwind(|| {
+        let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
+        add_main_row(
+            &mut ms,
+            &[
+                ("ANTENNA1", Value::Scalar(ScalarValue::Int32(0))),
+                ("ANTENNA2", Value::Scalar(ScalarValue::Int32(1))),
+                ("FIELD_ID", Value::Scalar(ScalarValue::Int32(0))),
+                ("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(0))),
+                (
+                    "TIME",
+                    Value::Scalar(ScalarValue::Float64(59000.0 * 86400.0)),
+                ),
+            ],
+        );
+        ms.save_assuming_valid().unwrap();
+
+        let reopened = MeasurementSet::open(&ms_path).unwrap();
+        let main_dm_types = main_dm_types(&reopened);
+        assert!(!main_dm_types.is_empty());
+        assert!(main_dm_types.iter().all(|dm| dm == "StandardStMan"));
+    });
+    unsafe {
+        std::env::remove_var("CASA_RS_MS_STORAGE_POLICY");
+    }
+    result.unwrap();
 }
 
 #[test]

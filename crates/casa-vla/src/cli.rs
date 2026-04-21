@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
@@ -507,7 +507,7 @@ fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
     Ok(())
 }
 
-fn cleanup_failed_import_output(path: &std::path::Path) -> Result<(), std::io::Error> {
+fn cleanup_failed_import_output(path: &Path) -> Result<(), std::io::Error> {
     if path.is_dir() {
         fs::remove_dir_all(path)
     } else {

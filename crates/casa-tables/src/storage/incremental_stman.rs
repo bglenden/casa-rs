@@ -1574,6 +1574,52 @@ pub(crate) fn write_ism_file(
     rows: &[casa_types::RecordValue],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
+    write_ism_file_impl(file_path, col_descs, rows, None, big_endian)
+}
+
+pub(crate) fn write_ism_file_indexed(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    field_indices: &[usize],
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    write_ism_file_impl(file_path, col_descs, rows, Some(field_indices), big_endian)
+}
+
+fn row_value_at_index<'a>(
+    row: &'a casa_types::RecordValue,
+    field_index: usize,
+    field_name: &str,
+) -> Option<&'a casa_types::Value> {
+    let field = row.fields().get(field_index)?;
+    debug_assert_eq!(field.name, field_name);
+    Some(&field.value)
+}
+
+fn row_value_for_column<'a>(
+    row: &'a casa_types::RecordValue,
+    field_indices: Option<&[usize]>,
+    col_idx: usize,
+    col_desc: &ColumnDescContents,
+) -> Option<&'a casa_types::Value> {
+    if let Some(indices) = field_indices {
+        row_value_at_index(row, indices[col_idx], &col_desc.col_name)
+    } else {
+        row.fields()
+            .iter()
+            .find(|f| f.name == col_desc.col_name)
+            .map(|f| &f.value)
+    }
+}
+
+fn write_ism_file_impl(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    field_indices: Option<&[usize]>,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
     let nrrow = rows.len();
     let ncol = col_descs.len();
 
@@ -1646,11 +1692,7 @@ pub(crate) fn write_ism_file(
             let mut new_data_estimate = 0usize;
             for (col_idx, col_desc) in col_descs.iter().enumerate() {
                 let (dt, nrelem) = col_info[col_idx];
-                let value = row
-                    .fields()
-                    .iter()
-                    .find(|f| f.name == col_desc.col_name)
-                    .map(|f| &f.value);
+                let value = row_value_for_column(row, field_indices, col_idx, col_desc);
                 let encoded = encode_value_bytes(value, dt, nrelem, big_endian);
                 if rel_row == 0 || encoded != last_values[col_idx] {
                     new_data_estimate += encoded.len();
@@ -1677,11 +1719,7 @@ pub(crate) fn write_ism_file(
                 for (col_idx, col_desc) in col_descs.iter().enumerate() {
                     let (dt, nrelem) = col_info[col_idx];
                     let bytes = if last_values[col_idx].is_empty() {
-                        let value = row
-                            .fields()
-                            .iter()
-                            .find(|f| f.name == col_desc.col_name)
-                            .map(|f| &f.value);
+                        let value = row_value_for_column(row, field_indices, col_idx, col_desc);
                         encode_value_bytes(value, dt, nrelem, big_endian)
                     } else {
                         last_values[col_idx].clone()
@@ -1696,11 +1734,7 @@ pub(crate) fn write_ism_file(
                 // row differs from carried-over
                 for (col_idx, col_desc) in col_descs.iter().enumerate() {
                     let (dt, nrelem) = col_info[col_idx];
-                    let value = row
-                        .fields()
-                        .iter()
-                        .find(|f| f.name == col_desc.col_name)
-                        .map(|f| &f.value);
+                    let value = row_value_for_column(row, field_indices, col_idx, col_desc);
                     let encoded = encode_value_bytes(value, dt, nrelem, big_endian);
                     // The carried-over value was already written at row 0.
                     // If current row differs from carried-over, we need to update.
@@ -1721,11 +1755,7 @@ pub(crate) fn write_ism_file(
             // Add this row's data to current bucket
             for (col_idx, col_desc) in col_descs.iter().enumerate() {
                 let (dt, nrelem) = col_info[col_idx];
-                let value = row
-                    .fields()
-                    .iter()
-                    .find(|f| f.name == col_desc.col_name)
-                    .map(|f| &f.value);
+                let value = row_value_for_column(row, field_indices, col_idx, col_desc);
                 let encoded = encode_value_bytes(value, dt, nrelem, big_endian);
 
                 if rel_row == 0 || encoded != last_values[col_idx] {
