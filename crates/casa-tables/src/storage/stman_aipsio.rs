@@ -858,7 +858,7 @@ fn parse_sparse_column_layouts(
     }
 
     let mut layouts = Vec::with_capacity(ncol);
-    for (col_desc, data_type) in columns.iter().zip(data_types.into_iter()) {
+    for (col_desc, data_type) in columns.iter().zip(data_types) {
         let column_header = read_object_header(&mut file)?;
         let layout = match column_header.type_name.as_str() {
             "StManColumnIndArrayAipsIO" => {
