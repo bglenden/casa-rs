@@ -3746,197 +3746,198 @@
 <a href=#3746 id=3746 data-nosnippet>3746</a>                planning_measurement_set_spectral_windows_ns: <span class="number">750_000</span>,
 <a href=#3747 id=3747 data-nosnippet>3747</a>                planning_calibration_table_plans_ns: <span class="number">900_000</span>,
 <a href=#3748 id=3748 data-nosnippet>3748</a>                open_measurement_set_ns: <span class="number">2_000_000</span>,
-<a href=#3749 id=3749 data-nosnippet>3749</a>                ensure_corrected_data_ns: <span class="number">3_000</span>,
-<a href=#3750 id=3750 data-nosnippet>3750</a>                correlation_lookup_ns: <span class="number">4_000</span>,
-<a href=#3751 id=3751 data-nosnippet>3751</a>                calibration_load_ns: <span class="number">5_000</span>,
-<a href=#3752 id=3752 data-nosnippet>3752</a>                row_compute_ns: <span class="number">6_000</span>,
-<a href=#3753 id=3753 data-nosnippet>3753</a>                row_writeback_ns: <span class="number">7_000</span>,
-<a href=#3754 id=3754 data-nosnippet>3754</a>                save_ns: <span class="number">8_000</span>,
-<a href=#3755 id=3755 data-nosnippet>3755</a>                total_ns: <span class="number">3_500_000</span>,
-<a href=#3756 id=3756 data-nosnippet>3756</a>            },
-<a href=#3757 id=3757 data-nosnippet>3757</a>        };
-<a href=#3758 id=3758 data-nosnippet>3758</a>        <span class="kw">let </span>apply_text = <span class="kw">super</span>::render_apply_report_text(<span class="kw-2">&amp;</span>report);
-<a href=#3759 id=3759 data-nosnippet>3759</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"Calibration Apply Report: dataset.ms"</span>));
-<a href=#3760 id=3760 data-nosnippet>3760</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"created_corrected_data_column=true"</span>));
-<a href=#3761 id=3761 data-nosnippet>3761</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"1.500ms"</span>));
-<a href=#3762 id=3762 data-nosnippet>3762</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"gainfield=4 Some(\"calibrator\")"</span>));
-<a href=#3763 id=3763 data-nosnippet>3763</a>    }
-<a href=#3764 id=3764 data-nosnippet>3764</a>
-<a href=#3765 id=3765 data-nosnippet>3765</a>    <span class="attr">#[test]
-<a href=#3766 id=3766 data-nosnippet>3766</a>    </span><span class="kw">fn </span>render_stats_and_solver_outputs_include_grouped_details() {
-<a href=#3767 id=3767 data-nosnippet>3767</a>        <span class="kw">let </span>report = CalibrationStatsReport {
-<a href=#3768 id=3768 data-nosnippet>3768</a>            path: PathBuf::from(<span class="string">"phase.gcal"</span>),
-<a href=#3769 id=3769 data-nosnippet>3769</a>            axis: CalibrationStatsAxis::Amplitude,
-<a href=#3770 id=3770 data-nosnippet>3770</a>            datacolumn: <span class="prelude-val">Some</span>(<span class="string">"CPARAM"</span>.into()),
-<a href=#3771 id=3771 data-nosnippet>3771</a>            row_count: <span class="number">12</span>,
-<a href=#3772 id=3772 data-nosnippet>3772</a>            global: sample_stats(),
-<a href=#3773 id=3773 data-nosnippet>3773</a>            by_field_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
-<a href=#3774 id=3774 data-nosnippet>3774</a>                key: <span class="number">3</span>,
-<a href=#3775 id=3775 data-nosnippet>3775</a>                stats: sample_stats(),
-<a href=#3776 id=3776 data-nosnippet>3776</a>            }],
-<a href=#3777 id=3777 data-nosnippet>3777</a>            by_spectral_window_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
-<a href=#3778 id=3778 data-nosnippet>3778</a>                key: <span class="number">1</span>,
-<a href=#3779 id=3779 data-nosnippet>3779</a>                stats: sample_stats(),
-<a href=#3780 id=3780 data-nosnippet>3780</a>            }],
-<a href=#3781 id=3781 data-nosnippet>3781</a>            by_antenna1_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
-<a href=#3782 id=3782 data-nosnippet>3782</a>                key: <span class="number">0</span>,
-<a href=#3783 id=3783 data-nosnippet>3783</a>                stats: sample_stats(),
-<a href=#3784 id=3784 data-nosnippet>3784</a>            }],
-<a href=#3785 id=3785 data-nosnippet>3785</a>            by_observation_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
-<a href=#3786 id=3786 data-nosnippet>3786</a>                key: <span class="number">7</span>,
-<a href=#3787 id=3787 data-nosnippet>3787</a>                stats: sample_stats(),
-<a href=#3788 id=3788 data-nosnippet>3788</a>            }],
-<a href=#3789 id=3789 data-nosnippet>3789</a>        };
-<a href=#3790 id=3790 data-nosnippet>3790</a>        <span class="kw">let </span>stats_text = <span class="kw">super</span>::render_stats_text(<span class="kw-2">&amp;</span>report);
-<a href=#3791 id=3791 data-nosnippet>3791</a>        <span class="macro">assert!</span>(stats_text.contains(<span class="string">"Calibration Stats: phase.gcal"</span>));
-<a href=#3792 id=3792 data-nosnippet>3792</a>        <span class="macro">assert!</span>(stats_text.contains(<span class="string">"grouped_by_field_id"</span>));
-<a href=#3793 id=3793 data-nosnippet>3793</a>        <span class="macro">assert!</span>(stats_text.contains(<span class="string">"npts=10 flagged_npts=2 total_npts=12"</span>));
-<a href=#3794 id=3794 data-nosnippet>3794</a>
-<a href=#3795 id=3795 data-nosnippet>3795</a>        <span class="kw">let </span>gain_text = <span class="kw">super</span>::render_gain_solve_report_text(<span class="kw-2">&amp;</span>GainSolveReport {
-<a href=#3796 id=3796 data-nosnippet>3796</a>            output_table: PathBuf::from(<span class="string">"phase.gcal"</span>),
-<a href=#3797 id=3797 data-nosnippet>3797</a>            gain_type: GainType::G,
-<a href=#3798 id=3798 data-nosnippet>3798</a>            refant_antenna_id: <span class="number">3</span>,
-<a href=#3799 id=3799 data-nosnippet>3799</a>            field_ids: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">1</span>],
-<a href=#3800 id=3800 data-nosnippet>3800</a>            spectral_window_ids: <span class="macro">vec!</span>[<span class="number">2</span>],
-<a href=#3801 id=3801 data-nosnippet>3801</a>            solution_row_count: <span class="number">24</span>,
-<a href=#3802 id=3802 data-nosnippet>3802</a>        });
-<a href=#3803 id=3803 data-nosnippet>3803</a>        <span class="macro">assert!</span>(gain_text.contains(<span class="string">"Gain Solve Report: phase.gcal"</span>));
-<a href=#3804 id=3804 data-nosnippet>3804</a>        <span class="macro">assert!</span>(gain_text.contains(<span class="string">"solution_rows=24"</span>));
-<a href=#3805 id=3805 data-nosnippet>3805</a>
-<a href=#3806 id=3806 data-nosnippet>3806</a>        <span class="kw">let </span>bandpass_text = <span class="kw">super</span>::render_bandpass_solve_report_text(<span class="kw-2">&amp;</span>BandpassSolveReport {
-<a href=#3807 id=3807 data-nosnippet>3807</a>            output_table: PathBuf::from(<span class="string">"bandpass.bcal"</span>),
-<a href=#3808 id=3808 data-nosnippet>3808</a>            table_subtype: <span class="string">"B Jones"</span>.into(),
-<a href=#3809 id=3809 data-nosnippet>3809</a>            refant_antenna_id: <span class="number">4</span>,
-<a href=#3810 id=3810 data-nosnippet>3810</a>            field_ids: <span class="macro">vec!</span>[<span class="number">0</span>],
-<a href=#3811 id=3811 data-nosnippet>3811</a>            spectral_window_ids: <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>],
-<a href=#3812 id=3812 data-nosnippet>3812</a>            solution_row_count: <span class="number">8</span>,
-<a href=#3813 id=3813 data-nosnippet>3813</a>            channel_count: <span class="number">64</span>,
-<a href=#3814 id=3814 data-nosnippet>3814</a>        });
-<a href=#3815 id=3815 data-nosnippet>3815</a>        <span class="macro">assert!</span>(bandpass_text.contains(<span class="string">"Bandpass Solve Report: bandpass.bcal"</span>));
-<a href=#3816 id=3816 data-nosnippet>3816</a>        <span class="macro">assert!</span>(bandpass_text.contains(<span class="string">"channel_count=64"</span>));
-<a href=#3817 id=3817 data-nosnippet>3817</a>
-<a href=#3818 id=3818 data-nosnippet>3818</a>        <span class="kw">let </span>fluxscale_text = <span class="kw">super</span>::render_fluxscale_report_text(<span class="kw-2">&amp;</span>FluxScaleReport {
-<a href=#3819 id=3819 data-nosnippet>3819</a>            output_table: PathBuf::from(<span class="string">"fluxscale.gcal"</span>),
-<a href=#3820 id=3820 data-nosnippet>3820</a>            spw_ids: <span class="macro">vec!</span>[<span class="number">0</span>],
-<a href=#3821 id=3821 data-nosnippet>3821</a>            spw_names: <span class="macro">vec!</span>[<span class="string">"SPW0"</span>.into()],
-<a href=#3822 id=3822 data-nosnippet>3822</a>            frequencies_hz: <span class="macro">vec!</span>[<span class="number">1.42e9</span>],
-<a href=#3823 id=3823 data-nosnippet>3823</a>            fields: BTreeMap::from([(
-<a href=#3824 id=3824 data-nosnippet>3824</a>                <span class="number">5</span>,
-<a href=#3825 id=3825 data-nosnippet>3825</a>                FluxScaleFieldResult {
-<a href=#3826 id=3826 data-nosnippet>3826</a>                    field_name: <span class="string">"target"</span>.into(),
-<a href=#3827 id=3827 data-nosnippet>3827</a>                    spw_results: BTreeMap::from([(
-<a href=#3828 id=3828 data-nosnippet>3828</a>                        <span class="number">0</span>,
-<a href=#3829 id=3829 data-nosnippet>3829</a>                        FluxScaleSpwResult {
-<a href=#3830 id=3830 data-nosnippet>3830</a>                            fluxd: [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#3831 id=3831 data-nosnippet>3831</a>                            fluxd_err: [<span class="number">0.1</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#3832 id=3832 data-nosnippet>3832</a>                            num_sol: [<span class="number">4.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#3833 id=3833 data-nosnippet>3833</a>                        },
-<a href=#3834 id=3834 data-nosnippet>3834</a>                    )]),
-<a href=#3835 id=3835 data-nosnippet>3835</a>                    fit_ref_frequency_hz: <span class="number">1.42e9</span>,
-<a href=#3836 id=3836 data-nosnippet>3836</a>                    fit_fluxd: <span class="number">1.0</span>,
-<a href=#3837 id=3837 data-nosnippet>3837</a>                    fit_fluxd_err: <span class="number">0.1</span>,
-<a href=#3838 id=3838 data-nosnippet>3838</a>                    spidx: <span class="macro">vec!</span>[<span class="number">0.0</span>],
-<a href=#3839 id=3839 data-nosnippet>3839</a>                    spidx_err: <span class="macro">vec!</span>[<span class="number">0.0</span>],
-<a href=#3840 id=3840 data-nosnippet>3840</a>                    covar_mat: <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">1.0</span>]],
-<a href=#3841 id=3841 data-nosnippet>3841</a>                },
-<a href=#3842 id=3842 data-nosnippet>3842</a>            )]),
-<a href=#3843 id=3843 data-nosnippet>3843</a>        });
-<a href=#3844 id=3844 data-nosnippet>3844</a>        <span class="macro">assert!</span>(fluxscale_text.contains(<span class="string">"FluxScale Report: fluxscale.gcal"</span>));
-<a href=#3845 id=3845 data-nosnippet>3845</a>        <span class="macro">assert!</span>(fluxscale_text.contains(<span class="string">"field 5 (target)"</span>));
-<a href=#3846 id=3846 data-nosnippet>3846</a>        <span class="macro">assert!</span>(fluxscale_text.contains(<span class="string">"fluxd=[1.0, 0.0, 0.0, 0.0]"</span>));
-<a href=#3847 id=3847 data-nosnippet>3847</a>    }
-<a href=#3848 id=3848 data-nosnippet>3848</a>
-<a href=#3849 id=3849 data-nosnippet>3849</a>    <span class="attr">#[test]
-<a href=#3850 id=3850 data-nosnippet>3850</a>    </span><span class="kw">fn </span>helper_parsers_and_writers_cover_error_paths() {
-<a href=#3851 id=3851 data-nosnippet>3851</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">999</span>), <span class="string">"999ns"</span>);
-<a href=#3852 id=3852 data-nosnippet>3852</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">12_500</span>), <span class="string">"12.500us"</span>);
-<a href=#3853 id=3853 data-nosnippet>3853</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">1_250_000</span>), <span class="string">"1.250ms"</span>);
-<a href=#3854 id=3854 data-nosnippet>3854</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">1_500_000_000</span>), <span class="string">"1.500s"</span>);
-<a href=#3855 id=3855 data-nosnippet>3855</a>
-<a href=#3856 id=3856 data-nosnippet>3856</a>        <span class="kw">let </span>selection = <span class="kw">super</span>::build_selection(<span class="kw-2">&amp;</span><span class="kw">super</span>::SelectionOptions {
-<a href=#3857 id=3857 data-nosnippet>3857</a>            selectdata: <span class="bool-val">true</span>,
-<a href=#3858 id=3858 data-nosnippet>3858</a>            field: <span class="prelude-val">Some</span>(<span class="string">"1,2"</span>.into()),
-<a href=#3859 id=3859 data-nosnippet>3859</a>            spw: <span class="prelude-val">Some</span>(<span class="string">"3"</span>.into()),
-<a href=#3860 id=3860 data-nosnippet>3860</a>            timerange: <span class="prelude-val">Some</span>(<span class="string">"10.0:20.0"</span>.into()),
-<a href=#3861 id=3861 data-nosnippet>3861</a>            uvrange: <span class="prelude-val">None</span>,
-<a href=#3862 id=3862 data-nosnippet>3862</a>            antenna: <span class="prelude-val">Some</span>(<span class="string">"4"</span>.into()),
-<a href=#3863 id=3863 data-nosnippet>3863</a>            scan: <span class="prelude-val">Some</span>(<span class="string">"5"</span>.into()),
-<a href=#3864 id=3864 data-nosnippet>3864</a>            correlation: <span class="prelude-val">None</span>,
-<a href=#3865 id=3865 data-nosnippet>3865</a>            observation: <span class="prelude-val">Some</span>(<span class="string">"6"</span>.into()),
-<a href=#3866 id=3866 data-nosnippet>3866</a>            array: <span class="prelude-val">Some</span>(<span class="string">"7"</span>.into()),
-<a href=#3867 id=3867 data-nosnippet>3867</a>            intent: <span class="prelude-val">None</span>,
-<a href=#3868 id=3868 data-nosnippet>3868</a>            feed: <span class="prelude-val">None</span>,
-<a href=#3869 id=3869 data-nosnippet>3869</a>            msselect: <span class="prelude-val">Some</span>(<span class="string">"ANTENNA1 == 4"</span>.into()),
-<a href=#3870 id=3870 data-nosnippet>3870</a>        })
-<a href=#3871 id=3871 data-nosnippet>3871</a>        .expect(<span class="string">"selection"</span>);
-<a href=#3872 id=3872 data-nosnippet>3872</a>        <span class="kw">let </span>taql = selection.to_taql();
-<a href=#3873 id=3873 data-nosnippet>3873</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"FIELD_ID IN [1,2]"</span>));
-<a href=#3874 id=3874 data-nosnippet>3874</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"DATA_DESC_ID IN [3]"</span>));
-<a href=#3875 id=3875 data-nosnippet>3875</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"ARRAY_ID IN [7]"</span>));
-<a href=#3876 id=3876 data-nosnippet>3876</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"TIME&gt;=10"</span>));
-<a href=#3877 id=3877 data-nosnippet>3877</a>
-<a href=#3878 id=3878 data-nosnippet>3878</a>        <span class="kw">let </span>bad_timerange = <span class="kw">super</span>::parse_time_range(<span class="string">"nope"</span>).unwrap_err();
-<a href=#3879 id=3879 data-nosnippet>3879</a>        <span class="macro">assert!</span>(bad_timerange.contains(<span class="string">"START:END"</span>));
-<a href=#3880 id=3880 data-nosnippet>3880</a>        <span class="kw">let </span>bad_bool = <span class="kw">super</span>::parse_bool_literal(<span class="string">"maybe"</span>).unwrap_err();
-<a href=#3881 id=3881 data-nosnippet>3881</a>        <span class="macro">assert!</span>(bad_bool.contains(<span class="string">"expected true or false"</span>));
-<a href=#3882 id=3882 data-nosnippet>3882</a>        <span class="kw">let </span>bad_interp = <span class="kw">super</span>::parse_interp_value(<span class="string">"--interp"</span>, <span class="string">"bogus"</span>).unwrap_err();
-<a href=#3883 id=3883 data-nosnippet>3883</a>        <span class="macro">assert!</span>(bad_interp.contains(<span class="string">"is unsupported"</span>));
-<a href=#3884 id=3884 data-nosnippet>3884</a>        <span class="macro">assert_eq!</span>(
-<a href=#3885 id=3885 data-nosnippet>3885</a>            <span class="kw">super</span>::parse_gainfield_value(<span class="string">"--gainfield"</span>, <span class="string">"nearest,0"</span>).unwrap(),
-<a href=#3886 id=3886 data-nosnippet>3886</a>            <span class="prelude-val">Some</span>(GainFieldSelector::FieldName(<span class="string">"nearest,0"</span>.into()))
-<a href=#3887 id=3887 data-nosnippet>3887</a>        );
-<a href=#3888 id=3888 data-nosnippet>3888</a>
-<a href=#3889 id=3889 data-nosnippet>3889</a>        <span class="kw">let </span>tempdir = TempDir::new().expect(<span class="string">"tempdir"</span>);
-<a href=#3890 id=3890 data-nosnippet>3890</a>        <span class="kw">let </span>output_path = tempdir.path().join(<span class="string">"report.txt"</span>);
-<a href=#3891 id=3891 data-nosnippet>3891</a>        fs::write(<span class="kw-2">&amp;</span>output_path, <span class="string">"old"</span>).expect(<span class="string">"seed output"</span>);
-<a href=#3892 id=3892 data-nosnippet>3892</a>        <span class="kw">let </span>error = <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">false</span>, <span class="string">"new output"</span>)
-<a href=#3893 id=3893 data-nosnippet>3893</a>            .expect_err(<span class="string">"refuse overwrite"</span>);
-<a href=#3894 id=3894 data-nosnippet>3894</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"refusing to overwrite existing output"</span>));
-<a href=#3895 id=3895 data-nosnippet>3895</a>        <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">true</span>, <span class="string">"new output"</span>).expect(<span class="string">"overwrite"</span>);
-<a href=#3896 id=3896 data-nosnippet>3896</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(<span class="kw-2">&amp;</span>output_path).unwrap(), <span class="string">"new output"</span>);
-<a href=#3897 id=3897 data-nosnippet>3897</a>
-<a href=#3898 id=3898 data-nosnippet>3898</a>        <span class="kw">let </span>json = <span class="kw">super</span>::render_json_task_result(
-<a href=#3899 id=3899 data-nosnippet>3899</a>            <span class="bool-val">true</span>,
-<a href=#3900 id=3900 data-nosnippet>3900</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::ManagedCalibrationOutput::Summary(Vec::new()),
-<a href=#3901 id=3901 data-nosnippet>3901</a>        )
-<a href=#3902 id=3902 data-nosnippet>3902</a>        .expect(<span class="string">"managed json"</span>);
-<a href=#3903 id=3903 data-nosnippet>3903</a>        <span class="macro">assert!</span>(json.contains(<span class="string">"\"kind\""</span>));
-<a href=#3904 id=3904 data-nosnippet>3904</a>    }
-<a href=#3905 id=3905 data-nosnippet>3905</a>
-<a href=#3906 id=3906 data-nosnippet>3906</a>    <span class="attr">#[test]
-<a href=#3907 id=3907 data-nosnippet>3907</a>    </span><span class="kw">fn </span>parse_args_reject_misaligned_calibration_metadata_lists() {
-<a href=#3908 id=3908 data-nosnippet>3908</a>        <span class="kw">let </span>error = parse_args([
-<a href=#3909 id=3909 data-nosnippet>3909</a>            <span class="string">"apply"</span>.into(),
-<a href=#3910 id=3910 data-nosnippet>3910</a>            <span class="string">"dataset.ms"</span>.into(),
-<a href=#3911 id=3911 data-nosnippet>3911</a>            <span class="string">"--gaintables"</span>.into(),
-<a href=#3912 id=3912 data-nosnippet>3912</a>            <span class="string">"phase.gcal,bandpass.bcal"</span>.into(),
-<a href=#3913 id=3913 data-nosnippet>3913</a>            <span class="string">"--gainfield"</span>.into(),
-<a href=#3914 id=3914 data-nosnippet>3914</a>            <span class="string">"nearest;0;1"</span>.into(),
-<a href=#3915 id=3915 data-nosnippet>3915</a>        ])
-<a href=#3916 id=3916 data-nosnippet>3916</a>        .unwrap_err();
-<a href=#3917 id=3917 data-nosnippet>3917</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"expected one value or one per table"</span>));
-<a href=#3918 id=3918 data-nosnippet>3918</a>    }
-<a href=#3919 id=3919 data-nosnippet>3919</a>
-<a href=#3920 id=3920 data-nosnippet>3920</a>    <span class="attr">#[test]
-<a href=#3921 id=3921 data-nosnippet>3921</a>    </span><span class="kw">fn </span>parse_args_rejects_invalid_selection_and_solver_literals() {
-<a href=#3922 id=3922 data-nosnippet>3922</a>        <span class="macro">assert_eq!</span>(
-<a href=#3923 id=3923 data-nosnippet>3923</a>            <span class="kw">super</span>::parse_gain_solve_interval(<span class="string">"0s"</span>).unwrap(),
-<a href=#3924 id=3924 data-nosnippet>3924</a>            GainSolveInterval::Seconds(<span class="number">0.0</span>)
-<a href=#3925 id=3925 data-nosnippet>3925</a>        );
-<a href=#3926 id=3926 data-nosnippet>3926</a>
-<a href=#3927 id=3927 data-nosnippet>3927</a>        <span class="kw">let </span>fluxscale_error = parse_args([
-<a href=#3928 id=3928 data-nosnippet>3928</a>            <span class="string">"fluxscale"</span>.into(),
-<a href=#3929 id=3929 data-nosnippet>3929</a>            <span class="string">"--in"</span>.into(),
-<a href=#3930 id=3930 data-nosnippet>3930</a>            <span class="string">"gain.gcal"</span>.into(),
-<a href=#3931 id=3931 data-nosnippet>3931</a>            <span class="string">"--out"</span>.into(),
-<a href=#3932 id=3932 data-nosnippet>3932</a>            <span class="string">"flux.gcal"</span>.into(),
-<a href=#3933 id=3933 data-nosnippet>3933</a>            <span class="string">"--reference"</span>.into(),
-<a href=#3934 id=3934 data-nosnippet>3934</a>            <span class="string">"3C286"</span>.into(),
-<a href=#3935 id=3935 data-nosnippet>3935</a>            <span class="string">"--refspwmap"</span>.into(),
-<a href=#3936 id=3936 data-nosnippet>3936</a>            <span class="string">"0,nope"</span>.into(),
-<a href=#3937 id=3937 data-nosnippet>3937</a>        ])
-<a href=#3938 id=3938 data-nosnippet>3938</a>        .unwrap_err();
-<a href=#3939 id=3939 data-nosnippet>3939</a>        <span class="macro">assert!</span>(fluxscale_error.contains(<span class="string">"parse --refspwmap"</span>));
-<a href=#3940 id=3940 data-nosnippet>3940</a>    }
-<a href=#3941 id=3941 data-nosnippet>3941</a>}
+<a href=#3749 id=3749 data-nosnippet>3749</a>                row_field_index_lookup_ns: <span class="number">2_500</span>,
+<a href=#3750 id=3750 data-nosnippet>3750</a>                ensure_corrected_data_ns: <span class="number">3_000</span>,
+<a href=#3751 id=3751 data-nosnippet>3751</a>                correlation_lookup_ns: <span class="number">4_000</span>,
+<a href=#3752 id=3752 data-nosnippet>3752</a>                calibration_load_ns: <span class="number">5_000</span>,
+<a href=#3753 id=3753 data-nosnippet>3753</a>                row_compute_ns: <span class="number">6_000</span>,
+<a href=#3754 id=3754 data-nosnippet>3754</a>                row_writeback_ns: <span class="number">7_000</span>,
+<a href=#3755 id=3755 data-nosnippet>3755</a>                save_ns: <span class="number">8_000</span>,
+<a href=#3756 id=3756 data-nosnippet>3756</a>                total_ns: <span class="number">3_500_000</span>,
+<a href=#3757 id=3757 data-nosnippet>3757</a>            },
+<a href=#3758 id=3758 data-nosnippet>3758</a>        };
+<a href=#3759 id=3759 data-nosnippet>3759</a>        <span class="kw">let </span>apply_text = <span class="kw">super</span>::render_apply_report_text(<span class="kw-2">&amp;</span>report);
+<a href=#3760 id=3760 data-nosnippet>3760</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"Calibration Apply Report: dataset.ms"</span>));
+<a href=#3761 id=3761 data-nosnippet>3761</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"created_corrected_data_column=true"</span>));
+<a href=#3762 id=3762 data-nosnippet>3762</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"1.500ms"</span>));
+<a href=#3763 id=3763 data-nosnippet>3763</a>        <span class="macro">assert!</span>(apply_text.contains(<span class="string">"gainfield=4 Some(\"calibrator\")"</span>));
+<a href=#3764 id=3764 data-nosnippet>3764</a>    }
+<a href=#3765 id=3765 data-nosnippet>3765</a>
+<a href=#3766 id=3766 data-nosnippet>3766</a>    <span class="attr">#[test]
+<a href=#3767 id=3767 data-nosnippet>3767</a>    </span><span class="kw">fn </span>render_stats_and_solver_outputs_include_grouped_details() {
+<a href=#3768 id=3768 data-nosnippet>3768</a>        <span class="kw">let </span>report = CalibrationStatsReport {
+<a href=#3769 id=3769 data-nosnippet>3769</a>            path: PathBuf::from(<span class="string">"phase.gcal"</span>),
+<a href=#3770 id=3770 data-nosnippet>3770</a>            axis: CalibrationStatsAxis::Amplitude,
+<a href=#3771 id=3771 data-nosnippet>3771</a>            datacolumn: <span class="prelude-val">Some</span>(<span class="string">"CPARAM"</span>.into()),
+<a href=#3772 id=3772 data-nosnippet>3772</a>            row_count: <span class="number">12</span>,
+<a href=#3773 id=3773 data-nosnippet>3773</a>            global: sample_stats(),
+<a href=#3774 id=3774 data-nosnippet>3774</a>            by_field_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
+<a href=#3775 id=3775 data-nosnippet>3775</a>                key: <span class="number">3</span>,
+<a href=#3776 id=3776 data-nosnippet>3776</a>                stats: sample_stats(),
+<a href=#3777 id=3777 data-nosnippet>3777</a>            }],
+<a href=#3778 id=3778 data-nosnippet>3778</a>            by_spectral_window_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
+<a href=#3779 id=3779 data-nosnippet>3779</a>                key: <span class="number">1</span>,
+<a href=#3780 id=3780 data-nosnippet>3780</a>                stats: sample_stats(),
+<a href=#3781 id=3781 data-nosnippet>3781</a>            }],
+<a href=#3782 id=3782 data-nosnippet>3782</a>            by_antenna1_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
+<a href=#3783 id=3783 data-nosnippet>3783</a>                key: <span class="number">0</span>,
+<a href=#3784 id=3784 data-nosnippet>3784</a>                stats: sample_stats(),
+<a href=#3785 id=3785 data-nosnippet>3785</a>            }],
+<a href=#3786 id=3786 data-nosnippet>3786</a>            by_observation_id: <span class="macro">vec!</span>[CalibrationIndexedStats {
+<a href=#3787 id=3787 data-nosnippet>3787</a>                key: <span class="number">7</span>,
+<a href=#3788 id=3788 data-nosnippet>3788</a>                stats: sample_stats(),
+<a href=#3789 id=3789 data-nosnippet>3789</a>            }],
+<a href=#3790 id=3790 data-nosnippet>3790</a>        };
+<a href=#3791 id=3791 data-nosnippet>3791</a>        <span class="kw">let </span>stats_text = <span class="kw">super</span>::render_stats_text(<span class="kw-2">&amp;</span>report);
+<a href=#3792 id=3792 data-nosnippet>3792</a>        <span class="macro">assert!</span>(stats_text.contains(<span class="string">"Calibration Stats: phase.gcal"</span>));
+<a href=#3793 id=3793 data-nosnippet>3793</a>        <span class="macro">assert!</span>(stats_text.contains(<span class="string">"grouped_by_field_id"</span>));
+<a href=#3794 id=3794 data-nosnippet>3794</a>        <span class="macro">assert!</span>(stats_text.contains(<span class="string">"npts=10 flagged_npts=2 total_npts=12"</span>));
+<a href=#3795 id=3795 data-nosnippet>3795</a>
+<a href=#3796 id=3796 data-nosnippet>3796</a>        <span class="kw">let </span>gain_text = <span class="kw">super</span>::render_gain_solve_report_text(<span class="kw-2">&amp;</span>GainSolveReport {
+<a href=#3797 id=3797 data-nosnippet>3797</a>            output_table: PathBuf::from(<span class="string">"phase.gcal"</span>),
+<a href=#3798 id=3798 data-nosnippet>3798</a>            gain_type: GainType::G,
+<a href=#3799 id=3799 data-nosnippet>3799</a>            refant_antenna_id: <span class="number">3</span>,
+<a href=#3800 id=3800 data-nosnippet>3800</a>            field_ids: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">1</span>],
+<a href=#3801 id=3801 data-nosnippet>3801</a>            spectral_window_ids: <span class="macro">vec!</span>[<span class="number">2</span>],
+<a href=#3802 id=3802 data-nosnippet>3802</a>            solution_row_count: <span class="number">24</span>,
+<a href=#3803 id=3803 data-nosnippet>3803</a>        });
+<a href=#3804 id=3804 data-nosnippet>3804</a>        <span class="macro">assert!</span>(gain_text.contains(<span class="string">"Gain Solve Report: phase.gcal"</span>));
+<a href=#3805 id=3805 data-nosnippet>3805</a>        <span class="macro">assert!</span>(gain_text.contains(<span class="string">"solution_rows=24"</span>));
+<a href=#3806 id=3806 data-nosnippet>3806</a>
+<a href=#3807 id=3807 data-nosnippet>3807</a>        <span class="kw">let </span>bandpass_text = <span class="kw">super</span>::render_bandpass_solve_report_text(<span class="kw-2">&amp;</span>BandpassSolveReport {
+<a href=#3808 id=3808 data-nosnippet>3808</a>            output_table: PathBuf::from(<span class="string">"bandpass.bcal"</span>),
+<a href=#3809 id=3809 data-nosnippet>3809</a>            table_subtype: <span class="string">"B Jones"</span>.into(),
+<a href=#3810 id=3810 data-nosnippet>3810</a>            refant_antenna_id: <span class="number">4</span>,
+<a href=#3811 id=3811 data-nosnippet>3811</a>            field_ids: <span class="macro">vec!</span>[<span class="number">0</span>],
+<a href=#3812 id=3812 data-nosnippet>3812</a>            spectral_window_ids: <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>],
+<a href=#3813 id=3813 data-nosnippet>3813</a>            solution_row_count: <span class="number">8</span>,
+<a href=#3814 id=3814 data-nosnippet>3814</a>            channel_count: <span class="number">64</span>,
+<a href=#3815 id=3815 data-nosnippet>3815</a>        });
+<a href=#3816 id=3816 data-nosnippet>3816</a>        <span class="macro">assert!</span>(bandpass_text.contains(<span class="string">"Bandpass Solve Report: bandpass.bcal"</span>));
+<a href=#3817 id=3817 data-nosnippet>3817</a>        <span class="macro">assert!</span>(bandpass_text.contains(<span class="string">"channel_count=64"</span>));
+<a href=#3818 id=3818 data-nosnippet>3818</a>
+<a href=#3819 id=3819 data-nosnippet>3819</a>        <span class="kw">let </span>fluxscale_text = <span class="kw">super</span>::render_fluxscale_report_text(<span class="kw-2">&amp;</span>FluxScaleReport {
+<a href=#3820 id=3820 data-nosnippet>3820</a>            output_table: PathBuf::from(<span class="string">"fluxscale.gcal"</span>),
+<a href=#3821 id=3821 data-nosnippet>3821</a>            spw_ids: <span class="macro">vec!</span>[<span class="number">0</span>],
+<a href=#3822 id=3822 data-nosnippet>3822</a>            spw_names: <span class="macro">vec!</span>[<span class="string">"SPW0"</span>.into()],
+<a href=#3823 id=3823 data-nosnippet>3823</a>            frequencies_hz: <span class="macro">vec!</span>[<span class="number">1.42e9</span>],
+<a href=#3824 id=3824 data-nosnippet>3824</a>            fields: BTreeMap::from([(
+<a href=#3825 id=3825 data-nosnippet>3825</a>                <span class="number">5</span>,
+<a href=#3826 id=3826 data-nosnippet>3826</a>                FluxScaleFieldResult {
+<a href=#3827 id=3827 data-nosnippet>3827</a>                    field_name: <span class="string">"target"</span>.into(),
+<a href=#3828 id=3828 data-nosnippet>3828</a>                    spw_results: BTreeMap::from([(
+<a href=#3829 id=3829 data-nosnippet>3829</a>                        <span class="number">0</span>,
+<a href=#3830 id=3830 data-nosnippet>3830</a>                        FluxScaleSpwResult {
+<a href=#3831 id=3831 data-nosnippet>3831</a>                            fluxd: [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#3832 id=3832 data-nosnippet>3832</a>                            fluxd_err: [<span class="number">0.1</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#3833 id=3833 data-nosnippet>3833</a>                            num_sol: [<span class="number">4.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#3834 id=3834 data-nosnippet>3834</a>                        },
+<a href=#3835 id=3835 data-nosnippet>3835</a>                    )]),
+<a href=#3836 id=3836 data-nosnippet>3836</a>                    fit_ref_frequency_hz: <span class="number">1.42e9</span>,
+<a href=#3837 id=3837 data-nosnippet>3837</a>                    fit_fluxd: <span class="number">1.0</span>,
+<a href=#3838 id=3838 data-nosnippet>3838</a>                    fit_fluxd_err: <span class="number">0.1</span>,
+<a href=#3839 id=3839 data-nosnippet>3839</a>                    spidx: <span class="macro">vec!</span>[<span class="number">0.0</span>],
+<a href=#3840 id=3840 data-nosnippet>3840</a>                    spidx_err: <span class="macro">vec!</span>[<span class="number">0.0</span>],
+<a href=#3841 id=3841 data-nosnippet>3841</a>                    covar_mat: <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">1.0</span>]],
+<a href=#3842 id=3842 data-nosnippet>3842</a>                },
+<a href=#3843 id=3843 data-nosnippet>3843</a>            )]),
+<a href=#3844 id=3844 data-nosnippet>3844</a>        });
+<a href=#3845 id=3845 data-nosnippet>3845</a>        <span class="macro">assert!</span>(fluxscale_text.contains(<span class="string">"FluxScale Report: fluxscale.gcal"</span>));
+<a href=#3846 id=3846 data-nosnippet>3846</a>        <span class="macro">assert!</span>(fluxscale_text.contains(<span class="string">"field 5 (target)"</span>));
+<a href=#3847 id=3847 data-nosnippet>3847</a>        <span class="macro">assert!</span>(fluxscale_text.contains(<span class="string">"fluxd=[1.0, 0.0, 0.0, 0.0]"</span>));
+<a href=#3848 id=3848 data-nosnippet>3848</a>    }
+<a href=#3849 id=3849 data-nosnippet>3849</a>
+<a href=#3850 id=3850 data-nosnippet>3850</a>    <span class="attr">#[test]
+<a href=#3851 id=3851 data-nosnippet>3851</a>    </span><span class="kw">fn </span>helper_parsers_and_writers_cover_error_paths() {
+<a href=#3852 id=3852 data-nosnippet>3852</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">999</span>), <span class="string">"999ns"</span>);
+<a href=#3853 id=3853 data-nosnippet>3853</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">12_500</span>), <span class="string">"12.500us"</span>);
+<a href=#3854 id=3854 data-nosnippet>3854</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">1_250_000</span>), <span class="string">"1.250ms"</span>);
+<a href=#3855 id=3855 data-nosnippet>3855</a>        <span class="macro">assert_eq!</span>(<span class="kw">super</span>::format_duration_ns(<span class="number">1_500_000_000</span>), <span class="string">"1.500s"</span>);
+<a href=#3856 id=3856 data-nosnippet>3856</a>
+<a href=#3857 id=3857 data-nosnippet>3857</a>        <span class="kw">let </span>selection = <span class="kw">super</span>::build_selection(<span class="kw-2">&amp;</span><span class="kw">super</span>::SelectionOptions {
+<a href=#3858 id=3858 data-nosnippet>3858</a>            selectdata: <span class="bool-val">true</span>,
+<a href=#3859 id=3859 data-nosnippet>3859</a>            field: <span class="prelude-val">Some</span>(<span class="string">"1,2"</span>.into()),
+<a href=#3860 id=3860 data-nosnippet>3860</a>            spw: <span class="prelude-val">Some</span>(<span class="string">"3"</span>.into()),
+<a href=#3861 id=3861 data-nosnippet>3861</a>            timerange: <span class="prelude-val">Some</span>(<span class="string">"10.0:20.0"</span>.into()),
+<a href=#3862 id=3862 data-nosnippet>3862</a>            uvrange: <span class="prelude-val">None</span>,
+<a href=#3863 id=3863 data-nosnippet>3863</a>            antenna: <span class="prelude-val">Some</span>(<span class="string">"4"</span>.into()),
+<a href=#3864 id=3864 data-nosnippet>3864</a>            scan: <span class="prelude-val">Some</span>(<span class="string">"5"</span>.into()),
+<a href=#3865 id=3865 data-nosnippet>3865</a>            correlation: <span class="prelude-val">None</span>,
+<a href=#3866 id=3866 data-nosnippet>3866</a>            observation: <span class="prelude-val">Some</span>(<span class="string">"6"</span>.into()),
+<a href=#3867 id=3867 data-nosnippet>3867</a>            array: <span class="prelude-val">Some</span>(<span class="string">"7"</span>.into()),
+<a href=#3868 id=3868 data-nosnippet>3868</a>            intent: <span class="prelude-val">None</span>,
+<a href=#3869 id=3869 data-nosnippet>3869</a>            feed: <span class="prelude-val">None</span>,
+<a href=#3870 id=3870 data-nosnippet>3870</a>            msselect: <span class="prelude-val">Some</span>(<span class="string">"ANTENNA1 == 4"</span>.into()),
+<a href=#3871 id=3871 data-nosnippet>3871</a>        })
+<a href=#3872 id=3872 data-nosnippet>3872</a>        .expect(<span class="string">"selection"</span>);
+<a href=#3873 id=3873 data-nosnippet>3873</a>        <span class="kw">let </span>taql = selection.to_taql();
+<a href=#3874 id=3874 data-nosnippet>3874</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"FIELD_ID IN [1,2]"</span>));
+<a href=#3875 id=3875 data-nosnippet>3875</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"DATA_DESC_ID IN [3]"</span>));
+<a href=#3876 id=3876 data-nosnippet>3876</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"ARRAY_ID IN [7]"</span>));
+<a href=#3877 id=3877 data-nosnippet>3877</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"TIME&gt;=10"</span>));
+<a href=#3878 id=3878 data-nosnippet>3878</a>
+<a href=#3879 id=3879 data-nosnippet>3879</a>        <span class="kw">let </span>bad_timerange = <span class="kw">super</span>::parse_time_range(<span class="string">"nope"</span>).unwrap_err();
+<a href=#3880 id=3880 data-nosnippet>3880</a>        <span class="macro">assert!</span>(bad_timerange.contains(<span class="string">"START:END"</span>));
+<a href=#3881 id=3881 data-nosnippet>3881</a>        <span class="kw">let </span>bad_bool = <span class="kw">super</span>::parse_bool_literal(<span class="string">"maybe"</span>).unwrap_err();
+<a href=#3882 id=3882 data-nosnippet>3882</a>        <span class="macro">assert!</span>(bad_bool.contains(<span class="string">"expected true or false"</span>));
+<a href=#3883 id=3883 data-nosnippet>3883</a>        <span class="kw">let </span>bad_interp = <span class="kw">super</span>::parse_interp_value(<span class="string">"--interp"</span>, <span class="string">"bogus"</span>).unwrap_err();
+<a href=#3884 id=3884 data-nosnippet>3884</a>        <span class="macro">assert!</span>(bad_interp.contains(<span class="string">"is unsupported"</span>));
+<a href=#3885 id=3885 data-nosnippet>3885</a>        <span class="macro">assert_eq!</span>(
+<a href=#3886 id=3886 data-nosnippet>3886</a>            <span class="kw">super</span>::parse_gainfield_value(<span class="string">"--gainfield"</span>, <span class="string">"nearest,0"</span>).unwrap(),
+<a href=#3887 id=3887 data-nosnippet>3887</a>            <span class="prelude-val">Some</span>(GainFieldSelector::FieldName(<span class="string">"nearest,0"</span>.into()))
+<a href=#3888 id=3888 data-nosnippet>3888</a>        );
+<a href=#3889 id=3889 data-nosnippet>3889</a>
+<a href=#3890 id=3890 data-nosnippet>3890</a>        <span class="kw">let </span>tempdir = TempDir::new().expect(<span class="string">"tempdir"</span>);
+<a href=#3891 id=3891 data-nosnippet>3891</a>        <span class="kw">let </span>output_path = tempdir.path().join(<span class="string">"report.txt"</span>);
+<a href=#3892 id=3892 data-nosnippet>3892</a>        fs::write(<span class="kw-2">&amp;</span>output_path, <span class="string">"old"</span>).expect(<span class="string">"seed output"</span>);
+<a href=#3893 id=3893 data-nosnippet>3893</a>        <span class="kw">let </span>error = <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">false</span>, <span class="string">"new output"</span>)
+<a href=#3894 id=3894 data-nosnippet>3894</a>            .expect_err(<span class="string">"refuse overwrite"</span>);
+<a href=#3895 id=3895 data-nosnippet>3895</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"refusing to overwrite existing output"</span>));
+<a href=#3896 id=3896 data-nosnippet>3896</a>        <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">true</span>, <span class="string">"new output"</span>).expect(<span class="string">"overwrite"</span>);
+<a href=#3897 id=3897 data-nosnippet>3897</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(<span class="kw-2">&amp;</span>output_path).unwrap(), <span class="string">"new output"</span>);
+<a href=#3898 id=3898 data-nosnippet>3898</a>
+<a href=#3899 id=3899 data-nosnippet>3899</a>        <span class="kw">let </span>json = <span class="kw">super</span>::render_json_task_result(
+<a href=#3900 id=3900 data-nosnippet>3900</a>            <span class="bool-val">true</span>,
+<a href=#3901 id=3901 data-nosnippet>3901</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::ManagedCalibrationOutput::Summary(Vec::new()),
+<a href=#3902 id=3902 data-nosnippet>3902</a>        )
+<a href=#3903 id=3903 data-nosnippet>3903</a>        .expect(<span class="string">"managed json"</span>);
+<a href=#3904 id=3904 data-nosnippet>3904</a>        <span class="macro">assert!</span>(json.contains(<span class="string">"\"kind\""</span>));
+<a href=#3905 id=3905 data-nosnippet>3905</a>    }
+<a href=#3906 id=3906 data-nosnippet>3906</a>
+<a href=#3907 id=3907 data-nosnippet>3907</a>    <span class="attr">#[test]
+<a href=#3908 id=3908 data-nosnippet>3908</a>    </span><span class="kw">fn </span>parse_args_reject_misaligned_calibration_metadata_lists() {
+<a href=#3909 id=3909 data-nosnippet>3909</a>        <span class="kw">let </span>error = parse_args([
+<a href=#3910 id=3910 data-nosnippet>3910</a>            <span class="string">"apply"</span>.into(),
+<a href=#3911 id=3911 data-nosnippet>3911</a>            <span class="string">"dataset.ms"</span>.into(),
+<a href=#3912 id=3912 data-nosnippet>3912</a>            <span class="string">"--gaintables"</span>.into(),
+<a href=#3913 id=3913 data-nosnippet>3913</a>            <span class="string">"phase.gcal,bandpass.bcal"</span>.into(),
+<a href=#3914 id=3914 data-nosnippet>3914</a>            <span class="string">"--gainfield"</span>.into(),
+<a href=#3915 id=3915 data-nosnippet>3915</a>            <span class="string">"nearest;0;1"</span>.into(),
+<a href=#3916 id=3916 data-nosnippet>3916</a>        ])
+<a href=#3917 id=3917 data-nosnippet>3917</a>        .unwrap_err();
+<a href=#3918 id=3918 data-nosnippet>3918</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"expected one value or one per table"</span>));
+<a href=#3919 id=3919 data-nosnippet>3919</a>    }
+<a href=#3920 id=3920 data-nosnippet>3920</a>
+<a href=#3921 id=3921 data-nosnippet>3921</a>    <span class="attr">#[test]
+<a href=#3922 id=3922 data-nosnippet>3922</a>    </span><span class="kw">fn </span>parse_args_rejects_invalid_selection_and_solver_literals() {
+<a href=#3923 id=3923 data-nosnippet>3923</a>        <span class="macro">assert_eq!</span>(
+<a href=#3924 id=3924 data-nosnippet>3924</a>            <span class="kw">super</span>::parse_gain_solve_interval(<span class="string">"0s"</span>).unwrap(),
+<a href=#3925 id=3925 data-nosnippet>3925</a>            GainSolveInterval::Seconds(<span class="number">0.0</span>)
+<a href=#3926 id=3926 data-nosnippet>3926</a>        );
+<a href=#3927 id=3927 data-nosnippet>3927</a>
+<a href=#3928 id=3928 data-nosnippet>3928</a>        <span class="kw">let </span>fluxscale_error = parse_args([
+<a href=#3929 id=3929 data-nosnippet>3929</a>            <span class="string">"fluxscale"</span>.into(),
+<a href=#3930 id=3930 data-nosnippet>3930</a>            <span class="string">"--in"</span>.into(),
+<a href=#3931 id=3931 data-nosnippet>3931</a>            <span class="string">"gain.gcal"</span>.into(),
+<a href=#3932 id=3932 data-nosnippet>3932</a>            <span class="string">"--out"</span>.into(),
+<a href=#3933 id=3933 data-nosnippet>3933</a>            <span class="string">"flux.gcal"</span>.into(),
+<a href=#3934 id=3934 data-nosnippet>3934</a>            <span class="string">"--reference"</span>.into(),
+<a href=#3935 id=3935 data-nosnippet>3935</a>            <span class="string">"3C286"</span>.into(),
+<a href=#3936 id=3936 data-nosnippet>3936</a>            <span class="string">"--refspwmap"</span>.into(),
+<a href=#3937 id=3937 data-nosnippet>3937</a>            <span class="string">"0,nope"</span>.into(),
+<a href=#3938 id=3938 data-nosnippet>3938</a>        ])
+<a href=#3939 id=3939 data-nosnippet>3939</a>        .unwrap_err();
+<a href=#3940 id=3940 data-nosnippet>3940</a>        <span class="macro">assert!</span>(fluxscale_error.contains(<span class="string">"parse --refspwmap"</span>));
+<a href=#3941 id=3941 data-nosnippet>3941</a>    }
+<a href=#3942 id=3942 data-nosnippet>3942</a>}
 </code></pre></div></section></main></body></html>
