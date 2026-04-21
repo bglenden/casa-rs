@@ -63,13 +63,13 @@ impl TilePixel for Complex64 {
     const SWAP_SIZE: usize = 8;
 }
 
-use super::StorageError;
 use super::canonical::*;
 use super::data_type::CasacoreDataType;
 use super::table_control::{
     ColumnDescContents, DataManagerEntry, read_iposition, read_record, write_iposition,
     write_record,
 };
+use super::{StorageError, StorageProfiler};
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -1625,7 +1625,14 @@ pub(crate) fn save_tiled_columns(
     default_tile_shape: Option<&[usize]>,
     dm_name: &str,
 ) -> Result<(), StorageError> {
-    match dm_type_name {
+    let mut profiler = StorageProfiler::start(format!(
+        "tiled::save_tiled_columns dm_seq={} type={} cols={} rows={}",
+        dm_seq_nr,
+        dm_type_name,
+        all_col_descs.len(),
+        rows.len()
+    ));
+    let result = match dm_type_name {
         "TiledColumnStMan" => save_tiled_column_stman(
             table_path,
             dm_seq_nr,
@@ -1656,7 +1663,549 @@ pub(crate) fn save_tiled_columns(
         other => Err(StorageError::FormatMismatch(format!(
             "unknown tiled DM type: {other}"
         ))),
+    };
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("dispatch_complete");
     }
+    result
+}
+
+pub(crate) struct SingleColumnTiledSaveOptions<'a> {
+    pub(crate) dm_type_name: &'a str,
+    pub(crate) big_endian: bool,
+    pub(crate) default_tile_shape: Option<&'a [usize]>,
+    pub(crate) dm_name: &'a str,
+}
+
+pub(crate) fn save_tiled_single_column_values(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_desc: &ColumnDescContents,
+    values: &[Option<&Value>],
+    options: SingleColumnTiledSaveOptions<'_>,
+) -> Result<(), StorageError> {
+    match options.dm_type_name {
+        "TiledColumnStMan" => save_single_column_tiled_column_stman(
+            table_path,
+            dm_seq_nr,
+            col_desc,
+            values,
+            options.big_endian,
+            options.default_tile_shape,
+            options.dm_name,
+        ),
+        "TiledShapeStMan" => save_single_column_tiled_shape_stman(
+            table_path,
+            dm_seq_nr,
+            col_desc,
+            values,
+            options.big_endian,
+            options.default_tile_shape,
+            options.dm_name,
+        ),
+        _ => {
+            let rows: Vec<RecordValue> = values
+                .iter()
+                .map(|value| match value {
+                    Some(value) => RecordValue::new(vec![RecordField::new(
+                        col_desc.col_name.clone(),
+                        (*value).clone(),
+                    )]),
+                    None => RecordValue::default(),
+                })
+                .collect();
+            save_tiled_columns(
+                table_path,
+                dm_seq_nr,
+                options.dm_type_name,
+                std::slice::from_ref(col_desc),
+                &rows,
+                options.big_endian,
+                options.default_tile_shape,
+                options.dm_name,
+            )
+        }
+    }
+}
+
+fn format_shape(shape: &[usize]) -> String {
+    let mut out = String::from("[");
+    for (idx, value) in shape.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&value.to_string());
+    }
+    out.push(']');
+    out
+}
+
+fn clamp_tile_shape_dims(tile_shape: &mut [usize]) {
+    for dim in tile_shape {
+        *dim = (*dim).max(1);
+    }
+}
+
+fn encode_column_cube_values(
+    values: &[Option<&Value>],
+    cube_shape: &[usize],
+    cell_nelem: usize,
+    elem_size: usize,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    let cube_nelem: usize = cube_shape.iter().product();
+    let mut cube_bytes = vec![0u8; cube_nelem * elem_size];
+    for (row_idx, value) in values.iter().enumerate() {
+        if let Some(value) = value {
+            let (encoded, _) = encode_array_value(value, big_endian)?;
+            let start = row_idx * cell_nelem * elem_size;
+            let end = start + cell_nelem * elem_size;
+            if end <= cube_bytes.len() && encoded.len() == cell_nelem * elem_size {
+                cube_bytes[start..end].copy_from_slice(&encoded);
+            }
+        }
+    }
+    Ok(cube_bytes)
+}
+
+fn save_single_column_tiled_column_stman(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_desc: &ColumnDescContents,
+    values: &[Option<&Value>],
+    big_endian: bool,
+    user_tile_shape: Option<&[usize]>,
+    dm_name: &str,
+) -> Result<(), StorageError> {
+    let mut profiler = StorageProfiler::start(format!(
+        "tiled::column dm_seq={} cols=1 rows={}",
+        dm_seq_nr,
+        values.len()
+    ));
+    let nrrow = values.len();
+    if nrrow == 0 {
+        let header = TiledStManHeader {
+            big_endian,
+            seq_nr: dm_seq_nr,
+            nrrow: 0,
+            col_data_types: vec![],
+            hypercolumn_name: dm_name.to_string(),
+            max_cache_size: 0,
+            nrdim: 0,
+            files: vec![],
+            cubes: vec![],
+        };
+        let variant = TiledVariant::Column {
+            default_tile_shape: vec![],
+        };
+        let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+        return write_tiled_header(&header_path, &variant, &header);
+    }
+
+    let cell_shape: Vec<usize> = col_desc.shape.iter().map(|&s| s as usize).collect();
+    let cell_ndim = cell_shape.len();
+
+    let mut cube_shape = cell_shape.clone();
+    cube_shape.push(nrrow);
+
+    let mut tile_shape = if let Some(ts) = user_tile_shape {
+        ts.to_vec()
+    } else {
+        default_tile_shape_for(&cell_shape, nrrow)
+    };
+    if tile_shape.len() == cell_ndim {
+        let default_row_tile = nrrow.clamp(1, 32);
+        tile_shape.push(default_row_tile);
+    }
+    clamp_tile_shape_dims(&mut tile_shape);
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail(
+            "layout",
+            Some(format!(
+                "cube_shape={} tile_shape={}",
+                format_shape(&cube_shape),
+                format_shape(&tile_shape)
+            )),
+        );
+    }
+
+    let col_data_type =
+        CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
+    let elem_size = tile_element_size(col_data_type);
+    let cell_nelem: usize = cell_shape.iter().product();
+
+    let (bucket_size, col_offsets) =
+        compute_tile_layout(std::slice::from_ref(&col_data_type), &tile_shape);
+    let nrdim = (cell_ndim + 1) as u32;
+    let tiles_per_dim: Vec<usize> = (0..nrdim as usize)
+        .map(|d| cube_shape[d].div_ceil(tile_shape[d]))
+        .collect();
+    let nr_tiles: usize = tiles_per_dim.iter().product();
+    let nrpixels: usize = tile_shape.iter().product();
+
+    let cube_bytes =
+        encode_column_cube_values(values, &cube_shape, cell_nelem, elem_size, big_endian)?;
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail(
+            "encode_cube_data",
+            Some(format!(
+                "tiles={} bucket_size={} nrpixels={}",
+                nr_tiles, bucket_size, nrpixels
+            )),
+        );
+    }
+
+    let mut tsm_data = vec![0u8; nr_tiles * bucket_size];
+    for tile_idx in 0..nr_tiles {
+        let tile_pos = linear_to_nd(tile_idx, &tiles_per_dim);
+        let cube_start: Vec<usize> = (0..nrdim as usize)
+            .map(|d| tile_pos[d] * tile_shape[d])
+            .collect();
+        let actual_extent: Vec<usize> = (0..nrdim as usize)
+            .map(|d| std::cmp::min(tile_shape[d], cube_shape[d] - cube_start[d]))
+            .collect();
+
+        let mut tile_col = vec![0u8; nrpixels * elem_size];
+        copy_cube_to_tile(
+            &cube_bytes,
+            &cube_shape,
+            &mut tile_col,
+            &tile_shape,
+            &cube_start,
+            &actual_extent,
+            elem_size,
+        );
+
+        let dst_start = tile_idx * bucket_size + col_offsets[0];
+        write_tile_storage(
+            &mut tsm_data[dst_start..dst_start + tile_storage_bytes(col_data_type, nrpixels)],
+            col_data_type,
+            &tile_col,
+            nrpixels,
+        );
+    }
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("assemble_tiles");
+    }
+
+    let tsm_path = tsm_data_path(table_path, dm_seq_nr, 0);
+    std::fs::write(&tsm_path, &tsm_data)?;
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("write_tsm_file");
+    }
+
+    let default_ts_i32: Vec<i32> = tile_shape.iter().map(|&v| v as i32).collect();
+    let header = TiledStManHeader {
+        big_endian,
+        seq_nr: dm_seq_nr,
+        nrrow: nrrow as u64,
+        col_data_types: vec![col_data_type],
+        hypercolumn_name: dm_name.to_string(),
+        max_cache_size: 0,
+        nrdim,
+        files: vec![Some(TsmFileInfo {
+            seq_nr: 0,
+            length: tsm_data.len() as i64,
+        })],
+        cubes: vec![TsmCubeInfo {
+            values: RecordValue::default(),
+            extensible: true,
+            cube_shape,
+            tile_shape,
+            file_seq_nr: 0,
+            file_offset: 0,
+        }],
+    };
+    let variant = TiledVariant::Column {
+        default_tile_shape: default_ts_i32,
+    };
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    write_tiled_header(&header_path, &variant, &header)?;
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("write_header");
+    }
+
+    Ok(())
+}
+
+fn save_single_column_tiled_shape_stman(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_desc: &ColumnDescContents,
+    values: &[Option<&Value>],
+    big_endian: bool,
+    user_tile_shape: Option<&[usize]>,
+    dm_name: &str,
+) -> Result<(), StorageError> {
+    let mut profiler = StorageProfiler::start(format!(
+        "tiled::shape dm_seq={} cols=1 rows={}",
+        dm_seq_nr,
+        values.len()
+    ));
+    let nrrow = values.len();
+    let col_data_type =
+        CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
+
+    if nrrow == 0 {
+        let header = TiledStManHeader {
+            big_endian,
+            seq_nr: dm_seq_nr,
+            nrrow: 0,
+            col_data_types: vec![col_data_type],
+            hypercolumn_name: dm_name.to_string(),
+            max_cache_size: 0,
+            nrdim: (col_desc.nrdim + 1) as u32,
+            files: vec![],
+            cubes: vec![TsmCubeInfo {
+                values: RecordValue::default(),
+                extensible: false,
+                cube_shape: vec![],
+                tile_shape: vec![],
+                file_seq_nr: -1,
+                file_offset: 0,
+            }],
+        };
+        let variant = TiledVariant::Shape {
+            default_tile_shape: vec![],
+            nr_used_row_map: 0,
+            row_map: vec![],
+            cube_map: vec![],
+            pos_map: vec![],
+        };
+        let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+        return write_tiled_header(&header_path, &variant, &header);
+    }
+
+    let mut shape_groups: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
+    for (row_idx, value) in values.iter().enumerate() {
+        let shape = if let Some(Value::Array(av)) = value {
+            array_shape(av)
+        } else {
+            vec![]
+        };
+        if let Some(group) = shape_groups
+            .iter_mut()
+            .find(|(candidate, _)| *candidate == shape)
+        {
+            group.1.push(row_idx);
+        } else {
+            shape_groups.push((shape, vec![row_idx]));
+        }
+    }
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail(
+            "group_shapes",
+            Some(format!("shape_groups={}", shape_groups.len())),
+        );
+    }
+
+    let mut cubes = vec![TsmCubeInfo {
+        values: RecordValue::default(),
+        extensible: false,
+        cube_shape: vec![],
+        tile_shape: vec![],
+        file_seq_nr: -1,
+        file_offset: 0,
+    }];
+    let mut all_files = Vec::new();
+    let mut row_map_vec = Vec::new();
+    let mut cube_map_vec = Vec::new();
+    let mut pos_map_vec = Vec::new();
+
+    let nrdim = if col_desc.nrdim > 0 {
+        (col_desc.nrdim + 1) as u32
+    } else {
+        2
+    };
+
+    for (group_idx, (cell_shape, group_rows)) in shape_groups.iter().enumerate() {
+        let cube_idx = group_idx + 1;
+        let n_in_cube = group_rows.len();
+
+        let mut cube_shape = cell_shape.clone();
+        cube_shape.push(n_in_cube);
+
+        let mut tile_shape = if let Some(ts) = user_tile_shape {
+            ts.to_vec()
+        } else {
+            default_tile_shape_for(cell_shape, n_in_cube)
+        };
+        if tile_shape.len() == cell_shape.len() {
+            let default_row_tile = n_in_cube.clamp(1, 32);
+            tile_shape.push(default_row_tile);
+        }
+        clamp_tile_shape_dims(&mut tile_shape);
+
+        let file_seq_nr = all_files.len() as u32;
+        let (bucket_size, col_offsets) =
+            compute_tile_layout(std::slice::from_ref(&col_data_type), &tile_shape);
+        let tiles_per_dim: Vec<usize> = cube_shape
+            .iter()
+            .zip(tile_shape.iter())
+            .map(|(&cs, &ts)| cs.div_ceil(ts))
+            .collect();
+        let nr_tiles: usize = tiles_per_dim.iter().product();
+        let nrpixels: usize = tile_shape.iter().product();
+        let cell_nelem: usize = cell_shape.iter().product();
+        let elem_size = tile_element_size(col_data_type);
+
+        let group_values: Vec<Option<&Value>> =
+            group_rows.iter().map(|&row_idx| values[row_idx]).collect();
+        let cube_bytes = encode_column_cube_values(
+            &group_values,
+            &cube_shape,
+            cell_nelem,
+            elem_size,
+            big_endian,
+        )?;
+
+        let mut tsm_data = vec![0u8; nr_tiles * bucket_size];
+        for tile_idx in 0..nr_tiles {
+            let tile_pos = linear_to_nd(tile_idx, &tiles_per_dim);
+            let cube_start: Vec<usize> = cube_shape
+                .iter()
+                .zip(tile_pos.iter())
+                .zip(tile_shape.iter())
+                .map(|((_, &tp), &ts)| tp * ts)
+                .collect();
+            let actual_extent: Vec<usize> = cube_shape
+                .iter()
+                .zip(cube_start.iter())
+                .zip(tile_shape.iter())
+                .map(|((&cs, &st), &ts)| std::cmp::min(ts, cs - st))
+                .collect();
+
+            let mut tile_col = vec![0u8; nrpixels * elem_size];
+            copy_cube_to_tile(
+                &cube_bytes,
+                &cube_shape,
+                &mut tile_col,
+                &tile_shape,
+                &cube_start,
+                &actual_extent,
+                elem_size,
+            );
+            let dst_start = tile_idx * bucket_size + col_offsets[0];
+            write_tile_storage(
+                &mut tsm_data[dst_start..dst_start + tile_storage_bytes(col_data_type, nrpixels)],
+                col_data_type,
+                &tile_col,
+                nrpixels,
+            );
+        }
+
+        let tsm_path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
+        std::fs::write(&tsm_path, &tsm_data)?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "write_cube",
+                Some(format!(
+                    "cube={} shape={} rows={} tile_shape={} bytes={}",
+                    cube_idx,
+                    format_shape(&cube_shape),
+                    n_in_cube,
+                    format_shape(&tile_shape),
+                    tsm_data.len()
+                )),
+            );
+        }
+
+        all_files.push(Some(TsmFileInfo {
+            seq_nr: file_seq_nr,
+            length: tsm_data.len() as i64,
+        }));
+
+        cubes.push(TsmCubeInfo {
+            values: RecordValue::default(),
+            extensible: true,
+            cube_shape,
+            tile_shape,
+            file_seq_nr: file_seq_nr as i32,
+            file_offset: 0,
+        });
+
+        for (pos_in_cube, &row_idx) in group_rows.iter().enumerate() {
+            row_map_vec.push(row_idx as u32);
+            cube_map_vec.push(cube_idx as u32);
+            pos_map_vec.push(pos_in_cube as u32);
+        }
+    }
+
+    {
+        let mut indices: Vec<usize> = (0..row_map_vec.len()).collect();
+        indices.sort_by_key(|&idx| row_map_vec[idx]);
+        let sorted_row: Vec<u32> = indices.iter().map(|&idx| row_map_vec[idx]).collect();
+        let sorted_cube: Vec<u32> = indices.iter().map(|&idx| cube_map_vec[idx]).collect();
+        let sorted_pos: Vec<u32> = indices.iter().map(|&idx| pos_map_vec[idx]).collect();
+        row_map_vec = sorted_row;
+        cube_map_vec = sorted_cube;
+        pos_map_vec = sorted_pos;
+    }
+
+    {
+        let mut merged_row = Vec::new();
+        let mut merged_cube = Vec::new();
+        let mut merged_pos = Vec::new();
+        for idx in 0..row_map_vec.len() {
+            if !merged_row.is_empty() {
+                let last = merged_row.len() - 1;
+                if merged_cube[last] == cube_map_vec[idx]
+                    && merged_row[last] + 1 == row_map_vec[idx]
+                    && merged_pos[last] + 1 == pos_map_vec[idx]
+                {
+                    merged_row[last] = row_map_vec[idx];
+                    merged_pos[last] = pos_map_vec[idx];
+                    continue;
+                }
+            }
+            merged_row.push(row_map_vec[idx]);
+            merged_cube.push(cube_map_vec[idx]);
+            merged_pos.push(pos_map_vec[idx]);
+        }
+        row_map_vec = merged_row;
+        cube_map_vec = merged_cube;
+        pos_map_vec = merged_pos;
+    }
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail("row_map", Some(format!("intervals={}", row_map_vec.len())));
+    }
+
+    let default_ts_i32: Vec<i32> = if let Some(ts) = user_tile_shape {
+        ts.iter().map(|&v| v as i32).collect()
+    } else if let Some((first_shape, _)) = shape_groups.first() {
+        default_tile_shape_for(first_shape, nrrow)
+            .iter()
+            .map(|&v| v as i32)
+            .collect()
+    } else {
+        vec![]
+    };
+
+    let header = TiledStManHeader {
+        big_endian,
+        seq_nr: dm_seq_nr,
+        nrrow: nrrow as u64,
+        col_data_types: vec![col_data_type],
+        hypercolumn_name: dm_name.to_string(),
+        max_cache_size: 0,
+        nrdim,
+        files: all_files,
+        cubes,
+    };
+    let variant = TiledVariant::Shape {
+        default_tile_shape: default_ts_i32,
+        nr_used_row_map: row_map_vec.len() as u32,
+        row_map: row_map_vec,
+        cube_map: cube_map_vec,
+        pos_map: pos_map_vec,
+    };
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    write_tiled_header(&header_path, &variant, &header)?;
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("write_header");
+    }
+
+    Ok(())
 }
 
 /// Compute a reasonable default tile shape for a given cell shape and row count.
@@ -1668,7 +2217,7 @@ fn default_tile_shape_for(cell_shape: &[usize], nrow: usize) -> Vec<usize> {
         .checked_div(cell_nelem)
         .unwrap_or(nrow)
         .max(1);
-    let mut shape: Vec<usize> = cell_shape.to_vec();
+    let mut shape: Vec<usize> = cell_shape.iter().map(|&dim| dim.max(1)).collect();
     shape.push(row_tile.min(nrow).max(1));
     shape
 }
@@ -1683,6 +2232,12 @@ fn save_tiled_column_stman(
     user_tile_shape: Option<&[usize]>,
     dm_name: &str,
 ) -> Result<(), StorageError> {
+    let mut profiler = StorageProfiler::start(format!(
+        "tiled::column dm_seq={} cols={} rows={}",
+        dm_seq_nr,
+        col_descs.len(),
+        rows.len()
+    ));
     let nrrow = rows.len();
     if nrrow == 0 || col_descs.is_empty() {
         // Write empty header.
@@ -1723,6 +2278,17 @@ fn save_tiled_column_stman(
     if tile_shape.len() == cell_ndim {
         let default_row_tile = nrrow.clamp(1, 32);
         tile_shape.push(default_row_tile);
+    }
+    clamp_tile_shape_dims(&mut tile_shape);
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail(
+            "layout",
+            Some(format!(
+                "cube_shape={} tile_shape={}",
+                format_shape(&cube_shape),
+                format_shape(&tile_shape)
+            )),
+        );
     }
 
     // Collect column data types.
@@ -1767,6 +2333,15 @@ fn save_tiled_column_stman(
         }
         col_cube_data.push(cube_bytes);
     }
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail(
+            "encode_cube_data",
+            Some(format!(
+                "tiles={} bucket_size={} nrpixels={}",
+                nr_tiles, bucket_size, nrpixels
+            )),
+        );
+    }
 
     // Build tile data for the TSM file.
     let mut tsm_data = vec![0u8; nr_tiles * bucket_size];
@@ -1805,10 +2380,16 @@ fn save_tiled_column_stman(
             );
         }
     }
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("assemble_tiles");
+    }
 
     // Write TSM data file.
     let tsm_path = tsm_data_path(table_path, dm_seq_nr, 0);
     std::fs::write(&tsm_path, &tsm_data)?;
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("write_tsm_file");
+    }
 
     // Build and write header.
     let default_ts_i32: Vec<i32> = tile_shape.iter().map(|&v| v as i32).collect();
@@ -1838,6 +2419,9 @@ fn save_tiled_column_stman(
     };
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
     write_tiled_header(&header_path, &variant, &header)?;
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("write_header");
+    }
 
     Ok(())
 }
@@ -1852,6 +2436,12 @@ fn save_tiled_shape_stman(
     user_tile_shape: Option<&[usize]>,
     dm_name: &str,
 ) -> Result<(), StorageError> {
+    let mut profiler = StorageProfiler::start(format!(
+        "tiled::shape dm_seq={} cols={} rows={}",
+        dm_seq_nr,
+        col_descs.len(),
+        rows.len()
+    ));
     let nrrow = rows.len();
     let col_data_types: Vec<CasacoreDataType> = col_descs
         .iter()
@@ -1912,6 +2502,12 @@ fn save_tiled_shape_stman(
             shape_groups.push((shape, vec![row_idx]));
         }
     }
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail(
+            "group_shapes",
+            Some(format!("shape_groups={}", shape_groups.len())),
+        );
+    }
 
     // Build cubes: cube 0 is dummy, cubes 1..N are real.
     let mut cubes = vec![TsmCubeInfo {
@@ -1940,11 +2536,16 @@ fn save_tiled_shape_stman(
         let mut cube_shape = cell_shape.clone();
         cube_shape.push(n_in_cube);
 
-        let tile_shape = if let Some(ts) = user_tile_shape {
+        let mut tile_shape = if let Some(ts) = user_tile_shape {
             ts.to_vec()
         } else {
             default_tile_shape_for(cell_shape, n_in_cube)
         };
+        if tile_shape.len() == cell_shape.len() {
+            let default_row_tile = n_in_cube.clamp(1, 32);
+            tile_shape.push(default_row_tile);
+        }
+        clamp_tile_shape_dims(&mut tile_shape);
 
         let file_seq_nr = all_files.len() as u32;
 
@@ -2022,6 +2623,19 @@ fn save_tiled_shape_stman(
 
         let tsm_path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
         std::fs::write(&tsm_path, &tsm_data)?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "write_cube",
+                Some(format!(
+                    "cube={} shape={} rows={} tile_shape={} bytes={}",
+                    cube_idx,
+                    format_shape(&cube_shape),
+                    n_in_cube,
+                    format_shape(&tile_shape),
+                    tsm_data.len()
+                )),
+            );
+        }
 
         all_files.push(Some(TsmFileInfo {
             seq_nr: file_seq_nr,
@@ -2084,6 +2698,9 @@ fn save_tiled_shape_stman(
         cube_map_vec = merged_cube;
         pos_map_vec = merged_pos;
     }
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark_with_detail("row_map", Some(format!("intervals={}", row_map_vec.len())));
+    }
 
     let default_ts_i32: Vec<i32> = if let Some(ts) = user_tile_shape {
         ts.iter().map(|&v| v as i32).collect()
@@ -2116,6 +2733,9 @@ fn save_tiled_shape_stman(
     };
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
     write_tiled_header(&header_path, &variant, &header)?;
+    if let Some(profiler) = profiler.as_mut() {
+        profiler.mark("write_header");
+    }
 
     Ok(())
 }
@@ -2184,13 +2804,14 @@ fn save_tiled_cell_stman(
         }
 
         let cube_shape = cell_shape.clone();
-        let tile_shape = if let Some(ts) = user_tile_shape {
+        let mut tile_shape = if let Some(ts) = user_tile_shape {
             // Use only the cell dimensions (no row dim for TiledCellStMan).
             ts[..cell_shape.len().min(ts.len())].to_vec()
         } else {
             // Use full cell shape as tile shape.
             cell_shape.clone()
         };
+        clamp_tile_shape_dims(&mut tile_shape);
 
         let (bucket_size, col_offsets) = compute_tile_layout(&col_data_types, &tile_shape);
         let tiles_per_dim: Vec<usize> = cube_shape

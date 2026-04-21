@@ -9,7 +9,7 @@ use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::{OptionalMainColumn, SubTable};
-use casa_tables::{ColumnSchema, Table, TableOptions};
+use casa_tables::{ColumnSchema, Table};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -142,19 +142,13 @@ struct SpectralWindowEntry {
 ///
 /// The current implementation accepts the task-style `importvla` option shape,
 /// but this wave only supports disk-file input plus the subset of selectors
-/// needed by the native writer: `archivefiles`, `vis`, `project`,
+/// needed by the native writer: `archivefiles`, optional `vis`, `project`,
 /// `antnamescheme`, `autocorr`, `applytsys`, and `keepblanks`.
 pub fn import_archive_files_to_measurement_set_from_options(
     options: &ImportVlaOptions,
 ) -> Result<ImportReport, VlaError> {
     validate_import_options(options)?;
-    let vis = options
-        .vis
-        .clone()
-        .ok_or_else(|| VlaError::InvalidArgument {
-            argument: "vis",
-            message: "a MeasurementSet output path is required for import".to_string(),
-        })?;
+    let vis = options.effective_vis_for_import()?;
     if vis.exists() {
         return Err(VlaError::InvalidArgument {
             argument: "vis",
@@ -1160,10 +1154,14 @@ impl MsImportWriter {
             self.last_field_by_array.insert(record.array_id, field_id);
         }
 
-        let mut antennas = record.antennas.iter().collect::<Vec<_>>();
-        antennas.sort_by_key(|antenna| antenna.antenna_id);
+        let array_id = record.array_id;
+        let time_seconds = record.time_seconds;
+        let integration_seconds = record.integration_seconds;
+        let antennas = record.antennas;
+        let mut sorted_antennas = antennas.iter().collect::<Vec<_>>();
+        sorted_antennas.sort_by_key(|antenna| antenna.antenna_id);
         let mut antenna_added = false;
-        for antenna in antennas {
+        for antenna in sorted_antennas {
             let (_, inserted) = self.ensure_antenna(antenna)?;
             antenna_added |= inserted;
         }
@@ -1172,57 +1170,53 @@ impl MsImportWriter {
         let mut group_data_desc_ids = Vec::with_capacity(record.groups.len());
         let mut group_rows = Vec::with_capacity(record.groups.len());
 
-        for group in &record.groups {
+        for group in record.groups {
             let polarization_id = self.ensure_polarization(&group.baselines[0].corr_types)?;
             let spectral_window_id = self.ensure_spectral_window(
                 &group.descriptor,
                 source_id,
-                record.time_seconds,
+                time_seconds,
                 source_direction,
                 ms_direction_epoch,
             )?;
             let data_desc_id = self.ensure_data_description(spectral_window_id, polarization_id)?;
             group_data_desc_ids.push(data_desc_id);
-            group_rows.push((&group.baselines, data_desc_id));
+            group_rows.push((group.baselines, data_desc_id));
         }
 
         if self
             .last_data_desc_ids_by_array
-            .get(&record.array_id)
+            .get(&array_id)
             .is_none_or(|existing| existing != &group_data_desc_ids)
         {
             new_scan = true;
             self.last_data_desc_ids_by_array
-                .insert(record.array_id, group_data_desc_ids);
+                .insert(array_id, group_data_desc_ids);
         }
 
         let scan_number = if new_scan {
             let scan_number = self.next_scan_number;
             self.next_scan_number += 1;
-            self.current_scan_by_array
-                .insert(record.array_id, scan_number);
+            self.current_scan_by_array.insert(array_id, scan_number);
             scan_number
         } else {
-            *self
-                .current_scan_by_array
-                .get(&record.array_id)
-                .ok_or_else(|| {
-                    VlaError::import(format!(
-                        "missing current scan number for subarray {}",
-                        record.array_id
-                    ))
-                })?
+            *self.current_scan_by_array.get(&array_id).ok_or_else(|| {
+                VlaError::import(format!(
+                    "missing current scan number for subarray {}",
+                    array_id
+                ))
+            })?
         };
 
         for (baselines, data_desc_id) in group_rows {
             for baseline in baselines {
                 let antenna1_id = *self
                     .antenna_rows
-                    .get(&record.antennas[baseline.antenna1_archive].name)
+                    .get(antennas[baseline.antenna1_archive].name.as_str())
                     .ok_or_else(|| VlaError::import("missing ANTENNA row for baseline ANTENNA1"))?;
                 let antenna2_id = *self
                     .antenna_rows
-                    .get(&record.antennas[baseline.antenna2_archive].name)
+                    .get(antennas[baseline.antenna2_archive].name.as_str())
                     .ok_or_else(|| VlaError::import("missing ANTENNA row for baseline ANTENNA2"))?;
                 self.add_main_row(
                     antenna1_id,
@@ -1231,9 +1225,9 @@ impl MsImportWriter {
                     observation_id,
                     data_desc_id,
                     scan_number,
-                    record.array_id,
-                    record.time_seconds,
-                    record.integration_seconds,
+                    array_id,
+                    time_seconds,
+                    integration_seconds,
                     baseline,
                 )?;
             }
@@ -1270,24 +1264,7 @@ impl MsImportWriter {
         }
         self.ms
             .save_assuming_valid()
-            .map_err(|error| VlaError::import(format!("save MeasurementSet: {error}")))?;
-        for column in ["TIME", "TIME_CENTROID"] {
-            set_epoch_measure_reference(self.ms.main_table_mut(), column, EpochRef::TAI)?;
-        }
-        if let Some(epoch) = self.ms_direction_epoch {
-            set_direction_measure_reference(self.ms.main_table_mut(), "UVW", epoch)?;
-        }
-        let ms_path = self
-            .ms
-            .path()
-            .ok_or_else(|| VlaError::import("MeasurementSet has no filesystem path"))?
-            .to_path_buf();
-        self.ms
-            .main_table_mut()
-            .save_assuming_valid(TableOptions::new(&ms_path))
-            .map_err(|error| {
-                VlaError::import(format!("save main table with VLA epoch refs: {error}"))
-            })
+            .map_err(|error| VlaError::import(format!("save MeasurementSet: {error}")))
     }
 
     fn ensure_direction_epoch(
@@ -1897,8 +1874,20 @@ impl MsImportWriter {
         array_id: i32,
         time_seconds: f64,
         integration_seconds: f64,
-        baseline: &NormalizedBaselineRow,
+        baseline: NormalizedBaselineRow,
     ) -> Result<(), VlaError> {
+        let NormalizedBaselineRow {
+            corr_types,
+            uvw_m,
+            data,
+            corrected_data,
+            model_data,
+            flag,
+            flag_category,
+            weight,
+            sigma,
+            ..
+        } = baseline;
         let (
             row_ant1,
             row_ant2,
@@ -1913,19 +1902,19 @@ impl MsImportWriter {
         ) = reorder_baseline_for_ms(
             antenna1_id,
             antenna2_id,
-            baseline.data.clone(),
-            baseline.corrected_data.clone(),
-            baseline.model_data.clone(),
-            baseline.flag.clone(),
-            baseline.flag_category.clone(),
-            baseline.weight.clone(),
-            baseline.sigma.clone(),
-            &baseline.corr_types,
+            data,
+            corrected_data,
+            model_data,
+            flag,
+            flag_category,
+            weight,
+            sigma,
+            &corr_types,
         )?;
         let row_uvw = if row_ant1 == antenna1_id && row_ant2 == antenna2_id {
-            baseline.uvw_m
+            uvw_m
         } else {
-            [-baseline.uvw_m[0], -baseline.uvw_m[1], -baseline.uvw_m[2]]
+            [-uvw_m[0], -uvw_m[1], -uvw_m[2]]
         };
         let row_flag_row = flag_row_value(&row_flag)?;
         let row = make_main_row(

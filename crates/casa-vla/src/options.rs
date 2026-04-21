@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Task-style options for CASA `importvla` compatibility.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use casa_types::quanta::Quantity;
@@ -180,13 +180,48 @@ impl ImportVlaOptions {
         }
         Ok(&self.archivefiles)
     }
+
+    /// Return the configured MeasurementSet path, deriving a default when unset.
+    pub fn effective_vis_for_import(&self) -> Result<PathBuf, VlaError> {
+        match &self.vis {
+            Some(path) => Ok(path.clone()),
+            None => {
+                let cwd = std::env::current_dir().map_err(|error| VlaError::InvalidArgument {
+                    argument: "vis",
+                    message: format!("resolve current working directory for default vis: {error}"),
+                })?;
+                self.default_vis_path_in(&cwd)
+            }
+        }
+    }
+
+    pub(crate) fn default_vis_path_in(&self, cwd: &Path) -> Result<PathBuf, VlaError> {
+        let first_archive = self
+            .require_archivefiles()?
+            .first()
+            .ok_or(VlaError::NoArchiveFiles)?;
+        let stem = first_archive
+            .file_stem()
+            .filter(|value| !value.is_empty())
+            .or_else(|| first_archive.file_name())
+            .ok_or_else(|| VlaError::InvalidArgument {
+                argument: "vis",
+                message: format!(
+                    "could not derive a default MeasurementSet name from {}",
+                    first_archive.display()
+                ),
+            })?;
+        let mut file_name = stem.to_os_string();
+        file_name.push(".ms");
+        Ok(cwd.join(file_name))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{AntennaNameScheme, BandName, ImportVlaOptions};
     use crate::VlaError;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::str::FromStr;
 
     #[test]
@@ -299,6 +334,36 @@ mod tests {
         assert_eq!(
             populated.require_archivefiles().unwrap(),
             &[PathBuf::from("one.xp1"), PathBuf::from("two.xp5")]
+        );
+    }
+
+    #[test]
+    fn effective_vis_for_import_uses_explicit_path_when_present() {
+        let options = ImportVlaOptions {
+            archivefiles: vec![PathBuf::from("one.xp1")],
+            vis: Some(PathBuf::from("/tmp/explicit.ms")),
+            ..ImportVlaOptions::default()
+        };
+
+        assert_eq!(
+            options.effective_vis_for_import().unwrap(),
+            PathBuf::from("/tmp/explicit.ms")
+        );
+    }
+
+    #[test]
+    fn default_vis_path_in_uses_first_archive_stem_in_cwd() {
+        let options = ImportVlaOptions {
+            archivefiles: vec![
+                PathBuf::from("/data/AG189_1_46182.76468_46183.09488.exp"),
+                PathBuf::from("/data/other.xp1"),
+            ],
+            ..ImportVlaOptions::default()
+        };
+
+        assert_eq!(
+            options.default_vis_path_in(Path::new("/work")).unwrap(),
+            PathBuf::from("/work/AG189_1_46182.76468_46183.09488.ms")
         );
     }
 }

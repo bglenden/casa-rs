@@ -20,6 +20,8 @@ pub(crate) mod virtual_taql_column;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use casa_aipsio::ByteOrder;
 use casa_types::{RecordField, RecordValue, Value};
@@ -28,8 +30,10 @@ use thiserror::Error;
 use crate::schema::{SchemaError, TableSchema};
 
 use self::data_type::CasacoreDataType;
-use self::incremental_stman::{IsmColumnResult, read_ism_file, write_ism_file};
-use self::standard_stman::{read_ssm_file, write_ssm_file};
+use self::incremental_stman::{
+    IsmColumnResult, read_ism_file, write_ism_file, write_ism_file_indexed,
+};
+use self::standard_stman::{read_ssm_file, write_ssm_file, write_ssm_file_indexed};
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
     StManColumnData, StManColumnInfo, extract_row_value, read_stman_file, write_stman_file,
@@ -45,6 +49,65 @@ use self::table_control::{
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
 pub(crate) const TABLE_INFO_FILE: &str = "table.info";
+
+fn storage_profile_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("CASA_RS_STORAGE_PROFILE") {
+        Ok(value) => {
+            let trimmed = value.trim();
+            !trimmed.is_empty()
+                && trimmed != "0"
+                && !trimmed.eq_ignore_ascii_case("false")
+                && !trimmed.eq_ignore_ascii_case("off")
+        }
+        Err(_) => false,
+    })
+}
+
+fn log_storage_profile(context: &str, phase: &str, delta: f64, total: f64, detail: Option<&str>) {
+    let mut line =
+        format!("[casa-tables profile] {context} phase={phase} dt={delta:.3}s total={total:.3}s");
+    if let Some(detail) = detail {
+        if !detail.is_empty() {
+            line.push(' ');
+            line.push_str(detail);
+        }
+    }
+    eprintln!("{line}");
+}
+
+pub(crate) struct StorageProfiler {
+    context: String,
+    start: Instant,
+    last: Instant,
+}
+
+impl StorageProfiler {
+    pub(crate) fn start(context: impl Into<String>) -> Option<Self> {
+        if !storage_profile_enabled() {
+            return None;
+        }
+        let now = Instant::now();
+        Some(Self {
+            context: context.into(),
+            start: now,
+            last: now,
+        })
+    }
+
+    pub(crate) fn mark(&mut self, phase: &str) {
+        self.mark_with_detail(phase, None::<String>);
+    }
+
+    pub(crate) fn mark_with_detail(&mut self, phase: &str, detail: impl Into<Option<String>>) {
+        let now = Instant::now();
+        let delta = now.duration_since(self.last).as_secs_f64();
+        let total = now.duration_since(self.start).as_secs_f64();
+        self.last = now;
+        let detail = detail.into();
+        log_storage_profile(&self.context, phase, delta, total, detail.as_deref());
+    }
+}
 
 /// Errors arising from table storage operations (I/O, format, schema).
 ///
@@ -193,6 +256,50 @@ fn filter_rows_for_save(
                 .cloned()
                 .collect();
             RecordValue::new(fields)
+        })
+        .collect()
+}
+
+fn project_rows_for_group(
+    rows: &[RecordValue],
+    group_col_descs: &[table_control::ColumnDescContents],
+    group_col_indices: Option<&[usize]>,
+) -> Vec<RecordValue> {
+    rows.iter()
+        .map(|row| {
+            let fields = group_col_descs
+                .iter()
+                .enumerate()
+                .filter_map(|(col_idx, desc)| {
+                    let value = group_col_indices
+                        .and_then(|indices| {
+                            row.fields()
+                                .get(indices[col_idx])
+                                .filter(|field| field.name == desc.col_name)
+                                .map(|field| field.value.clone())
+                        })
+                        .or_else(|| row.get(&desc.col_name).cloned());
+                    value.map(|value| RecordField::new(desc.col_name.clone(), value))
+                })
+                .collect();
+            RecordValue::new(fields)
+        })
+        .collect()
+}
+
+fn project_column_values_for_group<'a>(
+    rows: &'a [RecordValue],
+    col_name: &str,
+    field_index: Option<usize>,
+) -> Vec<Option<&'a Value>> {
+    rows.iter()
+        .map(|row| {
+            if let Some(idx) = field_index {
+                if let Some(field) = row.fields().get(idx).filter(|field| field.name == col_name) {
+                    return Some(&field.value);
+                }
+            }
+            row.get(col_name)
         })
         .collect()
 }
@@ -1245,10 +1352,17 @@ impl CompositeStorage {
     /// use the default DM from `dm_kind`. Each DM group writes its own data
     /// file (`table.f0`, `table.f1`, ...) and gets a separate entry in `table.dat`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn save_with_bindings(
+    pub(crate) fn save_with_bindings_borrowed(
         &self,
         table_path: &Path,
-        snapshot: &StorageSnapshot,
+        rows: &[RecordValue],
+        undefined_cells: &[HashSet<String>],
+        keywords: &RecordValue,
+        column_keywords: &HashMap<String, RecordValue>,
+        schema: Option<&TableSchema>,
+        table_info: &TableInfo,
+        virtual_columns: &HashSet<String>,
+        virtual_bindings: &[virtual_engine::VirtualColumnBinding],
         default_dm: crate::table::DataManagerKind,
         big_endian: bool,
         default_tile_shape: Option<&[usize]>,
@@ -1256,14 +1370,47 @@ impl CompositeStorage {
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
+        let mut profiler = StorageProfiler::start(format!(
+            "CompositeStorage::save_with_bindings path={}",
+            table_path.display()
+        ));
+
         fs::create_dir_all(table_path)?;
 
-        let schema = snapshot.schema.as_ref().ok_or_else(|| {
+        let schema = schema.ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
         })?;
-        let filtered_rows = filter_rows_for_save(&snapshot.rows, &snapshot.undefined_cells);
+        let rows_have_undefined_cells = undefined_cells
+            .iter()
+            .any(|undefined| !undefined.is_empty());
+        let filtered_rows_storage =
+            rows_have_undefined_cells.then(|| filter_rows_for_save(rows, undefined_cells));
+        let filtered_rows: &[RecordValue] = filtered_rows_storage.as_deref().unwrap_or(rows);
+        let row_field_positions = (!rows_have_undefined_cells)
+            .then(|| {
+                filtered_rows.first().map(|row| {
+                    row.fields()
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, field)| (field.name.clone(), idx))
+                        .collect::<HashMap<_, _>>()
+                })
+            })
+            .flatten();
         let nrrow = filtered_rows.len() as u64;
-        let has_virtual = !snapshot.virtual_bindings.is_empty();
+        let has_virtual = !virtual_bindings.is_empty();
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "prepare_rows",
+                Some(format!(
+                    "rows={} columns={} bindings={} virtual={}",
+                    nrrow,
+                    schema.columns().len(),
+                    bindings.len(),
+                    has_virtual
+                )),
+            );
+        }
 
         // Group columns by DM kind. Columns in `bindings` get their own DM;
         // everything else goes into the default DM.
@@ -1296,11 +1443,7 @@ impl CompositeStorage {
         });
 
         // Collect virtual column names for filtering.
-        let virtual_col_names: HashSet<&str> = snapshot
-            .virtual_columns
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
+        let virtual_col_names: HashSet<&str> = virtual_columns.iter().map(|s| s.as_str()).collect();
 
         // Build additional DM groups from bindings, then assign columns.
         let mut binding_seq_map: std::collections::HashMap<String, usize> =
@@ -1313,7 +1456,17 @@ impl CompositeStorage {
                 continue; // Virtual columns don't get stored DM entries.
             }
             if let Some(binding) = bindings.get(col_name) {
-                let group_key = format!("{:?}", binding.data_manager);
+                let group_key = if matches!(
+                    binding.data_manager,
+                    DataManagerKind::TiledColumnStMan
+                        | DataManagerKind::TiledShapeStMan
+                        | DataManagerKind::TiledCellStMan
+                        | DataManagerKind::TiledDataStMan
+                ) {
+                    format!("{:?}:{col_name}", binding.data_manager)
+                } else {
+                    format!("{:?}", binding.data_manager)
+                };
                 let group_idx = if let Some(&idx) = binding_seq_map.get(&group_key) {
                     idx
                 } else {
@@ -1343,6 +1496,12 @@ impl CompositeStorage {
                 groups[0].col_names.push(col_name.to_string());
             }
         }
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "group_columns",
+                Some(format!("groups={} next_seq={next_seq}", groups.len())),
+            );
+        }
 
         // Build a combined table.dat with all DM entries.
         // For now, use from_snapshot for the first DM and add extra DM entries manually.
@@ -1368,26 +1527,29 @@ impl CompositeStorage {
         let mut table_dat = if has_virtual {
             TableDatContents::from_snapshot_with_virtual(
                 schema,
-                &snapshot.keywords,
-                &snapshot.column_keywords,
+                keywords,
+                column_keywords,
                 nrrow,
                 &groups[0].dm_type_name,
                 &[],
                 big_endian,
-                &snapshot.virtual_bindings,
+                virtual_bindings,
                 table_path,
             )
         } else {
             TableDatContents::from_snapshot(
                 schema,
-                &snapshot.keywords,
-                &snapshot.column_keywords,
+                keywords,
+                column_keywords,
                 nrrow,
                 &groups[0].dm_type_name,
                 &[],
                 big_endian,
             )
         };
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark("build_table_dat");
+        }
 
         // Override DM entries with our multi-DM setup.
         // Preserve any virtual DM entries that from_snapshot_with_virtual added.
@@ -1429,6 +1591,16 @@ impl CompositeStorage {
             .map(|e| e.seq_nr + 1)
             .max()
             .unwrap_or(1);
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "finalize_table_dat",
+                Some(format!(
+                    "non_empty_groups={} seq_count={}",
+                    non_empty_groups.len(),
+                    table_dat.column_set.seq_count
+                )),
+            );
+        }
 
         // Write data files per group.
         for group in &groups {
@@ -1437,20 +1609,7 @@ impl CompositeStorage {
             }
             let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, group.seq_nr));
 
-            // Filter rows and col_descs to only this group's columns.
             let group_col_set: HashSet<&str> = group.col_names.iter().map(|s| s.as_str()).collect();
-            let group_rows: Vec<RecordValue> = filtered_rows
-                .iter()
-                .map(|row| {
-                    let fields: Vec<_> = row
-                        .fields()
-                        .iter()
-                        .filter(|f| group_col_set.contains(f.name.as_str()))
-                        .cloned()
-                        .collect();
-                    RecordValue::new(fields)
-                })
-                .collect();
             let group_col_descs: Vec<_> = table_dat
                 .table_desc
                 .columns
@@ -1458,19 +1617,93 @@ impl CompositeStorage {
                 .filter(|c| group_col_set.contains(c.col_name.as_str()))
                 .cloned()
                 .collect();
+            let group_col_indices = row_field_positions.as_ref().and_then(|positions| {
+                let indices: Vec<usize> = group_col_descs
+                    .iter()
+                    .filter_map(|desc| positions.get(&desc.col_name).copied())
+                    .collect();
+                (indices.len() == group_col_descs.len()).then_some(indices)
+            });
+            let use_borrowed_tiled_values = matches!(
+                group.dm_kind,
+                DataManagerKind::TiledColumnStMan
+                    | DataManagerKind::TiledShapeStMan
+                    | DataManagerKind::TiledCellStMan
+                    | DataManagerKind::TiledDataStMan
+            ) && group_col_descs.len() == 1;
+            let group_col_index = group_col_indices
+                .as_ref()
+                .and_then(|indices| (indices.len() == 1).then_some(indices[0]));
+            let group_values = use_borrowed_tiled_values.then(|| {
+                project_column_values_for_group(
+                    filtered_rows,
+                    &group_col_descs[0].col_name,
+                    group_col_index,
+                )
+            });
+            let group_rows = if group_values.is_none() {
+                Some(project_rows_for_group(
+                    filtered_rows,
+                    &group_col_descs,
+                    group_col_indices.as_deref(),
+                ))
+            } else {
+                None
+            };
+            let projected_group_col_indices = group_col_indices
+                .as_ref()
+                .map(|_| (0..group_col_descs.len()).collect::<Vec<_>>());
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.mark_with_detail(
+                    "group_projection",
+                    Some(format!(
+                        "seq={} dm={} cols={} rows={} indexed_projection={} mode={}",
+                        group.seq_nr,
+                        group.dm_type_name,
+                        group_col_descs.len(),
+                        filtered_rows.len(),
+                        group_col_indices.is_some(),
+                        if group_values.is_some() {
+                            "borrowed_values"
+                        } else {
+                            "projected_rows"
+                        }
+                    )),
+                );
+            }
 
             match group.dm_kind {
                 DataManagerKind::StManAipsIO => {
                     write_stman_file(
                         &data_path,
                         &group_col_descs,
-                        &group_rows,
+                        group_rows.as_ref().expect("row projection for StManAipsIO"),
                         ByteOrder::BigEndian,
                     )?;
                 }
                 DataManagerKind::StandardStMan => {
-                    let dm_data =
-                        write_ssm_file(&data_path, &group_col_descs, &group_rows, big_endian)?;
+                    let dm_data = if let Some(projected_group_col_indices) =
+                        projected_group_col_indices.as_ref()
+                    {
+                        write_ssm_file_indexed(
+                            &data_path,
+                            &group_col_descs,
+                            group_rows
+                                .as_ref()
+                                .expect("row projection for StandardStMan"),
+                            projected_group_col_indices,
+                            big_endian,
+                        )?
+                    } else {
+                        write_ssm_file(
+                            &data_path,
+                            &group_col_descs,
+                            group_rows
+                                .as_ref()
+                                .expect("row projection for StandardStMan"),
+                            big_endian,
+                        )?
+                    };
                     // Update the DM blob in the table_dat.
                     if let Some(entry) = table_dat
                         .column_set
@@ -1482,8 +1715,28 @@ impl CompositeStorage {
                     }
                 }
                 DataManagerKind::IncrementalStMan => {
-                    let dm_data =
-                        write_ism_file(&data_path, &group_col_descs, &group_rows, big_endian)?;
+                    let dm_data = if let Some(projected_group_col_indices) =
+                        projected_group_col_indices.as_ref()
+                    {
+                        write_ism_file_indexed(
+                            &data_path,
+                            &group_col_descs,
+                            group_rows
+                                .as_ref()
+                                .expect("row projection for IncrementalStMan"),
+                            projected_group_col_indices,
+                            big_endian,
+                        )?
+                    } else {
+                        write_ism_file(
+                            &data_path,
+                            &group_col_descs,
+                            group_rows
+                                .as_ref()
+                                .expect("row projection for IncrementalStMan"),
+                            big_endian,
+                        )?
+                    };
                     if let Some(entry) = table_dat
                         .column_set
                         .data_managers
@@ -1499,26 +1752,86 @@ impl CompositeStorage {
                 | DataManagerKind::TiledDataStMan => {
                     // Use the first column name as the hypercolumn/DM name.
                     let first_col = group.col_names.first().map(|s| s.as_str()).unwrap_or("");
-                    tiled_stman::save_tiled_columns(
-                        table_path,
-                        group.seq_nr,
-                        &group.dm_type_name,
-                        &group_col_descs,
-                        &group_rows,
-                        big_endian,
-                        group.tile_shape.as_deref(),
-                        first_col,
-                    )?;
+                    if let Some(group_values) = group_values.as_ref() {
+                        tiled_stman::save_tiled_single_column_values(
+                            table_path,
+                            group.seq_nr,
+                            &group_col_descs[0],
+                            group_values,
+                            tiled_stman::SingleColumnTiledSaveOptions {
+                                dm_type_name: &group.dm_type_name,
+                                big_endian,
+                                default_tile_shape: group.tile_shape.as_deref(),
+                                dm_name: first_col,
+                            },
+                        )?;
+                    } else {
+                        tiled_stman::save_tiled_columns(
+                            table_path,
+                            group.seq_nr,
+                            &group.dm_type_name,
+                            &group_col_descs,
+                            group_rows
+                                .as_ref()
+                                .expect("row projection for tiled storage"),
+                            big_endian,
+                            group.tile_shape.as_deref(),
+                            first_col,
+                        )?;
+                    }
                 }
+            }
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.mark_with_detail(
+                    "group_save",
+                    Some(format!(
+                        "seq={} dm={} cols={} rows={}",
+                        group.seq_nr,
+                        group.dm_type_name,
+                        group_col_descs.len(),
+                        filtered_rows.len()
+                    )),
+                );
             }
         }
 
         let control_path = table_path.join(TABLE_CONTROL_FILE);
         write_table_dat(&control_path, &table_dat)?;
         let info_path = table_path.join(TABLE_INFO_FILE);
-        fs::write(&info_path, snapshot.table_info.to_string())?;
+        fs::write(&info_path, table_info.to_string())?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark("write_control_files");
+        }
 
         Ok(())
+    }
+
+    /// Save with per-column DM bindings using an owned snapshot.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn save_with_bindings(
+        &self,
+        table_path: &Path,
+        snapshot: &StorageSnapshot,
+        default_dm: crate::table::DataManagerKind,
+        big_endian: bool,
+        default_tile_shape: Option<&[usize]>,
+        bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
+    ) -> Result<(), StorageError> {
+        self.save_with_bindings_borrowed(
+            table_path,
+            &snapshot.rows,
+            &snapshot.undefined_cells,
+            &snapshot.keywords,
+            &snapshot.column_keywords,
+            snapshot.schema.as_ref(),
+            &snapshot.table_info,
+            &snapshot.virtual_columns,
+            &snapshot.virtual_bindings,
+            default_dm,
+            big_endian,
+            default_tile_shape,
+            bindings,
+        )
     }
 }
 

@@ -8,10 +8,10 @@
 //!
 //! Cf. C++ `MeasurementSet` class.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use casa_tables::{Table, TableInfo, TableOptions};
+use casa_tables::{ColumnBinding, DataManagerKind, Table, TableInfo, TableOptions};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::builder::{MeasurementSetBuilder, MsSchemas};
@@ -130,7 +130,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        self.main.save(TableOptions::new(&path))?;
+        save_main_table_with_policy(&self.main, &path, false)?;
 
         for (id, table) in &self.subtables {
             let subtable_path = self
@@ -138,7 +138,7 @@ impl MeasurementSet {
                 .get(id)
                 .cloned()
                 .unwrap_or_else(|| path.join(id.name()));
-            table.save(TableOptions::new(&subtable_path))?;
+            table.save(measurement_set_table_options(&subtable_path))?;
         }
 
         Ok(())
@@ -160,7 +160,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        self.main.save_assuming_valid(TableOptions::new(&path))?;
+        save_main_table_with_policy(&self.main, &path, true)?;
 
         for (id, table) in &self.subtables {
             let subtable_path = self
@@ -168,7 +168,7 @@ impl MeasurementSet {
                 .get(id)
                 .cloned()
                 .unwrap_or_else(|| path.join(id.name()));
-            table.save_assuming_valid(TableOptions::new(&subtable_path))?;
+            table.save_assuming_valid(measurement_set_table_options(&subtable_path))?;
         }
 
         Ok(())
@@ -190,7 +190,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        self.main.save(TableOptions::new(&path))?;
+        save_main_table_with_policy(&self.main, &path, false)?;
         Ok(())
     }
 
@@ -209,7 +209,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        self.main.save_assuming_valid(TableOptions::new(&path))?;
+        save_main_table_with_policy(&self.main, &path, true)?;
         Ok(())
     }
 
@@ -775,10 +775,132 @@ fn apply_column_metadata(table: &mut Table, defs: &[ColumnDef]) {
             );
         }
         if let Some(measinfo) = measinfo_for(def) {
-            keywords.upsert("MEASINFO", Value::Record(measinfo));
+            let merged = merge_measinfo_keywords(
+                match keywords.get("MEASINFO") {
+                    Some(Value::Record(existing)) => Some(existing),
+                    _ => None,
+                },
+                &measinfo,
+            );
+            keywords.upsert("MEASINFO", Value::Record(merged));
         }
         table.set_column_keywords(def.name, keywords);
     }
+}
+
+fn measurement_set_table_options(path: &Path) -> TableOptions {
+    TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MeasurementSetSavePolicy {
+    Standard,
+    CasaLikeMixed,
+}
+
+fn measurement_set_save_policy() -> MeasurementSetSavePolicy {
+    match std::env::var("CASA_RS_MS_STORAGE_POLICY") {
+        Ok(value) if value.eq_ignore_ascii_case("standard") => MeasurementSetSavePolicy::Standard,
+        Ok(value) if value.eq_ignore_ascii_case("casa-like-mixed") => {
+            MeasurementSetSavePolicy::CasaLikeMixed
+        }
+        _ => MeasurementSetSavePolicy::CasaLikeMixed,
+    }
+}
+
+fn save_main_table_with_policy(main: &Table, path: &Path, assume_valid: bool) -> MsResult<()> {
+    let options = measurement_set_table_options(path);
+    match measurement_set_save_policy() {
+        MeasurementSetSavePolicy::Standard => {
+            if assume_valid {
+                main.save_assuming_valid(options)?;
+            } else {
+                main.save(options)?;
+            }
+        }
+        MeasurementSetSavePolicy::CasaLikeMixed => {
+            let bindings = measurement_set_main_table_bindings(main);
+            if assume_valid {
+                main.save_with_bindings_assuming_valid(options, &bindings)?;
+            } else {
+                main.save_with_bindings(options, &bindings)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn measurement_set_main_table_bindings(main: &Table) -> HashMap<String, ColumnBinding> {
+    let column_names: HashSet<_> = main
+        .schema()
+        .map(|schema| {
+            schema
+                .columns()
+                .iter()
+                .map(|column| column.name())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut bindings = HashMap::new();
+    let mut bind = |name: &str, data_manager: DataManagerKind| {
+        if column_names.contains(name) {
+            bindings.insert(
+                name.to_string(),
+                ColumnBinding {
+                    data_manager,
+                    tile_shape: None,
+                },
+            );
+        }
+    };
+
+    for name in [
+        "ARRAY_ID",
+        "EXPOSURE",
+        "FEED1",
+        "FEED2",
+        "FIELD_ID",
+        "FLAG_ROW",
+        "INTERVAL",
+        "OBSERVATION_ID",
+        "PROCESSOR_ID",
+        "SCAN_NUMBER",
+        "STATE_ID",
+        "TIME",
+        "TIME_CENTROID",
+    ] {
+        bind(name, DataManagerKind::IncrementalStMan);
+    }
+    for name in ["ANTENNA1", "ANTENNA2", "DATA_DESC_ID"] {
+        bind(name, DataManagerKind::StandardStMan);
+    }
+    for name in [
+        "DATA",
+        "MODEL_DATA",
+        "CORRECTED_DATA",
+        "FLAG",
+        "SIGMA",
+        "WEIGHT",
+        "FLAG_CATEGORY",
+    ] {
+        bind(name, DataManagerKind::TiledShapeStMan);
+    }
+    bind("UVW", DataManagerKind::TiledColumnStMan);
+
+    bindings
+}
+
+fn merge_measinfo_keywords(existing: Option<&RecordValue>, defaults: &RecordValue) -> RecordValue {
+    let mut merged = defaults.clone();
+    if let Some(existing) = existing {
+        for field in existing.fields() {
+            let preserve_existing = field.name == "Ref" || merged.get(&field.name).is_none();
+            if preserve_existing {
+                merged.upsert(field.name.clone(), field.value.clone());
+            }
+        }
+    }
+    merged
 }
 
 fn ensure_main_column_keywords(main: &mut Table) {
