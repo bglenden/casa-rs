@@ -407,9 +407,20 @@ fn calibrate_guided_flow_runs_gain_bandpass_and_apply_on_ngc5921() {
     let bandpass_table = app
         .field_text_for_test("out_table")
         .expect("solve-bandpass output table");
+    let bandpass_args = app
+        .execution_arguments_for_test()
+        .expect("build solve-bandpass execution arguments")
+        .into_iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
 
     start_run_with_default_calibrate_launcher(&mut app);
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    assert!(
+        app.wait_for_idle_for_test(Duration::from_secs(120)),
+        "status={} stderr={} args={bandpass_args:?}",
+        app.status_line_for_test(),
+        app.stderr_for_test()
+    );
     assert!(
         Path::new(&bandpass_table).exists(),
         "expected {bandpass_table} to exist"

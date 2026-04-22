@@ -510,6 +510,20 @@ pub(crate) fn evaluate_apply_rows(
     };
 
     let mut evaluated_rows = HashMap::new();
+    let mut main_rows = ms
+        .main_table()
+        .row_accessor()
+        .prepare(&[VisibilityDataColumn::Data.name(), "FLAG"])
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            path: ms_path.clone(),
+            source: MsError::from(source),
+        })?;
+    let data_index = main_rows
+        .column_index(VisibilityDataColumn::Data.name())
+        .expect("prepared apply reader includes DATA");
+    let flag_index = main_rows
+        .column_index("FLAG")
+        .expect("prepared apply reader includes FLAG");
     for row in &plan.selected_rows {
         let correlation_types = correlation_types_by_ddid
             .get(&row.data_desc_id)
@@ -517,31 +531,24 @@ pub(crate) fn evaluate_apply_rows(
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
-        let main_row = ms
-            .main_table()
-            .row_accessor()
-            .row(row.row_index)
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+        main_rows.load(row.row_index).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
-            })?;
-        let data = array_row_value(
-            main_row,
-            row.row_index,
-            VisibilityDataColumn::Data.name(),
-            None,
-        )
-        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-            path: ms_path.clone(),
-            source: MsError::from(source),
+            }
         })?;
-        let original_flags =
-            array_row_value(main_row, row.row_index, "FLAG", None).map_err(|source| {
-                ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                }
-            })?;
+        let data = main_rows.array_at(data_index).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            }
+        })?;
+        let original_flags = main_rows.array_at(flag_index).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            }
+        })?;
 
         let result = apply_row(
             row,
@@ -761,18 +768,6 @@ fn execute_apply_plan(
         .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
     let use_partial_main_save = !created_corrected_data_column;
     let mut changed_columns: Vec<&'static str> = vec![VisibilityDataColumn::CorrectedData.name()];
-    let row_field_index_lookup_started_at = Instant::now();
-    let row_field_indices = plan
-        .selected_rows
-        .first()
-        .map(|row| cached_apply_row_field_indices(ms.main_table(), row.row_index))
-        .transpose()
-        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-            path: ms_path.clone(),
-            source: MsError::from(source),
-        })?
-        .unwrap_or_default();
-    let row_field_index_lookup_ns = row_field_index_lookup_started_at.elapsed().as_nanos() as u64;
     let row_loop_started_at = Instant::now();
     if use_partial_main_save {
         let anticipated_updates = plan.selected_rows.len();
@@ -866,34 +861,36 @@ fn execute_apply_plan(
         prefetched_inputs
     };
 
-    for (row, prefetched_inputs) in plan.selected_rows.iter().zip(&prefetched_inputs) {
-        let correlation_types = correlation_types_by_ddid
-            .get(&row.data_desc_id)
-            .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
-                data_desc_id: row.data_desc_id,
-                correlation_types: Vec::new(),
-            })?;
-        let row_compute_started_at = Instant::now();
-        let ExecutionRowResult {
-            corrected_data,
-            updated_flags,
-            updated_weight,
-            updated_weight_spectrum,
-            newly_flagged_samples,
-            row_became_fully_flagged,
-        } = apply_row_prefetched(
-            row,
-            correlation_types,
-            prefetched_inputs,
-            any_calwt && has_weight_spectrum,
-            &plan,
-            &loaded_tables,
-            parang_state.as_ref(),
-        )?;
-        row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
+    let row_field_index_lookup_ns;
+    if use_partial_main_save {
+        row_field_index_lookup_ns = 0;
+        for (row, prefetched_inputs) in plan.selected_rows.iter().zip(&prefetched_inputs) {
+            let correlation_types = correlation_types_by_ddid
+                .get(&row.data_desc_id)
+                .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                    data_desc_id: row.data_desc_id,
+                    correlation_types: Vec::new(),
+                })?;
+            let row_compute_started_at = Instant::now();
+            let ExecutionRowResult {
+                corrected_data,
+                updated_flags,
+                updated_weight,
+                updated_weight_spectrum,
+                newly_flagged_samples,
+                row_became_fully_flagged,
+            } = apply_row_prefetched(
+                row,
+                correlation_types,
+                prefetched_inputs,
+                any_calwt && has_weight_spectrum,
+                &plan,
+                &loaded_tables,
+                parang_state.as_ref(),
+            )?;
+            row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
 
-        let row_writeback_started_at = Instant::now();
-        if use_partial_main_save {
+            let row_writeback_started_at = Instant::now();
             ms.main_table_mut()
                 .set_array_cell_assuming_valid(
                     row.row_index,
@@ -959,58 +956,148 @@ fn execute_apply_plan(
                         source: MsError::from(source),
                     })?;
             }
-        } else {
-            let mut row_accessor = ms.main_table_mut().row_accessor_mut();
-            let row_record = row_accessor.row_mut(row.row_index).map_err(|source| {
+            updated_row_count += 1;
+            row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
+        }
+    } else {
+        let row_field_index_lookup_started_at = Instant::now();
+        let mut prepared_columns = vec![VisibilityDataColumn::CorrectedData.name()];
+        if ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("FLAG"))
+        {
+            prepared_columns.push("FLAG");
+        }
+        if ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("FLAG_ROW"))
+        {
+            prepared_columns.push("FLAG_ROW");
+        }
+        if ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("WEIGHT"))
+        {
+            prepared_columns.push("WEIGHT");
+        }
+        if has_weight_spectrum {
+            prepared_columns.push("WEIGHT_SPECTRUM");
+        }
+        let mut prepared_main_rows = ms
+            .main_table_mut()
+            .row_accessor_mut()
+            .prepare(&prepared_columns)
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            })?;
+        let row_field_indices = ApplyRowFieldIndices {
+            corrected_data: prepared_main_rows
+                .column_index(VisibilityDataColumn::CorrectedData.name()),
+            flag: prepared_main_rows.column_index("FLAG"),
+            flag_row: prepared_main_rows.column_index("FLAG_ROW"),
+            weight: prepared_main_rows.column_index("WEIGHT"),
+            weight_spectrum: prepared_main_rows.column_index("WEIGHT_SPECTRUM"),
+        };
+        row_field_index_lookup_ns = row_field_index_lookup_started_at.elapsed().as_nanos() as u64;
+
+        for (row, prefetched_inputs) in plan.selected_rows.iter().zip(&prefetched_inputs) {
+            let correlation_types = correlation_types_by_ddid
+                .get(&row.data_desc_id)
+                .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                    data_desc_id: row.data_desc_id,
+                    correlation_types: Vec::new(),
+                })?;
+            let row_compute_started_at = Instant::now();
+            let ExecutionRowResult {
+                corrected_data,
+                updated_flags,
+                updated_weight,
+                updated_weight_spectrum,
+                newly_flagged_samples,
+                row_became_fully_flagged,
+            } = apply_row_prefetched(
+                row,
+                correlation_types,
+                prefetched_inputs,
+                any_calwt && has_weight_spectrum,
+                &plan,
+                &loaded_tables,
+                parang_state.as_ref(),
+            )?;
+            row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
+
+            let row_writeback_started_at = Instant::now();
+            prepared_main_rows.seek(row.row_index).map_err(|source| {
                 ApplyExecutionError::MutateMeasurementSet {
                     path: ms_path.clone(),
                     source: MsError::from(source),
                 }
             })?;
-            write_row_value(
-                row_record,
-                VisibilityDataColumn::CorrectedData.name(),
-                row_field_indices.corrected_data,
-                Value::Array(corrected_data),
-            );
+            if let Some(slot_index) = row_field_indices.corrected_data {
+                prepared_main_rows
+                    .set_value_at(slot_index, Value::Array(corrected_data))
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?;
+            }
 
             if let Some(updated_flags) = updated_flags {
-                write_row_value(
-                    row_record,
-                    "FLAG",
-                    row_field_indices.flag,
-                    Value::Array(updated_flags),
-                );
+                if let Some(slot_index) = row_field_indices.flag {
+                    prepared_main_rows
+                        .set_value_at(slot_index, Value::Array(updated_flags))
+                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::from(source),
+                        })?;
+                }
                 if row_became_fully_flagged {
-                    write_row_value(
-                        row_record,
-                        "FLAG_ROW",
-                        row_field_indices.flag_row,
-                        Value::Scalar(ScalarValue::Bool(true)),
-                    );
+                    if let Some(slot_index) = row_field_indices.flag_row {
+                        prepared_main_rows
+                            .set_value_at(slot_index, Value::Scalar(ScalarValue::Bool(true)))
+                            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                                path: ms_path.clone(),
+                                source: MsError::from(source),
+                            })?;
+                    }
                     flagged_row_count += 1;
                 }
                 flagged_sample_count += newly_flagged_samples;
             }
             if let Some(updated_weight) = updated_weight {
-                write_row_value(
-                    row_record,
-                    "WEIGHT",
-                    row_field_indices.weight,
-                    Value::Array(updated_weight),
-                );
+                if let Some(slot_index) = row_field_indices.weight {
+                    prepared_main_rows
+                        .set_value_at(slot_index, Value::Array(updated_weight))
+                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::from(source),
+                        })?;
+                }
             }
             if let Some(updated_weight_spectrum) = updated_weight_spectrum {
-                write_row_value(
-                    row_record,
-                    "WEIGHT_SPECTRUM",
-                    row_field_indices.weight_spectrum,
-                    Value::Array(updated_weight_spectrum),
-                );
+                if let Some(slot_index) = row_field_indices.weight_spectrum {
+                    prepared_main_rows
+                        .set_value_at(slot_index, Value::Array(updated_weight_spectrum))
+                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::from(source),
+                        })?;
+                }
             }
+            updated_row_count += 1;
+            row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
         }
-        updated_row_count += 1;
-        row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
+
+        prepared_main_rows
+            .flush()
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            })?;
     }
     let row_loop_ns = row_loop_started_at.elapsed().as_nanos() as u64;
 
@@ -2518,113 +2605,11 @@ fn ensure_corrected_data_column(ms: &mut MeasurementSet) -> Result<bool, TableEr
 
 #[derive(Clone, Copy, Default)]
 struct ApplyRowFieldIndices {
-    data: Option<usize>,
     corrected_data: Option<usize>,
     flag: Option<usize>,
     flag_row: Option<usize>,
     weight: Option<usize>,
     weight_spectrum: Option<usize>,
-}
-
-fn cached_apply_row_field_indices(
-    table: &Table,
-    row_index: usize,
-) -> Result<ApplyRowFieldIndices, TableError> {
-    if let Some(schema) = table.schema() {
-        let mut indices = ApplyRowFieldIndices::default();
-        for (field_index, column) in schema.columns().iter().enumerate() {
-            match column.name() {
-                name if name == VisibilityDataColumn::Data.name() => {
-                    indices.data = Some(field_index);
-                }
-                name if name == VisibilityDataColumn::CorrectedData.name() => {
-                    indices.corrected_data = Some(field_index);
-                }
-                "FLAG" => indices.flag = Some(field_index),
-                "FLAG_ROW" => indices.flag_row = Some(field_index),
-                "WEIGHT" => indices.weight = Some(field_index),
-                "WEIGHT_SPECTRUM" => indices.weight_spectrum = Some(field_index),
-                _ => {}
-            }
-        }
-        return Ok(indices);
-    }
-
-    let row = table.row_accessor().row(row_index)?;
-    let mut indices = ApplyRowFieldIndices::default();
-    for (field_index, field) in row.fields().iter().enumerate() {
-        match field.name.as_str() {
-            name if name == VisibilityDataColumn::Data.name() => {
-                indices.data = Some(field_index);
-            }
-            name if name == VisibilityDataColumn::CorrectedData.name() => {
-                indices.corrected_data = Some(field_index);
-            }
-            "FLAG" => indices.flag = Some(field_index),
-            "FLAG_ROW" => indices.flag_row = Some(field_index),
-            "WEIGHT" => indices.weight = Some(field_index),
-            "WEIGHT_SPECTRUM" => indices.weight_spectrum = Some(field_index),
-            _ => {}
-        }
-    }
-    Ok(indices)
-}
-
-fn cached_row_value<'a>(
-    row: &'a casa_types::RecordValue,
-    column: &str,
-    field_index: Option<usize>,
-) -> Option<&'a Value> {
-    if let Some(field_index) = field_index {
-        if let Some(field) = row.fields().get(field_index) {
-            if field.name == column {
-                return Some(&field.value);
-            }
-        }
-    }
-    row.get(column)
-}
-
-fn array_row_value<'a>(
-    row: &'a casa_types::RecordValue,
-    row_index: usize,
-    column: &str,
-    field_index: Option<usize>,
-) -> Result<&'a ArrayValue, TableError> {
-    match cached_row_value(row, column, field_index) {
-        Some(Value::Array(array)) => Ok(array),
-        Some(value) => Err(TableError::ColumnTypeMismatch {
-            row_index,
-            column: column.to_string(),
-            expected: "array",
-            found: value.kind(),
-        }),
-        None => Err(TableError::ColumnNotFound {
-            row_index,
-            column: column.to_string(),
-        }),
-    }
-}
-
-fn write_row_value(
-    row: &mut casa_types::RecordValue,
-    column: &str,
-    field_index: Option<usize>,
-    value: Value,
-) {
-    if let Some(field_index) = field_index {
-        if let Some(field) = row.fields_mut().get_mut(field_index) {
-            if field.name == column {
-                field.value = value;
-                return;
-            }
-        }
-    }
-    if let Some(existing) = row.get_mut(column) {
-        *existing = value;
-    } else {
-        row.upsert(column, value);
-    }
 }
 
 fn display_ms_path(ms: &MeasurementSet) -> String {
@@ -2909,27 +2894,6 @@ mod tests {
         let log = fs::read_to_string(log_paths[0].clone()).expect("summary log");
         assert!(log.contains("kind=ApplyCompleted"));
         assert!(log.contains("row_read_overhead_ms=0.00"));
-    }
-
-    #[test]
-    fn cached_apply_row_field_indices_uses_schema_without_rows() {
-        let main_schema = MeasurementSetBuilder::new()
-            .with_main_column(OptionalMainColumn::Data)
-            .with_main_column(OptionalMainColumn::CorrectedData)
-            .with_main_column(OptionalMainColumn::WeightSpectrum)
-            .build_schemas()
-            .expect("schemas")
-            .main;
-        let table = Table::with_schema(main_schema);
-
-        let indices = cached_apply_row_field_indices(&table, 0).expect("schema lookup");
-
-        assert!(indices.data.is_some());
-        assert!(indices.corrected_data.is_some());
-        assert!(indices.flag.is_some());
-        assert!(indices.flag_row.is_some());
-        assert!(indices.weight.is_some());
-        assert!(indices.weight_spectrum.is_some());
     }
 
     fn default_main_value(column: &ColumnSchema) -> Value {

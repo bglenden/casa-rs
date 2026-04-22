@@ -51,6 +51,19 @@ pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
 pub(crate) const TABLE_INFO_FILE: &str = "table.info";
 
+fn reorder_row_to_requested_columns(row: &RecordValue, columns: &[&str]) -> RecordValue {
+    RecordValue::new(
+        columns
+            .iter()
+            .filter_map(|column| {
+                row.get(column)
+                    .cloned()
+                    .map(|value| RecordField::new(*column, value))
+            })
+            .collect(),
+    )
+}
+
 fn storage_profile_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| match std::env::var("CASA_RS_STORAGE_PROFILE") {
@@ -859,11 +872,57 @@ impl CompositeStorage {
 
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(table_dat) => {
-                self.load_plain_table(table_path, &table_dat, row_hint)
+                self.load_plain_table_filtered(table_path, &table_dat, row_hint, None)
             }
             TableDatResult::Ref(ref_dat) => self.load_ref_table(table_path, &ref_dat),
             TableDatResult::Concat(concat_dat) => self.load_concat_table(table_path, &concat_dat),
         }
+    }
+
+    pub(crate) fn load_selected_columns_with_row_hint(
+        &self,
+        table_path: &Path,
+        columns: &[&str],
+        row_hint: Option<u64>,
+    ) -> Result<StorageSnapshot, StorageError> {
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !control_path.is_file() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        let requested_columns: HashSet<&str> = columns.iter().copied().collect();
+        let mut snapshot = match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => self.load_plain_table_filtered(
+                table_path,
+                &table_dat,
+                row_hint,
+                Some(&requested_columns),
+            ),
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                let mut snapshot = self.load_with_row_hint(table_path, row_hint)?;
+                for row in &mut snapshot.rows {
+                    *row = RecordValue::new(
+                        row.fields()
+                            .iter()
+                            .filter(|field| requested_columns.contains(field.name.as_str()))
+                            .cloned()
+                            .collect(),
+                    );
+                }
+                for undefined in &mut snapshot.undefined_cells {
+                    undefined.retain(|column| requested_columns.contains(column.as_str()));
+                }
+                Ok(snapshot)
+            }
+        }?;
+        for row in &mut snapshot.rows {
+            *row = reorder_row_to_requested_columns(row, columns);
+        }
+        Ok(snapshot)
     }
 
     pub(crate) fn save_metadata_only(
@@ -1043,18 +1102,46 @@ impl CompositeStorage {
     /// - Pass 1: Load stored columns from storage managers (StManAipsIO, StandardStMan).
     /// - Pass 2: Materialize virtual columns from virtual engines.
     /// - Pass 3: Reject any remaining unknown DM types.
-    fn load_plain_table(
+    fn load_plain_table_filtered(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
         row_hint: Option<u64>,
+        requested_columns: Option<&HashSet<&str>>,
     ) -> Result<StorageSnapshot, StorageError> {
+        if let Some(requested_columns) = requested_columns
+            && table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            let mut snapshot =
+                self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
+            for row in &mut snapshot.rows {
+                *row = RecordValue::new(
+                    row.fields()
+                        .iter()
+                        .filter(|field| requested_columns.contains(field.name.as_str()))
+                        .cloned()
+                        .collect(),
+                );
+            }
+            for undefined in &mut snapshot.undefined_cells {
+                undefined.retain(|column| requested_columns.contains(column.as_str()));
+            }
+            return Ok(snapshot);
+        }
+
         let schema = table_dat.to_table_schema()?;
         let keywords = table_dat.table_desc.table_keywords.clone();
         let column_keywords: HashMap<String, RecordValue> = table_dat
             .table_desc
             .columns
             .iter()
+            .filter(|c| {
+                requested_columns.is_none_or(|requested| requested.contains(c.col_name.as_str()))
+            })
             .filter(|c| !c.keywords.fields().is_empty())
             .map(|c| (c.col_name.clone(), c.keywords.clone()))
             .collect();
@@ -1081,13 +1168,25 @@ impl CompositeStorage {
 
             let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
 
-            let bound_cols: Vec<(usize, &_)> = table_dat
+            let all_bound_cols: Vec<(usize, &_)> = table_dat
                 .column_set
                 .columns
                 .iter()
                 .enumerate()
                 .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
                 .collect();
+            let bound_cols: Vec<(usize, &_)> = all_bound_cols
+                .iter()
+                .copied()
+                .filter(|(_, pc)| {
+                    requested_columns
+                        .is_none_or(|requested| requested.contains(pc.original_name.as_str()))
+                })
+                .collect();
+
+            if bound_cols.is_empty() {
+                continue;
+            }
 
             match dm.type_name.as_str() {
                 "StManAipsIO" => {
@@ -1097,7 +1196,7 @@ impl CompositeStorage {
                     load_stman_aipsio_columns(
                         &data_path,
                         &table_dat.table_desc.columns,
-                        &bound_cols,
+                        &all_bound_cols,
                         &mut rows,
                         &mut undefined_cells,
                         nrrow,
@@ -1207,7 +1306,15 @@ impl CompositeStorage {
                     .iter()
                     .enumerate()
                     .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+                    .filter(|(_, pc)| {
+                        requested_columns
+                            .is_none_or(|requested| requested.contains(pc.original_name.as_str()))
+                    })
                     .collect();
+
+                if bound_cols.is_empty() {
+                    continue;
+                }
 
                 for &(desc_idx, _) in &bound_cols {
                     virtual_columns.insert(table_dat.table_desc.columns[desc_idx].col_name.clone());
@@ -1228,6 +1335,21 @@ impl CompositeStorage {
 
         // Build DM info from table.dat entries.
         let dm_info = extract_dm_info(table_dat);
+
+        if let Some(requested_columns) = requested_columns {
+            for row in &mut rows {
+                *row = RecordValue::new(
+                    row.fields()
+                        .iter()
+                        .filter(|field| requested_columns.contains(field.name.as_str()))
+                        .cloned()
+                        .collect(),
+                );
+            }
+            for undefined in &mut undefined_cells {
+                undefined.retain(|column| requested_columns.contains(column.as_str()));
+            }
+        }
 
         Ok(StorageSnapshot {
             row_count: rows.len(),
@@ -1265,7 +1387,7 @@ impl CompositeStorage {
             .iter()
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
-            let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             return scalar_column_from_snapshot(&snapshot, column);
         }
 
@@ -1366,7 +1488,7 @@ impl CompositeStorage {
             .iter()
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
-            let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             return Ok(scalar_columns_from_snapshot(&snapshot));
         }
 
@@ -1442,7 +1564,8 @@ impl CompositeStorage {
                         .iter()
                         .any(|(desc_idx, _)| !table_dat.table_desc.columns[*desc_idx].is_array)
                     {
-                        let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+                        let snapshot =
+                            self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
                         return Ok(scalar_columns_from_snapshot(&snapshot));
                     }
                 }
@@ -1486,7 +1609,7 @@ impl CompositeStorage {
             .iter()
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
-            let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             return array_column_from_snapshot(&snapshot, column);
         }
 
@@ -1630,7 +1753,7 @@ impl CompositeStorage {
             .iter()
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
-            let snapshot = self.load_plain_table(table_path, table_dat, row_hint)?;
+            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             let values = array_column_from_snapshot(&snapshot, column)?;
             return Ok(select_array_rows(&values, selected_rows));
         }

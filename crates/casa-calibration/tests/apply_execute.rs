@@ -385,6 +385,55 @@ fn execute_apply_calflag_marks_samples_when_solution_is_missing() {
 }
 
 #[test]
+fn execute_apply_calflag_marks_samples_when_solution_is_missing_without_seeded_corrected_data() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_apply_fixture_ms(dir.path(), false);
+    let caltable_path = common::create_apply_gain_caltable(
+        &dir.path().join("phase.gcal"),
+        &["TARGET0"],
+        &[common::SyntheticGainSolutionRow {
+            time_seconds: 100.0,
+            field_id: 0,
+            spectral_window_id: 0,
+            antenna_id: 0,
+            gains: vec![
+                casa_types::Complex32::new(2.0, 0.0),
+                casa_types::Complex32::new(4.0, 0.0),
+            ],
+            flags: vec![false, false],
+        }],
+    );
+
+    let report = execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode: ApplyMode::CalFlag,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply calibration with calflag via prepared-row writeback");
+
+    assert!(report.created_corrected_data_column);
+    assert_eq!(report.flagged_sample_count, 4);
+    assert_eq!(report.flagged_row_count, 1);
+
+    let ms = MeasurementSet::open(&ms_path).expect("reopen measurement set");
+    let _corrected_column = ms
+        .data_column(VisibilityDataColumn::CorrectedData)
+        .expect("corrected data accessor");
+
+    let flag_column = ms.flag_column();
+    let flags = flag_column.get(0).expect("read flags");
+    let ArrayValue::Bool(flags) = flags else {
+        panic!("expected bool flags");
+    };
+    assert!(flags.iter().all(|flag| *flag));
+    assert!(ms.flag_row_column().get(0).expect("flag row"));
+}
+
+#[test]
 fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), true);
@@ -441,6 +490,91 @@ fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
 
     assert_eq!(weight[[0]], 100.0);
     assert_eq!(weight[[1]], 1600.0);
+}
+
+#[test]
+fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_apply_fixture_ms_with_options(dir.path(), false, true);
+    let caltable_path = common::create_apply_gain_caltable(
+        &dir.path().join("phase.gcal"),
+        &["TARGET0"],
+        &[
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 0,
+                gains: vec![
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 1,
+                gains: vec![
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+        ],
+    );
+
+    let mut spec = ApplyCalibrationTableSpec::new(&caltable_path);
+    spec.calwt = true;
+    let report = execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![spec],
+        },
+    )
+    .expect("apply calibration with channelized calwt via prepared-row writeback");
+
+    assert!(report.created_corrected_data_column);
+    assert_eq!(report.updated_row_count, 1);
+
+    let ms = MeasurementSet::open(&ms_path).expect("reopen measurement set");
+    let corrected_column = ms
+        .data_column(VisibilityDataColumn::CorrectedData)
+        .expect("corrected data accessor");
+    let corrected = corrected_column.get(0).expect("read corrected row");
+    let ArrayValue::Complex32(corrected) = corrected else {
+        panic!("expected Complex32 corrected data");
+    };
+    assert_eq!(corrected[[0, 0]], casa_types::Complex32::new(0.1, 0.0));
+    assert_eq!(corrected[[1, 0]], casa_types::Complex32::new(0.0, 0.025));
+    assert_eq!(corrected[[0, 1]], casa_types::Complex32::new(0.2, 0.0));
+    assert_eq!(corrected[[1, 1]], casa_types::Complex32::new(0.0, 0.05));
+
+    let weight_spectrum = ms
+        .main_table()
+        .get_array_cell(0, "WEIGHT_SPECTRUM")
+        .expect("read weight spectrum row");
+    let ArrayValue::Float32(weight_spectrum) = weight_spectrum else {
+        panic!("expected float32 WEIGHT_SPECTRUM");
+    };
+    assert_eq!(weight_spectrum[[0, 0]], 700.0);
+    assert_eq!(weight_spectrum[[0, 1]], 700.0);
+    assert_eq!(weight_spectrum[[1, 0]], 17_600.0);
+    assert_eq!(weight_spectrum[[1, 1]], 17_600.0);
+
+    let weight = ms
+        .main_table()
+        .get_array_cell(0, "WEIGHT")
+        .expect("read weight row");
+    let ArrayValue::Float32(weight) = weight else {
+        panic!("expected float32 WEIGHT");
+    };
+    assert_eq!(weight[[0]], 700.0);
+    assert_eq!(weight[[1]], 17_600.0);
 }
 
 #[test]

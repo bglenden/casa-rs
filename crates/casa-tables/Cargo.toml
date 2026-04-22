@@ -43,5 +43,9 @@ name = "t_scalar_record_column"
 name = "taql_bench"
 harness = false
 
+[[bench]]
+name = "row_buffer_bench"
+harness = false
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
