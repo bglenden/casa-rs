@@ -1690,6 +1690,53 @@ fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
 }
 
 #[test]
+fn prepared_row_cached_fast_path_rejects_invalid_slot_index() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))),
+            ]))
+            .expect("push row");
+
+        let root = unique_test_dir(&format!("prepared_row_invalid_slot_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        let mut prepared = reopened
+            .row_accessor()
+            .prepare(&["id", "data"])
+            .expect("prepare reader");
+        prepared.load(0).expect("load row");
+
+        assert!(matches!(
+            prepared.scalar_at(99),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "#99"
+        ));
+        assert!(matches!(
+            prepared.array_at(99),
+            Err(TableError::SchemaColumnUnknown { column }) if column == "#99"
+        ));
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
 fn prepared_row_access_rejects_record_columns() {
     let schema = TableSchema::new(vec![ColumnSchema::record("meta")]).expect("schema");
     let table = Table::with_schema(schema);
