@@ -212,7 +212,7 @@ fn read_tiled_header(path: &Path) -> Result<(TiledVariant, TiledStManHeader), St
 
     // The outermost AipsIO object is the derived-class envelope.
     let outer_type = io.get_next_type()?;
-    let _outer_version = io.getstart(&outer_type)?;
+    let outer_version = io.getstart(&outer_type)?;
 
     match outer_type.as_str() {
         "TiledColumnStMan" => {
@@ -257,7 +257,11 @@ fn read_tiled_header(path: &Path) -> Result<(TiledVariant, TiledStManHeader), St
             // default_tile_shape, nrrowLast, rowMap, cubeMap, posMap.
             let header = read_tiled_stman_base(&mut io)?;
             let default_tile_shape = read_iposition(&mut io)?;
-            let nrrow_last = io.get_u64().unwrap_or(io.get_u32().unwrap_or(0) as u64);
+            let nrrow_last = if outer_version >= 2 {
+                io.get_u64()?
+            } else {
+                io.get_u32()? as u64
+            };
             let row_map = read_block_u64(&mut io)?;
             let cube_map = read_block_u32(&mut io)?;
             let pos_map = read_block_u32(&mut io)?;
@@ -1899,19 +1903,17 @@ fn load_tiled_column_rows_cell_variant(
             dt,
             elem_size,
         )?;
-        let mut decoded = extract_selected_rows_from_cube_raw(
-            &raw,
-            &cube.cube_shape,
-            std::iter::once(SelectedCubeRow {
-                out_idx: 0,
-                pos_in_cube: 0,
-            }),
-            col_desc,
-            dt,
-            header.big_endian,
-            1,
-        )?;
-        outputs[out_idx] = decoded.pop().flatten();
+        outputs[out_idx] = match decode_array_value(&raw, &cube.cube_shape, dt, header.big_endian)?
+        {
+            Value::Array(array) => Some(array),
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "tiled cell row '{}' expected array value, found {:?}",
+                    col_desc.col_name,
+                    other.kind()
+                )));
+            }
+        };
     }
     Ok(outputs)
 }
@@ -2146,6 +2148,304 @@ pub(crate) fn save_tiled_single_column_values(
             )
         }
     }
+}
+
+type SparseArrayRowValues = Vec<(usize, Option<ArrayValue>)>;
+
+#[derive(Clone, Copy, Debug)]
+struct SparseTiledCubeRowPatch {
+    global_row_idx: usize,
+    pos_in_cube: usize,
+}
+
+pub(crate) fn save_tiled_columns_sparse_rows_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    dm_type_name: &str,
+    col_descs: &[ColumnDescContents],
+    sparse_columns: &[Option<SparseArrayRowValues>],
+    changed_rows: &[usize],
+) -> Result<bool, StorageError> {
+    if changed_rows.is_empty() {
+        return Ok(true);
+    }
+    if col_descs.len() != sparse_columns.len() {
+        return Ok(false);
+    }
+    match dm_type_name {
+        "TiledColumnStMan" => save_tiled_column_group_rows_sparse_in_place(
+            table_path,
+            dm_seq_nr,
+            col_descs,
+            sparse_columns,
+            changed_rows,
+        ),
+        "TiledCellStMan" => save_tiled_cell_group_rows_sparse_in_place(
+            table_path,
+            dm_seq_nr,
+            col_descs,
+            sparse_columns,
+            changed_rows,
+        ),
+        "TiledDataStMan" => save_tiled_data_group_rows_sparse_in_place(
+            table_path,
+            dm_seq_nr,
+            col_descs,
+            sparse_columns,
+            changed_rows,
+        ),
+        "TiledShapeStMan" => save_tiled_shape_group_rows_sparse_in_place(
+            table_path,
+            dm_seq_nr,
+            col_descs,
+            sparse_columns,
+            changed_rows,
+        ),
+        _ => Ok(false),
+    }
+}
+
+fn cube_with_single_row_axis(cube: &TsmCubeInfo) -> TsmCubeInfo {
+    let mut cube_with_row_axis = cube.clone();
+    cube_with_row_axis.cube_shape.push(1);
+    cube_with_row_axis.tile_shape.push(1);
+    cube_with_row_axis
+}
+
+fn save_tiled_column_group_rows_sparse_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_descs: &[ColumnDescContents],
+    sparse_columns: &[Option<SparseArrayRowValues>],
+    changed_rows: &[usize],
+) -> Result<bool, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    if !matches!(variant, TiledVariant::Column { .. })
+        || header.col_data_types.len() != col_descs.len()
+    {
+        return Ok(false);
+    }
+    let Some(cube) = header.cubes.first() else {
+        return Ok(false);
+    };
+    if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+        return Ok(false);
+    }
+    let row_axis = cube.cube_shape.len() - 1;
+    let row_count = cube.cube_shape[row_axis];
+    let row_patches: Vec<_> = changed_rows
+        .iter()
+        .copied()
+        .filter(|&row_idx| row_idx < row_count)
+        .map(|row_idx| SparseTiledCubeRowPatch {
+            global_row_idx: row_idx,
+            pos_in_cube: row_idx,
+        })
+        .collect();
+    if row_patches.is_empty() {
+        return Ok(true);
+    }
+    patch_tiled_cube_sparse_rows(
+        table_path,
+        dm_seq_nr,
+        col_descs,
+        sparse_columns,
+        header.big_endian,
+        &header.col_data_types,
+        cube,
+        &row_patches,
+    )?;
+    Ok(true)
+}
+
+fn save_tiled_cell_group_rows_sparse_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_descs: &[ColumnDescContents],
+    sparse_columns: &[Option<SparseArrayRowValues>],
+    changed_rows: &[usize],
+) -> Result<bool, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    if !matches!(variant, TiledVariant::Cell { .. })
+        || header.col_data_types.len() != col_descs.len()
+    {
+        return Ok(false);
+    }
+
+    for &row_idx in changed_rows {
+        let Some(cube) = header.cubes.get(row_idx) else {
+            continue;
+        };
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            continue;
+        }
+        let cube_with_row_axis = cube_with_single_row_axis(cube);
+        patch_tiled_cube_sparse_rows(
+            table_path,
+            dm_seq_nr,
+            col_descs,
+            sparse_columns,
+            header.big_endian,
+            &header.col_data_types,
+            &cube_with_row_axis,
+            &[SparseTiledCubeRowPatch {
+                global_row_idx: row_idx,
+                pos_in_cube: 0,
+            }],
+        )?;
+    }
+
+    Ok(true)
+}
+
+fn save_tiled_data_group_rows_sparse_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_descs: &[ColumnDescContents],
+    sparse_columns: &[Option<SparseArrayRowValues>],
+    changed_rows: &[usize],
+) -> Result<bool, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    let TiledVariant::Data {
+        row_map,
+        cube_map,
+        pos_map,
+        ..
+    } = variant
+    else {
+        return Ok(false);
+    };
+    if header.col_data_types.len() != col_descs.len() || row_map.is_empty() {
+        return Ok(false);
+    }
+
+    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SparseTiledCubeRowPatch>> =
+        std::collections::BTreeMap::new();
+    for &row_idx in changed_rows {
+        let chunk = match row_map.binary_search(&(row_idx as u64)) {
+            Ok(i) => i,
+            Err(i) => {
+                if i == 0 {
+                    continue;
+                }
+                i - 1
+            }
+        };
+        let cube_idx = cube_map[chunk] as usize;
+        if cube_idx >= header.cubes.len() {
+            continue;
+        }
+        let chunk_start = row_map[chunk] as usize;
+        let pos_in_cube = pos_map[chunk] as usize + (row_idx - chunk_start);
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SparseTiledCubeRowPatch {
+                global_row_idx: row_idx,
+                pos_in_cube,
+            });
+    }
+    if patches_by_cube.is_empty() {
+        return Ok(true);
+    }
+
+    for (cube_idx, row_patches) in patches_by_cube {
+        let cube = &header.cubes[cube_idx];
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            continue;
+        }
+        patch_tiled_cube_sparse_rows(
+            table_path,
+            dm_seq_nr,
+            col_descs,
+            sparse_columns,
+            header.big_endian,
+            &header.col_data_types,
+            cube,
+            &row_patches,
+        )?;
+    }
+
+    Ok(true)
+}
+
+fn save_tiled_shape_group_rows_sparse_in_place(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_descs: &[ColumnDescContents],
+    sparse_columns: &[Option<SparseArrayRowValues>],
+    changed_rows: &[usize],
+) -> Result<bool, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    let TiledVariant::Shape {
+        nr_used_row_map,
+        row_map,
+        cube_map,
+        pos_map,
+        ..
+    } = variant
+    else {
+        return Ok(false);
+    };
+    if header.col_data_types.len() != col_descs.len() {
+        return Ok(false);
+    }
+    let n_intervals = nr_used_row_map as usize;
+    if n_intervals == 0 {
+        return Ok(false);
+    }
+
+    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SparseTiledCubeRowPatch>> =
+        std::collections::BTreeMap::new();
+    for &row_idx in changed_rows {
+        let interval = row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
+        if interval >= n_intervals {
+            continue;
+        }
+        let cube_idx = cube_map[interval] as usize;
+        if cube_idx == 0 || cube_idx >= header.cubes.len() {
+            continue;
+        }
+        let diff = row_map[interval] as usize - row_idx;
+        let Some(pos_in_cube) = (pos_map[interval] as usize).checked_sub(diff) else {
+            return Err(StorageError::FormatMismatch(format!(
+                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
+                pos_map[interval]
+            )));
+        };
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SparseTiledCubeRowPatch {
+                global_row_idx: row_idx,
+                pos_in_cube,
+            });
+    }
+    if patches_by_cube.is_empty() {
+        return Ok(true);
+    }
+
+    for (cube_idx, row_patches) in patches_by_cube {
+        let cube = &header.cubes[cube_idx];
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            continue;
+        }
+        patch_tiled_cube_sparse_rows(
+            table_path,
+            dm_seq_nr,
+            col_descs,
+            sparse_columns,
+            header.big_endian,
+            &header.col_data_types,
+            cube,
+            &row_patches,
+        )?;
+    }
+    Ok(true)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2434,6 +2734,194 @@ fn patch_single_column_tiled_cube_rows(
             write_tile_storage(&mut packed_tile, col_data_type, &unpacked_tile, nrpixels);
             file.seek(SeekFrom::Start(tile_start as u64))?;
             file.write_all(&packed_tile)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn patch_tiled_cube_sparse_rows(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    col_descs: &[ColumnDescContents],
+    sparse_columns: &[Option<SparseArrayRowValues>],
+    big_endian: bool,
+    col_data_types: &[CasacoreDataType],
+    cube: &TsmCubeInfo,
+    row_patches: &[SparseTiledCubeRowPatch],
+) -> Result<(), StorageError> {
+    let ndim = cube.cube_shape.len();
+    if ndim == 0 {
+        return Ok(());
+    }
+    let row_axis = ndim - 1;
+    if row_axis == 0 {
+        return Err(StorageError::FormatMismatch(
+            "tiled sparse save requires array-valued cells".to_string(),
+        ));
+    }
+
+    struct SparseColumnPatch {
+        col_data_type: CasacoreDataType,
+        elem_size: usize,
+        expected_row_bytes: usize,
+        row_block_bytes: usize,
+        tile_storage_len: usize,
+        col_offset: usize,
+        encoded_rows: std::collections::HashMap<usize, Vec<u8>>,
+    }
+
+    let cell_shape = &cube.cube_shape[..row_axis];
+    let tile_cell_shape = &cube.tile_shape[..row_axis];
+    let row_tile_len = cube.tile_shape[row_axis].max(1);
+    let row_block_pixels: usize = tile_cell_shape.iter().product();
+    let nrpixels: usize = cube.tile_shape.iter().product();
+    let (bucket_size, col_offsets) = compute_tile_layout(col_data_types, &cube.tile_shape);
+    let tiles_per_dim: Vec<usize> = cube
+        .cube_shape
+        .iter()
+        .zip(cube.tile_shape.iter())
+        .map(|(&cube_len, &tile_len)| cube_len.div_ceil(tile_len))
+        .collect();
+    let cell_tiles_per_dim = &tiles_per_dim[..row_axis];
+    let cell_tile_total = cell_tiles_per_dim.iter().product::<usize>().max(1);
+
+    let mut column_patches = Vec::new();
+    for (col_idx, sparse_values) in sparse_columns.iter().enumerate() {
+        let Some(sparse_values) = sparse_values else {
+            continue;
+        };
+        if col_idx >= col_descs.len() || col_idx >= col_data_types.len() {
+            return Ok(());
+        }
+        let col_data_type = col_data_types[col_idx];
+        let elem_size = tile_element_size(col_data_type);
+        if elem_size == 0 {
+            return Err(StorageError::FormatMismatch(format!(
+                "tiled sparse save does not support non-primitive array column {}",
+                col_descs[col_idx].col_name
+            )));
+        }
+        let expected_row_bytes = cell_shape.iter().product::<usize>() * elem_size;
+        let mut encoded_rows = std::collections::HashMap::with_capacity(sparse_values.len());
+        for (row_idx, value) in sparse_values {
+            let encoded = match value {
+                Some(value) => {
+                    let wrapped = Value::Array(value.clone());
+                    let (encoded, dt) = encode_array_value(&wrapped, big_endian)?;
+                    if dt != col_data_type {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "tiled sparse save column {} expected {:?} but encoded {:?}",
+                            col_descs[col_idx].col_name, col_data_type, dt
+                        )));
+                    }
+                    if encoded.len() != expected_row_bytes {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "tiled sparse save column {} expected {expected_row_bytes} row bytes but encoded {}",
+                            col_descs[col_idx].col_name,
+                            encoded.len()
+                        )));
+                    }
+                    encoded
+                }
+                None => vec![0u8; expected_row_bytes],
+            };
+            encoded_rows.insert(*row_idx, encoded);
+        }
+        if encoded_rows.is_empty() {
+            continue;
+        }
+        column_patches.push(SparseColumnPatch {
+            col_data_type,
+            elem_size,
+            expected_row_bytes,
+            row_block_bytes: row_block_pixels * elem_size,
+            tile_storage_len: tile_storage_bytes(col_data_type, nrpixels),
+            col_offset: col_offsets[col_idx],
+            encoded_rows,
+        });
+    }
+    if column_patches.is_empty() {
+        return Ok(());
+    }
+
+    let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SparseTiledCubeRowPatch>> =
+        std::collections::BTreeMap::new();
+    for &patch in row_patches {
+        patches_by_row_tile
+            .entry(patch.pos_in_cube / row_tile_len)
+            .or_default()
+            .push(patch);
+    }
+
+    let tsm_path = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
+    let mut file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
+    for (row_tile_idx, row_tile_patches) in patches_by_row_tile {
+        if row_tile_idx >= tiles_per_dim[row_axis] {
+            continue;
+        }
+        for cell_tile_linear in 0..cell_tile_total {
+            let cell_tile_pos = if cell_tiles_per_dim.is_empty() {
+                Vec::new()
+            } else {
+                linear_to_nd(cell_tile_linear, cell_tiles_per_dim)
+            };
+            let mut tile_pos = cell_tile_pos.clone();
+            tile_pos.push(row_tile_idx);
+            let tile_idx = nd_to_linear(&tile_pos, &tiles_per_dim);
+            let tile_start = cube.file_offset as usize + tile_idx * bucket_size;
+            let mut packed_bucket = vec![0u8; bucket_size];
+            file.seek(SeekFrom::Start(tile_start as u64))?;
+            file.read_exact(&mut packed_bucket)?;
+
+            let cell_cube_start: Vec<usize> = (0..row_axis)
+                .map(|dim| cell_tile_pos.get(dim).copied().unwrap_or(0) * cube.tile_shape[dim])
+                .collect();
+            let actual_cell_extent: Vec<usize> = (0..row_axis)
+                .map(|dim| {
+                    std::cmp::min(cube.tile_shape[dim], cell_shape[dim] - cell_cube_start[dim])
+                })
+                .collect();
+
+            for column_patch in &column_patches {
+                let src_start = column_patch.col_offset;
+                let src_end = src_start + column_patch.tile_storage_len;
+                let mut unpacked_tile = read_tile_storage(
+                    &packed_bucket[src_start..src_end],
+                    column_patch.col_data_type,
+                    nrpixels,
+                );
+                for patch in &row_tile_patches {
+                    let Some(encoded_row) = column_patch.encoded_rows.get(&patch.global_row_idx)
+                    else {
+                        continue;
+                    };
+                    debug_assert_eq!(encoded_row.len(), column_patch.expected_row_bytes);
+                    let local_row = patch.pos_in_cube % row_tile_len;
+                    let row_slice_start = local_row * column_patch.row_block_bytes;
+                    let row_slice_end = row_slice_start + column_patch.row_block_bytes;
+                    let row_tile = &mut unpacked_tile[row_slice_start..row_slice_end];
+                    copy_cube_to_tile(
+                        encoded_row,
+                        cell_shape,
+                        row_tile,
+                        tile_cell_shape,
+                        &cell_cube_start,
+                        &actual_cell_extent,
+                        column_patch.elem_size,
+                    );
+                }
+                write_tile_storage(
+                    &mut packed_bucket[src_start..src_end],
+                    column_patch.col_data_type,
+                    &unpacked_tile,
+                    nrpixels,
+                );
+            }
+
+            file.seek(SeekFrom::Start(tile_start as u64))?;
+            file.write_all(&packed_bucket)?;
         }
     }
 
@@ -5355,7 +5843,13 @@ fn dot_product(a: &[usize], b: &[usize]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
+    use ndarray::ArrayD;
     use tempfile::tempdir;
+
+    use crate::storage::TABLE_CONTROL_FILE;
+    use crate::storage::table_control::{read_table_dat, write_table_dat};
+    use crate::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 
     fn make_bool_tile_pattern(base: usize) -> Vec<bool> {
         (0..4).map(|i| (base + i) % 3 == 0).collect()
@@ -5550,5 +6044,116 @@ mod tests {
                 assert_eq!(reconstructed[idx], cube_data[idx], "mismatch at ({i},{j})");
             }
         }
+    }
+
+    #[test]
+    fn sparse_partial_save_patches_tiled_data_rows_from_legacy_header() {
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Float32,
+            vec![2, 2],
+        )])
+        .expect("schema");
+
+        let mut table = Table::with_schema(schema);
+        for row_idx in 0..4 {
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "data",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(
+                            vec![2, 2],
+                            vec![
+                                row_idx as f32,
+                                row_idx as f32 + 10.0,
+                                row_idx as f32 + 20.0,
+                                row_idx as f32 + 30.0,
+                            ],
+                        )
+                        .expect("shape data"),
+                    )),
+                )]))
+                .expect("push row");
+        }
+
+        let dir = tempdir().expect("tempdir");
+        let table_path = dir.path().join("tiled-data-compat.table");
+        std::fs::create_dir_all(&table_path).expect("create table dir");
+        table
+            .save(
+                TableOptions::new(&table_path).with_data_manager(DataManagerKind::TiledColumnStMan),
+            )
+            .expect("save tiled-column table");
+
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        let mut table_dat = read_table_dat(&control_path).expect("read table.dat");
+        for dm in &mut table_dat.column_set.data_managers {
+            if dm.type_name == "TiledColumnStMan" {
+                dm.type_name = "TiledDataStMan".to_string();
+            }
+        }
+        for desc in &mut table_dat.table_desc.columns {
+            if desc.data_manager_type == "TiledColumnStMan" {
+                desc.data_manager_type = "TiledDataStMan".to_string();
+            }
+        }
+        write_table_dat(&control_path, &table_dat).expect("rewrite table.dat");
+
+        let header_path = table_path.join("table.f0");
+        let (variant, header) = read_tiled_header(&header_path).expect("read tiled header");
+        let TiledVariant::Column { default_tile_shape } = variant else {
+            panic!("expected TiledColumnStMan header");
+        };
+        write_tiled_header(
+            &header_path,
+            &TiledVariant::Data {
+                default_tile_shape,
+                nrrow_last: header.nrrow,
+                row_map: vec![0],
+                cube_map: vec![0],
+                pos_map: vec![0],
+            },
+            &header,
+        )
+        .expect("rewrite TiledDataStMan header");
+
+        let mut reopened =
+            Table::open(TableOptions::new(&table_path)).expect("open tiled-data table");
+        assert_eq!(reopened.data_manager_info()[0].dm_type, "TiledDataStMan");
+
+        reopened
+            .set_array_cell_assuming_valid(
+                2,
+                "data",
+                ArrayValue::Float32(
+                    ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0])
+                        .expect("shape updated data"),
+                ),
+            )
+            .expect("set tiled-data array cell lazily");
+
+        reopened
+            .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
+            .expect("sparse tiled-data partial save");
+
+        let verify = Table::open(TableOptions::new(&table_path)).expect("reopen tiled-data table");
+        assert_eq!(
+            verify.get_array_cell(0, "data").expect("data row 0"),
+            &ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
+            )
+        );
+        assert_eq!(
+            verify.get_array_cell(2, "data").expect("data row 2"),
+            &ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0]).unwrap()
+            )
+        );
+        assert_eq!(
+            verify.get_array_cell(3, "data").expect("data row 3"),
+            &ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![3.0, 13.0, 23.0, 33.0]).unwrap()
+            )
+        );
     }
 }
