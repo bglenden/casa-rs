@@ -1986,6 +1986,65 @@ fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column()
 }
 
 #[test]
+fn lazy_disk_open_reads_scalar_cells_without_loading_full_scalar_columns() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("scan", PrimitiveType::Int32),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        for (id, scan) in [(1, 10), (2, 20), (3, 30), (4, 40)] {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                    RecordField::new("scan", Value::Scalar(ScalarValue::Int32(scan))),
+                ]))
+                .expect("push row");
+        }
+
+        let root = unique_test_dir(&format!("lazy_scalar_cell_buffered_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        assert!(!reopened.inner.has_loaded_rows());
+        assert!(!reopened.inner.has_loaded_scalar_column("id"));
+        assert!(!reopened.inner.has_loaded_scalar_column("scan"));
+
+        assert_eq!(
+            reopened.get_scalar_cell(3, "id").expect("id row 3"),
+            &ScalarValue::Int32(4)
+        );
+        assert_eq!(
+            reopened.get_scalar_cell(1, "scan").expect("scan row 1"),
+            &ScalarValue::Int32(20)
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "scalar cell reads should not force row materialization for {dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_scalar_column("id"),
+            "scalar cell reads should not populate the full scalar-column cache for {dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_scalar_column("scan"),
+            "scalar cell reads should not populate the full scalar-column cache for {dm:?}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
 fn partial_save_with_changed_rows_patches_stman_aipsio_indirect_arrays() {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("flag_row", PrimitiveType::Bool),
@@ -2214,6 +2273,248 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_rows() {
 }
 
 #[test]
+fn partial_save_with_changed_rows_patches_only_touched_multi_column_tiled_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::array_fixed("DATA", PrimitiveType::Float32, vec![2, 2]),
+        ColumnSchema::array_fixed("WEIGHT", PrimitiveType::Float32, vec![2, 2]),
+    ])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new(
+                    "DATA",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(
+                            vec![2, 2],
+                            vec![
+                                row_idx as f32,
+                                row_idx as f32 + 10.0,
+                                row_idx as f32 + 20.0,
+                                row_idx as f32 + 30.0,
+                            ],
+                        )
+                        .expect("shape DATA"),
+                    )),
+                ),
+                RecordField::new(
+                    "WEIGHT",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(
+                            vec![2, 2],
+                            vec![
+                                row_idx as f32 + 100.0,
+                                row_idx as f32 + 110.0,
+                                row_idx as f32 + 120.0,
+                                row_idx as f32 + 130.0,
+                            ],
+                        )
+                        .expect("shape WEIGHT"),
+                    )),
+                ),
+            ]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("partial_save_changed_rows_tiled_shape_multi_column");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled-shape table");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open tiled-shape table");
+    let tiled_groups: Vec<_> = reopened
+        .data_manager_info()
+        .iter()
+        .filter(|dm| dm.dm_type == "TiledShapeStMan")
+        .collect();
+    assert_eq!(tiled_groups.len(), 1);
+    assert_eq!(tiled_groups[0].columns.len(), 2);
+    assert!(
+        tiled_groups[0]
+            .columns
+            .iter()
+            .any(|column| column == "DATA")
+    );
+    assert!(
+        tiled_groups[0]
+            .columns
+            .iter()
+            .any(|column| column == "WEIGHT")
+    );
+
+    reopened
+        .set_array_cell_assuming_valid(
+            1,
+            "DATA",
+            ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![201.0, 211.0, 221.0, 231.0])
+                    .expect("shape updated DATA"),
+            ),
+        )
+        .expect("set DATA lazily");
+    reopened
+        .set_array_cell_assuming_valid(
+            2,
+            "WEIGHT",
+            ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![302.0, 312.0, 322.0, 332.0])
+                    .expect("shape updated WEIGHT"),
+            ),
+        )
+        .expect("set WEIGHT lazily");
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(reopened.inner.has_pending_array_cells("DATA"));
+    assert!(reopened.inner.has_pending_array_cells("WEIGHT"));
+    assert!(!reopened.inner.has_loaded_array_column("DATA"));
+    assert!(!reopened.inner.has_loaded_array_column("WEIGHT"));
+
+    reopened
+        .save_selected_rows_in_place_assuming_valid(&["DATA", "WEIGHT"], &[1, 2])
+        .expect("partial save with tiled group row hints");
+    assert!(
+        !reopened.inner.has_loaded_rows(),
+        "multi-column tiled sparse save should not force row materialization"
+    );
+    assert!(
+        !reopened.inner.has_loaded_array_column("DATA"),
+        "multi-column tiled sparse save should not materialize the DATA column"
+    );
+    assert!(
+        !reopened.inner.has_loaded_array_column("WEIGHT"),
+        "multi-column tiled sparse save should not materialize the WEIGHT column"
+    );
+
+    let verify = Table::open(TableOptions::new(&root)).expect("reopen after sparse partial save");
+    assert_eq!(
+        verify.get_array_cell(0, "DATA").expect("DATA row 0"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
+        )
+    );
+    assert_eq!(
+        verify.get_array_cell(1, "DATA").expect("DATA row 1"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![201.0, 211.0, 221.0, 231.0]).unwrap()
+        )
+    );
+    assert_eq!(
+        verify.get_array_cell(2, "DATA").expect("DATA row 2"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![2.0, 12.0, 22.0, 32.0]).unwrap()
+        )
+    );
+    assert_eq!(
+        verify.get_array_cell(1, "WEIGHT").expect("WEIGHT row 1"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![101.0, 111.0, 121.0, 131.0]).unwrap()
+        )
+    );
+    assert_eq!(
+        verify.get_array_cell(2, "WEIGHT").expect("WEIGHT row 2"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![302.0, 312.0, 322.0, 332.0]).unwrap()
+        )
+    );
+    assert_eq!(
+        verify.get_array_cell(3, "WEIGHT").expect("WEIGHT row 3"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![103.0, 113.0, 123.0, 133.0]).unwrap()
+        )
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
+fn partial_save_with_changed_rows_patches_only_touched_tiled_cell_rows() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 2],
+    )])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(
+                        vec![2, 2],
+                        vec![
+                            row_idx as f32,
+                            row_idx as f32 + 10.0,
+                            row_idx as f32 + 20.0,
+                            row_idx as f32 + 30.0,
+                        ],
+                    )
+                    .expect("shape data"),
+                )),
+            )]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("partial_save_changed_rows_tiled_cell");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledCellStMan))
+        .expect("save tiled-cell table");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open tiled-cell table");
+    reopened
+        .set_array_cell_assuming_valid(
+            2,
+            "data",
+            ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![202.0, 212.0, 222.0, 232.0])
+                    .expect("shape updated data"),
+            ),
+        )
+        .expect("set array cell lazily");
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(reopened.inner.has_pending_array_cells("data"));
+    assert!(!reopened.inner.has_loaded_array_column("data"));
+
+    reopened
+        .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
+        .expect("partial save with tiled-cell row hint");
+    assert!(
+        !reopened.inner.has_loaded_rows(),
+        "tiled-cell sparse save should not force row materialization"
+    );
+    assert!(
+        !reopened.inner.has_loaded_array_column("data"),
+        "tiled-cell sparse save should not materialize the array column"
+    );
+
+    let verify = Table::open(TableOptions::new(&root)).expect("reopen after sparse partial save");
+    assert_eq!(
+        verify.get_array_cell(0, "data").expect("data row 0"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
+        )
+    );
+    assert_eq!(
+        verify.get_array_cell(2, "data").expect("data row 2"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![202.0, 212.0, 222.0, 232.0]).unwrap()
+        )
+    );
+    assert_eq!(
+        verify.get_array_cell(3, "data").expect("data row 3"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![3.0, 13.0, 23.0, 33.0]).unwrap()
+        )
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
 fn partial_save_with_changed_rows_patches_only_touched_incremental_rows() {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("id", PrimitiveType::Int32),
@@ -2256,6 +2557,14 @@ fn partial_save_with_changed_rows_patches_only_touched_incremental_rows() {
     assert!(
         !reopened.inner.has_loaded_rows(),
         "sparse incremental save should not force row materialization"
+    );
+    assert!(
+        !reopened.inner.has_loaded_scalar_column("id"),
+        "sparse incremental save should not materialize the id column"
+    );
+    assert!(
+        !reopened.inner.has_loaded_scalar_column("scan"),
+        "sparse incremental save should not materialize the scan column"
     );
 
     let verify =

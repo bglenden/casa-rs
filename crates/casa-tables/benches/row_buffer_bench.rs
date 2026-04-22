@@ -5,8 +5,10 @@
 //! path added in wave 99 on the same persisted table shape.
 
 use std::hint::black_box;
+use std::path::PathBuf;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use ndarray::ArrayD;
 use tempfile::TempDir;
 
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
@@ -58,6 +60,72 @@ fn persisted_row_table(row_count: usize) -> (TempDir, std::path::PathBuf) {
 
     table
         .save(TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan))
+        .expect("save benchmark table");
+    (tempdir, path)
+}
+
+fn persisted_incremental_scalar_table(row_count: usize) -> (TempDir, PathBuf) {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("scan", PrimitiveType::Int32),
+        ColumnSchema::scalar("state", PrimitiveType::Int32),
+    ])
+    .expect("valid schema");
+
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("incremental-sparse-bench.table");
+
+    let mut table = Table::with_schema(schema);
+    for row_index in 0..row_count {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(row_index as i32))),
+                RecordField::new(
+                    "scan",
+                    Value::Scalar(ScalarValue::Int32(((row_index / 8) * 10) as i32)),
+                ),
+                RecordField::new(
+                    "state",
+                    Value::Scalar(ScalarValue::Int32((row_index % 3) as i32)),
+                ),
+            ]))
+            .expect("add row");
+    }
+
+    table
+        .save(TableOptions::new(&path).with_data_manager(DataManagerKind::IncrementalStMan))
+        .expect("save benchmark table");
+    (tempdir, path)
+}
+
+fn persisted_tiled_single_column_table(row_count: usize) -> (TempDir, PathBuf) {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![16, 4],
+    )])
+    .expect("valid schema");
+
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("tiled-sparse-bench.table");
+
+    let mut table = Table::with_schema(schema);
+    for row_index in 0..row_count {
+        let values = (0..64)
+            .map(|offset| row_index as f32 + offset as f32)
+            .collect::<Vec<_>>();
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(vec![16, 4], values).expect("shape data"),
+                )),
+            )]))
+            .expect("add row");
+    }
+
+    table
+        .save(TableOptions::new(&path).with_data_manager(DataManagerKind::TiledShapeStMan))
         .expect("save benchmark table");
     (tempdir, path)
 }
@@ -221,5 +289,91 @@ fn bench_row_writes(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_row_reads, bench_row_writes);
+fn bench_sparse_partial_writes(c: &mut Criterion) {
+    let (_incremental_tempdir, incremental_path) = persisted_incremental_scalar_table(8192);
+    let (_tiled_tempdir, tiled_path) = persisted_tiled_single_column_table(2048);
+    let mut group = c.benchmark_group("sparse_partial_write");
+
+    group.bench_function("incremental_scalar_rows_8k", |b| {
+        b.iter_batched(
+            || Table::open(TableOptions::new(&incremental_path)).expect("open table"),
+            |mut table| {
+                table
+                    .set_scalar_cell_assuming_valid(2, "id", ScalarValue::Int32(2002))
+                    .expect("set row 2 id");
+                table
+                    .set_scalar_cell_assuming_valid(4097, "scan", ScalarValue::Int32(9041))
+                    .expect("set row 4097 scan");
+                table
+                    .save_selected_rows_in_place_assuming_valid(&["id", "scan"], &[2, 4097])
+                    .expect("sparse incremental partial save");
+                black_box(table.row_count())
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("tiled_single_column_rows_2k", |b| {
+        b.iter_batched(
+            || Table::open(TableOptions::new(&tiled_path)).expect("open table"),
+            |mut table| {
+                let values = (0..64)
+                    .map(|offset| 20_000.0 + offset as f32)
+                    .collect::<Vec<_>>();
+                table
+                    .set_array_cell_assuming_valid(
+                        1024,
+                        "data",
+                        ArrayValue::Float32(
+                            ArrayD::from_shape_vec(vec![16, 4], values)
+                                .expect("updated sparse tiled shape"),
+                        ),
+                    )
+                    .expect("set sparse tiled cell");
+                table
+                    .save_selected_rows_in_place_assuming_valid(&["data"], &[1024])
+                    .expect("sparse tiled partial save");
+                black_box(table.row_count())
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
+fn bench_lazy_single_cell_reads(c: &mut Criterion) {
+    let (_incremental_tempdir, incremental_path) = persisted_incremental_scalar_table(8192);
+    let mut group = c.benchmark_group("lazy_single_cell_read");
+
+    group.bench_function("incremental_scalar_rows_8k", |b| {
+        b.iter_batched(
+            || Table::open(TableOptions::new(&incremental_path)).expect("open table"),
+            |table| {
+                let mut acc = 0i64;
+                for row_index in [2usize, 511, 4097, 7001] {
+                    let value = table
+                        .get_scalar_cell(row_index, "scan")
+                        .expect("get buffered scalar cell");
+                    let ScalarValue::Int32(value) = value else {
+                        panic!("expected int32 scalar");
+                    };
+                    acc += i64::from(*value);
+                }
+                black_box(acc)
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_row_reads,
+    bench_row_writes,
+    bench_sparse_partial_writes,
+    bench_lazy_single_cell_reads
+);
 criterion_main!(benches);

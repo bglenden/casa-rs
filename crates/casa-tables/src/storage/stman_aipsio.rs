@@ -743,6 +743,87 @@ pub(crate) fn read_stman_array_column_rows(
     Ok(Some(values))
 }
 
+pub(crate) fn read_stman_scalar_column_rows(
+    path: &Path,
+    columns: &[ColumnDescContents],
+    target_col_idx: usize,
+    selected_rows: &[usize],
+    byte_order: ByteOrder,
+) -> Result<Option<Vec<Option<ScalarValue>>>, StorageError> {
+    if selected_rows.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let layouts = parse_sparse_column_layouts(path, columns, byte_order)?;
+    let Some(layout) = layouts
+        .get(target_col_idx)
+        .and_then(|layout| layout.as_ref())
+    else {
+        return Ok(None);
+    };
+    let column = columns.get(target_col_idx).ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "target StManAipsIO scalar column index {target_col_idx} is out of range"
+        ))
+    })?;
+
+    let mut main_file = std::fs::File::open(path)?;
+    let mut requests: Vec<(usize, usize)> = selected_rows
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(out_idx, row_index)| (row_index, out_idx))
+        .collect();
+    requests.sort_unstable_by_key(|&(row_index, _)| row_index);
+
+    let mut values = vec![None; selected_rows.len()];
+    match layout {
+        SparseColumnLayout::ScalarBoolPacked { extents } => {
+            for (row_index, out_idx) in requests {
+                let (slot, bit_offset) = locate_bit_extent_slot(extents, row_index)?;
+                main_file.seek(SeekFrom::Start(slot))?;
+                let mut byte = [0u8; 1];
+                main_file.read_exact(&mut byte)?;
+                let scalar = ScalarValue::Bool(((byte[0] >> bit_offset) & 1) != 0);
+                values[out_idx] = if (column.option & 2) != 0
+                    && scalar_value_is_default(
+                        &Value::Scalar(scalar.clone()),
+                        column.require_primitive_type()?,
+                    ) {
+                    None
+                } else {
+                    Some(scalar)
+                };
+            }
+        }
+        SparseColumnLayout::ScalarFixed { data_type, extents } => {
+            let row_width = scalar_fixed_width_bytes(*data_type).ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "unsupported direct StManAipsIO scalar type {data_type:?}"
+                ))
+            })?;
+            let mut raw = vec![0u8; row_width];
+            for (row_index, out_idx) in requests {
+                let slot = locate_extent_slot(extents, row_index)?;
+                main_file.seek(SeekFrom::Start(slot))?;
+                main_file.read_exact(&mut raw)?;
+                let scalar = decode_fixed_scalar_value(*data_type, &raw)?;
+                values[out_idx] = if (column.option & 2) != 0
+                    && scalar_value_is_default(
+                        &Value::Scalar(scalar.clone()),
+                        column.require_primitive_type()?,
+                    ) {
+                    None
+                } else {
+                    Some(scalar)
+                };
+            }
+        }
+        _ => return Ok(None),
+    }
+
+    Ok(Some(values))
+}
+
 pub(crate) fn read_stman_scalar_column(
     path: &Path,
     columns: &[ColumnDescContents],

@@ -3,7 +3,12 @@ use super::*;
 #[cfg(unix)]
 use crate::lock::read_sync_data_from_table_dir;
 use crate::storage::StorageProfiler;
-use casa_types::ScalarValue;
+use casa_types::{ArrayValue, ScalarValue};
+
+type SparseArrayRowValues = Vec<(usize, Option<ArrayValue>)>;
+type SparseArrayColumns = Vec<Option<SparseArrayRowValues>>;
+type SparseScalarRowValues = Vec<(usize, Option<ScalarValue>)>;
+type SparseScalarColumns = Vec<Option<SparseScalarRowValues>>;
 
 impl Table {
     /// Opens an existing table from disk.
@@ -451,17 +456,43 @@ impl Table {
                     }
                 }
                 "IncrementalStMan" => {
-                    let sparse_saved = if let (Some(rows), Some(scalar_group_columns)) = (
-                        changed_rows.as_ref(),
-                        borrow_scalar_group_columns_from_current_cells(self, &group_col_descs)?,
-                    ) {
-                        crate::storage::incremental_stman::save_ism_file_scalar_columns_rows_in_place(
-                            &data_path,
-                            &group_col_descs,
-                            &scalar_group_columns,
-                            rows,
-                            table_dat.big_endian,
-                        )?
+                    let group_changed_columns: std::collections::HashSet<&str> = group_col_descs
+                        .iter()
+                        .filter_map(|desc| {
+                            changed_set
+                                .contains(desc.col_name.as_str())
+                                .then_some(desc.col_name.as_str())
+                        })
+                        .collect();
+                    let sparse_saved = if let Some(rows) = changed_rows.as_ref() {
+                        if let Some(sparse_group_columns) =
+                            collect_sparse_scalar_group_values_from_current_cells(
+                                self,
+                                rows,
+                                &group_col_descs,
+                                &group_changed_columns,
+                            )?
+                        {
+                            crate::storage::incremental_stman::save_ism_file_scalar_columns_sparse_rows_in_place(
+                                &data_path,
+                                &group_col_descs,
+                                &sparse_group_columns,
+                                rows,
+                                table_dat.big_endian,
+                            )?
+                        } else if let Some(scalar_group_columns) =
+                            borrow_scalar_group_columns_from_current_cells(self, &group_col_descs)?
+                        {
+                            crate::storage::incremental_stman::save_ism_file_scalar_columns_rows_in_place(
+                                &data_path,
+                                &group_col_descs,
+                                &scalar_group_columns,
+                                rows,
+                                table_dat.big_endian,
+                            )?
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     };
@@ -503,26 +534,44 @@ impl Table {
                     }
                 }
                 "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
-                    if group_col_descs.len() != 1 {
-                        return Err(TableError::Storage(format!(
-                            "partial in-place save only supports single-column tiled groups; seq {} has {} columns",
-                            group.seq_nr,
-                            group_col_descs.len()
-                        )));
-                    }
-                    let values = collect_column_values_from_current_cells(
-                        self,
-                        self.row_count(),
-                        &group_col_descs[0],
-                    )?;
-                    let value_refs: Vec<_> = values.iter().map(|value| value.as_ref()).collect();
+                    let group_changed_columns: std::collections::HashSet<&str> = group_col_descs
+                        .iter()
+                        .filter_map(|desc| {
+                            changed_set
+                                .contains(desc.col_name.as_str())
+                                .then_some(desc.col_name.as_str())
+                        })
+                        .collect();
                     let dm_name = if group_col_descs[0].data_manager_group.is_empty() {
                         group_col_descs[0].col_name.as_str()
                     } else {
                         group_col_descs[0].data_manager_group.as_str()
                     };
-                    let sparse_saved = match changed_rows.as_ref() {
-                        Some(rows) => {
+                    let sparse_saved = if let Some(rows) = changed_rows.as_ref() {
+                        if let Some(sparse_group_columns) =
+                            collect_sparse_array_group_values_from_current_cells(
+                                self,
+                                rows,
+                                &group_col_descs,
+                                &group_changed_columns,
+                            )?
+                        {
+                            crate::storage::tiled_stman::save_tiled_columns_sparse_rows_in_place(
+                                source_path,
+                                group.seq_nr,
+                                &group.dm_type,
+                                &group_col_descs,
+                                &sparse_group_columns,
+                                rows,
+                            )?
+                        } else if group_col_descs.len() == 1 {
+                            let values = collect_column_values_from_current_cells(
+                                self,
+                                self.row_count(),
+                                &group_col_descs[0],
+                            )?;
+                            let value_refs: Vec<_> =
+                                values.iter().map(|value| value.as_ref()).collect();
                             crate::storage::tiled_stman::save_tiled_single_column_rows_in_place(
                                 source_path,
                                 group.seq_nr,
@@ -536,22 +585,50 @@ impl Table {
                                     dm_name,
                                 },
                             )?
+                        } else {
+                            false
                         }
-                        None => false,
+                    } else {
+                        false
                     };
                     if !sparse_saved {
-                        crate::storage::tiled_stman::save_tiled_single_column_values(
-                            source_path,
-                            group.seq_nr,
-                            &group_col_descs[0],
-                            &value_refs,
-                            crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
-                                dm_type_name: &group.dm_type,
-                                big_endian: table_dat.big_endian,
-                                default_tile_shape: None,
+                        if group_col_descs.len() == 1 {
+                            let values = collect_column_values_from_current_cells(
+                                self,
+                                self.row_count(),
+                                &group_col_descs[0],
+                            )?;
+                            let value_refs: Vec<_> =
+                                values.iter().map(|value| value.as_ref()).collect();
+                            crate::storage::tiled_stman::save_tiled_single_column_values(
+                                source_path,
+                                group.seq_nr,
+                                &group_col_descs[0],
+                                &value_refs,
+                                crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
+                                    dm_type_name: &group.dm_type,
+                                    big_endian: table_dat.big_endian,
+                                    default_tile_shape: None,
+                                    dm_name,
+                                },
+                            )?;
+                        } else {
+                            let rows = build_group_rows_from_current_cells(
+                                self,
+                                self.row_count(),
+                                &group_col_descs,
+                            )?;
+                            crate::storage::tiled_stman::save_tiled_columns(
+                                source_path,
+                                group.seq_nr,
+                                &group.dm_type,
+                                &group_col_descs,
+                                &rows,
+                                table_dat.big_endian,
+                                None,
                                 dm_name,
-                            },
-                        )?;
+                            )?;
+                        }
                     }
                 }
                 other => {
@@ -934,6 +1011,67 @@ fn borrow_scalar_group_columns_from_current_cells<'a>(
         values.push(column_values);
     }
     Ok(Some(values))
+}
+
+fn collect_sparse_scalar_group_values_from_current_cells(
+    table: &Table,
+    row_indices: &[usize],
+    col_descs: &[crate::storage::table_control::ColumnDescContents],
+    changed_columns: &std::collections::HashSet<&str>,
+) -> Result<Option<SparseScalarColumns>, TableError> {
+    let mut columns = Vec::with_capacity(col_descs.len());
+    for col_desc in col_descs {
+        if col_desc.is_array || col_desc.is_record() {
+            return Ok(None);
+        }
+        if !changed_columns.contains(col_desc.col_name.as_str()) {
+            columns.push(None);
+            continue;
+        }
+        let Some(pending_values) = table.inner.pending_scalar_cells(&col_desc.col_name) else {
+            return Ok(None);
+        };
+        let mut values = Vec::with_capacity(row_indices.len());
+        for &row_index in row_indices {
+            if let Some(value) = pending_values.get(&row_index) {
+                values.push((row_index, Some(value.clone())));
+            }
+        }
+        columns.push(Some(values));
+    }
+    Ok(Some(columns))
+}
+
+fn collect_sparse_array_group_values_from_current_cells(
+    table: &Table,
+    row_indices: &[usize],
+    col_descs: &[crate::storage::table_control::ColumnDescContents],
+    changed_columns: &std::collections::HashSet<&str>,
+) -> Result<Option<SparseArrayColumns>, TableError> {
+    let mut columns = Vec::with_capacity(col_descs.len());
+    for col_desc in col_descs {
+        if !col_desc.is_array || col_desc.is_record() {
+            return Ok(None);
+        }
+        if !changed_columns.contains(col_desc.col_name.as_str()) {
+            columns.push(None);
+            continue;
+        }
+        let Some(pending_values) = table.inner.pending_array_cells(&col_desc.col_name) else {
+            return Ok(None);
+        };
+        let mut values = Vec::with_capacity(row_indices.len());
+        for &row_index in row_indices {
+            if let Some((_, value)) = pending_values
+                .iter()
+                .find(|(pending_row, _)| *pending_row == row_index)
+            {
+                values.push((row_index, Some(value.clone())));
+            }
+        }
+        columns.push(Some(values));
+    }
+    Ok(Some(columns))
 }
 
 fn current_value_for_column(

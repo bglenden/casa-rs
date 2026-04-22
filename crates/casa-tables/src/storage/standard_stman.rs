@@ -20,7 +20,7 @@ use std::path::Path;
 use casa_aipsio::{AipsIo, ByteOrder};
 use ndarray::ShapeBuilder;
 
-use casa_types::{ArrayValue, Value};
+use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use super::StorageError;
@@ -509,6 +509,111 @@ fn read_i32_canonical(src: &[u8], big_endian: bool) -> i32 {
     }
 }
 
+fn extract_scalar_from_ssm_bytes(
+    bytes: &[u8],
+    data_type: CasacoreDataType,
+    big_endian: bool,
+) -> Result<Value, StorageError> {
+    let value = match data_type {
+        CasacoreDataType::TpUChar => Value::Scalar(ScalarValue::UInt8(bytes[0])),
+        CasacoreDataType::TpShort => Value::Scalar(ScalarValue::Int16(if big_endian {
+            i16::from_be_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM i16 scalar width".to_string())
+            })?)
+        } else {
+            i16::from_le_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM i16 scalar width".to_string())
+            })?)
+        })),
+        CasacoreDataType::TpUShort => Value::Scalar(ScalarValue::UInt16(if big_endian {
+            u16::from_be_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM u16 scalar width".to_string())
+            })?)
+        } else {
+            u16::from_le_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM u16 scalar width".to_string())
+            })?)
+        })),
+        CasacoreDataType::TpInt => Value::Scalar(ScalarValue::Int32(if big_endian {
+            read_i32_be(bytes)
+        } else {
+            i32::from_le_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM i32 scalar width".to_string())
+            })?)
+        })),
+        CasacoreDataType::TpUInt => Value::Scalar(ScalarValue::UInt32(if big_endian {
+            u32::from_be_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM u32 scalar width".to_string())
+            })?)
+        } else {
+            u32::from_le_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM u32 scalar width".to_string())
+            })?)
+        })),
+        CasacoreDataType::TpFloat => Value::Scalar(ScalarValue::Float32(if big_endian {
+            read_f32_be(bytes)
+        } else {
+            read_f32_le(bytes)
+        })),
+        CasacoreDataType::TpDouble => Value::Scalar(ScalarValue::Float64(if big_endian {
+            read_f64_be(bytes)
+        } else {
+            read_f64_le(bytes)
+        })),
+        CasacoreDataType::TpInt64 => Value::Scalar(ScalarValue::Int64(if big_endian {
+            i64::from_be_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM i64 scalar width".to_string())
+            })?)
+        } else {
+            i64::from_le_bytes(bytes.try_into().map_err(|_| {
+                StorageError::FormatMismatch("invalid SSM i64 scalar width".to_string())
+            })?)
+        })),
+        CasacoreDataType::TpComplex => {
+            if bytes.len() != 8 {
+                return Err(StorageError::FormatMismatch(
+                    "invalid SSM complex32 scalar width".to_string(),
+                ));
+            }
+            let re = if big_endian {
+                read_f32_be(&bytes[..4])
+            } else {
+                read_f32_le(&bytes[..4])
+            };
+            let im = if big_endian {
+                read_f32_be(&bytes[4..8])
+            } else {
+                read_f32_le(&bytes[4..8])
+            };
+            Value::Scalar(ScalarValue::Complex32(casa_types::Complex32::new(re, im)))
+        }
+        CasacoreDataType::TpDComplex => {
+            if bytes.len() != 16 {
+                return Err(StorageError::FormatMismatch(
+                    "invalid SSM complex64 scalar width".to_string(),
+                ));
+            }
+            let re = if big_endian {
+                read_f64_be(&bytes[..8])
+            } else {
+                read_f64_le(&bytes[..8])
+            };
+            let im = if big_endian {
+                read_f64_be(&bytes[8..16])
+            } else {
+                read_f64_le(&bytes[8..16])
+            };
+            Value::Scalar(ScalarValue::Complex64(casa_types::Complex64::new(re, im)))
+        }
+        other => {
+            return Err(StorageError::FormatMismatch(format!(
+                "unsupported SSM scalar type {other:?}"
+            )));
+        }
+    };
+    Ok(value)
+}
+
 // ---------------------------------------------------------------------------
 // String bucket reader
 // ---------------------------------------------------------------------------
@@ -907,6 +1012,123 @@ pub(crate) fn read_ssm_file(
     }
 
     Ok(result)
+}
+
+pub(crate) fn read_ssm_scalar_column_rows(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[&ColumnDescContents],
+    target_col_idx: usize,
+    selected_rows: &[usize],
+) -> Result<Option<Vec<Option<ScalarValue>>>, StorageError> {
+    if selected_rows.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+
+    let mut file = File::open(file_path)?;
+    let header = parse_ssm_header(&mut file)?;
+    let dm_info = parse_ssm_dm_blob(dm_blob)?;
+    let indices = parse_ssm_indices(&mut file, &header)?;
+
+    if target_col_idx >= col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM scalar column index {target_col_idx} is out of range"
+        )));
+    }
+    if target_col_idx >= dm_info.column_offsets.len()
+        || target_col_idx >= dm_info.col_index_map.len()
+    {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM scalar column index {target_col_idx} missing dm blob metadata"
+        )));
+    }
+
+    let col_desc = col_descs[target_col_idx];
+    if col_desc.is_array || col_desc.is_record() {
+        return Ok(None);
+    }
+
+    let column_offset = dm_info.column_offsets[target_col_idx] as usize;
+    let index_nr = dm_info.col_index_map[target_col_idx] as usize;
+    if index_nr >= indices.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM column '{}' references index {index_nr} but only {} indices exist",
+            col_desc.col_name,
+            indices.len()
+        )));
+    }
+    let index = &indices[index_nr];
+    let be = header.big_endian;
+
+    let mut requests: Vec<(usize, usize)> = selected_rows
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(out_idx, row_index)| (row_index, out_idx))
+        .collect();
+    requests.sort_unstable_by_key(|&(row_index, _)| row_index);
+
+    let mut cached_bucket_nr = None;
+    let mut cached_bucket = Vec::new();
+    let mut values = vec![None; selected_rows.len()];
+    let (elem_bytes, _) = canonical_element_size(col_desc.data_type);
+
+    for (row_index, out_idx) in requests {
+        let (bucket_nr, start_row, _end_row) =
+            index.find_bucket(row_index as u64).ok_or_else(|| {
+                StorageError::FormatMismatch(format!("SSM index has no bucket for row {row_index}"))
+            })?;
+        if cached_bucket_nr != Some(bucket_nr) {
+            cached_bucket = read_bucket(&mut file, &header, bucket_nr)?;
+            cached_bucket_nr = Some(bucket_nr);
+        }
+        let row_in_bucket = (row_index as u64 - start_row) as usize;
+        let value = match col_desc.data_type {
+            CasacoreDataType::TpBool => {
+                let byte_offset = column_offset + row_in_bucket / 8;
+                let bit_offset = row_in_bucket % 8;
+                Value::Scalar(ScalarValue::Bool(
+                    ((cached_bucket[byte_offset] >> bit_offset) & 1) != 0,
+                ))
+            }
+            CasacoreDataType::TpString => {
+                let ref_offset = column_offset + row_in_bucket * 12;
+                let str_bucket = read_i32_canonical(&cached_bucket[ref_offset..], be);
+                let str_offset = read_i32_canonical(&cached_bucket[ref_offset + 4..], be);
+                let str_length = read_i32_canonical(&cached_bucket[ref_offset + 8..], be);
+                let string = if str_length <= 8 {
+                    String::from_utf8(
+                        cached_bucket[ref_offset..ref_offset + str_length as usize].to_vec(),
+                    )
+                    .map_err(|err| StorageError::FormatMismatch(format!("invalid UTF-8: {err}")))?
+                } else {
+                    read_ssm_string(&mut file, &header, str_bucket, str_offset, str_length)?
+                };
+                Value::Scalar(ScalarValue::String(string))
+            }
+            _ => {
+                let data_start = column_offset + row_in_bucket * elem_bytes;
+                let data_end = data_start + elem_bytes;
+                extract_scalar_from_ssm_bytes(
+                    &cached_bucket[data_start..data_end],
+                    col_desc.data_type,
+                    be,
+                )?
+            }
+        };
+        values[out_idx] = Some(match value {
+            Value::Scalar(scalar) => scalar,
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "SSM column '{}' expected scalar value, found {:?}",
+                    col_desc.col_name,
+                    other.kind()
+                )));
+            }
+        });
+    }
+
+    Ok(Some(values))
 }
 
 fn read_column_from_buckets(
