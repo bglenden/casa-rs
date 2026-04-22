@@ -24,6 +24,7 @@ impl Table {
     /// parent table is opened automatically and the referenced rows are
     /// materialized into this table.
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         let storage = CompositeStorage;
         let snapshot = storage.load_metadata_only(&options.path)?;
         #[cfg(unix)]
@@ -70,6 +71,7 @@ impl Table {
     /// This is a Rust-specific optimization; casacore C++ does not expose a
     /// direct equivalent on `Table`.
     pub fn open_metadata_only(options: TableOptions) -> Result<Self, TableError> {
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         let storage = CompositeStorage;
         let snapshot = storage.load_metadata_only(&options.path)?;
         Ok(Self {
@@ -134,6 +136,7 @@ impl Table {
             options.endian_format.is_big_endian(),
             options.tile_shape.as_deref(),
         )?;
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         Ok(())
     }
 
@@ -161,6 +164,7 @@ impl Table {
         };
         let storage = CompositeStorage;
         storage.save_metadata_only(&options.path, &snapshot)?;
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         Ok(())
     }
 
@@ -263,6 +267,7 @@ impl Table {
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("storage_save");
         }
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         Ok(())
     }
 
@@ -655,6 +660,7 @@ impl Table {
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("write_control_file");
         }
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(source_path);
         Ok(())
     }
 

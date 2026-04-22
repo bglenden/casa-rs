@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
@@ -88,7 +88,7 @@ struct PendingArrayCells {
     by_column: HashMap<String, PendingArrayColumn>,
 }
 
-type BufferedScalarColumn = Vec<OnceCell<Option<ScalarValue>>>;
+type BufferedArrayColumn = Vec<OnceLock<Option<ArrayValue>>>;
 
 pub(crate) enum LazyScalarLookup<'a> {
     Hit(&'a ScalarValue),
@@ -104,39 +104,39 @@ pub(crate) enum LazyArrayLookup<'a> {
 
 fn lazy_array_column_store(
     schema: Option<&TableSchema>,
-) -> HashMap<String, OnceCell<Vec<Option<ArrayValue>>>> {
+) -> HashMap<String, OnceLock<Vec<Option<ArrayValue>>>> {
     schema
         .into_iter()
         .flat_map(|schema| schema.columns())
         .filter(|column| matches!(column.column_type(), ColumnType::Array(_)))
-        .map(|column| (column.name().to_string(), OnceCell::new()))
+        .map(|column| (column.name().to_string(), OnceLock::new()))
         .collect()
 }
 
 fn lazy_scalar_column_store(
     schema: Option<&TableSchema>,
-) -> HashMap<String, OnceCell<Vec<Option<ScalarValue>>>> {
+) -> HashMap<String, OnceLock<Vec<Option<ScalarValue>>>> {
     schema
         .into_iter()
         .flat_map(|schema| schema.columns())
         .filter(|column| matches!(column.column_type(), ColumnType::Scalar))
-        .map(|column| (column.name().to_string(), OnceCell::new()))
+        .map(|column| (column.name().to_string(), OnceLock::new()))
         .collect()
 }
 
-fn lazy_buffered_scalar_cell_store(
+fn lazy_buffered_array_cell_store(
     schema: Option<&TableSchema>,
-) -> HashMap<String, OnceCell<BufferedScalarColumn>> {
+) -> HashMap<String, OnceLock<BufferedArrayColumn>> {
     schema
         .into_iter()
         .flat_map(|schema| schema.columns())
-        .filter(|column| matches!(column.column_type(), ColumnType::Scalar))
-        .map(|column| (column.name().to_string(), OnceCell::new()))
+        .filter(|column| matches!(column.column_type(), ColumnType::Array(_)))
+        .map(|column| (column.name().to_string(), OnceLock::new()))
         .collect()
 }
 
-fn new_buffered_scalar_column(row_count: usize) -> BufferedScalarColumn {
-    (0..row_count).map(|_| OnceCell::new()).collect()
+fn new_buffered_array_column(row_count: usize) -> BufferedArrayColumn {
+    (0..row_count).map(|_| OnceLock::new()).collect()
 }
 
 fn eager_loaded_rows(
@@ -206,11 +206,11 @@ fn apply_prepared_array_overrides(
 
 #[derive(Debug, Default)]
 pub(crate) struct TableImpl {
-    loaded_rows: OnceCell<LoadedRows>,
-    loaded_scalar_columns: HashMap<String, OnceCell<Vec<Option<ScalarValue>>>>,
-    buffered_scalar_cells: HashMap<String, OnceCell<BufferedScalarColumn>>,
+    loaded_rows: OnceLock<LoadedRows>,
+    loaded_scalar_columns: HashMap<String, OnceLock<Vec<Option<ScalarValue>>>>,
     pending_scalar_cells: PendingScalarCells,
-    loaded_array_columns: HashMap<String, OnceCell<Vec<Option<ArrayValue>>>>,
+    loaded_array_columns: HashMap<String, OnceLock<Vec<Option<ArrayValue>>>>,
+    buffered_array_cells: HashMap<String, OnceLock<BufferedArrayColumn>>,
     pending_array_cells: PendingArrayCells,
     lazy_rows: Option<LazyRowsSource>,
     persisted_row_count: usize,
@@ -221,7 +221,7 @@ pub(crate) struct TableImpl {
 
 impl TableImpl {
     pub(crate) fn new() -> Self {
-        let loaded_rows = OnceCell::new();
+        let loaded_rows = OnceLock::new();
         loaded_rows
             .set(LoadedRows {
                 rows: Vec::new(),
@@ -231,9 +231,9 @@ impl TableImpl {
         Self {
             loaded_rows,
             loaded_scalar_columns: HashMap::new(),
-            buffered_scalar_cells: HashMap::new(),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: HashMap::new(),
+            buffered_array_cells: HashMap::new(),
             pending_array_cells: PendingArrayCells::default(),
             lazy_rows: None,
             persisted_row_count: 0,
@@ -245,16 +245,16 @@ impl TableImpl {
 
     pub(crate) fn from_rows(rows: Vec<RecordValue>) -> Self {
         let persisted_row_count = rows.len();
-        let loaded_rows = OnceCell::new();
+        let loaded_rows = OnceLock::new();
         loaded_rows
             .set(eager_loaded_rows(rows, Vec::new()))
             .expect("initialize eager row store");
         Self {
             loaded_rows,
             loaded_scalar_columns: HashMap::new(),
-            buffered_scalar_cells: HashMap::new(),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: HashMap::new(),
+            buffered_array_cells: HashMap::new(),
             pending_array_cells: PendingArrayCells::default(),
             lazy_rows: None,
             persisted_row_count,
@@ -272,16 +272,16 @@ impl TableImpl {
         schema: Option<TableSchema>,
     ) -> Self {
         let persisted_row_count = rows.len();
-        let loaded_rows = OnceCell::new();
+        let loaded_rows = OnceLock::new();
         loaded_rows
             .set(eager_loaded_rows(rows, undefined_cells))
             .expect("initialize eager row store");
         Self {
             loaded_rows,
             loaded_scalar_columns: lazy_scalar_column_store(schema.as_ref()),
-            buffered_scalar_cells: lazy_buffered_scalar_cell_store(schema.as_ref()),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: lazy_array_column_store(schema.as_ref()),
+            buffered_array_cells: lazy_buffered_array_cell_store(schema.as_ref()),
             pending_array_cells: PendingArrayCells::default(),
             lazy_rows: None,
             persisted_row_count,
@@ -299,11 +299,11 @@ impl TableImpl {
         path: PathBuf,
     ) -> Self {
         Self {
-            loaded_rows: OnceCell::new(),
+            loaded_rows: OnceLock::new(),
             loaded_scalar_columns: lazy_scalar_column_store(schema.as_ref()),
-            buffered_scalar_cells: lazy_buffered_scalar_cell_store(schema.as_ref()),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: lazy_array_column_store(schema.as_ref()),
+            buffered_array_cells: lazy_buffered_array_cell_store(schema.as_ref()),
             pending_array_cells: PendingArrayCells::default(),
             lazy_rows: Some(LazyRowsSource {
                 path,
@@ -371,77 +371,6 @@ impl TableImpl {
             .map_err(|err| {
                 TableError::Storage(format!(
                     "failed to load scalar column '{column}' for table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
-        if let Some(profiler) = profiler.as_mut() {
-            profiler.mark_with_detail(
-                "storage_load_complete",
-                Some(format!(
-                    "row_count_hint={} values={}",
-                    source.row_count_hint,
-                    values.len()
-                )),
-            );
-        }
-        Ok(values)
-    }
-
-    fn load_scalar_column_rows_now(
-        source: &LazyRowsSource,
-        column: &str,
-        row_indices: &[usize],
-    ) -> Result<Vec<Option<ScalarValue>>, TableError> {
-        let mut profiler = StorageProfiler::start(format!(
-            "table_impl::load_scalar_column_rows_now path={} column={column}",
-            source.path.display()
-        ));
-        let storage = CompositeStorage;
-        let values = storage
-            .load_scalar_column_rows_with_row_hint(
-                &source.path,
-                column,
-                row_indices,
-                Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load selected rows for scalar column '{column}' from table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
-        if let Some(profiler) = profiler.as_mut() {
-            profiler.mark_with_detail(
-                "storage_load_complete",
-                Some(format!(
-                    "row_count_hint={} requested_rows={} values={}",
-                    source.row_count_hint,
-                    row_indices.len(),
-                    values.len()
-                )),
-            );
-        }
-        Ok(values)
-    }
-
-    fn load_array_column_now(
-        source: &LazyRowsSource,
-        column: &str,
-    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
-        let mut profiler = StorageProfiler::start(format!(
-            "table_impl::load_array_column_now path={} column={column}",
-            source.path.display()
-        ));
-        let storage = CompositeStorage;
-        let values = storage
-            .load_array_column_with_row_hint(
-                &source.path,
-                column,
-                Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load array column '{column}' for table {}: {err}",
                     source.path.display()
                 ))
             })?;
@@ -673,30 +602,15 @@ impl TableImpl {
                 Some(None) | None => Ok(LazyScalarLookup::Missing),
             };
         }
-
-        let Some(buffered_column) = self.buffered_scalar_cells.get(column) else {
-            return Ok(LazyScalarLookup::Unknown);
-        };
-        if buffered_column.get().is_none() {
-            let _ = buffered_column.set(new_buffered_scalar_column(self.row_count()));
-        }
-        let buffered = buffered_column
+        let loaded = Self::load_scalar_column_now(source, column)?;
+        let _ = cached_column.set(loaded);
+        match cached_column
             .get()
-            .expect("buffered scalar column initialized before access");
-        let Some(buffered_cell) = buffered.get(row_index) else {
-            return Ok(LazyScalarLookup::Missing);
-        };
-        if buffered_cell.get().is_none() {
-            let loaded = Self::load_scalar_column_rows_now(source, column, &[row_index])?;
-            let value = loaded.into_iter().next().unwrap_or(None);
-            let _ = buffered_cell.set(value);
-        }
-        match buffered_cell
-            .get()
-            .expect("buffered scalar cell initialized before access")
+            .expect("scalar column initialized before shared access")
+            .get(row_index)
         {
-            Some(value) => Ok(LazyScalarLookup::Hit(value)),
-            None => Ok(LazyScalarLookup::Missing),
+            Some(Some(value)) => Ok(LazyScalarLookup::Hit(value)),
+            Some(None) | None => Ok(LazyScalarLookup::Missing),
         }
     }
 
@@ -800,16 +714,36 @@ impl TableImpl {
         let Some(cached_column) = self.loaded_array_columns.get(column) else {
             return Ok(LazyArrayLookup::Unknown);
         };
-        if cached_column.get().is_none() {
-            let loaded = Self::load_array_column_now(source, column)?;
-            let _ = cached_column.set(loaded);
+        if let Some(values) = cached_column.get() {
+            return match values.get(row_index) {
+                Some(Some(value)) => Ok(LazyArrayLookup::Hit(value)),
+                Some(None) | None => Ok(LazyArrayLookup::Missing),
+            };
         }
-        let values = cached_column
+
+        let Some(buffered_column) = self.buffered_array_cells.get(column) else {
+            return Ok(LazyArrayLookup::Unknown);
+        };
+        if buffered_column.get().is_none() {
+            let _ = buffered_column.set(new_buffered_array_column(self.row_count()));
+        }
+        let buffered = buffered_column
             .get()
-            .expect("array column initialized before access");
-        match values.get(row_index) {
-            Some(Some(value)) => Ok(LazyArrayLookup::Hit(value)),
-            Some(None) | None => Ok(LazyArrayLookup::Missing),
+            .expect("buffered array column initialized before access");
+        let Some(buffered_cell) = buffered.get(row_index) else {
+            return Ok(LazyArrayLookup::Missing);
+        };
+        if buffered_cell.get().is_none() {
+            let loaded = Self::load_array_column_rows_now(source, column, &[row_index])?;
+            let value = loaded.into_iter().next().unwrap_or(None);
+            let _ = buffered_cell.set(value);
+        }
+        match buffered_cell
+            .get()
+            .expect("buffered array cell initialized before access")
+        {
+            Some(value) => Ok(LazyArrayLookup::Hit(value)),
+            None => Ok(LazyArrayLookup::Missing),
         }
     }
 
@@ -843,6 +777,40 @@ impl TableImpl {
             row_indices
                 .iter()
                 .map(|&row_index| cached_values.get(row_index).cloned().unwrap_or(None))
+                .collect()
+        } else if let Some(buffered_column) = self.buffered_array_cells.get(column) {
+            if buffered_column.get().is_none() {
+                let _ = buffered_column.set(new_buffered_array_column(self.row_count()));
+            }
+            let buffered = buffered_column
+                .get()
+                .expect("buffered array column initialized before selected-row access");
+            let mut missing_rows = Vec::new();
+            for &row_index in row_indices {
+                let Some(buffered_cell) = buffered.get(row_index) else {
+                    continue;
+                };
+                if buffered_cell.get().is_none() {
+                    missing_rows.push(row_index);
+                }
+            }
+            if !missing_rows.is_empty() {
+                let loaded = Self::load_array_column_rows_now(source, column, &missing_rows)?;
+                for (row_index, value) in missing_rows.into_iter().zip(loaded) {
+                    if let Some(buffered_cell) = buffered.get(row_index) {
+                        let _ = buffered_cell.set(value);
+                    }
+                }
+            }
+            row_indices
+                .iter()
+                .map(|&row_index| {
+                    buffered
+                        .get(row_index)
+                        .and_then(|cell| cell.get())
+                        .cloned()
+                        .unwrap_or(None)
+                })
                 .collect()
         } else {
             Self::load_array_column_rows_now(source, column, row_indices)?
@@ -1028,6 +996,9 @@ impl TableImpl {
     }
 
     pub(crate) fn set_schema(&mut self, schema: Option<TableSchema>) {
+        self.loaded_scalar_columns = lazy_scalar_column_store(schema.as_ref());
+        self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
+        self.buffered_array_cells = lazy_buffered_array_cell_store(schema.as_ref());
         self.schema = schema;
     }
 
@@ -1044,16 +1015,16 @@ impl TableImpl {
         schema: Option<TableSchema>,
     ) {
         self.loaded_rows = {
-            let loaded_rows = OnceCell::new();
+            let loaded_rows = OnceLock::new();
             loaded_rows
                 .set(eager_loaded_rows(rows, undefined_cells))
                 .expect("replace eager row store");
             loaded_rows
         };
         self.loaded_scalar_columns = lazy_scalar_column_store(schema.as_ref());
-        self.buffered_scalar_cells = lazy_buffered_scalar_cell_store(schema.as_ref());
         self.pending_scalar_cells = PendingScalarCells::default();
         self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
+        self.buffered_array_cells = lazy_buffered_array_cell_store(schema.as_ref());
         self.pending_array_cells = PendingArrayCells::default();
         self.persisted_row_count = self.loaded_rows.get().map_or(0, |loaded| loaded.rows.len());
         self.lazy_rows = None;

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::thread;
 
 use casa_types::{
     Array2, ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
@@ -1986,7 +1988,227 @@ fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column()
 }
 
 #[test]
-fn lazy_disk_open_reads_scalar_cells_without_loading_full_scalar_columns() {
+fn lazy_disk_open_reads_array_cells_without_loading_full_tiled_column() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 2],
+    )])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..6 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(
+                        vec![2, 2],
+                        vec![
+                            row_idx as f32,
+                            row_idx as f32 + 10.0,
+                            row_idx as f32 + 20.0,
+                            row_idx as f32 + 30.0,
+                        ],
+                    )
+                    .expect("shape data"),
+                )),
+            )]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("lazy_array_cells_tiled_shape");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled-shape table");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(!reopened.inner.has_loaded_array_column("data"));
+
+    let row_4 = reopened.get_array_cell(4, "data").expect("row 4 array");
+    assert_eq!(
+        row_4,
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![4.0, 14.0, 24.0, 34.0]).unwrap()
+        )
+    );
+    let row_1 = reopened.get_array_cell(1, "data").expect("row 1 array");
+    assert_eq!(
+        row_1,
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 11.0, 21.0, 31.0]).unwrap()
+        )
+    );
+    assert!(
+        !reopened.inner.has_loaded_rows(),
+        "single array-cell reads should not force row materialization"
+    );
+    assert!(
+        !reopened.inner.has_loaded_array_column("data"),
+        "single array-cell reads should stay on the buffered tiled path"
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
+fn opened_table_supports_multi_thread_shared_reads() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Table>();
+
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 2],
+    )])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..8 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(
+                        vec![2, 2],
+                        vec![
+                            row_idx as f32,
+                            row_idx as f32 + 10.0,
+                            row_idx as f32 + 20.0,
+                            row_idx as f32 + 30.0,
+                        ],
+                    )
+                    .expect("shape data"),
+                )),
+            )]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("shared_multithread_reads_tiled_shape");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled-shape table");
+
+    let shared = Arc::new(Table::open(TableOptions::new(&root)).expect("open lazy table"));
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let shared = Arc::clone(&shared);
+            thread::spawn(move || {
+                shared
+                    .get_array_cells_owned("data", &[7, 3, 5])
+                    .expect("selected rows")
+            })
+        })
+        .collect();
+
+    for rows in handles
+        .into_iter()
+        .map(|handle| handle.join().expect("thread join"))
+    {
+        assert_eq!(
+            rows,
+            vec![
+                Some(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(vec![2, 2], vec![7.0, 17.0, 27.0, 37.0]).unwrap()
+                )),
+                Some(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(vec![2, 2], vec![3.0, 13.0, 23.0, 33.0]).unwrap()
+                )),
+                Some(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(vec![2, 2], vec![5.0, 15.0, 25.0, 35.0]).unwrap()
+                )),
+            ]
+        );
+    }
+    assert!(
+        !shared.inner.has_loaded_rows(),
+        "shared reads should stay on the lazy read path"
+    );
+    assert!(
+        !shared.inner.has_loaded_array_column("data"),
+        "shared selected-row reads should not populate the full array-column cache"
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
+fn tiled_shared_read_cache_is_invalidated_after_in_place_save() {
+    crate::storage::tiled_stman::reset_table_cache_budget_for_tests();
+
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 2],
+    )])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(
+                        vec![2, 2],
+                        vec![
+                            row_idx as f32,
+                            row_idx as f32 + 10.0,
+                            row_idx as f32 + 20.0,
+                            row_idx as f32 + 30.0,
+                        ],
+                    )
+                    .expect("shape data"),
+                )),
+            )]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("tiled_cache_invalidated_after_partial_save");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled-shape table");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+    reopened
+        .get_array_cell(2, "data")
+        .expect("prime shared cache");
+    assert!(
+        crate::storage::tiled_stman::shared_tile_cache_entry_count() > 0,
+        "read should populate the shared tiled cache"
+    );
+
+    reopened
+        .set_array_cell_assuming_valid(
+            2,
+            "data",
+            ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![90.0, 91.0, 92.0, 93.0]).unwrap(),
+            ),
+        )
+        .expect("mutate cached row");
+    reopened
+        .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
+        .expect("partial save");
+
+    let verify = Table::open(TableOptions::new(&root)).expect("reopen after partial save");
+    assert_eq!(
+        verify.get_array_cell(2, "data").expect("updated row"),
+        &ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![90.0, 91.0, 92.0, 93.0]).unwrap()
+        )
+    );
+
+    crate::storage::tiled_stman::reset_table_cache_budget_for_tests();
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
+fn lazy_disk_open_reads_scalar_cells_with_full_scalar_column_cache() {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("id", PrimitiveType::Int32),
         ColumnSchema::scalar("scan", PrimitiveType::Int32),
@@ -2032,12 +2254,12 @@ fn lazy_disk_open_reads_scalar_cells_without_loading_full_scalar_columns() {
             "scalar cell reads should not force row materialization for {dm:?}"
         );
         assert!(
-            !reopened.inner.has_loaded_scalar_column("id"),
-            "scalar cell reads should not populate the full scalar-column cache for {dm:?}"
+            reopened.inner.has_loaded_scalar_column("id"),
+            "scalar cell reads should populate the full scalar-column cache for {dm:?}"
         );
         assert!(
-            !reopened.inner.has_loaded_scalar_column("scan"),
-            "scalar cell reads should not populate the full scalar-column cache for {dm:?}"
+            reopened.inner.has_loaded_scalar_column("scan"),
+            "scalar cell reads should populate the full scalar-column cache for {dm:?}"
         );
 
         std::fs::remove_dir_all(&root).expect("cleanup test dir");

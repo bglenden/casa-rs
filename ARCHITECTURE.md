@@ -35,6 +35,7 @@ Additional constraints:
 - `casa-values` and `casa-aipsio` stay internal implementation crates.
 - `casa-table-read` owns the minimal shared read-only loader used by runtime data loaders.
 - `casa-tables` keeps the broader storage/write path crate-internal even when user-facing table APIs are exposed from the crate.
+- Within `casa-tables`, lazy read paths are safe to share across threads under an in-process multi-reader, single-writer contract; shared tiled reads use a process-wide bounded cache, while dirty write state stays under exclusive mutable ownership.
 - Within `casa-tables`, row/column/cell accessor objects are the canonical public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and legacy table-level convenience methods remain compatibility wrappers.
 - Versioned provider bundles are boundary contracts; UI projections are derived views, not separate truth sources.
 

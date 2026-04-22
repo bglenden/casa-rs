@@ -21,6 +21,7 @@ use std::io::{Read as IoRead, Seek, SeekFrom, Write as IoWrite};
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_types::{
@@ -31,6 +32,168 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 /// Maximum number of dimensions supported by stack-allocated arrays in
 /// tile iteration loops.  casacore images are at most 5-D.
 const MAX_NDIM: usize = 8;
+const DEFAULT_TABLE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const TABLE_CACHE_BUDGET_ENV: &str = "CASA_RS_TABLE_CACHE_BYTES";
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SharedTileKey {
+    table_path: PathBuf,
+    dm_seq_nr: u32,
+    cube_idx: usize,
+    target_col_idx: usize,
+    tile_index: usize,
+}
+
+#[derive(Clone)]
+struct SharedTileEntry {
+    data: Arc<[u8]>,
+    bytes: usize,
+    last_used: u64,
+}
+
+struct SharedTileCacheState {
+    budget_bytes: usize,
+    explicit_budget: Option<usize>,
+    bytes_used: usize,
+    clock: u64,
+    entries: std::collections::HashMap<SharedTileKey, SharedTileEntry>,
+}
+
+impl SharedTileCacheState {
+    fn new() -> Self {
+        Self {
+            budget_bytes: table_cache_budget_from_env(),
+            explicit_budget: None,
+            bytes_used: 0,
+            clock: 0,
+            entries: std::collections::HashMap::new(),
+        }
+    }
+
+    fn next_tick(&mut self) -> u64 {
+        self.clock = self.clock.wrapping_add(1);
+        self.clock
+    }
+
+    fn get(&mut self, key: &SharedTileKey) -> Option<Arc<[u8]>> {
+        let tick = self.next_tick();
+        let entry = self.entries.get_mut(key)?;
+        entry.last_used = tick;
+        Some(entry.data.clone())
+    }
+
+    fn set_budget(&mut self, budget_bytes: usize) {
+        self.explicit_budget = Some(budget_bytes);
+        self.budget_bytes = budget_bytes;
+        self.evict_to_budget();
+    }
+
+    fn reset_for_tests(&mut self) {
+        self.entries.clear();
+        self.bytes_used = 0;
+        self.clock = 0;
+        self.explicit_budget = None;
+        self.budget_bytes = table_cache_budget_from_env();
+    }
+
+    fn insert(&mut self, key: SharedTileKey, data: Arc<[u8]>) -> Arc<[u8]> {
+        let bytes = data.len();
+        if self.budget_bytes == 0 || bytes > self.budget_bytes {
+            return data;
+        }
+        let tick = self.next_tick();
+        self.bytes_used += bytes;
+        self.entries.insert(
+            key,
+            SharedTileEntry {
+                data: data.clone(),
+                bytes,
+                last_used: tick,
+            },
+        );
+        self.evict_to_budget();
+        data
+    }
+
+    fn evict_to_budget(&mut self) {
+        while self.bytes_used > self.budget_bytes {
+            let Some((evict_key, evict_bytes)) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, entry)| (key.clone(), entry.bytes))
+            else {
+                break;
+            };
+            self.entries.remove(&evict_key);
+            self.bytes_used = self.bytes_used.saturating_sub(evict_bytes);
+        }
+    }
+}
+
+static SHARED_TILE_CACHE: LazyLock<Mutex<SharedTileCacheState>> =
+    LazyLock::new(|| Mutex::new(SharedTileCacheState::new()));
+
+fn table_cache_budget_from_env() -> usize {
+    std::env::var(TABLE_CACHE_BUDGET_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(DEFAULT_TABLE_CACHE_BYTES)
+}
+
+/// Returns the current process-wide shared table-read cache budget in bytes.
+///
+/// The initial value comes from `CASA_RS_TABLE_CACHE_BYTES` when set,
+/// otherwise a bounded default is used.
+pub fn table_cache_budget_bytes() -> usize {
+    SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned")
+        .budget_bytes
+}
+
+/// Overrides the process-wide shared table-read cache budget in bytes.
+///
+/// The runtime override takes precedence over `CASA_RS_TABLE_CACHE_BYTES`
+/// for the remainder of the process and immediately evicts excess cached data.
+pub fn set_table_cache_budget_bytes(budget_bytes: usize) {
+    SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned")
+        .set_budget(budget_bytes);
+}
+
+#[cfg(test)]
+pub(crate) fn reset_table_cache_budget_for_tests() {
+    SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned")
+        .reset_for_tests();
+}
+
+#[cfg(test)]
+pub(crate) fn shared_tile_cache_entry_count() -> usize {
+    SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned")
+        .entries
+        .len()
+}
+
+pub(crate) fn invalidate_shared_tile_cache_for_table(table_path: &Path) {
+    let mut cache = SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned");
+    let mut freed_bytes = 0usize;
+    cache.entries.retain(|key, entry| {
+        let keep = key.table_path != table_path;
+        if !keep {
+            freed_bytes += entry.bytes;
+        }
+        keep
+    });
+    cache.bytes_used = cache.bytes_used.saturating_sub(freed_bytes);
+}
 
 /// Pixel types supported by the generic tile I/O path.
 ///
@@ -1307,39 +1470,33 @@ fn load_tiled_column_rows_column_variant(
     if header.cubes.is_empty() {
         return Ok(vec![None; selected_rows.len()]);
     }
-    let cube = &header.cubes[0];
+    let cube_idx = 0usize;
+    let cube = &header.cubes[cube_idx];
     if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
         return Ok(vec![None; selected_rows.len()]);
     }
-    let tsm_file_name = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
-    let file_data = std::fs::read(&tsm_file_name).map_err(|e| {
-        StorageError::FormatMismatch(format!("cannot read {}: {e}", tsm_file_name.display()))
-    })?;
-    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-    let cube_raw = reconstruct_cube_column(
-        &file_data,
-        cube.file_offset as usize,
-        &cube.cube_shape,
-        &cube.tile_shape,
-        col_offsets[target_col_idx],
-        bucket_size,
-        dt,
-        elem_size,
-    )?;
-    extract_selected_rows_from_cube_raw(
-        &cube_raw,
-        &cube.cube_shape,
+    let patches_by_cube = std::iter::once((
+        cube_idx,
         selected_rows
             .iter()
             .enumerate()
             .map(|(out_idx, &row_idx)| SelectedCubeRow {
                 out_idx,
                 pos_in_cube: row_idx,
-            }),
+            })
+            .collect(),
+    ))
+    .collect();
+    load_selected_rows_from_touched_cubes(
+        table_path,
+        dm_seq_nr,
+        header,
+        target_col_idx,
         col_desc,
         dt,
-        header.big_endian,
+        elem_size,
         selected_rows.len(),
+        patches_by_cube,
     )
 }
 
@@ -1871,7 +2028,7 @@ fn load_tiled_column_rows_cell_variant(
     selected_rows: &[usize],
 ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
     let mut outputs = vec![None; selected_rows.len()];
-    let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();
+    let mut read_session = TileReadSession::default();
 
     for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
         let Some(cube) = header.cubes.get(row_idx) else {
@@ -1880,40 +2037,18 @@ fn load_tiled_column_rows_cell_variant(
         if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
             continue;
         }
-        let file_seq_nr = cube.file_seq_nr as u32;
-        let file_data = match file_cache.entry(file_seq_nr) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
-                let data = std::fs::read(&path).map_err(|err| {
-                    StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
-                })?;
-                entry.insert(data)
-            }
-        };
-        let (bucket_size, col_offsets) =
-            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-        let raw = reconstruct_cube_column(
-            file_data,
-            cube.file_offset as usize,
-            &cube.cube_shape,
-            &cube.tile_shape,
-            col_offsets[target_col_idx],
-            bucket_size,
+        outputs[out_idx] = decode_tiled_cell_from_shared_tiles(
+            table_path,
+            dm_seq_nr,
+            header,
+            row_idx,
+            cube,
+            target_col_idx,
+            col_desc,
             dt,
             elem_size,
+            &mut read_session,
         )?;
-        outputs[out_idx] = match decode_array_value(&raw, &cube.cube_shape, dt, header.big_endian)?
-        {
-            Value::Array(array) => Some(array),
-            other => {
-                return Err(StorageError::FormatMismatch(format!(
-                    "tiled cell row '{}' expected array value, found {:?}",
-                    col_desc.col_name,
-                    other.kind()
-                )));
-            }
-        };
     }
     Ok(outputs)
 }
@@ -1931,7 +2066,7 @@ fn load_selected_rows_from_touched_cubes(
     patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
 ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
     let mut outputs = vec![None; output_len];
-    let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();
+    let mut read_session = TileReadSession::default();
 
     for (cube_idx, patches) in patches_by_cube {
         let Some(cube) = header.cubes.get(cube_idx) else {
@@ -1940,42 +2075,20 @@ fn load_selected_rows_from_touched_cubes(
         if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
             continue;
         }
-        let file_seq_nr = cube.file_seq_nr as u32;
-        let file_data = match file_cache.entry(file_seq_nr) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
-                let data = std::fs::read(&path).map_err(|err| {
-                    StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
-                })?;
-                entry.insert(data)
-            }
-        };
-        let (bucket_size, col_offsets) =
-            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-        let cube_raw = reconstruct_cube_column(
-            file_data,
-            cube.file_offset as usize,
-            &cube.cube_shape,
-            &cube.tile_shape,
-            col_offsets[target_col_idx],
-            bucket_size,
-            dt,
-            elem_size,
-        )?;
-        let decoded = extract_selected_rows_from_cube_raw(
-            &cube_raw,
-            &cube.cube_shape,
-            patches.iter().copied(),
-            col_desc,
-            dt,
-            header.big_endian,
-            output_len,
-        )?;
-        for (out_idx, value) in decoded.into_iter().enumerate() {
-            if value.is_some() {
-                outputs[out_idx] = value;
-            }
+        for selected in patches {
+            outputs[selected.out_idx] = decode_selected_cube_row_from_shared_tiles(
+                table_path,
+                dm_seq_nr,
+                header,
+                cube_idx,
+                cube,
+                target_col_idx,
+                col_desc,
+                dt,
+                elem_size,
+                selected,
+                &mut read_session,
+            )?;
         }
     }
 
@@ -4357,6 +4470,275 @@ fn write_tiled_file_tile(
     Ok(())
 }
 
+#[derive(Default)]
+struct TileReadSession {
+    files: std::collections::HashMap<u32, std::fs::File>,
+}
+
+impl TileReadSession {
+    fn file(
+        &mut self,
+        table_path: &Path,
+        dm_seq_nr: u32,
+        file_seq_nr: u32,
+    ) -> Result<&mut std::fs::File, StorageError> {
+        match self.files.entry(file_seq_nr) {
+            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
+                let file = OpenOptions::new().read(true).open(&path).map_err(|err| {
+                    StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
+                })?;
+                Ok(entry.insert(file))
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_shared_column_tile(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    cube_idx: usize,
+    cube: &TsmCubeInfo,
+    target_col_idx: usize,
+    bucket_size: usize,
+    col_offset_in_tile: usize,
+    dt: CasacoreDataType,
+    tile_index: usize,
+    session: &mut TileReadSession,
+) -> Result<Arc<[u8]>, StorageError> {
+    let key = SharedTileKey {
+        table_path: table_path.to_path_buf(),
+        dm_seq_nr,
+        cube_idx,
+        target_col_idx,
+        tile_index,
+    };
+    if let Some(hit) = SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned")
+        .get(&key)
+    {
+        return Ok(hit);
+    }
+
+    let tile_nelem: usize = cube.tile_shape.iter().product();
+    let tile_bytes = tile_nelem * tile_element_size(dt);
+    let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
+    let swap_size = match dt {
+        CasacoreDataType::TpComplex => 4,
+        CasacoreDataType::TpDComplex => 8,
+        _ => tile_element_size(dt),
+    };
+    let needs_swap = header.big_endian != cfg!(target_endian = "big");
+    let file_pos =
+        (cube.file_offset as usize + tile_index * bucket_size + col_offset_in_tile) as u64;
+    let file = session.file(table_path, dm_seq_nr, cube.file_seq_nr as u32)?;
+    let mut tile = vec![0u8; tile_bytes];
+    read_tiled_file_tile(
+        file,
+        file_pos,
+        &mut tile,
+        file_tile_bytes,
+        dt,
+        tile_nelem,
+        needs_swap,
+        swap_size,
+    )?;
+    let data: Arc<[u8]> = Arc::from(tile);
+    let mut cache = SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned");
+    if let Some(hit) = cache.get(&key) {
+        return Ok(hit);
+    }
+    Ok(cache.insert(key, data))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconstruct_cube_column_from_shared_tiles(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    cube_idx: usize,
+    cube: &TsmCubeInfo,
+    target_col_idx: usize,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    session: &mut TileReadSession,
+) -> Result<Vec<u8>, StorageError> {
+    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+    let ndim = cube.cube_shape.len();
+    let tiles_per_dim: Vec<usize> = (0..ndim)
+        .map(|i| cube.cube_shape[i].div_ceil(cube.tile_shape[i]))
+        .collect();
+    let nr_tiles: usize = tiles_per_dim.iter().product();
+    let cube_nelem: usize = cube.cube_shape.iter().product();
+    let mut result = vec![0u8; cube_nelem * elem_size];
+
+    for tile_idx in 0..nr_tiles {
+        let tile_pos = linear_to_nd(tile_idx, &tiles_per_dim);
+        let cube_start: Vec<usize> = (0..ndim)
+            .map(|d| tile_pos[d] * cube.tile_shape[d])
+            .collect();
+        let actual_extent: Vec<usize> = (0..ndim)
+            .map(|d| std::cmp::min(cube.tile_shape[d], cube.cube_shape[d] - cube_start[d]))
+            .collect();
+        let tile = load_shared_column_tile(
+            table_path,
+            dm_seq_nr,
+            header,
+            cube_idx,
+            cube,
+            target_col_idx,
+            bucket_size,
+            col_offsets[target_col_idx],
+            dt,
+            tile_idx,
+            session,
+        )?;
+        copy_tile_to_cube(
+            tile.as_ref(),
+            &cube.tile_shape,
+            &mut result,
+            &cube.cube_shape,
+            &cube_start,
+            &actual_extent,
+            elem_size,
+        );
+    }
+
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_selected_cube_row_from_shared_tiles(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    cube_idx: usize,
+    cube: &TsmCubeInfo,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected: SelectedCubeRow,
+    session: &mut TileReadSession,
+) -> Result<Option<ArrayValue>, StorageError> {
+    let cell_ndim = cube.cube_shape.len().saturating_sub(1);
+    let cell_shape: Vec<usize> = cube.cube_shape[..cell_ndim].to_vec();
+    let cell_nelem: usize = cell_shape.iter().product();
+    let cell_tile_shape = &cube.tile_shape[..cell_ndim];
+    let cell_tiles_per_dim: Vec<usize> = cell_shape
+        .iter()
+        .zip(cell_tile_shape.iter())
+        .map(|(&cell, &tile)| cell.div_ceil(tile))
+        .collect();
+    let row_tile = selected.pos_in_cube / cube.tile_shape[cell_ndim];
+    let row_in_tile = selected.pos_in_cube % cube.tile_shape[cell_ndim];
+    let row_tile_nelem: usize = cell_tile_shape.iter().product();
+    let tiles_per_dim: Vec<usize> = cube
+        .cube_shape
+        .iter()
+        .zip(cube.tile_shape.iter())
+        .map(|(&shape, &tile)| shape.div_ceil(tile))
+        .collect();
+    let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
+    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+    let mut raw = vec![0u8; cell_nelem * elem_size];
+
+    for cell_tile_linear in 0..cell_tiles_per_dim.iter().product::<usize>() {
+        let cell_tile_pos = linear_to_nd(cell_tile_linear, &cell_tiles_per_dim);
+        let mut full_tile_pos = cell_tile_pos.clone();
+        full_tile_pos.push(row_tile);
+        let tile_index: usize = full_tile_pos
+            .iter()
+            .zip(tile_grid_strides.iter())
+            .map(|(pos, stride)| pos * stride)
+            .sum();
+        let tile = load_shared_column_tile(
+            table_path,
+            dm_seq_nr,
+            header,
+            cube_idx,
+            cube,
+            target_col_idx,
+            bucket_size,
+            col_offsets[target_col_idx],
+            dt,
+            tile_index,
+            session,
+        )?;
+        let src_start = row_in_tile * row_tile_nelem * elem_size;
+        let src_end = src_start + row_tile_nelem * elem_size;
+        let tile_row = &tile[src_start..src_end];
+        let cell_start: Vec<usize> = cell_tile_pos
+            .iter()
+            .enumerate()
+            .map(|(axis, &pos)| pos * cell_tile_shape[axis])
+            .collect();
+        let actual_extent: Vec<usize> = cell_shape
+            .iter()
+            .enumerate()
+            .map(|(axis, &shape)| std::cmp::min(cell_tile_shape[axis], shape - cell_start[axis]))
+            .collect();
+        copy_tile_to_cube(
+            tile_row,
+            cell_tile_shape,
+            &mut raw,
+            &cell_shape,
+            &cell_start,
+            &actual_extent,
+            elem_size,
+        );
+    }
+
+    match decode_array_value(&raw, &cell_shape, dt, header.big_endian)? {
+        Value::Array(array) => Ok(Some(array)),
+        other => Err(StorageError::FormatMismatch(format!(
+            "tiled array column {} decoded as non-array value {:?}",
+            col_desc.col_name,
+            other.kind()
+        ))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_tiled_cell_from_shared_tiles(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    cube_idx: usize,
+    cube: &TsmCubeInfo,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    session: &mut TileReadSession,
+) -> Result<Option<ArrayValue>, StorageError> {
+    let raw = reconstruct_cube_column_from_shared_tiles(
+        table_path,
+        dm_seq_nr,
+        header,
+        cube_idx,
+        cube,
+        target_col_idx,
+        dt,
+        elem_size,
+        session,
+    )?;
+    match decode_array_value(&raw, &cube.cube_shape, dt, header.big_endian)? {
+        Value::Array(array) => Ok(Some(array)),
+        other => Err(StorageError::FormatMismatch(format!(
+            "tiled cell row '{}' expected array value, found {:?}",
+            col_desc.col_name,
+            other.kind()
+        ))),
+    }
+}
+
 impl TiledFileIO {
     /// Creates a new `TiledFileIO`, writing the TSM header and allocating
     /// a zeroed data file on disk.
@@ -5845,6 +6227,7 @@ mod tests {
     use super::*;
     use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
     use ndarray::ArrayD;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
     use crate::storage::TABLE_CONTROL_FILE;
@@ -5853,6 +6236,13 @@ mod tests {
 
     fn make_bool_tile_pattern(base: usize) -> Vec<bool> {
         (0..4).map(|i| (base + i) % 3 == 0).collect()
+    }
+
+    fn shared_table_cache_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("shared table cache test lock")
     }
 
     #[test]
@@ -5878,6 +6268,98 @@ mod tests {
     fn bool_tile_storage_is_bit_packed() {
         assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 4), 1);
         assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 9), 2);
+    }
+
+    #[test]
+    fn table_cache_budget_api_respects_env_and_runtime_override() {
+        let _guard = shared_table_cache_test_guard();
+        let prior = std::env::var(TABLE_CACHE_BUDGET_ENV).ok();
+
+        unsafe {
+            std::env::set_var(TABLE_CACHE_BUDGET_ENV, "8192");
+        }
+        reset_table_cache_budget_for_tests();
+        assert_eq!(table_cache_budget_bytes(), 8192);
+
+        set_table_cache_budget_bytes(4096);
+        assert_eq!(table_cache_budget_bytes(), 4096);
+
+        match prior {
+            Some(value) => unsafe {
+                std::env::set_var(TABLE_CACHE_BUDGET_ENV, value);
+            },
+            None => unsafe {
+                std::env::remove_var(TABLE_CACHE_BUDGET_ENV);
+            },
+        }
+        reset_table_cache_budget_for_tests();
+    }
+
+    #[test]
+    fn tiled_selected_row_reads_reuse_shared_tile_cache() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+        set_table_cache_budget_bytes(128);
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "data",
+            PrimitiveType::Float32,
+            vec![2, 2],
+        )])
+        .expect("schema");
+        let mut table = Table::with_schema(schema);
+        for row_idx in 0..6 {
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "data",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(
+                            vec![2, 2],
+                            vec![
+                                row_idx as f32,
+                                row_idx as f32 + 10.0,
+                                row_idx as f32 + 20.0,
+                                row_idx as f32 + 30.0,
+                            ],
+                        )
+                        .expect("shape data"),
+                    )),
+                )]))
+                .expect("push row");
+        }
+
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("shared_tile_cache.table");
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::TiledShapeStMan)
+                    .with_tile_shape(vec![2, 2, 2]),
+            )
+            .expect("save tiled-shape table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        assert_eq!(shared_tile_cache_entry_count(), 0);
+        reopened
+            .get_array_cells_owned("data", &[0, 1, 4, 5])
+            .expect("first tiled selected-row read");
+        let cache_entries_after_first_read = shared_tile_cache_entry_count();
+        assert!(
+            cache_entries_after_first_read > 0,
+            "first tiled selected-row read should populate the shared tile cache"
+        );
+
+        reopened
+            .get_array_cells_owned("data", &[0, 1, 4, 5])
+            .expect("second tiled selected-row read");
+        assert_eq!(
+            shared_tile_cache_entry_count(),
+            cache_entries_after_first_read,
+            "repeated tiled selected-row reads should reuse the shared tile cache"
+        );
+
+        reset_table_cache_budget_for_tests();
     }
 
     #[test]
