@@ -7080,6 +7080,170 @@ mod tests {
     }
 
     #[test]
+    fn canonical_helpers_manifest_and_cli_option_parsers_cover_remaining_paths() {
+        assert_eq!(canonical_spectral_mode_name(SpectralMode::Mfs), "mfs");
+        assert_eq!(canonical_spectral_mode_name(SpectralMode::Cube), "cube");
+        assert_eq!(
+            canonical_spectral_mode_name(SpectralMode::Cubedata),
+            "cubedata"
+        );
+        assert_eq!(
+            canonical_weighting_name(WeightingMode::Briggs { robust: -0.5 }),
+            "briggs:-0.5"
+        );
+        assert_eq!(
+            canonical_restoring_beam_mode_name(RestoringBeamMode::Common),
+            "common"
+        );
+        assert_eq!(canonical_deconvolver_name(Deconvolver::Clark), "clark");
+        assert_eq!(canonical_w_term_mode_name(WTermMode::WProject), "wproject");
+        assert_eq!(
+            canonical_cube_interpolation_name(CubeInterpolation::Linear),
+            "linear"
+        );
+        assert_eq!(
+            canonical_cube_axis_value(&CubeAxisValue::Channel(7)),
+            "channel:7"
+        );
+        assert_eq!(
+            canonical_cube_axis_value(&CubeAxisValue::FrequencyHz {
+                hz: 1.5e9,
+                frame: Some(FrequencyRef::LSRK),
+            }),
+            "frequency_hz:1500000000@LSRK"
+        );
+        assert_eq!(
+            canonical_cube_axis_value(&CubeAxisValue::VelocityMs {
+                ms: 12.5,
+                frame: None,
+            }),
+            "velocity_ms:12.5"
+        );
+        assert_eq!(
+            canonical_cube_axis_value(&CubeAxisValue::Doppler {
+                value: 0.125,
+                convention: DopplerRef::RADIO,
+            }),
+            "doppler:0.125@RADIO"
+        );
+        assert_eq!(
+            canonical_uv_taper(GaussianUvTaper {
+                major: UvTaperSize::ImageFwhmRad(1.0),
+                minor: UvTaperSize::BaselineHwhmLambda(2.0),
+                position_angle_rad: 0.5,
+            }),
+            "major=image_fwhm_rad:1,minor=baseline_hwhm_lambda:2,pa_rad=0.5"
+        );
+        assert_eq!(optional_numeric_list(None), "none");
+        assert_eq!(optional_numeric_list(Some(&[1, 3, 5])), "1,3,5");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("fixture.ms"),
+            OsString::from("--imagename"),
+            OsString::from("fixture.image"),
+            OsString::from("--imsize"),
+            OsString::from("256"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.5"),
+            OsString::from("--field"),
+            OsString::from("1,2"),
+            OsString::from("--phasecenter"),
+            OsString::from("J2000 1rad 2rad"),
+            OsString::from("--ddid"),
+            OsString::from("4"),
+            OsString::from("--spw"),
+            OsString::from("5"),
+            OsString::from("--channel-start"),
+            OsString::from("6"),
+            OsString::from("--channel-count"),
+            OsString::from("7"),
+            OsString::from("--datacolumn"),
+            OsString::from("data"),
+            OsString::from("--corr"),
+            OsString::from("stokes_i"),
+            OsString::from("--specmode"),
+            OsString::from("cubedata"),
+            OsString::from("--start"),
+            OsString::from("9"),
+            OsString::from("--width"),
+            OsString::from("10m/s"),
+            OsString::from("--outframe"),
+            OsString::from("BARY"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--robust"),
+            OsString::from("0.0"),
+            OsString::from("--perchanweightdensity"),
+            OsString::from("--uvtaper"),
+            OsString::from("10arcsec,2lambda,30deg"),
+            OsString::from("--restoringbeam"),
+            OsString::from("common"),
+            OsString::from("--deconvolver"),
+            OsString::from("multiscale"),
+            OsString::from("--scales"),
+            OsString::from("0,5,15"),
+            OsString::from("--mask-box"),
+            OsString::from("1,2,3,4"),
+            OsString::from("--mask-image"),
+            OsString::from("mask.im"),
+            OsString::from("--wterm"),
+            OsString::from("direct"),
+            OsString::from("--wprojplanes"),
+            OsString::from("16"),
+            OsString::from("--dirty-only"),
+        ])
+        .unwrap();
+        let manifest = oracle_parameter_manifest(&config);
+        assert_eq!(manifest.get("field_ids").unwrap(), "1,2");
+        assert_eq!(manifest.get("spectral_mode").unwrap(), "cubedata");
+        assert_eq!(manifest.get("cube_start").unwrap(), "channel:9");
+        assert_eq!(manifest.get("cube_width").unwrap(), "velocity_ms:10");
+        assert_eq!(manifest.get("weighting").unwrap(), "briggs:0");
+        assert!(
+            manifest
+                .get("uv_taper")
+                .unwrap()
+                .contains("major=image_fwhm_rad:")
+        );
+        assert_eq!(manifest.get("mask_boxes").unwrap(), "1,2,3,4");
+        assert_eq!(manifest.get("w_term_mode").unwrap(), "direct");
+
+        let args = vec![
+            OsString::from("--managed-output"),
+            OsString::from("true"),
+            OsString::from("--json-run"),
+            OsString::from("request.json"),
+            OsString::from("--keep"),
+        ];
+        let (managed_output, filtered) = extract_option_value(&args, "--managed-output").unwrap();
+        assert!(managed_output);
+        assert!(!filtered.iter().any(|arg| arg == "--managed-output"));
+        let (json_run, filtered) = extract_string_option(&filtered, "--json-run").unwrap();
+        assert_eq!(json_run.as_deref(), Some("request.json"));
+        assert_eq!(filtered, vec![OsString::from("--keep")]);
+        assert!(
+            extract_option_value(&[OsString::from("--managed-output")], "--managed-output")
+                .unwrap_err()
+                .contains("requires a value")
+        );
+        assert!(
+            extract_string_option(&[OsString::from("--json-run")], "--json-run")
+                .unwrap_err()
+                .contains("missing value")
+        );
+        assert!(
+            run_with_cli_args([
+                OsString::from("casars-imager"),
+                OsString::from("--managed-output"),
+                OsString::from("maybe"),
+            ])
+            .unwrap_err()
+            .contains("--managed-output expects true or false")
+        );
+    }
+
+    #[test]
     fn render_help_mentions_json_protocol_surface() {
         let help = render_help(&command_schema("casars-imager-test"));
         assert!(help.contains("--ui-schema"));

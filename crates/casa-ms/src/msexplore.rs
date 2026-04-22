@@ -7442,6 +7442,11 @@ impl ListObsPlotRenderStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::listobs::{
+        AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
+        ObservationSummary, PolarizationSummary, SourceSummary, SpectralWindowSummary,
+    };
+    use crate::plot::UvCoveragePlotPayload;
     use crate::test_helpers::default_value;
     use crate::{MeasurementSetBuilder, OptionalMainColumn};
     use casa_types::{RecordField, RecordValue};
@@ -8561,6 +8566,537 @@ mod tests {
         assert_eq!(compacted.header_lines.len(), 1);
         assert!(compacted.header_lines[0].contains("Downsampled plot"));
         assert!(compacted.summary.contains("Decimated points from 10 to 6"));
+    }
+
+    fn synthetic_summary() -> ListObsSummary {
+        ListObsSummary {
+            schema_version: 1,
+            options: ListObsOptions::default(),
+            measurement_set: MeasurementSetInfo {
+                path: Some("fixture.ms".to_string()),
+                ms_version: Some(2.0),
+                row_count: 4,
+                observation_count: 1,
+                field_count: 2,
+                spectral_window_count: 2,
+                polarization_count: 1,
+                data_description_count: 2,
+                source_count: 1,
+                antenna_count: 2,
+                antenna_table_count: 2,
+                time_reference: Some("UTC".to_string()),
+                start_mjd_seconds: None,
+                end_mjd_seconds: Some(180.0),
+                total_elapsed_seconds: Some(80.0),
+            },
+            observations: vec![ObservationSummary {
+                observation_id: 0,
+                telescope_name: "VLA".to_string(),
+                observer: "  ".to_string(),
+                project: "Project-42".to_string(),
+                release_date_mjd_seconds: 0.0,
+                start_mjd_seconds: Some(100.0),
+                end_mjd_seconds: Some(180.0),
+            }],
+            scans: vec![],
+            fields: vec![
+                FieldSummary {
+                    field_id: 0,
+                    name: "FIELD_A".to_string(),
+                    code: "".to_string(),
+                    source_id: 0,
+                    row_count: 2,
+                    unflagged_row_count: None,
+                    time_mjd_seconds: 100.0,
+                    direction_reference: Some("J2000".to_string()),
+                    phase_direction_radians: [0.0, 0.0],
+                },
+                FieldSummary {
+                    field_id: 1,
+                    name: "FIELD_B".to_string(),
+                    code: "".to_string(),
+                    source_id: 0,
+                    row_count: 2,
+                    unflagged_row_count: None,
+                    time_mjd_seconds: 140.0,
+                    direction_reference: Some("J2000".to_string()),
+                    phase_direction_radians: [0.1, 0.2],
+                },
+            ],
+            polarization_setups: vec![PolarizationSummary {
+                polarization_id: 0,
+                num_correlations: 2,
+                correlation_types: vec!["XX".to_string(), "YY".to_string()],
+            }],
+            data_descriptions: vec![
+                DataDescriptionSummary {
+                    data_description_id: 0,
+                    spectral_window_id: 0,
+                    polarization_id: 0,
+                    flagged: false,
+                },
+                DataDescriptionSummary {
+                    data_description_id: 1,
+                    spectral_window_id: 1,
+                    polarization_id: 0,
+                    flagged: false,
+                },
+            ],
+            spectral_windows: vec![
+                SpectralWindowSummary {
+                    spectral_window_id: 0,
+                    name: "LOW".to_string(),
+                    num_channels: 16,
+                    frame: Some("TOPO".to_string()),
+                    first_channel_frequency_hz: 1.0e9,
+                    channel_width_hz: 1.0e6,
+                    reference_frequency_hz: 1.0e9,
+                    center_frequency_hz: 1.008e9,
+                    min_frequency_hz: 0.9995e9,
+                    max_frequency_hz: 1.0165e9,
+                    total_bandwidth_hz: 16.0e6,
+                    data_description_ids: vec![0],
+                    polarization_ids: vec![0],
+                    correlation_types: vec!["XX".to_string(), "YY".to_string()],
+                },
+                SpectralWindowSummary {
+                    spectral_window_id: 1,
+                    name: "HIGH".to_string(),
+                    num_channels: 32,
+                    frame: Some("TOPO".to_string()),
+                    first_channel_frequency_hz: 1.2e9,
+                    channel_width_hz: 5.0e5,
+                    reference_frequency_hz: 1.2e9,
+                    center_frequency_hz: 1.208e9,
+                    min_frequency_hz: 1.19975e9,
+                    max_frequency_hz: 1.21625e9,
+                    total_bandwidth_hz: 16.0e6,
+                    data_description_ids: vec![1],
+                    polarization_ids: vec![0],
+                    correlation_types: vec!["XX".to_string(), "YY".to_string()],
+                },
+            ],
+            sources: vec![SourceSummary {
+                source_id: 0,
+                name: "SOURCE_A".to_string(),
+                code: "".to_string(),
+                spectral_window_id: -1,
+                calibration_group: 0,
+                num_lines: 0,
+                rest_frequency_hz: None,
+                system_velocity_m_s: None,
+                time_mjd_seconds: 100.0,
+                direction_radians: [0.0, 0.0],
+            }],
+            antennas: vec![
+                AntennaSummary {
+                    antenna_id: 0,
+                    name: "ea01".to_string(),
+                    station: "A01".to_string(),
+                    antenna_type: "GROUND-BASED".to_string(),
+                    mount: "ALT-AZ".to_string(),
+                    dish_diameter_m: 25.0,
+                    longitude_radians: 0.0,
+                    latitude_radians: 0.0,
+                    offset_from_observatory_m: [0.0, 0.0, 0.0],
+                    position_m: [1000.0, 2000.0, 0.0],
+                },
+                AntennaSummary {
+                    antenna_id: 1,
+                    name: "ea02".to_string(),
+                    station: "A02".to_string(),
+                    antenna_type: "GROUND-BASED".to_string(),
+                    mount: "ALT-AZ".to_string(),
+                    dish_diameter_m: 25.0,
+                    longitude_radians: 0.0,
+                    latitude_radians: 0.0,
+                    offset_from_observatory_m: [120.0, 40.0, 0.0],
+                    position_m: [1120.0, 2040.0, 0.0],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn compact_payload_to_budget_handles_grid_page_passthrough_and_empty_results() {
+        let original =
+            MsPlotPayload::ListObs(ListObsPlotPayload::UvCoverage(UvCoveragePlotPayload {
+                draw_points: true,
+                mirror: true,
+                axis_extent_lambda: 0.0,
+                tracks: vec![],
+                summary: "uv".to_string(),
+            }));
+        assert_eq!(
+            compact_payload_to_budget(original.clone(), &PointBudget::unlimited()).unwrap(),
+            original
+        );
+
+        let grid_payload = MsPlotPayload::ScatterGrid(MsScatterGridPayload {
+            title: "Dense grid".to_string(),
+            x_axis: MsAxis::Time,
+            y_axis: MsAxis::Amplitude,
+            x_label: "Time".to_string(),
+            y_label: "Amplitude".to_string(),
+            fixed_x_bounds: None,
+            fixed_y_bounds: None,
+            showlegend: true,
+            legend_position: MsLegendPosition::ExteriorBottom,
+            showmajorgrid: true,
+            showminorgrid: false,
+            iteraxis: MsIterationAxis::Field,
+            gridrows: 1,
+            gridcols: 2,
+            share_x_bounds: true,
+            share_y_bounds: true,
+            panels: vec![
+                MsScatterPanelPayload {
+                    key: "field=0".to_string(),
+                    label: "Field 0".to_string(),
+                    summary: "Field 0 summary.".to_string(),
+                    series: vec![
+                        scatter_series(
+                            "A0",
+                            "a0",
+                            MsAxis::Amplitude,
+                            &[(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)],
+                            0,
+                        ),
+                        scatter_series(
+                            "A1",
+                            "a1",
+                            MsAxis::Amplitude,
+                            &[(0.0, 1.5), (1.0, 2.5), (2.0, 3.5)],
+                            10,
+                        ),
+                    ],
+                },
+                MsScatterPanelPayload {
+                    key: "field=1".to_string(),
+                    label: "Field 1".to_string(),
+                    summary: "Field 1 summary.".to_string(),
+                    series: vec![scatter_series(
+                        "B0",
+                        "b0",
+                        MsAxis::Amplitude,
+                        &[(0.0, 4.0), (1.0, 5.0), (2.0, 6.0)],
+                        20,
+                    )],
+                },
+            ],
+            header_lines: vec![],
+            summary: "Dense grid summary.".to_string(),
+        });
+        let compacted_grid = compact_payload_to_budget(
+            grid_payload,
+            &PointBudget {
+                max_plot_points: Some(4),
+                rendered_points: 9,
+            },
+        )
+        .unwrap();
+        let MsPlotPayload::ScatterGrid(compacted_grid) = compacted_grid else {
+            panic!("expected scatter grid payload");
+        };
+        assert_eq!(compacted_grid.panels.len(), 2);
+        assert!(compacted_grid.header_lines[0].contains("Downsampled plot"));
+        assert!(
+            compacted_grid
+                .summary
+                .contains("Decimated points from 9 to 4")
+        );
+
+        let page_payload = MsPlotPayload::ScatterPage(MsScatterPagePayload {
+            title: "Dense page".to_string(),
+            exprange: MsPageExportRange::All,
+            gridrows: 1,
+            gridcols: 2,
+            header_lines: vec![],
+            items: vec![
+                MsScatterPageItemPayload {
+                    plotindex: 0,
+                    rowindex: 0,
+                    colindex: 0,
+                    plot: scatter_plot_payload(
+                        "Left",
+                        None,
+                        MsLegendPosition::UpperRight,
+                        vec![scatter_series(
+                            "L",
+                            "left",
+                            MsAxis::Amplitude,
+                            &[(0.0, 1.0), (1.0, 1.5), (2.0, 2.0)],
+                            30,
+                        )],
+                    ),
+                },
+                MsScatterPageItemPayload {
+                    plotindex: 1,
+                    rowindex: 0,
+                    colindex: 1,
+                    plot: scatter_plot_payload(
+                        "Right",
+                        None,
+                        MsLegendPosition::UpperRight,
+                        vec![scatter_series(
+                            "R",
+                            "right",
+                            MsAxis::Amplitude,
+                            &[(0.0, 3.0), (1.0, 3.5), (2.0, 4.0)],
+                            40,
+                        )],
+                    ),
+                },
+            ],
+            summary: "Dense page summary.".to_string(),
+        });
+        let compacted_page = compact_payload_to_budget(
+            page_payload,
+            &PointBudget {
+                max_plot_points: Some(3),
+                rendered_points: 6,
+            },
+        )
+        .unwrap();
+        let MsPlotPayload::ScatterPage(compacted_page) = compacted_page else {
+            panic!("expected scatter page payload");
+        };
+        assert_eq!(compacted_page.items.len(), 2);
+        assert!(compacted_page.header_lines[0].contains("Downsampled plot"));
+        assert!(
+            compacted_page
+                .summary
+                .contains("Decimated points from 6 to 3")
+        );
+
+        let empty_grid = MsPlotPayload::ScatterGrid(MsScatterGridPayload {
+            title: "Empty".to_string(),
+            x_axis: MsAxis::Time,
+            y_axis: MsAxis::Amplitude,
+            x_label: "Time".to_string(),
+            y_label: "Amplitude".to_string(),
+            fixed_x_bounds: None,
+            fixed_y_bounds: None,
+            showlegend: false,
+            legend_position: MsLegendPosition::UpperRight,
+            showmajorgrid: true,
+            showminorgrid: false,
+            iteraxis: MsIterationAxis::Field,
+            gridrows: 1,
+            gridcols: 1,
+            share_x_bounds: true,
+            share_y_bounds: true,
+            panels: vec![MsScatterPanelPayload {
+                key: "field=0".to_string(),
+                label: "Field 0".to_string(),
+                summary: "Empty panel".to_string(),
+                series: vec![scatter_series("Empty", "empty", MsAxis::Amplitude, &[], 50)],
+            }],
+            header_lines: vec![],
+            summary: "Empty grid".to_string(),
+        });
+        assert!(
+            compact_payload_to_budget(
+                empty_grid,
+                &PointBudget {
+                    max_plot_points: Some(1),
+                    rendered_points: 2,
+                },
+            )
+            .unwrap_err()
+            .contains("produced no drawable panels")
+        );
+    }
+
+    #[test]
+    fn page_header_resolution_uses_summary_fallbacks_and_wrapping() {
+        let summary = synthetic_summary();
+        assert_eq!(measurement_set_start_time(&summary), Some(100.0));
+        assert_eq!(first_non_empty([" ", "", "Observer"]), Some("Observer"));
+        assert_eq!(first_non_empty([" ", "   "]), None);
+
+        let spec = MsExploreSpec {
+            ms_path: std::path::PathBuf::from("fixture.ms"),
+            summary_format: MeasurementSetSummaryOutputFormat::Text,
+            selection: MsSelectionSpec::default(),
+            header_items: vec![
+                MsPageHeaderItem::Filename,
+                MsPageHeaderItem::ObsDate,
+                MsPageHeaderItem::ObsTime,
+                MsPageHeaderItem::Observer,
+                MsPageHeaderItem::ProjId,
+                MsPageHeaderItem::Telescope,
+                MsPageHeaderItem::TargName,
+                MsPageHeaderItem::TargDir,
+                MsPageHeaderItem::YColumn,
+            ],
+            page_title: None,
+            exprange: MsPageExportRange::Current,
+            max_plot_points: 10,
+            plots: vec![MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime)],
+        };
+
+        let lines = [
+            resolve_page_header_segment(MsPageHeaderItem::Filename, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::ObsDate, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::ObsTime, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::Observer, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::ProjId, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::Telescope, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::TargName, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::TargDir, &spec, &summary),
+            resolve_page_header_segment(MsPageHeaderItem::YColumn, &spec, &summary),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let joined = lines.join(" | ");
+        assert!(joined.contains("fixture.ms"));
+        assert!(joined.contains("Obs Date:"));
+        assert!(joined.contains("Obs Time:"));
+        assert!(joined.contains("Project-42"));
+        assert!(joined.contains("VLA"));
+        assert!(joined.contains("FIELD_A"));
+        assert!(joined.contains("J2000"));
+        assert!(joined.contains("Amplitude"));
+        assert_eq!(
+            wrap_header_segments(&["x".repeat(40), "y".repeat(40), "z".repeat(40),]).len(),
+            2
+        );
+    }
+
+    #[test]
+    fn prepared_selected_data_source_and_grid_helpers_cover_ratio_and_errors() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new()
+                .with_main_column(OptionalMainColumn::Data)
+                .with_main_column(OptionalMainColumn::CorrectedData)
+                .with_main_column(OptionalMainColumn::ModelData),
+        )
+        .expect("create in-memory MS");
+        let schema = ms.main_table().schema().expect("main schema").clone();
+        let make_complex = |values: &[(f32, f32)]| {
+            ArrayValue::Complex32(
+                ArrayD::from_shape_vec(
+                    vec![1, values.len()],
+                    values
+                        .iter()
+                        .map(|(re, im)| Complex32::new(*re, *im))
+                        .collect(),
+                )
+                .expect("complex shape"),
+            )
+        };
+
+        for (data, corrected, model) in [
+            (
+                make_complex(&[(10.0, 0.0), (20.0, 0.0)]),
+                make_complex(&[(12.0, 0.0), (24.0, 0.0)]),
+                make_complex(&[(2.0, 0.0), (4.0, 0.0)]),
+            ),
+            (
+                make_complex(&[(5.0, 0.0), (15.0, 0.0)]),
+                make_complex(&[(8.0, 0.0), (0.0, 0.0)]),
+                make_complex(&[(4.0, 0.0), (0.0, 0.0)]),
+            ),
+        ] {
+            let fields = schema
+                .columns()
+                .iter()
+                .map(|column| {
+                    let value = match column.name() {
+                        "DATA" => Value::Array(data.clone()),
+                        "CORRECTED_DATA" => Value::Array(corrected.clone()),
+                        "MODEL_DATA" => Value::Array(model.clone()),
+                        _ => default_value(column.name()),
+                    };
+                    RecordField::new(column.name(), value)
+                })
+                .collect::<Vec<_>>();
+            ms.main_table_mut()
+                .add_row(RecordValue::new(fields))
+                .expect("add main row");
+        }
+
+        let difference =
+            PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedMinusModel, &[0, 1])
+                .unwrap();
+        assert_eq!(
+            difference.row(0).unwrap().values[0],
+            Complex64::new(10.0, 0.0)
+        );
+
+        let scalar_ratio =
+            PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedDivModelScalar, &[0, 1])
+                .unwrap();
+        let scalar_ratio_row = scalar_ratio.row(0).unwrap();
+        assert_eq!(scalar_ratio_row.values[0], Complex64::new(6.0, 0.0));
+        assert!(scalar_ratio.row(1).unwrap().values[1].re.is_nan());
+
+        let direct_ratio =
+            PreparedSelectedDataSource::new(&ms, MsDataColumn::DataDivModel, &[0]).unwrap();
+        assert_eq!(
+            direct_ratio.row(0).unwrap().values[1],
+            Complex64::new(5.0, 0.0)
+        );
+
+        let wrong_shape = ArrayValue::Complex32(
+            ArrayD::from_shape_vec(
+                vec![2],
+                vec![Complex32::new(1.0, 0.0), Complex32::new(2.0, 0.0)],
+            )
+            .unwrap(),
+        );
+        assert!(
+            complex_grid_from_array(&wrong_shape)
+                .unwrap_err()
+                .contains("expects complex visibility cells")
+        );
+
+        let float_grid = float_grid_from_array(
+            &ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![1, 2], vec![1.0_f32, 2.0_f32]).unwrap(),
+            ),
+            "WEIGHT_SPECTRUM",
+        )
+        .unwrap();
+        assert_eq!(float_grid.values, vec![1.0, 2.0]);
+        assert_eq!(
+            scalar_values_to_grid(&[3.0, 4.0], 2).values,
+            vec![3.0, 3.0, 4.0, 4.0]
+        );
+        assert!(
+            combine_grids(
+                ComplexGrid {
+                    corr_count: 1,
+                    chan_count: 2,
+                    values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
+                },
+                ComplexGrid {
+                    corr_count: 2,
+                    chan_count: 1,
+                    values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
+                },
+                |left, right| left + right,
+            )
+            .unwrap_err()
+            .contains("mismatched shapes")
+        );
+    }
+
+    #[test]
+    fn listobs_visibility_lowering_rejects_metadata_presets() {
+        let ms = MeasurementSet::create_memory(MeasurementSetBuilder::new())
+            .expect("create in-memory MS");
+        assert!(
+            build_listobs_compat_visibility_payload(
+                &ms,
+                &ListObsOptions::default(),
+                &ListObsPlotSpec::new(ListObsPlotKind::UvCoverage),
+            )
+            .unwrap_err()
+            .contains("metadata payload")
+        );
     }
 
     #[test]
