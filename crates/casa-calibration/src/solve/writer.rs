@@ -308,51 +308,49 @@ fn write_gain_spectral_window_subtable(
 
         let center_index = chan_freq.len() / 2;
         table
-            .set_cell(row, "NUM_CHAN", Value::Scalar(ScalarValue::Int32(1)))
+            .cell_accessor_mut(row, "NUM_CHAN")
+            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
             .map_err(|source| GainSolveError::CopySubtable {
                 subtable: "SPECTRAL_WINDOW".to_string(),
                 path: output_root.display().to_string(),
                 source: Box::new(source),
             })?;
         table
-            .set_cell(
-                row,
-                "CHAN_FREQ",
-                Value::Array(f64_array(&[chan_freq[center_index]])),
-            )
+            .cell_accessor_mut(row, "CHAN_FREQ")
+            .and_then(|mut cell| cell.set(Value::Array(f64_array(&[chan_freq[center_index]]))))
             .map_err(|source| GainSolveError::CopySubtable {
                 subtable: "SPECTRAL_WINDOW".to_string(),
                 path: output_root.display().to_string(),
                 source: Box::new(source),
             })?;
         table
-            .set_cell(
-                row,
-                "CHAN_WIDTH",
-                Value::Array(f64_array(&[chan_width.iter().copied().sum()])),
-            )
+            .cell_accessor_mut(row, "CHAN_WIDTH")
+            .and_then(|mut cell| {
+                cell.set(Value::Array(f64_array(&[chan_width.iter().copied().sum()])))
+            })
             .map_err(|source| GainSolveError::CopySubtable {
                 subtable: "SPECTRAL_WINDOW".to_string(),
                 path: output_root.display().to_string(),
                 source: Box::new(source),
             })?;
         table
-            .set_cell(
-                row,
-                "EFFECTIVE_BW",
-                Value::Array(f64_array(&[effective_bw.iter().copied().sum()])),
-            )
+            .cell_accessor_mut(row, "EFFECTIVE_BW")
+            .and_then(|mut cell| {
+                cell.set(Value::Array(f64_array(&[effective_bw
+                    .iter()
+                    .copied()
+                    .sum()])))
+            })
             .map_err(|source| GainSolveError::CopySubtable {
                 subtable: "SPECTRAL_WINDOW".to_string(),
                 path: output_root.display().to_string(),
                 source: Box::new(source),
             })?;
         table
-            .set_cell(
-                row,
-                "RESOLUTION",
-                Value::Array(f64_array(&[resolution.iter().copied().sum()])),
-            )
+            .cell_accessor_mut(row, "RESOLUTION")
+            .and_then(|mut cell| {
+                cell.set(Value::Array(f64_array(&[resolution.iter().copied().sum()])))
+            })
             .map_err(|source| GainSolveError::CopySubtable {
                 subtable: "SPECTRAL_WINDOW".to_string(),
                 path: output_root.display().to_string(),
@@ -373,7 +371,8 @@ fn write_gain_spectral_window_subtable(
 
 fn get_f64_array(table: &Table, row: usize, column: &str) -> Result<Vec<f64>, GainSolveError> {
     match table
-        .get_array_cell(row, column)
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.array())
         .map_err(MsError::from)
         .map_err(|source| GainSolveError::OpenMeasurementSet {
             path: column.to_string(),

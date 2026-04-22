@@ -833,7 +833,12 @@ mod tests {
         let arrays = build_array_fixture();
         assert_eq!(arrays.row_count(), 10);
         assert_eq!(
-            match arrays.cell(0, "idata").unwrap().unwrap() {
+            match arrays
+                .cell_accessor(0, "idata")
+                .and_then(|cell| cell.value())
+                .unwrap()
+                .unwrap()
+            {
                 Value::Array(array) => array.shape().to_vec(),
                 other => panic!("expected array value, got {other:?}"),
             },
@@ -843,7 +848,12 @@ mod tests {
         let varshape = build_varshape_fixture();
         assert_eq!(varshape.row_count(), 10);
         assert_eq!(
-            match varshape.cell(9, "vardata").unwrap().unwrap() {
+            match varshape
+                .cell_accessor(9, "vardata")
+                .and_then(|cell| cell.value())
+                .unwrap()
+                .unwrap()
+            {
                 Value::Array(array) => array.shape().to_vec(),
                 other => panic!("expected array value, got {other:?}"),
             },
@@ -856,7 +866,12 @@ mod tests {
         let arrays_n = build_array_fixture_n(3, &[2, 2, 2]);
         assert_eq!(arrays_n.row_count(), 3);
         assert_eq!(
-            match arrays_n.cell(2, "data").unwrap().unwrap() {
+            match arrays_n
+                .cell_accessor(2, "data")
+                .and_then(|cell| cell.value())
+                .unwrap()
+                .unwrap()
+            {
                 Value::Array(array) => array.shape().to_vec(),
                 other => panic!("expected array value, got {other:?}"),
             },

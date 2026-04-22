@@ -482,7 +482,8 @@ fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
     let ms = MeasurementSet::open(&ms_path).expect("reopen measurement set");
     let weight = ms
         .main_table()
-        .get_array_cell(0, "WEIGHT")
+        .cell_accessor(0, "WEIGHT")
+        .and_then(|cell| cell.array())
         .expect("read weight row");
     let ArrayValue::Float32(weight) = weight else {
         panic!("expected float32 WEIGHT");
@@ -556,7 +557,8 @@ fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
 
     let weight_spectrum = ms
         .main_table()
-        .get_array_cell(0, "WEIGHT_SPECTRUM")
+        .cell_accessor(0, "WEIGHT_SPECTRUM")
+        .and_then(|cell| cell.array())
         .expect("read weight spectrum row");
     let ArrayValue::Float32(weight_spectrum) = weight_spectrum else {
         panic!("expected float32 WEIGHT_SPECTRUM");
@@ -568,7 +570,8 @@ fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
 
     let weight = ms
         .main_table()
-        .get_array_cell(0, "WEIGHT")
+        .cell_accessor(0, "WEIGHT")
+        .and_then(|cell| cell.array())
         .expect("read weight row");
     let ArrayValue::Float32(weight) = weight else {
         panic!("expected float32 WEIGHT");
@@ -627,7 +630,8 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
 
     let weight_spectrum = ms
         .main_table()
-        .get_array_cell(0, "WEIGHT_SPECTRUM")
+        .cell_accessor(0, "WEIGHT_SPECTRUM")
+        .and_then(|cell| cell.array())
         .expect("read weight spectrum row");
     let ArrayValue::Float32(weight_spectrum) = weight_spectrum else {
         panic!("expected float32 WEIGHT_SPECTRUM");
@@ -639,7 +643,8 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
 
     let weight = ms
         .main_table()
-        .get_array_cell(0, "WEIGHT")
+        .cell_accessor(0, "WEIGHT")
+        .and_then(|cell| cell.array())
         .expect("read weight row");
     let ArrayValue::Float32(weight) = weight else {
         panic!("expected float32 WEIGHT");

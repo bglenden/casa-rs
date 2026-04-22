@@ -309,7 +309,8 @@ pub fn solve_gain(
 
 pub(crate) fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, GainSolveError> {
     match table
-        .get_scalar_cell(row, column)
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
         .map_err(MsError::from)
         .map_err(|source| GainSolveError::OpenMeasurementSet {
             path: column.to_string(),
@@ -331,7 +332,8 @@ pub(crate) fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, Ga
 
 pub(crate) fn get_f64(table: &Table, row: usize, column: &str) -> Result<f64, GainSolveError> {
     match table
-        .get_scalar_cell(row, column)
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
         .map_err(MsError::from)
         .map_err(|source| GainSolveError::OpenMeasurementSet {
             path: column.to_string(),

@@ -318,7 +318,11 @@ fn resolve_datacolumn(
 }
 
 fn load_flag_mask(table: &Table, row: usize) -> Option<Vec<bool>> {
-    match table.get_array_cell(row, COL_FLAG).ok()? {
+    match table
+        .cell_accessor(row, COL_FLAG)
+        .and_then(|cell| cell.array())
+        .ok()?
+    {
         ArrayValue::Bool(values) => Some(values.iter().copied().collect()),
         _ => None,
     }
@@ -343,12 +347,13 @@ fn extract_row_values(
         | CalibrationStatsAxis::Real
         | CalibrationStatsAxis::Imaginary => {
             let column = datacolumn.expect("complex stats require datacolumn");
-            let array = table.get_array_cell(row, column).map_err(|source| {
-                CalibrationStatsError::Open {
+            let array = table
+                .cell_accessor(row, column)
+                .and_then(|cell| cell.array())
+                .map_err(|source| CalibrationStatsError::Open {
                     path: path.display().to_string(),
                     source,
-                }
-            })?;
+                })?;
             let ArrayValue::Complex32(values) = array else {
                 return Err(CalibrationStatsError::UnsupportedAxis {
                     path: path.display().to_string(),
@@ -378,15 +383,19 @@ fn extract_row_values(
                 .collect())
         }
         CalibrationStatsAxis::Column(column) => {
-            if let Ok(array) = table.get_array_cell(row, column) {
+            if let Ok(array) = table
+                .cell_accessor(row, column)
+                .and_then(|cell| cell.array())
+            {
                 flatten_real_array(array, flags, request, path, column)
             } else {
-                let scalar = table.get_scalar_cell(row, column).map_err(|source| {
-                    CalibrationStatsError::Open {
+                let scalar = table
+                    .cell_accessor(row, column)
+                    .and_then(|cell| cell.scalar())
+                    .map_err(|source| CalibrationStatsError::Open {
                         path: path.display().to_string(),
                         source,
-                    }
-                })?;
+                    })?;
                 scalar_to_sample(column, scalar, path).map(|sample| {
                     vec![SampleValue {
                         value: sample,
@@ -463,17 +472,17 @@ fn scalar_to_sample(
 }
 
 fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, CalibrationStatsError> {
-    let scalar =
-        table
-            .get_scalar_cell(row, column)
-            .map_err(|source| CalibrationStatsError::Open {
-                path: column.to_string(),
-                source,
-            })?;
-    match scalar {
-        ScalarValue::Int32(value) => Ok(*value),
+    let scalar = table
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|source| CalibrationStatsError::Open {
+            path: column.to_string(),
+            source,
+        })?;
+    match *scalar {
+        ScalarValue::Int32(value) => Ok(value),
         ScalarValue::Int64(value) => {
-            i32::try_from(*value).map_err(|_| CalibrationStatsError::UnsupportedAxis {
+            i32::try_from(value).map_err(|_| CalibrationStatsError::UnsupportedAxis {
                 path: column.to_string(),
                 axis: column.to_string(),
                 column: column.to_string(),

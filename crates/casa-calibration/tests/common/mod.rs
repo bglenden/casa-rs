@@ -1566,7 +1566,8 @@ fn set_field_directions_in_table(path: &Path, directions: &[(usize, f64, f64)]) 
             ArrayValue::Float64(ArrayD::from_shape_vec(vec![2, 1], vec![ra, dec]).unwrap());
         for column in ["DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"] {
             table
-                .set_cell(row, column, Value::Array(direction.clone()))
+                .cell_accessor_mut(row, column)
+                .and_then(|mut cell| cell.set(Value::Array(direction.clone())))
                 .expect("set FIELD direction");
         }
     }
@@ -1579,11 +1580,8 @@ fn set_antenna_mounts_in_table(path: &Path, mounts: &[(usize, &str)]) {
     let mut table = Table::open(TableOptions::new(path)).expect("open ANTENNA table");
     for &(row, mount) in mounts {
         table
-            .set_cell(
-                row,
-                "MOUNT",
-                Value::Scalar(ScalarValue::String(mount.to_string())),
-            )
+            .cell_accessor_mut(row, "MOUNT")
+            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::String(mount.to_string()))))
             .expect("set ANTENNA mount");
     }
     table

@@ -3802,7 +3802,9 @@ mod tests {
 
     fn set_main_row_flag_matrix(ms: &mut MeasurementSet, row: usize, flags: ArrayD<bool>) {
         ms.main_table_mut()
-            .set_cell(row, "FLAG", Value::Array(ArrayValue::Bool(flags)))
+            .cell_accessor_mut(row, "FLAG")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Bool(flags)))
             .unwrap();
     }
 }

@@ -725,9 +725,12 @@ impl<T: ImagePixel> PagedImage<T> {
             return Ok(data_type);
         }
 
-        let cell = table.cell(0, MAP_COLUMN)?.ok_or_else(|| {
-            ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
-        })?;
+        let cell = table
+            .cell_accessor(0, MAP_COLUMN)?
+            .value()?
+            .ok_or_else(|| {
+                ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
+            })?;
         match cell {
             Value::Array(array) => Ok(array.primitive_type()),
             _ => Err(ImageError::InvalidMetadata(
@@ -737,9 +740,12 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     fn map_column_shape(table: &Table) -> Result<Vec<usize>, ImageError> {
-        let cell = table.cell(0, MAP_COLUMN)?.ok_or_else(|| {
-            ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
-        })?;
+        let cell = table
+            .cell_accessor(0, MAP_COLUMN)?
+            .value()?
+            .ok_or_else(|| {
+                ImageError::InvalidMetadata("missing 'map' column in row 0".to_string())
+            })?;
         match cell {
             Value::Array(array) => Ok(array.shape().to_vec()),
             _ => Err(ImageError::InvalidMetadata(
@@ -1834,7 +1840,8 @@ impl<T: ImagePixel> PagedImage<T> {
     fn read_array(&self) -> Result<ArrayD<T>, ImageError> {
         let cell = self
             .table
-            .cell(0, MAP_COLUMN)?
+            .cell_accessor(0, MAP_COLUMN)?
+            .value()?
             .ok_or_else(|| ImageError::InvalidMetadata("missing map cell".to_string()))?;
         match cell {
             Value::Array(array) => from_array_value(array.clone()),
@@ -1846,7 +1853,8 @@ impl<T: ImagePixel> PagedImage<T> {
 
     fn write_array(&mut self, array: &ArrayD<T>) -> Result<(), ImageError> {
         self.table
-            .set_cell(0, MAP_COLUMN, Value::Array(to_array_value(array)))?;
+            .cell_accessor_mut(0, MAP_COLUMN)?
+            .set(Value::Array(to_array_value(array)))?;
         Ok(())
     }
 
@@ -1972,8 +1980,9 @@ impl<T: ImagePixel> PagedImage<T> {
         let table = Table::open(TableOptions::new(path))?;
         let mut messages = Vec::new();
         for row in 0..table.row_count() {
-            if let Ok(Some(Value::Scalar(ScalarValue::String(message)))) =
-                table.cell(row, "MESSAGE")
+            if let Ok(Some(Value::Scalar(ScalarValue::String(message)))) = table
+                .cell_accessor(row, "MESSAGE")
+                .and_then(|cell| cell.value())
             {
                 messages.push(message.clone());
             }

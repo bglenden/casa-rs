@@ -351,7 +351,8 @@ impl SolveAccumulator {
             None => {
                 let data = ms
                     .main_table()
-                    .get_array_cell(row.row_index, "DATA")
+                    .cell_accessor(row.row_index, "DATA")
+                    .and_then(|cell| cell.array())
                     .map_err(|source| GainSolveError::OpenMeasurementSet {
                         path: ms
                             .path()
@@ -361,7 +362,8 @@ impl SolveAccumulator {
                     })?;
                 let flags = ms
                     .main_table()
-                    .get_array_cell(row.row_index, "FLAG")
+                    .cell_accessor(row.row_index, "FLAG")
+                    .and_then(|cell| cell.array())
                     .map_err(|source| GainSolveError::OpenMeasurementSet {
                         path: ms
                             .path()
@@ -374,7 +376,8 @@ impl SolveAccumulator {
         };
         let weights = ms
             .main_table()
-            .get_array_cell(row.row_index, "WEIGHT")
+            .cell_accessor(row.row_index, "WEIGHT")
+            .and_then(|cell| cell.array())
             .map_err(|source| GainSolveError::OpenMeasurementSet {
                 path: ms
                     .path()

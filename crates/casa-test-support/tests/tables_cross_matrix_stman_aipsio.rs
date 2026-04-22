@@ -943,7 +943,9 @@ fn stride_read_on_rust_written_table() {
 
     // Read every other row (stride=2): should get rows 0 and 2
     let strided: Vec<_> = reopened
-        .get_column_range("col_i32", RowRange::with_stride(0, 3, 2))
+        .column_accessor("col_i32")
+        .unwrap()
+        .iter_range(RowRange::with_stride(0, 3, 2))
         .unwrap()
         .collect();
     assert_eq!(strided.len(), 2, "stride=2 should select 2 rows");
@@ -962,14 +964,18 @@ fn stride_read_on_rust_written_table() {
 
     // Read stride=1 (all rows)
     let all: Vec<_> = reopened
-        .get_column_range("col_i32", RowRange::new(0, 3))
+        .column_accessor("col_i32")
+        .unwrap()
+        .iter_range(RowRange::new(0, 3))
         .unwrap()
         .collect();
     assert_eq!(all.len(), 3, "stride=1 should select all 3 rows");
 
     // Read starting from row 1 with stride=1
     let tail: Vec<_> = reopened
-        .get_column_range("col_i32", RowRange::new(1, 3))
+        .column_accessor("col_i32")
+        .unwrap()
+        .iter_range(RowRange::new(1, 3))
         .unwrap()
         .collect();
     assert_eq!(tail.len(), 2, "offset range should select 2 rows");
@@ -999,7 +1005,9 @@ fn stride_read_on_cpp_written_table() {
 
     // Read every other row
     let strided: Vec<_> = table
-        .get_column_range("col_i32", RowRange::with_stride(0, 3, 2))
+        .column_accessor("col_i32")
+        .unwrap()
+        .iter_range(RowRange::with_stride(0, 3, 2))
         .unwrap()
         .collect();
     assert_eq!(strided.len(), 2, "stride=2 on C++-written table");
@@ -1084,7 +1092,12 @@ fn record_column_round_trip_values() {
     assert_eq!(table.rows().unwrap().len(), 3);
 
     // Read record cells via the record column API.
-    let records: Vec<_> = table.get_record_column("meta").unwrap().collect();
+    let records: Vec<_> = table
+        .column_accessor("meta")
+        .unwrap()
+        .record_iter()
+        .unwrap()
+        .collect();
     assert_eq!(records.len(), 3);
 
     // Row 0: {unit: "Jy", value: 2.5}

@@ -550,7 +550,8 @@ fn load_structured_selection_columns(
 
 fn load_i32_column(table: &Table, column: &str) -> MsResult<Vec<i32>> {
     table
-        .get_scalar_cells_owned(column)?
+        .column_accessor(column)?
+        .scalar_cells_owned()?
         .into_iter()
         .enumerate()
         .map(|(row, value)| match value {
@@ -571,7 +572,8 @@ fn load_i32_column(table: &Table, column: &str) -> MsResult<Vec<i32>> {
 
 fn load_f64_column(table: &Table, column: &str) -> MsResult<Vec<f64>> {
     table
-        .get_scalar_cells_owned(column)?
+        .column_accessor(column)?
+        .scalar_cells_owned()?
         .into_iter()
         .enumerate()
         .map(|(row, value)| match value {

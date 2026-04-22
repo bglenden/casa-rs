@@ -520,9 +520,10 @@ pub struct RecordColumnCell {
 
 /// An iterator over cells in a single column, yielding one [`ColumnCellRef`] per row.
 ///
-/// Obtain a `ColumnCellIter` via [`Table::get_column`] or [`Table::get_column_range`].
+/// Obtain a `ColumnCellIter` via [`Table::column_accessor`] and then
+/// [`TableColumn::iter`] or [`TableColumn::iter_range`].
 /// The iterator borrows the table's row data and does not allocate per cell.
-/// For batch processing, see [`ColumnChunkIter`] via [`Table::iter_column_chunks`].
+/// For batch processing, see [`ColumnChunkIter`] via [`TableColumn::chunks`].
 pub struct ColumnCellIter<'a> {
     row_data: &'a [RecordValue],
     column: String,
@@ -542,8 +543,8 @@ impl<'a> Iterator for ColumnCellIter<'a> {
 
 /// An iterator over cells in a record column, yielding one [`RecordColumnCell`] per row.
 ///
-/// Obtain a `RecordColumnIter` via [`Table::get_record_column`] or
-/// [`Table::get_record_column_range`]. When a [`TableSchema`] is attached and
+/// Obtain a `RecordColumnIter` via [`Table::column_accessor`] and then
+/// [`TableColumn::record_iter`] or [`TableColumn::record_iter_range`]. When a [`TableSchema`] is attached and
 /// the column is typed as [`crate::schema::ColumnType::Record`], rows whose
 /// record cell is absent yield an empty [`RecordValue`] rather than an error.
 pub struct RecordColumnIter<'a> {
@@ -581,9 +582,9 @@ impl<'a> Iterator for RecordColumnIter<'a> {
 /// count is not a multiple of `chunk_size`. An empty table (or an exhausted
 /// range) causes `next` to return `None` immediately.
 ///
-/// Obtain a `ColumnChunkIter` via [`Table::iter_column_chunks`]. This iterator
-/// is useful for processing columns in memory-bounded passes without
-/// materializing the entire column at once.
+/// Obtain a `ColumnChunkIter` via [`Table::column_accessor`] and then
+/// [`TableColumn::chunks`]. This iterator is useful for processing columns in
+/// memory-bounded passes without materializing the entire column at once.
 pub struct ColumnChunkIter<'a> {
     inner: ColumnCellIter<'a>,
     chunk_size: usize,

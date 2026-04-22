@@ -210,39 +210,39 @@ fn round_trip(
 
     for i in 0..nrow {
         // Scalar checks.
-        let ab = reopened.get_scalar_cell(i, "ab")?;
+        let ab = reopened.cell_accessor(i, "ab")?.scalar()?;
         if *ab != ScalarValue::Int32(i as i32) {
             appendln(out, &format!("MISMATCH ab row {i}: {ab:?}"));
         }
         cells_verified += 1;
 
-        let ad = reopened.get_scalar_cell(i, "ad")?;
+        let ad = reopened.cell_accessor(i, "ad")?.scalar()?;
         if *ad != ScalarValue::UInt32(i as u32 + 2) {
             appendln(out, &format!("MISMATCH ad row {i}: {ad:?}"));
         }
         cells_verified += 1;
 
-        let ag = reopened.get_scalar_cell(i, "ag")?;
+        let ag = reopened.cell_accessor(i, "ag")?.scalar()?;
         let expected_ag = ScalarValue::Complex64(Complex64::new(i as f64 + 3.0, -(i as f64 + 1.0)));
         if *ag != expected_ag {
             appendln(out, &format!("MISMATCH ag row {i}: {ag:?}"));
         }
         cells_verified += 1;
 
-        let ae = reopened.get_scalar_cell(i, "ae")?;
+        let ae = reopened.cell_accessor(i, "ae")?.scalar()?;
         if *ae != ScalarValue::Float32(i as f32 + 3.0) {
             appendln(out, &format!("MISMATCH ae row {i}: {ae:?}"));
         }
         cells_verified += 1;
 
-        let af = reopened.get_scalar_cell(i, "af")?;
+        let af = reopened.cell_accessor(i, "af")?.scalar()?;
         if *af != ScalarValue::String(format!("V{i}")) {
             appendln(out, &format!("MISMATCH af row {i}: {af:?}"));
         }
         cells_verified += 1;
 
         // Array check.
-        let arr = reopened.get_array_cell(i, "arr1")?;
+        let arr = reopened.cell_accessor(i, "arr1")?.array()?;
         let base = (i * nelem) as f32;
         let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
         let expected_arr = Array::from_shape_vec(IxDyn(&[2, 3, 4]), expected)
@@ -294,11 +294,14 @@ fn demo_column_iteration(out: &mut String) -> Result<(), TableError> {
     let table = build_demo_table()?;
 
     // get_column: iterate all cells of a scalar column.
-    let count = table.get_column("ab")?.count();
+    let count = table.column_accessor("ab")?.iter()?.count();
     appendln(out, &format!("get_column(\"ab\"): {count} cells"));
 
     // get_column_range: iterate a sub-range.
-    let count = table.get_column_range("ab", RowRange::new(2, 5))?.count();
+    let count = table
+        .column_accessor("ab")?
+        .iter_range(RowRange::new(2, 5))?
+        .count();
     appendln(
         out,
         &format!("get_column_range(\"ab\", 2..5): {count} cells"),
@@ -306,7 +309,8 @@ fn demo_column_iteration(out: &mut String) -> Result<(), TableError> {
 
     // iter_column_chunks: chunked iteration over an array column.
     let chunks: Vec<_> = table
-        .iter_column_chunks("arr1", RowRange::new(0, 10), 3)?
+        .column_accessor("arr1")?
+        .chunks(RowRange::new(0, 10), 3)?
         .collect();
     appendln(
         out,
@@ -317,7 +321,7 @@ fn demo_column_iteration(out: &mut String) -> Result<(), TableError> {
     );
 
     // column_cells: materialized vector.
-    let cells = table.column_cells("af")?;
+    let cells = table.column_accessor("af")?.cells()?;
     let defined = cells.iter().filter(|c| c.is_some()).count();
     appendln(out, &format!("column_cells(\"af\"): {defined} values"));
 
@@ -479,7 +483,7 @@ fn demo_ref_tables(out: &mut String) -> Result<(), TableError> {
             Value::Scalar(ScalarValue::String("modified".into())),
         )?;
     }
-    let af = table.cell(0, "af")?;
+    let af = table.cell_accessor(0, "af")?.value()?;
     appendln(out, &format!("write-through: row 0 af = {af:?}"));
 
     // Save and reopen round-trip.
@@ -964,7 +968,7 @@ fn demo_tiled_storage(out: &mut String) -> Result<(), TableError> {
 
         let mut ok = true;
         for i in 0..nrow {
-            let arr = reopened.get_array_cell(i, "data")?;
+            let arr = reopened.cell_accessor(i, "data")?.array()?;
             let base = (i * nelem) as f32;
             let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
             let expected_arr =
@@ -1018,7 +1022,7 @@ fn demo_tiled_storage(out: &mut String) -> Result<(), TableError> {
 
         let mut ok = true;
         for (i, shape) in shapes.iter().enumerate() {
-            let arr = reopened.get_array_cell(i, "data")?;
+            let arr = reopened.cell_accessor(i, "data")?.array()?;
             let nelem: usize = shape.iter().product();
             let base = (i * 10) as f32;
             let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
@@ -1072,7 +1076,7 @@ fn demo_tiled_storage(out: &mut String) -> Result<(), TableError> {
 
         let mut ok = true;
         for (i, shape) in shapes.iter().enumerate() {
-            let arr = reopened.get_array_cell(i, "data")?;
+            let arr = reopened.cell_accessor(i, "data")?.array()?;
             let nelem: usize = shape.iter().product();
             let base = (i * 10) as f32;
             let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
@@ -1177,15 +1181,15 @@ fn demo_virtual_columns(out: &mut String) -> Result<(), TableError> {
 
         let mut ok = true;
         for (i, (id, name, arr)) in base_data.iter().enumerate() {
-            let got_id = reopened.get_scalar_cell(i, "id")?;
+            let got_id = reopened.cell_accessor(i, "id")?.scalar()?;
             if *got_id != ScalarValue::Int32(*id) {
                 ok = false;
             }
-            let got_name = reopened.get_scalar_cell(i, "name")?;
+            let got_name = reopened.cell_accessor(i, "name")?.scalar()?;
             if *got_name != ScalarValue::String(name.to_string()) {
                 ok = false;
             }
-            let got_data = reopened.get_array_cell(i, "data")?;
+            let got_data = reopened.cell_accessor(i, "data")?.array()?;
             let expected = Array::from_shape_vec(IxDyn(&[3]), arr.to_vec()).unwrap();
             if let ArrayValue::Float32(v) = got_data {
                 if *v != expected {
@@ -1247,7 +1251,7 @@ fn demo_virtual_columns(out: &mut String) -> Result<(), TableError> {
 
         let mut ok = true;
         for (i, stored) in stored_rows.iter().enumerate() {
-            let arr = reopened.get_array_cell(i, "virtual_col")?;
+            let arr = reopened.cell_accessor(i, "virtual_col")?.array()?;
             if let ArrayValue::Float64(arr) = arr {
                 for (j, &s) in stored.iter().enumerate() {
                     let expected = s as f64 * scale + offset;
@@ -1325,7 +1329,7 @@ fn demo_virtual_columns(out: &mut String) -> Result<(), TableError> {
         let mut ok = true;
         for (i, data) in stored_rows.iter().enumerate() {
             // Fortran-order [2,3]: physical = [re0,im0,re1,im1,re2,im2]
-            let arr = reopened.get_array_cell(i, "virtual_col")?;
+            let arr = reopened.cell_accessor(i, "virtual_col")?.array()?;
             if let ArrayValue::Complex32(arr) = arr {
                 for j in 0..3 {
                     let re_stored = data[j * 2] as f64;

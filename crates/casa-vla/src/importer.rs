@@ -3259,7 +3259,7 @@ mod tests {
     }
 
     fn main_scan_number(ms: &MeasurementSet, row: usize) -> i32 {
-        let table_row = ms.main_table().row(row).unwrap();
+        let table_row = ms.main_table().row_accessor().row(row).unwrap();
         let Value::Scalar(ScalarValue::Int32(scan_number)) = table_row.get("SCAN_NUMBER").unwrap()
         else {
             panic!("expected SCAN_NUMBER scalar");
@@ -3455,6 +3455,7 @@ mod tests {
         assert_eq!(reopened.data_description().unwrap().row_count(), 1);
         let dd0 = reopened
             .main_table()
+            .row_accessor()
             .row(0)
             .unwrap()
             .get("DATA_DESC_ID")
@@ -3462,6 +3463,7 @@ mod tests {
             .clone();
         let dd1 = reopened
             .main_table()
+            .row_accessor()
             .row(1)
             .unwrap()
             .get("DATA_DESC_ID")
@@ -3682,7 +3684,7 @@ mod tests {
                 .schema()
                 .is_some_and(|schema| schema.contains_column("DOPPLER_ID"))
         );
-        let spw_row = spw_table.row(0).unwrap();
+        let spw_row = spw_table.row_accessor().row(0).unwrap();
         assert_eq!(optional_i32_scalar(spw_row, "DOPPLER_ID"), Some(0));
     }
 
@@ -3871,7 +3873,7 @@ mod tests {
         let reopened = MeasurementSet::open(&ms_path).unwrap();
         let doppler = reopened.doppler().unwrap();
         assert_eq!(doppler.table().row_count(), 2);
-        let row = doppler.table().row(1).unwrap();
+        let row = doppler.table().row_accessor().row(1).unwrap();
         let Value::Scalar(ScalarValue::Int32(source_id)) = row.get("SOURCE_ID").unwrap() else {
             panic!("expected SOURCE_ID scalar");
         };

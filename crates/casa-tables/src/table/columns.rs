@@ -320,7 +320,7 @@ impl Table {
     ///
     /// Compatibility note: new row-oriented code should prefer
     /// [`row_accessor`](Table::row_accessor).
-    pub fn row(&self, row_index: usize) -> Result<&RecordValue, TableError> {
+    pub(crate) fn row(&self, row_index: usize) -> Result<&RecordValue, TableError> {
         self.inner
             .row(row_index)?
             .ok_or(TableError::RowOutOfBounds {
@@ -337,7 +337,7 @@ impl Table {
     ///
     /// Compatibility note: new row-oriented write paths should prefer
     /// [`row_accessor_mut`](Table::row_accessor_mut).
-    pub fn row_mut(&mut self, row_index: usize) -> Result<&mut RecordValue, TableError> {
+    pub(crate) fn row_mut(&mut self, row_index: usize) -> Result<&mut RecordValue, TableError> {
         let row_count = self.row_count();
         self.inner
             .row_mut(row_index)?
@@ -356,7 +356,11 @@ impl Table {
     ///
     /// Compatibility note: new cell-oriented code should prefer
     /// [`cell_accessor`](Table::cell_accessor).
-    pub fn cell(&self, row_index: usize, column: &str) -> Result<Option<&Value>, TableError> {
+    pub(crate) fn cell(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<Option<&Value>, TableError> {
         Ok(self.row(row_index)?.get(column))
     }
 
@@ -368,7 +372,7 @@ impl Table {
     ///
     /// Compatibility note: new column-oriented code should prefer
     /// [`column_accessor`](Table::column_accessor).
-    pub fn get_column<'a>(&'a self, column: &str) -> Result<ColumnCellIter<'a>, TableError> {
+    pub(crate) fn get_column<'a>(&'a self, column: &str) -> Result<ColumnCellIter<'a>, TableError> {
         self.get_column_range(column, RowRange::new(0, self.row_count()))
     }
 
@@ -377,7 +381,7 @@ impl Table {
     /// The iterator borrows the table's row data and yields one
     /// [`ColumnCellRef`] per selected row. Returns [`TableError`] if the
     /// column is unknown or the range is invalid.
-    pub fn get_column_range<'a>(
+    pub(crate) fn get_column_range<'a>(
         &'a self,
         column: &str,
         row_range: RowRange,
@@ -447,7 +451,7 @@ impl Table {
     ///
     /// Compatibility note: new cell-oriented write paths should prefer
     /// [`cell_accessor_mut`](Table::cell_accessor_mut).
-    pub fn set_record_cell(
+    pub(crate) fn set_record_cell(
         &mut self,
         row_index: usize,
         column: &str,
@@ -459,7 +463,7 @@ impl Table {
     /// Returns an iterator over every record cell in `column`, covering all rows.
     ///
     /// Shorthand for `get_record_column_range(column, RowRange::new(0, row_count()))`.
-    pub fn get_record_column<'a>(
+    pub(crate) fn get_record_column<'a>(
         &'a self,
         column: &str,
     ) -> Result<RecordColumnIter<'a>, TableError> {
@@ -472,7 +476,7 @@ impl Table {
     /// absent cells are defaulted to an empty [`RecordValue`] when the schema
     /// permits it. Returns [`TableError`] if the column is unknown, not a
     /// record column, or a cell has the wrong type.
-    pub fn get_record_column_range<'a>(
+    pub(crate) fn get_record_column_range<'a>(
         &'a self,
         column: &str,
         row_range: RowRange,
@@ -536,7 +540,7 @@ impl Table {
     ///
     /// Compatibility note: new column-oriented write paths should prefer
     /// [`column_accessor_mut`](Table::column_accessor_mut).
-    pub fn put_column<I>(&mut self, column: &str, values: I) -> Result<usize, TableError>
+    pub(crate) fn put_column<I>(&mut self, column: &str, values: I) -> Result<usize, TableError>
     where
         I: IntoIterator<Item = Value>,
     {
@@ -549,7 +553,7 @@ impl Table {
     /// `row_range`; otherwise [`TableError::ColumnWriteTooFewValues`] or
     /// [`TableError::ColumnWriteTooManyValues`] is returned. Returns the
     /// number of cells written on success.
-    pub fn put_column_range<I>(
+    pub(crate) fn put_column_range<I>(
         &mut self,
         column: &str,
         row_range: RowRange,
@@ -650,7 +654,7 @@ impl Table {
     ///
     /// Compatibility note: new cell-oriented write paths should prefer
     /// [`cell_accessor_mut`](Table::cell_accessor_mut).
-    pub fn set_cell(
+    pub(crate) fn set_cell(
         &mut self,
         row_index: usize,
         column: &str,
@@ -709,11 +713,12 @@ impl Table {
     /// Returns all cell values for `column` as an allocated `Vec`.
     ///
     /// This materializes the entire column into memory. For large tables,
-    /// prefer [`Table::get_column`] or [`Table::iter_column_chunks`] which stream lazily.
+    /// prefer [`Table::column_accessor`](Table::column_accessor) with
+    /// [`TableColumn::iter`] or [`TableColumn::chunks`] to stream lazily.
     ///
     /// Compatibility note: new column-oriented code should prefer
     /// [`column_accessor`](Table::column_accessor).
-    pub fn column_cells(&self, column: &str) -> Result<Vec<Option<&Value>>, TableError> {
+    pub(crate) fn column_cells(&self, column: &str) -> Result<Vec<Option<&Value>>, TableError> {
         Ok(self
             .rows()?
             .iter()
@@ -729,7 +734,7 @@ impl Table {
     ///
     /// Compatibility note: new column-oriented code should prefer
     /// [`column_accessor`](Table::column_accessor).
-    pub fn iter_column_chunks<'a>(
+    pub(crate) fn iter_column_chunks<'a>(
         &'a self,
         column: &str,
         row_range: RowRange,
@@ -748,7 +753,7 @@ impl Table {
     ///
     /// Compatibility note: new cell-oriented code should prefer
     /// [`cell_accessor`](Table::cell_accessor).
-    pub fn get_array_cell(
+    pub(crate) fn get_array_cell(
         &self,
         row_index: usize,
         column: &str,
@@ -792,7 +797,7 @@ impl Table {
     ///
     /// Compatibility note: new column-oriented code should prefer
     /// [`column_accessor`](Table::column_accessor).
-    pub fn get_array_cells_owned(
+    pub(crate) fn get_array_cells_owned(
         &self,
         column: &str,
         row_indices: &[usize],
@@ -830,7 +835,7 @@ impl Table {
     ///
     /// Compatibility note: new column-oriented code should prefer
     /// [`column_accessor`](Table::column_accessor).
-    pub fn get_scalar_cells_owned(
+    pub(crate) fn get_scalar_cells_owned(
         &self,
         column: &str,
     ) -> Result<Vec<Option<ScalarValue>>, TableError> {
@@ -856,7 +861,7 @@ impl Table {
     ///
     /// Compatibility note: new cell-oriented code should prefer
     /// [`cell_accessor`](Table::cell_accessor).
-    pub fn get_scalar_cell(
+    pub(crate) fn get_scalar_cell(
         &self,
         row_index: usize,
         column: &str,
@@ -904,7 +909,7 @@ impl Table {
     /// Compatibility note: new write paths should prefer
     /// [`cell_accessor_mut`](Table::cell_accessor_mut) or
     /// [`column_accessor_mut`](Table::column_accessor_mut).
-    pub fn set_scalar_cell_assuming_valid(
+    pub(crate) fn set_scalar_cell_assuming_valid(
         &mut self,
         row_index: usize,
         column: &str,
@@ -932,7 +937,7 @@ impl Table {
     /// Compatibility note: new write paths should prefer
     /// [`cell_accessor_mut`](Table::cell_accessor_mut) or
     /// [`column_accessor_mut`](Table::column_accessor_mut).
-    pub fn set_array_cell_assuming_valid(
+    pub(crate) fn set_array_cell_assuming_valid(
         &mut self,
         row_index: usize,
         column: &str,

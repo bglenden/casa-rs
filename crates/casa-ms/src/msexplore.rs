@@ -2827,14 +2827,14 @@ fn apply_msexplore_flag_edit_preview(
     }
     for (row, (matrix, flag_row)) in row_updates {
         ms.main_table_mut()
-            .set_cell(
-                row,
-                "FLAG",
-                Value::Array(ArrayValue::Bool(matrix.into_dyn())),
-            )
+            .cell_accessor_mut(row, "FLAG")
+            .map_err(|error| error.to_string())?
+            .set(Value::Array(ArrayValue::Bool(matrix.into_dyn())))
             .map_err(|error| error.to_string())?;
         ms.main_table_mut()
-            .set_cell(row, "FLAG_ROW", Value::Scalar(ScalarValue::Bool(flag_row)))
+            .cell_accessor_mut(row, "FLAG_ROW")
+            .map_err(|error| error.to_string())?
+            .set(Value::Scalar(ScalarValue::Bool(flag_row)))
             .map_err(|error| error.to_string())?;
     }
     Ok(preview)

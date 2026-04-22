@@ -224,9 +224,8 @@
 //! In C++ casacore the same functionality is split across `Table`,
 //! `TableRow`, `TableColumn`, `ScalarColumn<T>`, `ArrayColumn<T>`, and
 //! `TableRecord`. In this crate, [`Table`] remains the owning object, while
-//! [`TableRow`], [`TableColumn`], and [`TableCell`] provide the preferred
-//! public data-access surface. The older table-level `row`/`cell`/`get_*`/`set_*`
-//! methods remain available as compatibility wrappers.
+//! [`TableRow`], [`TableColumn`], and [`TableCell`] provide the public
+//! data-access surface.
 //!
 //! # Demo program
 //!

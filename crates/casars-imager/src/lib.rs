@@ -2132,7 +2132,8 @@ impl SelectedMainArrayColumn {
     ) -> Result<Self, String> {
         let values = ms
             .main_table()
-            .get_array_cells_owned(column_name, row_indices)
+            .column_accessor(column_name)
+            .and_then(|column| column.array_cells_owned(row_indices))
             .map_err(|error| format!("load selected {column_name} rows: {error}"))?;
         Ok(Self {
             column_name,
@@ -2290,10 +2291,11 @@ impl PointingDirectionResolver {
         let mut by_row_index = HashMap::<usize, PointingDirectionRow>::new();
         for row_index in 0..table.row_count() {
             let antenna_id = match table
-                .get_scalar_cell(row_index, "ANTENNA_ID")
+                .cell_accessor(row_index, "ANTENNA_ID")
+                .and_then(|cell| cell.scalar())
                 .map_err(|error| format!("read POINTING.ANTENNA_ID row {row_index}: {error}"))?
             {
-                ScalarValue::Int32(value) => *value,
+                &ScalarValue::Int32(value) => value,
                 other => {
                     return Err(format!(
                         "POINTING.ANTENNA_ID row {row_index} must be Int32, found {:?}",
@@ -2302,10 +2304,11 @@ impl PointingDirectionResolver {
                 }
             };
             let time_mjd_seconds = match table
-                .get_scalar_cell(row_index, "TIME")
+                .cell_accessor(row_index, "TIME")
+                .and_then(|cell| cell.scalar())
                 .map_err(|error| format!("read POINTING.TIME row {row_index}: {error}"))?
             {
-                ScalarValue::Float64(value) => *value,
+                &ScalarValue::Float64(value) => value,
                 other => {
                     return Err(format!(
                         "POINTING.TIME row {row_index} must be Float64, found {:?}",
@@ -2314,10 +2317,11 @@ impl PointingDirectionResolver {
                 }
             };
             let interval_seconds = match table
-                .get_scalar_cell(row_index, "INTERVAL")
+                .cell_accessor(row_index, "INTERVAL")
+                .and_then(|cell| cell.scalar())
                 .map_err(|error| format!("read POINTING.INTERVAL row {row_index}: {error}"))?
             {
-                ScalarValue::Float64(value) => *value,
+                &ScalarValue::Float64(value) => value,
                 other => {
                     return Err(format!(
                         "POINTING.INTERVAL row {row_index} must be Float64, found {:?}",
@@ -2327,7 +2331,8 @@ impl PointingDirectionResolver {
             };
             let angles_rad = extract_constant_direction_angles(
                 table
-                    .get_array_cell(row_index, "DIRECTION")
+                    .cell_accessor(row_index, "DIRECTION")
+                    .and_then(|cell| cell.array())
                     .map_err(|error| format!("read POINTING.DIRECTION row {row_index}: {error}"))?,
                 "POINTING.DIRECTION",
                 row_index,
@@ -2485,11 +2490,13 @@ fn select_main_rows(
         || needs_pointing_times;
     let field_column = ms
         .main_table()
-        .get_column("FIELD_ID")
+        .column_accessor("FIELD_ID")
+        .and_then(|column| column.iter())
         .map_err(|error| format!("open FIELD_ID column: {error}"))?;
     let ddid_column = ms
         .main_table()
-        .get_column("DATA_DESC_ID")
+        .column_accessor("DATA_DESC_ID")
+        .and_then(|column| column.iter())
         .map_err(|error| format!("open DATA_DESC_ID column: {error}"))?;
     let allowed_ddids = allowed_ddids(config, ddid_info)?;
     let time_column = TimeColumn::new(ms.main_table());
@@ -2616,7 +2623,11 @@ fn load_optional_i32_main_column(
     ms: &MeasurementSet,
     column_name: &'static str,
 ) -> Result<Option<Vec<Option<i32>>>, String> {
-    let Ok(column) = ms.main_table().get_column(column_name) else {
+    let Ok(column) = ms
+        .main_table()
+        .column_accessor(column_name)
+        .and_then(|column| column.iter())
+    else {
         return Ok(None);
     };
     let mut values = vec![None; ms.main_table().row_count()];
@@ -8615,13 +8626,11 @@ mod tests {
             &[Complex32::new(1.0, 0.0), Complex32::new(3.0, 0.5)],
         );
         ms.main_table_mut()
-            .set_cell(
-                0,
-                "FLAG",
-                Value::Array(ArrayValue::Bool(
-                    ArrayD::from_shape_vec(vec![2, 1], vec![true, false]).unwrap(),
-                )),
-            )
+            .cell_accessor_mut(0, "FLAG")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Bool(
+                ArrayD::from_shape_vec(vec![2, 1], vec![true, false]).unwrap(),
+            )))
             .unwrap();
         ms.save().unwrap();
 
@@ -10467,8 +10476,18 @@ mod tests {
         let polarization = ms.polarization().unwrap();
         let engine = MsCalEngine::new(&ms).unwrap();
         let time_column = TimeColumn::new(ms.main_table());
-        let field_column = ms.main_table().get_column("FIELD_ID").unwrap();
-        let ddid_column = ms.main_table().get_column("DATA_DESC_ID").unwrap();
+        let field_column = ms
+            .main_table()
+            .column_accessor("FIELD_ID")
+            .unwrap()
+            .iter()
+            .unwrap();
+        let ddid_column = ms
+            .main_table()
+            .column_accessor("DATA_DESC_ID")
+            .unwrap()
+            .iter()
+            .unwrap();
         let mut reference_time = None::<f64>;
         let mut bounds = None::<[f64; 2]>;
         for (field_cell, ddid_cell) in field_column.zip(ddid_column) {
@@ -11955,8 +11974,18 @@ mod tests {
         let polarization = ms.polarization().unwrap();
         let engine = MsCalEngine::new(&ms).unwrap();
         let time_column = TimeColumn::new(ms.main_table());
-        let field_column = ms.main_table().get_column("FIELD_ID").unwrap();
-        let ddid_column = ms.main_table().get_column("DATA_DESC_ID").unwrap();
+        let field_column = ms
+            .main_table()
+            .column_accessor("FIELD_ID")
+            .unwrap()
+            .iter()
+            .unwrap();
+        let ddid_column = ms
+            .main_table()
+            .column_accessor("DATA_DESC_ID")
+            .unwrap()
+            .iter()
+            .unwrap();
         let mut reference_time = None::<f64>;
         let mut bounds = None::<[f64; 2]>;
         let mut selected_rows = Vec::new();
@@ -12127,8 +12156,18 @@ mod tests {
         let polarization = ms.polarization().unwrap();
         let engine = MsCalEngine::new(&ms).unwrap();
         let time_column = TimeColumn::new(ms.main_table());
-        let field_column = ms.main_table().get_column("FIELD_ID").unwrap();
-        let ddid_column = ms.main_table().get_column("DATA_DESC_ID").unwrap();
+        let field_column = ms
+            .main_table()
+            .column_accessor("FIELD_ID")
+            .unwrap()
+            .iter()
+            .unwrap();
+        let ddid_column = ms
+            .main_table()
+            .column_accessor("DATA_DESC_ID")
+            .unwrap()
+            .iter()
+            .unwrap();
         let mut reference_time = None::<f64>;
         let mut bounds = None::<[f64; 2]>;
         let mut selected_rows = Vec::new();

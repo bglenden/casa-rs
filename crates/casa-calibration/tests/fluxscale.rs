@@ -138,14 +138,22 @@ fn read_field_cparams(table_path: &std::path::Path, field_id: i32) -> Vec<Vec<Co
     let table = Table::open(TableOptions::new(table_path)).expect("open table");
     let mut rows = Vec::new();
     for row in 0..table.row_count() {
-        let row_field_id = match table.cell(row, "FIELD_ID").expect("FIELD_ID cell") {
+        let row_field_id = match table
+            .cell_accessor(row, "FIELD_ID")
+            .and_then(|cell| cell.value())
+            .expect("FIELD_ID cell")
+        {
             Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
             other => panic!("unexpected FIELD_ID value: {other:?}"),
         };
         if row_field_id != field_id {
             continue;
         }
-        let gains = match table.get_array_cell(row, "CPARAM").expect("CPARAM cell") {
+        let gains = match table
+            .cell_accessor(row, "CPARAM")
+            .and_then(|cell| cell.array())
+            .expect("CPARAM cell")
+        {
             ArrayValue::Complex32(values) => values.iter().copied().collect::<Vec<_>>(),
             other => panic!("unexpected CPARAM value: {other:?}"),
         };

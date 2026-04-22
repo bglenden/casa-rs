@@ -6604,9 +6604,10 @@ mod tests {
         assert_eq!(reopened.data_manager_info()[0].dm_type, "TiledDataStMan");
 
         reopened
-            .set_array_cell_assuming_valid(
+            .column_accessor_mut("data")
+            .expect("data column mut")
+            .set_array_assuming_valid(
                 2,
-                "data",
                 ArrayValue::Float32(
                     ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0])
                         .expect("shape updated data"),
@@ -6619,20 +6620,21 @@ mod tests {
             .expect("sparse tiled-data partial save");
 
         let verify = Table::open(TableOptions::new(&table_path)).expect("reopen tiled-data table");
+        let data = verify.column_accessor("data").expect("data column");
         assert_eq!(
-            verify.get_array_cell(0, "data").expect("data row 0"),
+            data.array_cell(0).expect("data row 0"),
             &ArrayValue::Float32(
                 ArrayD::from_shape_vec(vec![2, 2], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
             )
         );
         assert_eq!(
-            verify.get_array_cell(2, "data").expect("data row 2"),
+            data.array_cell(2).expect("data row 2"),
             &ArrayValue::Float32(
                 ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0]).unwrap()
             )
         );
         assert_eq!(
-            verify.get_array_cell(3, "data").expect("data row 3"),
+            data.array_cell(3).expect("data row 3"),
             &ArrayValue::Float32(
                 ArrayD::from_shape_vec(vec![2, 2], vec![3.0, 13.0, 23.0, 33.0]).unwrap()
             )

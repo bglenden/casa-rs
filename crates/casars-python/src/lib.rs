@@ -232,7 +232,7 @@ impl PyTable {
 
         let mut names = BTreeSet::new();
         for row_index in 0..self.inner.row_count() {
-            if let Ok(row) = self.inner.row(row_index) {
+            if let Ok(row) = self.inner.row_accessor().row(row_index) {
                 for field in row.fields() {
                     names.insert(field.name.clone());
                 }
@@ -254,7 +254,12 @@ impl PyTable {
     }
 
     fn get_cell(&self, py: Python<'_>, row: usize, column: &str) -> PyResult<Py<PyAny>> {
-        match self.inner.cell(row, column).map_err(table_err)? {
+        match self
+            .inner
+            .cell_accessor(row, column)
+            .and_then(|cell| cell.value())
+            .map_err(table_err)?
+        {
             Some(value) => value_to_py(py, value),
             None => Ok(py.None()),
         }
@@ -269,7 +274,10 @@ impl PyTable {
     ) -> PyResult<()> {
         require_writable(self.writable, "table")?;
         let value = py_to_value(py, value)?;
-        self.inner.set_cell(row, column, value).map_err(table_err)?;
+        self.inner
+            .cell_accessor_mut(row, column)
+            .and_then(|mut cell| cell.set(value))
+            .map_err(table_err)?;
         self.inner
             .save(TableOptions::new(&self.path))
             .map_err(table_err)
@@ -287,7 +295,8 @@ impl PyTable {
         let row_range = build_row_range(self.inner.row_count(), start, count, step)?;
         let cells = self
             .inner
-            .get_column_range(column, row_range)
+            .column_accessor(column)
+            .and_then(|column| column.iter_range(row_range))
             .map_err(table_err)?
             .map(|cell| cell.value.cloned())
             .collect::<Vec<_>>();
@@ -308,7 +317,8 @@ impl PyTable {
         let row_range = build_row_range_for_values(start, values.len(), step)?;
         let written = self
             .inner
-            .put_column_range(column, row_range, values)
+            .column_accessor_mut(column)
+            .and_then(|mut column| column.put_range(row_range, values))
             .map_err(table_err)?;
         self.inner
             .save(TableOptions::new(&self.path))

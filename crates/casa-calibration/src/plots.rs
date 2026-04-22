@@ -549,13 +549,14 @@ fn get_i32_scalar(
     column: &str,
     path: &str,
 ) -> Result<i32, CalibrationPlotError> {
-    match table.get_scalar_cell(row, column).map_err(|source| {
-        CalibrationPlotError::OpenCalibrationTable {
+    match table
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
             path: path.to_string(),
             source,
-        }
-    })? {
-        ScalarValue::Int32(value) => Ok(*value),
+        })? {
+        &ScalarValue::Int32(value) => Ok(value),
         other => Err(CalibrationPlotError::InvalidCalibrationTable {
             path: path.to_string(),
             reason: format!("expected Int32 in {column} row {row}, found {other:?}"),
@@ -569,13 +570,14 @@ fn get_f64_scalar(
     column: &str,
     path: &str,
 ) -> Result<f64, CalibrationPlotError> {
-    match table.get_scalar_cell(row, column).map_err(|source| {
-        CalibrationPlotError::OpenCalibrationTable {
+    match table
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
             path: path.to_string(),
             source,
-        }
-    })? {
-        ScalarValue::Float64(value) => Ok(*value),
+        })? {
+        &ScalarValue::Float64(value) => Ok(value),
         other => Err(CalibrationPlotError::InvalidCalibrationTable {
             path: path.to_string(),
             reason: format!("expected Float64 in {column} row {row}, found {other:?}"),
@@ -589,12 +591,13 @@ fn get_complex_array(
     column: &str,
     path: &str,
 ) -> Result<ndarray::ArrayD<Complex32>, CalibrationPlotError> {
-    match table.get_array_cell(row, column).map_err(|source| {
-        CalibrationPlotError::OpenCalibrationTable {
+    match table
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.array())
+        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
             path: path.to_string(),
             source,
-        }
-    })? {
+        })? {
         ArrayValue::Complex32(values) => Ok(values.clone()),
         other => Err(CalibrationPlotError::InvalidCalibrationTable {
             path: path.to_string(),
@@ -604,7 +607,10 @@ fn get_complex_array(
 }
 
 fn get_flag_mask(table: &Table, row: usize, expected_len: usize) -> Vec<bool> {
-    match table.get_array_cell(row, COL_FLAG) {
+    match table
+        .cell_accessor(row, COL_FLAG)
+        .and_then(|cell| cell.array())
+    {
         Ok(ArrayValue::Bool(values)) => values.iter().copied().collect(),
         _ => vec![false; expected_len],
     }
@@ -653,7 +659,8 @@ fn spectral_window_frequencies(
         });
     }
     match spw_table
-        .get_array_cell(row, "CHAN_FREQ")
+        .cell_accessor(row, "CHAN_FREQ")
+        .and_then(|cell| cell.array())
         .map_err(|source| CalibrationPlotError::OpenCalibrationSubtable {
             path: path.to_string(),
             subtable: "SPECTRAL_WINDOW",

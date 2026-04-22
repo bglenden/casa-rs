@@ -2115,11 +2115,13 @@ fn assert_apply_state_close_with_complex_tolerances(
 
         let left_weight = left
             .main_table()
-            .get_array_cell(row, "WEIGHT")
+            .cell_accessor(row, "WEIGHT")
+            .and_then(|cell| cell.array())
             .expect("left WEIGHT");
         let right_weight = right
             .main_table()
-            .get_array_cell(row, "WEIGHT")
+            .cell_accessor(row, "WEIGHT")
+            .and_then(|cell| cell.array())
             .expect("right WEIGHT");
         assert_float_cells_close(row, "WEIGHT", left_weight, right_weight, 5.0e-4);
 
@@ -2138,11 +2140,13 @@ fn assert_apply_state_close_with_complex_tolerances(
         if left_has_weight_spectrum {
             let left_weight_spectrum = left
                 .main_table()
-                .get_array_cell(row, "WEIGHT_SPECTRUM")
+                .cell_accessor(row, "WEIGHT_SPECTRUM")
+                .and_then(|cell| cell.array())
                 .expect("left WEIGHT_SPECTRUM");
             let right_weight_spectrum = right
                 .main_table()
-                .get_array_cell(row, "WEIGHT_SPECTRUM")
+                .cell_accessor(row, "WEIGHT_SPECTRUM")
+                .and_then(|cell| cell.array())
                 .expect("right WEIGHT_SPECTRUM");
             assert_float_cells_close(
                 row,
@@ -2253,14 +2257,22 @@ fn read_cparam_rows_for_field(table_path: &std::path::Path, field_id: i32) -> Ve
     let table = Table::open(TableOptions::new(table_path)).expect("open caltable");
     let mut rows = Vec::new();
     for row in 0..table.row_count() {
-        let current_field_id = match table.cell(row, "FIELD_ID").expect("FIELD_ID cell") {
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(value))) => *value,
+        let current_field_id = match table
+            .cell_accessor(row, "FIELD_ID")
+            .and_then(|cell| cell.scalar())
+            .expect("FIELD_ID cell")
+        {
+            casa_types::ScalarValue::Int32(value) => *value,
             other => panic!("unexpected FIELD_ID value: {other:?}"),
         };
         if current_field_id != field_id {
             continue;
         }
-        let gains = match table.get_array_cell(row, "CPARAM").expect("CPARAM cell") {
+        let gains = match table
+            .cell_accessor(row, "CPARAM")
+            .and_then(|cell| cell.array())
+            .expect("CPARAM cell")
+        {
             ArrayValue::Complex32(values) => values.iter().copied().collect::<Vec<_>>(),
             other => panic!("unexpected CPARAM value: {other:?}"),
         };
@@ -2272,7 +2284,8 @@ fn read_cparam_rows_for_field(table_path: &std::path::Path, field_id: i32) -> Ve
 fn read_field_direction(table_path: &std::path::Path, field_id: usize) -> (f64, f64) {
     let table = Table::open(TableOptions::new(table_path.join("FIELD"))).expect("open FIELD table");
     let phase_dir = match table
-        .get_array_cell(field_id, "PHASE_DIR")
+        .cell_accessor(field_id, "PHASE_DIR")
+        .and_then(|cell| cell.array())
         .expect("PHASE_DIR cell")
     {
         ArrayValue::Float64(values) => values,

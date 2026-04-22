@@ -1022,7 +1022,8 @@ impl TableBrowser {
         let value = self
             .current()
             .table
-            .cell(self.cells_row_selected, &column.name)
+            .cell_accessor(self.cells_row_selected, &column.name)
+            .and_then(|cell| cell.value())
             .ok()
             .flatten();
         let (node, trail, value_path) =
@@ -1187,7 +1188,8 @@ impl TableBrowser {
                 let value = self
                     .current()
                     .table
-                    .cell(row_index, &column.name)
+                    .cell_accessor(row_index, &column.name)
+                    .and_then(|cell| cell.value())
                     .ok()
                     .flatten();
                 let summary =
@@ -1459,7 +1461,7 @@ fn build_columns(table: &Table) -> Result<Vec<ColumnEntry>, TableBrowserError> {
             format_cell_header(&name, type_label.as_deref(), unit_info.heading.as_deref());
         let mut width = cell_header.chars().count().max(MIN_COLUMN_WIDTH);
         for row_index in 0..sample_limit {
-            let value = table.cell(row_index, &name)?;
+            let value = table.cell_accessor(row_index, &name)?.value()?;
             let rendered =
                 compact_optional_value_with_unit(value, unit_info.display_unit.as_deref());
             width = width.max(rendered.chars().count().min(MAX_COLUMN_WIDTH));
@@ -3011,7 +3013,12 @@ subtable_back={subtable_back_elapsed:?}"
             .collect::<Vec<_>>();
         for row in 0..row_count {
             for column in &column_names {
-                let value = match browser.current().table.cell(row, column) {
+                let value = match browser
+                    .current()
+                    .table
+                    .cell_accessor(row, column)
+                    .and_then(|cell| cell.value())
+                {
                     Ok(Some(value)) => value,
                     Ok(None) | Err(_) => continue,
                 };
