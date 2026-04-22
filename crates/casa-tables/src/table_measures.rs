@@ -538,7 +538,7 @@ fn resolve_ref_string(
             tab_ref_types,
             tab_ref_codes,
         } => {
-            let code = match table.get_scalar_cell(row, ref_column)? {
+            let code = match table.cell_accessor(row, ref_column)?.scalar()? {
                 ScalarValue::Int32(v) => *v,
                 ScalarValue::Int64(v) => *v as i32,
                 ScalarValue::UInt32(v) => *v as i32,
@@ -566,7 +566,7 @@ fn resolve_ref_string(
             )))
         }
         MeasRefDesc::VariableString { ref_column } => {
-            match table.get_scalar_cell(row, ref_column)? {
+            match table.cell_accessor(row, ref_column)?.scalar()? {
                 ScalarValue::String(s) => Ok(s.clone()),
                 _ => Err(TableError::Storage(format!(
                     "ref column '{ref_column}' at row {row}: expected String"
@@ -832,11 +832,9 @@ impl<'a> ScalarMeasColumnMut<'a> {
     /// Writes a measure at `row`.
     pub fn put(&mut self, row: usize, mv: &MeasureValue) -> Result<(), TableError> {
         let vals = measure_values(mv);
-        self.table.set_cell(
-            row,
-            &self.column_name,
-            Value::Array(ArrayValue::from_f64_vec(vals)),
-        )?;
+        self.table
+            .cell_accessor_mut(row, &self.column_name)?
+            .set(Value::Array(ArrayValue::from_f64_vec(vals)))?;
         self.write_ref(row, mv)?;
         Ok(())
     }
@@ -859,13 +857,15 @@ impl<'a> ScalarMeasColumnMut<'a> {
                 let code = ref_string_to_code(self.desc.measure_type, &refer)?;
                 let ref_column = ref_column.clone();
                 self.table
-                    .set_cell(row, &ref_column, Value::Scalar(ScalarValue::Int32(code)))?;
+                    .cell_accessor_mut(row, &ref_column)?
+                    .set(Value::Scalar(ScalarValue::Int32(code)))?;
                 Ok(())
             }
             MeasRefDesc::VariableString { ref_column } => {
                 let ref_column = ref_column.clone();
                 self.table
-                    .set_cell(row, &ref_column, Value::Scalar(ScalarValue::String(refer)))?;
+                    .cell_accessor_mut(row, &ref_column)?
+                    .set(Value::Scalar(ScalarValue::String(refer)))?;
                 Ok(())
             }
         }
@@ -920,11 +920,9 @@ impl<'a> ArrayMeasColumnMut<'a> {
         for mv in measures {
             all_values.extend_from_slice(&measure_values(mv));
         }
-        self.table.set_cell(
-            row,
-            &self.column_name,
-            Value::Array(ArrayValue::from_f64_vec(all_values)),
-        )?;
+        self.table
+            .cell_accessor_mut(row, &self.column_name)?
+            .set(Value::Array(ArrayValue::from_f64_vec(all_values)))?;
         // Write reference from first measure if variable
         if !measures.is_empty() {
             let refer = measure_ref_string(&measures[0]);
@@ -933,19 +931,15 @@ impl<'a> ArrayMeasColumnMut<'a> {
                 MeasRefDesc::VariableInt { ref_column, .. } => {
                     let code = ref_string_to_code(self.desc.measure_type, &refer)?;
                     let ref_column = ref_column.clone();
-                    self.table.set_cell(
-                        row,
-                        &ref_column,
-                        Value::Scalar(ScalarValue::Int32(code)),
-                    )?;
+                    self.table
+                        .cell_accessor_mut(row, &ref_column)?
+                        .set(Value::Scalar(ScalarValue::Int32(code)))?;
                 }
                 MeasRefDesc::VariableString { ref_column } => {
                     let ref_column = ref_column.clone();
-                    self.table.set_cell(
-                        row,
-                        &ref_column,
-                        Value::Scalar(ScalarValue::String(refer)),
-                    )?;
+                    self.table
+                        .cell_accessor_mut(row, &ref_column)?
+                        .set(Value::Scalar(ScalarValue::String(refer)))?;
                 }
             }
         }
@@ -956,7 +950,7 @@ impl<'a> ArrayMeasColumnMut<'a> {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn read_array_values(table: &Table, row: usize, column: &str) -> Result<Vec<f64>, TableError> {
-    let arr = table.get_array_cell(row, column)?;
+    let arr = table.cell_accessor(row, column)?.array()?;
     match arr {
         ArrayValue::Float64(a) => Ok(a.iter().copied().collect()),
         ArrayValue::Float32(a) => Ok(a.iter().map(|&v| v as f64).collect()),

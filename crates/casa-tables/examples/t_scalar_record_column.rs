@@ -64,7 +64,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for (i, rec) in records.iter().enumerate() {
-        table.set_record_cell(i, "meta", rec.clone())?;
+        table
+            .cell_accessor_mut(i, "meta")?
+            .set_record(rec.clone())?;
     }
     println!("Wrote record values to 'meta' column\n");
 
@@ -96,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 6. Iterate over the record column ────────────────────────────
     println!("\n--- Iterating record column ---\n");
-    for cell in table.get_record_column("meta")? {
+    for cell in table.column_accessor("meta")?.record_iter()? {
         println!(
             "  row {}: {} field(s)",
             cell.row_index,

@@ -268,21 +268,27 @@ jobs:
                 );
                 if (hasWdadStatus) continue;
 
-                if (content.state === "CLOSED") {
-                  await syncIssueBoard(
-                    content.number,
-                    {
-                      statusOptionId: statusOption.done,
-                      wdadOptionId: wdadOption.done,
-                      statusLabel: "Done",
-                      wdadLabel: "Done",
-                    },
-                    "missing WDAD reconciliation for closed issue"
-                  );
-                } else {
-                  await updateSingleSelect(node.id, fieldWdadId, wdadOption.backlog);
+                try {
+                  if (content.state === "CLOSED") {
+                    await syncIssueBoard(
+                      content.number,
+                      {
+                        statusOptionId: statusOption.done,
+                        wdadOptionId: wdadOption.done,
+                        statusLabel: "Done",
+                        wdadLabel: "Done",
+                      },
+                      "missing WDAD reconciliation for closed issue"
+                    );
+                  } else {
+                    await updateSingleSelect(node.id, fieldWdadId, wdadOption.backlog);
+                    console.log(
+                      `Synced issue #${content.number}: wdad=Backlog (missing WDAD reconciliation)`
+                    );
+                  }
+                } catch (error) {
                   console.log(
-                    `Synced issue #${content.number}: wdad=Backlog (missing WDAD reconciliation)`
+                    `Skipping issue #${content.number} during missing WDAD reconciliation: ${error.message}`
                   );
                 }
               }
@@ -394,7 +400,6 @@ jobs:
             }
 
             if (context.eventName === "pull_request_target") {
-              await syncProjectItemsMissingWdadStatus();
               const pr = context.payload.pull_request;
 
               if (context.payload.action === "closed" && !pr.merged_at) {

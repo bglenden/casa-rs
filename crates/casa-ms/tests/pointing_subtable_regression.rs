@@ -21,7 +21,8 @@ fn papersky_mosaic_pointing_direction_materializes_as_array() {
 
     let direction = pointing
         .table()
-        .get_array_cell(0, "DIRECTION")
+        .cell_accessor(0, "DIRECTION")
+        .and_then(|cell| cell.array())
         .expect("POINTING.DIRECTION row 0 should materialize as an array");
 
     let ArrayValue::Float64(direction) = direction else {

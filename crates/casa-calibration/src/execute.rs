@@ -790,14 +790,16 @@ fn execute_apply_plan(
         let row_fetch_started_at = Instant::now();
         let data_values = ms
             .main_table()
-            .get_array_cells_owned(VisibilityDataColumn::Data.name(), &selected_row_indices)
+            .column_accessor(VisibilityDataColumn::Data.name())
+            .and_then(|column| column.array_cells_owned(&selected_row_indices))
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
             })?;
         let flag_values = ms
             .main_table()
-            .get_array_cells_owned("FLAG", &selected_row_indices)
+            .column_accessor("FLAG")
+            .and_then(|column| column.array_cells_owned(&selected_row_indices))
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
@@ -805,7 +807,8 @@ fn execute_apply_plan(
         let weight_values = if any_calwt {
             Some(
                 ms.main_table()
-                    .get_array_cells_owned("WEIGHT", &selected_row_indices)
+                    .column_accessor("WEIGHT")
+                    .and_then(|column| column.array_cells_owned(&selected_row_indices))
                     .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                         path: ms_path.clone(),
                         source: MsError::from(source),
@@ -892,11 +895,10 @@ fn execute_apply_plan(
 
             let row_writeback_started_at = Instant::now();
             ms.main_table_mut()
-                .set_array_cell_assuming_valid(
-                    row.row_index,
-                    VisibilityDataColumn::CorrectedData.name(),
-                    corrected_data,
-                )
+                .column_accessor_mut(VisibilityDataColumn::CorrectedData.name())
+                .and_then(|mut column| {
+                    column.set_array_assuming_valid(row.row_index, corrected_data)
+                })
                 .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                     path: ms_path.clone(),
                     source: MsError::from(source),
@@ -907,7 +909,10 @@ fn execute_apply_plan(
                     changed_columns.push("FLAG");
                 }
                 ms.main_table_mut()
-                    .set_array_cell_assuming_valid(row.row_index, "FLAG", updated_flags)
+                    .column_accessor_mut("FLAG")
+                    .and_then(|mut column| {
+                        column.set_array_assuming_valid(row.row_index, updated_flags)
+                    })
                     .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                         path: ms_path.clone(),
                         source: MsError::from(source),
@@ -917,11 +922,10 @@ fn execute_apply_plan(
                         changed_columns.push("FLAG_ROW");
                     }
                     ms.main_table_mut()
-                        .set_scalar_cell_assuming_valid(
-                            row.row_index,
-                            "FLAG_ROW",
-                            ScalarValue::Bool(true),
-                        )
+                        .column_accessor_mut("FLAG_ROW")
+                        .and_then(|mut column| {
+                            column.set_scalar_assuming_valid(row.row_index, ScalarValue::Bool(true))
+                        })
                         .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                             path: ms_path.clone(),
                             source: MsError::from(source),
@@ -935,7 +939,10 @@ fn execute_apply_plan(
                     changed_columns.push("WEIGHT");
                 }
                 ms.main_table_mut()
-                    .set_array_cell_assuming_valid(row.row_index, "WEIGHT", updated_weight)
+                    .column_accessor_mut("WEIGHT")
+                    .and_then(|mut column| {
+                        column.set_array_assuming_valid(row.row_index, updated_weight)
+                    })
                     .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                         path: ms_path.clone(),
                         source: MsError::from(source),
@@ -946,11 +953,10 @@ fn execute_apply_plan(
                     changed_columns.push("WEIGHT_SPECTRUM");
                 }
                 ms.main_table_mut()
-                    .set_array_cell_assuming_valid(
-                        row.row_index,
-                        "WEIGHT_SPECTRUM",
-                        updated_weight_spectrum,
-                    )
+                    .column_accessor_mut("WEIGHT_SPECTRUM")
+                    .and_then(|mut column| {
+                        column.set_array_assuming_valid(row.row_index, updated_weight_spectrum)
+                    })
                     .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                         path: ms_path.clone(),
                         source: MsError::from(source),
@@ -2168,7 +2174,8 @@ fn load_calibration_table(
         let antenna_id = get_i32(&table, row_index, COL_ANTENNA1)?;
         let time_seconds = get_f64(&table, row_index, COL_TIME)?;
         let flags = table
-            .get_array_cell(row_index, COL_FLAG)
+            .cell_accessor(row_index, COL_FLAG)
+            .and_then(|cell| cell.array())
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: table_plan.spec.path.display().to_string(),
                 source: MsError::from(source),
@@ -2176,7 +2183,8 @@ fn load_calibration_table(
         let grid = match table_plan.summary.parameter_family {
             CalibrationParameterFamily::Complex => {
                 let gains = table
-                    .get_array_cell(row_index, COL_CPARAM)
+                    .cell_accessor(row_index, COL_CPARAM)
+                    .and_then(|cell| cell.array())
                     .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                         path: table_plan.spec.path.display().to_string(),
                         source: MsError::from(source),
@@ -2191,7 +2199,8 @@ fn load_calibration_table(
                 if table_plan.summary.table_subtype.as_str() == "K Jones" =>
             {
                 let delays = table
-                    .get_array_cell(row_index, COL_FPARAM)
+                    .cell_accessor(row_index, COL_FPARAM)
+                    .and_then(|cell| cell.array())
                     .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                         path: table_plan.spec.path.display().to_string(),
                         source: MsError::from(source),
@@ -2299,7 +2308,8 @@ fn load_bpoly_cal_desc_map(
     let mut entries = HashMap::new();
     for row_index in 0..cal_desc.row_count() {
         let spw_ids = cal_desc
-            .get_array_cell(row_index, COL_SPECTRAL_WINDOW_ID)
+            .cell_accessor(row_index, COL_SPECTRAL_WINDOW_ID)
+            .and_then(|cell| cell.array())
             .map_err(|source| ApplyExecutionError::UnsupportedCalibrationTable {
                 path: path.display().to_string(),
                 reason: format!(
@@ -2592,13 +2602,12 @@ fn ensure_corrected_data_column(ms: &mut MeasurementSet) -> Result<bool, TableEr
     for row_index in 0..row_count {
         let data = ms
             .main_table()
-            .get_array_cell(row_index, VisibilityDataColumn::Data.name())?
+            .cell_accessor(row_index, VisibilityDataColumn::Data.name())?
+            .array()?
             .clone();
-        ms.main_table_mut().set_cell(
-            row_index,
-            VisibilityDataColumn::CorrectedData.name(),
-            Value::Array(data),
-        )?;
+        ms.main_table_mut()
+            .cell_accessor_mut(row_index, VisibilityDataColumn::CorrectedData.name())?
+            .set(Value::Array(data))?;
     }
     Ok(true)
 }
@@ -2669,12 +2678,13 @@ fn correlation_receptors(code: i32) -> Option<(usize, usize)> {
 }
 
 fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyExecutionError> {
-    match table.get_scalar_cell(row_index, column).map_err(|source| {
-        ApplyExecutionError::MutateMeasurementSet {
+    match table
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: "<table>".to_string(),
             source: MsError::from(source),
-        }
-    })? {
+        })? {
         ScalarValue::Int32(value) => Ok(*value),
         other => Err(ApplyExecutionError::UnsupportedParameterShape {
             path: format!("{column}:{:?}", other.primitive_type()),
@@ -2684,12 +2694,13 @@ fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyEx
 }
 
 fn get_f64(table: &Table, row_index: usize, column: &str) -> Result<f64, ApplyExecutionError> {
-    match table.get_scalar_cell(row_index, column).map_err(|source| {
-        ApplyExecutionError::MutateMeasurementSet {
+    match table
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: "<table>".to_string(),
             source: MsError::from(source),
-        }
-    })? {
+        })? {
         ScalarValue::Float64(value) => Ok(*value),
         other => Err(ApplyExecutionError::UnsupportedParameterShape {
             path: format!("{column}:{:?}", other.primitive_type()),
@@ -2703,12 +2714,13 @@ fn get_complex32(
     row_index: usize,
     column: &str,
 ) -> Result<Complex32, ApplyExecutionError> {
-    match table.get_scalar_cell(row_index, column).map_err(|source| {
-        ApplyExecutionError::MutateMeasurementSet {
+    match table
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: "<table>".to_string(),
             source: MsError::from(source),
-        }
-    })? {
+        })? {
         ScalarValue::Complex32(value) => Ok(*value),
         ScalarValue::Complex64(value) => Ok(Complex32::new(value.re as f32, value.im as f32)),
         other => Err(ApplyExecutionError::UnsupportedParameterShape {
@@ -2723,12 +2735,13 @@ fn get_string(
     row_index: usize,
     column: &str,
 ) -> Result<String, ApplyExecutionError> {
-    match table.get_scalar_cell(row_index, column).map_err(|source| {
-        ApplyExecutionError::MutateMeasurementSet {
+    match table
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: "<table>".to_string(),
             source: MsError::from(source),
-        }
-    })? {
+        })? {
         ScalarValue::String(value) => Ok(value.clone()),
         other => Err(ApplyExecutionError::UnsupportedParameterShape {
             path: format!("{column}:{:?}", other.primitive_type()),
@@ -2743,12 +2756,13 @@ fn get_numeric_array(
     column: &str,
     path: &Path,
 ) -> Result<Vec<f64>, ApplyExecutionError> {
-    let values = table.get_array_cell(row_index, column).map_err(|source| {
-        ApplyExecutionError::UnsupportedCalibrationTable {
+    let values = table
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.array())
+        .map_err(|source| ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason: format!("failed to read {column} row {row_index}: {source}"),
-        }
-    })?;
+        })?;
     match values {
         ArrayValue::Float32(values) => Ok(values.iter().map(|value| f64::from(*value)).collect()),
         ArrayValue::Float64(values) => Ok(values.iter().copied().collect()),
@@ -2769,12 +2783,13 @@ fn get_f64_array(
     column: &str,
     path: &Path,
 ) -> Result<Vec<f64>, ApplyExecutionError> {
-    let values = table.get_array_cell(row_index, column).map_err(|source| {
-        ApplyExecutionError::UnsupportedCalibrationTable {
+    let values = table
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.array())
+        .map_err(|source| ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason: format!("failed to read {column} row {row_index}: {source}"),
-        }
-    })?;
+        })?;
     match values {
         ArrayValue::Float64(values) => Ok(values.iter().copied().collect()),
         ArrayValue::Float32(values) => Ok(values.iter().map(|value| f64::from(*value)).collect()),
@@ -3425,13 +3440,15 @@ mod tests {
         assert!(ensure_corrected_data_column(&mut ms).unwrap());
         let corrected = ms
             .main_table()
-            .get_array_cell(0, VisibilityDataColumn::CorrectedData.name())
+            .cell_accessor(0, VisibilityDataColumn::CorrectedData.name())
+            .and_then(|cell| cell.array())
             .unwrap()
             .clone();
         assert_eq!(
             corrected,
             *ms.main_table()
-                .get_array_cell(0, VisibilityDataColumn::Data.name())
+                .cell_accessor(0, VisibilityDataColumn::Data.name())
+                .and_then(|cell| cell.array())
                 .unwrap()
         );
         assert!(!ensure_corrected_data_column(&mut ms).unwrap());

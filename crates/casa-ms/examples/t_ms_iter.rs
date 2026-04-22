@@ -119,10 +119,11 @@ fn main() {
         let first_row = g.row_indices[0];
         let scan = ms
             .main_table()
-            .get_scalar_cell(first_row, "SCAN_NUMBER")
+            .cell_accessor(first_row, "SCAN_NUMBER")
+            .and_then(|cell| cell.scalar())
             .ok()
             .and_then(|v| match v {
-                ScalarValue::Int32(s) => Some(*s),
+                &ScalarValue::Int32(s) => Some(s),
                 _ => None,
             })
             .unwrap_or(-1);

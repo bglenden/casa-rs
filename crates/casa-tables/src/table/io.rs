@@ -114,7 +114,8 @@ impl Table {
     /// This is intended for advanced callers that already know the in-memory
     /// table is schema-valid because all mutations went through validating APIs
     /// such as [`add_row`](crate::Table::add_row), [`add_column`](crate::Table::add_column),
-    /// and [`set_cell`](crate::Table::set_cell). It preserves the exact same
+    /// [`cell_accessor_mut`](crate::Table::cell_accessor_mut), and
+    /// [`column_accessor_mut`](crate::Table::column_accessor_mut). It preserves the exact same
     /// on-disk format as [`save`](Table::save), but skips the extra full-table
     /// validation pass before serialization.
     ///
@@ -1092,13 +1093,19 @@ fn current_value_for_column(
         )));
     }
     if col_desc.is_array {
-        match table.get_array_cell(row_index, &col_desc.col_name) {
+        match table
+            .column_accessor(&col_desc.col_name)
+            .and_then(|column| column.array_cell(row_index))
+        {
             Ok(value) => Ok(Some(Value::Array(value.clone()))),
             Err(TableError::ColumnNotFound { .. }) => Ok(None),
             Err(err) => Err(err),
         }
     } else {
-        match table.get_scalar_cell(row_index, &col_desc.col_name) {
+        match table
+            .column_accessor(&col_desc.col_name)
+            .and_then(|column| column.scalar_cell(row_index))
+        {
             Ok(value) => Ok(Some(Value::Scalar(value.clone()))),
             Err(TableError::ColumnNotFound { .. }) => Ok(None),
             Err(err) => Err(err),

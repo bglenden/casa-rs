@@ -411,7 +411,8 @@ impl BandpassAccumulator {
             None => {
                 let data = ms
                     .main_table()
-                    .get_array_cell(row.row_index, "DATA")
+                    .cell_accessor(row.row_index, "DATA")
+                    .and_then(|cell| cell.array())
                     .map_err(|source| BandpassSolveError::OpenMeasurementSet {
                         path: ms
                             .path()
@@ -421,7 +422,8 @@ impl BandpassAccumulator {
                     })?;
                 let flags = ms
                     .main_table()
-                    .get_array_cell(row.row_index, "FLAG")
+                    .cell_accessor(row.row_index, "FLAG")
+                    .and_then(|cell| cell.array())
                     .map_err(|source| BandpassSolveError::OpenMeasurementSet {
                         path: ms
                             .path()
@@ -434,7 +436,8 @@ impl BandpassAccumulator {
         };
         let weights = ms
             .main_table()
-            .get_array_cell(row.row_index, "WEIGHT")
+            .cell_accessor(row.row_index, "WEIGHT")
+            .and_then(|cell| cell.array())
             .map_err(|source| BandpassSolveError::OpenMeasurementSet {
                 path: ms
                     .path()
@@ -588,7 +591,8 @@ fn build_bandpass_groups(
             Some(preapplied) => &preapplied.corrected_data,
             None => ms
                 .main_table()
-                .get_array_cell(row.row_index, "DATA")
+                .cell_accessor(row.row_index, "DATA")
+                .and_then(|cell| cell.array())
                 .map_err(|source| BandpassSolveError::OpenMeasurementSet {
                     path: ms
                         .path()

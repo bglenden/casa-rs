@@ -225,7 +225,10 @@ fn summarize_parameter_column(
         .map(|data_type| format!("{data_type:?}"));
     let first_cell_shape = parameter_column.as_deref().and_then(|column| {
         for row in 0..table.row_count() {
-            if let Ok(array) = table.get_array_cell(row, column) {
+            if let Ok(array) = table
+                .cell_accessor(row, column)
+                .and_then(|cell| cell.array())
+            {
                 return Some(array.shape().to_vec());
             }
         }
@@ -477,10 +480,13 @@ fn scan_coverage(
             );
         }
         if has_time {
-            match table.get_scalar_cell(row, COL_TIME) {
-                Ok(ScalarValue::Float64(value)) => {
-                    min_time = Some(min_time.map_or(*value, |current| current.min(*value)));
-                    max_time = Some(max_time.map_or(*value, |current| current.max(*value)));
+            match table
+                .cell_accessor(row, COL_TIME)
+                .and_then(|cell| cell.scalar())
+            {
+                Ok(&ScalarValue::Float64(value)) => {
+                    min_time = Some(min_time.map_or(value, |current| current.min(value)));
+                    max_time = Some(max_time.map_or(value, |current| current.max(value)));
                 }
                 Ok(other) => issues.push(issue(
                     "time-column-type",
@@ -495,10 +501,13 @@ fn scan_coverage(
             }
         }
         if has_interval {
-            match table.get_scalar_cell(row, COL_INTERVAL) {
-                Ok(ScalarValue::Float64(value)) => {
-                    min_interval = Some(min_interval.map_or(*value, |current| current.min(*value)));
-                    max_interval = Some(max_interval.map_or(*value, |current| current.max(*value)));
+            match table
+                .cell_accessor(row, COL_INTERVAL)
+                .and_then(|cell| cell.scalar())
+            {
+                Ok(&ScalarValue::Float64(value)) => {
+                    min_interval = Some(min_interval.map_or(value, |current| current.min(value)));
+                    max_interval = Some(max_interval.map_or(value, |current| current.max(value)));
                 }
                 Ok(other) => issues.push(issue(
                     "interval-column-type",
@@ -544,7 +553,10 @@ fn scan_bpoly_spectral_window_ids(
     };
     let mut spw_ids = BTreeSet::new();
     for row in 0..table.row_count() {
-        match table.get_array_cell(row, COL_SPECTRAL_WINDOW_ID) {
+        match table
+            .cell_accessor(row, COL_SPECTRAL_WINDOW_ID)
+            .and_then(|cell| cell.array())
+        {
             Ok(casa_types::ArrayValue::Int32(values)) => {
                 for value in values.iter().copied() {
                     spw_ids.insert(value);
@@ -575,9 +587,12 @@ fn collect_i32_cell(
     values: &mut BTreeSet<i32>,
     issues: &mut Vec<CalibrationValidationIssue>,
 ) {
-    match table.get_scalar_cell(row, column) {
-        Ok(ScalarValue::Int32(value)) => {
-            values.insert(*value);
+    match table
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
+    {
+        Ok(&ScalarValue::Int32(value)) => {
+            values.insert(value);
         }
         Ok(other) => issues.push(issue(
             format!("unexpected-{column}-type"),

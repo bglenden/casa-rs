@@ -197,7 +197,10 @@ fn update_with_where() {
         TaqlResult::Update { rows_affected } => assert_eq!(rows_affected, 1),
         _ => panic!("expected Update"),
     }
-    let val = table.cell(25, "flux").unwrap();
+    let val = table
+        .cell_accessor(25, "flux")
+        .and_then(|cell| cell.value())
+        .unwrap();
     assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(999.0))));
 }
 
@@ -211,7 +214,10 @@ fn update_expression() {
         TaqlResult::Update { rows_affected } => assert_eq!(rows_affected, 1),
         _ => panic!("expected Update"),
     }
-    let val = table.cell(0, "flux").unwrap();
+    let val = table
+        .cell_accessor(0, "flux")
+        .and_then(|cell| cell.value())
+        .unwrap();
     assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(1.0)))); // 0.1 * 10.0
 }
 

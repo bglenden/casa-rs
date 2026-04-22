@@ -71,7 +71,7 @@ impl RefLayout {
     {
         let mut row_map = Vec::new();
         for i in 0..parent.row_count() {
-            if predicate(parent.row(i)?) {
+            if predicate(parent.row_accessor().row(i)?) {
                 row_map.push(i);
             }
         }
@@ -250,13 +250,15 @@ impl<'a> RefTable<'a> {
     }
 
     pub fn row(&self, index: usize) -> Result<&RecordValue, TableError> {
-        self.parent.row(self.layout.translate_row(index)?)
+        self.parent
+            .row_accessor()
+            .row(self.layout.translate_row(index)?)
     }
 
     pub fn cell(&self, row: usize, column: &str) -> Result<Option<&Value>, TableError> {
         let parent_idx = self.layout.translate_row(row)?;
         let parent_col = self.layout.translate_column(column)?;
-        self.parent.cell(parent_idx, parent_col)
+        self.parent.cell_accessor(parent_idx, parent_col)?.value()
     }
 
     pub fn row_numbers(&self) -> &[usize] {
@@ -332,19 +334,23 @@ impl<'a> RefTableMut<'a> {
     }
 
     pub fn row(&self, index: usize) -> Result<&RecordValue, TableError> {
-        self.parent.row(self.layout.translate_row(index)?)
+        self.parent
+            .row_accessor()
+            .row(self.layout.translate_row(index)?)
     }
 
     pub fn cell(&self, row: usize, column: &str) -> Result<Option<&Value>, TableError> {
         let parent_idx = self.layout.translate_row(row)?;
         let parent_col = self.layout.translate_column(column)?;
-        self.parent.cell(parent_idx, parent_col)
+        self.parent.cell_accessor(parent_idx, parent_col)?.value()
     }
 
     pub fn set_cell(&mut self, row: usize, column: &str, value: Value) -> Result<(), TableError> {
         let parent_idx = self.layout.translate_row(row)?;
         let parent_col = self.layout.translate_column(column)?.to_string();
-        self.parent.set_cell(parent_idx, &parent_col, value)
+        self.parent
+            .cell_accessor_mut(parent_idx, &parent_col)?
+            .set(value)
     }
 
     pub fn row_numbers(&self) -> &[usize] {
@@ -471,7 +477,7 @@ mod tests {
             )
             .unwrap();
         }
-        let name = table.cell(2, "name").unwrap().unwrap();
+        let name = table.row_accessor().row(2).unwrap().get("name").unwrap();
         assert_eq!(
             name,
             &Value::Scalar(ScalarValue::String("modified".to_string()))
@@ -506,11 +512,11 @@ mod tests {
         let reopened = Table::open(crate::table::TableOptions::new(&ref_path)).unwrap();
         assert_eq!(reopened.row_count(), 3);
 
-        let id = reopened.cell(0, "id").unwrap().unwrap();
+        let id = reopened.row_accessor().row(0).unwrap().get("id").unwrap();
         assert_eq!(id, &Value::Scalar(ScalarValue::Int32(0)));
-        let id = reopened.cell(1, "id").unwrap().unwrap();
+        let id = reopened.row_accessor().row(1).unwrap().get("id").unwrap();
         assert_eq!(id, &Value::Scalar(ScalarValue::Int32(2)));
-        let id = reopened.cell(2, "id").unwrap().unwrap();
+        let id = reopened.row_accessor().row(2).unwrap().get("id").unwrap();
         assert_eq!(id, &Value::Scalar(ScalarValue::Int32(4)));
     }
 
@@ -558,7 +564,7 @@ mod tests {
         drop(view);
 
         assert_eq!(
-            reopened.cell(1, "name").unwrap(),
+            reopened.row_accessor().row(1).unwrap().get("name"),
             Some(&Value::Scalar(ScalarValue::String("projected".to_string())))
         );
 
@@ -572,7 +578,7 @@ mod tests {
         assert_eq!(saved.row_count(), 5);
         assert_eq!(saved.schema().unwrap().columns().len(), 1);
         assert_eq!(
-            saved.cell(1, "name").unwrap(),
+            saved.row_accessor().row(1).unwrap().get("name"),
             Some(&Value::Scalar(ScalarValue::String("projected".to_string())))
         );
     }

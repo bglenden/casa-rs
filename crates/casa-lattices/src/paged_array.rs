@@ -368,7 +368,9 @@ impl<T: LatticeElement> PagedArray<T> {
 
         // Read the shape from the cell.
         let cell = table
-            .cell(0, COLUMN_NAME)
+            .cell_accessor(0, COLUMN_NAME)
+            .map_err(table_err)?
+            .value()
             .map_err(table_err)?
             .ok_or_else(|| {
                 LatticeError::Table("PagedArray column not found or no rows".to_string())
@@ -560,7 +562,9 @@ impl<T: LatticeElement> PagedArray<T> {
         let table_ref = self.table.borrow();
         let table = table_ref.as_ref().unwrap();
         let cell = table
-            .cell(0, COLUMN_NAME)
+            .cell_accessor(0, COLUMN_NAME)
+            .map_err(table_err)?
+            .value()
             .map_err(table_err)?
             .ok_or_else(|| LatticeError::Table("PagedArray cell not found".to_string()))?;
         match cell {
@@ -577,7 +581,9 @@ impl<T: LatticeElement> PagedArray<T> {
             .get_mut()
             .as_mut()
             .unwrap()
-            .set_cell(0, COLUMN_NAME, Value::Array(array_value))
+            .cell_accessor_mut(0, COLUMN_NAME)
+            .map_err(table_err)?
+            .set(Value::Array(array_value))
             .map_err(table_err)
     }
 }

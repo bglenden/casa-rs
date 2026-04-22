@@ -60,8 +60,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Print each row in this group.
         for &row_idx in &group.row_indices {
-            let cat = table.cell(row_idx, "category").unwrap();
-            let val = table.cell(row_idx, "value").unwrap();
+            let cat = table
+                .cell_accessor(row_idx, "category")
+                .and_then(|cell| cell.value())
+                .unwrap();
+            let val = table
+                .cell_accessor(row_idx, "value")
+                .and_then(|cell| cell.value())
+                .unwrap();
             println!("  row {row_idx}: category={cat:?}, value={val:?}");
         }
         println!();

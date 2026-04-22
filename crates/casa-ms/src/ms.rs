@@ -1262,10 +1262,12 @@ mod tests {
         assert_eq!(reopened.row_count(), 1);
         match reopened
             .main_table()
-            .get_scalar_cell(0, "FIELD_ID")
+            .cell_accessor(0, "FIELD_ID")
+            .unwrap()
+            .scalar()
             .expect("field id cell")
         {
-            ScalarValue::Int32(value) => assert_eq!(*value, 1),
+            &ScalarValue::Int32(value) => assert_eq!(value, 1),
             other => panic!(
                 "expected FIELD_ID to be Int32, found {:?}",
                 other.primitive_type()

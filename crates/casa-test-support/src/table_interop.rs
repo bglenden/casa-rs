@@ -534,7 +534,9 @@ fn compare_table_to_fixture(table: &Table, fixture: &TableFixture) -> Result<(),
         for col_schema in fixture.schema.columns() {
             let col_name = col_schema.name();
             let expected = expected_row.get(col_name);
-            let actual = table.cell(row_idx, col_name);
+            let actual = table
+                .cell_accessor(row_idx, col_name)
+                .and_then(|cell| cell.value());
 
             match (expected, actual) {
                 (None, Ok(None)) => {} // Both undefined — OK

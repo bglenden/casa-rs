@@ -11254,13 +11254,15 @@ fn add_main_row(
 
 fn set_main_row_flag_matrix(ms: &mut MeasurementSet, row: usize, flags: ArrayD<bool>) {
     ms.main_table_mut()
-        .set_cell(row, "FLAG", Value::Array(ArrayValue::Bool(flags)))
+        .cell_accessor_mut(row, "FLAG")
+        .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Bool(flags))))
         .unwrap();
 }
 
 fn set_main_row_data_matrix(ms: &mut MeasurementSet, row: usize, data: ArrayD<Complex32>) {
     ms.main_table_mut()
-        .set_cell(row, "DATA", Value::Array(ArrayValue::Complex32(data)))
+        .cell_accessor_mut(row, "DATA")
+        .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(data))))
         .unwrap();
 }
 

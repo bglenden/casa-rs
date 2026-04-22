@@ -104,7 +104,8 @@ impl<'a> TableIterator<'a> {
         for col_name in &self.key_columns {
             let value = self
                 .table
-                .cell(row_index, col_name)
+                .cell_accessor(row_index, col_name)
+                .and_then(|cell| cell.value())
                 .expect("table rows were validated when the iterator was created")
                 .cloned()
                 .unwrap_or(Value::Scalar(ScalarValue::Bool(false)));
@@ -166,7 +167,10 @@ pub(crate) fn argsort(table: &Table, keys: &[(&str, SortOrder)]) -> Result<Vec<u
         }
 
         for &(col_name, order) in keys {
-            let val_a = match table.cell(a, col_name) {
+            let val_a = match table
+                .cell_accessor(a, col_name)
+                .and_then(|cell| cell.value())
+            {
                 Ok(value) => value.and_then(|v| match v {
                     Value::Scalar(s) => Some(s),
                     _ => None,
@@ -176,7 +180,10 @@ pub(crate) fn argsort(table: &Table, keys: &[(&str, SortOrder)]) -> Result<Vec<u
                     return Ordering::Equal;
                 }
             };
-            let val_b = match table.cell(b, col_name) {
+            let val_b = match table
+                .cell_accessor(b, col_name)
+                .and_then(|cell| cell.value())
+            {
                 Ok(value) => value.and_then(|v| match v {
                     Value::Scalar(s) => Some(s),
                     _ => None,
@@ -244,7 +251,7 @@ pub(crate) fn validate_sort_column(table: &Table, col_name: &str) -> Result<(), 
 
     // Without schema, check the first row dynamically.
     if table.row_count() > 0 {
-        match table.cell(0, col_name)? {
+        match table.cell_accessor(0, col_name)?.value()? {
             Some(Value::Scalar(sv)) if sv.sort_cmp(sv).is_none() => {
                 return Err(TableError::SortKeyUnsortable {
                     column: col_name.to_string(),
@@ -609,12 +616,10 @@ mod tests {
         let reopened = Table::open(crate::table::TableOptions::new(&sorted_path)).unwrap();
         assert_eq!(reopened.row_count(), 5);
         // Should be 4,3,2,1,0.
+        let ids = reopened.column_accessor("id").unwrap();
         for i in 0..5 {
-            let val = reopened.cell(i, "id").unwrap();
-            assert_eq!(
-                val,
-                Some(&Value::Scalar(ScalarValue::Int32((4 - i) as i32)))
-            );
+            let val = ids.scalar_cell(i).unwrap();
+            assert_eq!(val, &ScalarValue::Int32((4 - i) as i32));
         }
     }
 }

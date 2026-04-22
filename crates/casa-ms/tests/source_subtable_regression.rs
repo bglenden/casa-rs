@@ -20,7 +20,7 @@ fn ngc5921_with_flags_source_subtable_materializes_source_model_records() {
         "SOURCE subtable should contain rows"
     );
 
-    let first_row = source.table().row(0).expect("SOURCE row 0");
+    let first_row = source.table().row_accessor().row(0).expect("SOURCE row 0");
     assert!(
         matches!(first_row.get("SOURCE_MODEL"), Some(Value::Record(_))),
         "expected SOURCE_MODEL to materialize as a record, got {:?}",

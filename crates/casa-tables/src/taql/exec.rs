@@ -114,6 +114,7 @@ fn execute_select(sel: &SelectStatement, table: &crate::Table) -> Result<TaqlRes
         let mut indices = Vec::new();
         for i in 0..row_count {
             let row = table
+                .row_accessor()
                 .row(i)
                 .map_err(|err| TaqlError::Table(err.to_string()))?;
             let ctx = EvalContext {
@@ -229,6 +230,7 @@ fn materialize_select(
     let mut result_rows: Vec<RecordValue> = Vec::with_capacity(row_indices.len());
     for &row_idx in row_indices {
         let row = table
+            .row_accessor()
             .row(row_idx)
             .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
@@ -340,6 +342,7 @@ fn execute_joins(
 
         for &left_idx in &result_rows {
             let left_row = table
+                .row_accessor()
                 .row(left_idx)
                 .map_err(|err| TaqlError::Table(err.to_string()))?;
             let mut found_match = false;
@@ -355,6 +358,7 @@ fn execute_joins(
 
             for right_idx in 0..right_count {
                 let right_row = table
+                    .row_accessor()
                     .row(right_idx)
                     .map_err(|err| TaqlError::Table(err.to_string()))?;
 
@@ -431,6 +435,7 @@ fn execute_update(
         let mut indices = Vec::new();
         for i in 0..row_count {
             let row = table
+                .row_accessor()
                 .row(i)
                 .map_err(|err| TaqlError::Table(err.to_string()))?;
             let ctx = EvalContext {
@@ -458,6 +463,7 @@ fn execute_update(
     let mut updates: Vec<Vec<(String, Value)>> = Vec::with_capacity(matching_rows.len());
     for &row_idx in &matching_rows {
         let row = table
+            .row_accessor()
             .row(row_idx)
             .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
@@ -479,7 +485,8 @@ fn execute_update(
     for (row_idx, row_updates) in matching_rows.into_iter().zip(updates) {
         for (column, value) in row_updates {
             table
-                .set_cell(row_idx, &column, value)
+                .cell_accessor_mut(row_idx, &column)
+                .and_then(|mut cell| cell.set(value))
                 .map_err(|e| TaqlError::Table(e.to_string()))?;
         }
     }
@@ -557,6 +564,7 @@ fn execute_delete(
         let mut indices = Vec::new();
         for i in 0..row_count {
             let row = table
+                .row_accessor()
                 .row(i)
                 .map_err(|err| TaqlError::Table(err.to_string()))?;
             let ctx = EvalContext {
@@ -602,7 +610,7 @@ fn execute_calc(calc: &CalcStatement, table: &crate::Table) -> Result<TaqlResult
     // Use row 0 if the table has rows, otherwise an empty context
     let empty_row = casa_types::RecordValue::default();
     let row = if table.row_count() > 0 {
-        table.row(0).unwrap_or(&empty_row)
+        table.row_accessor().row(0).unwrap_or(&empty_row)
     } else {
         &empty_row
     };
@@ -793,6 +801,7 @@ fn execute_group_by(sel: &SelectStatement, table: &crate::Table) -> Result<TaqlR
         let mut indices = Vec::new();
         for i in 0..row_count {
             let row = table
+                .row_accessor()
                 .row(i)
                 .map_err(|err| TaqlError::Table(err.to_string()))?;
             let ctx = EvalContext {
@@ -892,6 +901,7 @@ fn group_rows(
 
     for &row_idx in row_indices {
         let row = table
+            .row_accessor()
             .row(row_idx)
             .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
@@ -1013,6 +1023,7 @@ fn eval_aggregate_column(
             // For non-aggregate columns in GROUP BY, use the first row's value
             if let Some(&first_row) = group.first() {
                 let row = table
+                    .row_accessor()
                     .row(first_row)
                     .map_err(|err| TaqlError::Table(err.to_string()))?;
                 let ctx = EvalContext {
@@ -1029,6 +1040,7 @@ fn eval_aggregate_column(
             // For expression columns, try evaluating with first row
             if let Some(&first_row) = group.first() {
                 let row = table
+                    .row_accessor()
                     .row(first_row)
                     .map_err(|err| TaqlError::Table(err.to_string()))?;
                 let ctx = EvalContext {
@@ -1122,6 +1134,7 @@ fn sort_rows(
     let mut sort_keys: Vec<Vec<ExprValue>> = Vec::with_capacity(row_indices.len());
     for &row_idx in row_indices.iter() {
         let row = table
+            .row_accessor()
             .row(row_idx)
             .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
@@ -1171,6 +1184,7 @@ fn deduplicate_rows(
 
     for &row_idx in row_indices.iter() {
         let row = table
+            .row_accessor()
             .row(row_idx)
             .map_err(|err| TaqlError::Table(err.to_string()))?;
         let ctx = EvalContext {
@@ -1611,7 +1625,10 @@ mod tests {
             }
             _ => panic!("expected Update"),
         }
-        let val = table.cell(5, "flux").unwrap();
+        let val = table
+            .cell_accessor(5, "flux")
+            .and_then(|cell| cell.value())
+            .unwrap();
         assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(99.0))));
     }
 
@@ -1626,7 +1643,10 @@ mod tests {
             }
             _ => panic!("expected Update"),
         }
-        let val = table.cell(3, "flux").unwrap();
+        let val = table
+            .cell_accessor(3, "flux")
+            .and_then(|cell| cell.value())
+            .unwrap();
         assert_eq!(val, Some(&Value::Scalar(ScalarValue::Float64(9.0)))); // 3 * 1.5 * 2.0
     }
 
@@ -1643,7 +1663,10 @@ mod tests {
             _ => panic!("expected Insert"),
         }
         assert_eq!(table.row_count(), 11);
-        let val = table.cell(10, "id").unwrap();
+        let val = table
+            .cell_accessor(10, "id")
+            .and_then(|cell| cell.value())
+            .unwrap();
         assert_eq!(val, Some(&Value::Scalar(ScalarValue::Int32(10))));
     }
 

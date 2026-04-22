@@ -602,11 +602,8 @@ fn write_scaled_output(
         };
         let scaled = scale_gains(&row.gains, estimate.correction_factor, incremental);
         table
-            .set_cell(
-                row.row_index,
-                COL_CPARAM,
-                Value::Array(ArrayValue::Complex32(scaled)),
-            )
+            .cell_accessor_mut(row.row_index, COL_CPARAM)
+            .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(scaled))))
             .map_err(|source| FluxScaleError::MutateOutput {
                 path: output_root.display().to_string(),
                 source: Box::new(source),
@@ -778,7 +775,8 @@ fn copy_table_tree(source: &Path, destination: &Path) -> Result<(), FluxScaleErr
 
 fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, FluxScaleError> {
     match table
-        .cell(row, column)
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.value())
         .map_err(|source| FluxScaleError::MutateOutput {
             path: column.to_string(),
             source: Box::new(source),
@@ -797,7 +795,8 @@ fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, FluxScaleErro
 
 fn get_string(table: &Table, row: usize, column: &str) -> Result<String, FluxScaleError> {
     match table
-        .cell(row, column)
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.value())
         .map_err(|source| FluxScaleError::MutateOutput {
             path: column.to_string(),
             source: Box::new(source),
@@ -815,23 +814,24 @@ fn get_string(table: &Table, row: usize, column: &str) -> Result<String, FluxSca
 }
 
 fn get_ref_frequency(table: &Table, row: usize) -> Result<f64, FluxScaleError> {
-    let chan_freq =
-        table
-            .get_array_cell(row, "CHAN_FREQ")
-            .map_err(|source| FluxScaleError::MutateOutput {
-                path: "CHAN_FREQ".to_string(),
-                source: Box::new(source),
-            })?;
+    let chan_freq = table
+        .cell_accessor(row, "CHAN_FREQ")
+        .and_then(|cell| cell.array())
+        .map_err(|source| FluxScaleError::MutateOutput {
+            path: "CHAN_FREQ".to_string(),
+            source: Box::new(source),
+        })?;
     match chan_freq {
         ArrayValue::Float64(values) if !values.is_empty() => {
             Ok(values.iter().copied().sum::<f64>() / values.len() as f64)
         }
-        _ => match table.cell(row, "REF_FREQUENCY").map_err(|source| {
-            FluxScaleError::MutateOutput {
+        _ => match table
+            .cell_accessor(row, "REF_FREQUENCY")
+            .and_then(|cell| cell.value())
+            .map_err(|source| FluxScaleError::MutateOutput {
                 path: "REF_FREQUENCY".to_string(),
                 source: Box::new(source),
-            }
-        })? {
+            })? {
             Some(Value::Scalar(ScalarValue::Float64(value))) => Ok(*value),
             Some(Value::Array(ArrayValue::Float64(values))) if values.len() == 1 => {
                 Ok(values.iter().copied().next().unwrap_or(0.0))
@@ -847,7 +847,8 @@ fn get_complex_array(
     column: &str,
 ) -> Result<ArrayD<Complex32>, FluxScaleError> {
     match table
-        .get_array_cell(row, column)
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.array())
         .map_err(|source| FluxScaleError::MutateOutput {
             path: column.to_string(),
             source: Box::new(source),
@@ -865,7 +866,8 @@ fn get_complex_array(
 
 fn get_bool_array(table: &Table, row: usize, column: &str) -> Result<ArrayD<bool>, FluxScaleError> {
     match table
-        .get_array_cell(row, column)
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.array())
         .map_err(|source| FluxScaleError::MutateOutput {
             path: column.to_string(),
             source: Box::new(source),

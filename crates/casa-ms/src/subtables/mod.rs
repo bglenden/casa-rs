@@ -277,8 +277,8 @@ pub trait SubTable {
 
 /// Extract an `i32` from a scalar cell.
 pub(crate) fn get_i32(table: &Table, row: usize, col: &str) -> MsResult<i32> {
-    match table.get_scalar_cell(row, col)? {
-        ScalarValue::Int32(v) => Ok(*v),
+    match table.cell_accessor(row, col)?.scalar()? {
+        &ScalarValue::Int32(v) => Ok(v),
         other => Err(MsError::ColumnTypeMismatch {
             column: col.to_string(),
             table: "subtable".to_string(),
@@ -290,8 +290,8 @@ pub(crate) fn get_i32(table: &Table, row: usize, col: &str) -> MsResult<i32> {
 
 /// Extract an `f64` from a scalar cell.
 pub(crate) fn get_f64(table: &Table, row: usize, col: &str) -> MsResult<f64> {
-    match table.get_scalar_cell(row, col)? {
-        ScalarValue::Float64(v) => Ok(*v),
+    match table.cell_accessor(row, col)?.scalar()? {
+        &ScalarValue::Float64(v) => Ok(v),
         other => Err(MsError::ColumnTypeMismatch {
             column: col.to_string(),
             table: "subtable".to_string(),
@@ -303,8 +303,8 @@ pub(crate) fn get_f64(table: &Table, row: usize, col: &str) -> MsResult<f64> {
 
 /// Extract a `bool` from a scalar cell.
 pub(crate) fn get_bool(table: &Table, row: usize, col: &str) -> MsResult<bool> {
-    match table.get_scalar_cell(row, col)? {
-        ScalarValue::Bool(v) => Ok(*v),
+    match table.cell_accessor(row, col)?.scalar()? {
+        &ScalarValue::Bool(v) => Ok(v),
         other => Err(MsError::ColumnTypeMismatch {
             column: col.to_string(),
             table: "subtable".to_string(),
@@ -316,7 +316,7 @@ pub(crate) fn get_bool(table: &Table, row: usize, col: &str) -> MsResult<bool> {
 
 /// Extract a `&str` from a scalar cell.
 pub(crate) fn get_string(table: &Table, row: usize, col: &str) -> MsResult<String> {
-    match table.get_scalar_cell(row, col)? {
+    match table.cell_accessor(row, col)?.scalar()? {
         ScalarValue::String(v) => Ok(v.clone()),
         other => Err(MsError::ColumnTypeMismatch {
             column: col.to_string(),
@@ -329,7 +329,7 @@ pub(crate) fn get_string(table: &Table, row: usize, col: &str) -> MsResult<Strin
 
 /// Extract an array cell reference.
 pub(crate) fn get_array<'a>(table: &'a Table, row: usize, col: &str) -> MsResult<&'a ArrayValue> {
-    Ok(table.get_array_cell(row, col)?)
+    Ok(table.cell_accessor(row, col)?.array()?)
 }
 
 /// Extract an optional `i32` from a scalar cell.
@@ -388,7 +388,9 @@ pub(crate) fn set_scalar(
     col: &str,
     value: ScalarValue,
 ) -> MsResult<()> {
-    table.set_cell(row, col, Value::Scalar(value))?;
+    table
+        .cell_accessor_mut(row, col)?
+        .set(Value::Scalar(value))?;
     Ok(())
 }
 
@@ -399,6 +401,8 @@ pub(crate) fn set_array(
     col: &str,
     value: ArrayValue,
 ) -> MsResult<()> {
-    table.set_cell(row, col, Value::Array(value))?;
+    table
+        .cell_accessor_mut(row, col)?
+        .set(Value::Array(value))?;
     Ok(())
 }

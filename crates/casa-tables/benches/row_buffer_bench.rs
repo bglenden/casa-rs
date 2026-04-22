@@ -299,10 +299,14 @@ fn bench_sparse_partial_writes(c: &mut Criterion) {
             || Table::open(TableOptions::new(&incremental_path)).expect("open table"),
             |mut table| {
                 table
-                    .set_scalar_cell_assuming_valid(2, "id", ScalarValue::Int32(2002))
+                    .cell_accessor_mut(2, "id")
+                    .expect("row 2 id accessor")
+                    .set_scalar_assuming_valid(ScalarValue::Int32(2002))
                     .expect("set row 2 id");
                 table
-                    .set_scalar_cell_assuming_valid(4097, "scan", ScalarValue::Int32(9041))
+                    .cell_accessor_mut(4097, "scan")
+                    .expect("row 4097 scan accessor")
+                    .set_scalar_assuming_valid(ScalarValue::Int32(9041))
                     .expect("set row 4097 scan");
                 table
                     .save_selected_rows_in_place_assuming_valid(&["id", "scan"], &[2, 4097])
@@ -321,14 +325,12 @@ fn bench_sparse_partial_writes(c: &mut Criterion) {
                     .map(|offset| 20_000.0 + offset as f32)
                     .collect::<Vec<_>>();
                 table
-                    .set_array_cell_assuming_valid(
-                        1024,
-                        "data",
-                        ArrayValue::Float32(
-                            ArrayD::from_shape_vec(vec![16, 4], values)
-                                .expect("updated sparse tiled shape"),
-                        ),
-                    )
+                    .cell_accessor_mut(1024, "data")
+                    .expect("row 1024 data accessor")
+                    .set_array_assuming_valid(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(vec![16, 4], values)
+                            .expect("updated sparse tiled shape"),
+                    ))
                     .expect("set sparse tiled cell");
                 table
                     .save_selected_rows_in_place_assuming_valid(&["data"], &[1024])
@@ -353,12 +355,14 @@ fn bench_lazy_single_cell_reads(c: &mut Criterion) {
                 let mut acc = 0i64;
                 for row_index in [2usize, 511, 4097, 7001] {
                     let value = table
-                        .get_scalar_cell(row_index, "scan")
+                        .cell_accessor(row_index, "scan")
+                        .expect("scan accessor")
+                        .scalar()
                         .expect("get buffered scalar cell");
-                    let ScalarValue::Int32(value) = value else {
+                    let &ScalarValue::Int32(value) = value else {
                         panic!("expected int32 scalar");
                     };
-                    acc += i64::from(*value);
+                    acc += i64::from(value);
                 }
                 black_box(acc)
             },

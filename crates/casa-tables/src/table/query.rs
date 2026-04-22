@@ -193,8 +193,15 @@ impl Table {
         row: usize,
         slicer: &Slicer,
     ) -> Result<Value, TableError> {
+        let row_count = self.row_count();
         let cell = self
-            .cell(row, column)?
+            .inner
+            .row(row)?
+            .ok_or(TableError::RowOutOfBounds {
+                row_index: row,
+                row_count,
+            })?
+            .get(column)
             .ok_or_else(|| TableError::ColumnNotFound {
                 row_index: row,
                 column: column.to_string(),
@@ -228,7 +235,11 @@ impl Table {
         slicer: &Slicer,
         data: &ArrayValue,
     ) -> Result<(), TableError> {
-        let _ = self.row(row)?;
+        let row_count = self.row_count();
+        let _ = self.inner.row(row)?.ok_or(TableError::RowOutOfBounds {
+            row_index: row,
+            row_count,
+        })?;
         let cell = self
             .inner
             .row_mut(row)?
@@ -618,14 +629,14 @@ where
             return std::cmp::Ordering::Equal;
         }
 
-        let va = match table.cell(a, column) {
+        let va = match table.cell_accessor(a, column).and_then(|cell| cell.value()) {
             Ok(value) => value,
             Err(err) => {
                 *error.borrow_mut() = Some(err);
                 return std::cmp::Ordering::Equal;
             }
         };
-        let vb = match table.cell(b, column) {
+        let vb = match table.cell_accessor(b, column).and_then(|cell| cell.value()) {
             Ok(value) => value,
             Err(err) => {
                 *error.borrow_mut() = Some(err);

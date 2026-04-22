@@ -29,6 +29,146 @@ fn row_with_fixed_arrays(id: i32, data: &[i32], other: &[i32]) -> RecordValue {
     ])
 }
 
+fn table_row(table: &Table, row_index: usize) -> Result<&RecordValue, TableError> {
+    table.row_accessor().row(row_index)
+}
+
+fn table_cell<'a>(
+    table: &'a Table,
+    row_index: usize,
+    column: &str,
+) -> Result<Option<&'a Value>, TableError> {
+    Ok(table.row_accessor().row(row_index)?.get(column))
+}
+
+fn table_scalar<'a>(
+    table: &'a Table,
+    row_index: usize,
+    column: &str,
+) -> Result<&'a ScalarValue, TableError> {
+    table.column_accessor(column)?.scalar_cell(row_index)
+}
+
+fn table_array<'a>(
+    table: &'a Table,
+    row_index: usize,
+    column: &str,
+) -> Result<&'a ArrayValue, TableError> {
+    table.column_accessor(column)?.array_cell(row_index)
+}
+
+fn table_column_cells<'a>(
+    table: &'a Table,
+    column: &str,
+) -> Result<Vec<Option<&'a Value>>, TableError> {
+    table.column_accessor(column)?.cells()
+}
+
+fn table_column_range<'a>(
+    table: &'a Table,
+    column: &str,
+    row_range: RowRange,
+) -> Result<super::ColumnCellIter<'a>, TableError> {
+    table.column_accessor(column)?.iter_range(row_range)
+}
+
+fn table_record_column<'a>(
+    table: &'a Table,
+    column: &str,
+) -> Result<super::RecordColumnIter<'a>, TableError> {
+    table.column_accessor(column)?.record_iter()
+}
+
+fn table_record_column_range<'a>(
+    table: &'a Table,
+    column: &str,
+    row_range: RowRange,
+) -> Result<super::RecordColumnIter<'a>, TableError> {
+    table.column_accessor(column)?.record_iter_range(row_range)
+}
+
+fn table_iter_column_chunks<'a>(
+    table: &'a Table,
+    column: &str,
+    row_range: RowRange,
+    chunk_size: usize,
+) -> Result<super::ColumnChunkIter<'a>, TableError> {
+    table.column_accessor(column)?.chunks(row_range, chunk_size)
+}
+
+fn table_set_cell(
+    table: &mut Table,
+    row_index: usize,
+    column: &str,
+    value: Value,
+) -> Result<(), TableError> {
+    table.cell_accessor_mut(row_index, column)?.set(value)
+}
+
+fn table_set_record_cell(
+    table: &mut Table,
+    row_index: usize,
+    column: &str,
+    value: RecordValue,
+) -> Result<(), TableError> {
+    table
+        .cell_accessor_mut(row_index, column)?
+        .set_record(value)
+}
+
+fn table_put_column_range<I>(
+    table: &mut Table,
+    column: &str,
+    row_range: RowRange,
+    values: I,
+) -> Result<usize, TableError>
+where
+    I: IntoIterator<Item = Value>,
+{
+    table
+        .column_accessor_mut(column)?
+        .put_range(row_range, values)
+}
+
+fn table_set_scalar_assuming_valid(
+    table: &mut Table,
+    row_index: usize,
+    column: &str,
+    value: ScalarValue,
+) -> Result<(), TableError> {
+    table
+        .column_accessor_mut(column)?
+        .set_scalar_assuming_valid(row_index, value)
+}
+
+fn table_set_array_assuming_valid(
+    table: &mut Table,
+    row_index: usize,
+    column: &str,
+    value: ArrayValue,
+) -> Result<(), TableError> {
+    table
+        .column_accessor_mut(column)?
+        .set_array_assuming_valid(row_index, value)
+}
+
+fn table_scalar_cells_owned(
+    table: &Table,
+    column: &str,
+) -> Result<Vec<Option<ScalarValue>>, TableError> {
+    table.column_accessor(column)?.scalar_cells_owned()
+}
+
+fn table_array_cells_owned(
+    table: &Table,
+    column: &str,
+    row_indices: &[usize],
+) -> Result<Vec<Option<ArrayValue>>, TableError> {
+    table
+        .column_accessor(column)?
+        .array_cells_owned(row_indices)
+}
+
 #[test]
 fn table_keeps_rows_in_order() {
     let first = RecordValue::new(vec![RecordField::new(
@@ -57,27 +197,27 @@ fn table_exposes_row_and_column_cell_access() {
     ]);
     let mut table = Table::from_rows(vec![first.clone(), second.clone()]);
 
-    assert_eq!(table.row(0).unwrap(), &first);
+    assert_eq!(table_row(&table, 0).unwrap(), &first);
     assert_eq!(
-        table.cell(1, "id"),
+        table_cell(&table, 1, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
 
-    table
-        .set_cell(
-            1,
-            "name",
-            Value::Scalar(ScalarValue::String("beta".to_string())),
-        )
-        .expect("set cell");
+    table_set_cell(
+        &mut table,
+        1,
+        "name",
+        Value::Scalar(ScalarValue::String("beta".to_string())),
+    )
+    .expect("set cell");
     assert_eq!(
-        table.cell(1, "name"),
+        table_cell(&table, 1, "name"),
         Ok(Some(&Value::Scalar(ScalarValue::String(
             "beta".to_string()
         ))))
     );
 
-    let id_cells = table.column_cells("id").unwrap();
+    let id_cells = table_column_cells(&table, "id").unwrap();
     assert_eq!(
         id_cells,
         vec![
@@ -187,11 +327,11 @@ fn mutable_accessors_update_rows_columns_and_cells() {
     }
 
     assert_eq!(
-        table.get_scalar_cell(0, "id").expect("first id"),
+        table_scalar(&table, 0, "id").expect("first id"),
         &ScalarValue::Int32(1)
     );
     assert_eq!(
-        table.get_array_cell(0, "data").expect("first data"),
+        table_array(&table, 0, "data").expect("first data"),
         &ArrayValue::from_i32_vec(vec![2, 3])
     );
     assert_eq!(
@@ -201,13 +341,13 @@ fn mutable_accessors_update_rows_columns_and_cells() {
             Value::Scalar(ScalarValue::String("old".to_string())),
         )])
     );
-    assert_eq!(table.cell(0, "extra"), Ok(None));
+    assert_eq!(table_cell(&table, 0, "extra"), Ok(None));
     assert_eq!(
-        table.get_scalar_cell(1, "id").expect("id"),
+        table_scalar(&table, 1, "id").expect("id"),
         &ScalarValue::Int32(11)
     );
     assert_eq!(
-        table.get_array_cell(1, "data").expect("data"),
+        table_array(&table, 1, "data").expect("data"),
         &ArrayValue::from_i32_vec(vec![13, 21])
     );
     assert_eq!(
@@ -218,7 +358,7 @@ fn mutable_accessors_update_rows_columns_and_cells() {
         )])
     );
     assert_eq!(
-        table.cell(1, "extra"),
+        table_cell(&table, 1, "extra"),
         Ok(Some(&Value::Scalar(ScalarValue::Bool(true))))
     );
 }
@@ -257,11 +397,11 @@ fn column_range_iteration_supports_stride() {
         .collect();
     let table = Table::from_rows(rows);
 
-    let cells: Vec<(usize, Option<Value>)> = table
-        .get_column_range("id", RowRange::with_stride(1, 6, 2))
-        .expect("get strided range")
-        .map(|cell| (cell.row_index, cell.value.cloned()))
-        .collect();
+    let cells: Vec<(usize, Option<Value>)> =
+        table_column_range(&table, "id", RowRange::with_stride(1, 6, 2))
+            .expect("get strided range")
+            .map(|cell| (cell.row_index, cell.value.cloned()))
+            .collect();
     assert_eq!(
         cells,
         vec![
@@ -279,13 +419,13 @@ fn column_range_rejects_invalid_ranges() {
         Value::Scalar(ScalarValue::Int32(1)),
     )])]);
 
-    let bad_stride = table.get_column_range("id", RowRange::with_stride(0, 1, 0));
+    let bad_stride = table_column_range(&table, "id", RowRange::with_stride(0, 1, 0));
     assert!(matches!(
         bad_stride,
         Err(TableError::InvalidRowStride { stride: 0 })
     ));
 
-    let bad_end = table.get_column_range("id", RowRange::new(0, 2));
+    let bad_end = table_column_range(&table, "id", RowRange::new(0, 2));
     assert!(matches!(
         bad_end,
         Err(TableError::InvalidRowRange {
@@ -381,7 +521,7 @@ fn mutable_selection_sort_and_query_variants_write_through() {
             .unwrap();
     }
     assert_eq!(
-        table.cell(1, "name").unwrap(),
+        table_cell(&table, 1, "name").unwrap(),
         Some(&Value::Scalar(ScalarValue::String("projected".to_string())))
     );
 
@@ -404,7 +544,7 @@ fn mutable_selection_sort_and_query_variants_write_through() {
             .unwrap();
     }
     assert_eq!(
-        table.cell(1, "name").unwrap(),
+        table_cell(&table, 1, "name").unwrap(),
         Some(&Value::Scalar(ScalarValue::String("selected".to_string())))
     );
 
@@ -420,7 +560,7 @@ fn mutable_selection_sort_and_query_variants_write_through() {
             .unwrap();
     }
     assert_eq!(
-        table.cell(2, "name").unwrap(),
+        table_cell(&table, 2, "name").unwrap(),
         Some(&Value::Scalar(ScalarValue::String("sorted".to_string())))
     );
 
@@ -443,7 +583,7 @@ fn mutable_selection_sort_and_query_variants_write_through() {
             .unwrap();
     }
     assert_eq!(
-        table.cell(1, "name").unwrap(),
+        table_cell(&table, 1, "name").unwrap(),
         Some(&Value::Scalar(ScalarValue::String("custom".to_string())))
     );
 
@@ -458,7 +598,7 @@ fn mutable_selection_sort_and_query_variants_write_through() {
             .unwrap();
     }
     assert_eq!(
-        table.cell(0, "name").unwrap(),
+        table_cell(&table, 0, "name").unwrap(),
         Some(&Value::Scalar(ScalarValue::String("queried".to_string())))
     );
 
@@ -474,7 +614,7 @@ fn mutable_selection_sort_and_query_variants_write_through() {
             .unwrap();
     }
     assert_eq!(
-        table.cell(2, "name").unwrap(),
+        table_cell(&table, 2, "name").unwrap(),
         Some(&Value::Scalar(ScalarValue::String(
             "projected_query".to_string()
         )))
@@ -540,11 +680,11 @@ fn lazy_materialization_failures_return_storage_errors() {
     let reopened = Table::open(TableOptions::new(&path)).unwrap();
     assert_eq!(reopened.row_count(), 1);
     assert!(matches!(
-        reopened.row(0),
+        table_row(&reopened, 0),
         Err(TableError::Storage(msg)) if msg.contains("failed to materialize rows")
     ));
     assert!(matches!(
-        reopened.cell(0, "id"),
+        table_cell(&reopened, 0, "id"),
         Err(TableError::Storage(msg)) if msg.contains("failed to materialize rows")
     ));
 
@@ -581,12 +721,8 @@ fn sort_by_reports_missing_columns_and_orders_defined_before_undefined() {
             None,
         )
         .unwrap();
-    table
-        .set_cell(0, "opt", Value::Scalar(ScalarValue::Int32(10)))
-        .unwrap();
-    table
-        .set_cell(2, "opt", Value::Scalar(ScalarValue::Int32(5)))
-        .unwrap();
+    table_set_cell(&mut table, 0, "opt", Value::Scalar(ScalarValue::Int32(10))).unwrap();
+    table_set_cell(&mut table, 2, "opt", Value::Scalar(ScalarValue::Int32(5))).unwrap();
 
     let sorted = table
         .sort_by("opt", |a, b| match (a, b) {
@@ -699,11 +835,11 @@ fn record_column_range_defaults_missing_cells_for_record_schema() {
     ];
     let table = Table::from_rows_with_schema(rows, schema).expect("schema-valid rows");
 
-    let cells: Vec<(usize, RecordValue)> = table
-        .get_record_column_range("meta", RowRange::new(0, 3))
-        .expect("iterate record column")
-        .map(|cell| (cell.row_index, cell.value))
-        .collect();
+    let cells: Vec<(usize, RecordValue)> =
+        table_record_column_range(&table, "meta", RowRange::new(0, 3))
+            .expect("iterate record column")
+            .map(|cell| (cell.row_index, cell.value))
+            .collect();
 
     assert_eq!(
         cells,
@@ -720,7 +856,7 @@ fn record_column_range_without_schema_requires_all_rows_present() {
     let table = Table::from_rows(vec![record, RecordValue::new(vec![])]);
 
     assert_eq!(
-        table.get_record_column("meta").map(|iter| iter.count()),
+        table_record_column(&table, "meta").map(|iter| iter.count()),
         Err(TableError::ColumnNotFound {
             row_index: 1,
             column: "meta".to_string(),
@@ -742,7 +878,7 @@ fn record_column_range_rejects_non_record_cells() {
     ]);
 
     assert_eq!(
-        table.get_record_column("meta").map(|iter| iter.count()),
+        table_record_column(&table, "meta").map(|iter| iter.count()),
         Err(TableError::ColumnTypeMismatch {
             row_index: 1,
             column: "meta".to_string(),
@@ -765,9 +901,7 @@ fn set_record_cell_updates_row() {
         Value::Scalar(ScalarValue::Int32(42)),
     )]);
 
-    table
-        .set_record_cell(0, "meta", payload.clone())
-        .expect("set record cell");
+    table_set_record_cell(&mut table, 0, "meta", payload.clone()).expect("set record cell");
     assert_eq!(table.record_cell(0, "meta"), Ok(payload));
 }
 
@@ -829,30 +963,30 @@ fn put_column_range_streams_values_without_column_vecs() {
         )]),
     ]);
 
-    let written = table
-        .put_column_range(
-            "name",
-            RowRange::with_stride(0, 4, 2),
-            ["x", "y"]
-                .into_iter()
-                .map(|value| Value::Scalar(ScalarValue::String(value.to_string()))),
-        )
-        .expect("put strided range");
+    let written = table_put_column_range(
+        &mut table,
+        "name",
+        RowRange::with_stride(0, 4, 2),
+        ["x", "y"]
+            .into_iter()
+            .map(|value| Value::Scalar(ScalarValue::String(value.to_string()))),
+    )
+    .expect("put strided range");
     assert_eq!(written, 2);
     assert_eq!(
-        table.cell(0, "name"),
+        table_cell(&table, 0, "name"),
         Ok(Some(&Value::Scalar(ScalarValue::String("x".to_string()))))
     );
     assert_eq!(
-        table.cell(1, "name"),
+        table_cell(&table, 1, "name"),
         Ok(Some(&Value::Scalar(ScalarValue::String("b".to_string()))))
     );
     assert_eq!(
-        table.cell(2, "name"),
+        table_cell(&table, 2, "name"),
         Ok(Some(&Value::Scalar(ScalarValue::String("y".to_string()))))
     );
     assert_eq!(
-        table.cell(3, "name"),
+        table_cell(&table, 3, "name"),
         Ok(Some(&Value::Scalar(ScalarValue::String("d".to_string()))))
     );
 }
@@ -874,7 +1008,8 @@ fn put_column_range_checks_value_count() {
         )]),
     ]);
 
-    let too_few = table.put_column_range(
+    let too_few = table_put_column_range(
+        &mut table,
         "name",
         RowRange::new(0, 3),
         ["x", "y"]
@@ -903,7 +1038,8 @@ fn put_column_range_checks_value_count() {
             Value::Scalar(ScalarValue::String("c".to_string())),
         )]),
     ]);
-    let too_many = table.put_column_range(
+    let too_many = table_put_column_range(
+        &mut table,
         "name",
         RowRange::new(0, 3),
         ["x", "y", "z", "w"]
@@ -981,7 +1117,12 @@ fn variable_array_schema_allows_undefined_and_checks_ndim() {
     let two_d = Array2::from_shape_vec((1, 2), vec![4, 5])
         .expect("shape")
         .into_dyn();
-    let error = table.set_cell(0, "payload", Value::Array(ArrayValue::Int32(two_d)));
+    let error = table_set_cell(
+        &mut table,
+        0,
+        "payload",
+        Value::Array(ArrayValue::Int32(two_d)),
+    );
     assert_eq!(
         error,
         Err(TableError::ArrayNdimMismatch {
@@ -1023,7 +1164,7 @@ fn table_schema_round_trips_through_disk_storage() {
     assert_eq!(reopened.row_count(), 1);
     assert_eq!(reopened.schema(), Some(&schema));
     assert_eq!(
-        reopened.cell(0, "id"),
+        table_cell(&reopened, 0, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
@@ -1061,7 +1202,7 @@ fn table_keywords_round_trip_through_disk_storage() {
 
     assert_eq!(reopened.row_count(), 1);
     assert_eq!(
-        reopened.cell(0, "id"),
+        table_cell(&reopened, 0, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
@@ -1152,11 +1293,11 @@ fn metadata_only_save_updates_keywords_without_rewriting_row_storage() {
         Some(&Value::Scalar(ScalarValue::String("after".to_string())))
     );
     assert_eq!(
-        reopened.cell(0, "id"),
+        table_cell(&reopened, 0, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
-        reopened.cell(0, "data"),
+        table_cell(&reopened, 0, "data"),
         Ok(Some(&Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))))
     );
 
@@ -1175,22 +1316,22 @@ fn iter_column_chunks_batches_rows() {
         .collect();
     let table = Table::from_rows(rows);
 
-    let chunks: Vec<Vec<(usize, i32)>> = table
-        .iter_column_chunks("id", RowRange::new(0, 7), 3)
-        .expect("chunk iter")
-        .map(|chunk| {
-            chunk
-                .into_iter()
-                .map(|cell| {
-                    let v = match cell.value {
-                        Some(Value::Scalar(ScalarValue::Int32(n))) => n,
-                        _ => panic!("expected i32"),
-                    };
-                    (cell.row_index, *v)
-                })
-                .collect()
-        })
-        .collect();
+    let chunks: Vec<Vec<(usize, i32)>> =
+        table_iter_column_chunks(&table, "id", RowRange::new(0, 7), 3)
+            .expect("chunk iter")
+            .map(|chunk| {
+                chunk
+                    .into_iter()
+                    .map(|cell| {
+                        let v = match cell.value {
+                            Some(Value::Scalar(ScalarValue::Int32(n))) => n,
+                            _ => panic!("expected i32"),
+                        };
+                        (cell.row_index, *v)
+                    })
+                    .collect()
+            })
+            .collect();
 
     assert_eq!(
         chunks,
@@ -1214,11 +1355,11 @@ fn iter_column_chunks_with_stride() {
         .collect();
     let table = Table::from_rows(rows);
 
-    let chunks: Vec<Vec<usize>> = table
-        .iter_column_chunks("id", RowRange::with_stride(0, 6, 2), 2)
-        .expect("chunk iter")
-        .map(|chunk| chunk.into_iter().map(|cell| cell.row_index).collect())
-        .collect();
+    let chunks: Vec<Vec<usize>> =
+        table_iter_column_chunks(&table, "id", RowRange::with_stride(0, 6, 2), 2)
+            .expect("chunk iter")
+            .map(|chunk| chunk.into_iter().map(|cell| cell.row_index).collect())
+            .collect();
 
     assert_eq!(chunks, vec![vec![0, 2], vec![4]]);
 }
@@ -1231,7 +1372,7 @@ fn get_array_cell_returns_borrow() {
         Value::Array(array.clone()),
     )])]);
 
-    let borrowed = table.get_array_cell(0, "data").expect("get array cell");
+    let borrowed = table_array(&table, 0, "data").expect("get array cell");
     assert_eq!(borrowed, &array);
 }
 
@@ -1243,7 +1384,7 @@ fn get_array_cell_rejects_non_array() {
     )])]);
 
     assert!(matches!(
-        table.get_array_cell(0, "id"),
+        table_array(&table, 0, "id"),
         Err(TableError::ColumnTypeMismatch { .. })
     ));
 }
@@ -1253,7 +1394,7 @@ fn get_array_cell_rejects_missing() {
     let table = Table::from_rows(vec![RecordValue::new(vec![])]);
 
     assert!(matches!(
-        table.get_array_cell(0, "data"),
+        table_array(&table, 0, "data"),
         Err(TableError::ColumnNotFound { .. })
     ));
 }
@@ -1265,7 +1406,7 @@ fn get_scalar_cell_returns_borrow() {
         Value::Scalar(ScalarValue::Int32(42)),
     )])]);
 
-    let borrowed = table.get_scalar_cell(0, "id").expect("get scalar cell");
+    let borrowed = table_scalar(&table, 0, "id").expect("get scalar cell");
     assert_eq!(borrowed, &ScalarValue::Int32(42));
 }
 
@@ -1299,7 +1440,7 @@ fn lazy_disk_open_reads_cells_without_materializing_rows() {
         let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
         assert!(!reopened.inner.has_loaded_rows());
         assert_eq!(
-            reopened.get_scalar_cell(0, "id").expect("scalar access"),
+            table_scalar(&reopened, 0, "id").expect("scalar access"),
             &ScalarValue::Int32(42)
         );
         assert!(
@@ -1307,7 +1448,7 @@ fn lazy_disk_open_reads_cells_without_materializing_rows() {
             "scalar access should not force row materialization for {dm:?}"
         );
 
-        let array = reopened.get_array_cell(0, "data").expect("array access");
+        let array = table_array(&reopened, 0, "data").expect("array access");
         assert_eq!(array, &ArrayValue::from_i32_vec(vec![7, 9]));
         assert!(
             !reopened.inner.has_loaded_rows(),
@@ -1471,15 +1612,11 @@ fn prepared_row_writer_reuses_buffer_and_keeps_sparse_updates() {
             "prepared row writes should not touch unrelated array columns for {dm:?}"
         );
         assert_eq!(
-            reopened
-                .get_scalar_cell(0, "id")
-                .expect("buffered scalar row 0"),
+            table_scalar(&reopened, 0, "id").expect("buffered scalar row 0"),
             &ScalarValue::Int32(10)
         );
         assert_eq!(
-            reopened
-                .get_scalar_cell(1, "id")
-                .expect("buffered scalar row 1"),
+            table_scalar(&reopened, 1, "id").expect("buffered scalar row 1"),
             &ScalarValue::Int32(20)
         );
 
@@ -1489,27 +1626,27 @@ fn prepared_row_writer_reuses_buffer_and_keeps_sparse_updates() {
 
         let verify = Table::open(TableOptions::new(&root)).expect("reopen after prepared writes");
         assert_eq!(
-            verify.get_scalar_cell(0, "id").expect("id row 0"),
+            table_scalar(&verify, 0, "id").expect("id row 0"),
             &ScalarValue::Int32(10)
         );
         assert_eq!(
-            verify.get_scalar_cell(1, "id").expect("id row 1"),
+            table_scalar(&verify, 1, "id").expect("id row 1"),
             &ScalarValue::Int32(20)
         );
         assert_eq!(
-            verify.get_array_cell(0, "data").expect("data row 0"),
+            table_array(&verify, 0, "data").expect("data row 0"),
             &ArrayValue::from_i32_vec(vec![70, 90])
         );
         assert_eq!(
-            verify.get_array_cell(1, "data").expect("data row 1"),
+            table_array(&verify, 1, "data").expect("data row 1"),
             &ArrayValue::from_i32_vec(vec![110, 130])
         );
         assert_eq!(
-            verify.get_array_cell(0, "other").expect("other row 0"),
+            table_array(&verify, 0, "other").expect("other row 0"),
             &ArrayValue::from_i32_vec(vec![100, 200])
         );
         assert_eq!(
-            verify.get_array_cell(1, "other").expect("other row 1"),
+            table_array(&verify, 1, "other").expect("other row 1"),
             &ArrayValue::from_i32_vec(vec![300, 400])
         );
 
@@ -1591,19 +1728,19 @@ fn prepared_row_writer_seek_keeps_buffer_unmaterialized_and_direct_writes_cohere
 
         let verify = Table::open(TableOptions::new(&root)).expect("reopen after prepared writes");
         assert_eq!(
-            verify.get_scalar_cell(0, "id").expect("id row 0"),
+            table_scalar(&verify, 0, "id").expect("id row 0"),
             &ScalarValue::Int32(10)
         );
         assert_eq!(
-            verify.get_scalar_cell(1, "id").expect("id row 1"),
+            table_scalar(&verify, 1, "id").expect("id row 1"),
             &ScalarValue::Int32(20)
         );
         assert_eq!(
-            verify.get_array_cell(0, "data").expect("data row 0"),
+            table_array(&verify, 0, "data").expect("data row 0"),
             &ArrayValue::from_i32_vec(vec![70, 90])
         );
         assert_eq!(
-            verify.get_array_cell(1, "data").expect("data row 1"),
+            table_array(&verify, 1, "data").expect("data row 1"),
             &ArrayValue::from_i32_vec(vec![3, 4])
         );
 
@@ -1640,25 +1777,27 @@ fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
             .expect("save disk-backed table");
 
         let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
-        reopened
-            .set_scalar_cell_assuming_valid(0, "id", ScalarValue::Int32(10))
+        table_set_scalar_assuming_valid(&mut reopened, 0, "id", ScalarValue::Int32(10))
             .expect("pending scalar update");
-        reopened
-            .set_array_cell_assuming_valid(0, "data", ArrayValue::from_i32_vec(vec![70, 90]))
-            .expect("pending array update");
+        table_set_array_assuming_valid(
+            &mut reopened,
+            0,
+            "data",
+            ArrayValue::from_i32_vec(vec![70, 90]),
+        )
+        .expect("pending array update");
 
-        reopened
-            .get_scalar_cell(1, "id")
-            .expect("prime scalar cache");
-        reopened
-            .get_array_cell(1, "data")
-            .expect("prime array cache");
-        reopened
-            .set_scalar_cell_assuming_valid(1, "id", ScalarValue::Int32(20))
+        table_scalar(&reopened, 1, "id").expect("prime scalar cache");
+        table_array(&reopened, 1, "data").expect("prime array cache");
+        table_set_scalar_assuming_valid(&mut reopened, 1, "id", ScalarValue::Int32(20))
             .expect("cached scalar update");
-        reopened
-            .set_array_cell_assuming_valid(1, "data", ArrayValue::from_i32_vec(vec![110, 130]))
-            .expect("cached array update");
+        table_set_array_assuming_valid(
+            &mut reopened,
+            1,
+            "data",
+            ArrayValue::from_i32_vec(vec![110, 130]),
+        )
+        .expect("cached array update");
 
         let mut prepared = reopened
             .row_accessor()
@@ -1793,9 +1932,7 @@ fn lazy_disk_open_reads_scalar_column_owned_without_materializing_rows() {
         let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
         assert!(!reopened.inner.has_loaded_rows());
 
-        let values = reopened
-            .get_scalar_cells_owned("scan")
-            .expect("read scalar column");
+        let values = table_scalar_cells_owned(&reopened, "scan").expect("read scalar column");
         assert_eq!(
             values,
             vec![Some(ScalarValue::Int32(10)), Some(ScalarValue::Int32(20))]
@@ -1848,24 +1985,23 @@ fn lazy_disk_open_mutates_and_partially_saves_without_materializing_rows() {
         let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
         assert!(!reopened.inner.has_loaded_rows());
         assert_eq!(
-            reopened
-                .get_scalar_cell(0, "id")
-                .expect("prefetch id row 0"),
+            table_scalar(&reopened, 0, "id").expect("prefetch id row 0"),
             &ScalarValue::Int32(1)
         );
         assert_eq!(
-            reopened
-                .get_scalar_cell(1, "scan")
-                .expect("prefetch scan row 1"),
+            table_scalar(&reopened, 1, "scan").expect("prefetch scan row 1"),
             &ScalarValue::Int32(20)
         );
 
-        reopened
-            .set_scalar_cell_assuming_valid(1, "id", ScalarValue::Int32(22))
+        table_set_scalar_assuming_valid(&mut reopened, 1, "id", ScalarValue::Int32(22))
             .expect("set scalar cell lazily");
-        reopened
-            .set_array_cell_assuming_valid(0, "data", ArrayValue::from_i32_vec(vec![70, 90]))
-            .expect("set array cell lazily");
+        table_set_array_assuming_valid(
+            &mut reopened,
+            0,
+            "data",
+            ArrayValue::from_i32_vec(vec![70, 90]),
+        )
+        .expect("set array cell lazily");
         assert!(
             !reopened.inner.has_loaded_rows(),
             "lazy mutation should not force row materialization for {dm:?}"
@@ -1890,27 +2026,27 @@ fn lazy_disk_open_mutates_and_partially_saves_without_materializing_rows() {
         let verify = Table::open(TableOptions::new(&root)).expect("reopen after partial save");
         assert!(!verify.inner.has_loaded_rows());
         assert_eq!(
-            verify.get_scalar_cell(0, "id").expect("id row 0"),
+            table_scalar(&verify, 0, "id").expect("id row 0"),
             &ScalarValue::Int32(1)
         );
         assert_eq!(
-            verify.get_scalar_cell(1, "id").expect("id row 1"),
+            table_scalar(&verify, 1, "id").expect("id row 1"),
             &ScalarValue::Int32(22)
         );
         assert_eq!(
-            verify.get_scalar_cell(0, "scan").expect("scan row 0"),
+            table_scalar(&verify, 0, "scan").expect("scan row 0"),
             &ScalarValue::Int32(10)
         );
         assert_eq!(
-            verify.get_scalar_cell(1, "scan").expect("scan row 1"),
+            table_scalar(&verify, 1, "scan").expect("scan row 1"),
             &ScalarValue::Int32(20)
         );
         assert_eq!(
-            verify.get_array_cell(0, "data").expect("data row 0"),
+            table_array(&verify, 0, "data").expect("data row 0"),
             &ArrayValue::from_i32_vec(vec![70, 90])
         );
         assert_eq!(
-            verify.get_array_cell(1, "data").expect("data row 1"),
+            table_array(&verify, 1, "data").expect("data row 1"),
             &ArrayValue::from_i32_vec(vec![11, 13])
         );
 
@@ -1958,9 +2094,8 @@ fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column()
     assert!(!reopened.inner.has_loaded_rows());
     assert!(!reopened.inner.has_loaded_array_column("data"));
 
-    let selected = reopened
-        .get_array_cells_owned("data", &[5, 2, 4])
-        .expect("read selected array cells");
+    let selected =
+        table_array_cells_owned(&reopened, "data", &[5, 2, 4]).expect("read selected array cells");
     assert_eq!(
         selected,
         vec![
@@ -2242,11 +2377,11 @@ fn lazy_disk_open_reads_scalar_cells_with_full_scalar_column_cache() {
         assert!(!reopened.inner.has_loaded_scalar_column("scan"));
 
         assert_eq!(
-            reopened.get_scalar_cell(3, "id").expect("id row 3"),
+            table_scalar(&reopened, 3, "id").expect("id row 3"),
             &ScalarValue::Int32(4)
         );
         assert_eq!(
-            reopened.get_scalar_cell(1, "scan").expect("scan row 1"),
+            table_scalar(&reopened, 1, "scan").expect("scan row 1"),
             &ScalarValue::Int32(20)
         );
         assert!(
@@ -2309,20 +2444,19 @@ fn partial_save_with_changed_rows_patches_stman_aipsio_indirect_arrays() {
         .expect("save disk-backed table");
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
-    reopened
-        .set_scalar_cell_assuming_valid(1, "flag_row", ScalarValue::Bool(true))
+    table_set_scalar_assuming_valid(&mut reopened, 1, "flag_row", ScalarValue::Bool(true))
         .expect("set flag_row");
-    reopened
-        .set_array_cell_assuming_valid(
-            1,
-            "data",
-            ArrayValue::Float32(
-                ndarray::Array2::from_shape_vec((1, 3), vec![50.0, 60.0, 70.0])
-                    .expect("updated row 1 shape")
-                    .into_dyn(),
-            ),
-        )
-        .expect("set indirect data");
+    table_set_array_assuming_valid(
+        &mut reopened,
+        1,
+        "data",
+        ArrayValue::Float32(
+            ndarray::Array2::from_shape_vec((1, 3), vec![50.0, 60.0, 70.0])
+                .expect("updated row 1 shape")
+                .into_dyn(),
+        ),
+    )
+    .expect("set indirect data");
     assert!(!reopened.inner.has_loaded_rows());
     assert!(reopened.inner.has_pending_array_cells("data"));
 
@@ -2332,15 +2466,15 @@ fn partial_save_with_changed_rows_patches_stman_aipsio_indirect_arrays() {
 
     let verify = Table::open(TableOptions::new(&root)).expect("reopen after partial save");
     assert_eq!(
-        verify.get_scalar_cell(0, "flag_row").expect("row 0 flag"),
+        table_scalar(&verify, 0, "flag_row").expect("row 0 flag"),
         &ScalarValue::Bool(false)
     );
     assert_eq!(
-        verify.get_scalar_cell(1, "flag_row").expect("row 1 flag"),
+        table_scalar(&verify, 1, "flag_row").expect("row 1 flag"),
         &ScalarValue::Bool(true)
     );
     assert_eq!(
-        verify.get_array_cell(0, "data").expect("row 0 data"),
+        table_array(&verify, 0, "data").expect("row 0 data"),
         &ArrayValue::Float32(
             ndarray::Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0])
                 .expect("verify row 0 shape")
@@ -2348,7 +2482,7 @@ fn partial_save_with_changed_rows_patches_stman_aipsio_indirect_arrays() {
         )
     );
     assert_eq!(
-        verify.get_array_cell(1, "data").expect("row 1 data"),
+        table_array(&verify, 1, "data").expect("row 1 data"),
         &ArrayValue::Float32(
             ndarray::Array2::from_shape_vec((1, 3), vec![50.0, 60.0, 70.0])
                 .expect("verify row 1 shape")
@@ -2389,9 +2523,8 @@ fn lazy_disk_open_reads_selected_indirect_array_cells_without_loading_full_stman
         .expect("save disk-backed table");
 
     let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
-    let values = reopened
-        .get_array_cells_owned("data", &[2, 1])
-        .expect("selected indirect array rows");
+    let values =
+        table_array_cells_owned(&reopened, "data", &[2, 1]).expect("selected indirect array rows");
 
     assert_eq!(
         values,
@@ -2451,41 +2584,41 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_rows() {
         .expect("save tiled-shape table");
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open tiled-shape table");
-    reopened
-        .set_array_cell_assuming_valid(
-            2,
-            "data",
-            ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![4, 1], vec![200.0, 210.0, 220.0, 230.0])
-                    .expect("shape updated data"),
-            ),
-        )
-        .expect("set array cell lazily");
+    table_set_array_assuming_valid(
+        &mut reopened,
+        2,
+        "data",
+        ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![4, 1], vec![200.0, 210.0, 220.0, 230.0])
+                .expect("shape updated data"),
+        ),
+    )
+    .expect("set array cell lazily");
     reopened
         .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
         .expect("partial save with row hint");
 
     let verify = Table::open(TableOptions::new(&root)).expect("reopen after sparse partial save");
     assert_eq!(
-        verify.get_array_cell(0, "data").expect("data row 0"),
+        table_array(&verify, 0, "data").expect("data row 0"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![4, 1], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(1, "data").expect("data row 1"),
+        table_array(&verify, 1, "data").expect("data row 1"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![4, 1], vec![1.0, 11.0, 21.0, 31.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(2, "data").expect("data row 2"),
+        table_array(&verify, 2, "data").expect("data row 2"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![4, 1], vec![200.0, 210.0, 220.0, 230.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(3, "data").expect("data row 3"),
+        table_array(&verify, 3, "data").expect("data row 3"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![4, 1], vec![3.0, 13.0, 23.0, 33.0]).unwrap()
         )
@@ -2567,26 +2700,26 @@ fn partial_save_with_changed_rows_patches_only_touched_multi_column_tiled_rows()
             .any(|column| column == "WEIGHT")
     );
 
-    reopened
-        .set_array_cell_assuming_valid(
-            1,
-            "DATA",
-            ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![2, 2], vec![201.0, 211.0, 221.0, 231.0])
-                    .expect("shape updated DATA"),
-            ),
-        )
-        .expect("set DATA lazily");
-    reopened
-        .set_array_cell_assuming_valid(
-            2,
-            "WEIGHT",
-            ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![2, 2], vec![302.0, 312.0, 322.0, 332.0])
-                    .expect("shape updated WEIGHT"),
-            ),
-        )
-        .expect("set WEIGHT lazily");
+    table_set_array_assuming_valid(
+        &mut reopened,
+        1,
+        "DATA",
+        ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![201.0, 211.0, 221.0, 231.0])
+                .expect("shape updated DATA"),
+        ),
+    )
+    .expect("set DATA lazily");
+    table_set_array_assuming_valid(
+        &mut reopened,
+        2,
+        "WEIGHT",
+        ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![302.0, 312.0, 322.0, 332.0])
+                .expect("shape updated WEIGHT"),
+        ),
+    )
+    .expect("set WEIGHT lazily");
     assert!(!reopened.inner.has_loaded_rows());
     assert!(reopened.inner.has_pending_array_cells("DATA"));
     assert!(reopened.inner.has_pending_array_cells("WEIGHT"));
@@ -2611,37 +2744,37 @@ fn partial_save_with_changed_rows_patches_only_touched_multi_column_tiled_rows()
 
     let verify = Table::open(TableOptions::new(&root)).expect("reopen after sparse partial save");
     assert_eq!(
-        verify.get_array_cell(0, "DATA").expect("DATA row 0"),
+        table_array(&verify, 0, "DATA").expect("DATA row 0"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(1, "DATA").expect("DATA row 1"),
+        table_array(&verify, 1, "DATA").expect("DATA row 1"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![201.0, 211.0, 221.0, 231.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(2, "DATA").expect("DATA row 2"),
+        table_array(&verify, 2, "DATA").expect("DATA row 2"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![2.0, 12.0, 22.0, 32.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(1, "WEIGHT").expect("WEIGHT row 1"),
+        table_array(&verify, 1, "WEIGHT").expect("WEIGHT row 1"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![101.0, 111.0, 121.0, 131.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(2, "WEIGHT").expect("WEIGHT row 2"),
+        table_array(&verify, 2, "WEIGHT").expect("WEIGHT row 2"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![302.0, 312.0, 322.0, 332.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(3, "WEIGHT").expect("WEIGHT row 3"),
+        table_array(&verify, 3, "WEIGHT").expect("WEIGHT row 3"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![103.0, 113.0, 123.0, 133.0]).unwrap()
         )
@@ -2687,16 +2820,16 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_cell_rows() {
         .expect("save tiled-cell table");
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open tiled-cell table");
-    reopened
-        .set_array_cell_assuming_valid(
-            2,
-            "data",
-            ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![2, 2], vec![202.0, 212.0, 222.0, 232.0])
-                    .expect("shape updated data"),
-            ),
-        )
-        .expect("set array cell lazily");
+    table_set_array_assuming_valid(
+        &mut reopened,
+        2,
+        "data",
+        ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![202.0, 212.0, 222.0, 232.0])
+                .expect("shape updated data"),
+        ),
+    )
+    .expect("set array cell lazily");
     assert!(!reopened.inner.has_loaded_rows());
     assert!(reopened.inner.has_pending_array_cells("data"));
     assert!(!reopened.inner.has_loaded_array_column("data"));
@@ -2715,19 +2848,19 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_cell_rows() {
 
     let verify = Table::open(TableOptions::new(&root)).expect("reopen after sparse partial save");
     assert_eq!(
-        verify.get_array_cell(0, "data").expect("data row 0"),
+        table_array(&verify, 0, "data").expect("data row 0"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(2, "data").expect("data row 2"),
+        table_array(&verify, 2, "data").expect("data row 2"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![202.0, 212.0, 222.0, 232.0]).unwrap()
         )
     );
     assert_eq!(
-        verify.get_array_cell(3, "data").expect("data row 3"),
+        table_array(&verify, 3, "data").expect("data row 3"),
         &ArrayValue::Float32(
             ArrayD::from_shape_vec(vec![2, 2], vec![3.0, 13.0, 23.0, 33.0]).unwrap()
         )
@@ -2767,11 +2900,9 @@ fn partial_save_with_changed_rows_patches_only_touched_incremental_rows() {
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open incremental table");
     assert!(!reopened.inner.has_loaded_rows());
-    reopened
-        .set_scalar_cell_assuming_valid(2, "id", ScalarValue::Int32(2002))
+    table_set_scalar_assuming_valid(&mut reopened, 2, "id", ScalarValue::Int32(2002))
         .expect("set row 2 id");
-    reopened
-        .set_scalar_cell_assuming_valid(41, "scan", ScalarValue::Int32(9041))
+    table_set_scalar_assuming_valid(&mut reopened, 41, "scan", ScalarValue::Int32(9041))
         .expect("set row 41 scan");
     reopened
         .save_selected_rows_in_place_assuming_valid(&["id", "scan"], &[2, 41])
@@ -2792,27 +2923,27 @@ fn partial_save_with_changed_rows_patches_only_touched_incremental_rows() {
     let verify =
         Table::open(TableOptions::new(&root)).expect("reopen after sparse incremental save");
     assert_eq!(
-        verify.get_scalar_cell(1, "id").expect("id row 1"),
+        table_scalar(&verify, 1, "id").expect("id row 1"),
         &ScalarValue::Int32(1)
     );
     assert_eq!(
-        verify.get_scalar_cell(2, "id").expect("id row 2"),
+        table_scalar(&verify, 2, "id").expect("id row 2"),
         &ScalarValue::Int32(2002)
     );
     assert_eq!(
-        verify.get_scalar_cell(40, "scan").expect("scan row 40"),
+        table_scalar(&verify, 40, "scan").expect("scan row 40"),
         &ScalarValue::Int32(50)
     );
     assert_eq!(
-        verify.get_scalar_cell(41, "scan").expect("scan row 41"),
+        table_scalar(&verify, 41, "scan").expect("scan row 41"),
         &ScalarValue::Int32(9041)
     );
     assert_eq!(
-        verify.get_scalar_cell(42, "scan").expect("scan row 42"),
+        table_scalar(&verify, 42, "scan").expect("scan row 42"),
         &ScalarValue::Int32(50)
     );
     assert_eq!(
-        verify.get_scalar_cell(41, "state").expect("state row 41"),
+        table_scalar(&verify, 41, "state").expect("state row 41"),
         &ScalarValue::Int32(2)
     );
 
@@ -2827,7 +2958,7 @@ fn get_scalar_cell_rejects_non_scalar() {
     )])]);
 
     assert!(matches!(
-        table.get_scalar_cell(0, "data"),
+        table_scalar(&table, 0, "data"),
         Err(TableError::ColumnTypeMismatch { .. })
     ));
 }
@@ -2885,19 +3016,19 @@ fn build_endian_test_table() -> Table {
 fn verify_endian_test_table(t: &Table) {
     assert_eq!(t.row_count(), 2);
     assert_eq!(
-        t.cell(0, "i32_col"),
+        table_cell(t, 0, "i32_col"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
-        t.cell(0, "f64_col"),
+        table_cell(t, 0, "f64_col"),
         Ok(Some(&Value::Scalar(ScalarValue::Float64(2.78))))
     );
     assert_eq!(
-        t.cell(0, "str_col"),
+        table_cell(t, 0, "str_col"),
         Ok(Some(&Value::Scalar(ScalarValue::String("hello".into()))))
     );
     assert_eq!(
-        t.cell(1, "i32_col"),
+        table_cell(t, 1, "i32_col"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(-7))))
     );
 }
@@ -3090,8 +3221,8 @@ fn assert_save_with_bindings_preserves_scalar_values_when_row_field_order_varies
         .expect("save with bindings");
 
     let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
-    let row0 = reopened.row(0).expect("row 0");
-    let row1 = reopened.row(1).expect("row 1");
+    let row0 = table_row(&reopened, 0).expect("row 0");
+    let row1 = table_row(&reopened, 1).expect("row 1");
     assert_eq!(row0.get("A"), Some(&Value::Scalar(ScalarValue::Int32(10))));
     assert_eq!(row0.get("B"), Some(&Value::Scalar(ScalarValue::Int32(20))));
     assert_eq!(row1.get("A"), Some(&Value::Scalar(ScalarValue::Int32(30))));
@@ -3143,8 +3274,7 @@ fn fixed_shape_indirect_array_round_trips_through_disk() {
             .save(TableOptions::new(&root).with_data_manager(dm))
             .expect("save");
         let reopened = Table::open(TableOptions::new(&root)).expect("open");
-        match reopened
-            .cell(0, "data")
+        match table_cell(&reopened, 0, "data")
             .expect("row0 data")
             .expect("row0 data defined")
         {
@@ -3153,8 +3283,7 @@ fn fixed_shape_indirect_array_round_trips_through_disk() {
             }
             other => panic!("unexpected row0 value: {other:?}"),
         }
-        match reopened
-            .cell(1, "data")
+        match table_cell(&reopened, 1, "data")
             .expect("row1 data")
             .expect("row1 data defined")
         {
@@ -3236,13 +3365,13 @@ fn ism_slowly_changing() {
     let reopened = Table::open(TableOptions::new(&root)).expect("reopen");
     assert_eq!(reopened.row_count(), 10);
     for (i, (&expected_scan, &expected_flag)) in scans.iter().zip(flags.iter()).enumerate() {
-        let scan = reopened.get_scalar_cell(i, "SCAN_NUMBER").unwrap();
+        let scan = table_scalar(&reopened, i, "SCAN_NUMBER").unwrap();
         assert_eq!(
             *scan,
             ScalarValue::Int32(expected_scan),
             "row {i} SCAN_NUMBER"
         );
-        let flag = reopened.get_scalar_cell(i, "FLAG").unwrap();
+        let flag = table_scalar(&reopened, i, "FLAG").unwrap();
         assert_eq!(*flag, ScalarValue::Bool(expected_flag), "row {i} FLAG");
     }
     std::fs::remove_dir_all(&root).expect("cleanup");
@@ -3302,7 +3431,7 @@ fn add_column_populates_existing_rows() {
     assert_eq!(table.schema().unwrap().columns().len(), 3);
     for i in 0..3 {
         assert_eq!(
-            table.cell(i, "score"),
+            table_cell(&table, i, "score"),
             Ok(Some(&Value::Scalar(ScalarValue::Float64(0.0))))
         );
     }
@@ -3328,7 +3457,7 @@ fn add_column_round_trips_through_disk() {
         assert_eq!(reopened.schema().unwrap().columns().len(), 3);
         for i in 0..3 {
             assert_eq!(
-                reopened.cell(i, "score"),
+                table_cell(&reopened, i, "score"),
                 Ok(Some(&Value::Scalar(ScalarValue::Float64(99.5))))
             );
         }
@@ -3356,7 +3485,7 @@ fn add_column_none_default_with_undefined() {
     assert_eq!(table.schema().unwrap().columns().len(), 3);
     // Rows should not have the new field.
     for i in 0..3 {
-        assert_eq!(table.cell(i, "opt"), Ok(None));
+        assert_eq!(table_cell(&table, i, "opt"), Ok(None));
     }
 }
 
@@ -3386,7 +3515,7 @@ fn from_rows_with_schema_persists_missing_undefined_scalar_cells() {
     ];
 
     let table = Table::from_rows_with_schema(rows, schema).expect("table");
-    assert_eq!(table.cell(1, "opt"), Ok(None));
+    assert_eq!(table_cell(&table, 1, "opt"), Ok(None));
     assert!(
         table.undefined_cells().unwrap()[1].contains("opt"),
         "missing scalar field should be tracked as undefined"
@@ -3400,10 +3529,10 @@ fn from_rows_with_schema_persists_missing_undefined_scalar_cells() {
 
     let reopened = Table::open(TableOptions::new(&path)).expect("reopen table");
     assert_eq!(
-        reopened.cell(0, "opt"),
+        table_cell(&reopened, 0, "opt"),
         Ok(Some(&Value::Scalar(ScalarValue::Float64(2.5))))
     );
-    assert_eq!(reopened.cell(1, "opt"), Ok(None));
+    assert_eq!(table_cell(&reopened, 1, "opt"), Ok(None));
     assert!(reopened.undefined_cells().unwrap()[1].contains("opt"));
 }
 
@@ -3446,7 +3575,7 @@ fn remove_column_drops_from_all_rows() {
     assert_eq!(table.schema().unwrap().columns().len(), 1);
     assert!(!table.schema().unwrap().contains_column("name"));
     for i in 0..3 {
-        assert_eq!(table.cell(i, "name"), Ok(None));
+        assert_eq!(table_cell(&table, i, "name"), Ok(None));
     }
     assert!(table.column_keywords("name").is_none());
 }
@@ -3466,7 +3595,7 @@ fn remove_column_round_trips_through_disk() {
         assert_eq!(reopened.schema().unwrap().columns().len(), 1);
         assert!(!reopened.schema().unwrap().contains_column("name"));
         assert_eq!(
-            reopened.cell(0, "id"),
+            table_cell(&reopened, 0, "id"),
             Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
         );
         std::fs::remove_dir_all(&root).expect("cleanup");
@@ -3495,8 +3624,8 @@ fn rename_column_updates_rows_and_keywords() {
     assert!(table.schema().unwrap().contains_column("label"));
     assert!(!table.schema().unwrap().contains_column("name"));
     for i in 0..3 {
-        assert!(table.cell(i, "label").unwrap().is_some());
-        assert_eq!(table.cell(i, "name"), Ok(None));
+        assert!(table_cell(&table, i, "label").unwrap().is_some());
+        assert_eq!(table_cell(&table, i, "name"), Ok(None));
     }
     assert!(table.column_keywords("label").is_some());
     assert!(table.column_keywords("name").is_none());
@@ -3517,7 +3646,7 @@ fn rename_column_round_trips_through_disk() {
         assert!(reopened.schema().unwrap().contains_column("label"));
         assert!(!reopened.schema().unwrap().contains_column("name"));
         assert_eq!(
-            reopened.cell(0, "label"),
+            table_cell(&reopened, 0, "label"),
             Ok(Some(&Value::Scalar(ScalarValue::String("row0".into()))))
         );
         std::fs::remove_dir_all(&root).expect("cleanup");
@@ -3547,15 +3676,15 @@ fn remove_rows_compacts() {
     assert_eq!(table.row_count(), 3);
     // Remaining rows should be ids 0, 2, 4
     assert_eq!(
-        table.cell(0, "id"),
+        table_cell(&table, 0, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
-        table.cell(1, "id"),
+        table_cell(&table, 1, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
     assert_eq!(
-        table.cell(2, "id"),
+        table_cell(&table, 2, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(4))))
     );
 }
@@ -3574,11 +3703,11 @@ fn remove_rows_round_trips_through_disk() {
         let reopened = Table::open(TableOptions::new(&root)).expect("open");
         assert_eq!(reopened.row_count(), 2);
         assert_eq!(
-            reopened.cell(0, "id"),
+            table_cell(&reopened, 0, "id"),
             Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
         );
         assert_eq!(
-            reopened.cell(1, "id"),
+            table_cell(&reopened, 1, "id"),
             Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
         );
         std::fs::remove_dir_all(&root).expect("cleanup");
@@ -3618,19 +3747,19 @@ fn insert_row_at_position() {
 
     assert_eq!(table.row_count(), 4);
     assert_eq!(
-        table.cell(0, "id"),
+        table_cell(&table, 0, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
-        table.cell(1, "id"),
+        table_cell(&table, 1, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(99))))
     );
     assert_eq!(
-        table.cell(2, "id"),
+        table_cell(&table, 2, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(1))))
     );
     assert_eq!(
-        table.cell(3, "id"),
+        table_cell(&table, 3, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
 }
@@ -3648,7 +3777,7 @@ fn insert_row_at_end() {
     table.insert_row(3, new_row).expect("insert at end");
     assert_eq!(table.row_count(), 4);
     assert_eq!(
-        table.cell(3, "id"),
+        table_cell(&table, 3, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(99))))
     );
 }
@@ -3971,15 +4100,15 @@ fn memory_table_full_crud_cycle() {
     assert_eq!(table.row_count(), 2);
 
     // set_cell
-    table
-        .set_cell(
-            0,
-            "name",
-            Value::Scalar(ScalarValue::String("ALICE".into())),
-        )
-        .unwrap();
+    table_set_cell(
+        &mut table,
+        0,
+        "name",
+        Value::Scalar(ScalarValue::String("ALICE".into())),
+    )
+    .unwrap();
     assert_eq!(
-        table.cell(0, "name"),
+        table_cell(&table, 0, "name"),
         Ok(Some(&Value::Scalar(ScalarValue::String("ALICE".into()))))
     );
 
@@ -4019,7 +4148,7 @@ fn memory_table_save_materializes_to_disk() {
     assert!(!reopened.is_memory());
     assert_eq!(reopened.row_count(), 1);
     assert_eq!(
-        reopened.cell(0, "id"),
+        table_cell(&reopened, 0, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(42))))
     );
     assert_eq!(
@@ -4059,7 +4188,7 @@ fn to_memory_copies_all_data() {
     assert!(mem.path().is_none());
     assert_eq!(mem.row_count(), 1);
     assert_eq!(
-        mem.cell(0, "id"),
+        table_cell(&mem, 0, "id"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(1))))
     );
     assert_eq!(
@@ -4210,7 +4339,7 @@ fn forward_column_round_trip() {
     assert_eq!(reopened.row_count(), 3);
     assert!(reopened.is_virtual_column("value"));
     for (i, expected) in [1.5, 2.5, 3.5].iter().enumerate() {
-        let val = reopened.cell(i, "value").unwrap();
+        let val = table_cell(&reopened, i, "value").unwrap();
         match val.unwrap() {
             Value::Scalar(ScalarValue::Float64(v)) => {
                 assert!(
@@ -4261,7 +4390,7 @@ fn scaled_array_round_trip() {
 
     for (i, stored) in [1i32, 2, 3].iter().enumerate() {
         let expected = (*stored as f64) * scale + offset;
-        let val = reopened.cell(i, "virtual_col").unwrap();
+        let val = table_cell(&reopened, i, "virtual_col").unwrap();
         match val.unwrap() {
             Value::Scalar(ScalarValue::Float64(v)) => {
                 assert!(
@@ -4333,13 +4462,13 @@ fn multi_dm_round_trip() {
     assert!(reopened.is_virtual_column("scaled_col"));
 
     // stored_int should be 5
-    match reopened.cell(0, "stored_int").unwrap().unwrap() {
+    match table_cell(&reopened, 0, "stored_int").unwrap().unwrap() {
         Value::Scalar(ScalarValue::Int32(v)) => assert_eq!(*v, 5),
         other => panic!("expected Int32(5), got {other:?}"),
     }
 
     // fwd_col should be 42.0 (from base table)
-    match reopened.cell(0, "fwd_col").unwrap().unwrap() {
+    match table_cell(&reopened, 0, "fwd_col").unwrap().unwrap() {
         Value::Scalar(ScalarValue::Float64(v)) => {
             assert!((v - 42.0).abs() < 1e-10, "fwd_col: expected 42.0, got {v}");
         }
@@ -4347,7 +4476,7 @@ fn multi_dm_round_trip() {
     }
 
     // scaled_col should be 5 * 3.0 + 1.0 = 16.0
-    match reopened.cell(0, "scaled_col").unwrap().unwrap() {
+    match table_cell(&reopened, 0, "scaled_col").unwrap().unwrap() {
         Value::Scalar(ScalarValue::Float64(v)) => {
             assert!(
                 (v - 16.0).abs() < 1e-10,
@@ -4815,7 +4944,7 @@ fn put_cell_slice_2d() {
         .put_cell_slice("data", 0, &slicer, &ArrayValue::Float64(patch))
         .unwrap();
 
-    match table.cell(0, "data").unwrap().unwrap() {
+    match table_cell(&table, 0, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a[[0, 0]], 0.0); // untouched
             assert_eq!(a[[1, 0]], 99.0); // patched
@@ -5045,21 +5174,21 @@ fn put_column_slice_multiple_rows() {
         .unwrap();
 
     // Row 0: [0, 11, 11, 0]
-    match table.cell(0, "data").unwrap().unwrap() {
+    match table_cell(&table, 0, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a.as_slice().unwrap(), &[0.0, 11.0, 11.0, 0.0]);
         }
         other => panic!("unexpected {other:?}"),
     }
     // Row 1: untouched
-    match table.cell(1, "data").unwrap().unwrap() {
+    match table_cell(&table, 1, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a.as_slice().unwrap(), &[0.0, 0.0, 0.0, 0.0]);
         }
         other => panic!("unexpected {other:?}"),
     }
     // Row 2: [0, 22, 22, 0]
-    match table.cell(2, "data").unwrap().unwrap() {
+    match table_cell(&table, 2, "data").unwrap().unwrap() {
         Value::Array(ArrayValue::Float64(a)) => {
             assert_eq!(a.as_slice().unwrap(), &[0.0, 22.0, 22.0, 0.0]);
         }
@@ -5190,7 +5319,7 @@ fn slice_helpers_cover_remaining_array_variants() {
             ),
         )
         .unwrap();
-    match table.cell(0, "c32").unwrap().unwrap() {
+    match table_cell(&table, 0, "c32").unwrap().unwrap() {
         Value::Array(ArrayValue::Complex32(values)) => {
             assert_eq!(values[[0]], Complex32::new(9.0, 1.0));
         }
@@ -5211,7 +5340,7 @@ fn slice_helpers_cover_remaining_array_variants() {
             ),
         )
         .unwrap();
-    match table.cell(0, "c64").unwrap().unwrap() {
+    match table_cell(&table, 0, "c64").unwrap().unwrap() {
         Value::Array(ArrayValue::Complex64(values)) => {
             assert_eq!(values[[1]], Complex64::new(8.0, 7.0));
         }
@@ -5229,7 +5358,7 @@ fn slice_helpers_cover_remaining_array_variants() {
             ),
         )
         .unwrap();
-    match table.cell(0, "text").unwrap().unwrap() {
+    match table_cell(&table, 0, "text").unwrap().unwrap() {
         Value::Array(ArrayValue::String(values)) => {
             assert_eq!(values[[0]], "delta");
         }
@@ -5244,7 +5373,7 @@ fn slice_helpers_cover_remaining_array_variants() {
             &ArrayValue::Float64(ArrayD::from_shape_vec(IxDyn(&[2]), vec![9.0, 9.0]).unwrap()),
         )
         .unwrap();
-    match table.cell(0, "ints").unwrap().unwrap() {
+    match table_cell(&table, 0, "ints").unwrap().unwrap() {
         Value::Array(ArrayValue::Int32(values)) => assert_eq!(values.as_slice().unwrap(), &[1, 2]),
         other => panic!("unexpected mismatch target value: {other:?}"),
     }
@@ -5280,7 +5409,7 @@ fn copy_rows_appends_all() {
     dst.copy_rows(&src).unwrap();
     assert_eq!(dst.row_count(), 3);
     assert_eq!(
-        dst.cell(2, "x"),
+        table_cell(&dst, 2, "x"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(2))))
     );
 }
@@ -5320,11 +5449,11 @@ fn copy_rows_with_mapping_selects_rows() {
     dst.copy_rows_with_mapping(&src, &[2, 0]).unwrap();
     assert_eq!(dst.row_count(), 2);
     assert_eq!(
-        dst.cell(0, "x"),
+        table_cell(&dst, 0, "x"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(30))))
     );
     assert_eq!(
-        dst.cell(1, "x"),
+        table_cell(&dst, 1, "x"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(10))))
     );
 }
@@ -5370,7 +5499,7 @@ fn fill_column_sets_all_cells() {
         .unwrap();
     for i in 0..3 {
         assert_eq!(
-            table.cell(i, "x"),
+            table_cell(&table, i, "x"),
             Ok(Some(&Value::Scalar(ScalarValue::Int32(99))))
         );
     }
@@ -5412,19 +5541,19 @@ fn fill_column_range_sets_subset() {
         .unwrap();
 
     assert_eq!(
-        table.cell(0, "x"),
+        table_cell(&table, 0, "x"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
-        table.cell(1, "x"),
+        table_cell(&table, 1, "x"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(77))))
     );
     assert_eq!(
-        table.cell(2, "x"),
+        table_cell(&table, 2, "x"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(0))))
     );
     assert_eq!(
-        table.cell(3, "x"),
+        table_cell(&table, 3, "x"),
         Ok(Some(&Value::Scalar(ScalarValue::Int32(77))))
     );
 }

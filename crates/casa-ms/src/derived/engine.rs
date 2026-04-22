@@ -695,10 +695,10 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
             tab_ref_types,
             tab_ref_codes,
         } => {
-            let code = match table.get_scalar_cell(row, ref_column)? {
-                ScalarValue::Int32(value) => *value,
-                ScalarValue::Int64(value) => *value as i32,
-                ScalarValue::UInt32(value) => *value as i32,
+            let code = match table.cell_accessor(row, ref_column)?.scalar()? {
+                &ScalarValue::Int32(value) => value,
+                &ScalarValue::Int64(value) => value as i32,
+                &ScalarValue::UInt32(value) => value as i32,
                 other => {
                     return Err(MsError::ColumnTypeMismatch {
                         column: ref_column.clone(),
@@ -727,7 +727,7 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
             })
         }
         MeasRefDesc::VariableString { ref_column } => {
-            match table.get_scalar_cell(row, ref_column)? {
+            match table.cell_accessor(row, ref_column)?.scalar()? {
                 ScalarValue::String(value) => Ok(value.clone()),
                 other => Err(MsError::ColumnTypeMismatch {
                     column: ref_column.clone(),

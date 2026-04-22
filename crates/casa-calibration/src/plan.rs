@@ -551,7 +551,8 @@ fn build_selected_rows(
 
 fn load_i32_column(table: &Table, column: &str) -> Result<Vec<Option<i32>>, ApplyPlanError> {
     table
-        .get_scalar_cells_owned(column)
+        .column_accessor(column)
+        .and_then(|column| column.scalar_cells_owned())
         .map_err(|source| ApplyPlanError::Selection {
             source: MsError::from(source),
         })?
@@ -571,7 +572,8 @@ fn load_i32_column(table: &Table, column: &str) -> Result<Vec<Option<i32>>, Appl
 
 fn load_f64_column(table: &Table, column: &str) -> Result<Vec<Option<f64>>, ApplyPlanError> {
     table
-        .get_scalar_cells_owned(column)
+        .column_accessor(column)
+        .and_then(|column| column.scalar_cells_owned())
         .map_err(|source| ApplyPlanError::Selection {
             source: MsError::from(source),
         })?
@@ -902,7 +904,8 @@ fn load_caltable_field_directions(
             continue;
         }
         let phase_dir = table
-            .get_array_cell(row_index, "PHASE_DIR")
+            .cell_accessor(row_index, "PHASE_DIR")
+            .and_then(|cell| cell.array())
             .map_err(|source| ApplyPlanError::OpenSubtable {
                 path: summary.path.display().to_string(),
                 subtable: "FIELD",
@@ -988,7 +991,8 @@ fn load_bpoly_spectral_window_ids(path: &Path) -> Result<Vec<i32>, ApplyPlanErro
     let mut spw_ids = BTreeSet::new();
     for row in 0..table.row_count() {
         let values = table
-            .get_array_cell(row, "SPECTRAL_WINDOW_ID")
+            .cell_accessor(row, "SPECTRAL_WINDOW_ID")
+            .and_then(|cell| cell.array())
             .map_err(|source| ApplyPlanError::OpenSubtable {
                 path: path.display().to_string(),
                 subtable: "CAL_DESC",
@@ -1100,7 +1104,8 @@ fn unique_i32(values: impl IntoIterator<Item = i32>) -> Vec<i32> {
 
 fn get_string(table: &Table, row_index: usize, column: &str) -> Result<String, ApplyPlanError> {
     match table
-        .get_scalar_cell(row_index, column)
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
         .map_err(|source| ApplyPlanError::Selection {
             source: MsError::from(source),
         })? {
@@ -1116,11 +1121,12 @@ fn get_string(table: &Table, row_index: usize, column: &str) -> Result<String, A
 #[cfg(test)]
 fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyPlanError> {
     match table
-        .get_scalar_cell(row_index, column)
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
         .map_err(|source| ApplyPlanError::Selection {
             source: MsError::from(source),
         })? {
-        ScalarValue::Int32(value) => Ok(*value),
+        &ScalarValue::Int32(value) => Ok(value),
         other => Err(ApplyPlanError::ScalarTypeMismatch {
             context: format!("{column} row {row_index}"),
             expected: "Int32",
@@ -1132,11 +1138,12 @@ fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyPl
 #[cfg(test)]
 fn get_f64(table: &Table, row_index: usize, column: &str) -> Result<f64, ApplyPlanError> {
     match table
-        .get_scalar_cell(row_index, column)
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
         .map_err(|source| ApplyPlanError::Selection {
             source: MsError::from(source),
         })? {
-        ScalarValue::Float64(value) => Ok(*value),
+        &ScalarValue::Float64(value) => Ok(value),
         other => Err(ApplyPlanError::ScalarTypeMismatch {
             context: format!("{column} row {row_index}"),
             expected: "Float64",

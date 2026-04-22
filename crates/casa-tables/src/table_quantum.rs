@@ -270,7 +270,7 @@ impl<'a> ScalarQuantColumn<'a> {
     /// For variable-unit columns, the unit is read from the companion column.
     /// If a conversion unit was set at construction, the value is converted.
     pub fn get(&self, row: usize) -> Result<Quantity, TableError> {
-        let scalar = self.table.get_scalar_cell(row, &self.column_name)?;
+        let scalar = self.table.cell_accessor(row, &self.column_name)?.scalar()?;
         let value = scalar_to_f64(scalar, row, &self.column_name)?;
 
         let unit = if let Some(ref u) = self.fixed_unit {
@@ -292,7 +292,7 @@ impl<'a> ScalarQuantColumn<'a> {
 
     fn read_variable_unit(&self, row: usize) -> Result<Unit, TableError> {
         let units_col = self.desc.unit_column_name().unwrap();
-        let scalar = self.table.get_scalar_cell(row, units_col)?;
+        let scalar = self.table.cell_accessor(row, units_col)?.scalar()?;
         match scalar {
             ScalarValue::String(s) => Unit::new(s)
                 .map_err(|e| TableError::Storage(format!("invalid unit '{s}' at row {row}: {e}"))),
@@ -335,18 +335,16 @@ impl<'a> ScalarQuantColumnMut<'a> {
     pub fn put(&mut self, row: usize, q: &Quantity) -> Result<(), TableError> {
         if self.desc.is_unit_variable() {
             // Write value as-is.
-            self.table.set_cell(
-                row,
-                &self.column_name,
-                Value::Scalar(ScalarValue::Float64(q.value())),
-            )?;
+            self.table
+                .cell_accessor_mut(row, &self.column_name)?
+                .set(Value::Scalar(ScalarValue::Float64(q.value())))?;
             // Write unit string.
             let units_col = self.desc.unit_column_name().unwrap().to_owned();
-            self.table.set_cell(
-                row,
-                &units_col,
-                Value::Scalar(ScalarValue::String(q.unit().name().to_owned())),
-            )?;
+            self.table
+                .cell_accessor_mut(row, &units_col)?
+                .set(Value::Scalar(ScalarValue::String(
+                    q.unit().name().to_owned(),
+                )))?;
         } else {
             // Convert to column's fixed unit.
             let col_unit_str = &self.desc.units[0];
@@ -356,11 +354,9 @@ impl<'a> ScalarQuantColumnMut<'a> {
             let converted = q
                 .get_value_in(&col_unit)
                 .map_err(|e| TableError::Storage(format!("unit conversion failed: {e}")))?;
-            self.table.set_cell(
-                row,
-                &self.column_name,
-                Value::Scalar(ScalarValue::Float64(converted)),
-            )?;
+            self.table
+                .cell_accessor_mut(row, &self.column_name)?
+                .set(Value::Scalar(ScalarValue::Float64(converted)))?;
         }
         Ok(())
     }
@@ -432,7 +428,7 @@ impl<'a> ArrayQuantColumn<'a> {
     ///
     /// The array is flattened to a vector of quantities in row-major order.
     pub fn get(&self, row: usize) -> Result<Vec<Quantity>, TableError> {
-        let arr = self.table.get_array_cell(row, &self.column_name)?;
+        let arr = self.table.cell_accessor(row, &self.column_name)?.array()?;
         let values = array_to_f64_vec(arr, row, &self.column_name)?;
 
         if self.desc.is_unit_variable() {
@@ -469,7 +465,7 @@ impl<'a> ArrayQuantColumn<'a> {
         let units_col = self.desc.unit_column_name().unwrap();
 
         // Try array units column first (per-element), then scalar (per-row).
-        let cell = self.table.cell(row, units_col)?;
+        let cell = self.table.cell_accessor(row, units_col)?.value()?;
         match cell {
             Some(Value::Array(ArrayValue::String(arr))) => {
                 let unit_strs: Vec<&str> = arr.iter().map(|s| s.as_str()).collect();
@@ -569,11 +565,9 @@ impl<'a> ArrayQuantColumnMut<'a> {
             let values: Vec<f64> = quanta.iter().map(|q| q.value()).collect();
             let units: Vec<String> = quanta.iter().map(|q| q.unit().name().to_owned()).collect();
 
-            self.table.set_cell(
-                row,
-                &self.column_name,
-                Value::Array(ArrayValue::from_f64_vec(values)),
-            )?;
+            self.table
+                .cell_accessor_mut(row, &self.column_name)?
+                .set(Value::Array(ArrayValue::from_f64_vec(values)))?;
 
             let units_col = self.desc.unit_column_name().unwrap().to_owned();
             // Determine if units column is scalar or array from schema,
@@ -582,27 +576,21 @@ impl<'a> ArrayQuantColumnMut<'a> {
             let is_scalar = self.units_col_is_scalar.unwrap_or(true);
 
             if is_scalar && quanta.len() == 1 {
-                self.table.set_cell(
-                    row,
-                    &units_col,
-                    Value::Scalar(ScalarValue::String(units[0].clone())),
-                )?;
+                self.table
+                    .cell_accessor_mut(row, &units_col)?
+                    .set(Value::Scalar(ScalarValue::String(units[0].clone())))?;
             } else {
                 // Check if the existing cell at this position is scalar
                 // (per-row mode: all elements share one unit).
                 // If so, write the first unit as the per-row unit.
                 if is_scalar {
-                    self.table.set_cell(
-                        row,
-                        &units_col,
-                        Value::Scalar(ScalarValue::String(units[0].clone())),
-                    )?;
+                    self.table
+                        .cell_accessor_mut(row, &units_col)?
+                        .set(Value::Scalar(ScalarValue::String(units[0].clone())))?;
                 } else {
-                    self.table.set_cell(
-                        row,
-                        &units_col,
-                        Value::Array(ArrayValue::from_string_vec(units)),
-                    )?;
+                    self.table
+                        .cell_accessor_mut(row, &units_col)?
+                        .set(Value::Array(ArrayValue::from_string_vec(units)))?;
                 }
             }
         } else {
@@ -617,13 +605,11 @@ impl<'a> ArrayQuantColumnMut<'a> {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             if col_units.is_empty() {
-                self.table.set_cell(
-                    row,
-                    &self.column_name,
-                    Value::Array(ArrayValue::from_f64_vec(
+                self.table
+                    .cell_accessor_mut(row, &self.column_name)?
+                    .set(Value::Array(ArrayValue::from_f64_vec(
                         quanta.iter().map(|q| q.value()).collect(),
-                    )),
-                )?;
+                    )))?;
                 return Ok(());
             }
             let unit_count = col_units.len();
@@ -637,11 +623,9 @@ impl<'a> ArrayQuantColumnMut<'a> {
                 })
                 .collect();
 
-            self.table.set_cell(
-                row,
-                &self.column_name,
-                Value::Array(ArrayValue::from_f64_vec(values?)),
-            )?;
+            self.table
+                .cell_accessor_mut(row, &self.column_name)?
+                .set(Value::Array(ArrayValue::from_f64_vec(values?)))?;
         }
         Ok(())
     }
@@ -708,7 +692,9 @@ mod tests {
         }
 
         // Read back: the units column should be an array, not a scalar
-        let cell = table.cell(0, "DATA_UNITS");
+        let cell = table
+            .cell_accessor(0, "DATA_UNITS")
+            .and_then(|cell| cell.value());
         assert!(
             matches!(cell, Ok(Some(Value::Array(ArrayValue::String(_))))),
             "expected array units but got: {cell:?}"

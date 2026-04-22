@@ -154,7 +154,8 @@ def test_table_reads_and_writes(tmp_path: Path) -> None:
     assert written == 3
     assert table.get_column("label") == ["delta", "epsilon", "zeta"]
 
-    table.set_cell(0, "meta", {"label": "delta", "weight": 100})
+    written = table.put_column("meta", [{"label": "delta", "weight": 100}], start=0)
+    assert written == 1
     assert table.get_cell(0, "meta") == {"label": "delta", "weight": 100}
 
     table.set_column_keywords("gain", {"unit": "arb", "stage": "python"})

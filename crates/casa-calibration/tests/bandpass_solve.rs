@@ -140,7 +140,8 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     for row in 0..ms.main_table().row_count() {
         let corrected = ms
             .main_table()
-            .get_array_cell(row, VisibilityDataColumn::CorrectedData.name())
+            .cell_accessor(row, VisibilityDataColumn::CorrectedData.name())
+            .and_then(|cell| cell.array())
             .expect("corrected data");
         let ArrayValue::Complex32(values) = corrected else {
             panic!("corrected data row {row} was not Complex32");
@@ -272,7 +273,8 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
     for row in [0, row_count / 2, row_count - 1] {
         let corrected = ms
             .main_table()
-            .get_array_cell(row, VisibilityDataColumn::CorrectedData.name())
+            .cell_accessor(row, VisibilityDataColumn::CorrectedData.name())
+            .and_then(|cell| cell.array())
             .expect("corrected data");
         let ArrayValue::Complex32(values) = corrected else {
             panic!("corrected data row {row} was not Complex32");
@@ -661,7 +663,11 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
 
     let table = Table::open(TableOptions::new(&bandpass_table)).expect("open bandpass table");
     for row in 0..table.row_count() {
-        let gains = match table.get_array_cell(row, "CPARAM").expect("CPARAM cell") {
+        let gains = match table
+            .cell_accessor(row, "CPARAM")
+            .and_then(|cell| cell.array())
+            .expect("CPARAM cell")
+        {
             ArrayValue::Complex32(values) => values
                 .view()
                 .into_dimensionality::<Ix2>()
@@ -799,7 +805,8 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     for row in 0..ms.main_table().row_count() {
         let corrected = ms
             .main_table()
-            .get_array_cell(row, VisibilityDataColumn::CorrectedData.name())
+            .cell_accessor(row, VisibilityDataColumn::CorrectedData.name())
+            .and_then(|cell| cell.array())
             .expect("corrected data");
         let ArrayValue::Complex32(values) = corrected else {
             panic!("corrected data row {row} was not Complex32");

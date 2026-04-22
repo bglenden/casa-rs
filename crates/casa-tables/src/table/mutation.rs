@@ -81,7 +81,8 @@ impl Table {
     pub fn fill_column(&mut self, column: &str, value: Value) -> Result<(), TableError> {
         let n = self.row_count();
         for row_idx in 0..n {
-            self.set_cell(row_idx, column, value.clone())?;
+            self.cell_accessor_mut(row_idx, column)?
+                .set(value.clone())?;
         }
         Ok(())
     }
@@ -107,7 +108,8 @@ impl Table {
             if row_idx >= self.row_count() {
                 break;
             }
-            self.set_cell(row_idx, column, value.clone())?;
+            self.cell_accessor_mut(row_idx, column)?
+                .set(value.clone())?;
         }
         Ok(())
     }
