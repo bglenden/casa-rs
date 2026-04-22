@@ -6176,6 +6176,7 @@ Options:
 mod tests {
     use std::env;
     use std::fs;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
 
     use casa_images::PagedImage;
@@ -7250,6 +7251,222 @@ mod tests {
         assert!(help.contains("--json-schema"));
         assert!(help.contains("--protocol-info"));
         assert!(help.contains("--json-run <SOURCE>"));
+    }
+
+    #[test]
+    fn run_with_cli_args_handles_meta_output_flags() {
+        for args in [
+            vec![
+                OsString::from("casars-imager"),
+                OsString::from("--ui-schema"),
+            ],
+            vec![
+                OsString::from("casars-imager"),
+                OsString::from("--json-schema"),
+            ],
+            vec![
+                OsString::from("casars-imager"),
+                OsString::from("--protocol-info"),
+            ],
+            vec![OsString::from("casars-imager"), OsString::from("--help")],
+        ] {
+            run_with_cli_args(args).unwrap();
+        }
+    }
+
+    #[test]
+    fn option_extractors_preserve_non_utf8_args_and_false_values() {
+        let non_utf8 = OsString::from_vec(vec![0xff, b'a']);
+        let args = vec![
+            non_utf8.clone(),
+            OsString::from("--managed-output"),
+            OsString::from("false"),
+            OsString::from("--json-run"),
+            OsString::from("bundle.json"),
+        ];
+
+        let (managed_output, filtered) = extract_option_value(&args, "--managed-output").unwrap();
+        assert!(!managed_output);
+        assert_eq!(filtered.len(), 3);
+        assert_eq!(
+            filtered[0].as_os_str().as_bytes(),
+            non_utf8.as_os_str().as_bytes()
+        );
+
+        let (json_run, filtered) = extract_string_option(&filtered, "--json-run").unwrap();
+        assert_eq!(json_run.as_deref(), Some("bundle.json"));
+        assert_eq!(filtered, vec![non_utf8]);
+    }
+
+    #[test]
+    fn synthetic_trace_helpers_preserve_spectral_and_w_project_details() {
+        let prepared_trace = PreparedVisibilityTraceBundle {
+            schema_version: ORACLE_SCHEMA_VERSION,
+            ms_path: "demo.ms".to_string(),
+            data_column: "DATA".to_string(),
+            spectral_mode: "cubedata".to_string(),
+            phase_center: PhaseCenterTrace {
+                field_id: Some(3),
+                reference: "J2000".to_string(),
+                angles_rad: [1.0, -0.5],
+            },
+            source_channel_indices: vec![4, 7],
+            source_channel_frequencies_hz: vec![1.1e9, 1.2e9],
+            source_channel_widths_hz: vec![1.5e6, 2.5e6],
+            output_channel_frequencies_hz: vec![1.15e9, 1.25e9],
+            selected_rows: vec![SelectedRowTrace {
+                row_index: 12,
+                field_id: 3,
+                ddid: 5,
+                spw_id: 7,
+                polarization_id: 11,
+                time_mjd_seconds: Some(1234.5),
+            }],
+            samples: Vec::new(),
+            rejected_samples: Vec::new(),
+        };
+        let spectral_axis = build_prepare_spectral_axis_trace(&prepared_trace);
+        assert_eq!(spectral_axis.spectral_mode, "cubedata");
+        assert_eq!(
+            spectral_axis.source_channels,
+            vec![
+                PreparedSourceChannelTrace {
+                    source_channel_slot: 0,
+                    source_channel_index: 4,
+                    frequency_hz: 1.1e9,
+                    width_hz: 1.5e6,
+                },
+                PreparedSourceChannelTrace {
+                    source_channel_slot: 1,
+                    source_channel_index: 7,
+                    frequency_hz: 1.2e9,
+                    width_hz: 2.5e6,
+                }
+            ]
+        );
+        assert_eq!(
+            spectral_axis.output_channels,
+            vec![
+                PreparedOutputChannelTrace {
+                    output_channel_index: 0,
+                    frequency_hz: 1.15e9,
+                },
+                PreparedOutputChannelTrace {
+                    output_channel_index: 1,
+                    frequency_hz: 1.25e9,
+                }
+            ]
+        );
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--specmode"),
+            OsString::from("cubedata"),
+        ])
+        .unwrap();
+        let diagnostics = WProjectDiagnostics {
+            requested_plane_count: Some(8),
+            plane_count: 3,
+            sampling: 4,
+            w_scale: 1.5,
+            max_abs_w_lambda: 22.0,
+            kernels: vec![
+                casa_imaging::WProjectKernelDiagnostics {
+                    plane_index: 0,
+                    w_lambda: 0.0,
+                    support: 5,
+                    kernel_integral: 1.0,
+                },
+                casa_imaging::WProjectKernelDiagnostics {
+                    plane_index: 1,
+                    w_lambda: 11.0,
+                    support: 7,
+                    kernel_integral: 0.75,
+                },
+            ],
+            samples: vec![casa_imaging::WProjectSamplePlanDiagnostics {
+                batch_index: 2,
+                sample_index: 9,
+                u_lambda: 3.0,
+                v_lambda: -4.0,
+                w_lambda: 5.0,
+                weight: 6.5,
+                sumwt_factor: 2.0,
+                plane_index: 1,
+                loc_x: 12,
+                loc_y: -8,
+                off_x: 3,
+                off_y: -2,
+                conjugate_kernel: true,
+                normalization: 0.5,
+                support: 7,
+            }],
+            skipped_samples: vec![
+                casa_imaging::WProjectSkippedSampleDiagnostics {
+                    batch_index: 0,
+                    sample_index: 1,
+                    u_lambda: 1.0,
+                    v_lambda: 2.0,
+                    w_lambda: 3.0,
+                    weight: 4.0,
+                    sumwt_factor: 5.0,
+                    reason: WProjectSkipReason::NotGridable,
+                },
+                casa_imaging::WProjectSkippedSampleDiagnostics {
+                    batch_index: 1,
+                    sample_index: 2,
+                    u_lambda: 6.0,
+                    v_lambda: 7.0,
+                    w_lambda: 8.0,
+                    weight: 9.0,
+                    sumwt_factor: 10.0,
+                    reason: WProjectSkipReason::InvalidInput,
+                },
+                casa_imaging::WProjectSkippedSampleDiagnostics {
+                    batch_index: 3,
+                    sample_index: 4,
+                    u_lambda: 11.0,
+                    v_lambda: 12.0,
+                    w_lambda: 13.0,
+                    weight: 14.0,
+                    sumwt_factor: 15.0,
+                    reason: WProjectSkipReason::OutsideGrid,
+                },
+            ],
+            normalization_sumwt: 17.0,
+            reported_sumwt: 19.0,
+            gridded_samples: 23,
+        };
+        let w_project_trace =
+            build_w_project_trace_bundle(&config, diagnostics, Some(6), Some(1.42e9));
+        assert_eq!(w_project_trace.ms_path, "demo.ms");
+        assert_eq!(w_project_trace.spectral_mode, "cubedata");
+        assert_eq!(w_project_trace.channel_index, Some(6));
+        assert_eq!(w_project_trace.channel_frequency_hz, Some(1.42e9));
+        assert_eq!(w_project_trace.kernels.len(), 2);
+        assert_eq!(w_project_trace.samples.len(), 1);
+        assert_eq!(
+            w_project_trace
+                .skipped_samples
+                .iter()
+                .map(|sample| sample.reason)
+                .collect::<Vec<_>>(),
+            vec![
+                WProjectSkipReasonTrace::NotGridable,
+                WProjectSkipReasonTrace::InvalidInput,
+                WProjectSkipReasonTrace::OutsideGrid,
+            ]
+        );
+        assert_eq!(w_project_trace.normalization_sumwt, 17.0);
+        assert_eq!(w_project_trace.reported_sumwt, 19.0);
+        assert_eq!(w_project_trace.gridded_samples, 23);
     }
 
     #[test]

@@ -724,6 +724,52 @@ mod tests {
         assert_eq!(bundle.semantic.transport, "jsonl_stdio");
         assert!(bundle.components.contains_key("BrowserCommand"));
         assert!(bundle.components.contains_key("BrowserResponse"));
+        assert_eq!(
+            bundle.ui_schema_projection().unwrap(),
+            serde_json::json!({
+                "schema_version": 1,
+                "command_id": "tablebrowser",
+            })
+        );
+    }
+
+    #[test]
+    fn ui_schema_projection_reports_missing_projection() {
+        let bundle = BrowserSessionSchemaBundle {
+            protocol: BrowserProtocolInfo::current(),
+            semantic: SessionSemanticContract {
+                transport: "jsonl_stdio".to_string(),
+                request_schema: schema_for!(BrowserRequestEnvelope),
+                response_schema: schema_for!(BrowserResponseEnvelope),
+            },
+            components: ProviderComponentSchemas::new(),
+            annotations: serde_json::json!({}),
+            projections: ProviderProjectionMetadata {
+                cli: None,
+                ui_schema: None,
+                python: None,
+            },
+            request_schema: schema_for!(BrowserRequestEnvelope),
+            response_schema: schema_for!(BrowserResponseEnvelope),
+        };
+
+        assert_eq!(
+            bundle.ui_schema_projection().unwrap_err(),
+            "missing ui_schema projection"
+        );
+    }
+
+    #[test]
+    fn viewport_helpers_preserve_expected_dimensions() {
+        assert_eq!(
+            BrowserViewport::with_inspector_height(120, 32, 9),
+            BrowserViewport {
+                width: 120,
+                height: 32,
+                inspector_height: 9,
+            }
+        );
+        assert_eq!(BrowserViewport::default(), BrowserViewport::new(80, 24));
     }
 
     #[test]
