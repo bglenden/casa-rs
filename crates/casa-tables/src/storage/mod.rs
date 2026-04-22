@@ -9,7 +9,9 @@ pub(crate) mod stman_aipsio;
 pub(crate) mod stman_array_file;
 pub(crate) mod table_control;
 pub(crate) mod tiled_stman;
-pub use tiled_stman::{TilePixel, TiledFileIO};
+pub use tiled_stman::{
+    TilePixel, TiledFileIO, set_table_cache_budget_bytes, table_cache_budget_bytes,
+};
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;
 pub(crate) mod virtual_engine;

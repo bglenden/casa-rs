@@ -28,6 +28,7 @@ impl Table {
             return Self::open(options);
         }
 
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         let storage = CompositeStorage;
         let row_hint = crate::lock::read_sync_data_from_table_dir(&options.path)
             .map_err(|e| TableError::LockIo {
