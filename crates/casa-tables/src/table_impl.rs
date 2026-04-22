@@ -796,7 +796,7 @@ impl TableImpl {
             }
             if !missing_rows.is_empty() {
                 let loaded = Self::load_array_column_rows_now(source, column, &missing_rows)?;
-                for (row_index, value) in missing_rows.into_iter().zip(loaded.into_iter()) {
+                for (row_index, value) in missing_rows.into_iter().zip(loaded) {
                     if let Some(buffered_cell) = buffered.get(row_index) {
                         let _ = buffered_cell.set(value);
                     }
