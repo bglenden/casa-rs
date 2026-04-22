@@ -724,312 +724,358 @@
 <a href=#724 id=724 data-nosnippet>724</a>        <span class="macro">assert_eq!</span>(bundle.semantic.transport, <span class="string">"jsonl_stdio"</span>);
 <a href=#725 id=725 data-nosnippet>725</a>        <span class="macro">assert!</span>(bundle.components.contains_key(<span class="string">"BrowserCommand"</span>));
 <a href=#726 id=726 data-nosnippet>726</a>        <span class="macro">assert!</span>(bundle.components.contains_key(<span class="string">"BrowserResponse"</span>));
-<a href=#727 id=727 data-nosnippet>727</a>    }
-<a href=#728 id=728 data-nosnippet>728</a>
-<a href=#729 id=729 data-nosnippet>729</a>    <span class="attr">#[test]
-<a href=#730 id=730 data-nosnippet>730</a>    </span><span class="kw">fn </span>request_envelopes_round_trip_all_command_variants() {
-<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span>viewport = BrowserViewport::new(<span class="number">120</span>, <span class="number">32</span>);
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">let </span>cases = <span class="macro">vec!</span>[
-<a href=#733 id=733 data-nosnippet>733</a>            BrowserRequestEnvelope::new(BrowserCommand::OpenRoot {
-<a href=#734 id=734 data-nosnippet>734</a>                path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#735 id=735 data-nosnippet>735</a>                viewport,
-<a href=#736 id=736 data-nosnippet>736</a>            }),
-<a href=#737 id=737 data-nosnippet>737</a>            BrowserRequestEnvelope::new(BrowserCommand::Resize { viewport }),
-<a href=#738 id=738 data-nosnippet>738</a>            BrowserRequestEnvelope::new(BrowserCommand::CycleView {
-<a href=#739 id=739 data-nosnippet>739</a>                forward: <span class="bool-val">true</span>,
-<a href=#740 id=740 data-nosnippet>740</a>                viewport: <span class="prelude-val">Some</span>(viewport),
-<a href=#741 id=741 data-nosnippet>741</a>            }),
-<a href=#742 id=742 data-nosnippet>742</a>            BrowserRequestEnvelope::new(BrowserCommand::SetFocus {
-<a href=#743 id=743 data-nosnippet>743</a>                focus: BrowserFocus::Inspector,
-<a href=#744 id=744 data-nosnippet>744</a>                viewport: <span class="prelude-val">None</span>,
-<a href=#745 id=745 data-nosnippet>745</a>            }),
-<a href=#746 id=746 data-nosnippet>746</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveUp {
-<a href=#747 id=747 data-nosnippet>747</a>                steps: <span class="number">2</span>,
-<a href=#748 id=748 data-nosnippet>748</a>                viewport: <span class="prelude-val">None</span>,
-<a href=#749 id=749 data-nosnippet>749</a>            }),
-<a href=#750 id=750 data-nosnippet>750</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveDown {
-<a href=#751 id=751 data-nosnippet>751</a>                steps: <span class="number">3</span>,
-<a href=#752 id=752 data-nosnippet>752</a>                viewport: <span class="prelude-val">Some</span>(viewport),
-<a href=#753 id=753 data-nosnippet>753</a>            }),
-<a href=#754 id=754 data-nosnippet>754</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveLeft {
-<a href=#755 id=755 data-nosnippet>755</a>                steps: <span class="number">1</span>,
-<a href=#756 id=756 data-nosnippet>756</a>                viewport: <span class="prelude-val">None</span>,
-<a href=#757 id=757 data-nosnippet>757</a>            }),
-<a href=#758 id=758 data-nosnippet>758</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveRight {
-<a href=#759 id=759 data-nosnippet>759</a>                steps: <span class="number">4</span>,
-<a href=#760 id=760 data-nosnippet>760</a>                viewport: <span class="prelude-val">Some</span>(viewport),
-<a href=#761 id=761 data-nosnippet>761</a>            }),
-<a href=#762 id=762 data-nosnippet>762</a>            BrowserRequestEnvelope::new(BrowserCommand::PageUp {
-<a href=#763 id=763 data-nosnippet>763</a>                pages: <span class="number">2</span>,
-<a href=#764 id=764 data-nosnippet>764</a>                viewport: <span class="prelude-val">None</span>,
-<a href=#765 id=765 data-nosnippet>765</a>            }),
-<a href=#766 id=766 data-nosnippet>766</a>            BrowserRequestEnvelope::new(BrowserCommand::PageDown {
-<a href=#767 id=767 data-nosnippet>767</a>                pages: <span class="number">5</span>,
-<a href=#768 id=768 data-nosnippet>768</a>                viewport: <span class="prelude-val">Some</span>(viewport),
-<a href=#769 id=769 data-nosnippet>769</a>            }),
-<a href=#770 id=770 data-nosnippet>770</a>            BrowserRequestEnvelope::new(BrowserCommand::Activate { viewport: <span class="prelude-val">None </span>}),
-<a href=#771 id=771 data-nosnippet>771</a>            BrowserRequestEnvelope::new(BrowserCommand::Back {
-<a href=#772 id=772 data-nosnippet>772</a>                viewport: <span class="prelude-val">Some</span>(viewport),
-<a href=#773 id=773 data-nosnippet>773</a>            }),
-<a href=#774 id=774 data-nosnippet>774</a>            BrowserRequestEnvelope::new(BrowserCommand::Escape { viewport: <span class="prelude-val">None </span>}),
-<a href=#775 id=775 data-nosnippet>775</a>            BrowserRequestEnvelope::new(BrowserCommand::GetSnapshot {
-<a href=#776 id=776 data-nosnippet>776</a>                viewport: <span class="prelude-val">Some</span>(viewport),
-<a href=#777 id=777 data-nosnippet>777</a>            }),
-<a href=#778 id=778 data-nosnippet>778</a>        ];
-<a href=#779 id=779 data-nosnippet>779</a>
-<a href=#780 id=780 data-nosnippet>780</a>        <span class="kw">for </span>case <span class="kw">in </span>cases {
-<a href=#781 id=781 data-nosnippet>781</a>            assert_round_trip(case);
-<a href=#782 id=782 data-nosnippet>782</a>        }
-<a href=#783 id=783 data-nosnippet>783</a>    }
-<a href=#784 id=784 data-nosnippet>784</a>
-<a href=#785 id=785 data-nosnippet>785</a>    <span class="attr">#[test]
-<a href=#786 id=786 data-nosnippet>786</a>    </span><span class="kw">fn </span>response_envelopes_round_trip_snapshot_and_error_variants() {
-<a href=#787 id=787 data-nosnippet>787</a>        <span class="kw">let </span>viewport = BrowserViewport::new(<span class="number">120</span>, <span class="number">32</span>);
-<a href=#788 id=788 data-nosnippet>788</a>        <span class="kw">let </span>breadcrumb = <span class="macro">vec!</span>[
-<a href=#789 id=789 data-nosnippet>789</a>            BrowserBreadcrumbEntry {
-<a href=#790 id=790 data-nosnippet>790</a>                label: <span class="string">"root.ms"</span>.to_string(),
-<a href=#791 id=791 data-nosnippet>791</a>                path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#792 id=792 data-nosnippet>792</a>            },
-<a href=#793 id=793 data-nosnippet>793</a>            BrowserBreadcrumbEntry {
-<a href=#794 id=794 data-nosnippet>794</a>                label: <span class="string">"FIELD"</span>.to_string(),
-<a href=#795 id=795 data-nosnippet>795</a>                path: <span class="string">"/tmp/root.ms/FIELD"</span>.to_string(),
-<a href=#796 id=796 data-nosnippet>796</a>            },
-<a href=#797 id=797 data-nosnippet>797</a>        ];
-<a href=#798 id=798 data-nosnippet>798</a>
-<a href=#799 id=799 data-nosnippet>799</a>        <span class="kw">let </span>cases = <span class="macro">vec!</span>[
-<a href=#800 id=800 data-nosnippet>800</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-<a href=#801 id=801 data-nosnippet>801</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
-<a href=#802 id=802 data-nosnippet>802</a>                view: BrowserView::Columns,
-<a href=#803 id=803 data-nosnippet>803</a>                focus: BrowserFocus::Main,
-<a href=#804 id=804 data-nosnippet>804</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#805 id=805 data-nosnippet>805</a>                breadcrumb: breadcrumb.clone(),
-<a href=#806 id=806 data-nosnippet>806</a>                viewport,
-<a href=#807 id=807 data-nosnippet>807</a>                status_line: <span class="string">"Columns ready"</span>.to_string(),
-<a href=#808 id=808 data-nosnippet>808</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Columns"</span>.to_string(), <span class="string">"NAME scalar string"</span>.to_string()],
-<a href=#809 id=809 data-nosnippet>809</a>                vertical_metrics: <span class="prelude-val">None</span>,
-<a href=#810 id=810 data-nosnippet>810</a>                horizontal_metrics: <span class="prelude-val">None</span>,
-<a href=#811 id=811 data-nosnippet>811</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::Column {
-<a href=#812 id=812 data-nosnippet>812</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#813 id=813 data-nosnippet>813</a>                    column: <span class="string">"NAME"</span>.to_string(),
-<a href=#814 id=814 data-nosnippet>814</a>                }),
-<a href=#815 id=815 data-nosnippet>815</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
-<a href=#816 id=816 data-nosnippet>816</a>                    title: <span class="string">"Complex scalar"</span>.to_string(),
-<a href=#817 id=817 data-nosnippet>817</a>                    trail: <span class="macro">vec!</span>[BrowserInspectorTrailEntry {
-<a href=#818 id=818 data-nosnippet>818</a>                        label: <span class="string">"root"</span>.to_string(),
-<a href=#819 id=819 data-nosnippet>819</a>                        summary: <span class="string">"complex32"</span>.to_string(),
-<a href=#820 id=820 data-nosnippet>820</a>                    }],
-<a href=#821 id=821 data-nosnippet>821</a>                    node: BrowserValueNode::Scalar {
-<a href=#822 id=822 data-nosnippet>822</a>                        value: BrowserScalarValue::Complex32(BrowserComplex32Value {
-<a href=#823 id=823 data-nosnippet>823</a>                            re: <span class="number">1.25</span>,
-<a href=#824 id=824 data-nosnippet>824</a>                            im: -<span class="number">0.5</span>,
-<a href=#825 id=825 data-nosnippet>825</a>                        }),
-<a href=#826 id=826 data-nosnippet>826</a>                    },
-<a href=#827 id=827 data-nosnippet>827</a>                    rendered_lines: <span class="macro">vec!</span>[
-<a href=#828 id=828 data-nosnippet>828</a>                        <span class="string">"Inspector"</span>.to_string(),
-<a href=#829 id=829 data-nosnippet>829</a>                        <span class="string">"Type: complex32"</span>.to_string(),
-<a href=#830 id=830 data-nosnippet>830</a>                        <span class="string">"Value: 1.2500-0.5000i"</span>.to_string(),
-<a href=#831 id=831 data-nosnippet>831</a>                    ],
-<a href=#832 id=832 data-nosnippet>832</a>                }),
-<a href=#833 id=833 data-nosnippet>833</a>            }),
-<a href=#834 id=834 data-nosnippet>834</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-<a href=#835 id=835 data-nosnippet>835</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
-<a href=#836 id=836 data-nosnippet>836</a>                view: BrowserView::Cells,
-<a href=#837 id=837 data-nosnippet>837</a>                focus: BrowserFocus::Inspector,
-<a href=#838 id=838 data-nosnippet>838</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#839 id=839 data-nosnippet>839</a>                breadcrumb: breadcrumb.clone(),
-<a href=#840 id=840 data-nosnippet>840</a>                viewport,
-<a href=#841 id=841 data-nosnippet>841</a>                status_line: <span class="string">"Array inspector"</span>.to_string(),
-<a href=#842 id=842 data-nosnippet>842</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Cells"</span>.to_string()],
-<a href=#843 id=843 data-nosnippet>843</a>                vertical_metrics: <span class="prelude-val">None</span>,
-<a href=#844 id=844 data-nosnippet>844</a>                horizontal_metrics: <span class="prelude-val">None</span>,
-<a href=#845 id=845 data-nosnippet>845</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::Cell {
-<a href=#846 id=846 data-nosnippet>846</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#847 id=847 data-nosnippet>847</a>                    row: <span class="number">7</span>,
-<a href=#848 id=848 data-nosnippet>848</a>                    column: <span class="string">"DATA"</span>.to_string(),
-<a href=#849 id=849 data-nosnippet>849</a>                    value_path: <span class="macro">vec!</span>[ValuePathSegment::ArrayIndex { flat_index: <span class="number">1 </span>}],
-<a href=#850 id=850 data-nosnippet>850</a>                }),
-<a href=#851 id=851 data-nosnippet>851</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
-<a href=#852 id=852 data-nosnippet>852</a>                    title: <span class="string">"Complex array"</span>.to_string(),
-<a href=#853 id=853 data-nosnippet>853</a>                    trail: <span class="macro">vec!</span>[
-<a href=#854 id=854 data-nosnippet>854</a>                        BrowserInspectorTrailEntry {
-<a href=#855 id=855 data-nosnippet>855</a>                            label: <span class="string">"root"</span>.to_string(),
-<a href=#856 id=856 data-nosnippet>856</a>                            summary: <span class="string">"array[2x2]"</span>.to_string(),
-<a href=#857 id=857 data-nosnippet>857</a>                        },
-<a href=#858 id=858 data-nosnippet>858</a>                        BrowserInspectorTrailEntry {
-<a href=#859 id=859 data-nosnippet>859</a>                            label: <span class="string">"[0,1]"</span>.to_string(),
-<a href=#860 id=860 data-nosnippet>860</a>                            summary: <span class="string">"complex64"</span>.to_string(),
-<a href=#861 id=861 data-nosnippet>861</a>                        },
-<a href=#862 id=862 data-nosnippet>862</a>                    ],
-<a href=#863 id=863 data-nosnippet>863</a>                    node: BrowserValueNode::Array {
-<a href=#864 id=864 data-nosnippet>864</a>                        primitive: BrowserPrimitiveType::Complex64,
-<a href=#865 id=865 data-nosnippet>865</a>                        shape: <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
-<a href=#866 id=866 data-nosnippet>866</a>                        total_elements: <span class="number">4</span>,
-<a href=#867 id=867 data-nosnippet>867</a>                        page_start: <span class="number">0</span>,
-<a href=#868 id=868 data-nosnippet>868</a>                        page_size: <span class="number">4</span>,
-<a href=#869 id=869 data-nosnippet>869</a>                        elements: <span class="macro">vec!</span>[
-<a href=#870 id=870 data-nosnippet>870</a>                            BrowserArrayElement {
-<a href=#871 id=871 data-nosnippet>871</a>                                flat_index: <span class="number">0</span>,
-<a href=#872 id=872 data-nosnippet>872</a>                                index: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">0</span>],
-<a href=#873 id=873 data-nosnippet>873</a>                                value: BrowserScalarValue::Complex64(BrowserComplex64Value {
-<a href=#874 id=874 data-nosnippet>874</a>                                    re: <span class="number">1.0</span>,
-<a href=#875 id=875 data-nosnippet>875</a>                                    im: -<span class="number">1.0</span>,
-<a href=#876 id=876 data-nosnippet>876</a>                                }),
-<a href=#877 id=877 data-nosnippet>877</a>                                selected: <span class="bool-val">false</span>,
-<a href=#878 id=878 data-nosnippet>878</a>                            },
-<a href=#879 id=879 data-nosnippet>879</a>                            BrowserArrayElement {
-<a href=#880 id=880 data-nosnippet>880</a>                                flat_index: <span class="number">1</span>,
-<a href=#881 id=881 data-nosnippet>881</a>                                index: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">1</span>],
-<a href=#882 id=882 data-nosnippet>882</a>                                value: BrowserScalarValue::Complex64(BrowserComplex64Value {
-<a href=#883 id=883 data-nosnippet>883</a>                                    re: <span class="number">2.0</span>,
-<a href=#884 id=884 data-nosnippet>884</a>                                    im: -<span class="number">2.0</span>,
-<a href=#885 id=885 data-nosnippet>885</a>                                }),
-<a href=#886 id=886 data-nosnippet>886</a>                                selected: <span class="bool-val">true</span>,
-<a href=#887 id=887 data-nosnippet>887</a>                            },
-<a href=#888 id=888 data-nosnippet>888</a>                        ],
-<a href=#889 id=889 data-nosnippet>889</a>                    },
-<a href=#890 id=890 data-nosnippet>890</a>                    rendered_lines: <span class="macro">vec!</span>[
-<a href=#891 id=891 data-nosnippet>891</a>                        <span class="string">"Inspector"</span>.to_string(),
-<a href=#892 id=892 data-nosnippet>892</a>                        <span class="string">"Type: array"</span>.to_string(),
-<a href=#893 id=893 data-nosnippet>893</a>                        <span class="string">"[0,1] = 2.0000-2.0000i"</span>.to_string(),
-<a href=#894 id=894 data-nosnippet>894</a>                    ],
-<a href=#895 id=895 data-nosnippet>895</a>                }),
-<a href=#896 id=896 data-nosnippet>896</a>            }),
-<a href=#897 id=897 data-nosnippet>897</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-<a href=#898 id=898 data-nosnippet>898</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
-<a href=#899 id=899 data-nosnippet>899</a>                view: BrowserView::Keywords,
-<a href=#900 id=900 data-nosnippet>900</a>                focus: BrowserFocus::Inspector,
-<a href=#901 id=901 data-nosnippet>901</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#902 id=902 data-nosnippet>902</a>                breadcrumb: breadcrumb.clone(),
-<a href=#903 id=903 data-nosnippet>903</a>                viewport,
-<a href=#904 id=904 data-nosnippet>904</a>                status_line: <span class="string">"Keyword record"</span>.to_string(),
-<a href=#905 id=905 data-nosnippet>905</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Keywords"</span>.to_string()],
-<a href=#906 id=906 data-nosnippet>906</a>                vertical_metrics: <span class="prelude-val">None</span>,
-<a href=#907 id=907 data-nosnippet>907</a>                horizontal_metrics: <span class="prelude-val">None</span>,
-<a href=#908 id=908 data-nosnippet>908</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::ColumnKeyword {
-<a href=#909 id=909 data-nosnippet>909</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#910 id=910 data-nosnippet>910</a>                    column: <span class="string">"UVW"</span>.to_string(),
-<a href=#911 id=911 data-nosnippet>911</a>                    keyword_path: <span class="macro">vec!</span>[<span class="string">"MEASINFO"</span>.to_string()],
-<a href=#912 id=912 data-nosnippet>912</a>                    value_path: <span class="macro">vec!</span>[ValuePathSegment::RecordField {
-<a href=#913 id=913 data-nosnippet>913</a>                        name: <span class="string">"Ref"</span>.to_string(),
-<a href=#914 id=914 data-nosnippet>914</a>                    }],
-<a href=#915 id=915 data-nosnippet>915</a>                }),
-<a href=#916 id=916 data-nosnippet>916</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
-<a href=#917 id=917 data-nosnippet>917</a>                    title: <span class="string">"Record"</span>.to_string(),
-<a href=#918 id=918 data-nosnippet>918</a>                    trail: <span class="macro">vec!</span>[BrowserInspectorTrailEntry {
-<a href=#919 id=919 data-nosnippet>919</a>                        label: <span class="string">"root"</span>.to_string(),
-<a href=#920 id=920 data-nosnippet>920</a>                        summary: <span class="string">"record(2)"</span>.to_string(),
-<a href=#921 id=921 data-nosnippet>921</a>                    }],
-<a href=#922 id=922 data-nosnippet>922</a>                    node: BrowserValueNode::Record {
-<a href=#923 id=923 data-nosnippet>923</a>                        total_fields: <span class="number">2</span>,
-<a href=#924 id=924 data-nosnippet>924</a>                        page_start: <span class="number">0</span>,
-<a href=#925 id=925 data-nosnippet>925</a>                        page_size: <span class="number">32</span>,
-<a href=#926 id=926 data-nosnippet>926</a>                        fields: <span class="macro">vec!</span>[
-<a href=#927 id=927 data-nosnippet>927</a>                            BrowserRecordFieldSummary {
-<a href=#928 id=928 data-nosnippet>928</a>                                name: <span class="string">"type"</span>.to_string(),
-<a href=#929 id=929 data-nosnippet>929</a>                                kind: BrowserValueKind::Scalar,
-<a href=#930 id=930 data-nosnippet>930</a>                                summary: <span class="string">"\"direction\""</span>.to_string(),
-<a href=#931 id=931 data-nosnippet>931</a>                                expandable: <span class="bool-val">false</span>,
-<a href=#932 id=932 data-nosnippet>932</a>                                openable: <span class="bool-val">false</span>,
-<a href=#933 id=933 data-nosnippet>933</a>                                selected: <span class="bool-val">false</span>,
-<a href=#934 id=934 data-nosnippet>934</a>                            },
-<a href=#935 id=935 data-nosnippet>935</a>                            BrowserRecordFieldSummary {
-<a href=#936 id=936 data-nosnippet>936</a>                                name: <span class="string">"Ref"</span>.to_string(),
-<a href=#937 id=937 data-nosnippet>937</a>                                kind: BrowserValueKind::Scalar,
-<a href=#938 id=938 data-nosnippet>938</a>                                summary: <span class="string">"\"J2000\""</span>.to_string(),
-<a href=#939 id=939 data-nosnippet>939</a>                                expandable: <span class="bool-val">false</span>,
-<a href=#940 id=940 data-nosnippet>940</a>                                openable: <span class="bool-val">false</span>,
-<a href=#941 id=941 data-nosnippet>941</a>                                selected: <span class="bool-val">true</span>,
-<a href=#942 id=942 data-nosnippet>942</a>                            },
-<a href=#943 id=943 data-nosnippet>943</a>                        ],
-<a href=#944 id=944 data-nosnippet>944</a>                    },
-<a href=#945 id=945 data-nosnippet>945</a>                    rendered_lines: <span class="macro">vec!</span>[
-<a href=#946 id=946 data-nosnippet>946</a>                        <span class="string">"Inspector"</span>.to_string(),
-<a href=#947 id=947 data-nosnippet>947</a>                        <span class="string">"Type: record"</span>.to_string(),
-<a href=#948 id=948 data-nosnippet>948</a>                        <span class="string">"Ref = \"J2000\""</span>.to_string(),
-<a href=#949 id=949 data-nosnippet>949</a>                    ],
-<a href=#950 id=950 data-nosnippet>950</a>                }),
-<a href=#951 id=951 data-nosnippet>951</a>            }),
-<a href=#952 id=952 data-nosnippet>952</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-<a href=#953 id=953 data-nosnippet>953</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
-<a href=#954 id=954 data-nosnippet>954</a>                view: BrowserView::Keywords,
-<a href=#955 id=955 data-nosnippet>955</a>                focus: BrowserFocus::Inspector,
-<a href=#956 id=956 data-nosnippet>956</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#957 id=957 data-nosnippet>957</a>                breadcrumb: breadcrumb.clone(),
-<a href=#958 id=958 data-nosnippet>958</a>                viewport,
-<a href=#959 id=959 data-nosnippet>959</a>                status_line: <span class="string">"Keyword table ref"</span>.to_string(),
-<a href=#960 id=960 data-nosnippet>960</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Keywords"</span>.to_string()],
-<a href=#961 id=961 data-nosnippet>961</a>                vertical_metrics: <span class="prelude-val">None</span>,
-<a href=#962 id=962 data-nosnippet>962</a>                horizontal_metrics: <span class="prelude-val">None</span>,
-<a href=#963 id=963 data-nosnippet>963</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::TableKeyword {
-<a href=#964 id=964 data-nosnippet>964</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#965 id=965 data-nosnippet>965</a>                    keyword_path: <span class="macro">vec!</span>[<span class="string">"FIELD"</span>.to_string(), <span class="string">"CHILD"</span>.to_string()],
-<a href=#966 id=966 data-nosnippet>966</a>                    value_path: <span class="macro">vec!</span>[ValuePathSegment::RecordField {
-<a href=#967 id=967 data-nosnippet>967</a>                        name: <span class="string">"child"</span>.to_string(),
-<a href=#968 id=968 data-nosnippet>968</a>                    }],
-<a href=#969 id=969 data-nosnippet>969</a>                }),
-<a href=#970 id=970 data-nosnippet>970</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
-<a href=#971 id=971 data-nosnippet>971</a>                    title: <span class="string">"Table ref"</span>.to_string(),
-<a href=#972 id=972 data-nosnippet>972</a>                    trail: <span class="macro">vec!</span>[BrowserInspectorTrailEntry {
-<a href=#973 id=973 data-nosnippet>973</a>                        label: <span class="string">"root"</span>.to_string(),
-<a href=#974 id=974 data-nosnippet>974</a>                        summary: <span class="string">"table_ref"</span>.to_string(),
-<a href=#975 id=975 data-nosnippet>975</a>                    }],
-<a href=#976 id=976 data-nosnippet>976</a>                    node: BrowserValueNode::TableRef {
-<a href=#977 id=977 data-nosnippet>977</a>                        path: <span class="string">"FIELD"</span>.to_string(),
-<a href=#978 id=978 data-nosnippet>978</a>                        resolved_path: <span class="string">"/tmp/root.ms/FIELD"</span>.to_string(),
-<a href=#979 id=979 data-nosnippet>979</a>                        openable: <span class="bool-val">true</span>,
-<a href=#980 id=980 data-nosnippet>980</a>                    },
-<a href=#981 id=981 data-nosnippet>981</a>                    rendered_lines: <span class="macro">vec!</span>[
-<a href=#982 id=982 data-nosnippet>982</a>                        <span class="string">"Inspector"</span>.to_string(),
-<a href=#983 id=983 data-nosnippet>983</a>                        <span class="string">"Type: table_ref"</span>.to_string(),
-<a href=#984 id=984 data-nosnippet>984</a>                        <span class="string">"FIELD"</span>.to_string(),
-<a href=#985 id=985 data-nosnippet>985</a>                    ],
-<a href=#986 id=986 data-nosnippet>986</a>                }),
-<a href=#987 id=987 data-nosnippet>987</a>            }),
-<a href=#988 id=988 data-nosnippet>988</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-<a href=#989 id=989 data-nosnippet>989</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
-<a href=#990 id=990 data-nosnippet>990</a>                view: BrowserView::Subtables,
-<a href=#991 id=991 data-nosnippet>991</a>                focus: BrowserFocus::Main,
-<a href=#992 id=992 data-nosnippet>992</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#993 id=993 data-nosnippet>993</a>                breadcrumb,
-<a href=#994 id=994 data-nosnippet>994</a>                viewport,
-<a href=#995 id=995 data-nosnippet>995</a>                status_line: <span class="string">"Undefined selection"</span>.to_string(),
-<a href=#996 id=996 data-nosnippet>996</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Subtables"</span>.to_string()],
-<a href=#997 id=997 data-nosnippet>997</a>                vertical_metrics: <span class="prelude-val">None</span>,
-<a href=#998 id=998 data-nosnippet>998</a>                horizontal_metrics: <span class="prelude-val">None</span>,
-<a href=#999 id=999 data-nosnippet>999</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::Subtable {
-<a href=#1000 id=1000 data-nosnippet>1000</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
-<a href=#1001 id=1001 data-nosnippet>1001</a>                    source: <span class="string">"keyword:FIELD"</span>.to_string(),
-<a href=#1002 id=1002 data-nosnippet>1002</a>                    target_path: <span class="string">"/tmp/root.ms/FIELD"</span>.to_string(),
-<a href=#1003 id=1003 data-nosnippet>1003</a>                }),
-<a href=#1004 id=1004 data-nosnippet>1004</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
-<a href=#1005 id=1005 data-nosnippet>1005</a>                    title: <span class="string">"Undefined"</span>.to_string(),
-<a href=#1006 id=1006 data-nosnippet>1006</a>                    trail: Vec::new(),
-<a href=#1007 id=1007 data-nosnippet>1007</a>                    node: BrowserValueNode::Undefined,
-<a href=#1008 id=1008 data-nosnippet>1008</a>                    rendered_lines: <span class="macro">vec!</span>[<span class="string">"Type: undefined"</span>.to_string()],
-<a href=#1009 id=1009 data-nosnippet>1009</a>                }),
-<a href=#1010 id=1010 data-nosnippet>1010</a>            }),
-<a href=#1011 id=1011 data-nosnippet>1011</a>            BrowserResponseEnvelope::error(<span class="string">"unsupported_version"</span>, <span class="string">"expected v1"</span>),
-<a href=#1012 id=1012 data-nosnippet>1012</a>        ];
-<a href=#1013 id=1013 data-nosnippet>1013</a>
-<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">for </span>case <span class="kw">in </span>cases {
-<a href=#1015 id=1015 data-nosnippet>1015</a>            assert_round_trip(case);
-<a href=#1016 id=1016 data-nosnippet>1016</a>        }
-<a href=#1017 id=1017 data-nosnippet>1017</a>    }
-<a href=#1018 id=1018 data-nosnippet>1018</a>
-<a href=#1019 id=1019 data-nosnippet>1019</a>    <span class="kw">fn </span>assert_schema_matches(actual_json: String, expected_json: <span class="kw-2">&amp;</span>str) {
-<a href=#1020 id=1020 data-nosnippet>1020</a>        <span class="kw">let </span>actual = serde_json::from_str::&lt;JsonValue&gt;(<span class="kw-2">&amp;</span>actual_json).expect(<span class="string">"parse actual schema"</span>);
-<a href=#1021 id=1021 data-nosnippet>1021</a>        <span class="kw">let </span>expected =
-<a href=#1022 id=1022 data-nosnippet>1022</a>            serde_json::from_str::&lt;JsonValue&gt;(expected_json).expect(<span class="string">"parse expected schema"</span>);
-<a href=#1023 id=1023 data-nosnippet>1023</a>        <span class="macro">assert_eq!</span>(actual, expected);
-<a href=#1024 id=1024 data-nosnippet>1024</a>    }
-<a href=#1025 id=1025 data-nosnippet>1025</a>
-<a href=#1026 id=1026 data-nosnippet>1026</a>    <span class="kw">fn </span>assert_round_trip&lt;T&gt;(value: T)
-<a href=#1027 id=1027 data-nosnippet>1027</a>    <span class="kw">where
-<a href=#1028 id=1028 data-nosnippet>1028</a>        </span>T: serde::Serialize + <span class="kw">for</span>&lt;<span class="lifetime">'de</span>&gt; serde::Deserialize&lt;<span class="lifetime">'de</span>&gt; + PartialEq + std::fmt::Debug,
-<a href=#1029 id=1029 data-nosnippet>1029</a>    {
-<a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="kw">let </span>json = serde_json::to_string(<span class="kw-2">&amp;</span>value).expect(<span class="string">"serialize round-trip value"</span>);
-<a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="kw">let </span>parsed = serde_json::from_str::&lt;T&gt;(<span class="kw-2">&amp;</span>json).expect(<span class="string">"deserialize round-trip value"</span>);
-<a href=#1032 id=1032 data-nosnippet>1032</a>        <span class="macro">assert_eq!</span>(parsed, value);
-<a href=#1033 id=1033 data-nosnippet>1033</a>    }
-<a href=#1034 id=1034 data-nosnippet>1034</a>}
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="macro">assert_eq!</span>(
+<a href=#728 id=728 data-nosnippet>728</a>            bundle.ui_schema_projection().unwrap(),
+<a href=#729 id=729 data-nosnippet>729</a>            <span class="macro">serde_json::json!</span>({
+<a href=#730 id=730 data-nosnippet>730</a>                <span class="string">"schema_version"</span>: <span class="number">1</span>,
+<a href=#731 id=731 data-nosnippet>731</a>                <span class="string">"command_id"</span>: <span class="string">"tablebrowser"</span>,
+<a href=#732 id=732 data-nosnippet>732</a>            })
+<a href=#733 id=733 data-nosnippet>733</a>        );
+<a href=#734 id=734 data-nosnippet>734</a>    }
+<a href=#735 id=735 data-nosnippet>735</a>
+<a href=#736 id=736 data-nosnippet>736</a>    <span class="attr">#[test]
+<a href=#737 id=737 data-nosnippet>737</a>    </span><span class="kw">fn </span>ui_schema_projection_reports_missing_projection() {
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>bundle = BrowserSessionSchemaBundle {
+<a href=#739 id=739 data-nosnippet>739</a>            protocol: BrowserProtocolInfo::current(),
+<a href=#740 id=740 data-nosnippet>740</a>            semantic: SessionSemanticContract {
+<a href=#741 id=741 data-nosnippet>741</a>                transport: <span class="string">"jsonl_stdio"</span>.to_string(),
+<a href=#742 id=742 data-nosnippet>742</a>                request_schema: <span class="macro">schema_for!</span>(BrowserRequestEnvelope),
+<a href=#743 id=743 data-nosnippet>743</a>                response_schema: <span class="macro">schema_for!</span>(BrowserResponseEnvelope),
+<a href=#744 id=744 data-nosnippet>744</a>            },
+<a href=#745 id=745 data-nosnippet>745</a>            components: ProviderComponentSchemas::new(),
+<a href=#746 id=746 data-nosnippet>746</a>            annotations: <span class="macro">serde_json::json!</span>({}),
+<a href=#747 id=747 data-nosnippet>747</a>            projections: ProviderProjectionMetadata {
+<a href=#748 id=748 data-nosnippet>748</a>                cli: <span class="prelude-val">None</span>,
+<a href=#749 id=749 data-nosnippet>749</a>                ui_schema: <span class="prelude-val">None</span>,
+<a href=#750 id=750 data-nosnippet>750</a>                python: <span class="prelude-val">None</span>,
+<a href=#751 id=751 data-nosnippet>751</a>            },
+<a href=#752 id=752 data-nosnippet>752</a>            request_schema: <span class="macro">schema_for!</span>(BrowserRequestEnvelope),
+<a href=#753 id=753 data-nosnippet>753</a>            response_schema: <span class="macro">schema_for!</span>(BrowserResponseEnvelope),
+<a href=#754 id=754 data-nosnippet>754</a>        };
+<a href=#755 id=755 data-nosnippet>755</a>
+<a href=#756 id=756 data-nosnippet>756</a>        <span class="macro">assert_eq!</span>(
+<a href=#757 id=757 data-nosnippet>757</a>            bundle.ui_schema_projection().unwrap_err(),
+<a href=#758 id=758 data-nosnippet>758</a>            <span class="string">"missing ui_schema projection"
+<a href=#759 id=759 data-nosnippet>759</a>        </span>);
+<a href=#760 id=760 data-nosnippet>760</a>    }
+<a href=#761 id=761 data-nosnippet>761</a>
+<a href=#762 id=762 data-nosnippet>762</a>    <span class="attr">#[test]
+<a href=#763 id=763 data-nosnippet>763</a>    </span><span class="kw">fn </span>viewport_helpers_preserve_expected_dimensions() {
+<a href=#764 id=764 data-nosnippet>764</a>        <span class="macro">assert_eq!</span>(
+<a href=#765 id=765 data-nosnippet>765</a>            BrowserViewport::with_inspector_height(<span class="number">120</span>, <span class="number">32</span>, <span class="number">9</span>),
+<a href=#766 id=766 data-nosnippet>766</a>            BrowserViewport {
+<a href=#767 id=767 data-nosnippet>767</a>                width: <span class="number">120</span>,
+<a href=#768 id=768 data-nosnippet>768</a>                height: <span class="number">32</span>,
+<a href=#769 id=769 data-nosnippet>769</a>                inspector_height: <span class="number">9</span>,
+<a href=#770 id=770 data-nosnippet>770</a>            }
+<a href=#771 id=771 data-nosnippet>771</a>        );
+<a href=#772 id=772 data-nosnippet>772</a>        <span class="macro">assert_eq!</span>(BrowserViewport::default(), BrowserViewport::new(<span class="number">80</span>, <span class="number">24</span>));
+<a href=#773 id=773 data-nosnippet>773</a>    }
+<a href=#774 id=774 data-nosnippet>774</a>
+<a href=#775 id=775 data-nosnippet>775</a>    <span class="attr">#[test]
+<a href=#776 id=776 data-nosnippet>776</a>    </span><span class="kw">fn </span>request_envelopes_round_trip_all_command_variants() {
+<a href=#777 id=777 data-nosnippet>777</a>        <span class="kw">let </span>viewport = BrowserViewport::new(<span class="number">120</span>, <span class="number">32</span>);
+<a href=#778 id=778 data-nosnippet>778</a>        <span class="kw">let </span>cases = <span class="macro">vec!</span>[
+<a href=#779 id=779 data-nosnippet>779</a>            BrowserRequestEnvelope::new(BrowserCommand::OpenRoot {
+<a href=#780 id=780 data-nosnippet>780</a>                path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#781 id=781 data-nosnippet>781</a>                viewport,
+<a href=#782 id=782 data-nosnippet>782</a>            }),
+<a href=#783 id=783 data-nosnippet>783</a>            BrowserRequestEnvelope::new(BrowserCommand::Resize { viewport }),
+<a href=#784 id=784 data-nosnippet>784</a>            BrowserRequestEnvelope::new(BrowserCommand::CycleView {
+<a href=#785 id=785 data-nosnippet>785</a>                forward: <span class="bool-val">true</span>,
+<a href=#786 id=786 data-nosnippet>786</a>                viewport: <span class="prelude-val">Some</span>(viewport),
+<a href=#787 id=787 data-nosnippet>787</a>            }),
+<a href=#788 id=788 data-nosnippet>788</a>            BrowserRequestEnvelope::new(BrowserCommand::SetFocus {
+<a href=#789 id=789 data-nosnippet>789</a>                focus: BrowserFocus::Inspector,
+<a href=#790 id=790 data-nosnippet>790</a>                viewport: <span class="prelude-val">None</span>,
+<a href=#791 id=791 data-nosnippet>791</a>            }),
+<a href=#792 id=792 data-nosnippet>792</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveUp {
+<a href=#793 id=793 data-nosnippet>793</a>                steps: <span class="number">2</span>,
+<a href=#794 id=794 data-nosnippet>794</a>                viewport: <span class="prelude-val">None</span>,
+<a href=#795 id=795 data-nosnippet>795</a>            }),
+<a href=#796 id=796 data-nosnippet>796</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveDown {
+<a href=#797 id=797 data-nosnippet>797</a>                steps: <span class="number">3</span>,
+<a href=#798 id=798 data-nosnippet>798</a>                viewport: <span class="prelude-val">Some</span>(viewport),
+<a href=#799 id=799 data-nosnippet>799</a>            }),
+<a href=#800 id=800 data-nosnippet>800</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveLeft {
+<a href=#801 id=801 data-nosnippet>801</a>                steps: <span class="number">1</span>,
+<a href=#802 id=802 data-nosnippet>802</a>                viewport: <span class="prelude-val">None</span>,
+<a href=#803 id=803 data-nosnippet>803</a>            }),
+<a href=#804 id=804 data-nosnippet>804</a>            BrowserRequestEnvelope::new(BrowserCommand::MoveRight {
+<a href=#805 id=805 data-nosnippet>805</a>                steps: <span class="number">4</span>,
+<a href=#806 id=806 data-nosnippet>806</a>                viewport: <span class="prelude-val">Some</span>(viewport),
+<a href=#807 id=807 data-nosnippet>807</a>            }),
+<a href=#808 id=808 data-nosnippet>808</a>            BrowserRequestEnvelope::new(BrowserCommand::PageUp {
+<a href=#809 id=809 data-nosnippet>809</a>                pages: <span class="number">2</span>,
+<a href=#810 id=810 data-nosnippet>810</a>                viewport: <span class="prelude-val">None</span>,
+<a href=#811 id=811 data-nosnippet>811</a>            }),
+<a href=#812 id=812 data-nosnippet>812</a>            BrowserRequestEnvelope::new(BrowserCommand::PageDown {
+<a href=#813 id=813 data-nosnippet>813</a>                pages: <span class="number">5</span>,
+<a href=#814 id=814 data-nosnippet>814</a>                viewport: <span class="prelude-val">Some</span>(viewport),
+<a href=#815 id=815 data-nosnippet>815</a>            }),
+<a href=#816 id=816 data-nosnippet>816</a>            BrowserRequestEnvelope::new(BrowserCommand::Activate { viewport: <span class="prelude-val">None </span>}),
+<a href=#817 id=817 data-nosnippet>817</a>            BrowserRequestEnvelope::new(BrowserCommand::Back {
+<a href=#818 id=818 data-nosnippet>818</a>                viewport: <span class="prelude-val">Some</span>(viewport),
+<a href=#819 id=819 data-nosnippet>819</a>            }),
+<a href=#820 id=820 data-nosnippet>820</a>            BrowserRequestEnvelope::new(BrowserCommand::Escape { viewport: <span class="prelude-val">None </span>}),
+<a href=#821 id=821 data-nosnippet>821</a>            BrowserRequestEnvelope::new(BrowserCommand::GetSnapshot {
+<a href=#822 id=822 data-nosnippet>822</a>                viewport: <span class="prelude-val">Some</span>(viewport),
+<a href=#823 id=823 data-nosnippet>823</a>            }),
+<a href=#824 id=824 data-nosnippet>824</a>        ];
+<a href=#825 id=825 data-nosnippet>825</a>
+<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">for </span>case <span class="kw">in </span>cases {
+<a href=#827 id=827 data-nosnippet>827</a>            assert_round_trip(case);
+<a href=#828 id=828 data-nosnippet>828</a>        }
+<a href=#829 id=829 data-nosnippet>829</a>    }
+<a href=#830 id=830 data-nosnippet>830</a>
+<a href=#831 id=831 data-nosnippet>831</a>    <span class="attr">#[test]
+<a href=#832 id=832 data-nosnippet>832</a>    </span><span class="kw">fn </span>response_envelopes_round_trip_snapshot_and_error_variants() {
+<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span>viewport = BrowserViewport::new(<span class="number">120</span>, <span class="number">32</span>);
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>breadcrumb = <span class="macro">vec!</span>[
+<a href=#835 id=835 data-nosnippet>835</a>            BrowserBreadcrumbEntry {
+<a href=#836 id=836 data-nosnippet>836</a>                label: <span class="string">"root.ms"</span>.to_string(),
+<a href=#837 id=837 data-nosnippet>837</a>                path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#838 id=838 data-nosnippet>838</a>            },
+<a href=#839 id=839 data-nosnippet>839</a>            BrowserBreadcrumbEntry {
+<a href=#840 id=840 data-nosnippet>840</a>                label: <span class="string">"FIELD"</span>.to_string(),
+<a href=#841 id=841 data-nosnippet>841</a>                path: <span class="string">"/tmp/root.ms/FIELD"</span>.to_string(),
+<a href=#842 id=842 data-nosnippet>842</a>            },
+<a href=#843 id=843 data-nosnippet>843</a>        ];
+<a href=#844 id=844 data-nosnippet>844</a>
+<a href=#845 id=845 data-nosnippet>845</a>        <span class="kw">let </span>cases = <span class="macro">vec!</span>[
+<a href=#846 id=846 data-nosnippet>846</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+<a href=#847 id=847 data-nosnippet>847</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
+<a href=#848 id=848 data-nosnippet>848</a>                view: BrowserView::Columns,
+<a href=#849 id=849 data-nosnippet>849</a>                focus: BrowserFocus::Main,
+<a href=#850 id=850 data-nosnippet>850</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#851 id=851 data-nosnippet>851</a>                breadcrumb: breadcrumb.clone(),
+<a href=#852 id=852 data-nosnippet>852</a>                viewport,
+<a href=#853 id=853 data-nosnippet>853</a>                status_line: <span class="string">"Columns ready"</span>.to_string(),
+<a href=#854 id=854 data-nosnippet>854</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Columns"</span>.to_string(), <span class="string">"NAME scalar string"</span>.to_string()],
+<a href=#855 id=855 data-nosnippet>855</a>                vertical_metrics: <span class="prelude-val">None</span>,
+<a href=#856 id=856 data-nosnippet>856</a>                horizontal_metrics: <span class="prelude-val">None</span>,
+<a href=#857 id=857 data-nosnippet>857</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::Column {
+<a href=#858 id=858 data-nosnippet>858</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#859 id=859 data-nosnippet>859</a>                    column: <span class="string">"NAME"</span>.to_string(),
+<a href=#860 id=860 data-nosnippet>860</a>                }),
+<a href=#861 id=861 data-nosnippet>861</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
+<a href=#862 id=862 data-nosnippet>862</a>                    title: <span class="string">"Complex scalar"</span>.to_string(),
+<a href=#863 id=863 data-nosnippet>863</a>                    trail: <span class="macro">vec!</span>[BrowserInspectorTrailEntry {
+<a href=#864 id=864 data-nosnippet>864</a>                        label: <span class="string">"root"</span>.to_string(),
+<a href=#865 id=865 data-nosnippet>865</a>                        summary: <span class="string">"complex32"</span>.to_string(),
+<a href=#866 id=866 data-nosnippet>866</a>                    }],
+<a href=#867 id=867 data-nosnippet>867</a>                    node: BrowserValueNode::Scalar {
+<a href=#868 id=868 data-nosnippet>868</a>                        value: BrowserScalarValue::Complex32(BrowserComplex32Value {
+<a href=#869 id=869 data-nosnippet>869</a>                            re: <span class="number">1.25</span>,
+<a href=#870 id=870 data-nosnippet>870</a>                            im: -<span class="number">0.5</span>,
+<a href=#871 id=871 data-nosnippet>871</a>                        }),
+<a href=#872 id=872 data-nosnippet>872</a>                    },
+<a href=#873 id=873 data-nosnippet>873</a>                    rendered_lines: <span class="macro">vec!</span>[
+<a href=#874 id=874 data-nosnippet>874</a>                        <span class="string">"Inspector"</span>.to_string(),
+<a href=#875 id=875 data-nosnippet>875</a>                        <span class="string">"Type: complex32"</span>.to_string(),
+<a href=#876 id=876 data-nosnippet>876</a>                        <span class="string">"Value: 1.2500-0.5000i"</span>.to_string(),
+<a href=#877 id=877 data-nosnippet>877</a>                    ],
+<a href=#878 id=878 data-nosnippet>878</a>                }),
+<a href=#879 id=879 data-nosnippet>879</a>            }),
+<a href=#880 id=880 data-nosnippet>880</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+<a href=#881 id=881 data-nosnippet>881</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
+<a href=#882 id=882 data-nosnippet>882</a>                view: BrowserView::Cells,
+<a href=#883 id=883 data-nosnippet>883</a>                focus: BrowserFocus::Inspector,
+<a href=#884 id=884 data-nosnippet>884</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#885 id=885 data-nosnippet>885</a>                breadcrumb: breadcrumb.clone(),
+<a href=#886 id=886 data-nosnippet>886</a>                viewport,
+<a href=#887 id=887 data-nosnippet>887</a>                status_line: <span class="string">"Array inspector"</span>.to_string(),
+<a href=#888 id=888 data-nosnippet>888</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Cells"</span>.to_string()],
+<a href=#889 id=889 data-nosnippet>889</a>                vertical_metrics: <span class="prelude-val">None</span>,
+<a href=#890 id=890 data-nosnippet>890</a>                horizontal_metrics: <span class="prelude-val">None</span>,
+<a href=#891 id=891 data-nosnippet>891</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::Cell {
+<a href=#892 id=892 data-nosnippet>892</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#893 id=893 data-nosnippet>893</a>                    row: <span class="number">7</span>,
+<a href=#894 id=894 data-nosnippet>894</a>                    column: <span class="string">"DATA"</span>.to_string(),
+<a href=#895 id=895 data-nosnippet>895</a>                    value_path: <span class="macro">vec!</span>[ValuePathSegment::ArrayIndex { flat_index: <span class="number">1 </span>}],
+<a href=#896 id=896 data-nosnippet>896</a>                }),
+<a href=#897 id=897 data-nosnippet>897</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
+<a href=#898 id=898 data-nosnippet>898</a>                    title: <span class="string">"Complex array"</span>.to_string(),
+<a href=#899 id=899 data-nosnippet>899</a>                    trail: <span class="macro">vec!</span>[
+<a href=#900 id=900 data-nosnippet>900</a>                        BrowserInspectorTrailEntry {
+<a href=#901 id=901 data-nosnippet>901</a>                            label: <span class="string">"root"</span>.to_string(),
+<a href=#902 id=902 data-nosnippet>902</a>                            summary: <span class="string">"array[2x2]"</span>.to_string(),
+<a href=#903 id=903 data-nosnippet>903</a>                        },
+<a href=#904 id=904 data-nosnippet>904</a>                        BrowserInspectorTrailEntry {
+<a href=#905 id=905 data-nosnippet>905</a>                            label: <span class="string">"[0,1]"</span>.to_string(),
+<a href=#906 id=906 data-nosnippet>906</a>                            summary: <span class="string">"complex64"</span>.to_string(),
+<a href=#907 id=907 data-nosnippet>907</a>                        },
+<a href=#908 id=908 data-nosnippet>908</a>                    ],
+<a href=#909 id=909 data-nosnippet>909</a>                    node: BrowserValueNode::Array {
+<a href=#910 id=910 data-nosnippet>910</a>                        primitive: BrowserPrimitiveType::Complex64,
+<a href=#911 id=911 data-nosnippet>911</a>                        shape: <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
+<a href=#912 id=912 data-nosnippet>912</a>                        total_elements: <span class="number">4</span>,
+<a href=#913 id=913 data-nosnippet>913</a>                        page_start: <span class="number">0</span>,
+<a href=#914 id=914 data-nosnippet>914</a>                        page_size: <span class="number">4</span>,
+<a href=#915 id=915 data-nosnippet>915</a>                        elements: <span class="macro">vec!</span>[
+<a href=#916 id=916 data-nosnippet>916</a>                            BrowserArrayElement {
+<a href=#917 id=917 data-nosnippet>917</a>                                flat_index: <span class="number">0</span>,
+<a href=#918 id=918 data-nosnippet>918</a>                                index: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">0</span>],
+<a href=#919 id=919 data-nosnippet>919</a>                                value: BrowserScalarValue::Complex64(BrowserComplex64Value {
+<a href=#920 id=920 data-nosnippet>920</a>                                    re: <span class="number">1.0</span>,
+<a href=#921 id=921 data-nosnippet>921</a>                                    im: -<span class="number">1.0</span>,
+<a href=#922 id=922 data-nosnippet>922</a>                                }),
+<a href=#923 id=923 data-nosnippet>923</a>                                selected: <span class="bool-val">false</span>,
+<a href=#924 id=924 data-nosnippet>924</a>                            },
+<a href=#925 id=925 data-nosnippet>925</a>                            BrowserArrayElement {
+<a href=#926 id=926 data-nosnippet>926</a>                                flat_index: <span class="number">1</span>,
+<a href=#927 id=927 data-nosnippet>927</a>                                index: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">1</span>],
+<a href=#928 id=928 data-nosnippet>928</a>                                value: BrowserScalarValue::Complex64(BrowserComplex64Value {
+<a href=#929 id=929 data-nosnippet>929</a>                                    re: <span class="number">2.0</span>,
+<a href=#930 id=930 data-nosnippet>930</a>                                    im: -<span class="number">2.0</span>,
+<a href=#931 id=931 data-nosnippet>931</a>                                }),
+<a href=#932 id=932 data-nosnippet>932</a>                                selected: <span class="bool-val">true</span>,
+<a href=#933 id=933 data-nosnippet>933</a>                            },
+<a href=#934 id=934 data-nosnippet>934</a>                        ],
+<a href=#935 id=935 data-nosnippet>935</a>                    },
+<a href=#936 id=936 data-nosnippet>936</a>                    rendered_lines: <span class="macro">vec!</span>[
+<a href=#937 id=937 data-nosnippet>937</a>                        <span class="string">"Inspector"</span>.to_string(),
+<a href=#938 id=938 data-nosnippet>938</a>                        <span class="string">"Type: array"</span>.to_string(),
+<a href=#939 id=939 data-nosnippet>939</a>                        <span class="string">"[0,1] = 2.0000-2.0000i"</span>.to_string(),
+<a href=#940 id=940 data-nosnippet>940</a>                    ],
+<a href=#941 id=941 data-nosnippet>941</a>                }),
+<a href=#942 id=942 data-nosnippet>942</a>            }),
+<a href=#943 id=943 data-nosnippet>943</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+<a href=#944 id=944 data-nosnippet>944</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
+<a href=#945 id=945 data-nosnippet>945</a>                view: BrowserView::Keywords,
+<a href=#946 id=946 data-nosnippet>946</a>                focus: BrowserFocus::Inspector,
+<a href=#947 id=947 data-nosnippet>947</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#948 id=948 data-nosnippet>948</a>                breadcrumb: breadcrumb.clone(),
+<a href=#949 id=949 data-nosnippet>949</a>                viewport,
+<a href=#950 id=950 data-nosnippet>950</a>                status_line: <span class="string">"Keyword record"</span>.to_string(),
+<a href=#951 id=951 data-nosnippet>951</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Keywords"</span>.to_string()],
+<a href=#952 id=952 data-nosnippet>952</a>                vertical_metrics: <span class="prelude-val">None</span>,
+<a href=#953 id=953 data-nosnippet>953</a>                horizontal_metrics: <span class="prelude-val">None</span>,
+<a href=#954 id=954 data-nosnippet>954</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::ColumnKeyword {
+<a href=#955 id=955 data-nosnippet>955</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#956 id=956 data-nosnippet>956</a>                    column: <span class="string">"UVW"</span>.to_string(),
+<a href=#957 id=957 data-nosnippet>957</a>                    keyword_path: <span class="macro">vec!</span>[<span class="string">"MEASINFO"</span>.to_string()],
+<a href=#958 id=958 data-nosnippet>958</a>                    value_path: <span class="macro">vec!</span>[ValuePathSegment::RecordField {
+<a href=#959 id=959 data-nosnippet>959</a>                        name: <span class="string">"Ref"</span>.to_string(),
+<a href=#960 id=960 data-nosnippet>960</a>                    }],
+<a href=#961 id=961 data-nosnippet>961</a>                }),
+<a href=#962 id=962 data-nosnippet>962</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
+<a href=#963 id=963 data-nosnippet>963</a>                    title: <span class="string">"Record"</span>.to_string(),
+<a href=#964 id=964 data-nosnippet>964</a>                    trail: <span class="macro">vec!</span>[BrowserInspectorTrailEntry {
+<a href=#965 id=965 data-nosnippet>965</a>                        label: <span class="string">"root"</span>.to_string(),
+<a href=#966 id=966 data-nosnippet>966</a>                        summary: <span class="string">"record(2)"</span>.to_string(),
+<a href=#967 id=967 data-nosnippet>967</a>                    }],
+<a href=#968 id=968 data-nosnippet>968</a>                    node: BrowserValueNode::Record {
+<a href=#969 id=969 data-nosnippet>969</a>                        total_fields: <span class="number">2</span>,
+<a href=#970 id=970 data-nosnippet>970</a>                        page_start: <span class="number">0</span>,
+<a href=#971 id=971 data-nosnippet>971</a>                        page_size: <span class="number">32</span>,
+<a href=#972 id=972 data-nosnippet>972</a>                        fields: <span class="macro">vec!</span>[
+<a href=#973 id=973 data-nosnippet>973</a>                            BrowserRecordFieldSummary {
+<a href=#974 id=974 data-nosnippet>974</a>                                name: <span class="string">"type"</span>.to_string(),
+<a href=#975 id=975 data-nosnippet>975</a>                                kind: BrowserValueKind::Scalar,
+<a href=#976 id=976 data-nosnippet>976</a>                                summary: <span class="string">"\"direction\""</span>.to_string(),
+<a href=#977 id=977 data-nosnippet>977</a>                                expandable: <span class="bool-val">false</span>,
+<a href=#978 id=978 data-nosnippet>978</a>                                openable: <span class="bool-val">false</span>,
+<a href=#979 id=979 data-nosnippet>979</a>                                selected: <span class="bool-val">false</span>,
+<a href=#980 id=980 data-nosnippet>980</a>                            },
+<a href=#981 id=981 data-nosnippet>981</a>                            BrowserRecordFieldSummary {
+<a href=#982 id=982 data-nosnippet>982</a>                                name: <span class="string">"Ref"</span>.to_string(),
+<a href=#983 id=983 data-nosnippet>983</a>                                kind: BrowserValueKind::Scalar,
+<a href=#984 id=984 data-nosnippet>984</a>                                summary: <span class="string">"\"J2000\""</span>.to_string(),
+<a href=#985 id=985 data-nosnippet>985</a>                                expandable: <span class="bool-val">false</span>,
+<a href=#986 id=986 data-nosnippet>986</a>                                openable: <span class="bool-val">false</span>,
+<a href=#987 id=987 data-nosnippet>987</a>                                selected: <span class="bool-val">true</span>,
+<a href=#988 id=988 data-nosnippet>988</a>                            },
+<a href=#989 id=989 data-nosnippet>989</a>                        ],
+<a href=#990 id=990 data-nosnippet>990</a>                    },
+<a href=#991 id=991 data-nosnippet>991</a>                    rendered_lines: <span class="macro">vec!</span>[
+<a href=#992 id=992 data-nosnippet>992</a>                        <span class="string">"Inspector"</span>.to_string(),
+<a href=#993 id=993 data-nosnippet>993</a>                        <span class="string">"Type: record"</span>.to_string(),
+<a href=#994 id=994 data-nosnippet>994</a>                        <span class="string">"Ref = \"J2000\""</span>.to_string(),
+<a href=#995 id=995 data-nosnippet>995</a>                    ],
+<a href=#996 id=996 data-nosnippet>996</a>                }),
+<a href=#997 id=997 data-nosnippet>997</a>            }),
+<a href=#998 id=998 data-nosnippet>998</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+<a href=#999 id=999 data-nosnippet>999</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
+<a href=#1000 id=1000 data-nosnippet>1000</a>                view: BrowserView::Keywords,
+<a href=#1001 id=1001 data-nosnippet>1001</a>                focus: BrowserFocus::Inspector,
+<a href=#1002 id=1002 data-nosnippet>1002</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#1003 id=1003 data-nosnippet>1003</a>                breadcrumb: breadcrumb.clone(),
+<a href=#1004 id=1004 data-nosnippet>1004</a>                viewport,
+<a href=#1005 id=1005 data-nosnippet>1005</a>                status_line: <span class="string">"Keyword table ref"</span>.to_string(),
+<a href=#1006 id=1006 data-nosnippet>1006</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Keywords"</span>.to_string()],
+<a href=#1007 id=1007 data-nosnippet>1007</a>                vertical_metrics: <span class="prelude-val">None</span>,
+<a href=#1008 id=1008 data-nosnippet>1008</a>                horizontal_metrics: <span class="prelude-val">None</span>,
+<a href=#1009 id=1009 data-nosnippet>1009</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::TableKeyword {
+<a href=#1010 id=1010 data-nosnippet>1010</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#1011 id=1011 data-nosnippet>1011</a>                    keyword_path: <span class="macro">vec!</span>[<span class="string">"FIELD"</span>.to_string(), <span class="string">"CHILD"</span>.to_string()],
+<a href=#1012 id=1012 data-nosnippet>1012</a>                    value_path: <span class="macro">vec!</span>[ValuePathSegment::RecordField {
+<a href=#1013 id=1013 data-nosnippet>1013</a>                        name: <span class="string">"child"</span>.to_string(),
+<a href=#1014 id=1014 data-nosnippet>1014</a>                    }],
+<a href=#1015 id=1015 data-nosnippet>1015</a>                }),
+<a href=#1016 id=1016 data-nosnippet>1016</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
+<a href=#1017 id=1017 data-nosnippet>1017</a>                    title: <span class="string">"Table ref"</span>.to_string(),
+<a href=#1018 id=1018 data-nosnippet>1018</a>                    trail: <span class="macro">vec!</span>[BrowserInspectorTrailEntry {
+<a href=#1019 id=1019 data-nosnippet>1019</a>                        label: <span class="string">"root"</span>.to_string(),
+<a href=#1020 id=1020 data-nosnippet>1020</a>                        summary: <span class="string">"table_ref"</span>.to_string(),
+<a href=#1021 id=1021 data-nosnippet>1021</a>                    }],
+<a href=#1022 id=1022 data-nosnippet>1022</a>                    node: BrowserValueNode::TableRef {
+<a href=#1023 id=1023 data-nosnippet>1023</a>                        path: <span class="string">"FIELD"</span>.to_string(),
+<a href=#1024 id=1024 data-nosnippet>1024</a>                        resolved_path: <span class="string">"/tmp/root.ms/FIELD"</span>.to_string(),
+<a href=#1025 id=1025 data-nosnippet>1025</a>                        openable: <span class="bool-val">true</span>,
+<a href=#1026 id=1026 data-nosnippet>1026</a>                    },
+<a href=#1027 id=1027 data-nosnippet>1027</a>                    rendered_lines: <span class="macro">vec!</span>[
+<a href=#1028 id=1028 data-nosnippet>1028</a>                        <span class="string">"Inspector"</span>.to_string(),
+<a href=#1029 id=1029 data-nosnippet>1029</a>                        <span class="string">"Type: table_ref"</span>.to_string(),
+<a href=#1030 id=1030 data-nosnippet>1030</a>                        <span class="string">"FIELD"</span>.to_string(),
+<a href=#1031 id=1031 data-nosnippet>1031</a>                    ],
+<a href=#1032 id=1032 data-nosnippet>1032</a>                }),
+<a href=#1033 id=1033 data-nosnippet>1033</a>            }),
+<a href=#1034 id=1034 data-nosnippet>1034</a>            BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+<a href=#1035 id=1035 data-nosnippet>1035</a>                capabilities: BrowserCapabilities { editable: <span class="bool-val">false </span>},
+<a href=#1036 id=1036 data-nosnippet>1036</a>                view: BrowserView::Subtables,
+<a href=#1037 id=1037 data-nosnippet>1037</a>                focus: BrowserFocus::Main,
+<a href=#1038 id=1038 data-nosnippet>1038</a>                table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#1039 id=1039 data-nosnippet>1039</a>                breadcrumb,
+<a href=#1040 id=1040 data-nosnippet>1040</a>                viewport,
+<a href=#1041 id=1041 data-nosnippet>1041</a>                status_line: <span class="string">"Undefined selection"</span>.to_string(),
+<a href=#1042 id=1042 data-nosnippet>1042</a>                content_lines: <span class="macro">vec!</span>[<span class="string">"Subtables"</span>.to_string()],
+<a href=#1043 id=1043 data-nosnippet>1043</a>                vertical_metrics: <span class="prelude-val">None</span>,
+<a href=#1044 id=1044 data-nosnippet>1044</a>                horizontal_metrics: <span class="prelude-val">None</span>,
+<a href=#1045 id=1045 data-nosnippet>1045</a>                selected_address: <span class="prelude-val">Some</span>(BrowserAddress::Subtable {
+<a href=#1046 id=1046 data-nosnippet>1046</a>                    table_path: <span class="string">"/tmp/root.ms"</span>.to_string(),
+<a href=#1047 id=1047 data-nosnippet>1047</a>                    source: <span class="string">"keyword:FIELD"</span>.to_string(),
+<a href=#1048 id=1048 data-nosnippet>1048</a>                    target_path: <span class="string">"/tmp/root.ms/FIELD"</span>.to_string(),
+<a href=#1049 id=1049 data-nosnippet>1049</a>                }),
+<a href=#1050 id=1050 data-nosnippet>1050</a>                inspector: <span class="prelude-val">Some</span>(BrowserInspectorSnapshot {
+<a href=#1051 id=1051 data-nosnippet>1051</a>                    title: <span class="string">"Undefined"</span>.to_string(),
+<a href=#1052 id=1052 data-nosnippet>1052</a>                    trail: Vec::new(),
+<a href=#1053 id=1053 data-nosnippet>1053</a>                    node: BrowserValueNode::Undefined,
+<a href=#1054 id=1054 data-nosnippet>1054</a>                    rendered_lines: <span class="macro">vec!</span>[<span class="string">"Type: undefined"</span>.to_string()],
+<a href=#1055 id=1055 data-nosnippet>1055</a>                }),
+<a href=#1056 id=1056 data-nosnippet>1056</a>            }),
+<a href=#1057 id=1057 data-nosnippet>1057</a>            BrowserResponseEnvelope::error(<span class="string">"unsupported_version"</span>, <span class="string">"expected v1"</span>),
+<a href=#1058 id=1058 data-nosnippet>1058</a>        ];
+<a href=#1059 id=1059 data-nosnippet>1059</a>
+<a href=#1060 id=1060 data-nosnippet>1060</a>        <span class="kw">for </span>case <span class="kw">in </span>cases {
+<a href=#1061 id=1061 data-nosnippet>1061</a>            assert_round_trip(case);
+<a href=#1062 id=1062 data-nosnippet>1062</a>        }
+<a href=#1063 id=1063 data-nosnippet>1063</a>    }
+<a href=#1064 id=1064 data-nosnippet>1064</a>
+<a href=#1065 id=1065 data-nosnippet>1065</a>    <span class="kw">fn </span>assert_schema_matches(actual_json: String, expected_json: <span class="kw-2">&amp;</span>str) {
+<a href=#1066 id=1066 data-nosnippet>1066</a>        <span class="kw">let </span>actual = serde_json::from_str::&lt;JsonValue&gt;(<span class="kw-2">&amp;</span>actual_json).expect(<span class="string">"parse actual schema"</span>);
+<a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="kw">let </span>expected =
+<a href=#1068 id=1068 data-nosnippet>1068</a>            serde_json::from_str::&lt;JsonValue&gt;(expected_json).expect(<span class="string">"parse expected schema"</span>);
+<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="macro">assert_eq!</span>(actual, expected);
+<a href=#1070 id=1070 data-nosnippet>1070</a>    }
+<a href=#1071 id=1071 data-nosnippet>1071</a>
+<a href=#1072 id=1072 data-nosnippet>1072</a>    <span class="kw">fn </span>assert_round_trip&lt;T&gt;(value: T)
+<a href=#1073 id=1073 data-nosnippet>1073</a>    <span class="kw">where
+<a href=#1074 id=1074 data-nosnippet>1074</a>        </span>T: serde::Serialize + <span class="kw">for</span>&lt;<span class="lifetime">'de</span>&gt; serde::Deserialize&lt;<span class="lifetime">'de</span>&gt; + PartialEq + std::fmt::Debug,
+<a href=#1075 id=1075 data-nosnippet>1075</a>    {
+<a href=#1076 id=1076 data-nosnippet>1076</a>        <span class="kw">let </span>json = serde_json::to_string(<span class="kw-2">&amp;</span>value).expect(<span class="string">"serialize round-trip value"</span>);
+<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="kw">let </span>parsed = serde_json::from_str::&lt;T&gt;(<span class="kw-2">&amp;</span>json).expect(<span class="string">"deserialize round-trip value"</span>);
+<a href=#1078 id=1078 data-nosnippet>1078</a>        <span class="macro">assert_eq!</span>(parsed, value);
+<a href=#1079 id=1079 data-nosnippet>1079</a>    }
+<a href=#1080 id=1080 data-nosnippet>1080</a>}
 </code></pre></div></section></main></body></html>

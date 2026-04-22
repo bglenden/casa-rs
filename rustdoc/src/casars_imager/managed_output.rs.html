@@ -508,7 +508,7 @@
 <a href=#508 id=508 data-nosnippet>508</a>
 <a href=#509 id=509 data-nosnippet>509</a><span class="attr">#[cfg(test)]
 <a href=#510 id=510 data-nosnippet>510</a></span><span class="kw">mod </span>tests {
-<a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">use </span><span class="kw">super</span>::ManagedImagingOutput;
+<a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">use </span>super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
 <a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">use </span><span class="kw">crate</span>::task_contract::{
 <a href=#513 id=513 data-nosnippet>513</a>        ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
 <a href=#514 id=514 data-nosnippet>514</a>        ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
@@ -816,5 +816,55 @@
 <a href=#816 id=816 data-nosnippet>816</a>        );
 <a href=#817 id=817 data-nosnippet>817</a>        <span class="macro">assert!</span>(!output.artifacts[<span class="number">0</span>].preview_png_exists);
 <a href=#818 id=818 data-nosnippet>818</a>    }
-<a href=#819 id=819 data-nosnippet>819</a>}
+<a href=#819 id=819 data-nosnippet>819</a>
+<a href=#820 id=820 data-nosnippet>820</a>    <span class="attr">#[test]
+<a href=#821 id=821 data-nosnippet>821</a>    </span><span class="kw">fn </span>artifact_helpers_cover_standard_products_and_preview_flags() {
+<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">let </span>tempdir = tempdir().unwrap();
+<a href=#823 id=823 data-nosnippet>823</a>        <span class="kw">let </span>imagename = tempdir.path().join(<span class="string">"standard-output"</span>);
+<a href=#824 id=824 data-nosnippet>824</a>        fs::write(imagename.with_extension(<span class="string">"image"</span>), <span class="string">b"image"</span>).unwrap();
+<a href=#825 id=825 data-nosnippet>825</a>        fs::write(imagename.with_extension(<span class="string">"image.png"</span>), <span class="string">b"png"</span>).unwrap();
+<a href=#826 id=826 data-nosnippet>826</a>
+<a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = sample_cli_config(imagename.clone());
+<a href=#828 id=828 data-nosnippet>828</a>        config.deconvolver = Deconvolver::Clark;
+<a href=#829 id=829 data-nosnippet>829</a>        config.nterms = <span class="number">1</span>;
+<a href=#830 id=830 data-nosnippet>830</a>        config.spectral_mode = SpectralMode::Cube;
+<a href=#831 id=831 data-nosnippet>831</a>        config.write_preview_pngs = <span class="bool-val">true</span>;
+<a href=#832 id=832 data-nosnippet>832</a>
+<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span>artifacts = imaging_artifacts(<span class="kw-2">&amp;</span>config);
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="macro">assert_eq!</span>(artifacts.len(), <span class="number">4</span>);
+<a href=#835 id=835 data-nosnippet>835</a>        <span class="macro">assert_eq!</span>(
+<a href=#836 id=836 data-nosnippet>836</a>            artifacts
+<a href=#837 id=837 data-nosnippet>837</a>                .iter()
+<a href=#838 id=838 data-nosnippet>838</a>                .map(|artifact| artifact.kind.as_str())
+<a href=#839 id=839 data-nosnippet>839</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#840 id=840 data-nosnippet>840</a>            <span class="macro">vec!</span>[<span class="string">"psf"</span>, <span class="string">"residual"</span>, <span class="string">"model"</span>, <span class="string">"image"</span>]
+<a href=#841 id=841 data-nosnippet>841</a>        );
+<a href=#842 id=842 data-nosnippet>842</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">0</span>].label, <span class="string">"PSF"</span>);
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="macro">assert!</span>(!artifacts[<span class="number">0</span>].exists);
+<a href=#844 id=844 data-nosnippet>844</a>        <span class="macro">assert_eq!</span>(
+<a href=#845 id=845 data-nosnippet>845</a>            artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
+<a href=#846 id=846 data-nosnippet>846</a>            <span class="prelude-val">Some</span>(
+<a href=#847 id=847 data-nosnippet>847</a>                imagename
+<a href=#848 id=848 data-nosnippet>848</a>                    .with_extension(<span class="string">"psf.png"</span>)
+<a href=#849 id=849 data-nosnippet>849</a>                    .to_string_lossy()
+<a href=#850 id=850 data-nosnippet>850</a>                    .as_ref()
+<a href=#851 id=851 data-nosnippet>851</a>            )
+<a href=#852 id=852 data-nosnippet>852</a>        );
+<a href=#853 id=853 data-nosnippet>853</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">3</span>].label, <span class="string">"Restored Image"</span>);
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].exists);
+<a href=#855 id=855 data-nosnippet>855</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].preview_png_exists);
+<a href=#856 id=856 data-nosnippet>856</a>
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>manual = artifact(
+<a href=#858 id=858 data-nosnippet>858</a>            label_for_term(<span class="string">"Residual"</span>, <span class="number">2</span>),
+<a href=#859 id=859 data-nosnippet>859</a>            <span class="string">"residual"</span>,
+<a href=#860 id=860 data-nosnippet>860</a>            imagename.with_extension(<span class="string">"residual"</span>),
+<a href=#861 id=861 data-nosnippet>861</a>            <span class="prelude-val">None</span>,
+<a href=#862 id=862 data-nosnippet>862</a>        );
+<a href=#863 id=863 data-nosnippet>863</a>        <span class="macro">assert_eq!</span>(manual.label, <span class="string">"Residual TT2"</span>);
+<a href=#864 id=864 data-nosnippet>864</a>        <span class="macro">assert_eq!</span>(manual.kind, <span class="string">"residual"</span>);
+<a href=#865 id=865 data-nosnippet>865</a>        <span class="macro">assert!</span>(!manual.exists);
+<a href=#866 id=866 data-nosnippet>866</a>        <span class="macro">assert_eq!</span>(manual.preview_png_path, <span class="prelude-val">None</span>);
+<a href=#867 id=867 data-nosnippet>867</a>        <span class="macro">assert!</span>(!manual.preview_png_exists);
+<a href=#868 id=868 data-nosnippet>868</a>    }
+<a href=#869 id=869 data-nosnippet>869</a>}
 </code></pre></div></section></main></body></html>

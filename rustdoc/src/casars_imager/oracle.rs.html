@@ -662,32 +662,135 @@
 <a href=#662 id=662 data-nosnippet>662</a><span class="attr">#[cfg(test)]
 <a href=#663 id=663 data-nosnippet>663</a></span><span class="kw">mod </span>tests {
 <a href=#664 id=664 data-nosnippet>664</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#665 id=665 data-nosnippet>665</a>
-<a href=#666 id=666 data-nosnippet>666</a>    <span class="attr">#[test]
-<a href=#667 id=667 data-nosnippet>667</a>    </span><span class="kw">fn </span>directory_sha256_changes_when_contents_change() {
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
-<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>path = tmp.path().join(<span class="string">"tree"</span>);
-<a href=#670 id=670 data-nosnippet>670</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>path).unwrap();
-<a href=#671 id=671 data-nosnippet>671</a>        fs::write(path.join(<span class="string">"a.txt"</span>), <span class="string">b"alpha"</span>).unwrap();
-<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">let </span>first = sha256_hex_path(<span class="kw-2">&amp;</span>path).unwrap();
-<a href=#673 id=673 data-nosnippet>673</a>        fs::write(path.join(<span class="string">"a.txt"</span>), <span class="string">b"beta"</span>).unwrap();
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>second = sha256_hex_path(<span class="kw-2">&amp;</span>path).unwrap();
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="macro">assert_ne!</span>(first, second);
-<a href=#676 id=676 data-nosnippet>676</a>    }
-<a href=#677 id=677 data-nosnippet>677</a>
-<a href=#678 id=678 data-nosnippet>678</a>    <span class="attr">#[test]
-<a href=#679 id=679 data-nosnippet>679</a>    </span><span class="kw">fn </span>gzip_json_hash_is_stable_across_writes() {
-<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
-<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>payload = <span class="macro">vec!</span>[<span class="string">"alpha"</span>, <span class="string">"beta"</span>, <span class="string">"gamma"</span>];
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span>first_path = tmp.path().join(<span class="string">"first.json.gz"</span>);
-<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>second_path = tmp.path().join(<span class="string">"second.json.gz"</span>);
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>first = write_json_gzip_hashed(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>first_path).unwrap();
-<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>second = write_json_gzip_hashed(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>second_path).unwrap();
-<a href=#686 id=686 data-nosnippet>686</a>        <span class="macro">assert_eq!</span>(first, second);
-<a href=#687 id=687 data-nosnippet>687</a>        <span class="macro">assert_eq!</span>(
-<a href=#688 id=688 data-nosnippet>688</a>            fs::read(first_path).unwrap(),
-<a href=#689 id=689 data-nosnippet>689</a>            fs::read(second_path).unwrap()
-<a href=#690 id=690 data-nosnippet>690</a>        );
-<a href=#691 id=691 data-nosnippet>691</a>    }
-<a href=#692 id=692 data-nosnippet>692</a>}
+<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">use </span>std::os::unix::net::UnixListener;
+<a href=#666 id=666 data-nosnippet>666</a>
+<a href=#667 id=667 data-nosnippet>667</a>    <span class="attr">#[test]
+<a href=#668 id=668 data-nosnippet>668</a>    </span><span class="kw">fn </span>directory_sha256_changes_when_contents_change() {
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>path = tmp.path().join(<span class="string">"tree"</span>);
+<a href=#671 id=671 data-nosnippet>671</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>path).unwrap();
+<a href=#672 id=672 data-nosnippet>672</a>        fs::write(path.join(<span class="string">"a.txt"</span>), <span class="string">b"alpha"</span>).unwrap();
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>first = sha256_hex_path(<span class="kw-2">&amp;</span>path).unwrap();
+<a href=#674 id=674 data-nosnippet>674</a>        fs::write(path.join(<span class="string">"a.txt"</span>), <span class="string">b"beta"</span>).unwrap();
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>second = sha256_hex_path(<span class="kw-2">&amp;</span>path).unwrap();
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="macro">assert_ne!</span>(first, second);
+<a href=#677 id=677 data-nosnippet>677</a>    }
+<a href=#678 id=678 data-nosnippet>678</a>
+<a href=#679 id=679 data-nosnippet>679</a>    <span class="attr">#[test]
+<a href=#680 id=680 data-nosnippet>680</a>    </span><span class="kw">fn </span>gzip_json_hash_is_stable_across_writes() {
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
+<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span>payload = <span class="macro">vec!</span>[<span class="string">"alpha"</span>, <span class="string">"beta"</span>, <span class="string">"gamma"</span>];
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>first_path = tmp.path().join(<span class="string">"first.json.gz"</span>);
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>second_path = tmp.path().join(<span class="string">"second.json.gz"</span>);
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>first = write_json_gzip_hashed(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>first_path).unwrap();
+<a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">let </span>second = write_json_gzip_hashed(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>second_path).unwrap();
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="macro">assert_eq!</span>(first, second);
+<a href=#688 id=688 data-nosnippet>688</a>        <span class="macro">assert_eq!</span>(
+<a href=#689 id=689 data-nosnippet>689</a>            fs::read(first_path).unwrap(),
+<a href=#690 id=690 data-nosnippet>690</a>            fs::read(second_path).unwrap()
+<a href=#691 id=691 data-nosnippet>691</a>        );
+<a href=#692 id=692 data-nosnippet>692</a>    }
+<a href=#693 id=693 data-nosnippet>693</a>
+<a href=#694 id=694 data-nosnippet>694</a>    <span class="attr">#[test]
+<a href=#695 id=695 data-nosnippet>695</a>    </span><span class="kw">fn </span>pretty_json_and_file_hash_helpers_round_trip() {
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">let </span>payload = OracleBundleManifest {
+<a href=#698 id=698 data-nosnippet>698</a>            schema_version: ORACLE_SCHEMA_VERSION,
+<a href=#699 id=699 data-nosnippet>699</a>            dataset_path: <span class="string">"demo.ms"</span>.to_string(),
+<a href=#700 id=700 data-nosnippet>700</a>            dataset_identity: <span class="prelude-val">Some</span>(<span class="string">"identity"</span>.to_string()),
+<a href=#701 id=701 data-nosnippet>701</a>            dataset_sha256: <span class="prelude-val">Some</span>(<span class="string">"abc123"</span>.to_string()),
+<a href=#702 id=702 data-nosnippet>702</a>            dataset_tier: DatasetTier::TierB,
+<a href=#703 id=703 data-nosnippet>703</a>            casa_version: <span class="prelude-val">Some</span>(<span class="string">"6.6"</span>.to_string()),
+<a href=#704 id=704 data-nosnippet>704</a>            casacore_version: <span class="prelude-val">Some</span>(<span class="string">"3.6"</span>.to_string()),
+<a href=#705 id=705 data-nosnippet>705</a>            parameter_manifest: BTreeMap::from([(<span class="string">"specmode"</span>.to_string(), <span class="string">"cube"</span>.to_string())]),
+<a href=#706 id=706 data-nosnippet>706</a>            artifacts: <span class="macro">vec!</span>[OracleArtifactManifest {
+<a href=#707 id=707 data-nosnippet>707</a>                name: <span class="string">"trace"</span>.to_string(),
+<a href=#708 id=708 data-nosnippet>708</a>                truth_domain: TruthDomain::CasaImaging,
+<a href=#709 id=709 data-nosnippet>709</a>                tolerance: ToleranceClass::IntermediateFloat,
+<a href=#710 id=710 data-nosnippet>710</a>                relative_path: <span class="string">"trace.json"</span>.to_string(),
+<a href=#711 id=711 data-nosnippet>711</a>                format: ArtifactFormat::Json,
+<a href=#712 id=712 data-nosnippet>712</a>                sha256: <span class="prelude-val">None</span>,
+<a href=#713 id=713 data-nosnippet>713</a>                notes: <span class="prelude-val">Some</span>(<span class="string">"note"</span>.to_string()),
+<a href=#714 id=714 data-nosnippet>714</a>            }],
+<a href=#715 id=715 data-nosnippet>715</a>        };
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">let </span>pretty_path = tmp.path().join(<span class="string">"bundle.json"</span>);
+<a href=#717 id=717 data-nosnippet>717</a>        write_json_pretty(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>pretty_path).unwrap();
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span>pretty_text = fs::read_to_string(<span class="kw-2">&amp;</span>pretty_path).unwrap();
+<a href=#719 id=719 data-nosnippet>719</a>        <span class="macro">assert!</span>(pretty_text.contains(<span class="string">'\n'</span>));
+<a href=#720 id=720 data-nosnippet>720</a>
+<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">let </span>hashed_path = tmp.path().join(<span class="string">"bundle-hashed.json"</span>);
+<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">let </span>expected_hash = write_json_pretty_hashed(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>hashed_path).unwrap();
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>hashed_bytes = fs::read(<span class="kw-2">&amp;</span>hashed_path).unwrap();
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="macro">assert_eq!</span>(sha256_hex_bytes(<span class="kw-2">&amp;</span>hashed_bytes), expected_hash);
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="macro">assert_eq!</span>(sha256_hex_path(<span class="kw-2">&amp;</span>hashed_path).unwrap(), expected_hash);
+<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">let </span>bytes_path = tmp.path().join(<span class="string">"bytes.txt"</span>);
+<a href=#727 id=727 data-nosnippet>727</a>        fs::write(<span class="kw-2">&amp;</span>bytes_path, <span class="string">b"abc"</span>).unwrap();
+<a href=#728 id=728 data-nosnippet>728</a>        <span class="macro">assert_eq!</span>(
+<a href=#729 id=729 data-nosnippet>729</a>            sha256_hex_bytes(<span class="string">b"abc"</span>),
+<a href=#730 id=730 data-nosnippet>730</a>            sha256_hex_path(<span class="kw-2">&amp;</span>bytes_path).unwrap()
+<a href=#731 id=731 data-nosnippet>731</a>        );
+<a href=#732 id=732 data-nosnippet>732</a>    }
+<a href=#733 id=733 data-nosnippet>733</a>
+<a href=#734 id=734 data-nosnippet>734</a>    <span class="attr">#[test]
+<a href=#735 id=735 data-nosnippet>735</a>    </span><span class="kw">fn </span>directory_hash_recurses_and_special_files_error_cleanly() {
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>root = tmp.path().join(<span class="string">"tree"</span>);
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>nested = root.join(<span class="string">"nested"</span>);
+<a href=#739 id=739 data-nosnippet>739</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>nested).unwrap();
+<a href=#740 id=740 data-nosnippet>740</a>        fs::write(root.join(<span class="string">"b.txt"</span>), <span class="string">b"beta"</span>).unwrap();
+<a href=#741 id=741 data-nosnippet>741</a>        fs::write(nested.join(<span class="string">"a.txt"</span>), <span class="string">b"alpha"</span>).unwrap();
+<a href=#742 id=742 data-nosnippet>742</a>
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span>first = sha256_hex_path(<span class="kw-2">&amp;</span>root).unwrap();
+<a href=#744 id=744 data-nosnippet>744</a>        fs::rename(root.join(<span class="string">"b.txt"</span>), root.join(<span class="string">"c.txt"</span>)).unwrap();
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>second = sha256_hex_path(<span class="kw-2">&amp;</span>root).unwrap();
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="macro">assert_ne!</span>(first, second);
+<a href=#747 id=747 data-nosnippet>747</a>
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>socket_path = tmp.path().join(<span class="string">"oracle.sock"</span>);
+<a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>_listener = UnixListener::bind(<span class="kw-2">&amp;</span>socket_path).unwrap();
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="macro">assert!</span>(
+<a href=#751 id=751 data-nosnippet>751</a>            sha256_hex_path(<span class="kw-2">&amp;</span>socket_path)
+<a href=#752 id=752 data-nosnippet>752</a>                .unwrap_err()
+<a href=#753 id=753 data-nosnippet>753</a>                .contains(<span class="string">"must be a file or directory"</span>)
+<a href=#754 id=754 data-nosnippet>754</a>        );
+<a href=#755 id=755 data-nosnippet>755</a>    }
+<a href=#756 id=756 data-nosnippet>756</a>
+<a href=#757 id=757 data-nosnippet>757</a>    <span class="attr">#[test]
+<a href=#758 id=758 data-nosnippet>758</a>    </span><span class="kw">fn </span>private_serialization_and_file_collection_helpers_are_exercised_directly() {
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span>root = tmp.path().join(<span class="string">"tree"</span>);
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>nested = root.join(<span class="string">"nested"</span>);
+<a href=#762 id=762 data-nosnippet>762</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>nested).unwrap();
+<a href=#763 id=763 data-nosnippet>763</a>        fs::write(root.join(<span class="string">"z.json"</span>), <span class="string">b"{}"</span>).unwrap();
+<a href=#764 id=764 data-nosnippet>764</a>        fs::write(nested.join(<span class="string">"a.json"</span>), <span class="string">b"[]"</span>).unwrap();
+<a href=#765 id=765 data-nosnippet>765</a>
+<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">let </span>compact =
+<a href=#767 id=767 data-nosnippet>767</a>            render_json_compact(<span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="string">"alpha"</span>, <span class="string">"beta"</span>], <span class="kw-2">&amp;</span>root.join(<span class="string">"payload.json"</span>)).unwrap();
+<a href=#768 id=768 data-nosnippet>768</a>        <span class="macro">assert_eq!</span>(String::from_utf8(compact).unwrap(), <span class="string">"[\"alpha\",\"beta\"]"</span>);
+<a href=#769 id=769 data-nosnippet>769</a>
+<a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">let </span><span class="kw-2">mut </span>files = Vec::new();
+<a href=#771 id=771 data-nosnippet>771</a>        collect_files(<span class="kw-2">&amp;</span>root, <span class="kw-2">&amp;</span>root, <span class="kw-2">&amp;mut </span>files).unwrap();
+<a href=#772 id=772 data-nosnippet>772</a>        files.sort();
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="macro">assert_eq!</span>(
+<a href=#774 id=774 data-nosnippet>774</a>            files,
+<a href=#775 id=775 data-nosnippet>775</a>            <span class="macro">vec!</span>[PathBuf::from(<span class="string">"nested/a.json"</span>), PathBuf::from(<span class="string">"z.json"</span>)]
+<a href=#776 id=776 data-nosnippet>776</a>        );
+<a href=#777 id=777 data-nosnippet>777</a>
+<a href=#778 id=778 data-nosnippet>778</a>        <span class="macro">assert_eq!</span>(hex_lower(<span class="kw-2">&amp;</span>[<span class="number">0x00</span>, <span class="number">0xab</span>, <span class="number">0xff</span>]), <span class="string">"00abff"</span>);
+<a href=#779 id=779 data-nosnippet>779</a>    }
+<a href=#780 id=780 data-nosnippet>780</a>
+<a href=#781 id=781 data-nosnippet>781</a>    <span class="attr">#[test]
+<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="kw">fn </span>collect_files_reports_paths_outside_root() {
+<a href=#783 id=783 data-nosnippet>783</a>        <span class="kw">let </span>tmp = tempfile::tempdir().unwrap();
+<a href=#784 id=784 data-nosnippet>784</a>        <span class="kw">let </span>root = tmp.path().join(<span class="string">"root"</span>);
+<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw">let </span>outside = tmp.path().join(<span class="string">"outside"</span>);
+<a href=#786 id=786 data-nosnippet>786</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>root).unwrap();
+<a href=#787 id=787 data-nosnippet>787</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>outside).unwrap();
+<a href=#788 id=788 data-nosnippet>788</a>        fs::write(outside.join(<span class="string">"payload.json"</span>), <span class="string">b"{}"</span>).unwrap();
+<a href=#789 id=789 data-nosnippet>789</a>
+<a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">let </span>err = collect_files(<span class="kw-2">&amp;</span>root, <span class="kw-2">&amp;</span>outside, <span class="kw-2">&amp;mut </span>Vec::new()).unwrap_err();
+<a href=#791 id=791 data-nosnippet>791</a>        <span class="macro">assert!</span>(err.contains(<span class="string">"strip root"</span>));
+<a href=#792 id=792 data-nosnippet>792</a>        <span class="macro">assert!</span>(err.contains(root.to_string_lossy().as_ref()));
+<a href=#793 id=793 data-nosnippet>793</a>        <span class="macro">assert!</span>(err.contains(outside.join(<span class="string">"payload.json"</span>).to_string_lossy().as_ref()));
+<a href=#794 id=794 data-nosnippet>794</a>    }
+<a href=#795 id=795 data-nosnippet>795</a>}
 </code></pre></div></section></main></body></html>
