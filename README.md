@@ -32,6 +32,11 @@ Contributor/developer policy is in `AGENTS.md`.
 
 ## Current Status
 
+![Source-derived public surface diagram](docs/images/public-surface-diagram.png)
+
+Source-derived diagram of the current public workspace surface. It is based on
+the crates' exported `lib.rs` items rather than only the architecture summary.
+
 Library crates:
 
 - `casa-types`: scalar/array/record values plus quanta and measures foundations.
