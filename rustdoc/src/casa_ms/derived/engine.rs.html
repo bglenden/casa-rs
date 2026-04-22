@@ -695,10 +695,10 @@
 <a href=#695 id=695 data-nosnippet>695</a>            tab_ref_types,
 <a href=#696 id=696 data-nosnippet>696</a>            tab_ref_codes,
 <a href=#697 id=697 data-nosnippet>697</a>        } =&gt; {
-<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">let </span>code = <span class="kw">match </span>table.get_scalar_cell(row, ref_column)<span class="question-mark">? </span>{
-<a href=#699 id=699 data-nosnippet>699</a>                ScalarValue::Int32(value) =&gt; <span class="kw-2">*</span>value,
-<a href=#700 id=700 data-nosnippet>700</a>                ScalarValue::Int64(value) =&gt; <span class="kw-2">*</span>value <span class="kw">as </span>i32,
-<a href=#701 id=701 data-nosnippet>701</a>                ScalarValue::UInt32(value) =&gt; <span class="kw-2">*</span>value <span class="kw">as </span>i32,
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">let </span>code = <span class="kw">match </span>table.cell_accessor(row, ref_column)<span class="question-mark">?</span>.scalar()<span class="question-mark">? </span>{
+<a href=#699 id=699 data-nosnippet>699</a>                <span class="kw-2">&amp;</span>ScalarValue::Int32(value) =&gt; value,
+<a href=#700 id=700 data-nosnippet>700</a>                <span class="kw-2">&amp;</span>ScalarValue::Int64(value) =&gt; value <span class="kw">as </span>i32,
+<a href=#701 id=701 data-nosnippet>701</a>                <span class="kw-2">&amp;</span>ScalarValue::UInt32(value) =&gt; value <span class="kw">as </span>i32,
 <a href=#702 id=702 data-nosnippet>702</a>                other =&gt; {
 <a href=#703 id=703 data-nosnippet>703</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::ColumnTypeMismatch {
 <a href=#704 id=704 data-nosnippet>704</a>                        column: ref_column.clone(),
@@ -727,7 +727,7 @@
 <a href=#727 id=727 data-nosnippet>727</a>            })
 <a href=#728 id=728 data-nosnippet>728</a>        }
 <a href=#729 id=729 data-nosnippet>729</a>        MeasRefDesc::VariableString { ref_column } =&gt; {
-<a href=#730 id=730 data-nosnippet>730</a>            <span class="kw">match </span>table.get_scalar_cell(row, ref_column)<span class="question-mark">? </span>{
+<a href=#730 id=730 data-nosnippet>730</a>            <span class="kw">match </span>table.cell_accessor(row, ref_column)<span class="question-mark">?</span>.scalar()<span class="question-mark">? </span>{
 <a href=#731 id=731 data-nosnippet>731</a>                ScalarValue::String(value) =&gt; <span class="prelude-val">Ok</span>(value.clone()),
 <a href=#732 id=732 data-nosnippet>732</a>                other =&gt; <span class="prelude-val">Err</span>(MsError::ColumnTypeMismatch {
 <a href=#733 id=733 data-nosnippet>733</a>                    column: ref_column.clone(),

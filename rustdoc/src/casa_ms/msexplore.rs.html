@@ -2827,14 +2827,14 @@
 <a href=#2827 id=2827 data-nosnippet>2827</a>    }
 <a href=#2828 id=2828 data-nosnippet>2828</a>    <span class="kw">for </span>(row, (matrix, flag_row)) <span class="kw">in </span>row_updates {
 <a href=#2829 id=2829 data-nosnippet>2829</a>        ms.main_table_mut()
-<a href=#2830 id=2830 data-nosnippet>2830</a>            .set_cell(
-<a href=#2831 id=2831 data-nosnippet>2831</a>                row,
-<a href=#2832 id=2832 data-nosnippet>2832</a>                <span class="string">"FLAG"</span>,
-<a href=#2833 id=2833 data-nosnippet>2833</a>                Value::Array(ArrayValue::Bool(matrix.into_dyn())),
-<a href=#2834 id=2834 data-nosnippet>2834</a>            )
-<a href=#2835 id=2835 data-nosnippet>2835</a>            .map_err(|error| error.to_string())<span class="question-mark">?</span>;
-<a href=#2836 id=2836 data-nosnippet>2836</a>        ms.main_table_mut()
-<a href=#2837 id=2837 data-nosnippet>2837</a>            .set_cell(row, <span class="string">"FLAG_ROW"</span>, Value::Scalar(ScalarValue::Bool(flag_row)))
+<a href=#2830 id=2830 data-nosnippet>2830</a>            .cell_accessor_mut(row, <span class="string">"FLAG"</span>)
+<a href=#2831 id=2831 data-nosnippet>2831</a>            .map_err(|error| error.to_string())<span class="question-mark">?
+<a href=#2832 id=2832 data-nosnippet>2832</a>            </span>.set(Value::Array(ArrayValue::Bool(matrix.into_dyn())))
+<a href=#2833 id=2833 data-nosnippet>2833</a>            .map_err(|error| error.to_string())<span class="question-mark">?</span>;
+<a href=#2834 id=2834 data-nosnippet>2834</a>        ms.main_table_mut()
+<a href=#2835 id=2835 data-nosnippet>2835</a>            .cell_accessor_mut(row, <span class="string">"FLAG_ROW"</span>)
+<a href=#2836 id=2836 data-nosnippet>2836</a>            .map_err(|error| error.to_string())<span class="question-mark">?
+<a href=#2837 id=2837 data-nosnippet>2837</a>            </span>.set(Value::Scalar(ScalarValue::Bool(flag_row)))
 <a href=#2838 id=2838 data-nosnippet>2838</a>            .map_err(|error| error.to_string())<span class="question-mark">?</span>;
 <a href=#2839 id=2839 data-nosnippet>2839</a>    }
 <a href=#2840 id=2840 data-nosnippet>2840</a>    <span class="prelude-val">Ok</span>(preview)

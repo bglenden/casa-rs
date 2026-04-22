@@ -1262,50 +1262,52 @@
 <a href=#1262 id=1262 data-nosnippet>1262</a>        <span class="macro">assert_eq!</span>(reopened.row_count(), <span class="number">1</span>);
 <a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="kw">match </span>reopened
 <a href=#1264 id=1264 data-nosnippet>1264</a>            .main_table()
-<a href=#1265 id=1265 data-nosnippet>1265</a>            .get_scalar_cell(<span class="number">0</span>, <span class="string">"FIELD_ID"</span>)
-<a href=#1266 id=1266 data-nosnippet>1266</a>            .expect(<span class="string">"field id cell"</span>)
-<a href=#1267 id=1267 data-nosnippet>1267</a>        {
-<a href=#1268 id=1268 data-nosnippet>1268</a>            ScalarValue::Int32(value) =&gt; <span class="macro">assert_eq!</span>(<span class="kw-2">*</span>value, <span class="number">1</span>),
-<a href=#1269 id=1269 data-nosnippet>1269</a>            other =&gt; <span class="macro">panic!</span>(
-<a href=#1270 id=1270 data-nosnippet>1270</a>                <span class="string">"expected FIELD_ID to be Int32, found {:?}"</span>,
-<a href=#1271 id=1271 data-nosnippet>1271</a>                other.primitive_type()
-<a href=#1272 id=1272 data-nosnippet>1272</a>            ),
-<a href=#1273 id=1273 data-nosnippet>1273</a>        }
-<a href=#1274 id=1274 data-nosnippet>1274</a>        <span class="macro">assert_eq!</span>(reopened.antenna().unwrap().row_count(), <span class="number">1</span>);
-<a href=#1275 id=1275 data-nosnippet>1275</a>
-<a href=#1276 id=1276 data-nosnippet>1276</a>        <span class="kw">let </span>antenna_after = fs::metadata(ms_path.join(<span class="string">"ANTENNA"</span>))
-<a href=#1277 id=1277 data-nosnippet>1277</a>            .unwrap()
-<a href=#1278 id=1278 data-nosnippet>1278</a>            .modified()
-<a href=#1279 id=1279 data-nosnippet>1279</a>            .unwrap();
-<a href=#1280 id=1280 data-nosnippet>1280</a>        <span class="macro">assert_eq!</span>(antenna_before, antenna_after);
-<a href=#1281 id=1281 data-nosnippet>1281</a>    }
-<a href=#1282 id=1282 data-nosnippet>1282</a>
-<a href=#1283 id=1283 data-nosnippet>1283</a>    <span class="attr">#[test]
-<a href=#1284 id=1284 data-nosnippet>1284</a>    </span><span class="kw">fn </span>validation_fails_on_wrong_column_type() {
-<a href=#1285 id=1285 data-nosnippet>1285</a>        <span class="kw">use </span>casa_tables::{ColumnSchema, TableSchema};
-<a href=#1286 id=1286 data-nosnippet>1286</a>
-<a href=#1287 id=1287 data-nosnippet>1287</a>        <span class="comment">// Create a table with TIME as Int32 instead of Float64
-<a href=#1288 id=1288 data-nosnippet>1288</a>        </span><span class="kw">let </span>bad_schema = TableSchema::new(<span class="macro">vec!</span>[
-<a href=#1289 id=1289 data-nosnippet>1289</a>            ColumnSchema::scalar(<span class="string">"TIME"</span>, PrimitiveType::Int32), <span class="comment">// wrong type!
-<a href=#1290 id=1290 data-nosnippet>1290</a>        </span>])
-<a href=#1291 id=1291 data-nosnippet>1291</a>        .unwrap();
-<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="kw">let </span>table = Table::with_schema(bad_schema);
-<a href=#1293 id=1293 data-nosnippet>1293</a>
-<a href=#1294 id=1294 data-nosnippet>1294</a>        <span class="kw">let </span>issues = validate::validate_columns(
-<a href=#1295 id=1295 data-nosnippet>1295</a>            <span class="kw-2">&amp;</span>table,
-<a href=#1296 id=1296 data-nosnippet>1296</a>            <span class="string">"MAIN"</span>,
-<a href=#1297 id=1297 data-nosnippet>1297</a>            <span class="kw-2">&amp;</span>[<span class="kw">crate</span>::column_def::ColumnDef {
-<a href=#1298 id=1298 data-nosnippet>1298</a>                name: <span class="string">"TIME"</span>,
-<a href=#1299 id=1299 data-nosnippet>1299</a>                data_type: PrimitiveType::Float64,
-<a href=#1300 id=1300 data-nosnippet>1300</a>                column_kind: <span class="kw">crate</span>::column_def::ColumnKind::Scalar,
-<a href=#1301 id=1301 data-nosnippet>1301</a>                unit: <span class="string">"s"</span>,
-<a href=#1302 id=1302 data-nosnippet>1302</a>                measure_type: <span class="prelude-val">None</span>,
-<a href=#1303 id=1303 data-nosnippet>1303</a>                measure_ref: <span class="string">""</span>,
-<a href=#1304 id=1304 data-nosnippet>1304</a>                comment: <span class="string">""</span>,
-<a href=#1305 id=1305 data-nosnippet>1305</a>            }],
-<a href=#1306 id=1306 data-nosnippet>1306</a>        );
-<a href=#1307 id=1307 data-nosnippet>1307</a>        <span class="macro">assert_eq!</span>(issues.len(), <span class="number">1</span>);
-<a href=#1308 id=1308 data-nosnippet>1308</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(issues[<span class="number">0</span>], ValidationIssue::WrongColumnType { .. }));
-<a href=#1309 id=1309 data-nosnippet>1309</a>    }
-<a href=#1310 id=1310 data-nosnippet>1310</a>}
+<a href=#1265 id=1265 data-nosnippet>1265</a>            .cell_accessor(<span class="number">0</span>, <span class="string">"FIELD_ID"</span>)
+<a href=#1266 id=1266 data-nosnippet>1266</a>            .unwrap()
+<a href=#1267 id=1267 data-nosnippet>1267</a>            .scalar()
+<a href=#1268 id=1268 data-nosnippet>1268</a>            .expect(<span class="string">"field id cell"</span>)
+<a href=#1269 id=1269 data-nosnippet>1269</a>        {
+<a href=#1270 id=1270 data-nosnippet>1270</a>            <span class="kw-2">&amp;</span>ScalarValue::Int32(value) =&gt; <span class="macro">assert_eq!</span>(value, <span class="number">1</span>),
+<a href=#1271 id=1271 data-nosnippet>1271</a>            other =&gt; <span class="macro">panic!</span>(
+<a href=#1272 id=1272 data-nosnippet>1272</a>                <span class="string">"expected FIELD_ID to be Int32, found {:?}"</span>,
+<a href=#1273 id=1273 data-nosnippet>1273</a>                other.primitive_type()
+<a href=#1274 id=1274 data-nosnippet>1274</a>            ),
+<a href=#1275 id=1275 data-nosnippet>1275</a>        }
+<a href=#1276 id=1276 data-nosnippet>1276</a>        <span class="macro">assert_eq!</span>(reopened.antenna().unwrap().row_count(), <span class="number">1</span>);
+<a href=#1277 id=1277 data-nosnippet>1277</a>
+<a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="kw">let </span>antenna_after = fs::metadata(ms_path.join(<span class="string">"ANTENNA"</span>))
+<a href=#1279 id=1279 data-nosnippet>1279</a>            .unwrap()
+<a href=#1280 id=1280 data-nosnippet>1280</a>            .modified()
+<a href=#1281 id=1281 data-nosnippet>1281</a>            .unwrap();
+<a href=#1282 id=1282 data-nosnippet>1282</a>        <span class="macro">assert_eq!</span>(antenna_before, antenna_after);
+<a href=#1283 id=1283 data-nosnippet>1283</a>    }
+<a href=#1284 id=1284 data-nosnippet>1284</a>
+<a href=#1285 id=1285 data-nosnippet>1285</a>    <span class="attr">#[test]
+<a href=#1286 id=1286 data-nosnippet>1286</a>    </span><span class="kw">fn </span>validation_fails_on_wrong_column_type() {
+<a href=#1287 id=1287 data-nosnippet>1287</a>        <span class="kw">use </span>casa_tables::{ColumnSchema, TableSchema};
+<a href=#1288 id=1288 data-nosnippet>1288</a>
+<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="comment">// Create a table with TIME as Int32 instead of Float64
+<a href=#1290 id=1290 data-nosnippet>1290</a>        </span><span class="kw">let </span>bad_schema = TableSchema::new(<span class="macro">vec!</span>[
+<a href=#1291 id=1291 data-nosnippet>1291</a>            ColumnSchema::scalar(<span class="string">"TIME"</span>, PrimitiveType::Int32), <span class="comment">// wrong type!
+<a href=#1292 id=1292 data-nosnippet>1292</a>        </span>])
+<a href=#1293 id=1293 data-nosnippet>1293</a>        .unwrap();
+<a href=#1294 id=1294 data-nosnippet>1294</a>        <span class="kw">let </span>table = Table::with_schema(bad_schema);
+<a href=#1295 id=1295 data-nosnippet>1295</a>
+<a href=#1296 id=1296 data-nosnippet>1296</a>        <span class="kw">let </span>issues = validate::validate_columns(
+<a href=#1297 id=1297 data-nosnippet>1297</a>            <span class="kw-2">&amp;</span>table,
+<a href=#1298 id=1298 data-nosnippet>1298</a>            <span class="string">"MAIN"</span>,
+<a href=#1299 id=1299 data-nosnippet>1299</a>            <span class="kw-2">&amp;</span>[<span class="kw">crate</span>::column_def::ColumnDef {
+<a href=#1300 id=1300 data-nosnippet>1300</a>                name: <span class="string">"TIME"</span>,
+<a href=#1301 id=1301 data-nosnippet>1301</a>                data_type: PrimitiveType::Float64,
+<a href=#1302 id=1302 data-nosnippet>1302</a>                column_kind: <span class="kw">crate</span>::column_def::ColumnKind::Scalar,
+<a href=#1303 id=1303 data-nosnippet>1303</a>                unit: <span class="string">"s"</span>,
+<a href=#1304 id=1304 data-nosnippet>1304</a>                measure_type: <span class="prelude-val">None</span>,
+<a href=#1305 id=1305 data-nosnippet>1305</a>                measure_ref: <span class="string">""</span>,
+<a href=#1306 id=1306 data-nosnippet>1306</a>                comment: <span class="string">""</span>,
+<a href=#1307 id=1307 data-nosnippet>1307</a>            }],
+<a href=#1308 id=1308 data-nosnippet>1308</a>        );
+<a href=#1309 id=1309 data-nosnippet>1309</a>        <span class="macro">assert_eq!</span>(issues.len(), <span class="number">1</span>);
+<a href=#1310 id=1310 data-nosnippet>1310</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(issues[<span class="number">0</span>], ValidationIssue::WrongColumnType { .. }));
+<a href=#1311 id=1311 data-nosnippet>1311</a>    }
+<a href=#1312 id=1312 data-nosnippet>1312</a>}
 </code></pre></div></section></main></body></html>

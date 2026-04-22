@@ -351,128 +351,131 @@
 <a href=#351 id=351 data-nosnippet>351</a>            <span class="prelude-val">None </span>=&gt; {
 <a href=#352 id=352 data-nosnippet>352</a>                <span class="kw">let </span>data = ms
 <a href=#353 id=353 data-nosnippet>353</a>                    .main_table()
-<a href=#354 id=354 data-nosnippet>354</a>                    .get_array_cell(row.row_index, <span class="string">"DATA"</span>)
-<a href=#355 id=355 data-nosnippet>355</a>                    .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#356 id=356 data-nosnippet>356</a>                        path: ms
-<a href=#357 id=357 data-nosnippet>357</a>                            .path()
-<a href=#358 id=358 data-nosnippet>358</a>                            .map(|path| path.display().to_string())
-<a href=#359 id=359 data-nosnippet>359</a>                            .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
-<a href=#360 id=360 data-nosnippet>360</a>                        source: MsError::from(source),
-<a href=#361 id=361 data-nosnippet>361</a>                    })<span class="question-mark">?</span>;
-<a href=#362 id=362 data-nosnippet>362</a>                <span class="kw">let </span>flags = ms
-<a href=#363 id=363 data-nosnippet>363</a>                    .main_table()
-<a href=#364 id=364 data-nosnippet>364</a>                    .get_array_cell(row.row_index, <span class="string">"FLAG"</span>)
-<a href=#365 id=365 data-nosnippet>365</a>                    .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#366 id=366 data-nosnippet>366</a>                        path: ms
-<a href=#367 id=367 data-nosnippet>367</a>                            .path()
-<a href=#368 id=368 data-nosnippet>368</a>                            .map(|path| path.display().to_string())
-<a href=#369 id=369 data-nosnippet>369</a>                            .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
-<a href=#370 id=370 data-nosnippet>370</a>                        source: MsError::from(source),
-<a href=#371 id=371 data-nosnippet>371</a>                    })<span class="question-mark">?</span>;
-<a href=#372 id=372 data-nosnippet>372</a>                (data, flags)
-<a href=#373 id=373 data-nosnippet>373</a>            }
-<a href=#374 id=374 data-nosnippet>374</a>        };
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">let </span>weights = ms
-<a href=#376 id=376 data-nosnippet>376</a>            .main_table()
-<a href=#377 id=377 data-nosnippet>377</a>            .get_array_cell(row.row_index, <span class="string">"WEIGHT"</span>)
-<a href=#378 id=378 data-nosnippet>378</a>            .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#379 id=379 data-nosnippet>379</a>                path: ms
-<a href=#380 id=380 data-nosnippet>380</a>                    .path()
-<a href=#381 id=381 data-nosnippet>381</a>                    .map(|path| path.display().to_string())
-<a href=#382 id=382 data-nosnippet>382</a>                    .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
-<a href=#383 id=383 data-nosnippet>383</a>                source: MsError::from(source),
-<a href=#384 id=384 data-nosnippet>384</a>            })<span class="question-mark">?</span>;
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">let </span>correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)<span class="question-mark">?</span>;
-<a href=#386 id=386 data-nosnippet>386</a>
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">let </span>ArrayValue::Complex32(data) = data <span class="kw">else </span>{
-<a href=#388 id=388 data-nosnippet>388</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#389 id=389 data-nosnippet>389</a>                path: <span class="string">"&lt;measurement-set DATA&gt;"</span>.to_string(),
-<a href=#390 id=390 data-nosnippet>390</a>                shape: data.shape().to_vec(),
-<a href=#391 id=391 data-nosnippet>391</a>            });
-<a href=#392 id=392 data-nosnippet>392</a>        };
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>ArrayValue::Bool(flags) = flags <span class="kw">else </span>{
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#395 id=395 data-nosnippet>395</a>                path: <span class="string">"&lt;measurement-set FLAG&gt;"</span>.to_string(),
-<a href=#396 id=396 data-nosnippet>396</a>                shape: flags.shape().to_vec(),
-<a href=#397 id=397 data-nosnippet>397</a>            });
-<a href=#398 id=398 data-nosnippet>398</a>        };
-<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>ArrayValue::Float32(weights) = weights <span class="kw">else </span>{
-<a href=#400 id=400 data-nosnippet>400</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#401 id=401 data-nosnippet>401</a>                path: <span class="string">"&lt;measurement-set WEIGHT&gt;"</span>.to_string(),
-<a href=#402 id=402 data-nosnippet>402</a>                shape: weights.shape().to_vec(),
-<a href=#403 id=403 data-nosnippet>403</a>            });
-<a href=#404 id=404 data-nosnippet>404</a>        };
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">if </span>data.ndim() != <span class="number">2 </span>|| flags.ndim() != <span class="number">2 </span>|| data.shape() != flags.shape() {
-<a href=#406 id=406 data-nosnippet>406</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#407 id=407 data-nosnippet>407</a>                path: <span class="string">"&lt;measurement-set row&gt;"</span>.to_string(),
-<a href=#408 id=408 data-nosnippet>408</a>                shape: data.shape().to_vec(),
-<a href=#409 id=409 data-nosnippet>409</a>            });
-<a href=#410 id=410 data-nosnippet>410</a>        }
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">if </span>weights.ndim() != <span class="number">1 </span>|| weights.shape()[<span class="number">0</span>] != data.shape()[<span class="number">0</span>] {
-<a href=#412 id=412 data-nosnippet>412</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#413 id=413 data-nosnippet>413</a>                path: <span class="string">"&lt;measurement-set WEIGHT&gt;"</span>.to_string(),
-<a href=#414 id=414 data-nosnippet>414</a>                shape: weights.shape().to_vec(),
-<a href=#415 id=415 data-nosnippet>415</a>            });
-<a href=#416 id=416 data-nosnippet>416</a>        }
-<a href=#417 id=417 data-nosnippet>417</a>
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>graph_count = <span class="kw">match </span>gain_type {
-<a href=#419 id=419 data-nosnippet>419</a>            GainType::G =&gt; <span class="number">2</span>,
-<a href=#420 id=420 data-nosnippet>420</a>            GainType::T =&gt; <span class="number">1</span>,
-<a href=#421 id=421 data-nosnippet>421</a>        };
-<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">if </span><span class="self">self</span>.receptor_graphs.len() &lt; graph_count {
-<a href=#423 id=423 data-nosnippet>423</a>            <span class="self">self</span>.receptor_graphs.resize_with(graph_count, HashMap::new);
-<a href=#424 id=424 data-nosnippet>424</a>            <span class="self">self</span>.receptor_weights.resize_with(graph_count, HashMap::new);
-<a href=#425 id=425 data-nosnippet>425</a>        }
-<a href=#426 id=426 data-nosnippet>426</a>
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="self">self</span>.min_time = <span class="self">self</span>.min_time.min(row.time_seconds);
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="self">self</span>.max_time = <span class="self">self</span>.max_time.max(row.time_seconds);
-<a href=#429 id=429 data-nosnippet>429</a>        <span class="self">self</span>.total_interval += row.interval_seconds;
-<a href=#430 id=430 data-nosnippet>430</a>        <span class="self">self</span>.sample_rows += <span class="number">1</span>;
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="self">self</span>.scan_numbers.insert(row.scan_number);
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna1);
-<a href=#433 id=433 data-nosnippet>433</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna2);
-<a href=#434 id=434 data-nosnippet>434</a>
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">for </span>corr_index <span class="kw">in </span><span class="number">0</span>..data.shape()[<span class="number">0</span>] {
-<a href=#436 id=436 data-nosnippet>436</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(receptors) = correlation_receptors(correlation_types[corr_index]) <span class="kw">else </span>{
-<a href=#437 id=437 data-nosnippet>437</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedCorrelationLayout {
-<a href=#438 id=438 data-nosnippet>438</a>                    data_desc_id: row.data_desc_id,
-<a href=#439 id=439 data-nosnippet>439</a>                    correlation_types: correlation_types
-<a href=#440 id=440 data-nosnippet>440</a>                        .iter()
-<a href=#441 id=441 data-nosnippet>441</a>                        .map(|code| stokes_name(<span class="kw-2">*</span>code).to_string())
-<a href=#442 id=442 data-nosnippet>442</a>                        .collect(),
-<a href=#443 id=443 data-nosnippet>443</a>                });
-<a href=#444 id=444 data-nosnippet>444</a>            };
-<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">if </span>receptors.<span class="number">0 </span>!= receptors.<span class="number">1 </span>{
-<a href=#446 id=446 data-nosnippet>446</a>                <span class="kw">continue</span>;
-<a href=#447 id=447 data-nosnippet>447</a>            }
-<a href=#448 id=448 data-nosnippet>448</a>            <span class="kw">let </span>graph_index = <span class="kw">match </span>gain_type {
-<a href=#449 id=449 data-nosnippet>449</a>                GainType::G =&gt; receptors.<span class="number">0</span>,
-<a href=#450 id=450 data-nosnippet>450</a>                GainType::T =&gt; <span class="number">0</span>,
-<a href=#451 id=451 data-nosnippet>451</a>            };
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">let </span>weight = weights[[corr_index]];
-<a href=#453 id=453 data-nosnippet>453</a>            <span class="kw">if </span>weight &lt;= <span class="number">0.0 </span>{
-<a href=#454 id=454 data-nosnippet>454</a>                <span class="kw">continue</span>;
-<a href=#455 id=455 data-nosnippet>455</a>            }
-<a href=#456 id=456 data-nosnippet>456</a>            <span class="kw">for </span>chan_index <span class="kw">in </span><span class="number">0</span>..data.shape()[<span class="number">1</span>] {
-<a href=#457 id=457 data-nosnippet>457</a>                <span class="kw">if </span>flags[[corr_index, chan_index]] {
-<a href=#458 id=458 data-nosnippet>458</a>                    <span class="kw">continue</span>;
-<a href=#459 id=459 data-nosnippet>459</a>                }
-<a href=#460 id=460 data-nosnippet>460</a>                <span class="kw">let </span>sample = data[[corr_index, chan_index]] / Complex32::new(stokes_i, <span class="number">0.0</span>);
-<a href=#461 id=461 data-nosnippet>461</a>                <span class="kw">if </span>sample.norm() &lt;= f32::EPSILON {
-<a href=#462 id=462 data-nosnippet>462</a>                    <span class="kw">continue</span>;
-<a href=#463 id=463 data-nosnippet>463</a>                }
-<a href=#464 id=464 data-nosnippet>464</a>                accumulate_edge(
-<a href=#465 id=465 data-nosnippet>465</a>                    <span class="kw-2">&amp;mut </span><span class="self">self</span>.receptor_graphs[graph_index],
-<a href=#466 id=466 data-nosnippet>466</a>                    <span class="kw-2">&amp;mut </span><span class="self">self</span>.receptor_weights[graph_index],
-<a href=#467 id=467 data-nosnippet>467</a>                    row.antenna1,
-<a href=#468 id=468 data-nosnippet>468</a>                    row.antenna2,
-<a href=#469 id=469 data-nosnippet>469</a>                    weight,
-<a href=#470 id=470 data-nosnippet>470</a>                    sample * Complex32::new(weight, <span class="number">0.0</span>),
-<a href=#471 id=471 data-nosnippet>471</a>                );
-<a href=#472 id=472 data-nosnippet>472</a>            }
-<a href=#473 id=473 data-nosnippet>473</a>        }
-<a href=#474 id=474 data-nosnippet>474</a>
-<a href=#475 id=475 data-nosnippet>475</a>        <span class="prelude-val">Ok</span>(())
-<a href=#476 id=476 data-nosnippet>476</a>    }
-<a href=#477 id=477 data-nosnippet>477</a>}
+<a href=#354 id=354 data-nosnippet>354</a>                    .cell_accessor(row.row_index, <span class="string">"DATA"</span>)
+<a href=#355 id=355 data-nosnippet>355</a>                    .and_then(|cell| cell.array())
+<a href=#356 id=356 data-nosnippet>356</a>                    .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#357 id=357 data-nosnippet>357</a>                        path: ms
+<a href=#358 id=358 data-nosnippet>358</a>                            .path()
+<a href=#359 id=359 data-nosnippet>359</a>                            .map(|path| path.display().to_string())
+<a href=#360 id=360 data-nosnippet>360</a>                            .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
+<a href=#361 id=361 data-nosnippet>361</a>                        source: MsError::from(source),
+<a href=#362 id=362 data-nosnippet>362</a>                    })<span class="question-mark">?</span>;
+<a href=#363 id=363 data-nosnippet>363</a>                <span class="kw">let </span>flags = ms
+<a href=#364 id=364 data-nosnippet>364</a>                    .main_table()
+<a href=#365 id=365 data-nosnippet>365</a>                    .cell_accessor(row.row_index, <span class="string">"FLAG"</span>)
+<a href=#366 id=366 data-nosnippet>366</a>                    .and_then(|cell| cell.array())
+<a href=#367 id=367 data-nosnippet>367</a>                    .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#368 id=368 data-nosnippet>368</a>                        path: ms
+<a href=#369 id=369 data-nosnippet>369</a>                            .path()
+<a href=#370 id=370 data-nosnippet>370</a>                            .map(|path| path.display().to_string())
+<a href=#371 id=371 data-nosnippet>371</a>                            .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
+<a href=#372 id=372 data-nosnippet>372</a>                        source: MsError::from(source),
+<a href=#373 id=373 data-nosnippet>373</a>                    })<span class="question-mark">?</span>;
+<a href=#374 id=374 data-nosnippet>374</a>                (data, flags)
+<a href=#375 id=375 data-nosnippet>375</a>            }
+<a href=#376 id=376 data-nosnippet>376</a>        };
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span>weights = ms
+<a href=#378 id=378 data-nosnippet>378</a>            .main_table()
+<a href=#379 id=379 data-nosnippet>379</a>            .cell_accessor(row.row_index, <span class="string">"WEIGHT"</span>)
+<a href=#380 id=380 data-nosnippet>380</a>            .and_then(|cell| cell.array())
+<a href=#381 id=381 data-nosnippet>381</a>            .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#382 id=382 data-nosnippet>382</a>                path: ms
+<a href=#383 id=383 data-nosnippet>383</a>                    .path()
+<a href=#384 id=384 data-nosnippet>384</a>                    .map(|path| path.display().to_string())
+<a href=#385 id=385 data-nosnippet>385</a>                    .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
+<a href=#386 id=386 data-nosnippet>386</a>                source: MsError::from(source),
+<a href=#387 id=387 data-nosnippet>387</a>            })<span class="question-mark">?</span>;
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span>correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)<span class="question-mark">?</span>;
+<a href=#389 id=389 data-nosnippet>389</a>
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">let </span>ArrayValue::Complex32(data) = data <span class="kw">else </span>{
+<a href=#391 id=391 data-nosnippet>391</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#392 id=392 data-nosnippet>392</a>                path: <span class="string">"&lt;measurement-set DATA&gt;"</span>.to_string(),
+<a href=#393 id=393 data-nosnippet>393</a>                shape: data.shape().to_vec(),
+<a href=#394 id=394 data-nosnippet>394</a>            });
+<a href=#395 id=395 data-nosnippet>395</a>        };
+<a href=#396 id=396 data-nosnippet>396</a>        <span class="kw">let </span>ArrayValue::Bool(flags) = flags <span class="kw">else </span>{
+<a href=#397 id=397 data-nosnippet>397</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#398 id=398 data-nosnippet>398</a>                path: <span class="string">"&lt;measurement-set FLAG&gt;"</span>.to_string(),
+<a href=#399 id=399 data-nosnippet>399</a>                shape: flags.shape().to_vec(),
+<a href=#400 id=400 data-nosnippet>400</a>            });
+<a href=#401 id=401 data-nosnippet>401</a>        };
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>ArrayValue::Float32(weights) = weights <span class="kw">else </span>{
+<a href=#403 id=403 data-nosnippet>403</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#404 id=404 data-nosnippet>404</a>                path: <span class="string">"&lt;measurement-set WEIGHT&gt;"</span>.to_string(),
+<a href=#405 id=405 data-nosnippet>405</a>                shape: weights.shape().to_vec(),
+<a href=#406 id=406 data-nosnippet>406</a>            });
+<a href=#407 id=407 data-nosnippet>407</a>        };
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">if </span>data.ndim() != <span class="number">2 </span>|| flags.ndim() != <span class="number">2 </span>|| data.shape() != flags.shape() {
+<a href=#409 id=409 data-nosnippet>409</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#410 id=410 data-nosnippet>410</a>                path: <span class="string">"&lt;measurement-set row&gt;"</span>.to_string(),
+<a href=#411 id=411 data-nosnippet>411</a>                shape: data.shape().to_vec(),
+<a href=#412 id=412 data-nosnippet>412</a>            });
+<a href=#413 id=413 data-nosnippet>413</a>        }
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">if </span>weights.ndim() != <span class="number">1 </span>|| weights.shape()[<span class="number">0</span>] != data.shape()[<span class="number">0</span>] {
+<a href=#415 id=415 data-nosnippet>415</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#416 id=416 data-nosnippet>416</a>                path: <span class="string">"&lt;measurement-set WEIGHT&gt;"</span>.to_string(),
+<a href=#417 id=417 data-nosnippet>417</a>                shape: weights.shape().to_vec(),
+<a href=#418 id=418 data-nosnippet>418</a>            });
+<a href=#419 id=419 data-nosnippet>419</a>        }
+<a href=#420 id=420 data-nosnippet>420</a>
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>graph_count = <span class="kw">match </span>gain_type {
+<a href=#422 id=422 data-nosnippet>422</a>            GainType::G =&gt; <span class="number">2</span>,
+<a href=#423 id=423 data-nosnippet>423</a>            GainType::T =&gt; <span class="number">1</span>,
+<a href=#424 id=424 data-nosnippet>424</a>        };
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">if </span><span class="self">self</span>.receptor_graphs.len() &lt; graph_count {
+<a href=#426 id=426 data-nosnippet>426</a>            <span class="self">self</span>.receptor_graphs.resize_with(graph_count, HashMap::new);
+<a href=#427 id=427 data-nosnippet>427</a>            <span class="self">self</span>.receptor_weights.resize_with(graph_count, HashMap::new);
+<a href=#428 id=428 data-nosnippet>428</a>        }
+<a href=#429 id=429 data-nosnippet>429</a>
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="self">self</span>.min_time = <span class="self">self</span>.min_time.min(row.time_seconds);
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="self">self</span>.max_time = <span class="self">self</span>.max_time.max(row.time_seconds);
+<a href=#432 id=432 data-nosnippet>432</a>        <span class="self">self</span>.total_interval += row.interval_seconds;
+<a href=#433 id=433 data-nosnippet>433</a>        <span class="self">self</span>.sample_rows += <span class="number">1</span>;
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="self">self</span>.scan_numbers.insert(row.scan_number);
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna1);
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="self">self</span>.antenna_ids.insert(row.antenna2);
+<a href=#437 id=437 data-nosnippet>437</a>
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">for </span>corr_index <span class="kw">in </span><span class="number">0</span>..data.shape()[<span class="number">0</span>] {
+<a href=#439 id=439 data-nosnippet>439</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(receptors) = correlation_receptors(correlation_types[corr_index]) <span class="kw">else </span>{
+<a href=#440 id=440 data-nosnippet>440</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedCorrelationLayout {
+<a href=#441 id=441 data-nosnippet>441</a>                    data_desc_id: row.data_desc_id,
+<a href=#442 id=442 data-nosnippet>442</a>                    correlation_types: correlation_types
+<a href=#443 id=443 data-nosnippet>443</a>                        .iter()
+<a href=#444 id=444 data-nosnippet>444</a>                        .map(|code| stokes_name(<span class="kw-2">*</span>code).to_string())
+<a href=#445 id=445 data-nosnippet>445</a>                        .collect(),
+<a href=#446 id=446 data-nosnippet>446</a>                });
+<a href=#447 id=447 data-nosnippet>447</a>            };
+<a href=#448 id=448 data-nosnippet>448</a>            <span class="kw">if </span>receptors.<span class="number">0 </span>!= receptors.<span class="number">1 </span>{
+<a href=#449 id=449 data-nosnippet>449</a>                <span class="kw">continue</span>;
+<a href=#450 id=450 data-nosnippet>450</a>            }
+<a href=#451 id=451 data-nosnippet>451</a>            <span class="kw">let </span>graph_index = <span class="kw">match </span>gain_type {
+<a href=#452 id=452 data-nosnippet>452</a>                GainType::G =&gt; receptors.<span class="number">0</span>,
+<a href=#453 id=453 data-nosnippet>453</a>                GainType::T =&gt; <span class="number">0</span>,
+<a href=#454 id=454 data-nosnippet>454</a>            };
+<a href=#455 id=455 data-nosnippet>455</a>            <span class="kw">let </span>weight = weights[[corr_index]];
+<a href=#456 id=456 data-nosnippet>456</a>            <span class="kw">if </span>weight &lt;= <span class="number">0.0 </span>{
+<a href=#457 id=457 data-nosnippet>457</a>                <span class="kw">continue</span>;
+<a href=#458 id=458 data-nosnippet>458</a>            }
+<a href=#459 id=459 data-nosnippet>459</a>            <span class="kw">for </span>chan_index <span class="kw">in </span><span class="number">0</span>..data.shape()[<span class="number">1</span>] {
+<a href=#460 id=460 data-nosnippet>460</a>                <span class="kw">if </span>flags[[corr_index, chan_index]] {
+<a href=#461 id=461 data-nosnippet>461</a>                    <span class="kw">continue</span>;
+<a href=#462 id=462 data-nosnippet>462</a>                }
+<a href=#463 id=463 data-nosnippet>463</a>                <span class="kw">let </span>sample = data[[corr_index, chan_index]] / Complex32::new(stokes_i, <span class="number">0.0</span>);
+<a href=#464 id=464 data-nosnippet>464</a>                <span class="kw">if </span>sample.norm() &lt;= f32::EPSILON {
+<a href=#465 id=465 data-nosnippet>465</a>                    <span class="kw">continue</span>;
+<a href=#466 id=466 data-nosnippet>466</a>                }
+<a href=#467 id=467 data-nosnippet>467</a>                accumulate_edge(
+<a href=#468 id=468 data-nosnippet>468</a>                    <span class="kw-2">&amp;mut </span><span class="self">self</span>.receptor_graphs[graph_index],
+<a href=#469 id=469 data-nosnippet>469</a>                    <span class="kw-2">&amp;mut </span><span class="self">self</span>.receptor_weights[graph_index],
+<a href=#470 id=470 data-nosnippet>470</a>                    row.antenna1,
+<a href=#471 id=471 data-nosnippet>471</a>                    row.antenna2,
+<a href=#472 id=472 data-nosnippet>472</a>                    weight,
+<a href=#473 id=473 data-nosnippet>473</a>                    sample * Complex32::new(weight, <span class="number">0.0</span>),
+<a href=#474 id=474 data-nosnippet>474</a>                );
+<a href=#475 id=475 data-nosnippet>475</a>            }
+<a href=#476 id=476 data-nosnippet>476</a>        }
+<a href=#477 id=477 data-nosnippet>477</a>
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="prelude-val">Ok</span>(())
+<a href=#479 id=479 data-nosnippet>479</a>    }
+<a href=#480 id=480 data-nosnippet>480</a>}
 </code></pre></div></section></main></body></html>

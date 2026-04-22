@@ -6604,39 +6604,41 @@
 <a href=#6604 id=6604 data-nosnippet>6604</a>        <span class="macro">assert_eq!</span>(reopened.data_manager_info()[<span class="number">0</span>].dm_type, <span class="string">"TiledDataStMan"</span>);
 <a href=#6605 id=6605 data-nosnippet>6605</a>
 <a href=#6606 id=6606 data-nosnippet>6606</a>        reopened
-<a href=#6607 id=6607 data-nosnippet>6607</a>            .set_array_cell_assuming_valid(
-<a href=#6608 id=6608 data-nosnippet>6608</a>                <span class="number">2</span>,
-<a href=#6609 id=6609 data-nosnippet>6609</a>                <span class="string">"data"</span>,
-<a href=#6610 id=6610 data-nosnippet>6610</a>                ArrayValue::Float32(
-<a href=#6611 id=6611 data-nosnippet>6611</a>                    ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">402.0</span>, <span class="number">412.0</span>, <span class="number">422.0</span>, <span class="number">432.0</span>])
-<a href=#6612 id=6612 data-nosnippet>6612</a>                        .expect(<span class="string">"shape updated data"</span>),
-<a href=#6613 id=6613 data-nosnippet>6613</a>                ),
-<a href=#6614 id=6614 data-nosnippet>6614</a>            )
-<a href=#6615 id=6615 data-nosnippet>6615</a>            .expect(<span class="string">"set tiled-data array cell lazily"</span>);
-<a href=#6616 id=6616 data-nosnippet>6616</a>
-<a href=#6617 id=6617 data-nosnippet>6617</a>        reopened
-<a href=#6618 id=6618 data-nosnippet>6618</a>            .save_selected_rows_in_place_assuming_valid(<span class="kw-2">&amp;</span>[<span class="string">"data"</span>], <span class="kw-2">&amp;</span>[<span class="number">2</span>])
-<a href=#6619 id=6619 data-nosnippet>6619</a>            .expect(<span class="string">"sparse tiled-data partial save"</span>);
-<a href=#6620 id=6620 data-nosnippet>6620</a>
-<a href=#6621 id=6621 data-nosnippet>6621</a>        <span class="kw">let </span>verify = Table::open(TableOptions::new(<span class="kw-2">&amp;</span>table_path)).expect(<span class="string">"reopen tiled-data table"</span>);
-<a href=#6622 id=6622 data-nosnippet>6622</a>        <span class="macro">assert_eq!</span>(
-<a href=#6623 id=6623 data-nosnippet>6623</a>            verify.get_array_cell(<span class="number">0</span>, <span class="string">"data"</span>).expect(<span class="string">"data row 0"</span>),
-<a href=#6624 id=6624 data-nosnippet>6624</a>            <span class="kw-2">&amp;</span>ArrayValue::Float32(
-<a href=#6625 id=6625 data-nosnippet>6625</a>                ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>]).unwrap()
-<a href=#6626 id=6626 data-nosnippet>6626</a>            )
-<a href=#6627 id=6627 data-nosnippet>6627</a>        );
-<a href=#6628 id=6628 data-nosnippet>6628</a>        <span class="macro">assert_eq!</span>(
-<a href=#6629 id=6629 data-nosnippet>6629</a>            verify.get_array_cell(<span class="number">2</span>, <span class="string">"data"</span>).expect(<span class="string">"data row 2"</span>),
-<a href=#6630 id=6630 data-nosnippet>6630</a>            <span class="kw-2">&amp;</span>ArrayValue::Float32(
-<a href=#6631 id=6631 data-nosnippet>6631</a>                ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">402.0</span>, <span class="number">412.0</span>, <span class="number">422.0</span>, <span class="number">432.0</span>]).unwrap()
-<a href=#6632 id=6632 data-nosnippet>6632</a>            )
-<a href=#6633 id=6633 data-nosnippet>6633</a>        );
-<a href=#6634 id=6634 data-nosnippet>6634</a>        <span class="macro">assert_eq!</span>(
-<a href=#6635 id=6635 data-nosnippet>6635</a>            verify.get_array_cell(<span class="number">3</span>, <span class="string">"data"</span>).expect(<span class="string">"data row 3"</span>),
-<a href=#6636 id=6636 data-nosnippet>6636</a>            <span class="kw-2">&amp;</span>ArrayValue::Float32(
-<a href=#6637 id=6637 data-nosnippet>6637</a>                ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">3.0</span>, <span class="number">13.0</span>, <span class="number">23.0</span>, <span class="number">33.0</span>]).unwrap()
-<a href=#6638 id=6638 data-nosnippet>6638</a>            )
-<a href=#6639 id=6639 data-nosnippet>6639</a>        );
-<a href=#6640 id=6640 data-nosnippet>6640</a>    }
-<a href=#6641 id=6641 data-nosnippet>6641</a>}
+<a href=#6607 id=6607 data-nosnippet>6607</a>            .column_accessor_mut(<span class="string">"data"</span>)
+<a href=#6608 id=6608 data-nosnippet>6608</a>            .expect(<span class="string">"data column mut"</span>)
+<a href=#6609 id=6609 data-nosnippet>6609</a>            .set_array_assuming_valid(
+<a href=#6610 id=6610 data-nosnippet>6610</a>                <span class="number">2</span>,
+<a href=#6611 id=6611 data-nosnippet>6611</a>                ArrayValue::Float32(
+<a href=#6612 id=6612 data-nosnippet>6612</a>                    ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">402.0</span>, <span class="number">412.0</span>, <span class="number">422.0</span>, <span class="number">432.0</span>])
+<a href=#6613 id=6613 data-nosnippet>6613</a>                        .expect(<span class="string">"shape updated data"</span>),
+<a href=#6614 id=6614 data-nosnippet>6614</a>                ),
+<a href=#6615 id=6615 data-nosnippet>6615</a>            )
+<a href=#6616 id=6616 data-nosnippet>6616</a>            .expect(<span class="string">"set tiled-data array cell lazily"</span>);
+<a href=#6617 id=6617 data-nosnippet>6617</a>
+<a href=#6618 id=6618 data-nosnippet>6618</a>        reopened
+<a href=#6619 id=6619 data-nosnippet>6619</a>            .save_selected_rows_in_place_assuming_valid(<span class="kw-2">&amp;</span>[<span class="string">"data"</span>], <span class="kw-2">&amp;</span>[<span class="number">2</span>])
+<a href=#6620 id=6620 data-nosnippet>6620</a>            .expect(<span class="string">"sparse tiled-data partial save"</span>);
+<a href=#6621 id=6621 data-nosnippet>6621</a>
+<a href=#6622 id=6622 data-nosnippet>6622</a>        <span class="kw">let </span>verify = Table::open(TableOptions::new(<span class="kw-2">&amp;</span>table_path)).expect(<span class="string">"reopen tiled-data table"</span>);
+<a href=#6623 id=6623 data-nosnippet>6623</a>        <span class="kw">let </span>data = verify.column_accessor(<span class="string">"data"</span>).expect(<span class="string">"data column"</span>);
+<a href=#6624 id=6624 data-nosnippet>6624</a>        <span class="macro">assert_eq!</span>(
+<a href=#6625 id=6625 data-nosnippet>6625</a>            data.array_cell(<span class="number">0</span>).expect(<span class="string">"data row 0"</span>),
+<a href=#6626 id=6626 data-nosnippet>6626</a>            <span class="kw-2">&amp;</span>ArrayValue::Float32(
+<a href=#6627 id=6627 data-nosnippet>6627</a>                ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>]).unwrap()
+<a href=#6628 id=6628 data-nosnippet>6628</a>            )
+<a href=#6629 id=6629 data-nosnippet>6629</a>        );
+<a href=#6630 id=6630 data-nosnippet>6630</a>        <span class="macro">assert_eq!</span>(
+<a href=#6631 id=6631 data-nosnippet>6631</a>            data.array_cell(<span class="number">2</span>).expect(<span class="string">"data row 2"</span>),
+<a href=#6632 id=6632 data-nosnippet>6632</a>            <span class="kw-2">&amp;</span>ArrayValue::Float32(
+<a href=#6633 id=6633 data-nosnippet>6633</a>                ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">402.0</span>, <span class="number">412.0</span>, <span class="number">422.0</span>, <span class="number">432.0</span>]).unwrap()
+<a href=#6634 id=6634 data-nosnippet>6634</a>            )
+<a href=#6635 id=6635 data-nosnippet>6635</a>        );
+<a href=#6636 id=6636 data-nosnippet>6636</a>        <span class="macro">assert_eq!</span>(
+<a href=#6637 id=6637 data-nosnippet>6637</a>            data.array_cell(<span class="number">3</span>).expect(<span class="string">"data row 3"</span>),
+<a href=#6638 id=6638 data-nosnippet>6638</a>            <span class="kw-2">&amp;</span>ArrayValue::Float32(
+<a href=#6639 id=6639 data-nosnippet>6639</a>                ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">3.0</span>, <span class="number">13.0</span>, <span class="number">23.0</span>, <span class="number">33.0</span>]).unwrap()
+<a href=#6640 id=6640 data-nosnippet>6640</a>            )
+<a href=#6641 id=6641 data-nosnippet>6641</a>        );
+<a href=#6642 id=6642 data-nosnippet>6642</a>    }
+<a href=#6643 id=6643 data-nosnippet>6643</a>}
 </code></pre></div></section></main></body></html>

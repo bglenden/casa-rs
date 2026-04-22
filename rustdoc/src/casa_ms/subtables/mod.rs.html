@@ -277,8 +277,8 @@
 <a href=#277 id=277 data-nosnippet>277</a>
 <a href=#278 id=278 data-nosnippet>278</a></span><span class="doccomment">/// Extract an `i32` from a scalar cell.
 <a href=#279 id=279 data-nosnippet>279</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_i32(table: <span class="kw-2">&amp;</span>Table, row: usize, col: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;i32&gt; {
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">match </span>table.get_scalar_cell(row, col)<span class="question-mark">? </span>{
-<a href=#281 id=281 data-nosnippet>281</a>        ScalarValue::Int32(v) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>v),
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">match </span>table.cell_accessor(row, col)<span class="question-mark">?</span>.scalar()<span class="question-mark">? </span>{
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw-2">&amp;</span>ScalarValue::Int32(v) =&gt; <span class="prelude-val">Ok</span>(v),
 <a href=#282 id=282 data-nosnippet>282</a>        other =&gt; <span class="prelude-val">Err</span>(MsError::ColumnTypeMismatch {
 <a href=#283 id=283 data-nosnippet>283</a>            column: col.to_string(),
 <a href=#284 id=284 data-nosnippet>284</a>            table: <span class="string">"subtable"</span>.to_string(),
@@ -290,8 +290,8 @@
 <a href=#290 id=290 data-nosnippet>290</a>
 <a href=#291 id=291 data-nosnippet>291</a><span class="doccomment">/// Extract an `f64` from a scalar cell.
 <a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_f64(table: <span class="kw-2">&amp;</span>Table, row: usize, col: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;f64&gt; {
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">match </span>table.get_scalar_cell(row, col)<span class="question-mark">? </span>{
-<a href=#294 id=294 data-nosnippet>294</a>        ScalarValue::Float64(v) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>v),
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">match </span>table.cell_accessor(row, col)<span class="question-mark">?</span>.scalar()<span class="question-mark">? </span>{
+<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw-2">&amp;</span>ScalarValue::Float64(v) =&gt; <span class="prelude-val">Ok</span>(v),
 <a href=#295 id=295 data-nosnippet>295</a>        other =&gt; <span class="prelude-val">Err</span>(MsError::ColumnTypeMismatch {
 <a href=#296 id=296 data-nosnippet>296</a>            column: col.to_string(),
 <a href=#297 id=297 data-nosnippet>297</a>            table: <span class="string">"subtable"</span>.to_string(),
@@ -303,8 +303,8 @@
 <a href=#303 id=303 data-nosnippet>303</a>
 <a href=#304 id=304 data-nosnippet>304</a><span class="doccomment">/// Extract a `bool` from a scalar cell.
 <a href=#305 id=305 data-nosnippet>305</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_bool(table: <span class="kw-2">&amp;</span>Table, row: usize, col: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;bool&gt; {
-<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">match </span>table.get_scalar_cell(row, col)<span class="question-mark">? </span>{
-<a href=#307 id=307 data-nosnippet>307</a>        ScalarValue::Bool(v) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>v),
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">match </span>table.cell_accessor(row, col)<span class="question-mark">?</span>.scalar()<span class="question-mark">? </span>{
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw-2">&amp;</span>ScalarValue::Bool(v) =&gt; <span class="prelude-val">Ok</span>(v),
 <a href=#308 id=308 data-nosnippet>308</a>        other =&gt; <span class="prelude-val">Err</span>(MsError::ColumnTypeMismatch {
 <a href=#309 id=309 data-nosnippet>309</a>            column: col.to_string(),
 <a href=#310 id=310 data-nosnippet>310</a>            table: <span class="string">"subtable"</span>.to_string(),
@@ -316,7 +316,7 @@
 <a href=#316 id=316 data-nosnippet>316</a>
 <a href=#317 id=317 data-nosnippet>317</a><span class="doccomment">/// Extract a `&amp;str` from a scalar cell.
 <a href=#318 id=318 data-nosnippet>318</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_string(table: <span class="kw-2">&amp;</span>Table, row: usize, col: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;String&gt; {
-<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">match </span>table.get_scalar_cell(row, col)<span class="question-mark">? </span>{
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">match </span>table.cell_accessor(row, col)<span class="question-mark">?</span>.scalar()<span class="question-mark">? </span>{
 <a href=#320 id=320 data-nosnippet>320</a>        ScalarValue::String(v) =&gt; <span class="prelude-val">Ok</span>(v.clone()),
 <a href=#321 id=321 data-nosnippet>321</a>        other =&gt; <span class="prelude-val">Err</span>(MsError::ColumnTypeMismatch {
 <a href=#322 id=322 data-nosnippet>322</a>            column: col.to_string(),
@@ -329,7 +329,7 @@
 <a href=#329 id=329 data-nosnippet>329</a>
 <a href=#330 id=330 data-nosnippet>330</a><span class="doccomment">/// Extract an array cell reference.
 <a href=#331 id=331 data-nosnippet>331</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_array&lt;<span class="lifetime">'a</span>&gt;(table: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Table, row: usize, col: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayValue&gt; {
-<a href=#332 id=332 data-nosnippet>332</a>    <span class="prelude-val">Ok</span>(table.get_array_cell(row, col)<span class="question-mark">?</span>)
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="prelude-val">Ok</span>(table.cell_accessor(row, col)<span class="question-mark">?</span>.array()<span class="question-mark">?</span>)
 <a href=#333 id=333 data-nosnippet>333</a>}
 <a href=#334 id=334 data-nosnippet>334</a>
 <a href=#335 id=335 data-nosnippet>335</a><span class="doccomment">/// Extract an optional `i32` from a scalar cell.
@@ -388,18 +388,22 @@
 <a href=#388 id=388 data-nosnippet>388</a>    col: <span class="kw-2">&amp;</span>str,
 <a href=#389 id=389 data-nosnippet>389</a>    value: ScalarValue,
 <a href=#390 id=390 data-nosnippet>390</a>) -&gt; MsResult&lt;()&gt; {
-<a href=#391 id=391 data-nosnippet>391</a>    table.set_cell(row, col, Value::Scalar(value))<span class="question-mark">?</span>;
-<a href=#392 id=392 data-nosnippet>392</a>    <span class="prelude-val">Ok</span>(())
-<a href=#393 id=393 data-nosnippet>393</a>}
-<a href=#394 id=394 data-nosnippet>394</a>
-<a href=#395 id=395 data-nosnippet>395</a><span class="doccomment">/// Set an array cell.
-<a href=#396 id=396 data-nosnippet>396</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set_array(
-<a href=#397 id=397 data-nosnippet>397</a>    table: <span class="kw-2">&amp;mut </span>Table,
-<a href=#398 id=398 data-nosnippet>398</a>    row: usize,
-<a href=#399 id=399 data-nosnippet>399</a>    col: <span class="kw-2">&amp;</span>str,
-<a href=#400 id=400 data-nosnippet>400</a>    value: ArrayValue,
-<a href=#401 id=401 data-nosnippet>401</a>) -&gt; MsResult&lt;()&gt; {
-<a href=#402 id=402 data-nosnippet>402</a>    table.set_cell(row, col, Value::Array(value))<span class="question-mark">?</span>;
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="prelude-val">Ok</span>(())
-<a href=#404 id=404 data-nosnippet>404</a>}
+<a href=#391 id=391 data-nosnippet>391</a>    table
+<a href=#392 id=392 data-nosnippet>392</a>        .cell_accessor_mut(row, col)<span class="question-mark">?
+<a href=#393 id=393 data-nosnippet>393</a>        </span>.set(Value::Scalar(value))<span class="question-mark">?</span>;
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="prelude-val">Ok</span>(())
+<a href=#395 id=395 data-nosnippet>395</a>}
+<a href=#396 id=396 data-nosnippet>396</a>
+<a href=#397 id=397 data-nosnippet>397</a><span class="doccomment">/// Set an array cell.
+<a href=#398 id=398 data-nosnippet>398</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set_array(
+<a href=#399 id=399 data-nosnippet>399</a>    table: <span class="kw-2">&amp;mut </span>Table,
+<a href=#400 id=400 data-nosnippet>400</a>    row: usize,
+<a href=#401 id=401 data-nosnippet>401</a>    col: <span class="kw-2">&amp;</span>str,
+<a href=#402 id=402 data-nosnippet>402</a>    value: ArrayValue,
+<a href=#403 id=403 data-nosnippet>403</a>) -&gt; MsResult&lt;()&gt; {
+<a href=#404 id=404 data-nosnippet>404</a>    table
+<a href=#405 id=405 data-nosnippet>405</a>        .cell_accessor_mut(row, col)<span class="question-mark">?
+<a href=#406 id=406 data-nosnippet>406</a>        </span>.set(Value::Array(value))<span class="question-mark">?</span>;
+<a href=#407 id=407 data-nosnippet>407</a>    <span class="prelude-val">Ok</span>(())
+<a href=#408 id=408 data-nosnippet>408</a>}
 </code></pre></div></section></main></body></html>

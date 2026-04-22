@@ -3802,8 +3802,10 @@
 <a href=#3802 id=3802 data-nosnippet>3802</a>
 <a href=#3803 id=3803 data-nosnippet>3803</a>    <span class="kw">fn </span>set_main_row_flag_matrix(ms: <span class="kw-2">&amp;mut </span>MeasurementSet, row: usize, flags: ArrayD&lt;bool&gt;) {
 <a href=#3804 id=3804 data-nosnippet>3804</a>        ms.main_table_mut()
-<a href=#3805 id=3805 data-nosnippet>3805</a>            .set_cell(row, <span class="string">"FLAG"</span>, Value::Array(ArrayValue::Bool(flags)))
-<a href=#3806 id=3806 data-nosnippet>3806</a>            .unwrap();
-<a href=#3807 id=3807 data-nosnippet>3807</a>    }
-<a href=#3808 id=3808 data-nosnippet>3808</a>}
+<a href=#3805 id=3805 data-nosnippet>3805</a>            .cell_accessor_mut(row, <span class="string">"FLAG"</span>)
+<a href=#3806 id=3806 data-nosnippet>3806</a>            .unwrap()
+<a href=#3807 id=3807 data-nosnippet>3807</a>            .set(Value::Array(ArrayValue::Bool(flags)))
+<a href=#3808 id=3808 data-nosnippet>3808</a>            .unwrap();
+<a href=#3809 id=3809 data-nosnippet>3809</a>    }
+<a href=#3810 id=3810 data-nosnippet>3810</a>}
 </code></pre></div></section></main></body></html>
