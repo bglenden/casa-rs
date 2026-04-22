@@ -5963,7 +5963,9 @@ struct SelectedArrayColumn {
 impl SelectedArrayColumn {
     fn load(table: &Table, column: &'static str, row_indices: &[usize]) -> Result<Self, String> {
         let values = table
-            .get_array_cells_owned(column, row_indices)
+            .column_accessor(column)
+            .map_err(|error| error.to_string())?
+            .array_cells_owned(row_indices)
             .map_err(|error| error.to_string())?;
         Ok(Self { column, values })
     }

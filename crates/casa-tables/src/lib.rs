@@ -27,6 +27,9 @@
 //! | Type | Role |
 //! |------|------|
 //! | [`Table`] | Create, query, and persist a table |
+//! | [`TableRow`] / [`TableRowMut`] | Canonical row-oriented table-data access |
+//! | [`TableColumn`] / [`TableColumnMut`] | Canonical column-oriented table-data access |
+//! | [`TableCell`] / [`TableCellMut`] | Canonical cell-oriented table-data access |
 //! | [`ConcatTable`] | A read-only virtual concatenation of tables |
 //! | [`RefTable`] | A view over a parent table's rows and/or columns |
 //! | [`SortOrder`] | Ascending or descending sort direction |
@@ -219,10 +222,11 @@
 //! # Relationship to C++ casacore
 //!
 //! In C++ casacore the same functionality is split across `Table`,
-//! `ScalarColumn<T>`, `ArrayColumn<T>`, and `TableRecord`. The Rust [`Table`]
-//! type unifies all of these into a single, dynamically typed interface.
-//! Column type safety is enforced at runtime by the accessor methods rather
-//! than through compile-time generics.
+//! `TableRow`, `TableColumn`, `ScalarColumn<T>`, `ArrayColumn<T>`, and
+//! `TableRecord`. In this crate, [`Table`] remains the owning object, while
+//! [`TableRow`], [`TableColumn`], and [`TableCell`] provide the preferred
+//! public data-access surface. The older table-level `row`/`cell`/`get_*`/`set_*`
+//! methods remain available as compatibility wrappers.
 //!
 //! # Demo program
 //!
@@ -263,7 +267,8 @@ pub use sorting::{TableGroup, TableIterator};
 pub use storage::{DataManagerInfo, StorageError, TableInfo, TilePixel, TiledFileIO};
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    QueryResult, RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table,
-    TableError, TableKind, TableOptions,
+    QueryResult, RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table, TableCell,
+    TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
+    TableRowMut,
 };
 pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};

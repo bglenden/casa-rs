@@ -65,6 +65,62 @@ impl Table {
         self.inner.row_count()
     }
 
+    /// Returns the canonical read-only row accessor for this table.
+    pub fn row_accessor(&self) -> TableRow<'_> {
+        TableRow { table: self }
+    }
+
+    /// Returns the canonical mutable row accessor for this table.
+    pub fn row_accessor_mut(&mut self) -> TableRowMut<'_> {
+        TableRowMut { table: self }
+    }
+
+    /// Returns the canonical read-only column accessor for `column`.
+    pub fn column_accessor(&self, column: &str) -> Result<TableColumn<'_>, TableError> {
+        self.require_column(column)?;
+        Ok(TableColumn {
+            table: self,
+            column: column.to_string(),
+        })
+    }
+
+    /// Returns the canonical mutable column accessor for `column`.
+    pub fn column_accessor_mut(&mut self, column: &str) -> Result<TableColumnMut<'_>, TableError> {
+        self.require_column(column)?;
+        Ok(TableColumnMut {
+            table: self,
+            column: column.to_string(),
+        })
+    }
+
+    /// Returns the canonical read-only cell accessor for `(row_index, column)`.
+    pub fn cell_accessor(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<TableCell<'_>, TableError> {
+        self.require_row(row_index)?;
+        Ok(TableCell {
+            table: self,
+            row_index,
+            column: column.to_string(),
+        })
+    }
+
+    /// Returns the canonical mutable cell accessor for `(row_index, column)`.
+    pub fn cell_accessor_mut(
+        &mut self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<TableCellMut<'_>, TableError> {
+        self.require_row(row_index)?;
+        Ok(TableCellMut {
+            table: self,
+            row_index,
+            column: column.to_string(),
+        })
+    }
+
     /// Returns a slice over all rows in insertion order.
     pub fn rows(&self) -> Result<&[RecordValue], TableError> {
         self.inner.rows()
@@ -126,6 +182,9 @@ impl Table {
     }
 
     /// Returns a shared reference to the row at `row_index`.
+    ///
+    /// Compatibility note: new row-oriented code should prefer
+    /// [`row_accessor`](Table::row_accessor).
     pub fn row(&self, row_index: usize) -> Result<&RecordValue, TableError> {
         self.inner
             .row(row_index)?
@@ -140,6 +199,9 @@ impl Table {
     /// Direct mutation through this reference bypasses schema validation.
     /// Use [`set_cell`][Table::set_cell] or [`add_row`][Table::add_row] for
     /// validated writes.
+    ///
+    /// Compatibility note: new row-oriented write paths should prefer
+    /// [`row_accessor_mut`](Table::row_accessor_mut).
     pub fn row_mut(&mut self, row_index: usize) -> Result<&mut RecordValue, TableError> {
         let row_count = self.row_count();
         self.inner
@@ -156,6 +218,9 @@ impl Table {
     /// column is simply absent from the row. Use [`get_scalar_cell`][Table::get_scalar_cell]
     /// or [`get_array_cell`][Table::get_array_cell] for type-checked access with
     /// descriptive errors.
+    ///
+    /// Compatibility note: new cell-oriented code should prefer
+    /// [`cell_accessor`](Table::cell_accessor).
     pub fn cell(&self, row_index: usize, column: &str) -> Result<Option<&Value>, TableError> {
         Ok(self.row(row_index)?.get(column))
     }
@@ -165,7 +230,10 @@ impl Table {
     /// This is a shorthand for `get_column_range(column, RowRange::new(0, row_count()))`.
     /// Returns [`TableError::SchemaColumnUnknown`] if a schema is attached and
     /// `column` is not declared in it.
-    pub fn get_column<'a>(&'a self, column: &'a str) -> Result<ColumnCellIter<'a>, TableError> {
+    ///
+    /// Compatibility note: new column-oriented code should prefer
+    /// [`column_accessor`](Table::column_accessor).
+    pub fn get_column<'a>(&'a self, column: &str) -> Result<ColumnCellIter<'a>, TableError> {
         self.get_column_range(column, RowRange::new(0, self.row_count()))
     }
 
@@ -176,14 +244,14 @@ impl Table {
     /// column is unknown or the range is invalid.
     pub fn get_column_range<'a>(
         &'a self,
-        column: &'a str,
+        column: &str,
         row_range: RowRange,
     ) -> Result<ColumnCellIter<'a>, TableError> {
         self.require_column(column)?;
         row_range.validate(self.row_count())?;
         Ok(ColumnCellIter {
             row_data: self.rows()?,
-            column,
+            column: column.to_string(),
             rows: row_range.iter(),
         })
     }
@@ -241,6 +309,9 @@ impl Table {
     ///
     /// This is a convenience wrapper around [`set_cell`][Table::set_cell] that
     /// wraps `value` in [`Value::Record`].
+    ///
+    /// Compatibility note: new cell-oriented write paths should prefer
+    /// [`cell_accessor_mut`](Table::cell_accessor_mut).
     pub fn set_record_cell(
         &mut self,
         row_index: usize,
@@ -255,7 +326,7 @@ impl Table {
     /// Shorthand for `get_record_column_range(column, RowRange::new(0, row_count()))`.
     pub fn get_record_column<'a>(
         &'a self,
-        column: &'a str,
+        column: &str,
     ) -> Result<RecordColumnIter<'a>, TableError> {
         self.get_record_column_range(column, RowRange::new(0, self.row_count()))
     }
@@ -268,7 +339,7 @@ impl Table {
     /// record column, or a cell has the wrong type.
     pub fn get_record_column_range<'a>(
         &'a self,
-        column: &'a str,
+        column: &str,
         row_range: RowRange,
     ) -> Result<RecordColumnIter<'a>, TableError> {
         self.require_column(column)?;
@@ -316,7 +387,7 @@ impl Table {
 
         Ok(RecordColumnIter {
             row_data,
-            column,
+            column: column.to_string(),
             rows: row_range.iter(),
             default_missing,
         })
@@ -327,6 +398,9 @@ impl Table {
     /// Shorthand for `put_column_range(column, RowRange::new(0, row_count()), values)`.
     /// Returns the number of cells written, or [`TableError`] if the value
     /// count does not match the row count.
+    ///
+    /// Compatibility note: new column-oriented write paths should prefer
+    /// [`column_accessor_mut`](Table::column_accessor_mut).
     pub fn put_column<I>(&mut self, column: &str, values: I) -> Result<usize, TableError>
     where
         I: IntoIterator<Item = Value>,
@@ -438,6 +512,9 @@ impl Table {
     ///
     /// Returns [`TableError`] if the row is out of bounds, the column is
     /// unknown per the schema, or the value violates the column type/shape.
+    ///
+    /// Compatibility note: new cell-oriented write paths should prefer
+    /// [`cell_accessor_mut`](Table::cell_accessor_mut).
     pub fn set_cell(
         &mut self,
         row_index: usize,
@@ -498,6 +575,9 @@ impl Table {
     ///
     /// This materializes the entire column into memory. For large tables,
     /// prefer [`Table::get_column`] or [`Table::iter_column_chunks`] which stream lazily.
+    ///
+    /// Compatibility note: new column-oriented code should prefer
+    /// [`column_accessor`](Table::column_accessor).
     pub fn column_cells(&self, column: &str) -> Result<Vec<Option<&Value>>, TableError> {
         Ok(self
             .rows()?
@@ -511,9 +591,12 @@ impl Table {
     /// Each iteration yields a `Vec<ColumnCellRef>` of up to `chunk_size` rows.
     /// This avoids materializing the entire column at once while still allowing
     /// batch processing.
+    ///
+    /// Compatibility note: new column-oriented code should prefer
+    /// [`column_accessor`](Table::column_accessor).
     pub fn iter_column_chunks<'a>(
         &'a self,
-        column: &'a str,
+        column: &str,
         row_range: RowRange,
         chunk_size: usize,
     ) -> Result<ColumnChunkIter<'a>, TableError> {
@@ -527,6 +610,9 @@ impl Table {
     /// Returns a reference to the array value in a cell without cloning.
     ///
     /// Use ndarray's slicing on the returned `ArrayValue` for sub-array access.
+    ///
+    /// Compatibility note: new cell-oriented code should prefer
+    /// [`cell_accessor`](Table::cell_accessor).
     pub fn get_array_cell(
         &self,
         row_index: usize,
@@ -568,6 +654,9 @@ impl Table {
     ///
     /// The output preserves the order of `row_indices`. Missing cells are
     /// returned as `None`.
+    ///
+    /// Compatibility note: new column-oriented code should prefer
+    /// [`column_accessor`](Table::column_accessor).
     pub fn get_array_cells_owned(
         &self,
         column: &str,
@@ -603,6 +692,9 @@ impl Table {
     /// Returns owned scalar values for every row in `column`.
     ///
     /// Missing cells are returned as `None`.
+    ///
+    /// Compatibility note: new column-oriented code should prefer
+    /// [`column_accessor`](Table::column_accessor).
     pub fn get_scalar_cells_owned(
         &self,
         column: &str,
@@ -626,6 +718,9 @@ impl Table {
     }
 
     /// Returns a reference to the scalar value in a cell without cloning.
+    ///
+    /// Compatibility note: new cell-oriented code should prefer
+    /// [`cell_accessor`](Table::cell_accessor).
     pub fn get_scalar_cell(
         &self,
         row_index: usize,
@@ -670,6 +765,10 @@ impl Table {
     /// updates the cached scalar column rather than forcing full-row
     /// materialization. If rows are already loaded, it mutates the row in
     /// memory directly.
+    ///
+    /// Compatibility note: new write paths should prefer
+    /// [`cell_accessor_mut`](Table::cell_accessor_mut) or
+    /// [`column_accessor_mut`](Table::column_accessor_mut).
     pub fn set_scalar_cell_assuming_valid(
         &mut self,
         row_index: usize,
@@ -694,6 +793,10 @@ impl Table {
     /// updates the cached array column rather than forcing full-row
     /// materialization. If rows are already loaded, it mutates the row in
     /// memory directly.
+    ///
+    /// Compatibility note: new write paths should prefer
+    /// [`cell_accessor_mut`](Table::cell_accessor_mut) or
+    /// [`column_accessor_mut`](Table::column_accessor_mut).
     pub fn set_array_cell_assuming_valid(
         &mut self,
         row_index: usize,
@@ -785,6 +888,421 @@ impl Table {
 
     fn require_row(&self, row_index: usize) -> Result<(), TableError> {
         self.row(row_index).map(|_| ())
+    }
+}
+
+impl<'a> TableRow<'a> {
+    /// Returns the number of rows in the underlying table.
+    pub fn row_count(&self) -> usize {
+        self.table.row_count()
+    }
+
+    /// Returns the row at `row_index`.
+    pub fn row(&self, row_index: usize) -> Result<&'a RecordValue, TableError> {
+        self.table.row(row_index)
+    }
+
+    /// Returns a cell accessor for `(row_index, column)`.
+    pub fn cell(&self, row_index: usize, column: &str) -> Result<TableCell<'a>, TableError> {
+        self.table.cell_accessor(row_index, column)
+    }
+
+    /// Returns the scalar cell at `(row_index, column)`.
+    pub fn scalar_cell(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<&'a ScalarValue, TableError> {
+        self.table.get_scalar_cell(row_index, column)
+    }
+
+    /// Returns the array cell at `(row_index, column)`.
+    pub fn array_cell(&self, row_index: usize, column: &str) -> Result<&'a ArrayValue, TableError> {
+        self.table.get_array_cell(row_index, column)
+    }
+
+    /// Returns the record cell at `(row_index, column)`.
+    pub fn record_cell(&self, row_index: usize, column: &str) -> Result<RecordValue, TableError> {
+        self.table.record_cell(row_index, column)
+    }
+}
+
+impl<'a> TableRowMut<'a> {
+    /// Returns the number of rows in the underlying table.
+    pub fn row_count(&self) -> usize {
+        self.table.row_count()
+    }
+
+    /// Returns the row at `row_index`.
+    pub fn row(&self, row_index: usize) -> Result<&RecordValue, TableError> {
+        self.table.row(row_index)
+    }
+
+    /// Returns the row at `row_index` for direct mutation.
+    pub fn row_mut(&mut self, row_index: usize) -> Result<&mut RecordValue, TableError> {
+        self.table.row_mut(row_index)
+    }
+
+    /// Returns a read-only cell accessor for `(row_index, column)`.
+    pub fn cell(&self, row_index: usize, column: &str) -> Result<TableCell<'_>, TableError> {
+        self.table.cell_accessor(row_index, column)
+    }
+
+    /// Returns a mutable cell accessor for `(row_index, column)`.
+    pub fn cell_mut(
+        &mut self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<TableCellMut<'_>, TableError> {
+        self.table.cell_accessor_mut(row_index, column)
+    }
+
+    /// Writes `value` to `(row_index, column)`.
+    pub fn set_cell(
+        &mut self,
+        row_index: usize,
+        column: &str,
+        value: Value,
+    ) -> Result<(), TableError> {
+        self.table.set_cell(row_index, column, value)
+    }
+
+    /// Writes a record value to `(row_index, column)`.
+    pub fn set_record_cell(
+        &mut self,
+        row_index: usize,
+        column: &str,
+        value: RecordValue,
+    ) -> Result<(), TableError> {
+        self.table.set_record_cell(row_index, column, value)
+    }
+
+    /// Lazily updates a scalar cell while assuming schema validity.
+    pub fn set_scalar_cell_assuming_valid(
+        &mut self,
+        row_index: usize,
+        column: &str,
+        value: ScalarValue,
+    ) -> Result<(), TableError> {
+        self.table
+            .set_scalar_cell_assuming_valid(row_index, column, value)
+    }
+
+    /// Lazily updates an array cell while assuming schema validity.
+    pub fn set_array_cell_assuming_valid(
+        &mut self,
+        row_index: usize,
+        column: &str,
+        value: ArrayValue,
+    ) -> Result<(), TableError> {
+        self.table
+            .set_array_cell_assuming_valid(row_index, column, value)
+    }
+}
+
+impl<'a> TableColumn<'a> {
+    /// Returns the column name bound to this accessor.
+    pub fn name(&self) -> &str {
+        &self.column
+    }
+
+    /// Returns the number of rows in the underlying table.
+    pub fn row_count(&self) -> usize {
+        self.table.row_count()
+    }
+
+    /// Returns a cell accessor for `row_index`.
+    pub fn cell(&self, row_index: usize) -> Result<TableCell<'a>, TableError> {
+        self.table.cell_accessor(row_index, &self.column)
+    }
+
+    /// Returns the cell value at `row_index`, or `None` if absent.
+    pub fn get(&self, row_index: usize) -> Result<Option<&'a Value>, TableError> {
+        self.table.cell(row_index, &self.column)
+    }
+
+    /// Returns an iterator over all rows in the column.
+    pub fn iter(&self) -> Result<ColumnCellIter<'a>, TableError> {
+        self.table.get_column(&self.column)
+    }
+
+    /// Returns an iterator over a row range in the column.
+    pub fn iter_range(&self, row_range: RowRange) -> Result<ColumnCellIter<'a>, TableError> {
+        self.table.get_column_range(&self.column, row_range)
+    }
+
+    /// Returns record cells over all rows in the column.
+    pub fn record_iter(&self) -> Result<RecordColumnIter<'a>, TableError> {
+        self.table.get_record_column(&self.column)
+    }
+
+    /// Returns record cells over `row_range`.
+    pub fn record_iter_range(
+        &self,
+        row_range: RowRange,
+    ) -> Result<RecordColumnIter<'a>, TableError> {
+        self.table.get_record_column_range(&self.column, row_range)
+    }
+
+    /// Returns a chunked iterator over the column.
+    pub fn chunks(
+        &self,
+        row_range: RowRange,
+        chunk_size: usize,
+    ) -> Result<ColumnChunkIter<'a>, TableError> {
+        self.table
+            .iter_column_chunks(&self.column, row_range, chunk_size)
+    }
+
+    /// Returns all cells for the column as an allocated vector.
+    pub fn cells(&self) -> Result<Vec<Option<&'a Value>>, TableError> {
+        self.table.column_cells(&self.column)
+    }
+
+    /// Returns the scalar cell at `row_index`.
+    pub fn scalar_cell(&self, row_index: usize) -> Result<&'a ScalarValue, TableError> {
+        self.table.get_scalar_cell(row_index, &self.column)
+    }
+
+    /// Returns the array cell at `row_index`.
+    pub fn array_cell(&self, row_index: usize) -> Result<&'a ArrayValue, TableError> {
+        self.table.get_array_cell(row_index, &self.column)
+    }
+
+    /// Returns the record cell at `row_index`.
+    pub fn record_cell(&self, row_index: usize) -> Result<RecordValue, TableError> {
+        self.table.record_cell(row_index, &self.column)
+    }
+
+    /// Returns owned scalar values for the column.
+    pub fn scalar_cells_owned(&self) -> Result<Vec<Option<ScalarValue>>, TableError> {
+        self.table.get_scalar_cells_owned(&self.column)
+    }
+
+    /// Returns owned array values for the selected rows.
+    pub fn array_cells_owned(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+        self.table.get_array_cells_owned(&self.column, row_indices)
+    }
+}
+
+impl<'a> TableColumnMut<'a> {
+    /// Returns the column name bound to this accessor.
+    pub fn name(&self) -> &str {
+        &self.column
+    }
+
+    /// Returns the number of rows in the underlying table.
+    pub fn row_count(&self) -> usize {
+        self.table.row_count()
+    }
+
+    /// Returns a read-only cell accessor for `row_index`.
+    pub fn cell(&self, row_index: usize) -> Result<TableCell<'_>, TableError> {
+        self.table.cell_accessor(row_index, &self.column)
+    }
+
+    /// Returns a mutable cell accessor for `row_index`.
+    pub fn cell_mut(&mut self, row_index: usize) -> Result<TableCellMut<'_>, TableError> {
+        self.table.cell_accessor_mut(row_index, &self.column)
+    }
+
+    /// Returns an iterator over all rows in the column.
+    pub fn iter(&self) -> Result<ColumnCellIter<'_>, TableError> {
+        self.table.get_column(&self.column)
+    }
+
+    /// Returns an iterator over a row range in the column.
+    pub fn iter_range(&self, row_range: RowRange) -> Result<ColumnCellIter<'_>, TableError> {
+        self.table.get_column_range(&self.column, row_range)
+    }
+
+    /// Returns a chunked iterator over the column.
+    pub fn chunks(
+        &self,
+        row_range: RowRange,
+        chunk_size: usize,
+    ) -> Result<ColumnChunkIter<'_>, TableError> {
+        self.table
+            .iter_column_chunks(&self.column, row_range, chunk_size)
+    }
+
+    /// Returns the scalar cell at `row_index`.
+    pub fn scalar_cell(&self, row_index: usize) -> Result<&ScalarValue, TableError> {
+        self.table.get_scalar_cell(row_index, &self.column)
+    }
+
+    /// Returns the array cell at `row_index`.
+    pub fn array_cell(&self, row_index: usize) -> Result<&ArrayValue, TableError> {
+        self.table.get_array_cell(row_index, &self.column)
+    }
+
+    /// Returns owned scalar values for the column.
+    pub fn scalar_cells_owned(&self) -> Result<Vec<Option<ScalarValue>>, TableError> {
+        self.table.get_scalar_cells_owned(&self.column)
+    }
+
+    /// Returns owned array values for the selected rows.
+    pub fn array_cells_owned(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+        self.table.get_array_cells_owned(&self.column, row_indices)
+    }
+
+    /// Writes `value` to `row_index`.
+    pub fn set(&mut self, row_index: usize, value: Value) -> Result<(), TableError> {
+        self.table.set_cell(row_index, &self.column, value)
+    }
+
+    /// Writes a record value to `row_index`.
+    pub fn set_record(&mut self, row_index: usize, value: RecordValue) -> Result<(), TableError> {
+        self.table.set_record_cell(row_index, &self.column, value)
+    }
+
+    /// Lazily updates a scalar cell while assuming schema validity.
+    pub fn set_scalar_assuming_valid(
+        &mut self,
+        row_index: usize,
+        value: ScalarValue,
+    ) -> Result<(), TableError> {
+        self.table
+            .set_scalar_cell_assuming_valid(row_index, &self.column, value)
+    }
+
+    /// Lazily updates an array cell while assuming schema validity.
+    pub fn set_array_assuming_valid(
+        &mut self,
+        row_index: usize,
+        value: ArrayValue,
+    ) -> Result<(), TableError> {
+        self.table
+            .set_array_cell_assuming_valid(row_index, &self.column, value)
+    }
+
+    /// Writes a full column's values.
+    pub fn put<I>(&mut self, values: I) -> Result<usize, TableError>
+    where
+        I: IntoIterator<Item = Value>,
+    {
+        self.table.put_column(&self.column, values)
+    }
+
+    /// Writes values for `row_range`.
+    pub fn put_range<I>(&mut self, row_range: RowRange, values: I) -> Result<usize, TableError>
+    where
+        I: IntoIterator<Item = Value>,
+    {
+        self.table.put_column_range(&self.column, row_range, values)
+    }
+}
+
+impl<'a> TableCell<'a> {
+    /// Returns the row index bound to this accessor.
+    pub fn row_index(&self) -> usize {
+        self.row_index
+    }
+
+    /// Returns the column name bound to this accessor.
+    pub fn column(&self) -> &str {
+        &self.column
+    }
+
+    /// Returns the cell value, or `None` if absent.
+    pub fn value(&self) -> Result<Option<&'a Value>, TableError> {
+        self.table.cell(self.row_index, &self.column)
+    }
+
+    /// Returns the cell as a scalar value.
+    pub fn scalar(&self) -> Result<&'a ScalarValue, TableError> {
+        self.table.get_scalar_cell(self.row_index, &self.column)
+    }
+
+    /// Returns the cell as an array value.
+    pub fn array(&self) -> Result<&'a ArrayValue, TableError> {
+        self.table.get_array_cell(self.row_index, &self.column)
+    }
+
+    /// Returns the cell as a record value.
+    pub fn record(&self) -> Result<RecordValue, TableError> {
+        self.table.record_cell(self.row_index, &self.column)
+    }
+
+    /// Returns whether the cell is defined.
+    pub fn is_defined(&self) -> Result<bool, TableError> {
+        self.table.is_cell_defined(self.row_index, &self.column)
+    }
+
+    /// Returns the array shape of the cell, if it is an array.
+    pub fn array_shape(&self) -> Result<Option<Vec<usize>>, TableError> {
+        self.table.array_shape(self.row_index, &self.column)
+    }
+}
+
+impl<'a> TableCellMut<'a> {
+    /// Returns the row index bound to this accessor.
+    pub fn row_index(&self) -> usize {
+        self.row_index
+    }
+
+    /// Returns the column name bound to this accessor.
+    pub fn column(&self) -> &str {
+        &self.column
+    }
+
+    /// Returns the cell value, or `None` if absent.
+    pub fn value(&self) -> Result<Option<&Value>, TableError> {
+        self.table.cell(self.row_index, &self.column)
+    }
+
+    /// Returns the cell as a scalar value.
+    pub fn scalar(&self) -> Result<&ScalarValue, TableError> {
+        self.table.get_scalar_cell(self.row_index, &self.column)
+    }
+
+    /// Returns the cell as an array value.
+    pub fn array(&self) -> Result<&ArrayValue, TableError> {
+        self.table.get_array_cell(self.row_index, &self.column)
+    }
+
+    /// Returns the cell as a record value.
+    pub fn record(&self) -> Result<RecordValue, TableError> {
+        self.table.record_cell(self.row_index, &self.column)
+    }
+
+    /// Returns whether the cell is defined.
+    pub fn is_defined(&self) -> Result<bool, TableError> {
+        self.table.is_cell_defined(self.row_index, &self.column)
+    }
+
+    /// Returns the array shape of the cell, if it is an array.
+    pub fn array_shape(&self) -> Result<Option<Vec<usize>>, TableError> {
+        self.table.array_shape(self.row_index, &self.column)
+    }
+
+    /// Writes a new value to the cell.
+    pub fn set(&mut self, value: Value) -> Result<(), TableError> {
+        self.table.set_cell(self.row_index, &self.column, value)
+    }
+
+    /// Writes a record value to the cell.
+    pub fn set_record(&mut self, value: RecordValue) -> Result<(), TableError> {
+        self.table
+            .set_record_cell(self.row_index, &self.column, value)
+    }
+
+    /// Lazily updates the cell as a scalar while assuming schema validity.
+    pub fn set_scalar_assuming_valid(&mut self, value: ScalarValue) -> Result<(), TableError> {
+        self.table
+            .set_scalar_cell_assuming_valid(self.row_index, &self.column, value)
+    }
+
+    /// Lazily updates the cell as an array while assuming schema validity.
+    pub fn set_array_assuming_valid(&mut self, value: ArrayValue) -> Result<(), TableError> {
+        self.table
+            .set_array_cell_assuming_valid(self.row_index, &self.column, value)
     }
 }
 

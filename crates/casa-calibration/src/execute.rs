@@ -517,12 +517,14 @@ pub(crate) fn evaluate_apply_rows(
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
-        let main_row = ms.main_table().row(row.row_index).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
+        let main_row = ms
+            .main_table()
+            .row_accessor()
+            .row(row.row_index)
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
-            }
-        })?;
+            })?;
         let data = array_row_value(
             main_row,
             row.row_index,
@@ -958,13 +960,13 @@ fn execute_apply_plan(
                     })?;
             }
         } else {
-            let row_record = ms
-                .main_table_mut()
-                .row_mut(row.row_index)
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            let mut row_accessor = ms.main_table_mut().row_accessor_mut();
+            let row_record = row_accessor.row_mut(row.row_index).map_err(|source| {
+                ApplyExecutionError::MutateMeasurementSet {
                     path: ms_path.clone(),
                     source: MsError::from(source),
-                })?;
+                }
+            })?;
             write_row_value(
                 row_record,
                 VisibilityDataColumn::CorrectedData.name(),
@@ -2548,7 +2550,7 @@ fn cached_apply_row_field_indices(
         return Ok(indices);
     }
 
-    let row = table.row(row_index)?;
+    let row = table.row_accessor().row(row_index)?;
     let mut indices = ApplyRowFieldIndices::default();
     for (field_index, field) in row.fields().iter().enumerate() {
         match field.name.as_str() {
