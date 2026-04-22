@@ -100,6 +100,7 @@ impl Table {
         column: &str,
     ) -> Result<TableCell<'_>, TableError> {
         self.require_row(row_index)?;
+        self.require_column(column)?;
         Ok(TableCell {
             table: self,
             row_index,
@@ -114,6 +115,7 @@ impl Table {
         column: &str,
     ) -> Result<TableCellMut<'_>, TableError> {
         self.require_row(row_index)?;
+        self.require_column(column)?;
         Ok(TableCellMut {
             table: self,
             row_index,

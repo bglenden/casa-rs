@@ -126,9 +126,22 @@ fn mutable_accessors_update_rows_columns_and_cells() {
             ),
         ]))
         .expect("add row");
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+            RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![5, 8]))),
+            RecordField::new(
+                "meta",
+                Value::Record(RecordValue::new(vec![RecordField::new(
+                    "label",
+                    Value::Scalar(ScalarValue::String("keep".to_string())),
+                )])),
+            ),
+        ]))
+        .expect("add second row");
 
     table
-        .cell_accessor_mut(0, "id")
+        .cell_accessor_mut(1, "id")
         .expect("scalar cell accessor")
         .set_scalar_assuming_valid(ScalarValue::Int32(11))
         .expect("set scalar");
@@ -136,13 +149,13 @@ fn mutable_accessors_update_rows_columns_and_cells() {
     table
         .column_accessor_mut("data")
         .expect("column accessor mut")
-        .set_array_assuming_valid(0, ArrayValue::from_i32_vec(vec![13, 21]))
+        .set_array_assuming_valid(1, ArrayValue::from_i32_vec(vec![13, 21]))
         .expect("set array");
 
     table
         .row_accessor_mut()
         .set_record_cell(
-            0,
+            1,
             "meta",
             RecordValue::new(vec![RecordField::new(
                 "label",
@@ -153,29 +166,67 @@ fn mutable_accessors_update_rows_columns_and_cells() {
 
     {
         let mut rows = table.row_accessor_mut();
-        let row = rows.row_mut(0).expect("mutable row accessor");
+        let row = rows.row_mut(1).expect("mutable row accessor");
         row.upsert("extra", Value::Scalar(ScalarValue::Bool(true)));
     }
 
     assert_eq!(
-        table.get_scalar_cell(0, "id").expect("id"),
+        table.get_scalar_cell(0, "id").expect("first id"),
+        &ScalarValue::Int32(1)
+    );
+    assert_eq!(
+        table.get_array_cell(0, "data").expect("first data"),
+        &ArrayValue::from_i32_vec(vec![2, 3])
+    );
+    assert_eq!(
+        table.record_cell(0, "meta").expect("first meta"),
+        RecordValue::new(vec![RecordField::new(
+            "label",
+            Value::Scalar(ScalarValue::String("old".to_string())),
+        )])
+    );
+    assert_eq!(table.cell(0, "extra"), Ok(None));
+    assert_eq!(
+        table.get_scalar_cell(1, "id").expect("id"),
         &ScalarValue::Int32(11)
     );
     assert_eq!(
-        table.get_array_cell(0, "data").expect("data"),
+        table.get_array_cell(1, "data").expect("data"),
         &ArrayValue::from_i32_vec(vec![13, 21])
     );
     assert_eq!(
-        table.record_cell(0, "meta").expect("meta"),
+        table.record_cell(1, "meta").expect("meta"),
         RecordValue::new(vec![RecordField::new(
             "label",
             Value::Scalar(ScalarValue::String("new".to_string())),
         )])
     );
     assert_eq!(
-        table.cell(0, "extra"),
+        table.cell(1, "extra"),
         Ok(Some(&Value::Scalar(ScalarValue::Bool(true))))
     );
+}
+
+#[test]
+fn cell_accessors_reject_unknown_columns() {
+    let schema =
+        TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).expect("schema");
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(1)),
+        )]))
+        .expect("add row");
+
+    assert!(matches!(
+        table.cell_accessor(0, "missing"),
+        Err(TableError::SchemaColumnUnknown { column }) if column == "missing"
+    ));
+    assert!(matches!(
+        table.cell_accessor_mut(0, "missing"),
+        Err(TableError::SchemaColumnUnknown { column }) if column == "missing"
+    ));
 }
 
 #[test]
