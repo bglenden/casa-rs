@@ -662,6 +662,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::net::UnixListener;
 
     #[test]
     fn directory_sha256_changes_when_contents_change() {
@@ -688,5 +689,107 @@ mod tests {
             fs::read(first_path).unwrap(),
             fs::read(second_path).unwrap()
         );
+    }
+
+    #[test]
+    fn pretty_json_and_file_hash_helpers_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let payload = OracleBundleManifest {
+            schema_version: ORACLE_SCHEMA_VERSION,
+            dataset_path: "demo.ms".to_string(),
+            dataset_identity: Some("identity".to_string()),
+            dataset_sha256: Some("abc123".to_string()),
+            dataset_tier: DatasetTier::TierB,
+            casa_version: Some("6.6".to_string()),
+            casacore_version: Some("3.6".to_string()),
+            parameter_manifest: BTreeMap::from([("specmode".to_string(), "cube".to_string())]),
+            artifacts: vec![OracleArtifactManifest {
+                name: "trace".to_string(),
+                truth_domain: TruthDomain::CasaImaging,
+                tolerance: ToleranceClass::IntermediateFloat,
+                relative_path: "trace.json".to_string(),
+                format: ArtifactFormat::Json,
+                sha256: None,
+                notes: Some("note".to_string()),
+            }],
+        };
+        let pretty_path = tmp.path().join("bundle.json");
+        write_json_pretty(&payload, &pretty_path).unwrap();
+        let pretty_text = fs::read_to_string(&pretty_path).unwrap();
+        assert!(pretty_text.contains('\n'));
+
+        let hashed_path = tmp.path().join("bundle-hashed.json");
+        let expected_hash = write_json_pretty_hashed(&payload, &hashed_path).unwrap();
+        let hashed_bytes = fs::read(&hashed_path).unwrap();
+        assert_eq!(sha256_hex_bytes(&hashed_bytes), expected_hash);
+        assert_eq!(sha256_hex_path(&hashed_path).unwrap(), expected_hash);
+        let bytes_path = tmp.path().join("bytes.txt");
+        fs::write(&bytes_path, b"abc").unwrap();
+        assert_eq!(
+            sha256_hex_bytes(b"abc"),
+            sha256_hex_path(&bytes_path).unwrap()
+        );
+    }
+
+    #[test]
+    fn directory_hash_recurses_and_special_files_error_cleanly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("tree");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("b.txt"), b"beta").unwrap();
+        fs::write(nested.join("a.txt"), b"alpha").unwrap();
+
+        let first = sha256_hex_path(&root).unwrap();
+        fs::rename(root.join("b.txt"), root.join("c.txt")).unwrap();
+        let second = sha256_hex_path(&root).unwrap();
+        assert_ne!(first, second);
+
+        let socket_path = tmp.path().join("oracle.sock");
+        let _listener = UnixListener::bind(&socket_path).unwrap();
+        assert!(
+            sha256_hex_path(&socket_path)
+                .unwrap_err()
+                .contains("must be a file or directory")
+        );
+    }
+
+    #[test]
+    fn private_serialization_and_file_collection_helpers_are_exercised_directly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("tree");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("z.json"), b"{}").unwrap();
+        fs::write(nested.join("a.json"), b"[]").unwrap();
+
+        let compact =
+            render_json_compact(&vec!["alpha", "beta"], &root.join("payload.json")).unwrap();
+        assert_eq!(String::from_utf8(compact).unwrap(), "[\"alpha\",\"beta\"]");
+
+        let mut files = Vec::new();
+        collect_files(&root, &root, &mut files).unwrap();
+        files.sort();
+        assert_eq!(
+            files,
+            vec![PathBuf::from("nested/a.json"), PathBuf::from("z.json")]
+        );
+
+        assert_eq!(hex_lower(&[0x00, 0xab, 0xff]), "00abff");
+    }
+
+    #[test]
+    fn collect_files_reports_paths_outside_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("payload.json"), b"{}").unwrap();
+
+        let err = collect_files(&root, &outside, &mut Vec::new()).unwrap_err();
+        assert!(err.contains("strip root"));
+        assert!(err.contains(root.to_string_lossy().as_ref()));
+        assert!(err.contains(outside.join("payload.json").to_string_lossy().as_ref()));
     }
 }

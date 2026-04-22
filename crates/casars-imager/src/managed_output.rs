@@ -508,7 +508,7 @@ fn artifact(
 
 #[cfg(test)]
 mod tests {
-    use super::ManagedImagingOutput;
+    use super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
     use crate::task_contract::{
         ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
         ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
@@ -815,5 +815,55 @@ mod tests {
             Some("/tmp/from-task.alpha.png")
         );
         assert!(!output.artifacts[0].preview_png_exists);
+    }
+
+    #[test]
+    fn artifact_helpers_cover_standard_products_and_preview_flags() {
+        let tempdir = tempdir().unwrap();
+        let imagename = tempdir.path().join("standard-output");
+        fs::write(imagename.with_extension("image"), b"image").unwrap();
+        fs::write(imagename.with_extension("image.png"), b"png").unwrap();
+
+        let mut config = sample_cli_config(imagename.clone());
+        config.deconvolver = Deconvolver::Clark;
+        config.nterms = 1;
+        config.spectral_mode = SpectralMode::Cube;
+        config.write_preview_pngs = true;
+
+        let artifacts = imaging_artifacts(&config);
+        assert_eq!(artifacts.len(), 4);
+        assert_eq!(
+            artifacts
+                .iter()
+                .map(|artifact| artifact.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["psf", "residual", "model", "image"]
+        );
+        assert_eq!(artifacts[0].label, "PSF");
+        assert!(!artifacts[0].exists);
+        assert_eq!(
+            artifacts[0].preview_png_path.as_deref(),
+            Some(
+                imagename
+                    .with_extension("psf.png")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        assert_eq!(artifacts[3].label, "Restored Image");
+        assert!(artifacts[3].exists);
+        assert!(artifacts[3].preview_png_exists);
+
+        let manual = artifact(
+            label_for_term("Residual", 2),
+            "residual",
+            imagename.with_extension("residual"),
+            None,
+        );
+        assert_eq!(manual.label, "Residual TT2");
+        assert_eq!(manual.kind, "residual");
+        assert!(!manual.exists);
+        assert_eq!(manual.preview_png_path, None);
+        assert!(!manual.preview_png_exists);
     }
 }
