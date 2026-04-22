@@ -3,6 +3,139 @@ use std::collections::HashSet;
 
 use super::*;
 
+fn compile_prepared_row_slots(
+    table: &Table,
+    columns: &[&str],
+) -> Result<
+    (
+        Vec<PreparedRowSlot>,
+        std::collections::HashMap<String, usize>,
+    ),
+    TableError,
+> {
+    let schema = table
+        .schema()
+        .ok_or(TableError::PreparedRowRequiresSchema)?;
+    let mut slots = Vec::with_capacity(columns.len());
+    let mut column_indices = std::collections::HashMap::with_capacity(columns.len());
+
+    for &column in columns {
+        table.require_column(column)?;
+        let schema_column = schema
+            .columns()
+            .iter()
+            .find(|candidate| candidate.name() == column)
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: column.to_string(),
+            })?;
+        let kind = match schema_column.column_type() {
+            ColumnType::Scalar => PreparedRowSlotKind::Scalar,
+            ColumnType::Array(_) => PreparedRowSlotKind::Array,
+            ColumnType::Record => {
+                return Err(TableError::PreparedRowRecordColumnUnsupported {
+                    column: column.to_string(),
+                });
+            }
+        };
+        let slot_index = slots.len();
+        slots.push(PreparedRowSlot {
+            column: column.to_string(),
+            kind,
+        });
+        column_indices
+            .entry(column.to_string())
+            .or_insert(slot_index);
+    }
+
+    Ok((slots, column_indices))
+}
+
+fn placeholder_value(kind: PreparedRowSlotKind) -> Value {
+    match kind {
+        PreparedRowSlotKind::Scalar => Value::Scalar(ScalarValue::Bool(false)),
+        PreparedRowSlotKind::Array => Value::Array(ArrayValue::from_bool_vec(Vec::new())),
+    }
+}
+
+fn prepared_row_record(slots: &[PreparedRowSlot]) -> RecordValue {
+    RecordValue::new(
+        slots
+            .iter()
+            .map(|slot| RecordField::new(slot.column.clone(), placeholder_value(slot.kind)))
+            .collect(),
+    )
+}
+
+fn load_prepared_row_value(
+    table: &Table,
+    row_index: usize,
+    slot: &PreparedRowSlot,
+) -> Result<Value, TableError> {
+    match slot.kind {
+        PreparedRowSlotKind::Scalar => table
+            .get_scalar_cell(row_index, &slot.column)
+            .map(|value| Value::Scalar(value.clone())),
+        PreparedRowSlotKind::Array => table
+            .get_array_cell(row_index, &slot.column)
+            .map(|value| Value::Array(value.clone())),
+    }
+}
+
+fn fill_prepared_row_buffer(
+    table: &Table,
+    slots: &[PreparedRowSlot],
+    row: &mut RecordValue,
+    row_index: usize,
+) -> Result<(), TableError> {
+    let fields = row.fields_mut();
+    for (slot, field) in slots.iter().zip(fields.iter_mut()) {
+        field.value = load_prepared_row_value(table, row_index, slot)?;
+    }
+    Ok(())
+}
+
+fn current_prepared_row_index(row_index: Option<usize>) -> Result<usize, TableError> {
+    row_index.ok_or(TableError::RowOutOfBounds {
+        row_index: 0,
+        row_count: 0,
+    })
+}
+
+fn flush_prepared_row_buffer(
+    table: &mut Table,
+    slots: &[PreparedRowSlot],
+    row: &RecordValue,
+    row_index: usize,
+) -> Result<(), TableError> {
+    for (slot, field) in slots.iter().zip(row.fields().iter()) {
+        match (slot.kind, &field.value) {
+            (PreparedRowSlotKind::Scalar, Value::Scalar(value)) => {
+                table.set_scalar_cell_assuming_valid(row_index, &slot.column, value.clone())?;
+            }
+            (PreparedRowSlotKind::Array, Value::Array(value)) => {
+                table.set_array_cell_assuming_valid(row_index, &slot.column, value.clone())?;
+            }
+            (PreparedRowSlotKind::Scalar, value) => {
+                return Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: slot.column.clone(),
+                    expected: "scalar",
+                    found: value.kind(),
+                });
+            }
+            (PreparedRowSlotKind::Array, value) => {
+                return Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: slot.column.clone(),
+                    expected: "array",
+                    found: value.kind(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Table {
     /// Returns the attached schema, if any.
     ///
@@ -899,6 +1032,23 @@ impl<'a> TableRow<'a> {
         self.table.row_count()
     }
 
+    /// Prepares a reusable row buffer for `columns`.
+    ///
+    /// The returned accessor compiles a stable slot order once and reuses a
+    /// single `RecordValue` buffer across repeated row loads.
+    pub fn prepare(self, columns: &[&str]) -> Result<PreparedTableRow<'a>, TableError> {
+        let (slots, column_indices) = compile_prepared_row_slots(self.table, columns)?;
+        Ok(PreparedTableRow {
+            table: self.table,
+            row: prepared_row_record(&slots),
+            slots,
+            column_indices,
+            cached_rows: self.table.inner.prepared_rows(columns)?,
+            row_index: None,
+            row_materialized: false,
+        })
+    }
+
     /// Returns the row at `row_index`.
     pub fn row(&self, row_index: usize) -> Result<&'a RecordValue, TableError> {
         self.table.row(row_index)
@@ -933,6 +1083,23 @@ impl<'a> TableRowMut<'a> {
     /// Returns the number of rows in the underlying table.
     pub fn row_count(&self) -> usize {
         self.table.row_count()
+    }
+
+    /// Prepares a reusable mutable row buffer for `columns`.
+    ///
+    /// Call [`PreparedTableRowMut::flush`] after the final mutation so the
+    /// last loaded row is written back through the table accessor layer.
+    pub fn prepare(self, columns: &[&str]) -> Result<PreparedTableRowMut<'a>, TableError> {
+        let (slots, column_indices) = compile_prepared_row_slots(self.table, columns)?;
+        Ok(PreparedTableRowMut {
+            table: self.table,
+            row: prepared_row_record(&slots),
+            slots,
+            column_indices,
+            row_index: None,
+            row_materialized: false,
+            dirty: false,
+        })
     }
 
     /// Returns the row at `row_index`.
@@ -999,6 +1166,258 @@ impl<'a> TableRowMut<'a> {
     ) -> Result<(), TableError> {
         self.table
             .set_array_cell_assuming_valid(row_index, column, value)
+    }
+}
+
+impl<'a> PreparedTableRow<'a> {
+    /// Returns the number of rows in the underlying table.
+    pub fn row_count(&self) -> usize {
+        self.table.row_count()
+    }
+
+    /// Returns the stable slot index for `column`.
+    pub fn column_index(&self, column: &str) -> Option<usize> {
+        self.column_indices.get(column).copied()
+    }
+
+    /// Returns the currently loaded row index, if any.
+    pub fn current_row_index(&self) -> Option<usize> {
+        self.row_index
+    }
+
+    /// Returns the current reusable row buffer, if one has been loaded.
+    pub fn row(&mut self) -> Option<&RecordValue> {
+        let row_index = self.row_index?;
+        if let Some(rows) = self.cached_rows.as_ref() {
+            if !self.row_materialized {
+                let cached_row = rows.get(row_index)?;
+                for (target, source) in self
+                    .row
+                    .fields_mut()
+                    .iter_mut()
+                    .zip(cached_row.fields().iter())
+                {
+                    target.value = source.value.clone();
+                }
+                self.row_materialized = true;
+            }
+            return Some(&self.row);
+        }
+        if !self.row_materialized {
+            fill_prepared_row_buffer(self.table, &self.slots, &mut self.row, row_index).ok()?;
+            self.row_materialized = true;
+        }
+        Some(&self.row)
+    }
+
+    /// Selects `row_index` as the current row for indexed access.
+    pub fn load(&mut self, row_index: usize) -> Result<(), TableError> {
+        self.table
+            .require_row_index_without_loading_rows(row_index)?;
+        self.row_index = Some(row_index);
+        self.row_materialized = false;
+        Ok(())
+    }
+
+    /// Returns the scalar value for `slot_index` in the current row without cloning.
+    pub fn scalar_at(&self, slot_index: usize) -> Result<&ScalarValue, TableError> {
+        let row_index = current_prepared_row_index(self.row_index)?;
+        if let Some(rows) = self.cached_rows.as_ref() {
+            let row = rows.get(row_index).ok_or(TableError::RowOutOfBounds {
+                row_index,
+                row_count: rows.len(),
+            })?;
+            return match row.fields().get(slot_index).map(|field| &field.value) {
+                Some(Value::Scalar(value)) => Ok(value),
+                Some(value) => Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: self.slots[slot_index].column.clone(),
+                    expected: "scalar",
+                    found: value.kind(),
+                }),
+                None => Err(TableError::ColumnNotFound {
+                    row_index,
+                    column: self.slots[slot_index].column.clone(),
+                }),
+            };
+        }
+        let slot = self
+            .slots
+            .get(slot_index)
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: format!("#{slot_index}"),
+            })?;
+        match slot.kind {
+            PreparedRowSlotKind::Scalar => self.table.get_scalar_cell(row_index, &slot.column),
+            PreparedRowSlotKind::Array => Err(TableError::ColumnTypeMismatch {
+                row_index,
+                column: slot.column.clone(),
+                expected: "scalar",
+                found: ValueKind::Array,
+            }),
+        }
+    }
+
+    /// Returns the array value for `slot_index` in the current row without cloning.
+    pub fn array_at(&self, slot_index: usize) -> Result<&ArrayValue, TableError> {
+        let row_index = current_prepared_row_index(self.row_index)?;
+        if let Some(rows) = self.cached_rows.as_ref() {
+            let row = rows.get(row_index).ok_or(TableError::RowOutOfBounds {
+                row_index,
+                row_count: rows.len(),
+            })?;
+            return match row.fields().get(slot_index).map(|field| &field.value) {
+                Some(Value::Array(value)) => Ok(value),
+                Some(value) => Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: self.slots[slot_index].column.clone(),
+                    expected: "array",
+                    found: value.kind(),
+                }),
+                None => Err(TableError::ColumnNotFound {
+                    row_index,
+                    column: self.slots[slot_index].column.clone(),
+                }),
+            };
+        }
+        let slot = self
+            .slots
+            .get(slot_index)
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: format!("#{slot_index}"),
+            })?;
+        match slot.kind {
+            PreparedRowSlotKind::Array => self.table.get_array_cell(row_index, &slot.column),
+            PreparedRowSlotKind::Scalar => Err(TableError::ColumnTypeMismatch {
+                row_index,
+                column: slot.column.clone(),
+                expected: "array",
+                found: ValueKind::Scalar,
+            }),
+        }
+    }
+}
+
+impl<'a> PreparedTableRowMut<'a> {
+    /// Returns the number of rows in the underlying table.
+    pub fn row_count(&self) -> usize {
+        self.table.row_count()
+    }
+
+    /// Returns the stable slot index for `column`.
+    pub fn column_index(&self, column: &str) -> Option<usize> {
+        self.column_indices.get(column).copied()
+    }
+
+    /// Returns the currently loaded row index, if any.
+    pub fn current_row_index(&self) -> Option<usize> {
+        self.row_index
+    }
+
+    /// Returns the current reusable row buffer, if one has been loaded.
+    pub fn row(&self) -> Option<&RecordValue> {
+        self.row_materialized.then_some(&self.row)
+    }
+
+    /// Returns the current reusable row buffer for mutation, if one has been loaded.
+    pub fn row_mut(&mut self) -> Option<&mut RecordValue> {
+        if self.row_materialized {
+            self.dirty = true;
+            Some(&mut self.row)
+        } else {
+            None
+        }
+    }
+
+    /// Loads `row_index` into the reusable row buffer.
+    ///
+    /// If the current row buffer is dirty and `row_index` differs from the
+    /// loaded row, the current row is flushed first.
+    pub fn load(&mut self, row_index: usize) -> Result<&RecordValue, TableError> {
+        self.table
+            .require_row_index_without_loading_rows(row_index)?;
+        if self.row_index != Some(row_index) || !self.row_materialized {
+            self.flush()?;
+            fill_prepared_row_buffer(self.table, &self.slots, &mut self.row, row_index)?;
+            self.row_index = Some(row_index);
+            self.row_materialized = true;
+        }
+        Ok(&self.row)
+    }
+
+    /// Selects `row_index` as the current row for direct indexed writes.
+    ///
+    /// This avoids loading the reusable row buffer unless [`row_mut`](Self::row_mut)
+    /// is used afterwards.
+    pub fn seek(&mut self, row_index: usize) -> Result<(), TableError> {
+        self.table
+            .require_row_index_without_loading_rows(row_index)?;
+        if self.row_index != Some(row_index) && self.dirty {
+            self.flush()?;
+        }
+        if self.row_index != Some(row_index) {
+            self.row_materialized = false;
+        }
+        self.row_index = Some(row_index);
+        Ok(())
+    }
+
+    /// Flushes the current row buffer through the table accessor layer.
+    pub fn flush(&mut self) -> Result<(), TableError> {
+        let Some(row_index) = self.row_index else {
+            self.dirty = false;
+            return Ok(());
+        };
+        if self.dirty {
+            flush_prepared_row_buffer(self.table, &self.slots, &self.row, row_index)?;
+            self.dirty = false;
+        }
+        Ok(())
+    }
+
+    /// Writes `value` to `slot_index` in the currently selected row.
+    ///
+    /// This is the fast path for callers that already computed replacement
+    /// values and do not need a materialized row buffer.
+    pub fn set_value_at(&mut self, slot_index: usize, value: Value) -> Result<(), TableError> {
+        let row_index = current_prepared_row_index(self.row_index)?;
+        if self.dirty && self.row_materialized {
+            if let Some(field) = self.row.fields_mut().get_mut(slot_index) {
+                field.value = value;
+                return Ok(());
+            }
+        }
+        let slot = self
+            .slots
+            .get(slot_index)
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: format!("#{slot_index}"),
+            })?;
+        if self.row_materialized
+            && let Some(field) = self.row.fields_mut().get_mut(slot_index)
+        {
+            field.value = value.clone();
+        }
+        match (slot.kind, value) {
+            (PreparedRowSlotKind::Scalar, Value::Scalar(value)) => self
+                .table
+                .set_scalar_cell_assuming_valid(row_index, &slot.column, value),
+            (PreparedRowSlotKind::Array, Value::Array(value)) => self
+                .table
+                .set_array_cell_assuming_valid(row_index, &slot.column, value),
+            (PreparedRowSlotKind::Scalar, value) => Err(TableError::ColumnTypeMismatch {
+                row_index,
+                column: slot.column.clone(),
+                expected: "scalar",
+                found: value.kind(),
+            }),
+            (PreparedRowSlotKind::Array, value) => Err(TableError::ColumnTypeMismatch {
+                row_index,
+                column: slot.column.clone(),
+                expected: "array",
+                found: value.kind(),
+            }),
+        }
     }
 }
 

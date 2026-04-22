@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use casa_types::{ArrayValue, Complex64, RecordField, RecordValue, ScalarValue, Value, ValueKind};
@@ -616,6 +616,51 @@ pub struct TableRowMut<'a> {
     pub(crate) table: &'a mut Table,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreparedRowSlotKind {
+    Scalar,
+    Array,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedRowSlot {
+    pub(crate) column: String,
+    pub(crate) kind: PreparedRowSlotKind,
+}
+
+/// Read-only reusable row buffer for selected scalar/array columns.
+///
+/// Prepared row access compiles a stable slot order once, then reloads this
+/// same record-shaped buffer for each row. Callers can cache slot indices with
+/// [`PreparedTableRow::column_index`] and read the same offset repeatedly
+/// without per-row record allocation.
+#[derive(Debug, Clone)]
+pub struct PreparedTableRow<'a> {
+    pub(crate) table: &'a Table,
+    pub(crate) slots: Vec<PreparedRowSlot>,
+    pub(crate) column_indices: HashMap<String, usize>,
+    pub(crate) cached_rows: Option<Vec<RecordValue>>,
+    pub(crate) row_index: Option<usize>,
+    pub(crate) row: RecordValue,
+    pub(crate) row_materialized: bool,
+}
+
+/// Mutable reusable row buffer for selected scalar/array columns.
+///
+/// The buffer is reused across rows and flushes back through the table
+/// accessor layer, preserving lazy sparse writes rather than exposing
+/// storage-manager internals directly.
+#[derive(Debug)]
+pub struct PreparedTableRowMut<'a> {
+    pub(crate) table: &'a mut Table,
+    pub(crate) slots: Vec<PreparedRowSlot>,
+    pub(crate) column_indices: HashMap<String, usize>,
+    pub(crate) row_index: Option<usize>,
+    pub(crate) row: RecordValue,
+    pub(crate) row_materialized: bool,
+    pub(crate) dirty: bool,
+}
+
 /// Read-only column accessor for a [`Table`].
 ///
 /// This follows the same public-accessor direction as casacore's
@@ -758,6 +803,12 @@ pub enum TableError {
     /// A record-specific operation was attempted on a non-record schema column.
     #[error("column \"{column}\" is not a record column in schema")]
     SchemaColumnNotRecord { column: String },
+    /// Prepared row access currently requires an attached schema.
+    #[error("prepared row access requires an attached schema")]
+    PreparedRowRequiresSchema,
+    /// Prepared row access currently supports only scalar and array schema columns.
+    #[error("prepared row access does not yet support record column \"{column}\"")]
+    PreparedRowRecordColumnUnsupported { column: String },
     /// A required column (non-optional per schema) was absent from a row.
     #[error("schema column \"{column}\" is missing in row {row_index}")]
     SchemaColumnMissing { row_index: usize, column: String },

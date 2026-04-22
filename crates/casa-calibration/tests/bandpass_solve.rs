@@ -161,6 +161,138 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
 }
 
 #[test]
+fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
+    let dir = TempDir::new().expect("tempdir");
+    let prior_gains = [
+        [Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
+        [
+            Complex32::new(0.9553365, 0.29552022),
+            Complex32::new(0.921061, -0.38941833),
+        ],
+        [
+            Complex32::new(0.9800666, -0.19866933),
+            Complex32::new(0.87758255, 0.47942555),
+        ],
+    ];
+    let bandpass_gains = [
+        [
+            [Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
+            [Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
+        ],
+        [
+            [Complex32::new(1.1, 0.15), Complex32::new(0.8, -0.2)],
+            [Complex32::new(0.95, -0.1), Complex32::new(1.2, 0.25)],
+        ],
+        [
+            [Complex32::new(0.9, -0.05), Complex32::new(1.15, 0.18)],
+            [Complex32::new(1.05, 0.12), Complex32::new(0.88, -0.14)],
+        ],
+    ];
+    let clusters = (0..128)
+        .map(|index| common::SyntheticBandpassTimeCluster {
+            field_id: 0,
+            time_seconds: 100.0 + index as f64,
+            scan_number: 1,
+            prior_gains,
+            bandpass_gains,
+        })
+        .collect::<Vec<_>>();
+    let ms_path = common::create_bandpass_solve_fixture_ms(dir.path(), &clusters);
+
+    let prior_table = common::create_apply_gain_caltable(
+        &dir.path().join("prior_dense.gcal"),
+        &["TARGET0"],
+        &[
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 0,
+                gains: vec![prior_gains[0][0], prior_gains[0][1]],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 1,
+                gains: vec![prior_gains[1][0], prior_gains[1][1]],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 2,
+                gains: vec![prior_gains[2][0], prior_gains[2][1]],
+                flags: vec![false, false],
+            },
+        ],
+    );
+
+    let bandpass_table = dir.path().join("bandpass_dense.bcal");
+    let report = solve_bandpass_from_path(
+        &ms_path,
+        &BandpassSolveRequest {
+            selection: MsSelection::new().field(&[0]).spw(&[0]),
+            output_table: bandpass_table.clone(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: vec![ApplyCalibrationTableSpec::new(&prior_table)],
+            parang: false,
+            combine: BandpassSolveCombine::default(),
+            band_type: BandpassType::B,
+            normalize_average_amplitude: false,
+            amplitude_degree: 3,
+            phase_degree: 3,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve dense bandpass");
+
+    assert_eq!(report.solution_row_count, 3);
+    assert_eq!(report.channel_count, 2);
+
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().field(&[0]).spw(&[0]),
+            apply_mode: ApplyMode::CalFlag,
+            parang: false,
+            calibration_tables: vec![
+                ApplyCalibrationTableSpec::new(&prior_table),
+                ApplyCalibrationTableSpec::new(&bandpass_table),
+            ],
+        },
+    )
+    .expect("apply dense prior + bandpass");
+
+    let ms = MeasurementSet::open(&ms_path).expect("reopen solved dense ms");
+    let row_count = ms.main_table().row_count();
+    assert_eq!(row_count, clusters.len() * 3);
+    for row in [0, row_count / 2, row_count - 1] {
+        let corrected = ms
+            .main_table()
+            .get_array_cell(row, VisibilityDataColumn::CorrectedData.name())
+            .expect("corrected data");
+        let ArrayValue::Complex32(values) = corrected else {
+            panic!("corrected data row {row} was not Complex32");
+        };
+        let values = values
+            .view()
+            .into_dimensionality::<Ix2>()
+            .expect("2-D corrected data");
+        for sample in values {
+            assert!(
+                (*sample - Complex32::new(1.0, 0.0)).norm() <= 1.0e-3,
+                "expected unity corrected sample on row {row}, found ({:.6},{:.6})",
+                sample.re,
+                sample.im
+            );
+        }
+    }
+}
+
+#[test]
 fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
     let dir = TempDir::new().expect("tempdir");
     let prior_gains = [

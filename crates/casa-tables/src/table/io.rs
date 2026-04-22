@@ -904,16 +904,6 @@ fn collect_sparse_column_values_from_current_cells<'a>(
         let Some(col_desc) = col_descs.iter().find(|desc| desc.col_name == column) else {
             continue;
         };
-        if !col_desc.is_array
-            && let Some(pending_values) = table.inner.pending_scalar_cell_values(column)
-        {
-            let values = pending_values
-                .into_iter()
-                .map(|(row_index, value)| (row_index, Some(Value::Scalar(value))))
-                .collect();
-            patches.insert(column, values);
-            continue;
-        }
         let mut values = Vec::with_capacity(row_indices.len());
         for &row_index in row_indices {
             values.push((

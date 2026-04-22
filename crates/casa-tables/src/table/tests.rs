@@ -13,6 +13,20 @@ use super::{
     TableOptions,
 };
 
+fn row_with_fixed_arrays(id: i32, data: &[i32], other: &[i32]) -> RecordValue {
+    RecordValue::new(vec![
+        RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+        RecordField::new(
+            "data",
+            Value::Array(ArrayValue::from_i32_vec(data.to_vec())),
+        ),
+        RecordField::new(
+            "other",
+            Value::Array(ArrayValue::from_i32_vec(other.to_vec())),
+        ),
+    ])
+}
+
 #[test]
 fn table_keeps_rows_in_order() {
     let first = RecordValue::new(vec![RecordField::new(
@@ -1300,6 +1314,395 @@ fn lazy_disk_open_reads_cells_without_materializing_rows() {
 
         std::fs::remove_dir_all(&root).expect("cleanup test dir");
     }
+}
+
+#[test]
+fn prepared_row_reader_reuses_buffer_without_materializing_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        table
+            .add_row(row_with_fixed_arrays(1, &[7, 9], &[100, 200]))
+            .expect("push row 0");
+        table
+            .add_row(row_with_fixed_arrays(2, &[11, 13], &[300, 400]))
+            .expect("push row 1");
+
+        let root = unique_test_dir(&format!("prepared_row_reader_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        let mut prepared = reopened
+            .row_accessor()
+            .prepare(&["id", "data"])
+            .expect("prepare row reader");
+        let id_index = prepared.column_index("id").expect("id index");
+        let data_index = prepared.column_index("data").expect("data index");
+
+        prepared.load(0).expect("load first row");
+        assert_eq!(
+            prepared.scalar_at(id_index).expect("id slot"),
+            &ScalarValue::Int32(1)
+        );
+        assert_eq!(
+            prepared.array_at(data_index).expect("data slot"),
+            &ArrayValue::from_i32_vec(vec![7, 9])
+        );
+        let first_buffer_ptr = prepared
+            .row()
+            .expect("materialized first row")
+            .fields()
+            .as_ptr();
+        assert!(!reopened.inner.has_loaded_rows());
+        assert!(!reopened.inner.has_loaded_scalar_column("id"));
+        assert!(!reopened.inner.has_loaded_array_column("data"));
+        assert!(!reopened.inner.has_loaded_array_column("other"));
+
+        prepared.load(1).expect("load second row");
+        assert_eq!(
+            prepared.scalar_at(id_index).expect("id slot"),
+            &ScalarValue::Int32(2)
+        );
+        assert_eq!(
+            prepared.array_at(data_index).expect("data slot"),
+            &ArrayValue::from_i32_vec(vec![11, 13])
+        );
+        assert_eq!(
+            prepared
+                .row()
+                .expect("materialized second row")
+                .fields()
+                .as_ptr(),
+            first_buffer_ptr
+        );
+        assert!(!reopened.inner.has_loaded_rows());
+        assert!(!reopened.inner.has_loaded_scalar_column("id"));
+        assert!(!reopened.inner.has_loaded_array_column("data"));
+        assert!(!reopened.inner.has_loaded_array_column("other"));
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
+fn prepared_row_writer_reuses_buffer_and_keeps_sparse_updates() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        table
+            .add_row(row_with_fixed_arrays(1, &[7, 9], &[100, 200]))
+            .expect("push row 0");
+        table
+            .add_row(row_with_fixed_arrays(2, &[11, 13], &[300, 400]))
+            .expect("push row 1");
+
+        let root = unique_test_dir(&format!("prepared_row_writer_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        let mut prepared = reopened
+            .row_accessor_mut()
+            .prepare(&["id", "data"])
+            .expect("prepare row writer");
+        let id_index = prepared.column_index("id").expect("id index");
+        let data_index = prepared.column_index("data").expect("data index");
+
+        prepared.load(0).expect("load first row");
+        let first_buffer_ptr = prepared.row().expect("row loaded").fields().as_ptr();
+        {
+            let row = prepared.row_mut().expect("mutable row");
+            row.fields_mut()[id_index].value = Value::Scalar(ScalarValue::Int32(10));
+            row.fields_mut()[data_index].value =
+                Value::Array(ArrayValue::from_i32_vec(vec![70, 90]));
+        }
+
+        prepared.load(1).expect("load second row");
+        assert_eq!(
+            prepared.row().expect("row loaded").fields().as_ptr(),
+            first_buffer_ptr
+        );
+        {
+            let row = prepared.row_mut().expect("mutable row");
+            row.fields_mut()[id_index].value = Value::Scalar(ScalarValue::Int32(20));
+            row.fields_mut()[data_index].value =
+                Value::Array(ArrayValue::from_i32_vec(vec![110, 130]));
+        }
+        prepared.flush().expect("flush prepared rows");
+
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "prepared row writes should keep lazy row state for {dm:?}"
+        );
+        assert!(
+            reopened.inner.has_loaded_array_column("data")
+                || reopened.inner.has_pending_array_cells("data"),
+            "prepared row writes should keep updates isolated to the prepared data column for {dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_array_column("other"),
+            "prepared row writes should not touch unrelated array columns for {dm:?}"
+        );
+        assert_eq!(
+            reopened
+                .get_scalar_cell(0, "id")
+                .expect("buffered scalar row 0"),
+            &ScalarValue::Int32(10)
+        );
+        assert_eq!(
+            reopened
+                .get_scalar_cell(1, "id")
+                .expect("buffered scalar row 1"),
+            &ScalarValue::Int32(20)
+        );
+
+        reopened
+            .save_selected_rows_in_place_assuming_valid(&["id", "data"], &[0, 1])
+            .expect("save prepared row updates");
+
+        let verify = Table::open(TableOptions::new(&root)).expect("reopen after prepared writes");
+        assert_eq!(
+            verify.get_scalar_cell(0, "id").expect("id row 0"),
+            &ScalarValue::Int32(10)
+        );
+        assert_eq!(
+            verify.get_scalar_cell(1, "id").expect("id row 1"),
+            &ScalarValue::Int32(20)
+        );
+        assert_eq!(
+            verify.get_array_cell(0, "data").expect("data row 0"),
+            &ArrayValue::from_i32_vec(vec![70, 90])
+        );
+        assert_eq!(
+            verify.get_array_cell(1, "data").expect("data row 1"),
+            &ArrayValue::from_i32_vec(vec![110, 130])
+        );
+        assert_eq!(
+            verify.get_array_cell(0, "other").expect("other row 0"),
+            &ArrayValue::from_i32_vec(vec![100, 200])
+        );
+        assert_eq!(
+            verify.get_array_cell(1, "other").expect("other row 1"),
+            &ArrayValue::from_i32_vec(vec![300, 400])
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
+fn prepared_row_writer_seek_keeps_buffer_unmaterialized_and_direct_writes_coherent() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        table
+            .add_row(row_with_fixed_arrays(1, &[1, 2], &[100, 200]))
+            .expect("push row 0");
+        table
+            .add_row(row_with_fixed_arrays(2, &[3, 4], &[300, 400]))
+            .expect("push row 1");
+
+        let root = unique_test_dir(&format!("prepared_row_writer_seek_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        let mut prepared = reopened
+            .row_accessor_mut()
+            .prepare(&["id", "data"])
+            .expect("prepare row writer");
+        let id_index = prepared.column_index("id").expect("id index");
+        let data_index = prepared.column_index("data").expect("data index");
+
+        prepared.seek(0).expect("seek first row");
+        assert!(
+            prepared.row().is_none(),
+            "seek should not materialize the row buffer for {dm:?}"
+        );
+        assert!(
+            prepared.row_mut().is_none(),
+            "row_mut should stay unavailable until load materializes the buffer for {dm:?}"
+        );
+        prepared
+            .set_value_at(id_index, Value::Scalar(ScalarValue::Int32(10)))
+            .expect("direct scalar write");
+        prepared
+            .set_value_at(
+                data_index,
+                Value::Array(ArrayValue::from_i32_vec(vec![70, 90])),
+            )
+            .expect("direct array write");
+        assert!(
+            prepared.row().is_none(),
+            "direct writes through seek should not invent a row buffer for {dm:?}"
+        );
+
+        prepared.load(1).expect("load second row");
+        prepared
+            .set_value_at(id_index, Value::Scalar(ScalarValue::Int32(20)))
+            .expect("direct write-through keeps loaded buffer coherent");
+        assert_eq!(
+            prepared.row().expect("loaded row").fields()[id_index].value,
+            Value::Scalar(ScalarValue::Int32(20))
+        );
+
+        reopened
+            .save_selected_rows_in_place_assuming_valid(&["id", "data"], &[0, 1])
+            .expect("save prepared row updates");
+
+        let verify = Table::open(TableOptions::new(&root)).expect("reopen after prepared writes");
+        assert_eq!(
+            verify.get_scalar_cell(0, "id").expect("id row 0"),
+            &ScalarValue::Int32(10)
+        );
+        assert_eq!(
+            verify.get_scalar_cell(1, "id").expect("id row 1"),
+            &ScalarValue::Int32(20)
+        );
+        assert_eq!(
+            verify.get_array_cell(0, "data").expect("data row 0"),
+            &ArrayValue::from_i32_vec(vec![70, 90])
+        );
+        assert_eq!(
+            verify.get_array_cell(1, "data").expect("data row 1"),
+            &ArrayValue::from_i32_vec(vec![3, 4])
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
+fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        table
+            .add_row(row_with_fixed_arrays(1, &[7, 9], &[100, 200]))
+            .expect("push row 0");
+        table
+            .add_row(row_with_fixed_arrays(2, &[11, 13], &[300, 400]))
+            .expect("push row 1");
+
+        let root = unique_test_dir(&format!("prepared_row_reader_pending_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        reopened
+            .set_scalar_cell_assuming_valid(0, "id", ScalarValue::Int32(10))
+            .expect("pending scalar update");
+        reopened
+            .set_array_cell_assuming_valid(0, "data", ArrayValue::from_i32_vec(vec![70, 90]))
+            .expect("pending array update");
+
+        reopened
+            .get_scalar_cell(1, "id")
+            .expect("prime scalar cache");
+        reopened
+            .get_array_cell(1, "data")
+            .expect("prime array cache");
+        reopened
+            .set_scalar_cell_assuming_valid(1, "id", ScalarValue::Int32(20))
+            .expect("cached scalar update");
+        reopened
+            .set_array_cell_assuming_valid(1, "data", ArrayValue::from_i32_vec(vec![110, 130]))
+            .expect("cached array update");
+
+        let mut prepared = reopened
+            .row_accessor()
+            .prepare(&["id", "data"])
+            .expect("prepare reader");
+        let id_index = prepared.column_index("id").expect("id index");
+        let data_index = prepared.column_index("data").expect("data index");
+
+        prepared.load(0).expect("load first row");
+        assert_eq!(
+            prepared.scalar_at(id_index).expect("row 0 id"),
+            &ScalarValue::Int32(10)
+        );
+        assert_eq!(
+            prepared.array_at(data_index).expect("row 0 data"),
+            &ArrayValue::from_i32_vec(vec![70, 90])
+        );
+
+        prepared.load(1).expect("load second row");
+        assert_eq!(
+            prepared.scalar_at(id_index).expect("row 1 id"),
+            &ScalarValue::Int32(20)
+        );
+        assert_eq!(
+            prepared.array_at(data_index).expect("row 1 data"),
+            &ArrayValue::from_i32_vec(vec![110, 130])
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
+fn prepared_row_access_rejects_record_columns() {
+    let schema = TableSchema::new(vec![ColumnSchema::record("meta")]).expect("schema");
+    let table = Table::with_schema(schema);
+
+    let err = table
+        .row_accessor()
+        .prepare(&["meta"])
+        .expect_err("record column should be rejected");
+
+    assert!(matches!(
+        err,
+        TableError::PreparedRowRecordColumnUnsupported { column } if column == "meta"
+    ));
 }
 
 #[test]

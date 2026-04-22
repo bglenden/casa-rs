@@ -22,11 +22,6 @@ struct LoadedRows {
     undefined_cells: Vec<HashSet<String>>,
 }
 
-#[derive(Debug)]
-struct LoadedScalarColumns {
-    columns: HashMap<String, Vec<Option<ScalarValue>>>,
-}
-
 #[derive(Debug, Default)]
 struct PendingScalarCells {
     by_column: HashMap<String, HashMap<usize, ScalarValue>>,
@@ -116,6 +111,17 @@ fn lazy_array_column_store(
         .collect()
 }
 
+fn lazy_scalar_column_store(
+    schema: Option<&TableSchema>,
+) -> HashMap<String, OnceCell<Vec<Option<ScalarValue>>>> {
+    schema
+        .into_iter()
+        .flat_map(|schema| schema.columns())
+        .filter(|column| matches!(column.column_type(), ColumnType::Scalar))
+        .map(|column| (column.name().to_string(), OnceCell::new()))
+        .collect()
+}
+
 fn eager_loaded_rows(
     rows: Vec<RecordValue>,
     mut undefined_cells: Vec<HashSet<String>>,
@@ -129,10 +135,62 @@ fn eager_loaded_rows(
     }
 }
 
+fn apply_prepared_scalar_column(
+    rows: &mut [RecordValue],
+    column: &str,
+    values: &[Option<ScalarValue>],
+) {
+    for (row_index, value) in values.iter().enumerate() {
+        if let Some(value) = value
+            && let Some(row) = rows.get_mut(row_index)
+        {
+            row.upsert(column.to_string(), Value::Scalar(value.clone()));
+        }
+    }
+}
+
+fn apply_prepared_scalar_overrides(
+    rows: &mut [RecordValue],
+    column: &str,
+    values: &HashMap<usize, ScalarValue>,
+) {
+    for (&row_index, value) in values {
+        if let Some(row) = rows.get_mut(row_index) {
+            row.upsert(column.to_string(), Value::Scalar(value.clone()));
+        }
+    }
+}
+
+fn apply_prepared_array_column(
+    rows: &mut [RecordValue],
+    column: &str,
+    values: &[Option<ArrayValue>],
+) {
+    for (row_index, value) in values.iter().enumerate() {
+        if let Some(value) = value
+            && let Some(row) = rows.get_mut(row_index)
+        {
+            row.upsert(column.to_string(), Value::Array(value.clone()));
+        }
+    }
+}
+
+fn apply_prepared_array_overrides(
+    rows: &mut [RecordValue],
+    column: &str,
+    values: &PendingArrayColumn,
+) {
+    for (row_index, value) in &values.rows {
+        if let Some(row) = rows.get_mut(*row_index) {
+            row.upsert(column.to_string(), Value::Array(value.clone()));
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct TableImpl {
     loaded_rows: OnceCell<LoadedRows>,
-    loaded_scalar_columns: OnceCell<LoadedScalarColumns>,
+    loaded_scalar_columns: HashMap<String, OnceCell<Vec<Option<ScalarValue>>>>,
     pending_scalar_cells: PendingScalarCells,
     loaded_array_columns: HashMap<String, OnceCell<Vec<Option<ArrayValue>>>>,
     pending_array_cells: PendingArrayCells,
@@ -154,7 +212,7 @@ impl TableImpl {
             .expect("initialize empty row store");
         Self {
             loaded_rows,
-            loaded_scalar_columns: OnceCell::new(),
+            loaded_scalar_columns: HashMap::new(),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: HashMap::new(),
             pending_array_cells: PendingArrayCells::default(),
@@ -174,7 +232,7 @@ impl TableImpl {
             .expect("initialize eager row store");
         Self {
             loaded_rows,
-            loaded_scalar_columns: OnceCell::new(),
+            loaded_scalar_columns: HashMap::new(),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: HashMap::new(),
             pending_array_cells: PendingArrayCells::default(),
@@ -200,7 +258,7 @@ impl TableImpl {
             .expect("initialize eager row store");
         Self {
             loaded_rows,
-            loaded_scalar_columns: OnceCell::new(),
+            loaded_scalar_columns: lazy_scalar_column_store(schema.as_ref()),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: lazy_array_column_store(schema.as_ref()),
             pending_array_cells: PendingArrayCells::default(),
@@ -221,7 +279,7 @@ impl TableImpl {
     ) -> Self {
         Self {
             loaded_rows: OnceCell::new(),
-            loaded_scalar_columns: OnceCell::new(),
+            loaded_scalar_columns: lazy_scalar_column_store(schema.as_ref()),
             pending_scalar_cells: PendingScalarCells::default(),
             loaded_array_columns: lazy_array_column_store(schema.as_ref()),
             pending_array_cells: PendingArrayCells::default(),
@@ -273,17 +331,24 @@ impl TableImpl {
         Ok(loaded)
     }
 
-    fn load_scalar_columns_now(source: &LazyRowsSource) -> Result<LoadedScalarColumns, TableError> {
+    fn load_scalar_column_now(
+        source: &LazyRowsSource,
+        column: &str,
+    ) -> Result<Vec<Option<ScalarValue>>, TableError> {
         let mut profiler = StorageProfiler::start(format!(
-            "table_impl::load_scalar_columns_now path={}",
+            "table_impl::load_scalar_column_now path={} column={column}",
             source.path.display()
         ));
         let storage = CompositeStorage;
-        let snapshot = storage
-            .load_scalar_columns_with_row_hint(&source.path, Some(source.row_count_hint as u64))
+        let values = storage
+            .load_scalar_column_with_row_hint(
+                &source.path,
+                column,
+                Some(source.row_count_hint as u64),
+            )
             .map_err(|err| {
                 TableError::Storage(format!(
-                    "failed to load scalar columns for table {}: {err}",
+                    "failed to load scalar column '{column}' for table {}: {err}",
                     source.path.display()
                 ))
             })?;
@@ -291,15 +356,13 @@ impl TableImpl {
             profiler.mark_with_detail(
                 "storage_load_complete",
                 Some(format!(
-                    "row_count_hint={} columns={}",
+                    "row_count_hint={} values={}",
                     source.row_count_hint,
-                    snapshot.columns.len()
+                    values.len()
                 )),
             );
         }
-        Ok(LoadedScalarColumns {
-            columns: snapshot.columns,
-        })
+        Ok(values)
     }
 
     fn load_array_column_now(
@@ -449,6 +512,55 @@ impl TableImpl {
         Ok(self.ensure_loaded()?.rows.as_slice())
     }
 
+    pub(crate) fn prepared_rows(
+        &self,
+        columns: &[&str],
+    ) -> Result<Option<Vec<RecordValue>>, TableError> {
+        if self.loaded_rows.get().is_some() {
+            return Ok(None);
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(None);
+        };
+
+        let storage = CompositeStorage;
+        let mut rows = storage
+            .load_selected_columns_with_row_hint(
+                &source.path,
+                columns,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load prepared rows for table {}: {err}",
+                    source.path.display()
+                ))
+            })?
+            .rows;
+
+        for &column in columns {
+            if let Some(cached_column) = self.loaded_scalar_columns.get(column)
+                && let Some(values) = cached_column.get()
+            {
+                apply_prepared_scalar_column(&mut rows, column, values);
+            }
+            if let Some(overrides) = self.pending_scalar_cells.by_column.get(column) {
+                apply_prepared_scalar_overrides(&mut rows, column, overrides);
+            }
+            if let Some(cached_column) = self.loaded_array_columns.get(column)
+                && let Some(values) = cached_column.get()
+            {
+                apply_prepared_array_column(&mut rows, column, values);
+            }
+            if let Some(overrides) = self.pending_array_cells.by_column.get(column) {
+                apply_prepared_array_overrides(&mut rows, column, overrides);
+            }
+        }
+
+        Ok(Some(rows))
+    }
+
     pub(crate) fn undefined_cells(&self) -> Result<&[HashSet<String>], TableError> {
         Ok(self.ensure_loaded()?.undefined_cells.as_slice())
     }
@@ -493,17 +605,16 @@ impl TableImpl {
             return Ok(LazyScalarLookup::Hit(value));
         }
 
-        if self.loaded_scalar_columns.get().is_none() {
-            let loaded = Self::load_scalar_columns_now(source)?;
-            let _ = self.loaded_scalar_columns.set(loaded);
-        }
-        let columns = self
-            .loaded_scalar_columns
-            .get()
-            .expect("scalar columns initialized before access");
-        let Some(values) = columns.columns.get(column) else {
+        let Some(cached_column) = self.loaded_scalar_columns.get(column) else {
             return Ok(LazyScalarLookup::Unknown);
         };
+        if cached_column.get().is_none() {
+            let loaded = Self::load_scalar_column_now(source, column)?;
+            let _ = cached_column.set(loaded);
+        }
+        let values = cached_column
+            .get()
+            .expect("scalar column initialized before access");
         match values.get(row_index) {
             Some(Some(value)) => Ok(LazyScalarLookup::Hit(value)),
             Some(None) | None => Ok(LazyScalarLookup::Missing),
@@ -522,15 +633,15 @@ impl TableImpl {
             return Ok(None);
         };
 
-        if self.loaded_scalar_columns.get().is_none() {
-            let loaded = Self::load_scalar_columns_now(source)?;
-            let _ = self.loaded_scalar_columns.set(loaded);
+        let Some(cached_column) = self.loaded_scalar_columns.get(column) else {
+            return Ok(None);
+        };
+        if cached_column.get().is_none() {
+            let loaded = Self::load_scalar_column_now(source, column)?;
+            let _ = cached_column.set(loaded);
         }
 
-        Ok(self
-            .loaded_scalar_columns
-            .get()
-            .and_then(|columns| columns.columns.get(column).map(|values| values.as_slice())))
+        Ok(cached_column.get().map(|values| values.as_slice()))
     }
 
     pub(crate) fn scalar_cells_owned(
@@ -549,8 +660,8 @@ impl TableImpl {
             return Ok(Some(values));
         }
 
-        if let Some(columns) = self.loaded_scalar_columns.get()
-            && let Some(values) = columns.columns.get(column)
+        if let Some(cached_column) = self.loaded_scalar_columns.get(column)
+            && let Some(values) = cached_column.get()
         {
             let mut values = values.clone();
             if let Some(overrides) = self.pending_scalar_cells.by_column.get(column) {
@@ -567,32 +678,11 @@ impl TableImpl {
             return Ok(None);
         };
 
-        let mut profiler = StorageProfiler::start(format!(
-            "table_impl::scalar_cells_owned path={} column={column}",
-            source.path.display()
-        ));
-        let storage = CompositeStorage;
-        let mut values = storage
-            .load_scalar_column_with_row_hint(
-                &source.path,
-                column,
-                Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load scalar column '{column}' for table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
-        if let Some(profiler) = profiler.as_mut() {
-            profiler.mark_with_detail(
-                "storage_load_complete",
-                Some(format!(
-                    "row_count_hint={} values={}",
-                    source.row_count_hint,
-                    values.len()
-                )),
-            );
+        let mut values = Self::load_scalar_column_now(source, column)?;
+        if let Some(cached_column) = self.loaded_scalar_columns.get(column)
+            && cached_column.get().is_none()
+        {
+            let _ = cached_column.set(values.clone());
         }
         if let Some(overrides) = self.pending_scalar_cells.by_column.get(column) {
             for (&row_index, value) in overrides {
@@ -718,9 +808,12 @@ impl TableImpl {
             return Ok(Some(value));
         }
 
-        if let Some(loaded) = self.loaded_scalar_columns.get_mut()
-            && let Some(column_values) = loaded.columns.get_mut(column)
+        if let Some(cached_column) = self.loaded_scalar_columns.get_mut(column)
+            && cached_column.get().is_some()
         {
+            let column_values = cached_column
+                .get_mut()
+                .expect("scalar column initialized before mutable access");
             if let Some(cell) = column_values.get_mut(row_index) {
                 *cell = Some(value);
                 return Ok(None);
@@ -780,17 +873,6 @@ impl TableImpl {
             .entry(column.to_string())
             .or_default()
             .reserve(additional);
-    }
-
-    pub(crate) fn pending_scalar_cell_values(
-        &self,
-        column: &str,
-    ) -> Option<Vec<(usize, ScalarValue)>> {
-        self.pending_scalar_cells.by_column.get(column).map(|rows| {
-            rows.iter()
-                .map(|(&row_index, value)| (row_index, value.clone()))
-                .collect()
-        })
     }
 
     pub(crate) fn undefined_for_row_mut(
@@ -875,7 +957,7 @@ impl TableImpl {
                 .expect("replace eager row store");
             loaded_rows
         };
-        self.loaded_scalar_columns = OnceCell::new();
+        self.loaded_scalar_columns = lazy_scalar_column_store(schema.as_ref());
         self.pending_scalar_cells = PendingScalarCells::default();
         self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
         self.pending_array_cells = PendingArrayCells::default();
@@ -894,6 +976,13 @@ impl TableImpl {
     #[cfg(test)]
     pub(crate) fn has_loaded_array_column(&self, column: &str) -> bool {
         self.loaded_array_columns
+            .get(column)
+            .is_some_and(|cached| cached.get().is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_loaded_scalar_column(&self, column: &str) -> bool {
+        self.loaded_scalar_columns
             .get(column)
             .is_some_and(|cached| cached.get().is_some())
     }
