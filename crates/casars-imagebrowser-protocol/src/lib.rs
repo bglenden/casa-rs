@@ -797,5 +797,66 @@ mod tests {
         assert_eq!(bundle.semantic.transport, "jsonl_stdio");
         assert!(bundle.components.contains_key("ImageBrowserCommand"));
         assert!(bundle.components.contains_key("ImageBrowserResponse"));
+        assert_eq!(
+            bundle.ui_schema_projection().unwrap(),
+            serde_json::json!({
+                "schema_version": 1,
+                "command_id": "imexplore",
+            })
+        );
+    }
+
+    #[test]
+    fn ui_schema_projection_reports_missing_projection() {
+        let bundle = ImageBrowserSessionSchemaBundle {
+            protocol: ImageBrowserProtocolInfo::current(),
+            semantic: SessionSemanticContract {
+                transport: "jsonl_stdio".to_string(),
+                request_schema: schema_for!(ImageBrowserRequestEnvelope),
+                response_schema: schema_for!(ImageBrowserResponseEnvelope),
+            },
+            components: ProviderComponentSchemas::new(),
+            annotations: serde_json::json!({}),
+            projections: ProviderProjectionMetadata {
+                cli: None,
+                ui_schema: None,
+                python: None,
+            },
+            request_schema: schema_for!(ImageBrowserRequestEnvelope),
+            response_schema: schema_for!(ImageBrowserResponseEnvelope),
+        };
+
+        assert_eq!(
+            bundle.ui_schema_projection().unwrap_err(),
+            "missing ui_schema projection"
+        );
+    }
+
+    #[test]
+    fn viewport_helpers_preserve_expected_dimensions() {
+        assert_eq!(
+            ImageBrowserViewport::with_inspector_height(120, 32, 9),
+            ImageBrowserViewport {
+                width: 120,
+                height: 32,
+                inspector_height: 9,
+                plane_pixel_width: 0,
+                plane_pixel_height: 0,
+            }
+        );
+        assert_eq!(
+            ImageBrowserViewport::with_plane_pixels(120, 32, 9, 640, 480),
+            ImageBrowserViewport {
+                width: 120,
+                height: 32,
+                inspector_height: 9,
+                plane_pixel_width: 640,
+                plane_pixel_height: 480,
+            }
+        );
+        assert_eq!(
+            ImageBrowserViewport::default(),
+            ImageBrowserViewport::new(80, 24)
+        );
     }
 }
