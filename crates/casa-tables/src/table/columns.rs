@@ -1222,6 +1222,12 @@ impl<'a> PreparedTableRow<'a> {
     /// Returns the scalar value for `slot_index` in the current row without cloning.
     pub fn scalar_at(&self, slot_index: usize) -> Result<&ScalarValue, TableError> {
         let row_index = current_prepared_row_index(self.row_index)?;
+        let slot = self
+            .slots
+            .get(slot_index)
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: format!("#{slot_index}"),
+            })?;
         if let Some(rows) = self.cached_rows.as_ref() {
             let row = rows.get(row_index).ok_or(TableError::RowOutOfBounds {
                 row_index,
@@ -1231,22 +1237,16 @@ impl<'a> PreparedTableRow<'a> {
                 Some(Value::Scalar(value)) => Ok(value),
                 Some(value) => Err(TableError::ColumnTypeMismatch {
                     row_index,
-                    column: self.slots[slot_index].column.clone(),
+                    column: slot.column.clone(),
                     expected: "scalar",
                     found: value.kind(),
                 }),
                 None => Err(TableError::ColumnNotFound {
                     row_index,
-                    column: self.slots[slot_index].column.clone(),
+                    column: slot.column.clone(),
                 }),
             };
         }
-        let slot = self
-            .slots
-            .get(slot_index)
-            .ok_or_else(|| TableError::SchemaColumnUnknown {
-                column: format!("#{slot_index}"),
-            })?;
         match slot.kind {
             PreparedRowSlotKind::Scalar => self.table.get_scalar_cell(row_index, &slot.column),
             PreparedRowSlotKind::Array => Err(TableError::ColumnTypeMismatch {
@@ -1261,6 +1261,12 @@ impl<'a> PreparedTableRow<'a> {
     /// Returns the array value for `slot_index` in the current row without cloning.
     pub fn array_at(&self, slot_index: usize) -> Result<&ArrayValue, TableError> {
         let row_index = current_prepared_row_index(self.row_index)?;
+        let slot = self
+            .slots
+            .get(slot_index)
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: format!("#{slot_index}"),
+            })?;
         if let Some(rows) = self.cached_rows.as_ref() {
             let row = rows.get(row_index).ok_or(TableError::RowOutOfBounds {
                 row_index,
@@ -1270,22 +1276,16 @@ impl<'a> PreparedTableRow<'a> {
                 Some(Value::Array(value)) => Ok(value),
                 Some(value) => Err(TableError::ColumnTypeMismatch {
                     row_index,
-                    column: self.slots[slot_index].column.clone(),
+                    column: slot.column.clone(),
                     expected: "array",
                     found: value.kind(),
                 }),
                 None => Err(TableError::ColumnNotFound {
                     row_index,
-                    column: self.slots[slot_index].column.clone(),
+                    column: slot.column.clone(),
                 }),
             };
         }
-        let slot = self
-            .slots
-            .get(slot_index)
-            .ok_or_else(|| TableError::SchemaColumnUnknown {
-                column: format!("#{slot_index}"),
-            })?;
         match slot.kind {
             PreparedRowSlotKind::Array => self.table.get_array_cell(row_index, &slot.column),
             PreparedRowSlotKind::Scalar => Err(TableError::ColumnTypeMismatch {
