@@ -525,7 +525,7 @@ pub struct RecordColumnCell {
 /// For batch processing, see [`ColumnChunkIter`] via [`Table::iter_column_chunks`].
 pub struct ColumnCellIter<'a> {
     row_data: &'a [RecordValue],
-    column: &'a str,
+    column: String,
     rows: RowRangeIter,
 }
 
@@ -535,7 +535,7 @@ impl<'a> Iterator for ColumnCellIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         self.rows.next().map(|row_index| ColumnCellRef {
             row_index,
-            value: self.row_data[row_index].get(self.column),
+            value: self.row_data[row_index].get(&self.column),
         })
     }
 }
@@ -548,7 +548,7 @@ impl<'a> Iterator for ColumnCellIter<'a> {
 /// record cell is absent yield an empty [`RecordValue`] rather than an error.
 pub struct RecordColumnIter<'a> {
     row_data: &'a [RecordValue],
-    column: &'a str,
+    column: String,
     rows: RowRangeIter,
     default_missing: bool,
 }
@@ -558,7 +558,7 @@ impl<'a> Iterator for RecordColumnIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.rows.next().map(|row_index| {
-            let value = match self.row_data[row_index].get(self.column) {
+            let value = match self.row_data[row_index].get(&self.column) {
                 Some(Value::Record(record)) => record.clone(),
                 Some(_) => unreachable!("record iterator was prevalidated"),
                 None => {
@@ -596,6 +596,64 @@ impl<'a> Iterator for ColumnChunkIter<'a> {
         let chunk: Vec<_> = self.inner.by_ref().take(self.chunk_size).collect();
         if chunk.is_empty() { None } else { Some(chunk) }
     }
+}
+
+/// Read-only row accessor for a [`Table`].
+///
+/// This is the canonical row-oriented read surface for normal clients.
+/// Table-level `row`/`cell` helpers remain available as compatibility methods.
+#[derive(Debug, Clone, Copy)]
+pub struct TableRow<'a> {
+    pub(crate) table: &'a Table,
+}
+
+/// Mutable row accessor for a [`Table`].
+///
+/// Use this for row-oriented updates instead of reaching directly into storage
+/// internals. Table-level setters remain available as compatibility methods.
+#[derive(Debug)]
+pub struct TableRowMut<'a> {
+    pub(crate) table: &'a mut Table,
+}
+
+/// Read-only column accessor for a [`Table`].
+///
+/// This follows the same public-accessor direction as casacore's
+/// `ROTableColumn`, `ScalarColumn<T>`, and `ArrayColumn<T>`.
+#[derive(Debug, Clone)]
+pub struct TableColumn<'a> {
+    pub(crate) table: &'a Table,
+    pub(crate) column: String,
+}
+
+/// Mutable column accessor for a [`Table`].
+///
+/// Use this for column-oriented updates while keeping storage-manager details
+/// internal to `casa-tables`.
+#[derive(Debug)]
+pub struct TableColumnMut<'a> {
+    pub(crate) table: &'a mut Table,
+    pub(crate) column: String,
+}
+
+/// Read-only cell accessor for a [`Table`].
+///
+/// Cell accessors tie a row index and column name together so callers can
+/// choose row-, column-, or direct-cell-oriented code without touching
+/// storage-manager internals.
+#[derive(Debug, Clone)]
+pub struct TableCell<'a> {
+    pub(crate) table: &'a Table,
+    pub(crate) row_index: usize,
+    pub(crate) column: String,
+}
+
+/// Mutable cell accessor for a [`Table`].
+#[derive(Debug)]
+pub struct TableCellMut<'a> {
+    pub(crate) table: &'a mut Table,
+    pub(crate) row_index: usize,
+    pub(crate) column: String,
 }
 
 #[derive(Debug, Clone, Copy)]
