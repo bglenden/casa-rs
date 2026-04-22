@@ -3,6 +3,8 @@ name: WDAD Project Sync
 on:
   issues:
     types:
+      - opened
+      - reopened
       - closed
   pull_request_target:
     types:
@@ -216,6 +218,76 @@ jobs:
               }
             }
 
+            async function syncProjectItemsMissingWdadStatus() {
+              const project = await github.graphql(
+                `
+                  query($projectId: ID!) {
+                    node(id: $projectId) {
+                      ... on ProjectV2 {
+                        items(first: 100) {
+                          nodes {
+                            id
+                            content {
+                              __typename
+                              ... on Issue {
+                                number
+                                state
+                              }
+                            }
+                            fieldValues(first: 30) {
+                              nodes {
+                                __typename
+                                ... on ProjectV2ItemFieldSingleSelectValue {
+                                  name
+                                  field {
+                                    ... on ProjectV2SingleSelectField {
+                                      name
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `,
+                { projectId }
+              );
+
+              const nodes = project.node?.items?.nodes ?? [];
+              for (const node of nodes) {
+                const content = node.content;
+                if (!content || content.__typename !== "Issue") continue;
+
+                const hasWdadStatus = (node.fieldValues?.nodes ?? []).some(
+                  (fieldValue) =>
+                    fieldValue.__typename === "ProjectV2ItemFieldSingleSelectValue" &&
+                    fieldValue.field?.name === "WDAD Status"
+                );
+                if (hasWdadStatus) continue;
+
+                if (content.state === "CLOSED") {
+                  await syncIssueBoard(
+                    content.number,
+                    {
+                      statusOptionId: statusOption.done,
+                      wdadOptionId: wdadOption.done,
+                      statusLabel: "Done",
+                      wdadLabel: "Done",
+                    },
+                    "missing WDAD reconciliation for closed issue"
+                  );
+                } else {
+                  await updateSingleSelect(node.id, fieldWdadId, wdadOption.backlog);
+                  console.log(
+                    `Synced issue #${content.number}: wdad=Backlog (missing WDAD reconciliation)`
+                  );
+                }
+              }
+            }
+
             async function reconcileWaveIssueFromPullRequest(pr, source) {
               const waveIssueNumber = extractWaveIssueNumber(pr.body || "");
               if (!waveIssueNumber) {
@@ -299,6 +371,11 @@ jobs:
             }
 
             if (context.eventName === "issues") {
+              if (context.payload.action === "opened" || context.payload.action === "reopened") {
+                await syncProjectItemsMissingWdadStatus();
+                return;
+              }
+
               if (context.payload.action === "closed") {
                 await syncIssueBoard(
                   context.payload.issue.number,
@@ -317,6 +394,7 @@ jobs:
             }
 
             if (context.eventName === "pull_request_target") {
+              await syncProjectItemsMissingWdadStatus();
               const pr = context.payload.pull_request;
 
               if (context.payload.action === "closed" && !pr.merged_at) {
@@ -329,6 +407,7 @@ jobs:
             }
 
             if (context.eventName === "workflow_dispatch" || context.eventName === "schedule") {
+              await syncProjectItemsMissingWdadStatus();
               await syncClosedProjectIssuesToDone();
               await reconcileOpenPullRequests();
               await reconcileRecentMergedPullRequests();
