@@ -106,14 +106,26 @@ when the user asks for the narrower review directly:
 
 ### PR linkage contract
 
-Every wave PR must include an explicit board link in the PR body:
+Every issue-driven wave PR must include an explicit board link in the PR body:
 
 `Wave issue: #N`
+
+Automation- or gate-originated repair PRs that did not start from a real wave
+issue must instead include an explicit provenance marker in the PR body:
+
+`Wave source: automation <name>`
+
+Use `Wave source:` only when the work genuinely did not originate from a shaped
+or backlog-tracked issue. If the automation or gate failure reveals broader
+product, architecture, or stabilization work that should remain on the board,
+open or link the real issue up front and use `Wave issue: #N` instead of
+backfilling a synthetic issue after implementation.
 
 Use `Closes #N` only for issues that should auto-close on merge. Do not use
 `Closes #N` for the wave issue unless the merge itself is intended to close the
 wave. The project-sync automation uses the explicit `Wave issue: #N` marker to
-drive board transitions.
+drive board transitions. `Wave source:` is canonical PR provenance for
+automation-originated work but does not by itself drive board transitions.
 
 ## Decision authority
 
