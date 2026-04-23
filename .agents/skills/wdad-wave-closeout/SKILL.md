@@ -24,7 +24,9 @@ repairs, and narrowly scoped follow-up fixes found during closeout review.
 
 ## Procedure
 1. Confirm the implementation scope matches the wave issue.
-2. Confirm the PR body includes `Wave issue: #N`.
+2. Confirm the PR body includes valid linkage:
+   - issue-driven wave: `Wave issue: #N`
+   - automation/gate-originated repair with no real issue: `Wave source: automation <name>`
 3. Fill the issue closeout block with:
    - implemented outcome
    - changed-from-plan notes
@@ -38,7 +40,8 @@ repairs, and narrowly scoped follow-up fixes found during closeout review.
    - `wdad-reality-sync`
 5. Assemble or refresh the PR review packet and verification summary.
 6. Move the work into review by using a non-draft PR. The board automation treats
-   a non-draft PR with `Wave issue: #N` as `Review`.
+   a non-draft PR with `Wave issue: #N` as `Review`. `Wave source:` PRs keep
+   explicit provenance but do not drive board transitions on their own.
 7. Merge only after required CI and human decisions are clear.
 8. After merge, sync the local `main` checkout in `~/SoftwareProjects/casa-rs` to
    the GitHub-merged `origin/main` when that can be done safely with a fast-forward.

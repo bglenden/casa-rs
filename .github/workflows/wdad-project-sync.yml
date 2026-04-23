@@ -75,19 +75,26 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const waveRegexes = [
+            const waveIssueRegexes = [
               /^Wave issue:\s*#(\d+)\s*$/im,
               /\bimplements wave\s+#(\d+)\b/i,
               /\bwave\s+#(\d+)\b/i,
             ];
+            const waveSourceRegex = /^Wave source:\s*(.+\S)\s*$/im;
 
-            function extractWaveIssueNumber(text) {
-              if (!text) return null;
-              for (const regex of waveRegexes) {
+            function extractWaveLinkage(text) {
+              if (!text) return { issueNumber: null, source: null };
+              for (const regex of waveIssueRegexes) {
                 const match = text.match(regex);
-                if (match) return Number(match[1]);
+                if (match) {
+                  return { issueNumber: Number(match[1]), source: null };
+                }
               }
-              return null;
+              const sourceMatch = text.match(waveSourceRegex);
+              if (sourceMatch) {
+                return { issueNumber: null, source: sourceMatch[1] };
+              }
+              return { issueNumber: null, source: null };
             }
 
             async function getIssueProjectItem(issueNumber) {
@@ -295,9 +302,16 @@ jobs:
             }
 
             async function reconcileWaveIssueFromPullRequest(pr, source) {
-              const waveIssueNumber = extractWaveIssueNumber(pr.body || "");
+              const linkage = extractWaveLinkage(pr.body || "");
+              const waveIssueNumber = linkage.issueNumber;
               if (!waveIssueNumber) {
-                console.log(`PR #${pr.number} has no explicit wave marker; skipping (${source})`);
+                if (linkage.source) {
+                  console.log(
+                    `PR #${pr.number} declares explicit wave source "${linkage.source}"; skipping board sync (${source})`
+                  );
+                } else {
+                  console.log(`PR #${pr.number} has no explicit wave marker or source; skipping (${source})`);
+                }
                 return;
               }
 
