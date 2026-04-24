@@ -1,222 +1,102 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-04-19
-Verification: just verify
+Last reality check: 2026-04-24
+Verification: just docs-check
 
-## Project purpose
+## Purpose
 
-Implement native Rust libraries and applications that read, write, and
-manipulate casacore-compatible persistent data while preserving on-disk
-interoperability.
+Implement native Rust libraries and applications for casacore-compatible
+persistent data while preserving on-disk interoperability.
 
-## Project profile
+## Truth Order
 
-Primary language: Rust
-Secondary languages: Python and shell for packaging, docs, test harnesses, and automation
-Project type: workspace libraries + CLI/TUI apps + Python package
-Architecture style: layered workspace crates with explicit persistence and interoperability boundaries
+1. Code, tests, CI, and interoperability behavior.
+2. Accepted ADRs.
+3. `ARCHITECTURE.md` and `TESTING.md` for scaled-layer policy.
+4. GitHub issues and board state for planning history.
+5. `docs/Planning/` is historical unless a file says otherwise.
 
-## Truth hierarchy
-
-1. Code, tests, CI, and on-disk interoperability behavior are operational truth.
-2. Accepted ADRs are architectural decision truth.
-3. `ARCHITECTURE.md` describes the current workspace structure and must match reality.
-4. GitHub Issues / Project record planning and history, not current architecture.
-5. `docs/Planning/` is historical or program-reference material unless a file explicitly says otherwise.
-
-## References
-
-- C++ source: `~/SoftwareProjects/casacore`
-- CASA app/source reference: `~/SoftwareProjects/casa`
-- Upstream: `https://github.com/casacore/casacore`
-- Local C++ headers/libs installed via Homebrew.
-
-## Worktrees
-
-- `main` is in `~/SoftwareProjects/casa-rs`.
-
-## Standard commands
+## Commands
 
 - Setup: `just setup`
-- Fast check: `just quick`
-- Full wave verification: `just verify`
-- Smoke gate: `just smoke`
-- Lint: `just lint`
-- Typecheck: `just typecheck`
-- Test: `just test`
-- Architecture checks: `just arch-check`
-- Docs check: `just docs-check`
-- Graphs/maps: `just graph`
-- Blocking C++ interop release gate: `just release-cpp-interop`
-- Informational release performance suite: `just release-perf`
-- Release-only install gate: `scripts/test-install-suite.sh`
-- Release/tag-only CI-like coverage gate: `scripts/run-coverage.sh --ci-like`
-- Slow parity suites: `scripts/test-slow.sh`
+- Fast loop: `just quick`
+- Pre-review gate: `just verify`
+- Smoke/release gate: `just smoke`
+- Lint/type/test: `just lint`, `just typecheck`, `just test`
+- Architecture/docs: `just arch-check`, `just docs-check`, `just graph`
+- C++ interop release gate: `just release-cpp-interop`
+- Performance release evidence: `just release-perf`
+- Slow parity: `scripts/test-slow.sh`
 - Release: `scripts/release.sh <version>`
 
-## Planning mode policy
+## WDAD Workflow
 
-Use planning/read-only mode before editing when:
+- Board columns: `Backlog`, `Ready`, `In Progress`, `Review`, `Done`, `Parked`.
+- `Backlog -> Ready`: use `wdad-backlog-to-ready`.
+- `Ready -> In Progress`: use `wdad-wave-implementation`.
+- `In Progress -> Review`: use `wdad-wave-implementation` after a PR exists and `just verify` is recorded.
+- `Review -> Done`: use `wdad-pr-merge`.
+- Use scaled sidecars when risk justifies them: `wdad-architecture-review`,
+  `wdad-test-adversary-review`, `wdad-reality-sync`,
+  `wdad-ci-failure-diagnosis`, `wdad-stabilization-wave`, and
+  `wdad-planning-board-audit`.
 
-- adopting or changing the methodology surface
-- shaping a wave
-- crossing crate/package boundaries
-- changing public APIs, file formats, schemas, provider contracts, dependencies, concurrency, or performance-sensitive algorithms
-- diagnosing repeated CI failures
-- performing architecture review, test-adversary review, or reality sync
+## PR Linkage
 
-Planning output must include:
-
-- files/modules likely touched
-- tests to add/update
-- architecture impact
-- stop conditions
-- commands to run
-
-Planning mode may draft ADRs and issue updates.
-Planning mode may not approve architecture changes.
-
-## Skills policy
-
-Use repository skills in `.agents/skills/` for repeated WDAD procedures.
-Skills may define checklists and output formats.
-Skills must not be the only source of architectural policy or planning state.
-
-## Board transition map
-
-Primary WDAD entry points should match the GitHub Project transition being performed:
-
-- `Backlog -> Shaped`: use `wdad-wave-shaping`
-- `Shaped -> Current Wave / Implementing`: use `wdad-wave-execution`
-- `Implementing -> Review`: use `wdad-wave-closeout`
-- `Review -> Done`: use `wdad-wave-closeout`
-
-Use the specialist sidecar skills only when the transition skill calls for them or
-when the user asks for the narrower review directly:
-
-- `wdad-implementation-preflight` is the planning gate used inside
-  `wdad-wave-execution` when a wave is risky enough to require preflight.
-- `wdad-architecture-review`, `wdad-test-adversary-review`, and
-  `wdad-reality-sync` are closeout sidecars used by `wdad-wave-closeout`.
-- `wdad-stabilization-wave` is the specialized shaping/start path for no-feature
-  entropy-reduction waves.
-- `wdad-project-board-setup` exists for creating or repairing the GitHub Project
-  surface itself, not for ordinary wave progression.
-
-### PR linkage contract
-
-Every issue-driven wave PR must include an explicit board link in the PR body:
+Issue-driven wave PRs must include:
 
 `Wave issue: #N`
 
-Automation- or gate-originated repair PRs that did not start from a real wave
-issue must instead include an explicit provenance marker in the PR body:
+Automation- or gate-originated repair PRs without a real wave issue must include:
 
 `Wave source: automation <name>`
 
-Use `Wave source:` only when the work genuinely did not originate from a shaped
-or backlog-tracked issue. If the automation or gate failure reveals broader
-product, architecture, or stabilization work that should remain on the board,
-open or link the real issue up front and use `Wave issue: #N` instead of
-backfilling a synthetic issue after implementation.
+Use `Closes #N` only for issues that should auto-close on merge.
 
-Use `Closes #N` only for issues that should auto-close on merge. Do not use
-`Closes #N` for the wave issue unless the merge itself is intended to close the
-wave. The project-sync automation uses the explicit `Wave issue: #N` marker to
-drive board transitions. `Wave source:` is canonical PR provenance for
-automation-originated work but does not by itself drive board transitions.
-
-## Decision authority
-
-Agents may decide:
-
-- implementation details inside an existing crate or module boundary
-- local refactors that preserve public behavior
-- test structure for approved behavior
-- small private helper APIs
-
-Agents must stop before:
+## Stop And Ask Before
 
 - adding a new top-level crate, package, or app family
-- changing public APIs or persisted data formats
-- changing versioned provider-contract bundles or other external contracts
+- changing public APIs, persisted formats, provider-contract bundles, or other external contracts
 - adding substantial dependencies
-- changing dependency direction between major crate layers
-- changing concurrency or runtime model
-- changing major performance-sensitive algorithms
+- changing dependency direction, runtime model, concurrency, or major performance algorithms
 - weakening or deleting tests without replacement
-- editing accepted ADRs except to add supersession metadata when explicitly asked
+- editing accepted ADRs except to add explicitly requested supersession metadata
+- committing directly to `main`
+- merging, pruning branches, or deleting worktrees unless the user invoked `wdad-pr-merge` or asked directly
 
-## Project-specific rules
+## Project Rules
 
-- Prefer idiomatic Rust APIs over direct C++ API mirroring.
-- Use `casa-*` names for reusable libraries and `casars-*` names for app/runtime crates. This repo is a native Rust implementation, not a Rust wrapper around casacore C++.
-- Do not reimplement commodity infrastructure when a good Rust crate already exists; for example prefer `ndarray`.
-- API docs belong in source (`///`, `//!`) and are rendered by `cargo doc`.
-- For `casars` TUI work, follow `docs/casars-tui-framework.md`; new apps must conform to its shell-family conventions instead of inventing app-local UI structure.
-- For functionality-provider contracts, follow `docs/provider-contracts.md`. Treat the versioned schema bundle as the boundary contract; UI views are derived projections, not separate sources of truth.
-- Prefer red/green development: add a failing regression test first when practical.
-- If C++ has a demo for a supported module, provide a Rust equivalent demo.
-- When implementing new casacore-c++ functionality, document public items at roughly the corresponding C++ doxygen level and reference the upstream class or function names.
-- Shared CASA dataset root defaults to `../casatestdata`; override with `CASA_RS_TESTDATA_ROOT`.
-- Canonical measures runtime data lives in a CASA-compatible table tree rooted at `~/.casa/data`; override with `CASA_RS_MEASURESPATH`.
-- `CASA_RS_DATA` is deprecated compatibility only; do not prefer it in new code or docs.
-- Reuse upstream CASA/casaconfig tables and bundle layouts for measures data; do not introduce new embedded/raw measures assets when the CASA-table runtime model can be used instead.
-- Do not treat `/private/tmp` as the canonical home for shared CASA datasets.
+- Prefer idiomatic Rust over direct C++ API mirroring; this is not a Rust wrapper around casacore C++.
+- Use `casa-*` for reusable libraries and `casars-*` for app/runtime crates.
+- API docs belong in source comments rendered by `cargo doc`.
+- For `casars` TUI work, follow `docs/casars-tui-framework.md`.
+- For provider contracts, follow `docs/provider-contracts.md`; versioned schema bundles are the boundary contract.
+- Prefer red/green development when practical.
+- When implementing new casacore-C++ functionality, document public items at roughly the corresponding upstream doxygen level.
+- Shared CASA datasets default to `../casatestdata`; override with `CASA_RS_TESTDATA_ROOT`.
+- Measures runtime data defaults to `~/.casa/data`; override with `CASA_RS_MEASURESPATH`.
+- `CASA_RS_DATA` is deprecated compatibility only.
+- Do not use `/private/tmp` as the canonical shared CASA dataset location.
 - Small bundled real-MS CI fixtures live in `crates/casa-ms/tests/fixtures/`.
-- Do not introduce new backlog-style `TODO`, `FIXME`, `XXX`, or `HACK` comments as source of truth. If a code comment needs a backlog reference, point at a GitHub issue.
+- Do not add backlog-style `TODO`, `FIXME`, `XXX`, or `HACK` comments unless they reference a GitHub issue.
 
-## Merge policy
-
-- Squash-on-merge into `main`: one commit per wave or PR.
-- During development, checkpoint commits are fine.
-- Use `git merge --squash` locally or GitHub's "Squash and merge".
-- WDAD closeout should fast-forward the local `main` checkout in `~/SoftwareProjects/casa-rs`
-  to `origin/main` after a successful GitHub merge when that can be done safely.
-  If unrelated local changes or branch state block a safe fast-forward, report the
-  blocker instead of forcing the update.
-
-## Definition of Done
-
-A change is not done until:
-
-- `just verify` passes, or any intentional exclusion is called out explicitly in the wave closeout
-- relevant tests were added or updated
-- bug fixes include regression coverage
-- docs or ADRs were updated if reality changed
-- issue closeout records actual outcome, verification evidence, and remaining risks
-- no new backlog comments were added without an issue reference
-
-## Verification policy
+## Verification Policy
 
 - `just quick` is the normal local iteration gate.
-- `just verify` is the default full wave gate: SPDX, format, lint, workspace tests, and the editable Python package test surface.
-- `just smoke` is the named smoke/release gate for Python wheel-install checks and Rust demo/example verification.
-- Python-facing scripts must resolve Python `>=3.10` through the repo resolver rather than assuming `python3` in the current shell.
-- `scripts/test-release-cpp-interop.sh` is the blocking release gate for Rust/C++ interop suites and stays outside the default `cargo test --workspace` path.
-- `scripts/test-release-perf.sh` is informational release evidence by default; set `CASA_RS_ENFORCE_PERF=1` to turn named perf thresholds back into hard failures.
-- `scripts/test-install-suite.sh` and `scripts/run-coverage.sh --ci-like` are release-oriented heavy gates excluded from `just verify`; releases and version-tag CI run them explicitly.
-- Routine branch merges should not run `scripts/test-install-suite.sh` or `scripts/run-coverage.sh --ci-like` unless the user explicitly asks for release/tag-equivalent validation or for direct reproduction of those heavy gates.
-- GitHub PR CI runs the lighter `lint_test` and Python package checks; version-tag pushes additionally run the smoke, suite-install, and CI-like coverage gates.
-- `scripts/test-slow.sh` is opt-in for heavy CASA parity suites and must stay outside the default `cargo test --workspace` path.
-- Coverage changes should maintain a safety margin above the CI threshold; with the current 75% requirement, target at least 78%.
-- To reproduce GitHub Actions locally, use `scripts/ci-local.sh build`, then `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs. Individual job repro commands are `lint_test`, `python_package`, `smoke`, `suite_install`, and `coverage`.
-- For imaging-program work, wave closure still means implementation, gate verification, and end-of-wave review/fix pass once the GitHub wave is approved.
-- Release tags must be cut with `scripts/release.sh`; do not create release tags directly with `git tag`.
+- `just verify` is the default full wave gate.
+- `just smoke`, `scripts/test-install-suite.sh`, and
+  `scripts/run-coverage.sh --ci-like` are release/tag-oriented heavy gates.
+- Routine branch merges should not run release/tag-only heavy gates unless requested.
+- GitHub PR CI runs the lighter lint/test and Python package checks.
+- Version-tag CI additionally runs smoke, suite-install, and CI-like coverage.
+- Coverage must stay above the 75% CI threshold; target at least 78%.
+- Reproduce GitHub Actions locally with `scripts/ci-local.sh build`, then
+  `scripts/ci-local.sh pr` or `scripts/ci-local.sh tag`.
 
-## Documentation rules
+## Done
 
-- Use GitHub Issues / Project for active wave planning.
-- Do not create new local markdown planning files unless explicitly asked.
-- Treat `docs/Planning/` as historical or program-reference material, not canonical wave status.
-- Use ADRs only for architecturally significant decisions.
-- Mark generated docs as generated and obsolete docs as historical or delete them.
-
-## Review rules
-
-Before finalizing:
-
-1. perform an independent architecture review pass for medium/high-risk work
-2. perform a test-adversary review for medium/high-risk work
-3. perform a reality-sync review against `ARCHITECTURE.md`, `TESTING.md`, ADRs, and generated artifacts when reality changed
+A wave is done only after relevant tests pass, `just verify` passes or exclusions
+are recorded, issue closeout records the actual result, docs/ADRs are updated
+when reality changed, and medium/high-risk work gets the needed architecture,
+test-adversary, or reality-sync review.

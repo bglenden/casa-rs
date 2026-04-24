@@ -1,38 +1,36 @@
 ---
 name: wdad-test-adversary-review
-description: Closeout sidecar used by `wdad-wave-closeout` to review tests skeptically after implementation. Assumes the implementation may be wrong and identifies shallow, tautological, over-mocked, or missing tests. Read-only by default.
+description: Use for a skeptical review of the tests after implementation. Looks for shallow coverage, over-mocking, and ways the implementation could still be wrong while tests pass.
 ---
 
 # Skill: Test-adversary review
 
 ## Purpose
-Find ways the implementation could be wrong while tests still pass.
+
+Find gaps between claimed behavior and actual test evidence.
 
 ## Mode
-Read-only/planning mode. Do not edit files unless asked after reporting.
+
+Read-only/planning mode.
 
 ## Required inputs
-- Current branch/diff
-- Wave issue acceptance checks
-- Changed tests
-- Relevant implementation files
-- TESTING.md
+
+- wave acceptance checks
+- changed tests
+- relevant implementation files
+- `TESTING.md`
 
 ## Procedure
-1. Map every acceptance check to test evidence.
-2. Identify happy-path-only tests.
-3. Identify over-mocking and internal mocks.
-4. Identify tautological tests that repeat implementation logic.
-5. Identify missing boundary, error, regression, integration, GUI, or performance tests.
-6. Suggest concrete tests by behavior.
+
+1. Map acceptance checks to concrete evidence.
+2. Look for happy-path-only tests.
+3. Look for tautological or over-mocked tests.
+4. Identify missing regression, integration, or edge-case coverage.
+5. Recommend the smallest meaningful additions.
 
 ## Output
-- Acceptance-check coverage table
-- Weak or shallow tests
-- Missing tests
-- Tests that should be integration rather than mocked unit tests
-- Whether current tests are sufficient to merge
 
-## Do not
-- Judge code style unless it affects test meaning
-- Treat line coverage as proof of behavioral coverage
+- acceptance coverage summary
+- weak or shallow tests
+- missing tests
+- merge readiness from a testing perspective

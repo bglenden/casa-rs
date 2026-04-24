@@ -1,42 +1,36 @@
 ---
 name: wdad-architecture-review
-description: Closeout sidecar used by `wdad-wave-closeout` to review a branch or diff for architecture drift, boundary violations, unapproved dependencies, public API changes, duplication, or entropy risks. Read-only by default.
+description: Use for a dedicated architecture pass on a branch or diff. Checks boundaries, dependencies, public contracts, and entropy risk against the scaled-layer docs.
 ---
 
 # Skill: Architecture review
 
 ## Purpose
-Review changes for architectural coherence and entropy risk.
+
+Detect architecture drift before it lands.
 
 ## Mode
-Read-only/planning mode. Do not edit files unless separately instructed.
+
+Read-only/planning mode.
 
 ## Required inputs
-- Current branch/diff
-- Current wave issue
-- AGENTS.md
-- ARCHITECTURE.md
-- TESTING.md
-- accepted ADRs
+
+- current diff or branch
+- wave issue or wave-lead issue
+- `ARCHITECTURE.md`
+- accepted ADRs, if any
 
 ## Procedure
-1. Compare diff against wave scope and authority limits.
-2. Check module/package/crate boundaries.
-3. Check accepted ADRs and architecture constraints.
-4. Check public APIs, data formats, and dependencies.
-5. Look for duplicate subsystems, hidden coupling, over-generalization, and architecture shortcuts.
-6. Classify findings as blocking or non-blocking.
+
+1. Compare the diff to the approved scope.
+2. Check boundaries and dependency direction.
+3. Check public contracts and persisted formats.
+4. Flag duplication, hidden coupling, or policy drift.
+5. Classify findings as blocking or follow-up.
 
 ## Output
-- Blocking issues
-- Non-blocking issues
-- ADR/doc updates needed
-- Suggested follow-up issues
-- Confidence level and rationale
 
-## Blocking examples
-- Violates accepted ADR
-- Adds unapproved dependency
-- Changes public API without approval
-- Crosses forbidden boundary
-- Weakens tests
+- blocking findings
+- follow-up findings
+- doc or ADR updates needed
+- confidence level

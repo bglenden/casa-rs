@@ -1,6 +1,6 @@
 ---
 name: Wave
-about: Define a feature-sized wave
+about: Define a single-issue wave or wave-lead issue
 title: "Wave: "
 labels: ["wave"]
 ---
@@ -9,56 +9,45 @@ labels: ["wave"]
 
 What should be true when this wave is done?
 
+## Included issues
+
+- `n/a` if this issue is the whole wave
+- otherwise list the issues covered by this wave
+
 ## Non-goals
 
-What should not be done in this wave?
+What is deliberately out of scope?
 
 ## Current understanding
 
-Relevant architecture, current behavior, constraints, and context.
+Relevant behavior, constraints, and context.
 
 ## Acceptance checks
 
 - [ ] Behavior:
-- [ ] Error / edge case:
-- [ ] Integration / contract:
-- [ ] Performance / UX / GUI expectation (if relevant):
+- [ ] Edge case or failure mode:
+- [ ] Integration or contract:
+- [ ] Performance / UX / GUI expectation, if relevant:
 
-## Architecture impact
+## Architecture / test impact
 
-- Modules touched:
-- Public APIs changed:
-- Data formats / schemas changed:
-- New dependencies:
-- Needs ADR: yes / no
+- Main area:
+- Public API or persisted format change:
+- Provider contract change:
+- New dependency:
+- ADR or docs needed:
+- Verification to run: `quick` / `verify` / `release`
 
-## Test plan
+## Stop conditions
 
-- Unit:
-- Integration:
-- GUI/e2e:
-- Performance:
-- Adversarial review:
+- Stop and ask if:
+- Stop and split the wave if:
 
-## Planning-mode preflight
-
-- Required before implementation: yes / no
-- Reason:
-- Preflight comment posted: yes / no
-
-## Agent authority
-
-Agent may decide:
-- ...
-
-Agent must stop before:
-- ...
-
-## Closeout (fill before closing)
+## Closeout
 
 Implemented:
 Changed from plan:
-Deferred:
-Verification evidence:
-Docs / ADR updates:
-Known risks:
+Deferred / follow-ups:
+Verification run:
+PR:
+Branch / worktree cleanup:

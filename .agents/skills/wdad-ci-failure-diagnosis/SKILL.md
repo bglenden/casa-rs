@@ -1,36 +1,36 @@
 ---
 name: wdad-ci-failure-diagnosis
-description: Use after repeated CI/test failures or repair loops. Analyzes logs and diff in planning/read-only mode before further edits.
+description: Use when `verify`, release, or scheduled CI checks fail repeatedly. Produces a diagnosis, a likely root cause, and the smallest safe next step.
 ---
 
 # Skill: CI failure diagnosis
 
 ## Purpose
-Stop blind repair loops by diagnosing repeated failures before further edits.
+
+Shorten the loop when the slower gates fail.
 
 ## Mode
-Planning/read-only mode. Do not edit files.
+
+Read-only first. Do not guess blindly.
 
 ## Required inputs
-- CI logs or local failure output
-- Current diff
-- Build/test configuration
-- Relevant source/tests
+
+- failing command or CI log
+- current wave issue
+- recent related changes
+- `TESTING.md`, if present
 
 ## Procedure
-1. Summarize the failing command and first meaningful error.
-2. Determine whether the failure is implementation, test, environment, architecture, dependency, or flaky.
-3. Check whether the failure indicates a wrong wave assumption or ADR/doc mismatch.
-4. Propose the minimal repair plan.
-5. State whether it is safe to resume implementation mode.
+
+1. Reproduce or inspect the failure.
+2. Identify whether it belongs to `quick`, `verify`, or `release/scheduled`.
+3. Narrow the likely root cause.
+4. Decide whether the fix belongs in the current wave or a follow-up.
+5. Recommend the smallest safe next step.
 
 ## Output
-- Root cause
-- Failure category
-- Minimal repair plan
-- Scope/ADR/doc/test changes needed
-- Safe-to-edit recommendation
 
-## Do not
-- Patch failures before diagnosing
-- Delete or weaken tests to get green
+- failure summary
+- likely root cause
+- immediate next step
+- whether the gate placement itself should change

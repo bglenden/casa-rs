@@ -76,7 +76,7 @@ than a shared background service model.
 - On-disk interoperability with casacore-compatible formats is more important than mirroring C++ APIs directly.
 - Heavy CASA parity suites must stay opt-in rather than in the default `cargo test --workspace` path.
 - Some cross-language and parity tests must skip cleanly when `pkg-config casacore` or measures data are unavailable.
-- The methodology/process surface is newly installed; some architecture checks are still lightweight/document-oriented rather than full mechanical boundary enforcement.
+- WDAD uses the scaled layer in this repo; some architecture checks are still lightweight/document-oriented rather than full mechanical boundary enforcement.
 
 ## Known current gaps / debt
 

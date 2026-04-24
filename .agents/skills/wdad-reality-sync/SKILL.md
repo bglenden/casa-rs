@@ -1,39 +1,35 @@
 ---
 name: wdad-reality-sync
-description: Closeout sidecar used by `wdad-wave-closeout` or architecture checkpoints to compare actual code behavior against ARCHITECTURE.md, TESTING.md, ADRs, and generated artifacts. Proposes minimal doc/code follow-up actions.
+description: Use after a scaled-layer wave or at architecture checkpoints. Compares code and tests with ARCHITECTURE.md, TESTING.md, ADRs, and generated artifacts.
 ---
 
 # Skill: Reality sync
 
 ## Purpose
-Keep durable docs trustworthy by reconciling them with actual code and tests.
+
+Keep the durable scaled-layer docs trustworthy.
 
 ## Mode
-Planning/read-only mode first. Edits only after discrepancies are classified.
+
+Read-only/planning mode first.
 
 ## Required inputs
-- Current branch/diff or merged wave
-- ARCHITECTURE.md
-- TESTING.md
-- accepted ADRs
-- docs/generated/, if present
-- issue closeout
+
+- current diff or merged wave
+- `ARCHITECTURE.md`
+- `TESTING.md`
+- accepted ADRs, if any
+- generated artifacts, if any
 
 ## Procedure
-1. Identify actual changes in behavior, boundaries, APIs, dependencies, tests, and generated artifacts.
-2. Compare those changes to maintained docs and ADRs.
-3. Classify each discrepancy.
-4. Propose minimal edits or follow-up issues.
-5. Update issue closeout with reality-sync result if authorized.
 
-## Classification
-- Doc should update
-- Doc should be retired/marked historical
-- ADR needs supersession
-- Generated artifact needs regeneration
-- Follow-up issue needed
-- No action
+1. Identify what actually changed.
+2. Compare those changes to the maintained docs.
+3. Classify drift as doc update, ADR update, generated-artifact refresh, follow-up issue, or no action.
+4. Propose the smallest honest follow-up.
 
-## Do not
-- Create new planning markdown files
-- Rewrite accepted ADR decisions silently
+## Output
+
+- drift classification
+- minimal update list
+- follow-up issues, if any

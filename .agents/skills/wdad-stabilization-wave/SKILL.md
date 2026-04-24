@@ -1,36 +1,36 @@
 ---
 name: wdad-stabilization-wave
-description: "Specialized transition skill for stabilization work. Use it to shape and start a no-feature wave focused on entropy reduction: refactoring hotspots, tightening tests, removing dead code, updating diagrams, or strengthening architecture checks."
+description: Use when a brownfield repo needs a focused wave to repair the development loop, tighten verification, or reduce local entropy before feature work continues.
 ---
 
 # Skill: Stabilization wave
 
 ## Purpose
-Run a bounded no-feature wave to reduce entropy and improve maintainability
-without mixing in feature delivery.
+
+Shape or execute a wave whose goal is to improve the repo's operating surface.
 
 ## Mode
-Start in planning mode. Implementation may proceed after the stabilization wave issue is approved.
+
+Planning first. Implementation only after scope is approved.
 
 ## Required inputs
-- Recent architecture/test/reality-sync findings
-- Current ARCHITECTURE.md, TESTING.md, ADRs
-- Project board issues tagged refactor/test/docs/architecture
+
+- current pain point
+- repo commands and CI state
+- wave issue or draft
+- `ARCHITECTURE.md` and `TESTING.md`, if present
 
 ## Procedure
-1. Identify entropy hotspots and quality gaps.
-2. Choose a narrow stabilization outcome.
-3. Define non-goals; no feature work.
-4. Define measurable acceptance checks: tests improved, dependencies reduced, module split, graph regenerated, checks tightened.
-5. Shape a wave issue.
-6. Implement only after approval.
-7. Run architecture review, test-adversary review, and reality sync.
+
+1. Define the operational problem clearly.
+2. Keep the scope narrow and measurable.
+3. Prefer improvements to `quick`, `verify`, docs, or local structure over broad cleanup.
+4. Define acceptance checks in operational terms.
+5. Stop if the work expands into a hidden redesign.
 
 ## Output
-- Stabilization wave issue draft
-- Quality gates to prove improvement
-- Risks and rollback plan
 
-## Do not
-- Mix feature work into stabilization
-- Start open-ended cleanup
+- stabilization outcome
+- wave boundary
+- acceptance checks
+- verification plan

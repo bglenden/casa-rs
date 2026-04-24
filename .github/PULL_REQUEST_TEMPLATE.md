@@ -1,20 +1,6 @@
 ## Summary
 
-## Review packet
-
-- Highest-risk files/modules:
-- Public APIs changed:
-- Dependencies added:
-- ADR/doc changes:
-- Tests added or changed:
-- Known weaknesses:
-- Human decisions still needed:
-
-## Verification
-
-- `just quick`:
-- `just verify`:
-- Additional checks:
+Review status on the WDAD board assumes this PR exists and carries the current verification record.
 
 ## WDAD linkage
 
@@ -22,3 +8,24 @@
 - Wave source:
 - Additional issue closures:
   Closes #
+
+## Review checks
+
+- Acceptance checks covered:
+- Architecture concerns:
+- Doc or policy drift:
+- Known weaknesses:
+- Human decisions still needed:
+
+## Verification
+
+- `just quick`:
+- `just verify`:
+- Release/scheduled checks:
+
+## Closeout
+
+- [ ] issue closeout updated
+- [ ] branch cleanup done or explicitly deferred
+- [ ] worktree cleanup done or explicitly deferred
+- [ ] follow-up issues created where needed

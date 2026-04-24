@@ -1,16 +1,22 @@
-# WDAD starter skills
+# WDAD skills
 
-These repo-local Codex skills implement repeated steps in the Wave-Driven
-Agentic Development methodology.
+These repo-local Codex skills mirror the WDAD starter-kit skill set.
 
-Place this `.agents/skills/` directory at the repository root.
+Core skills:
 
-Durable policy still belongs in `AGENTS.md`, `ARCHITECTURE.md`, `TESTING.md`,
+- `wdad-backlog-to-ready`
+- `wdad-wave-implementation`
+- `wdad-pr-merge`
+
+Scaled skills:
+
+- `wdad-architecture-review`
+- `wdad-test-adversary-review`
+- `wdad-reality-sync`
+- `wdad-ci-failure-diagnosis`
+- `wdad-planning-board-audit`
+- `wdad-stabilization-wave`
+
+Durable policy belongs in `AGENTS.md`, `ARCHITECTURE.md`, `TESTING.md`,
 accepted ADRs, tests, and CI. Skills are reusable procedures, not hidden
 sources of truth.
-
-Start by invoking skills explicitly, for example:
-
-```text
-Use $wdad-wave-shaping on issue #42. Do not edit code.
-```
