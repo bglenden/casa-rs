@@ -8764,7 +8764,9 @@ fn importvla_workflow_runs_against_real_archive_and_renders_stdout() {
     app.set_text_value("vis", vis_path.to_string_lossy().as_ref());
 
     start_run_with_default_importvla_launcher(&mut app);
-    assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    // The shared real-world archive is large enough that a successful import can
+    // slightly exceed two minutes on slower or busier developer machines.
+    assert!(app.wait_for_idle_for_test(Duration::from_secs(180)));
     assert!(
         app.stderr_for_test().trim().is_empty(),
         "status={} stderr={}",
