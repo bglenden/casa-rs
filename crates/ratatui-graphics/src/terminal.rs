@@ -143,6 +143,18 @@ mod tests {
         assert!(caps.direct_kitty_layers);
         assert!(!caps.direct_kitty_animations);
 
+        unsafe {
+            env::remove_var("TERM_PROGRAM");
+            env::set_var("GHOSTTY_RESOURCES_DIR", "/tmp/ghostty-resources");
+        }
+        assert!(is_ghostty_terminal());
+
+        unsafe {
+            env::remove_var("GHOSTTY_RESOURCES_DIR");
+            env::set_var("GHOSTTY_BIN_DIR", "/tmp/ghostty-bin");
+        }
+        assert!(is_ghostty_terminal());
+
         match old_term_program {
             Some(value) => unsafe { env::set_var("TERM_PROGRAM", value) },
             None => unsafe { env::remove_var("TERM_PROGRAM") },
