@@ -8,11 +8,11 @@ Wave issue: #137
 Child issue: #115
 
 This inventory records the current CASA Guide tutorial surface that drives the
-first tutorial-parity waves. It does not download datasets or implement the
-dataset registry.
+first tutorial-parity waves. It does not download datasets; the first registry
+entries are implemented in `casa-test-support` for resolver/preflight use.
 
-Registry keys are proposed stable logical keys for the later #97 resolver and
-manifest work. Local path policies are expressed relative to
+Registry keys are stable logical keys for the #97 resolver and manifest work.
+Local path policies are expressed relative to
 `CASA_RS_TESTDATA_ROOT`; actual local paths should be populated by the dataset
 registry when artifacts are mirrored into shared tutorial storage.
 

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use tempfile::TempDir;
 
 const CASA_SOURCE_ROOT: &str = "/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code";
@@ -12,12 +13,14 @@ const CASA_BUILD_ROOT: &str = "/Users/brianglendenning/SoftwareProjects/casa-bui
 #[test]
 #[ignore = "diagnostic helper for CASA VLAFiller internals; run explicitly"]
 fn vlafiller_reports_first_spw_seed_for_xp1() {
-    let archive_path =
-        PathBuf::from("/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1");
-    if !archive_path.exists() {
-        eprintln!("skipping: {} does not exist", archive_path.display());
+    let Some(archive_path) = casatestdata_path_for_tier(
+        CasaTestDataTier::SlowParity,
+        "unittest/importvla/AS758_C030425.xp1",
+    )
+    .filter(|path| path.exists()) else {
+        eprintln!("skipping: AS758_C030425.xp1 is not available in shared test data");
         return;
-    }
+    };
 
     let source_root = PathBuf::from(CASA_SOURCE_ROOT);
     if !source_root.exists() {

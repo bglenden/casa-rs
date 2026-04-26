@@ -118,13 +118,166 @@ pub(crate) fn lock_casacore_global_state(
     }
 }
 
+/// Shared CASA dataset tier used by test-data discovery and gate preflights.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CasaTestDataTier {
+    /// Small shared fixtures that may be used by default local gates.
+    DefaultFixture,
+    /// Tutorial parity data that must be selected explicitly by longer gates.
+    TutorialParity,
+    /// Slow parity or performance data that must be selected explicitly.
+    SlowParity,
+}
+
+impl CasaTestDataTier {
+    /// Stable lower-case name used in diagnostics and scripts.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DefaultFixture => "default-fixture",
+            Self::TutorialParity => "tutorial-parity",
+            Self::SlowParity => "slow-parity",
+        }
+    }
+}
+
+/// One tutorial or long-gate dataset that can be staged under `CASA_RS_TESTDATA_ROOT`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TutorialDataset {
+    /// Stable registry key.
+    pub key: &'static str,
+    /// CASA Guide or tutorial source URL.
+    pub source_url: &'static str,
+    /// Download URL for the source artifact.
+    pub artifact_url: &'static str,
+    /// Expected source artifact filename.
+    pub expected_filename: &'static str,
+    /// Declared CASA Guide or CASA version, when known.
+    pub casa_guide_version: Option<&'static str>,
+    /// Expected byte size, when known from the source inventory.
+    pub expected_size_bytes: Option<u64>,
+    /// Expected SHA-256 checksum, once a local mirror has been verified.
+    pub expected_sha256: Option<&'static str>,
+    /// Dataset gate tier.
+    pub tier: CasaTestDataTier,
+    /// Path relative to `CASA_RS_TESTDATA_ROOT`.
+    pub relative_path: &'static str,
+}
+
+/// Tutorial dataset registry entries needed by the first tutorial-parity waves.
+pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
+    TutorialDataset {
+        key: "alma/first-look/twhya/calibrated-ms",
+        source_url: "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar",
+        expected_filename: "twhya_calibrated.ms.tar",
+        casa_guide_version: Some("6.6.1"),
+        expected_size_bytes: None,
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar",
+    },
+    TutorialDataset {
+        key: "alma/first-look/twhya/uncalibrated-ms",
+        source_url: "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar",
+        expected_filename: "twhya_uncalibrated.ms.tar",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: None,
+        expected_sha256: None,
+        tier: CasaTestDataTier::SlowParity,
+        relative_path: "tutorial-parity/alma/first-look/twhya/twhya_uncalibrated.ms.tar",
+    },
+    TutorialDataset {
+        key: "alma/first-look/twhya/calibrated-unflagged-ms",
+        source_url: "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar",
+        expected_filename: "twhya_calibrated_unflagged.ms.tar",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: None,
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/first-look/twhya/twhya_calibrated_unflagged.ms.tar",
+    },
+    TutorialDataset {
+        key: "alma/first-look/twhya/selfcal-ms",
+        source_url: "https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz",
+        expected_filename: "twhya_selfcal.ms.tgz",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: None,
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/first-look/twhya/twhya_selfcal.ms.tgz",
+    },
+    TutorialDataset {
+        key: "alma/first-look/twhya/continuum-image",
+        source_url: "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image",
+        expected_filename: "twhya_cont.image",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: None,
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/first-look/twhya/twhya_cont.image",
+    },
+    TutorialDataset {
+        key: "alma/first-look/twhya/n2hp-image",
+        source_url: "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image",
+        expected_filename: "twhya_n2hp.image",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: None,
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/first-look/twhya/twhya_n2hp.image",
+    },
+    TutorialDataset {
+        key: "vla/irc10216/ms-10s",
+        source_url: "https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216",
+        artifact_url: "http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz",
+        expected_filename: "TDRW0001_10s.ms.tgz",
+        casa_guide_version: None,
+        expected_size_bytes: Some(1_068_298_240),
+        expected_sha256: None,
+        tier: CasaTestDataTier::SlowParity,
+        relative_path: "tutorial-parity/vla/irc10216/TDRW0001_10s.ms.tgz",
+    },
+    TutorialDataset {
+        key: "vla/irc10216/fors1-fits",
+        source_url: "https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216",
+        artifact_url: "http://casa.nrao.edu/Data/EVLA/IRC10216/irc_fors1_dec_header.fits",
+        expected_filename: "irc_fors1_dec_header.fits",
+        casa_guide_version: None,
+        expected_size_bytes: Some(16_784_640),
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/vla/irc10216/irc_fors1_dec_header.fits",
+    },
+    TutorialDataset {
+        key: "simulation/vla-ppdisk/model-fits",
+        source_url: "https://casaguides.nrao.edu/index.php?title=Protoplanetary_Disk_Simulation_-_VLA-CASA6.7.2",
+        artifact_url: "https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits",
+        expected_filename: "ppdisk672_GHz_50pc.fits",
+        casa_guide_version: Some("6.7.2"),
+        expected_size_bytes: Some(276_480),
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits",
+    },
+];
+
 /// Resolve the shared `casatestdata` checkout used by CASA parity tests.
 ///
-/// The lookup order is:
+/// The default-fixture lookup order is:
 /// 1. `CASA_RS_TESTDATA_ROOT`
 /// 2. `../casatestdata` relative to the repo root
 /// 3. `~/SoftwareProjects/casatestdata`
 pub fn casatestdata_root() -> Option<PathBuf> {
+    casatestdata_root_for_tier(CasaTestDataTier::DefaultFixture)
+}
+
+/// Resolve the shared `casatestdata` checkout for a gate tier.
+pub fn casatestdata_root_for_tier(tier: CasaTestDataTier) -> Option<PathBuf> {
     if let Some(root) = std::env::var_os("CASA_RS_TESTDATA_ROOT") {
         let path = PathBuf::from(root);
         if path.exists() {
@@ -132,7 +285,7 @@ pub fn casatestdata_root() -> Option<PathBuf> {
         }
     }
 
-    casatestdata_root_candidates()
+    casatestdata_root_candidates_for_tier(tier)
         .into_iter()
         .find(|path| path.exists())
         .map(|path| normalize_existing_path(&path))
@@ -141,6 +294,25 @@ pub fn casatestdata_root() -> Option<PathBuf> {
 /// Resolve a path relative to the shared `casatestdata` checkout.
 pub fn casatestdata_path(relative: impl AsRef<Path>) -> Option<PathBuf> {
     casatestdata_root().map(|root| root.join(relative.as_ref()))
+}
+
+/// Resolve a path relative to the shared `casatestdata` checkout for a gate tier.
+pub fn casatestdata_path_for_tier(
+    tier: CasaTestDataTier,
+    relative: impl AsRef<Path>,
+) -> Option<PathBuf> {
+    casatestdata_root_for_tier(tier).map(|root| root.join(relative.as_ref()))
+}
+
+/// Resolve a tutorial registry entry by key.
+pub fn tutorial_dataset(key: &str) -> Option<&'static TutorialDataset> {
+    TUTORIAL_DATASETS.iter().find(|dataset| dataset.key == key)
+}
+
+/// Resolve a tutorial registry entry to its expected local path.
+pub fn tutorial_dataset_path(key: &str) -> Option<PathBuf> {
+    let dataset = tutorial_dataset(key)?;
+    casatestdata_path_for_tier(dataset.tier, dataset.relative_path)
 }
 
 /// Resolved local CASA Python environment used by opt-in parity tests.
@@ -197,7 +369,12 @@ pub fn git_head_commit(path: &Path) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[cfg(test)]
 fn casatestdata_root_candidates() -> Vec<PathBuf> {
+    casatestdata_root_candidates_for_tier(CasaTestDataTier::DefaultFixture)
+}
+
+fn casatestdata_root_candidates_for_tier(tier: CasaTestDataTier) -> Vec<PathBuf> {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -209,6 +386,12 @@ fn casatestdata_root_candidates() -> Vec<PathBuf> {
                 .join("SoftwareProjects")
                 .join("casatestdata"),
         );
+    }
+    if matches!(
+        tier,
+        CasaTestDataTier::TutorialParity | CasaTestDataTier::SlowParity
+    ) {
+        candidates.push(PathBuf::from("/Volumes/home/casatestdata"));
     }
     candidates
 }
@@ -2436,6 +2619,24 @@ mod tests {
     }
 
     #[test]
+    fn long_gate_candidates_include_shared_volume_without_defaulting_to_it() {
+        let default_candidates =
+            casatestdata_root_candidates_for_tier(CasaTestDataTier::DefaultFixture);
+        assert!(
+            !default_candidates
+                .iter()
+                .any(|path| path == Path::new("/Volumes/home/casatestdata"))
+        );
+
+        let slow_candidates = casatestdata_root_candidates_for_tier(CasaTestDataTier::SlowParity);
+        assert!(
+            slow_candidates
+                .iter()
+                .any(|path| path == Path::new("/Volumes/home/casatestdata"))
+        );
+    }
+
+    #[test]
     fn normalize_existing_path_preserves_missing_paths() {
         let dir = tempdir().unwrap();
         let missing = dir.path().join("missing");
@@ -2455,6 +2656,21 @@ mod tests {
             Some(normalize_existing_path(&root).join("measurementset/demo.ms"))
         );
         unsafe { std::env::remove_var("CASA_RS_TESTDATA_ROOT") };
+    }
+
+    #[test]
+    fn tutorial_dataset_registry_contains_first_wave_candidates() {
+        let twhya = tutorial_dataset("alma/first-look/twhya/calibrated-ms").unwrap();
+        assert_eq!(twhya.expected_filename, "twhya_calibrated.ms.tar");
+        assert_eq!(twhya.tier, CasaTestDataTier::TutorialParity);
+        assert!(twhya.relative_path.starts_with("tutorial-parity/"));
+
+        let irc10216 = tutorial_dataset("vla/irc10216/ms-10s").unwrap();
+        assert_eq!(irc10216.expected_size_bytes, Some(1_068_298_240));
+        assert_eq!(irc10216.tier, CasaTestDataTier::SlowParity);
+
+        let ppdisk = tutorial_dataset("simulation/vla-ppdisk/model-fits").unwrap();
+        assert_eq!(ppdisk.casa_guide_version, Some("6.7.2"));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::process::Command;
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::Table;
-use casa_test_support::discover_casa_python;
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
 use casa_types::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_vla::{ImportVlaOptions, import_archive_files_to_measurement_set_from_options};
 use tempfile::TempDir;
@@ -62,6 +62,11 @@ pub fn first_existing_path(candidates: &[&str]) -> Option<PathBuf> {
         .iter()
         .map(PathBuf::from)
         .find(|path| path.exists())
+}
+
+#[allow(dead_code)]
+pub fn slow_parity_archive(relative: &str) -> Option<PathBuf> {
+    casatestdata_path_for_tier(CasaTestDataTier::SlowParity, relative).filter(|path| path.exists())
 }
 
 fn assert_measurement_sets_match_subset(rust: &MeasurementSet, cpp: &MeasurementSet) {

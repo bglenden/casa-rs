@@ -9,7 +9,7 @@ use std::process::Command;
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::Table;
-use casa_test_support::discover_casa_python;
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
 use casa_types::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_vla::{ImportVlaOptions, import_archive_files_to_measurement_set_from_options};
 use tempfile::TempDir;
@@ -24,35 +24,31 @@ struct ImportedMeasurementSets {
     casa: MeasurementSet,
 }
 
-fn locate_archive(candidates: &[&'static str]) -> Option<PathBuf> {
-    candidates
-        .iter()
-        .map(PathBuf::from)
-        .find(|path| path.exists())
+fn locate_shared_archive(candidates: &[&'static str]) -> Option<PathBuf> {
+    candidates.iter().find_map(|relative| {
+        casatestdata_path_for_tier(CasaTestDataTier::SlowParity, relative)
+            .filter(|path| path.exists())
+    })
 }
 
 fn xp1_path() -> Option<PathBuf> {
-    locate_archive(&[
-        "/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1",
-        "/Users/brianglendenning/SoftwareProjects/casatestdata/unittest/importvla/AS758_C030425.xp1",
-        "/Volumes/home/casatestdata/other/AS758_C030425.xp1",
+    locate_shared_archive(&[
+        "unittest/importvla/AS758_C030425.xp1",
+        "other/AS758_C030425.xp1",
     ])
 }
 
 fn xp5_path() -> Option<PathBuf> {
-    locate_archive(&[
-        "/Volumes/home/casatestdata/unittest/importvla/AS758_C030426.xp5",
-        "/Users/brianglendenning/SoftwareProjects/casatestdata/unittest/importvla/AS758_C030426.xp5",
-        "/Volumes/home/casatestdata/other/AS758_C030426.xp5",
+    locate_shared_archive(&[
+        "unittest/importvla/AS758_C030426.xp5",
+        "other/AS758_C030426.xp5",
     ])
 }
 
 fn ag189_path() -> Option<PathBuf> {
-    locate_archive(&[
-        "/Users/brianglendenning/Desktop/AG189/observation.46325.2302894/AG189_1_46325.23029_46325.80807.exp",
-        "/Users/brianglendenning/Desktop/AG189/observation.46182.7646759/AG189_1_46182.76468_46183.09488.exp",
-        "/Users/brianglendenning/Desktop/AG189/observation.46673.4830671/AG189_1_46673.48307_46673.81374.exp",
-    ])
+    std::env::var_os("CASA_RS_IMPORTVLA_PARITY_AG189")
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
 }
 
 fn get_f64_scalar(row: &casa_types::RecordValue, column: &str) -> f64 {

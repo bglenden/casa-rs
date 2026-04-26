@@ -9898,11 +9898,18 @@ fn shared_importvla_archive_path() -> Option<PathBuf> {
     if let Some(root) = env::var_os("CASA_RS_IMPORTVLA_ARCHIVE") {
         candidates.push(PathBuf::from(root));
     }
+    if let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") {
+        candidates.push(
+            PathBuf::from(root)
+                .join("unittest")
+                .join("importvla")
+                .join("AS758_C030425.xp1"),
+        );
+    }
     candidates.extend([
         PathBuf::from("/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1"),
         PathBuf::from("/Users/brianglendenning/SoftwareProjects/casatestdata/unittest/importvla/AS758_C030425.xp1"),
         PathBuf::from("/Volumes/home/casatestdata/other/AS758_C030425.xp1"),
-        PathBuf::from("/Users/brianglendenning/Desktop/AG189/observation.46182.7646759/AG189_1_46182.76468_46183.09488.exp"),
     ]);
     candidates.into_iter().find(|path| path.exists())
 }

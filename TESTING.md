@@ -21,6 +21,13 @@ Verification: just verify
 - Binary serialization changes need endian coverage.
 - Measures-data dependent tests must skip cleanly when runtime tables are unavailable.
 - C++ dependent tests must skip cleanly when `pkg-config casacore` is unavailable.
+- Tests and scripts that use shared CASA datasets must use the shared resolver
+  policy: default fixtures may search `CASA_RS_TESTDATA_ROOT`,
+  `../casatestdata`, and `~/SoftwareProjects/casatestdata`; long gates may also
+  consider the shared `/Volumes/home/casatestdata` mirror after preflight.
+- Tutorial parity datasets are registry-backed and staged under
+  `CASA_RS_TESTDATA_ROOT/tutorial-parity/...`; default gates must not select
+  them implicitly.
 - Heavy parity suites stay behind explicit opt-in gates such as `scripts/test-slow.sh`.
 - Release-only Cargo integration suites should stay out of the default compile path via explicit `[[test]]` entries and `required-features`, not only file-local `cfg` guards.
 

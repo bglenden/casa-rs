@@ -33,6 +33,10 @@ command -v pkg-config >/dev/null 2>&1 || die "pkg-config is required"
 pkg-config --exists casacore || die "casacore pkg-config metadata is required for the blocking C++ interop gate"
 
 script_started_at="$(date +%s)"
+cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
+  --tier slow-parity \
+  --require unittest/importvla/AS758_C030425.xp1 \
+  --require unittest/importvla/AS758_C030426.xp5
 run_timed_step \
   "Running casa-test-support C++ interop suite" \
   cargo test -p casa-test-support --features cpp-interop-tests --tests

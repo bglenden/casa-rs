@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
-use std::path::Path;
 use std::process::Command;
 
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
-use casa_test_support::discover_casa_python;
 use casa_test_support::measures_interop::{
     cpp_frequency_convert, cpp_frequency_convert_between_frames, cpp_frequency_convert_via_model,
     cpp_frequency_convert_via_mutated_model,
 };
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -66,15 +65,16 @@ fn get_i32_scalar_or(row: &casa_types::RecordValue, column: &str, default: i32) 
     }
 }
 
-fn xp1_path() -> Option<&'static Path> {
+fn xp1_path() -> Option<std::path::PathBuf> {
     [
-        "/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1",
-        "/Users/brianglendenning/SoftwareProjects/casatestdata/unittest/importvla/AS758_C030425.xp1",
-        "/Volumes/home/casatestdata/other/AS758_C030425.xp1",
+        "unittest/importvla/AS758_C030425.xp1",
+        "other/AS758_C030425.xp1",
     ]
     .into_iter()
-    .map(Path::new)
-    .find(|path| path.exists())
+    .find_map(|relative| {
+        casatestdata_path_for_tier(CasaTestDataTier::SlowParity, relative)
+            .filter(|path| path.exists())
+    })
 }
 
 #[test]

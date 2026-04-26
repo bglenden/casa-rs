@@ -97,7 +97,6 @@ def image_candidates(root: pathlib.Path) -> list[pathlib.Path]:
     env_root = os.environ.get("CASA_RS_TESTDATA_ROOT")
     if env_root:
         candidate_roots.append(pathlib.Path(env_root))
-    candidate_roots.append(pathlib.Path("/Volumes/home/casatestdata"))
     candidate_roots.append((root / "../casatestdata").resolve())
     candidate_roots.append(pathlib.Path.home() / "SoftwareProjects/casatestdata")
 
