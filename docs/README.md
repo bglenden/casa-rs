@@ -31,6 +31,7 @@ This directory holds stable project documentation.
 
 Historical phase plans and program-reference docs live under:
 
+- `docs/tutorial-parity/`
 - `docs/Planning/Phase 2 - Table fillout/`
 - `docs/Planning/Phase 3 - Quanta Measures Coordinates/`
 - `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`
