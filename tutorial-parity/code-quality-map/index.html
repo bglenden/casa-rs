@@ -1,0 +1,853 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Expansion-Readiness Code-Quality Map - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#expansion-readiness-code-quality-map" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Expansion-Readiness Code-Quality Map
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#measurement-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement Snapshot
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expansion-critical-crate-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expansion-Critical Crate Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hotspot-classification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hotspot Classification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-cleanup-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First Cleanup Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="expansion-readiness-code-quality-map">Expansion-Readiness Code-Quality Map<a class="headerlink" href="#expansion-readiness-code-quality-map" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-04-26
+Verification: just docs-check</p>
+<p>Wave issue: #137
+Child issue: #131</p>
+<p>This audit is intentionally not a generic cleanup request. It records concrete
+code-quality risks that could make tutorial expansion brittle, then assigns
+them to shaped issues.</p>
+<h2 id="measurement-snapshot">Measurement Snapshot<a class="headerlink" href="#measurement-snapshot" title="Permanent link">&para;</a></h2>
+<p>Local scan command shape:</p>
+<div class="codehilite"><pre><span></span><code>find<span class="w"> </span>crates<span class="w"> </span>-path<span class="w"> </span><span class="s1">&#39;*/target&#39;</span><span class="w"> </span>-prune<span class="w"> </span>-o<span class="w"> </span>-name<span class="w"> </span><span class="s1">&#39;*.rs&#39;</span><span class="w"> </span>-print0<span class="w"> </span><span class="p">|</span><span class="w"> </span>xargs<span class="w"> </span>-0<span class="w"> </span>wc<span class="w"> </span>-l
+rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;unwrap\\(|expect\\(|panic!\\(|unimplemented!\\(|todo!\\(&#39;</span><span class="w"> </span>crates<span class="w"> </span>--glob<span class="w"> </span><span class="s1">&#39;*.rs&#39;</span>
+rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;\\.clone\\(|collect::&lt;Vec|collect::&lt;HashMap|collect::&lt;BTreeMap&#39;</span><span class="w"> </span>crates<span class="w"> </span>--glob<span class="w"> </span><span class="s1">&#39;*.rs&#39;</span>
+rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;pub fn|pub struct|pub enum|pub trait|pub mod&#39;</span><span class="w"> </span>crates/casa-<span class="o">{</span>tables,ms,images,imaging,calibration,vla,lattices,coordinates,types<span class="o">}</span>/src<span class="w"> </span>--glob<span class="w"> </span><span class="s1">&#39;*.rs&#39;</span>
+</code></pre></div>
+
+<p>Snapshot:</p>
+<ul>
+<li>Total Rust LOC under <code>crates/</code>: 345,635</li>
+<li>Product-path Rust LOC: 271,379</li>
+<li>Test-path Rust LOC: 74,256</li>
+<li>Product-path panic/unwrap/expect/todo/unimplemented candidates: 6,635</li>
+<li>Product-path clone/collect candidates: 2,150</li>
+<li>Public declarations across expansion-critical library crates: 2,480+</li>
+</ul>
+<p>These counts are triage signals only. They are not acceptance metrics. The
+important question is whether a candidate is reachable from external CASA data,
+tutorial-scale data volume, or public API expansion.</p>
+<h2 id="expansion-critical-crate-map">Expansion-Critical Crate Map<a class="headerlink" href="#expansion-critical-crate-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Crate / area</th>
+<th>Expansion role</th>
+<th style="text-align: right;">Current signal</th>
+<th>Classification</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>casa-tables</code></td>
+<td>Persistent table/MS/image storage substrate</td>
+<td style="text-align: right;">1,416 panic candidates, 434 clone/collect candidates, several storage modules over 2k LOC</td>
+<td>Needs focused audit and memory-bounded design before larger MS workflows</td>
+<td>#94, #132, #135</td>
+</tr>
+<tr>
+<td><code>casa-ms</code></td>
+<td>MS summaries, selectors, plotting, tutorial <code>listobs</code> / <code>plotms</code> parity</td>
+<td style="text-align: right;"><code>msexplore.rs</code> 9,440 LOC, <code>listobs.rs</code> 3,810 LOC, <code>spectral_selection.rs</code> 3,065 LOC</td>
+<td>Needs selector and plot seams before tutorial expansion</td>
+<td>#73, #75, #132, #135</td>
+</tr>
+<tr>
+<td><code>casa-calibration</code></td>
+<td><code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code>, <code>applycal</code> workflow owner</td>
+<td style="text-align: right;"><code>execute.rs</code> 3,457 LOC, CLI 3,942 LOC, performance-sensitive apply path</td>
+<td>Needs table-access/performance audit and panic-path hardening</td>
+<td>#94, #132, #135</td>
+</tr>
+<tr>
+<td><code>casa-imaging</code></td>
+<td>Core imaging algorithms for tutorial <code>tclean</code> paths</td>
+<td style="text-align: right;"><code>lib.rs</code> 8,850 LOC</td>
+<td>Already has focused split and cube coverage issues</td>
+<td>#76, #74</td>
+</tr>
+<tr>
+<td><code>casars-imager</code></td>
+<td>App/task orchestration for imaging</td>
+<td style="text-align: right;"><code>lib.rs</code> 12,847 LOC</td>
+<td>Large but app-facing; split only when tutorial work touches it</td>
+<td>#133 if needed later</td>
+</tr>
+<tr>
+<td><code>casa-images</code></td>
+<td>Image analysis, FITS export, image objects</td>
+<td style="text-align: right;">1,652 panic candidates, 297 clone/collect candidates, <code>image_expr.rs</code> 4,753 LOC, <code>image_view.rs</code> 4,363 LOC</td>
+<td>Needs public API and error-path audit before image-analysis expansion</td>
+<td>#132, #134, #135</td>
+</tr>
+<tr>
+<td><code>casa-vla</code></td>
+<td>VLA import/archive support and possible VLA tutorial inputs</td>
+<td style="text-align: right;"><code>importer.rs</code> 4,171 LOC</td>
+<td>Healthy enough for existing importvla surface; harden only paths used by VLA verticals</td>
+<td>#132 if reached by #121</td>
+</tr>
+<tr>
+<td><code>casa-lattices</code> / <code>casa-coordinates</code></td>
+<td>Image coordinate/statistics substrate</td>
+<td style="text-align: right;">Moderate public and panic candidate counts</td>
+<td>Audit public surface and user-data error paths before image-analysis breadth</td>
+<td>#132, #134</td>
+</tr>
+<tr>
+<td><code>casa-test-support</code></td>
+<td>CASA/casacore oracles, fixture staging, parity helpers</td>
+<td style="text-align: right;"><code>lib.rs</code> 5,487 LOC, heavily reused by parity tests</td>
+<td>Needs consolidation before tutorial regression growth</td>
+<td>#136</td>
+</tr>
+</tbody>
+</table>
+<h2 id="hotspot-classification">Hotspot Classification<a class="headerlink" href="#hotspot-classification" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th style="text-align: right;">LOC</th>
+<th>Classification</th>
+<th>Reason</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>crates/casars/src/app.rs</code></td>
+<td style="text-align: right;">17,421</td>
+<td>Defer</td>
+<td>TUI shell hotspot, but Wave 0 tutorial expansion starts in libraries/oracles</td>
+<td>none now</td>
+</tr>
+<tr>
+<td><code>crates/casars-imager/src/lib.rs</code></td>
+<td style="text-align: right;">12,847</td>
+<td>Watch</td>
+<td>App/task orchestration hotspot; split only when a tutorial issue touches it</td>
+<td>#133 if needed</td>
+</tr>
+<tr>
+<td><code>crates/casa-ms/src/msexplore.rs</code></td>
+<td style="text-align: right;">9,440</td>
+<td>Needs seam extraction</td>
+<td>Plotting surface is tutorial-critical and currently coupled to generic scatter logic</td>
+<td>#73, #135</td>
+</tr>
+<tr>
+<td><code>crates/casa-imaging/src/lib.rs</code></td>
+<td style="text-align: right;">8,850</td>
+<td>Already shaped</td>
+<td>Imaging cube/trace ownership must be clearer before cube tutorial expansion</td>
+<td>#76, #74</td>
+</tr>
+<tr>
+<td><code>crates/casa-tables/src/storage/tiled_stman.rs</code></td>
+<td style="text-align: right;">6,643</td>
+<td>Needs audit</td>
+<td>Storage behavior underpins large MS/image workflows; avoid incidental churn</td>
+<td>#94, #135</td>
+</tr>
+<tr>
+<td><code>crates/casa-test-support/src/lib.rs</code></td>
+<td style="text-align: right;">5,487</td>
+<td>Needs consolidation</td>
+<td>Tutorial parity tests will otherwise duplicate staging/oracle helpers</td>
+<td>#136</td>
+</tr>
+<tr>
+<td><code>crates/casa-images/src/image_expr.rs</code></td>
+<td style="text-align: right;">4,753</td>
+<td>Defer unless touched</td>
+<td>Expression expansion is not in the first vertical spine</td>
+<td>#134/#135 if image-analysis requires it</td>
+</tr>
+<tr>
+<td><code>crates/casa-images/src/image_view.rs</code></td>
+<td style="text-align: right;">4,363</td>
+<td>Needs public/error audit</td>
+<td>Image-analysis tutorial paths will use image views/statistics/regions</td>
+<td>#132, #134</td>
+</tr>
+<tr>
+<td><code>crates/casa-vla/src/importer.rs</code></td>
+<td style="text-align: right;">4,171</td>
+<td>Watch</td>
+<td>Important for VLA data handling, but first VLA spine starts from tutorial MS archives</td>
+<td>#132 if user-data failures appear</td>
+</tr>
+<tr>
+<td><code>crates/casa-calibration/src/execute.rs</code></td>
+<td style="text-align: right;">3,457</td>
+<td>Needs performance/error audit</td>
+<td>Calibration apply/solve is central to ALMA/VLA verticals</td>
+<td>#94, #132, #135</td>
+</tr>
+</tbody>
+</table>
+<h2 id="first-cleanup-map">First Cleanup Map<a class="headerlink" href="#first-cleanup-map" title="Permanent link">&para;</a></h2>
+<p>The audit produced these implementation-ready stabilization waves:</p>
+<ul>
+<li>
+<h1 id="132-harden-reachable-product-path-panicserrors">132 harden reachable product-path panics/errors.<a class="headerlink" href="#132-harden-reachable-product-path-panicserrors" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="133-split-expansion-critical-hotspots-not-already-covered-by-737576">133 split expansion-critical hotspots not already covered by #73/#75/#76.<a class="headerlink" href="#133-split-expansion-critical-hotspots-not-already-covered-by-737576" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="134-audit-public-library-surface-and-boundary-hygiene">134 audit public library surface and boundary hygiene.<a class="headerlink" href="#134-audit-public-library-surface-and-boundary-hygiene" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="135-audit-allocationcopy-patterns-on-tutorial-scale-paths">135 audit allocation/copy patterns on tutorial-scale paths.<a class="headerlink" href="#135-audit-allocationcopy-patterns-on-tutorial-scale-paths" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="136-consolidate-shared-test-support-seams">136 consolidate shared test-support seams.<a class="headerlink" href="#136-consolidate-shared-test-support-seams" title="Permanent link">&para;</a></h1>
+</li>
+</ul>
+<p>Existing localized issues remain valid:</p>
+<ul>
+<li>
+<h1 id="73-decouple-curated-visibility-plots-from-generic-msexplore-scatter">73 decouple curated visibility plots from generic <code>msexplore</code> scatter.<a class="headerlink" href="#73-decouple-curated-visibility-plots-from-generic-msexplore-scatter" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="74-add-cube-trace-seam-regression-coverage">74 add cube trace seam regression coverage.<a class="headerlink" href="#74-add-cube-trace-seam-regression-coverage" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="75-extract-listobs-selector-parsing-and-taql-building">75 extract <code>listobs</code> selector parsing and TAQL building.<a class="headerlink" href="#75-extract-listobs-selector-parsing-and-taql-building" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="76-split-casa-imaging-tracecube-orchestration">76 split <code>casa-imaging</code> trace/cube orchestration.<a class="headerlink" href="#76-split-casa-imaging-tracecube-orchestration" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="78-split-and-regression-test-provider-contract-core">78 split and regression-test provider-contract core.<a class="headerlink" href="#78-split-and-regression-test-provider-contract-core" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="94-study-fast-memory-bounded-table-access">94 study fast, memory-bounded table access.<a class="headerlink" href="#94-study-fast-memory-bounded-table-access" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="97-stabilize-shared-test-data-discovery">97 stabilize shared test-data discovery.<a class="headerlink" href="#97-stabilize-shared-test-data-discovery" title="Permanent link">&para;</a></h1>
+</li>
+</ul>
+<h2 id="stop-conditions-for-later-waves">Stop Conditions For Later Waves<a class="headerlink" href="#stop-conditions-for-later-waves" title="Permanent link">&para;</a></h2>
+<p>Stop before implementation if a cleanup requires:</p>
+<ul>
+<li>a public API or persisted-format change;</li>
+<li>a provider-contract schema bundle change;</li>
+<li>a new top-level crate or app family;</li>
+<li>a substantial dependency;</li>
+<li>runtime/concurrency model changes;</li>
+<li>weakening or deleting tests without replacement.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

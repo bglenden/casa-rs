@@ -1,0 +1,1380 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Current CASA Guide Tutorial And Dataset Inventory - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#current-casa-guide-tutorial-and-dataset-inventory" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Current CASA Guide Tutorial And Dataset Inventory
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#inventory-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alma-current-pages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ALMA Current Pages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vla-current-pages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VLA Current Pages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#simulation-pages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Simulation Pages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expected-output-products" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expected Output Products
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Expected Output Products">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ALMA
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vla" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VLA
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Simulation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-dataset-registry-candidates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First Dataset Registry Candidates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#registry-fields-for-97" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry Fields For #97
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="current-casa-guide-tutorial-and-dataset-inventory">Current CASA Guide Tutorial And Dataset Inventory<a class="headerlink" href="#current-casa-guide-tutorial-and-dataset-inventory" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-04-26
+Verification: just docs-check</p>
+<p>Wave issue: #137
+Child issue: #115</p>
+<p>This inventory records the current CASA Guide tutorial surface that drives the
+first tutorial-parity waves. It does not download datasets or implement the
+dataset registry.</p>
+<p>Registry keys are proposed stable logical keys for the later #97 resolver and
+manifest work. Local path policies are expressed relative to
+<code>CASA_RS_TESTDATA_ROOT</code>; actual local paths should be populated by the dataset
+registry when artifacts are mirrored into shared tutorial storage.</p>
+<h2 id="inventory-policy">Inventory Policy<a class="headerlink" href="#inventory-policy" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Current ALMA pages on the ALMA tutorials page are primary.</li>
+<li>Current VLA CASA 6.7.2 pages on the VLA tutorials page are primary.</li>
+<li>The Simulation index's current VLA protoplanetary disk guide is primary.</li>
+<li>Older Simulation pages such as CASA 6.6.6 <code>simalma</code> and ACA guides are
+  breadth/deferred unless a later wave promotes them.</li>
+<li>Pipeline reprocessing and external tools are inventoried but not treated as
+  engine-implementation targets.</li>
+</ul>
+<h2 id="alma-current-pages">ALMA Current Pages<a class="headerlink" href="#alma-current-pages" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Registry area</th>
+<th>Guide</th>
+<th style="text-align: right;">CASA version</th>
+<th>URL</th>
+<th>Extracted CASA surface</th>
+<th>Input artifacts / data source</th>
+<th>Classification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alma/getting-started</code></td>
+<td>Getting Started in CASA</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Getting_Started_in_CASA">https://casaguides.nrao.edu/index.php/Getting_Started_in_CASA</a></td>
+<td><code>rmtables</code></td>
+<td>none identified</td>
+<td>orientation</td>
+</tr>
+<tr>
+<td><code>alma/first-look/index</code></td>
+<td>ALMA First Look</td>
+<td style="text-align: right;">current index</td>
+<td><a href="https://casaguides.nrao.edu/index.php/ALMA_First_Look">https://casaguides.nrao.edu/index.php/ALMA_First_Look</a></td>
+<td>index page</td>
+<td>none identified</td>
+<td>index</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/imaging</code></td>
+<td>First Look at Imaging</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Imaging</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>split</code></td>
+<td><code>twhya_calibrated.ms.tar</code>, <code>twhya_uncalibrated.ms.tar</code>, <code>twhya_calibrated_unflagged.ms.tar</code> under <code>FirstLook_TWHya_Band7_*</code></td>
+<td>Wave 3 spine</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/selfcal</code></td>
+<td>First Look at Self Calibration</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Self_Calibration">https://casaguides.nrao.edu/index.php/First_Look_at_Self_Calibration</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>gaincal</code>, <code>applycal</code>, <code>split</code></td>
+<td>uses TW Hydra first-look MS products</td>
+<td>Wave 3 spine</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/line-imaging</code></td>
+<td>First Look at Line Imaging</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging</a></td>
+<td><code>plotms</code>, <code>uvcontsub</code>, <code>tclean</code></td>
+<td><code>twhya_selfcal.ms.tgz</code></td>
+<td>Wave 3 spine</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/image-analysis</code></td>
+<td>First Look at Image Analysis</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis">https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis</a></td>
+<td><code>imhead</code>, <code>imstat</code>, <code>immoments</code>, <code>exportfits</code></td>
+<td><code>twhya_cont.image</code>, <code>twhya_n2hp.image</code></td>
+<td>Wave 3 spine</td>
+</tr>
+<tr>
+<td><code>alma/antennae/band7</code></td>
+<td>Antennae Band 7 Imaging</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/AntennaeBand7_Imaging">https://casaguides.nrao.edu/index.php/AntennaeBand7_Imaging</a></td>
+<td><code>plotms</code>, <code>tclean</code>, <code>uvcontsub</code>, <code>imstat</code>, <code>immoments</code>, <code>exportfits</code>, <code>gaincal</code>, <code>applycal</code>, <code>rmtables</code></td>
+<td>ALMA science-verification package; page links support docs more than direct archives</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/iras16293/band9</code></td>
+<td>IRAS16293 Band 9 Imaging</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/IRAS16293_Band9_-_Imaging">https://casaguides.nrao.edu/index.php/IRAS16293_Band9_-_Imaging</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>split</code>, <code>uvcontsub</code>, <code>immoments</code>, <code>exportfits</code>, <code>immath</code>, <code>gaincal</code>, <code>applycal</code>, <code>flagdata</code>, <code>flagmanager</code></td>
+<td><code>https://bulk.cv.nrao.edu/almadata/public/casaguides/IRAS16293_Band9_6.6.6</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/m100/band3-combine</code></td>
+<td>M100 Band 3 Combine</td>
+<td style="text-align: right;">mixed page history, current ALMA topical</td>
+<td><a href="https://casaguides.nrao.edu/index.php/M100_Band3_Combine">https://casaguides.nrao.edu/index.php/M100_Band3_Combine</a></td>
+<td><code>listobs</code>, <code>tclean</code>, <code>split</code>, <code>imhead</code>, <code>imstat</code>, <code>immoments</code>, <code>exportfits</code>, <code>imregrid</code>, <code>immath</code>, <code>imsubimage</code>, image tool <code>ia.open</code></td>
+<td>ALMA science-verification data source</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/3c286/band6-pol</code></td>
+<td>3C286 Band 6 Polarization Imaging</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/3C286_Band6Pol_Imaging">https://casaguides.nrao.edu/index.php/3C286_Band6Pol_Imaging</a></td>
+<td><code>plotms</code>, <code>tclean</code>, <code>imhead</code>, <code>imstat</code>, <code>exportfits</code>, <code>immath</code>, <code>imfit</code>, <code>gaincal</code>, <code>applycal</code></td>
+<td>ALMA polarization products / pipeline docs</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/sunspot/band6-feathering</code></td>
+<td>Sunspot Band 6 Feathering</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Sunspot_Band6_Feathering">https://casaguides.nrao.edu/index.php/Sunspot_Band6_Feathering</a></td>
+<td><code>imhead</code>, <code>exportfits</code>, <code>imregrid</code>, <code>immath</code>, <code>imsubimage</code></td>
+<td>guide page does not expose direct archive in API scan</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/renormalization</code></td>
+<td>ALMA Renormalization Correction</td>
+<td style="text-align: right;">6.6.x</td>
+<td><a href="https://casaguides.nrao.edu/index.php/ALMA_Renormalization_Correction">https://casaguides.nrao.edu/index.php/ALMA_Renormalization_Correction</a></td>
+<td><code>applycal</code> plus calibration-product handling</td>
+<td>ALMA help/science-pipeline references</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/automasking</code></td>
+<td>Automasking Guide</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Automasking_Guide">https://casaguides.nrao.edu/index.php/Automasking_Guide</a></td>
+<td><code>listobs</code>, <code>tclean</code> with automasking controls</td>
+<td><code>twhya_selfcal.ms.contsub.tgz</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/data-weights</code></td>
+<td>Data Weights And Combination</td>
+<td style="text-align: right;">older page, still topical</td>
+<td><a href="https://casaguides.nrao.edu/index.php/DataWeightsAndCombination">https://casaguides.nrao.edu/index.php/DataWeightsAndCombination</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>applycal</code>, <code>concat</code>, <code>statwt</code></td>
+<td>ALMA help/science archive references</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>alma/na-imaging-template</code></td>
+<td>Guide to the NA Imaging Template</td>
+<td style="text-align: right;">current topical</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Guide_NA_ImagingTemplate">https://casaguides.nrao.edu/index.php/Guide_NA_ImagingTemplate</a></td>
+<td>pipeline/script template mapping</td>
+<td>ALMA QA2/product references</td>
+<td>mapping only</td>
+</tr>
+<tr>
+<td><code>alma/pipeline-reprocessing</code></td>
+<td>ALMA Imaging Pipeline Reprocessing</td>
+<td style="text-align: right;">current topical</td>
+<td><a href="https://casaguides.nrao.edu/index.php/ALMA_Imaging_Pipeline_Reprocessing">https://casaguides.nrao.edu/index.php/ALMA_Imaging_Pipeline_Reprocessing</a></td>
+<td>pipeline execution</td>
+<td>pipeline products</td>
+<td>external pipeline workflow</td>
+</tr>
+<tr>
+<td><code>alma/pipeline-known-issues</code></td>
+<td>ALMA Pipeline Known Issues</td>
+<td style="text-align: right;">current topical</td>
+<td><a href="https://casaguides.nrao.edu/index.php/ALMA_Pipeline_Known_Issues">https://casaguides.nrao.edu/index.php/ALMA_Pipeline_Known_Issues</a></td>
+<td>issue reference</td>
+<td>ALMA help pages</td>
+<td>reference only</td>
+</tr>
+</tbody>
+</table>
+<h2 id="vla-current-pages">VLA Current Pages<a class="headerlink" href="#vla-current-pages" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Registry area</th>
+<th>Guide</th>
+<th style="text-align: right;">CASA version</th>
+<th>URL</th>
+<th>Extracted CASA surface</th>
+<th>Input artifacts / data source</th>
+<th>Classification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vla/irc10216</code></td>
+<td>High frequency spectral line data reduction: IRC+10216</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216">https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>gencal</code>, <code>applycal</code>, <code>split</code>, <code>flagdata</code>, <code>setjy</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code>, <code>mstransform</code>, <code>uvcontsub</code>, <code>tclean</code>, <code>imstat</code>, <code>immoments</code>, <code>impv</code>, <code>statwt</code>, <code>plotcal</code></td>
+<td><code>TDRW0001_10s.ms.tgz</code>, <code>irc_fors1_dec_header.fits</code></td>
+<td>Wave 4 spine</td>
+</tr>
+<tr>
+<td><code>vla/3c391</code></td>
+<td>Continuum Imaging, Mosaicking: 3C391</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_Continuum_Tutorial_3C391-CASA6.7.2">https://casaguides.nrao.edu/index.php/VLA_Continuum_Tutorial_3C391-CASA6.7.2</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>split</code>, <code>imstat</code>, <code>gaincal</code>, <code>applycal</code>, <code>bandpass</code>, <code>fluxscale</code>, <code>setjy</code>, <code>gencal</code>, <code>flagdata</code>, <code>delmod</code>, <code>statwt</code>, <code>plotcal</code></td>
+<td><code>3c391_ctm_mosaic_10s_spw0.ms.tgz</code>, <code>AdvancedEVLAcont.tgz</code>, script archive</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/3c75-pol</code></td>
+<td>Polarization Calibration: 3C75</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Polarization_Calibration_based_on_CASA_pipeline_standard_reduction:_The_radio_galaxy_3C75">https://casaguides.nrao.edu/index.php/Polarization_Calibration_based_on_CASA_pipeline_standard_reduction:_The_radio_galaxy_3C75</a></td>
+<td><code>plotms</code>, <code>tclean</code>, <code>split</code>, <code>imstat</code>, <code>immath</code>, <code>imsubimage</code>, <code>gaincal</code>, <code>applycal</code>, <code>bandpass</code>, <code>setjy</code>, <code>flagdata</code>, <code>flagmanager</code>, <code>delmod</code>, <code>statwt</code></td>
+<td><code>CASA6.7.2_Polarization_Guide_Files.tgz</code>, calibrated MS, pipeline products</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/3c129-pband</code></td>
+<td>Radio galaxy 3C129 P-band continuum</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_Radio_galaxy_3C_129:_P-band_continuum_tutorial">https://casaguides.nrao.edu/index.php/VLA_Radio_galaxy_3C_129:_P-band_continuum_tutorial</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>split</code>, <code>gaincal</code>, <code>applycal</code>, <code>bandpass</code>, <code>setjy</code>, <code>gencal</code>, <code>flagdata</code>, <code>hanningsmooth</code>, <code>clearcal</code>, <code>statwt</code></td>
+<td><code>P_band_3C129.tgz</code>, ionosphere file, older tar bundle</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/mg0414-pband-line</code></td>
+<td>MG0414+0534 P-band Spectral Line</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=MG0414%2B0534_P-band_Spectral_Line_Tutorial">https://casaguides.nrao.edu/index.php?title=MG0414%2B0534_P-band_Spectral_Line_Tutorial</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>split</code>, <code>mstransform</code>, <code>gaincal</code>, <code>applycal</code>, <code>bandpass</code>, <code>setjy</code>, <code>gencal</code>, <code>flagdata</code>, <code>hanningsmooth</code></td>
+<td><code>MG0414_d1_data.ms.tgz</code>, ionosphere file, tutorial script</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/hi21-leda44055</code></td>
+<td>HI 21 cm spectral line: LEDA 44055</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/HI_21cm_(1.4_GHz)_spectral_line_data_reduction:_LEDA_44055-CASA6.7.2">https://casaguides.nrao.edu/index.php/HI_21cm_(1.4_GHz)_spectral_line_data_reduction:_LEDA_44055-CASA6.7.2</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>split</code>, <code>imcontsub</code>, <code>gaincal</code>, <code>applycal</code>, <code>bandpass</code>, <code>fluxscale</code>, <code>setjy</code>, <code>gencal</code>, <code>flagdata</code></td>
+<td>NRAO archive / baseline references</td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/flagging</code></td>
+<td>VLA CASA Flagging</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_CASA_Flagging">https://casaguides.nrao.edu/index.php/VLA_CASA_Flagging</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>split</code>, <code>gaincal</code>, <code>applycal</code>, <code>bandpass</code>, <code>flagdata</code>, <code>flagmanager</code>, <code>hanningsmooth</code>, <code>plotcal</code></td>
+<td><code>SNR_G55_10s.tar.gz</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/imaging</code></td>
+<td>VLA CASA Imaging</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_CASA_Imaging">https://casaguides.nrao.edu/index.php/VLA_CASA_Imaging</a></td>
+<td><code>tclean</code>, legacy <code>clean</code>, <code>imhead</code>, <code>immath</code>, image tool <code>ia.open</code>, <code>rmtables</code></td>
+<td><code>SNR_G55_10s.calib.tar.gz</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/selfcal</code></td>
+<td>VLA Self-calibration Tutorial</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_Self-calibration_Tutorial">https://casaguides.nrao.edu/index.php/VLA_Self-calibration_Tutorial</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>split</code>, <code>gaincal</code>, <code>applycal</code>, <code>plotcal</code></td>
+<td><code>17B-197...tar</code>, <code>VLASelf-calibrationTutorial.tar</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/data-combination</code></td>
+<td>VLA Data Combination - W49A</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_Data_Combination">https://casaguides.nrao.edu/index.php/VLA_Data_Combination</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>concat</code>, <code>statwt</code></td>
+<td><code>VLA-combination-W49A.tar.gz</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/source-subtraction</code></td>
+<td>Source Subtraction in VLA data</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_Source_Subtraction_Topical_Guide">https://casaguides.nrao.edu/index.php/VLA_Source_Subtraction_Topical_Guide</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>tclean</code>, <code>imhead</code>, <code>imfit</code>, <code>ft</code>, component-list <code>cl.addcomponent</code></td>
+<td><code>VLA-combination-SgrA-files.tar.gz</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+<tr>
+<td><code>vla/bandpass-slope</code></td>
+<td>Correcting for a Spectral Index in Bandpass Calibration</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_CASA_Bandpass_Slope">https://casaguides.nrao.edu/index.php/VLA_CASA_Bandpass_Slope</a></td>
+<td><code>listobs</code>, <code>plotms</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code>, <code>setjy</code></td>
+<td><code>G192-BP.ms.tar.gz</code></td>
+<td>Wave 6 breadth</td>
+</tr>
+</tbody>
+</table>
+<h2 id="simulation-pages">Simulation Pages<a class="headerlink" href="#simulation-pages" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Registry area</th>
+<th>Guide</th>
+<th style="text-align: right;">CASA version</th>
+<th>URL</th>
+<th>Extracted CASA surface</th>
+<th>Input artifacts / data source</th>
+<th>Classification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>simulation/vla-ppdisk</code></td>
+<td>Protoplanetary Disk Simulation - VLA</td>
+<td style="text-align: right;">6.7.2</td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=Protoplanetary_Disk_Simulation_-_VLA-CASA6.7.2">https://casaguides.nrao.edu/index.php?title=Protoplanetary_Disk_Simulation_-_VLA-CASA6.7.2</a></td>
+<td><code>importfits</code>, <code>immath</code>, <code>simobserve</code>, <code>simanalyze</code>, <code>plotms</code>, <code>tclean</code>, <code>imhead</code>, <code>imstat</code></td>
+<td><code>ppdisk672_GHz_50pc.fits</code></td>
+<td>Wave 5 spine</td>
+</tr>
+<tr>
+<td><code>simulation/ppdisk-alma-former</code></td>
+<td>Protoplanetary Disk Simulation</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Protoplanetary_Disk_Simulation_CASA_6.6.6">https://casaguides.nrao.edu/index.php/Protoplanetary_Disk_Simulation_CASA_6.6.6</a></td>
+<td><code>simobserve</code>, <code>simanalyze</code>, <code>imhead</code>, image tool <code>ia.open</code></td>
+<td><code>ppdisk672_GHz_50pc.fits</code> under ALMA sim inputs</td>
+<td>breadth/deferred</td>
+</tr>
+<tr>
+<td><code>simulation/simalma</code></td>
+<td>Simalma</td>
+<td style="text-align: right;">6.6.6</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Simalma">https://casaguides.nrao.edu/index.php/Simalma</a></td>
+<td><code>simalma</code> task surface</td>
+<td><code>https://bulk.cv.nrao.edu/almadata/public/casaguides/SimALMA</code></td>
+<td>Wave 6 breadth candidate</td>
+</tr>
+<tr>
+<td><code>simulation/aca</code></td>
+<td>ACA Simulation</td>
+<td style="text-align: right;">6.5.4</td>
+<td><a href="https://casaguides.nrao.edu/index.php/ACA_Simulation">https://casaguides.nrao.edu/index.php/ACA_Simulation</a></td>
+<td><code>simobserve</code>, <code>simanalyze</code></td>
+<td>no direct data artifact found in API scan</td>
+<td>breadth/deferred</td>
+</tr>
+<tr>
+<td><code>simulation/antenna-configs</code></td>
+<td>Antenna Configurations Models in CASA</td>
+<td style="text-align: right;">6.6.x</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Antenna_Configurations_Models_in_CASA">https://casaguides.nrao.edu/index.php/Antenna_Configurations_Models_in_CASA</a></td>
+<td>antenna-configuration reference</td>
+<td>ALMA simulator/configuration references</td>
+<td>support reference</td>
+</tr>
+<tr>
+<td><code>simulation/corruptions</code></td>
+<td>Corrupting Simulated Data (Simulator Tool)</td>
+<td style="text-align: right;">archived/tool reference</td>
+<td><a href="https://casaguides.nrao.edu/index.php/Corrupting_Simulated_Data_(Simulator_Tool)">https://casaguides.nrao.edu/index.php/Corrupting_Simulated_Data_(Simulator_Tool)</a></td>
+<td>simulator tool <code>sm.open</code>, <code>sm.setnoise</code>, <code>sm.setgain</code>, <code>sm.corrupt</code></td>
+<td>none identified</td>
+<td>Wave 5/6 corruption reference</td>
+</tr>
+</tbody>
+</table>
+<h2 id="expected-output-products">Expected Output Products<a class="headerlink" href="#expected-output-products" title="Permanent link">&para;</a></h2>
+<p>These product families are the inventory target for tutorial parity. Later
+implementation waves should turn each row into exact product manifests and
+CASA/casacore comparison artifacts for the specific dataset version used.</p>
+<h3 id="alma">ALMA<a class="headerlink" href="#alma" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Registry area</th>
+<th>Expected output products</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alma/getting-started</code></td>
+<td>cleanup behavior only; no durable science product</td>
+</tr>
+<tr>
+<td><code>alma/first-look/index</code></td>
+<td>index only; no durable science product</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/imaging</code></td>
+<td>continuum <code>.image</code>, <code>.model</code>, <code>.residual</code>, <code>.pb</code>, <code>.psf</code>, <code>.sumwt</code>, selected split MS products</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/selfcal</code></td>
+<td>gain calibration tables, corrected/selfcal split MS products, selfcal continuum image products</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/line-imaging</code></td>
+<td>continuum-subtracted MS, spectral cube <code>.image</code> products, masks/residual/model sidecars</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/image-analysis</code></td>
+<td>image header/stat records, moment maps, FITS exports</td>
+</tr>
+<tr>
+<td><code>alma/antennae/band7</code></td>
+<td>continuum/line image products, continuum-subtracted MS products, moments, FITS exports, selfcal caltables</td>
+</tr>
+<tr>
+<td><code>alma/iras16293/band9</code></td>
+<td>split/flagged MS products, calibration tables, continuum and line cubes, moment maps, FITS exports</td>
+</tr>
+<tr>
+<td><code>alma/m100/band3-combine</code></td>
+<td>combined image cubes, regridded images, subimages, moment maps, FITS exports</td>
+</tr>
+<tr>
+<td><code>alma/3c286/band6-pol</code></td>
+<td>polarization image products, statistics, FITS exports, fit records, calibration tables</td>
+</tr>
+<tr>
+<td><code>alma/sunspot/band6-feathering</code></td>
+<td>regridded/subimage products and FITS exports</td>
+</tr>
+<tr>
+<td><code>alma/renormalization</code></td>
+<td>corrected calibration/MS products from renormalized apply workflow</td>
+</tr>
+<tr>
+<td><code>alma/automasking</code></td>
+<td>automasked continuum images and mask products</td>
+</tr>
+<tr>
+<td><code>alma/data-weights</code></td>
+<td>concatenated/reweighted MS products and comparison plots</td>
+</tr>
+<tr>
+<td><code>alma/na-imaging-template</code></td>
+<td>mapping-only scripts/templates; no direct parity product</td>
+</tr>
+<tr>
+<td><code>alma/pipeline-reprocessing</code></td>
+<td>external pipeline products; interop target only</td>
+</tr>
+<tr>
+<td><code>alma/pipeline-known-issues</code></td>
+<td>reference-only; no parity product</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vla">VLA<a class="headerlink" href="#vla" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Registry area</th>
+<th>Expected output products</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vla/irc10216</code></td>
+<td>prior-cal/gain/bandpass/fluxscale tables, corrected and transformed MS products, continuum-subtracted MS, spectral cube images, moment maps, PV image, statistics</td>
+</tr>
+<tr>
+<td><code>vla/3c391</code></td>
+<td>calibrated/split MS products, continuum mosaic images, statistics, selfcal/calibration tables</td>
+</tr>
+<tr>
+<td><code>vla/3c75-pol</code></td>
+<td>calibrated polarization MS products, Stokes image products, subimages/math outputs, statistics</td>
+</tr>
+<tr>
+<td><code>vla/3c129-pband</code></td>
+<td>smoothed/flagged/calibrated P-band MS products, calibration tables, continuum images</td>
+</tr>
+<tr>
+<td><code>vla/mg0414-pband-line</code></td>
+<td>smoothed/transformed/calibrated MS products, line cube images, calibration tables</td>
+</tr>
+<tr>
+<td><code>vla/hi21-leda44055</code></td>
+<td>calibrated MS products, image-domain continuum subtraction products, HI cube and moment products</td>
+</tr>
+<tr>
+<td><code>vla/flagging</code></td>
+<td>flag-version products, flagged MS state, diagnostic plot/calibration products</td>
+</tr>
+<tr>
+<td><code>vla/imaging</code></td>
+<td>legacy <code>clean</code> comparison products where referenced, <code>tclean</code> image sidecars, header/math products</td>
+</tr>
+<tr>
+<td><code>vla/selfcal</code></td>
+<td>selfcal gain tables, corrected split MS products, successive image products</td>
+</tr>
+<tr>
+<td><code>vla/data-combination</code></td>
+<td>concatenated/reweighted MS products and combined image products</td>
+</tr>
+<tr>
+<td><code>vla/source-subtraction</code></td>
+<td>component-list/model products, predicted/model MS state, subtracted image products, fit records</td>
+</tr>
+<tr>
+<td><code>vla/bandpass-slope</code></td>
+<td>bandpass/gain/fluxscale calibration tables and diagnostic plot products</td>
+</tr>
+</tbody>
+</table>
+<h3 id="simulation">Simulation<a class="headerlink" href="#simulation" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Registry area</th>
+<th>Expected output products</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>simulation/vla-ppdisk</code></td>
+<td>imported/scaled model image, synthetic MS, simulation report products, dirty/clean image products, image statistics</td>
+</tr>
+<tr>
+<td><code>simulation/ppdisk-alma-former</code></td>
+<td>synthetic ALMA MS and image-analysis products</td>
+</tr>
+<tr>
+<td><code>simulation/simalma</code></td>
+<td>ALMA/ACA synthetic MS products and combined images</td>
+</tr>
+<tr>
+<td><code>simulation/aca</code></td>
+<td>ACA synthetic MS products and analyzed images</td>
+</tr>
+<tr>
+<td><code>simulation/antenna-configs</code></td>
+<td>support reference only; no direct parity product</td>
+</tr>
+<tr>
+<td><code>simulation/corruptions</code></td>
+<td>corrupted synthetic MS variants and seeded comparison products</td>
+</tr>
+</tbody>
+</table>
+<h2 id="first-dataset-registry-candidates">First Dataset Registry Candidates<a class="headerlink" href="#first-dataset-registry-candidates" title="Permanent link">&para;</a></h2>
+<p>Size values come from HTTP <code>Content-Length</code> when the source server advertises
+one. Checksum is <code>not advertised</code> unless the source page/server exposes one;
+the registry should compute and store SHA-256 at mirror time without making this
+inventory issue download every artifact.</p>
+<table>
+<thead>
+<tr>
+<th>Proposed key</th>
+<th>Source page</th>
+<th>Source artifact URL</th>
+<th>Expected filename</th>
+<th style="text-align: right;">Advertised size</th>
+<th>Checksum status</th>
+<th>Tier</th>
+<th>Local path policy</th>
+<th>First owning wave</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alma/first-look/twhya/calibrated-ms</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Imaging</a></td>
+<td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar</a></td>
+<td><code>twhya_calibrated.ms.tar</code></td>
+<td style="text-align: right;">not advertised</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>tutorial-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar</code></td>
+<td>#140</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/uncalibrated-ms</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Imaging</a></td>
+<td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar</a></td>
+<td><code>twhya_uncalibrated.ms.tar</code></td>
+<td style="text-align: right;">not advertised</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>slow-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_uncalibrated.ms.tar</code></td>
+<td>#140</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/calibrated-unflagged-ms</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Imaging</a></td>
+<td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar</a></td>
+<td><code>twhya_calibrated_unflagged.ms.tar</code></td>
+<td style="text-align: right;">not advertised</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>tutorial-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated_unflagged.ms.tar</code></td>
+<td>#140</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/selfcal-ms</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging</a></td>
+<td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz</a></td>
+<td><code>twhya_selfcal.ms.tgz</code></td>
+<td style="text-align: right;">not advertised</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>tutorial-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_selfcal.ms.tgz</code></td>
+<td>#140</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/continuum-image</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis">https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis</a></td>
+<td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image</a></td>
+<td><code>twhya_cont.image</code></td>
+<td style="text-align: right;">not advertised</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>tutorial-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_cont.image</code></td>
+<td>#140</td>
+</tr>
+<tr>
+<td><code>alma/first-look/twhya/n2hp-image</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis">https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis</a></td>
+<td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image</a></td>
+<td><code>twhya_n2hp.image</code></td>
+<td style="text-align: right;">not advertised</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>tutorial-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_n2hp.image</code></td>
+<td>#140</td>
+</tr>
+<tr>
+<td><code>vla/irc10216/ms-10s</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216">https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216</a></td>
+<td><a href="http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz">http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz</a></td>
+<td><code>TDRW0001_10s.ms.tgz</code></td>
+<td style="text-align: right;">1068298240 bytes</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>slow-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/vla/irc10216/TDRW0001_10s.ms.tgz</code></td>
+<td>#141</td>
+</tr>
+<tr>
+<td><code>vla/irc10216/fors1-fits</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216">https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216</a></td>
+<td><a href="http://casa.nrao.edu/Data/EVLA/IRC10216/irc_fors1_dec_header.fits">http://casa.nrao.edu/Data/EVLA/IRC10216/irc_fors1_dec_header.fits</a></td>
+<td><code>irc_fors1_dec_header.fits</code></td>
+<td style="text-align: right;">16784640 bytes</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>tutorial-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/vla/irc10216/irc_fors1_dec_header.fits</code></td>
+<td>#141</td>
+</tr>
+<tr>
+<td><code>simulation/vla-ppdisk/model-fits</code></td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=Protoplanetary_Disk_Simulation_-_VLA-CASA6.7.2">https://casaguides.nrao.edu/index.php?title=Protoplanetary_Disk_Simulation_-_VLA-CASA6.7.2</a></td>
+<td><a href="https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits">https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits</a></td>
+<td><code>ppdisk672_GHz_50pc.fits</code></td>
+<td style="text-align: right;">276480 bytes</td>
+<td>not advertised; compute SHA-256 after mirror</td>
+<td>tutorial-parity</td>
+<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits</code></td>
+<td>#142</td>
+</tr>
+</tbody>
+</table>
+<h2 id="registry-fields-for-97">Registry Fields For #97<a class="headerlink" href="#registry-fields-for-97" title="Permanent link">&para;</a></h2>
+<p>Each future registry entry should include:</p>
+<ul>
+<li>logical key;</li>
+<li>source page URL and source artifact URL;</li>
+<li>expected filename and unpacked root name;</li>
+<li>declared CASA Guide version;</li>
+<li>checksum and size once mirrored;</li>
+<li>dataset tier (<code>default-fixture</code>, <code>tutorial-parity</code>, <code>slow-parity</code>,
+  <code>performance</code>);</li>
+<li>local path under <code>CASA_RS_TESTDATA_ROOT</code>;</li>
+<li>optional local staging root for removable/NAS-backed mirrors;</li>
+<li>first owning wave and downstream dependent waves.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
