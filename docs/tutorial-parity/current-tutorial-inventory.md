@@ -12,8 +12,9 @@ first tutorial-parity waves. It does not download datasets or implement the
 dataset registry.
 
 Registry keys are proposed stable logical keys for the later #97 resolver and
-manifest work. Actual checksums and mirrored local paths should be populated
-when datasets are downloaded into the shared tutorial dataset mirror.
+manifest work. Local path policies are expressed relative to
+`CASA_RS_TESTDATA_ROOT`; actual local paths should be populated by the dataset
+registry when artifacts are mirrored into shared tutorial storage.
 
 ## Inventory Policy
 
@@ -75,19 +76,80 @@ when datasets are downloaded into the shared tutorial dataset mirror.
 | `simulation/antenna-configs` | Antenna Configurations Models in CASA | 6.6.x | <https://casaguides.nrao.edu/index.php/Antenna_Configurations_Models_in_CASA> | antenna-configuration reference | ALMA simulator/configuration references | support reference |
 | `simulation/corruptions` | Corrupting Simulated Data (Simulator Tool) | archived/tool reference | <https://casaguides.nrao.edu/index.php/Corrupting_Simulated_Data_(Simulator_Tool)> | simulator tool `sm.open`, `sm.setnoise`, `sm.setgain`, `sm.corrupt` | none identified | Wave 5/6 corruption reference |
 
+## Expected Output Products
+
+These product families are the inventory target for tutorial parity. Later
+implementation waves should turn each row into exact product manifests and
+CASA/casacore comparison artifacts for the specific dataset version used.
+
+### ALMA
+
+| Registry area | Expected output products |
+|---|---|
+| `alma/getting-started` | cleanup behavior only; no durable science product |
+| `alma/first-look/index` | index only; no durable science product |
+| `alma/first-look/twhya/imaging` | continuum `.image`, `.model`, `.residual`, `.pb`, `.psf`, `.sumwt`, selected split MS products |
+| `alma/first-look/twhya/selfcal` | gain calibration tables, corrected/selfcal split MS products, selfcal continuum image products |
+| `alma/first-look/twhya/line-imaging` | continuum-subtracted MS, spectral cube `.image` products, masks/residual/model sidecars |
+| `alma/first-look/twhya/image-analysis` | image header/stat records, moment maps, FITS exports |
+| `alma/antennae/band7` | continuum/line image products, continuum-subtracted MS products, moments, FITS exports, selfcal caltables |
+| `alma/iras16293/band9` | split/flagged MS products, calibration tables, continuum and line cubes, moment maps, FITS exports |
+| `alma/m100/band3-combine` | combined image cubes, regridded images, subimages, moment maps, FITS exports |
+| `alma/3c286/band6-pol` | polarization image products, statistics, FITS exports, fit records, calibration tables |
+| `alma/sunspot/band6-feathering` | regridded/subimage products and FITS exports |
+| `alma/renormalization` | corrected calibration/MS products from renormalized apply workflow |
+| `alma/automasking` | automasked continuum images and mask products |
+| `alma/data-weights` | concatenated/reweighted MS products and comparison plots |
+| `alma/na-imaging-template` | mapping-only scripts/templates; no direct parity product |
+| `alma/pipeline-reprocessing` | external pipeline products; interop target only |
+| `alma/pipeline-known-issues` | reference-only; no parity product |
+
+### VLA
+
+| Registry area | Expected output products |
+|---|---|
+| `vla/irc10216` | prior-cal/gain/bandpass/fluxscale tables, corrected and transformed MS products, continuum-subtracted MS, spectral cube images, moment maps, PV image, statistics |
+| `vla/3c391` | calibrated/split MS products, continuum mosaic images, statistics, selfcal/calibration tables |
+| `vla/3c75-pol` | calibrated polarization MS products, Stokes image products, subimages/math outputs, statistics |
+| `vla/3c129-pband` | smoothed/flagged/calibrated P-band MS products, calibration tables, continuum images |
+| `vla/mg0414-pband-line` | smoothed/transformed/calibrated MS products, line cube images, calibration tables |
+| `vla/hi21-leda44055` | calibrated MS products, image-domain continuum subtraction products, HI cube and moment products |
+| `vla/flagging` | flag-version products, flagged MS state, diagnostic plot/calibration products |
+| `vla/imaging` | legacy `clean` comparison products where referenced, `tclean` image sidecars, header/math products |
+| `vla/selfcal` | selfcal gain tables, corrected split MS products, successive image products |
+| `vla/data-combination` | concatenated/reweighted MS products and combined image products |
+| `vla/source-subtraction` | component-list/model products, predicted/model MS state, subtracted image products, fit records |
+| `vla/bandpass-slope` | bandpass/gain/fluxscale calibration tables and diagnostic plot products |
+
+### Simulation
+
+| Registry area | Expected output products |
+|---|---|
+| `simulation/vla-ppdisk` | imported/scaled model image, synthetic MS, simulation report products, dirty/clean image products, image statistics |
+| `simulation/ppdisk-alma-former` | synthetic ALMA MS and image-analysis products |
+| `simulation/simalma` | ALMA/ACA synthetic MS products and combined images |
+| `simulation/aca` | ACA synthetic MS products and analyzed images |
+| `simulation/antenna-configs` | support reference only; no direct parity product |
+| `simulation/corruptions` | corrupted synthetic MS variants and seeded comparison products |
+
 ## First Dataset Registry Candidates
 
-| Proposed key | Source URL | Expected filename | Tier | First owning wave |
-|---|---|---|---|---|
-| `alma/first-look/twhya/calibrated-ms` | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar> | `twhya_calibrated.ms.tar` | tutorial-parity | #140 |
-| `alma/first-look/twhya/uncalibrated-ms` | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar> | `twhya_uncalibrated.ms.tar` | tutorial-parity | #140 |
-| `alma/first-look/twhya/calibrated-unflagged-ms` | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar> | `twhya_calibrated_unflagged.ms.tar` | tutorial-parity | #140 |
-| `alma/first-look/twhya/selfcal-ms` | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz> | `twhya_selfcal.ms.tgz` | tutorial-parity | #140 |
-| `alma/first-look/twhya/continuum-image` | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image> | `twhya_cont.image` | tutorial-parity | #140 |
-| `alma/first-look/twhya/n2hp-image` | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image> | `twhya_n2hp.image` | tutorial-parity | #140 |
-| `vla/irc10216/ms-10s` | <http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz> | `TDRW0001_10s.ms.tgz` | tutorial-parity | #141 |
-| `vla/irc10216/fors1-fits` | <http://casa.nrao.edu/Data/EVLA/IRC10216/irc_fors1_dec_header.fits> | `irc_fors1_dec_header.fits` | tutorial-parity | #141 |
-| `simulation/vla-ppdisk/model-fits` | <https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits> | `ppdisk672_GHz_50pc.fits` | tutorial-parity | #142 |
+Size values come from HTTP `Content-Length` when the source server advertises
+one. Checksum is `not advertised` unless the source page/server exposes one;
+the registry should compute and store SHA-256 at mirror time without making this
+inventory issue download every artifact.
+
+| Proposed key | Source page | Source artifact URL | Expected filename | Advertised size | Checksum status | Tier | Local path policy | First owning wave |
+|---|---|---|---|---:|---|---|---|---|
+| `alma/first-look/twhya/calibrated-ms` | <https://casaguides.nrao.edu/index.php/First_Look_at_Imaging> | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar> | `twhya_calibrated.ms.tar` | not advertised | not advertised; compute SHA-256 after mirror | tutorial-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar` | #140 |
+| `alma/first-look/twhya/uncalibrated-ms` | <https://casaguides.nrao.edu/index.php/First_Look_at_Imaging> | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar> | `twhya_uncalibrated.ms.tar` | not advertised | not advertised; compute SHA-256 after mirror | slow-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_uncalibrated.ms.tar` | #140 |
+| `alma/first-look/twhya/calibrated-unflagged-ms` | <https://casaguides.nrao.edu/index.php/First_Look_at_Imaging> | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar> | `twhya_calibrated_unflagged.ms.tar` | not advertised | not advertised; compute SHA-256 after mirror | tutorial-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated_unflagged.ms.tar` | #140 |
+| `alma/first-look/twhya/selfcal-ms` | <https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging> | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz> | `twhya_selfcal.ms.tgz` | not advertised | not advertised; compute SHA-256 after mirror | tutorial-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_selfcal.ms.tgz` | #140 |
+| `alma/first-look/twhya/continuum-image` | <https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis> | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image> | `twhya_cont.image` | not advertised | not advertised; compute SHA-256 after mirror | tutorial-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_cont.image` | #140 |
+| `alma/first-look/twhya/n2hp-image` | <https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis> | <https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image> | `twhya_n2hp.image` | not advertised | not advertised; compute SHA-256 after mirror | tutorial-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_n2hp.image` | #140 |
+| `vla/irc10216/ms-10s` | <https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216> | <http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz> | `TDRW0001_10s.ms.tgz` | 1068298240 bytes | not advertised; compute SHA-256 after mirror | slow-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/vla/irc10216/TDRW0001_10s.ms.tgz` | #141 |
+| `vla/irc10216/fors1-fits` | <https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216> | <http://casa.nrao.edu/Data/EVLA/IRC10216/irc_fors1_dec_header.fits> | `irc_fors1_dec_header.fits` | 16784640 bytes | not advertised; compute SHA-256 after mirror | tutorial-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/vla/irc10216/irc_fors1_dec_header.fits` | #141 |
+| `simulation/vla-ppdisk/model-fits` | <https://casaguides.nrao.edu/index.php?title=Protoplanetary_Disk_Simulation_-_VLA-CASA6.7.2> | <https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits> | `ppdisk672_GHz_50pc.fits` | 276480 bytes | not advertised; compute SHA-256 after mirror | tutorial-parity | `${CASA_RS_TESTDATA_ROOT}/tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits` | #142 |
 
 ## Registry Fields For #97
 
@@ -103,4 +165,3 @@ Each future registry entry should include:
 - local path under `CASA_RS_TESTDATA_ROOT`;
 - optional local staging root for removable/NAS-backed mirrors;
 - first owning wave and downstream dependent waves.
-
