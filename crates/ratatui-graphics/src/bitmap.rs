@@ -91,6 +91,17 @@ mod tests {
     }
 
     #[test]
+    fn backend_and_dynamic_image_use_the_owned_rgb_buffer() {
+        let mut bitmap = PlottersBitmap::new(2, 2).unwrap();
+        {
+            let _backend = bitmap.backend();
+        }
+        let image = bitmap.into_dynamic_image().unwrap();
+        assert_eq!(image.width(), 2);
+        assert_eq!(image.height(), 2);
+    }
+
+    #[test]
     fn rejects_buffer_size_overflow() {
         let err = PlottersBitmap::new(u32::MAX, u32::MAX).unwrap_err();
         assert!(matches!(

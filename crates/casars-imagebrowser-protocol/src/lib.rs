@@ -780,6 +780,13 @@ mod tests {
                 .unwrap()
                 .contains("ImageBrowserResponseEnvelope")
         );
+        let schema_bundle = schema_bundle_json(serde_json::json!({
+            "schema_version": 1,
+            "command_id": "imexplore",
+        }))
+        .unwrap();
+        assert!(schema_bundle.contains("casa_imagebrowser_session"));
+        assert!(schema_bundle.contains("jsonl_stdio"));
     }
 
     #[test]
