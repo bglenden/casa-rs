@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::{
-    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode, command_schema,
-    run_from_config,
+    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SaveModelMode, SpectralMode,
+    command_schema, run_from_config,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -215,6 +215,35 @@ impl From<ImagerSpectralMode> for SpectralMode {
             ImagerSpectralMode::Mfs => Self::Mfs,
             ImagerSpectralMode::Cube => Self::Cube,
             ImagerSpectralMode::Cubedata => Self::Cubedata,
+        }
+    }
+}
+
+/// CASA-style model persistence after imaging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagerSaveModel {
+    /// Do not write a visibility model back to the MeasurementSet.
+    #[default]
+    None,
+    /// Predict the final MFS model image into MAIN.MODEL_DATA.
+    ModelColumn,
+}
+
+impl From<SaveModelMode> for ImagerSaveModel {
+    fn from(value: SaveModelMode) -> Self {
+        match value {
+            SaveModelMode::None => Self::None,
+            SaveModelMode::ModelColumn => Self::ModelColumn,
+        }
+    }
+}
+
+impl From<ImagerSaveModel> for SaveModelMode {
+    fn from(value: ImagerSaveModel) -> Self {
+        match value {
+            ImagerSaveModel::None => Self::None,
+            ImagerSaveModel::ModelColumn => Self::ModelColumn,
         }
     }
 }
@@ -623,6 +652,9 @@ pub struct ImagerRunTaskRequest {
     /// Optional explicit data-column override.
     #[serde(default)]
     pub data_column: Option<String>,
+    /// Model persistence mode.
+    #[serde(default)]
+    pub save_model: ImagerSaveModel,
     /// Optional explicit scalar plane or raw correlation.
     #[serde(default)]
     pub correlation: Option<ImagerPlaneSelection>,
@@ -722,6 +754,7 @@ impl ImagerRunTaskRequest {
             channel_start: config.channel_start,
             channel_count: config.channel_count,
             data_column: config.datacolumn.clone(),
+            save_model: config.save_model.into(),
             correlation: config
                 .correlation
                 .as_deref()
@@ -797,6 +830,7 @@ impl ImagerRunTaskRequest {
             channel_start: self.channel_start,
             channel_count: self.channel_count,
             datacolumn: self.data_column.clone(),
+            save_model: self.save_model.into(),
             correlation: self
                 .correlation
                 .map(|value| value.as_cli_text().to_string()),
@@ -1283,10 +1317,10 @@ mod tests {
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
         ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
         ImagerDeconvolver, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunTaskRequest,
-        ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper,
-        ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle,
+        ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
     };
-    use crate::{CliConfig, SpectralMode};
+    use crate::{CliConfig, SaveModelMode, SpectralMode};
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
@@ -1328,6 +1362,8 @@ mod tests {
             OsString::from("5:10~19"),
             OsString::from("--datacolumn"),
             OsString::from("CORRECTED_DATA"),
+            OsString::from("--savemodel"),
+            OsString::from("modelcolumn"),
             OsString::from("--corr"),
             OsString::from("XX"),
             OsString::from("--specmode"),
@@ -1400,6 +1436,7 @@ mod tests {
         assert_eq!(restored.phasecenter_field, Some(2));
         assert_eq!(restored.spw_selector.as_deref(), Some("5:10~19"));
         assert_eq!(restored.datacolumn.as_deref(), Some("CORRECTED_DATA"));
+        assert_eq!(restored.save_model, SaveModelMode::ModelColumn);
         assert_eq!(restored.correlation.as_deref(), Some("XX"));
         assert_eq!(restored.spectral_mode, SpectralMode::Cube);
         assert_eq!(restored.weighting, WeightingMode::Briggs { robust: -1.0 });
@@ -1428,6 +1465,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
@@ -1478,6 +1516,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
@@ -1695,6 +1734,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: None,
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
@@ -1845,6 +1885,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: Some(ImagerPlaneSelection::CorrXX),
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),

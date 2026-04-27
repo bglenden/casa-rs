@@ -93,6 +93,7 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         field_ids=[5],
         spw="0:10~20",
         data_column="corrected_data",
+        save_model="modelcolumn",
         correlation="I",
         weighting="briggs",
         robust=0.25,
@@ -112,6 +113,7 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["field_ids"] == [5]
     assert request["spw_selector"] == "0:10~20"
     assert request["data_column"] == "corrected_data"
+    assert request["save_model"] == "modelcolumn"
     assert request["correlation"] == "I"
     assert request["spectral_mode"] == "mfs"
     assert request["weighting"] == {"kind": "briggs", "robust": 0.25}

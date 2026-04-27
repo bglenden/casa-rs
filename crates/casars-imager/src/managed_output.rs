@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::task_contract::{
     ImagerArtifactKind, ImagerDeconvolver, ImagerRestoringBeamMode, ImagerRunTaskResult,
-    ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+    ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
 };
 use crate::{
     ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode,
@@ -43,6 +43,8 @@ pub struct ManagedImagingRequest {
     pub w_term_mode: String,
     /// Optional data-column override.
     pub data_column: Option<String>,
+    /// Requested model persistence mode.
+    pub save_model: String,
     /// Image size in pixels.
     pub imsize: usize,
     /// Cell size in arcseconds.
@@ -141,6 +143,11 @@ impl ManagedImagingOutput {
                 deconvolver: canonical_deconvolver_name(config.deconvolver).to_string(),
                 w_term_mode: canonical_w_term_mode_name(config.w_term_mode).to_string(),
                 data_column: config.datacolumn.clone(),
+                save_model: match config.save_model {
+                    crate::SaveModelMode::None => "none",
+                    crate::SaveModelMode::ModelColumn => "modelcolumn",
+                }
+                .to_string(),
                 imsize: config.imsize,
                 cell_arcsec: config.cell_arcsec,
                 dirty_only: config.dirty_only,
@@ -201,6 +208,11 @@ impl ManagedImagingOutput {
                     ImagerWTermMode::Wproject => "wproject".to_string(),
                 },
                 data_column: request.data_column.clone(),
+                save_model: match request.save_model {
+                    ImagerSaveModel::None => "none",
+                    ImagerSaveModel::ModelColumn => "modelcolumn",
+                }
+                .to_string(),
                 imsize: request.image_size,
                 cell_arcsec: request.cell_arcsec,
                 dirty_only: request.dirty_only,
@@ -512,11 +524,11 @@ mod tests {
     use crate::task_contract::{
         ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
         ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
-        ImagerRunTaskResult, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+        ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
     };
     use crate::{
         ChannelRunSummary, CliConfig, CubeAxisConfig, FrontendStageTimings, RunSummary,
-        SpectralMode,
+        SaveModelMode, SpectralMode,
     };
     use casa_imaging::{
         CleanStopReason, Deconvolver, ImagingStageTimings, RestoringBeamMode, WTermMode,
@@ -542,6 +554,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: Some("CORRECTED_DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -697,6 +710,7 @@ mod tests {
                 channel_start: Some(4),
                 channel_count: Some(8),
                 data_column: Some("MODEL_DATA".to_string()),
+                save_model: ImagerSaveModel::ModelColumn,
                 correlation: Some(ImagerPlaneSelection::CorrXX),
                 spectral_mode: ImagerSpectralMode::Cube,
                 cube_axis: Default::default(),
@@ -784,6 +798,7 @@ mod tests {
         assert_eq!(output.request.weighting, "briggs:-0.25");
         assert_eq!(output.request.deconvolver, "clark");
         assert_eq!(output.request.w_term_mode, "wproject");
+        assert_eq!(output.request.save_model, "modelcolumn");
         assert_eq!(output.request.restoring_beam_mode, "per_plane");
         assert_eq!(output.request.output_channels, 1);
         assert_eq!(output.request.correlation.as_deref(), Some("XX"));

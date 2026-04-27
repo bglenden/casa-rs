@@ -290,6 +290,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         channel_start: options.channel_start,
         channel_count: options.channel_count,
         datacolumn: options.datacolumn.clone(),
+        save_model: casars_imager::SaveModelMode::None,
         correlation: options.correlation.clone(),
         spectral_mode: options.spectral_mode,
         cube_axis: CubeAxisConfig {

@@ -21,6 +21,7 @@ Deconvolver: TypeAlias = Literal["hogbom", "mtmfs", "clark", "multiscale"]
 RestoringBeamMode: TypeAlias = Literal["per_plane", "common"]
 WTermMode: TypeAlias = Literal["none", "direct", "wproject"]
 PlaneSelection: TypeAlias = Literal["I", "Q", "U", "V", "XX", "YY", "RR", "LL"]
+SaveModel: TypeAlias = Literal["none", "modelcolumn"]
 
 
 def configure(*, binary: StrPath | None) -> None:
@@ -61,6 +62,7 @@ def mfs(
     channel_start: int | None = None,
     channel_count: int | None = None,
     data_column: str | None = None,
+    save_model: SaveModel = "none",
     correlation: PlaneSelection | None = None,
     weighting: str = "natural",
     robust: float = 0.5,
@@ -98,6 +100,7 @@ def mfs(
         "channel_start": channel_start,
         "channel_count": channel_count,
         "data_column": data_column,
+        "save_model": save_model,
         "correlation": correlation,
         "spectral_mode": "mfs",
         "weighting": _weighting_request(weighting, robust),

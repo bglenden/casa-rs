@@ -91,9 +91,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "savemodel",
+                label: "Save Model",
+                order: 5,
+                flags: &["--savemodel"],
+                metavar: "MODE",
+                value_kind: UiValueKind::Choice,
+                default: Some("none"),
+                choices: &["none", "modelcolumn"],
+                help: "Write the predicted final model into the MeasurementSet",
+                group: "Products",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "field",
                 label: "Field IDs",
-                order: 5,
+                order: 6,
                 flags: &["--field"],
                 metavar: "IDS",
                 value_kind: UiValueKind::String,
@@ -107,7 +121,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "phasecenter_field",
                 label: "Phasecenter Field",
-                order: 6,
+                order: 7,
                 flags: &["--phasecenter-field"],
                 metavar: "ID",
                 value_kind: UiValueKind::String,
@@ -121,7 +135,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "phasecenter",
                 label: "Explicit Phasecenter",
-                order: 7,
+                order: 8,
                 flags: &["--phasecenter"],
                 metavar: "DIR",
                 value_kind: UiValueKind::String,
@@ -135,7 +149,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "ddid",
                 label: "DDID",
-                order: 8,
+                order: 9,
                 flags: &["--ddid"],
                 metavar: "ID",
                 value_kind: UiValueKind::String,
@@ -803,6 +817,17 @@ mod tests {
             panic!("usepointing should use a toggle parser");
         };
         assert!(true_flags.contains(&"--usepointing".to_string()));
+
+        let savemodel = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "savemodel")
+            .expect("savemodel argument");
+        assert_eq!(savemodel.default.as_deref(), Some("none"));
+        let UiArgumentParser::Option { choices, .. } = &savemodel.parser else {
+            panic!("savemodel should use an option parser");
+        };
+        assert!(choices.contains(&"modelcolumn".to_string()));
 
         let polarization = schema
             .arguments

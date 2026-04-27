@@ -7,6 +7,7 @@ mod oracle;
 mod schema;
 mod task_contract;
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::ffi::OsString;
@@ -45,6 +46,7 @@ use casa_ms::{
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
+use casa_tables::ColumnSchema;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
@@ -76,7 +78,7 @@ pub use task_contract::{
     ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerPlaneSelection,
     ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
-    ImagerRunTaskResult, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
+    ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
     ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
 };
 
@@ -99,6 +101,15 @@ pub enum SpectralMode {
     /// This keeps the cube spectral axis in the native data frame and skips
     /// runtime frequency conversion.
     Cubedata,
+}
+
+/// CASA-style model persistence after imaging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveModelMode {
+    /// Do not write a visibility model back to the MeasurementSet.
+    None,
+    /// Predict the final MFS model image into MAIN.MODEL_DATA.
+    ModelColumn,
 }
 
 impl SpectralMode {
@@ -1046,9 +1057,10 @@ pub fn write_prepare_plane_oracle_bundle_from_config_with_overrides(
 
 /// Execute the imager using an already-parsed configuration.
 pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    validate_save_model_request(config)?;
     let total_start = Instant::now();
     let stage_start = Instant::now();
-    let ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
+    let mut ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
     let open_measurement_set = stage_start.elapsed();
     maybe_log_frontend_progress(
         "open_measurement_set",
@@ -1057,7 +1069,12 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     );
     let stage_start = Instant::now();
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
-    let prepared = prepare_plane_input(&ms, config, data_column)?;
+    let (prepared, model_trace) = if config.save_model == SaveModelMode::ModelColumn {
+        let (prepared, trace) = prepare_plane_input_with_trace(&ms, config, data_column)?;
+        (prepared, Some(trace))
+    } else {
+        (prepare_plane_input(&ms, config, data_column)?, None)
+    };
     let prepare_plane_time = stage_start.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input",
@@ -1206,6 +1223,22 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
         total_start.elapsed(),
     );
     let stage_start = Instant::now();
+    if config.save_model == SaveModelMode::ModelColumn {
+        let trace = model_trace.as_ref().ok_or_else(|| {
+            "internal error: savemodel=modelcolumn requires prepared visibility trace".to_string()
+        })?;
+        let written = write_model_column(&mut ms, config, &run_result, trace)?;
+        maybe_log_frontend_progress(
+            "write_model_column",
+            stage_start.elapsed(),
+            total_start.elapsed(),
+        );
+        maybe_log_frontend_progress(
+            &format!("write_model_column/written_samples/{written}"),
+            stage_start.elapsed(),
+            total_start.elapsed(),
+        );
+    }
     write_products(config, &coords, &run_result)?;
     let write_products_time = stage_start.elapsed();
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
@@ -1228,6 +1261,19 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
             total: total_start.elapsed(),
         },
     })
+}
+
+fn validate_save_model_request(config: &CliConfig) -> Result<(), String> {
+    if config.save_model != SaveModelMode::ModelColumn {
+        return Ok(());
+    }
+    if config.spectral_mode != SpectralMode::Mfs {
+        return Err("savemodel=modelcolumn currently supports specmode='mfs'".to_string());
+    }
+    if config.deconvolver == Deconvolver::Mtmfs {
+        return Err("savemodel=modelcolumn does not yet support deconvolver='mtmfs'".to_string());
+    }
+    Ok(())
 }
 
 fn frontend_progress_enabled() -> bool {
@@ -1482,6 +1528,8 @@ pub struct CliConfig {
     pub channel_count: Option<usize>,
     /// Optional explicit data-column override.
     pub datacolumn: Option<String>,
+    /// CASA-style model persistence mode.
+    pub save_model: SaveModelMode,
     /// Optional explicit scalar-plane override.
     ///
     /// Raw-correlation overrides use `XX`, `YY`, `RR`, or `LL`. Stokes-plane
@@ -1558,6 +1606,7 @@ impl CliConfig {
         let mut channel_start = None::<usize>;
         let mut channel_count = None::<usize>;
         let mut datacolumn = None::<String>;
+        let mut save_model = SaveModelMode::None;
         let mut correlation = None::<String>;
         let mut spectral_mode = SpectralMode::Mfs;
         let mut cube_axis = CubeAxisConfig::default();
@@ -1667,6 +1716,10 @@ impl CliConfig {
                 }
                 "--datacolumn" => {
                     datacolumn = Some(next_value(&mut args, "--datacolumn")?);
+                    continue;
+                }
+                "--savemodel" => {
+                    save_model = parse_save_model_mode(&next_value(&mut args, "--savemodel")?)?;
                     continue;
                 }
                 "--corr" | "--stokes" => {
@@ -1896,6 +1949,7 @@ impl CliConfig {
             channel_start,
             channel_count,
             datacolumn,
+            save_model,
             correlation,
             spectral_mode,
             cube_axis,
@@ -3425,6 +3479,16 @@ fn parse_data_column(name: &str) -> Result<VisibilityDataColumn, String> {
         "CORRECTED_DATA" | "CORRECTED" => Ok(VisibilityDataColumn::CorrectedData),
         "MODEL_DATA" | "MODEL" => Ok(VisibilityDataColumn::ModelData),
         _ => Err(format!("unsupported data column {name:?}")),
+    }
+}
+
+fn parse_save_model_mode(name: &str) -> Result<SaveModelMode, String> {
+    match name.to_ascii_lowercase().replace(['_', '-'], "").as_str() {
+        "none" => Ok(SaveModelMode::None),
+        "modelcolumn" => Ok(SaveModelMode::ModelColumn),
+        _ => Err(format!(
+            "unsupported savemodel value {name:?}; expected none or modelcolumn"
+        )),
     }
 }
 
@@ -5086,6 +5150,216 @@ fn write_products(
     }
 
     Ok(())
+}
+
+fn write_model_column(
+    ms: &mut MeasurementSet,
+    config: &CliConfig,
+    result: &RunProducts,
+    trace: &PreparedVisibilityTraceBundle,
+) -> Result<usize, String> {
+    if config.spectral_mode != SpectralMode::Mfs {
+        return Err("savemodel=modelcolumn currently supports specmode='mfs'".to_string());
+    }
+    let model_plane = match result {
+        RunProducts::Mfs(result) => result.model.slice(s![.., .., 0, 0]).to_owned(),
+        RunProducts::Mtmfs(_) => {
+            return Err(
+                "savemodel=modelcolumn does not yet support deconvolver='mtmfs'".to_string(),
+            );
+        }
+        RunProducts::Cube(_) => {
+            return Err("savemodel=modelcolumn does not yet support cube imaging".to_string());
+        }
+    };
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let components = model_column_components(&model_plane, geometry);
+    ensure_model_data_column(ms)?;
+
+    let mut rows = BTreeMap::<usize, ArrayD<Complex32>>::new();
+    let mut written_samples = 0usize;
+    for sample in &trace.samples {
+        if sample.source_contributions.is_empty() {
+            continue;
+        }
+        if let Entry::Vacant(entry) = rows.entry(sample.row_index) {
+            entry.insert(read_or_zero_model_row(ms, sample.row_index)?);
+        }
+        let row_shape = rows
+            .get(&sample.row_index)
+            .expect("row model was just inserted")
+            .shape()
+            .to_vec();
+        let row_model = rows
+            .get_mut(&sample.row_index)
+            .expect("row model was just inserted");
+        for contribution in &sample.source_contributions {
+            let predicted = if components.is_empty() {
+                Complex32::new(0.0, 0.0)
+            } else {
+                let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                predict_model_column_visibility(
+                    &components,
+                    sample.imaging_uvw_m[0] * lambda_scale,
+                    sample.imaging_uvw_m[1] * lambda_scale,
+                    sample.imaging_uvw_m[2] * lambda_scale,
+                )
+            };
+            let predicted = phase_rotate_visibility(
+                predicted,
+                -sample.phase_shift_m,
+                contribution.source_frequency_hz,
+            );
+            for &corr_index in &sample.correlation_indices {
+                if corr_index >= row_shape[0] || contribution.source_channel_index >= row_shape[1] {
+                    continue;
+                }
+                row_model[[corr_index, contribution.source_channel_index]] = predicted;
+                written_samples += 1;
+            }
+        }
+    }
+
+    for (row_index, row_model) in rows {
+        ms.main_table_mut()
+            .cell_accessor_mut(row_index, VisibilityDataColumn::ModelData.name())
+            .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(row_model))))
+            .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
+    }
+    ms.save().map_err(|error| {
+        format!(
+            "save MODEL_DATA updates to {}: {error}",
+            config.ms.display()
+        )
+    })?;
+    Ok(written_samples)
+}
+
+fn ensure_model_data_column(ms: &mut MeasurementSet) -> Result<(), String> {
+    if ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::ModelData.name()))
+    {
+        return Ok(());
+    }
+    let zero_rows = (0..ms.row_count())
+        .map(|row_index| zero_model_row_like_data(ms, row_index).map(|row| (row_index, row)))
+        .collect::<Result<Vec<_>, String>>()?;
+    ms.main_table_mut()
+        .add_column(
+            ColumnSchema::array_variable(
+                VisibilityDataColumn::ModelData.name(),
+                casa_types::PrimitiveType::Complex32,
+                Some(2),
+            ),
+            None,
+        )
+        .map_err(|error| format!("add MODEL_DATA column: {error}"))?;
+    for (row_index, row_model) in zero_rows {
+        ms.main_table_mut()
+            .cell_accessor_mut(row_index, VisibilityDataColumn::ModelData.name())
+            .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(row_model))))
+            .map_err(|error| format!("initialize MODEL_DATA row {row_index}: {error}"))?;
+    }
+    Ok(())
+}
+
+fn read_or_zero_model_row(
+    ms: &MeasurementSet,
+    row_index: usize,
+) -> Result<ArrayD<Complex32>, String> {
+    match ms
+        .main_table()
+        .cell_accessor(row_index, VisibilityDataColumn::ModelData.name())
+        .and_then(|cell| cell.array())
+    {
+        Ok(ArrayValue::Complex32(values)) => Ok(values.clone()),
+        Ok(other) => Err(format!(
+            "MODEL_DATA row {row_index} must be Complex32 array, found {:?}",
+            other.primitive_type()
+        )),
+        Err(_) => zero_model_row_like_data(ms, row_index),
+    }
+}
+
+fn zero_model_row_like_data(
+    ms: &MeasurementSet,
+    row_index: usize,
+) -> Result<ArrayD<Complex32>, String> {
+    let shape = ms
+        .main_table()
+        .cell_accessor(row_index, VisibilityDataColumn::Data.name())
+        .and_then(|cell| cell.array())
+        .map_err(|error| format!("read DATA row {row_index} shape for MODEL_DATA: {error}"))?
+        .shape()
+        .to_vec();
+    if shape.len() != 2 {
+        return Err(format!(
+            "DATA row {row_index} must be rank-2 to seed MODEL_DATA, found shape {shape:?}"
+        ));
+    }
+    Ok(ArrayD::from_elem(IxDyn(&shape), Complex32::new(0.0, 0.0)))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ModelColumnComponent {
+    value: f32,
+    l: f64,
+    m: f64,
+    n_minus_one: f64,
+}
+
+fn model_column_components(
+    model: &Array2<f32>,
+    geometry: ImageGeometry,
+) -> Vec<ModelColumnComponent> {
+    let [nx, ny] = geometry.image_shape;
+    let center_x = nx as f64 / 2.0;
+    let center_y = ny as f64 / 2.0;
+    let mut components = Vec::new();
+    for ((x, y), &value) in model.indexed_iter() {
+        if value.abs() <= 0.0 {
+            continue;
+        }
+        let l = (x as f64 - center_x) * geometry.cell_size_rad[0];
+        let m = (center_y - y as f64) * geometry.cell_size_rad[1];
+        let radius_sq = l * l + m * m;
+        let n_minus_one = if radius_sq < 1.0 {
+            (1.0 - radius_sq).sqrt() - 1.0
+        } else {
+            -1.0
+        };
+        components.push(ModelColumnComponent {
+            value,
+            l,
+            m,
+            n_minus_one,
+        });
+    }
+    components
+}
+
+fn predict_model_column_visibility(
+    components: &[ModelColumnComponent],
+    u_lambda: f64,
+    v_lambda: f64,
+    w_lambda: f64,
+) -> Complex32 {
+    let mut predicted = Complex32::new(0.0, 0.0);
+    for component in components {
+        let phase = std::f64::consts::TAU
+            * (u_lambda * component.l + v_lambda * component.m + w_lambda * component.n_minus_one);
+        predicted.re += component.value * phase.cos() as f32;
+        predicted.im -= component.value * phase.sin() as f32;
+    }
+    predicted
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6786,6 +7060,7 @@ Options:
   --channel-start N         first selected channel
   --channel-count N         number of selected channels
   --datacolumn NAME         DATA, CORRECTED_DATA, or MODEL_DATA
+  --savemodel MODE          none or modelcolumn
   --corr XX|YY|RR|LL        explicit raw-correlation imaging
   --stokes I|Q|U|V          explicit scalar Stokes-plane imaging
   --specmode MODE           mfs, cube, or cubedata
@@ -7023,6 +7298,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -7078,6 +7354,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(20),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
@@ -7131,6 +7408,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -7184,6 +7462,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -7237,6 +7516,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -7293,6 +7573,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(8),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -7346,6 +7627,7 @@ mod tests {
             channel_start: Some(0),
             channel_count: Some(20),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
@@ -8417,6 +8699,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -8507,6 +8790,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -8593,6 +8877,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -8709,6 +8994,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -8818,6 +9104,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -8889,6 +9176,7 @@ mod tests {
             channel_start: Some(0),
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -8992,6 +9280,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -9090,6 +9379,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -9170,6 +9460,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -9304,6 +9595,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -9390,6 +9682,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -9477,6 +9770,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("Q".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -9559,6 +9853,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("U".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -9643,6 +9938,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -9755,6 +10051,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(2),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cubedata,
             cube_axis: CubeAxisConfig {
@@ -9832,6 +10129,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -10072,6 +10370,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -10168,6 +10467,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -10281,6 +10581,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::ModelColumn,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -10325,6 +10626,25 @@ mod tests {
         assert_eq!(residual.units(), "Jy/beam");
         let sumwt = PagedImage::<f32>::open(format!("{}.sumwt", image_prefix.display())).unwrap();
         assert_eq!(sumwt.shape(), &[1, 1, 1, 1]);
+        let reopened = MeasurementSet::open(&ms_path).unwrap();
+        assert!(
+            reopened
+                .main_table()
+                .schema()
+                .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
+        );
+        let model_data = reopened
+            .main_table()
+            .cell_accessor(0, "MODEL_DATA")
+            .and_then(|cell| cell.array())
+            .unwrap();
+        let ArrayValue::Complex32(model_data) = model_data else {
+            panic!("MODEL_DATA should be complex");
+        };
+        assert!(
+            model_data.iter().any(|value| value.norm() > 0.0),
+            "savemodel=modelcolumn should write non-zero predicted visibilities"
+        );
     }
 
     #[test]
@@ -10392,6 +10712,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -10489,6 +10810,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
@@ -10586,6 +10908,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -10717,6 +11040,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -10826,6 +11150,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -10920,6 +11245,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -11020,6 +11346,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -11100,6 +11427,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("Q".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -11181,6 +11509,7 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
