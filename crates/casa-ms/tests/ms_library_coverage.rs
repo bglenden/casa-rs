@@ -16,7 +16,7 @@ use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, MeasurementSetPlotKind, MeasurementSetPlotPayload,
     MeasurementSetSummary, MeasurementSetSummaryOptions, MeasurementSetSummaryOutputFormat,
     MsError, OptionalMainColumn, SubTable, SubtableId, VisibilityDataColumn,
-    build_measurement_set_plot_payload_from_summary,
+    build_measurement_set_plot_payload_from_summary, build_measurement_set_visibility_plot_payload,
 };
 use casa_tables::{ColumnSchema, Table, TableSchema};
 use casa_types::measures::{EpochRef, PositionRef};
@@ -413,6 +413,65 @@ fn antenna_plot_uses_offset_coordinates_for_real_alma_fixture() {
             .iter()
             .any(|point| point.x.abs() > 1.0 || point.y.abs() > 1.0)
     );
+}
+
+#[test]
+fn curated_visibility_plots_build_stable_payloads_from_real_fixture() {
+    let (_temp, ms_path) = unpack_fixture_ms("mssel_test_small_multifield_spw.ms.tgz");
+    let ms = MeasurementSet::open(&ms_path).expect("open MS");
+    let options = MeasurementSetSummaryOptions {
+        field: Some("NGC4826-F3".to_string()),
+        spw: Some("5".to_string()),
+        ..MeasurementSetSummaryOptions::default()
+    };
+
+    let cases = [
+        (
+            MeasurementSetPlotKind::AmplitudeVsTime,
+            "Time (MJD seconds)",
+            "Amplitude",
+            None,
+            "field-5",
+            "NGC4826-F3",
+        ),
+        (
+            MeasurementSetPlotKind::PhaseVsTime,
+            "Time (MJD seconds)",
+            "Phase (deg)",
+            Some((-180.0, 180.0)),
+            "field-5",
+            "NGC4826-F3",
+        ),
+        (
+            MeasurementSetPlotKind::AmplitudeVsUvDistance,
+            "UV Distance (m)",
+            "Amplitude",
+            None,
+            "spw-5",
+            "",
+        ),
+    ];
+
+    for (kind, x_label, y_label, fixed_y_bounds, color_group, expected_label) in cases {
+        let spec = kind.default_spec();
+        let payload = build_measurement_set_visibility_plot_payload(&ms, &options, &spec)
+            .expect("visibility plot payload");
+        let MeasurementSetPlotPayload::VisibilityScatter(payload) = payload else {
+            panic!("expected visibility scatter payload");
+        };
+
+        assert_eq!(payload.kind, kind);
+        assert_eq!(payload.x_label, x_label);
+        assert_eq!(payload.y_label, y_label);
+        assert_eq!(payload.fixed_y_bounds, fixed_y_bounds);
+        assert_eq!(payload.series.len(), 1);
+        assert_eq!(payload.series[0].color_group, color_group);
+        assert_eq!(payload.series[0].label, expected_label);
+        assert!(payload.series[0].points.len() > 1);
+        assert!(payload.summary.contains("Rows="));
+        assert!(payload.summary.contains("Points="));
+        assert!(payload.summary.contains("Data column=data"));
+    }
 }
 
 #[test]

@@ -626,7 +626,7 @@ pub fn build_listobs_visibility_plot_payload(
     options: &ListObsOptions,
     spec: &ListObsPlotSpec,
 ) -> Result<ListObsPlotPayload, String> {
-    crate::msexplore::build_listobs_compat_visibility_payload(ms, options, spec)
+    crate::plot_visibility::build_listobs_visibility_plot_payload(ms, options, spec)
 }
 
 /// Render one plot payload into a bitmap image.

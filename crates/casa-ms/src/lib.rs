@@ -52,6 +52,7 @@ mod metadata;
 pub mod ms;
 pub mod msexplore;
 pub mod plot;
+mod plot_visibility;
 pub mod schema;
 pub mod selection;
 pub mod selection_helpers;
