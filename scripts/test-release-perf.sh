@@ -30,6 +30,9 @@ if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists casacore; th
 fi
 
 script_started_at="$(date +%s)"
+cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
+  --tier slow-parity \
+  --require measurementset/vla/ngc5921.ms
 run_timed_step \
   "Running casa-test-support release performance suite" \
   cargo test -p casa-test-support --release --features performance-tests --tests -- --nocapture

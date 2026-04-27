@@ -74,10 +74,20 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - For provider contracts, follow `docs/provider-contracts.md`; versioned schema bundles are the boundary contract.
 - Prefer red/green development when practical.
 - When implementing new casacore-C++ functionality, document public items at roughly the corresponding upstream doxygen level.
-- Shared CASA datasets default to `../casatestdata`; override with `CASA_RS_TESTDATA_ROOT`.
+- Shared CASA C++ test datasets default to `../casatestdata`; override with `CASA_RS_TESTDATA_ROOT`.
+- CASA tutorial datasets default to `~/SoftwareProjects/casa-tutorial-data`; override with `CASA_RS_TUTORIAL_DATA_ROOT`.
+- Default gates may use only `CASA_RS_TESTDATA_ROOT`, `../casatestdata`, or
+  `~/SoftwareProjects/casatestdata` for shared data discovery.
+- Slow, release, parity, and tutorial gates must run the shared test-data
+  preflight and report the selected root before exercising external data.
+- Tutorial data registry entries live in `casa-test-support`; local tutorial
+  artifacts are staged under `CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity/...`
+  or `~/SoftwareProjects/casa-tutorial-data/tutorial-parity/...`.
 - Measures runtime data defaults to `~/.casa/data`; override with `CASA_RS_MEASURESPATH`.
 - `CASA_RS_DATA` is deprecated compatibility only.
 - Do not use `/private/tmp` as the canonical shared CASA dataset location.
+- Do not add personal workstation archives as implicit default-gate fallbacks;
+  require an explicit env var for one-off local data.
 - Small bundled real-MS CI fixtures live in `crates/casa-ms/tests/fixtures/`.
 - Do not add backlog-style `TODO`, `FIXME`, `XXX`, or `HACK` comments unless they reference a GitHub issue.
 

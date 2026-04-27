@@ -6058,7 +6058,9 @@ mod tests {
         compute_residual, compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason, peak_abs_value,
         peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
-        run_mtmfs, tolerant_clean_stop_reason, trace_cube_weighting, trace_residual_refresh,
+        run_mtmfs, tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
+        trace_cube_channel_residual_refresh_model_channel_lambda,
+        trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
     fn point_source_visibilities(
@@ -6187,6 +6189,17 @@ mod tests {
             count += 1;
         }
         (sum / count as f64).sqrt() as f32
+    }
+
+    fn assert_error_contains<T>(result: Result<T, super::ImagingError>, expected: &str) {
+        let Err(err) = result else {
+            panic!("expected request to fail");
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains(expected),
+            "expected error containing {expected:?}, got {message:?}"
+        );
     }
 
     #[test]
@@ -6374,6 +6387,270 @@ mod tests {
                 1.0e-6,
             );
         }
+    }
+
+    #[test]
+    fn trace_cube_channel_w_project_plan_records_channel_specific_skips_and_validation() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let channel_zero = cube_channel_request_identity(
+            1.40e9,
+            vec![VisibilityBatch {
+                u_lambda: vec![5.0],
+                v_lambda: vec![6.0],
+                w_lambda: vec![7.0],
+                weight: vec![1.0],
+                sumwt_factor: vec![1.0],
+                gridable: vec![true],
+                visibility: vec![Complex32::new(9.0, 0.0)],
+            }],
+            0,
+        );
+        let channel_one = cube_channel_request_identity(
+            1.41e9,
+            vec![VisibilityBatch {
+                u_lambda: vec![15.0, 50_000.0, 0.0, 20.0],
+                v_lambda: vec![-20.0, 0.0, 0.0, 10.0],
+                w_lambda: vec![30.0, 40.0, 50.0, f64::NAN],
+                weight: vec![1.0, 2.0, 5.0, 1.0],
+                sumwt_factor: vec![1.0, 2.0, 3.0, 1.0],
+                gridable: vec![true, true, false, true],
+                visibility: vec![
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(2.0, 0.0),
+                    Complex32::new(5.0, 0.0),
+                    Complex32::new(1.0, 1.0),
+                ],
+            }],
+            1,
+        );
+        let request = CubeImagingRequest {
+            geometry,
+            channels: vec![channel_zero, channel_one],
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            weight_density_mode: WeightDensityMode::PerPlane,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: dirty_clean_config(0.35),
+            clean_mask: None,
+            psf_cutoff: 0.35,
+            w_term_mode: WTermMode::WProject,
+            w_project_planes: Some(8),
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+
+        let trace = trace_cube_channel_w_project_plan(&request, 1).unwrap();
+
+        assert_eq!(trace.requested_plane_count, Some(8));
+        assert_eq!(trace.plane_count, 8);
+        assert_eq!(trace.gridded_samples, 1);
+        assert_eq!(trace.samples.len(), 1);
+        assert_eq!(trace.samples[0].sample_index, 0);
+        assert_eq!(trace.samples[0].u_lambda, 15.0);
+        assert_eq!(trace.samples[0].w_lambda, 30.0);
+        assert_eq!(trace.samples[0].sumwt_factor, 1.0);
+        assert_eq!(trace.skipped_samples.len(), 3);
+        assert_eq!(trace.skipped_samples[0].sample_index, 1);
+        assert_eq!(
+            trace.skipped_samples[0].reason,
+            WProjectSkipReason::OutsideGrid
+        );
+        assert_eq!(trace.skipped_samples[1].sample_index, 2);
+        assert_eq!(
+            trace.skipped_samples[1].reason,
+            WProjectSkipReason::NotGridable
+        );
+        assert_eq!(trace.skipped_samples[2].sample_index, 3);
+        assert_eq!(
+            trace.skipped_samples[2].reason,
+            WProjectSkipReason::InvalidInput
+        );
+        assert_eq!(trace.max_abs_w_lambda, 40.0);
+
+        assert_error_contains(
+            trace_cube_channel_w_project_plan(&request, 2),
+            "cube channel index 2 is out of range for 2 channels",
+        );
+
+        let mut standard_request = request.clone();
+        standard_request.w_term_mode = WTermMode::None;
+        assert_error_contains(
+            trace_cube_channel_w_project_plan(&standard_request, 1),
+            "trace_cube_channel_w_project_plan requires w_term_mode='wproject'",
+        );
+    }
+
+    #[test]
+    fn trace_cube_channel_residual_refresh_validates_channel_and_model_planes() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [(-120.0, -90.0, 0.0), (45.0, -75.0, 0.0), (110.0, 65.0, 0.0)];
+        let channel_zero = cube_channel_request_identity(
+            1.40e9,
+            vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (32.0, 32.0),
+                1.0,
+            )],
+            0,
+        );
+        let channel_one = cube_channel_request_identity(
+            1.41e9,
+            vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (34.0, 31.0),
+                0.8,
+            )],
+            1,
+        );
+        let request = CubeImagingRequest {
+            geometry,
+            channels: vec![channel_zero, channel_one],
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            weight_density_mode: WeightDensityMode::PerPlane,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig::default(),
+            clean_mask: None,
+            psf_cutoff: 0.35,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let model_planes = vec![
+            Array2::<f32>::zeros((64, 64)),
+            Array2::<f32>::zeros((64, 64)),
+        ];
+
+        let trace = trace_cube_channel_residual_refresh(&request, 1, &model_planes).unwrap();
+        assert_eq!(trace.samples.len(), samples.len());
+        assert_eq!(trace.samples[0].batch_index, 0);
+        assert_eq!(trace.samples[0].sample_index, 0);
+        assert_eq!(
+            trace.samples[0].observed_visibility,
+            trace.samples[0].residual_visibility
+        );
+        assert_eq!(
+            trace.samples[0].predicted_visibility,
+            Complex32::new(0.0, 0.0)
+        );
+
+        assert_error_contains(
+            trace_cube_channel_residual_refresh(&request, 2, &model_planes),
+            "cube residual-refresh trace channel index 2 is out of range for 2 channels",
+        );
+        assert_error_contains(
+            trace_cube_channel_residual_refresh(&request, 0, &model_planes[..1]),
+            "cube residual-refresh trace model plane count 1 does not match request channel count 2",
+        );
+
+        let wrong_shape_planes = vec![
+            Array2::<f32>::zeros((64, 64)),
+            Array2::<f32>::zeros((32, 64)),
+        ];
+        assert_error_contains(
+            trace_cube_channel_residual_refresh(&request, 0, &wrong_shape_planes),
+            "cube residual-refresh trace model plane 1 shape",
+        );
+    }
+
+    #[test]
+    fn trace_cube_channel_residual_refresh_model_channel_lambda_differs_from_output_channel_lambda()
+    {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let batch = VisibilityBatch {
+            u_lambda: vec![95.0, -80.0, 35.0],
+            v_lambda: vec![42.0, 55.0, -70.0],
+            w_lambda: vec![0.0, 0.0, 0.0],
+            weight: vec![1.0, 1.0, 1.0],
+            sumwt_factor: vec![1.0, 1.0, 1.0],
+            gridable: vec![true, true, true],
+            visibility: vec![Complex32::new(0.0, 0.0); 3],
+        };
+        let channel_zero = CubeChannelRequest {
+            channel_frequency_hz: 1.0e9,
+            visibility_batches: vec![batch.clone()],
+            model_interpolation_batches: vec![CubeModelInterpolationBatch {
+                sample_contributions: (0..batch.len())
+                    .map(|_| {
+                        vec![CubeModelChannelContribution {
+                            model_channel_index: 1,
+                            factor: 1.0,
+                        }]
+                    })
+                    .collect(),
+            }],
+        };
+        let channel_one = cube_channel_request_identity(1.8e9, vec![batch.clone()], 1);
+        let request = CubeImagingRequest {
+            geometry,
+            channels: vec![channel_zero, channel_one],
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            weight_density_mode: WeightDensityMode::PerPlane,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig::default(),
+            clean_mask: None,
+            psf_cutoff: 0.35,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut model_planes = vec![
+            Array2::<f32>::zeros((64, 64)),
+            Array2::<f32>::zeros((64, 64)),
+        ];
+        model_planes[1][(35, 29)] = 1.0;
+
+        let output_lambda_trace =
+            trace_cube_channel_residual_refresh(&request, 0, &model_planes).unwrap();
+        let model_lambda_trace =
+            trace_cube_channel_residual_refresh_model_channel_lambda(&request, 0, &model_planes)
+                .unwrap();
+
+        assert_eq!(output_lambda_trace.samples.len(), batch.len());
+        assert_eq!(model_lambda_trace.samples.len(), batch.len());
+        let max_prediction_delta = output_lambda_trace
+            .samples
+            .iter()
+            .zip(model_lambda_trace.samples.iter())
+            .map(|(output_sample, model_sample)| {
+                (output_sample.predicted_visibility - model_sample.predicted_visibility).norm()
+            })
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_prediction_delta > 1.0e-4,
+            "expected model-channel lambda to change cube predictions, max delta={max_prediction_delta}"
+        );
+        assert!(
+            rms_difference(
+                &output_lambda_trace.residual_image,
+                &model_lambda_trace.residual_image
+            ) > 1.0e-6
+        );
     }
 
     #[test]
