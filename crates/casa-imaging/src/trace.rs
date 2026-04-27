@@ -339,7 +339,7 @@ pub fn trace_residual_refresh(
         &psf_state,
         matches!(
             request.deconvolver,
-            Deconvolver::Clark | Deconvolver::Multiscale
+            Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale
         ),
         &mut stage_timings,
     )?;

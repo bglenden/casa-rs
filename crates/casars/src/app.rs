@@ -13954,7 +13954,8 @@ fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
         "gain_type" | "solve_mode" | "solint" | "gain_combine" | "gain_model_source" => {
             mode == "solve_gain"
         }
-        "bandpass_combine" | "bandtype" | "solnorm" => mode == "solve_bandpass",
+        "solnorm" => matches!(mode, "solve_gain" | "solve_bandpass"),
+        "bandpass_combine" | "bandtype" => mode == "solve_bandpass",
         "fluxscale_input" | "reference_fields" | "transfer_fields" | "refspwmap"
         | "gainthreshold" | "incremental" => mode == "fluxscale",
         _ => true,

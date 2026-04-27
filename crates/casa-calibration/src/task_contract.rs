@@ -254,6 +254,9 @@ pub struct SolveGainTaskRequest {
     /// Visibility model source used while solving.
     #[serde(default)]
     pub model_source: GainSolveModelSource,
+    /// Whether to normalize average solution amplitudes to unity.
+    #[serde(default)]
+    pub normalize_average_amplitude: bool,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -388,6 +391,7 @@ impl CalibrationTaskRequest {
                     prior_calibration_tables: request.prior_calibration_tables.clone(),
                     parang: request.parang,
                     model_source: request.model_source,
+                    normalize_average_amplitude: request.normalize_average_amplitude,
                     smodel: request.smodel,
                 },
             )

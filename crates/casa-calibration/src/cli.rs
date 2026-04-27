@@ -91,6 +91,7 @@ struct SolveGainOptions {
     prior_calibration_tables: Vec<ApplyCalibrationTableSpec>,
     parang: bool,
     model_source: GainSolveModelSource,
+    normalize_average_amplitude: bool,
     format: OutputFormat,
     output: Option<PathBuf>,
     overwrite: bool,
@@ -232,6 +233,7 @@ impl Command {
                 prior_calibration_tables: options.prior_calibration_tables,
                 parang: options.parang,
                 model_source: options.model_source,
+                normalize_average_amplitude: options.normalize_average_amplitude,
                 smodel: [1.0, 0.0, 0.0, 0.0],
             }),
             Self::SolveBandpass(options) => {
@@ -774,13 +776,13 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             }),
             toggle_argument(ToggleArgumentConfig {
                 id: "solnorm",
-                label: "Normalize Bandpass",
+                label: "Normalize Amplitude",
                 order: 24,
-                help: "Normalize solved bandpass rows to unity average amplitude",
+                help: "Normalize solved amplitudes to unity average amplitude",
                 true_flags: &["--solnorm"],
                 false_flags: &["--no-solnorm"],
                 default: false,
-                group: "Solve Bandpass",
+                group: "Solve",
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
@@ -1609,6 +1611,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut refant = None;
     let mut parang = false;
     let mut model_source = GainSolveModelSource::PointSource;
+    let mut normalize_average_amplitude = false;
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
@@ -1688,6 +1691,8 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             }
             "--model-column" => model_source = GainSolveModelSource::ModelColumn,
             "--point-model" => model_source = GainSolveModelSource::PointSource,
+            "--solnorm" => normalize_average_amplitude = true,
+            "--no-solnorm" => normalize_average_amplitude = false,
             "--refant" => {
                 index += 1;
                 refant = Some(parse_refant_selector(&take_string_value(
@@ -1775,6 +1780,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             prior_calibration_tables,
             parang,
             model_source,
+            normalize_average_amplitude,
             format,
             output,
             overwrite,

@@ -330,6 +330,19 @@ pub enum CompatibilityMode {
     CasaStandardMfs,
 }
 
+/// Hogbom minor-cycle iteration accounting policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HogbomIterationMode {
+    /// Treat `niter` and `cycleniter` as strict caps on committed components.
+    Strict,
+    /// Mirror CASA's historical `SDAlgorithmHogbomClean` / `hclean` behavior.
+    ///
+    /// CASA passes `siter = 0` and `cycleNiter` to an inclusive Fortran
+    /// `do iter = siter, niter` loop, so one minor-cycle call can commit one
+    /// extra component while reporting `iterdone == cycleNiter`.
+    CasaInclusive,
+}
+
 /// One output-model channel contribution used during cube degridding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CubeModelChannelContribution {
@@ -698,13 +711,6 @@ impl ParallelHandBatch {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CleanConfig {
     /// Maximum number of reported minor-cycle iterations.
-    ///
-    /// casa-rs treats this as a hard cap on committed Hogbom updates.
-    ///
-    /// This intentionally diverges from a known CASA
-    /// `SDAlgorithmHogbomClean` / `hclean` off-by-one bug where a single
-    /// Hogbom minor-cycle call can sometimes commit one extra component while
-    /// still reporting `iterdone == niter`.
     pub niter: usize,
     /// Loop gain applied to each selected component.
     pub gain: f32,
@@ -726,6 +732,8 @@ pub struct CleanConfig {
     pub min_psf_fraction: f32,
     /// Upper clamp for the PSF fraction used to derive `cyclethreshold`.
     pub max_psf_fraction: f32,
+    /// Hogbom iteration accounting policy.
+    pub hogbom_iteration_mode: HogbomIterationMode,
 }
 
 impl Default for CleanConfig {
@@ -740,6 +748,7 @@ impl Default for CleanConfig {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::Strict,
         }
     }
 }
@@ -1102,11 +1111,9 @@ pub struct ImagingDiagnostics {
     pub major_cycles: usize,
     /// Number of Hogbom component updates executed.
     ///
-    /// This is bounded by the requested [`CleanConfig::niter`].
-    ///
-    /// If CASA reports one more committed Hogbom component than this counter
-    /// would allow, treat that as the documented upstream off-by-one bug rather
-    /// than a casa-rs parity target.
+    /// With [`HogbomIterationMode::CasaInclusive`], this can exceed the
+    /// externally reported [`CleanConfig::niter`] by one per Hogbom minor-cycle
+    /// call.
     pub minor_iterations: usize,
     /// Final reason why the Hogbom controller stopped, if CLEAN was requested.
     pub clean_stop_reason: Option<CleanStopReason>,

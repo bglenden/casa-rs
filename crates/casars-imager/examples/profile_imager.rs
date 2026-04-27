@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
 use casa_ms::{CubeAxisConfig, CubeInterpolation};
 use casars_imager::{CliConfig, RunSummary, SpectralMode, run_from_config};
 
@@ -47,6 +47,7 @@ struct Options {
     cyclefactor: f32,
     min_psf_fraction: f32,
     max_psf_fraction: f32,
+    hogbom_iteration_mode: HogbomIterationMode,
     mask_boxes: Vec<[usize; 4]>,
     mask_image: Option<PathBuf>,
     w_term_mode: WTermMode,
@@ -315,6 +316,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         cyclefactor: options.cyclefactor,
         min_psf_fraction: options.min_psf_fraction,
         max_psf_fraction: options.max_psf_fraction,
+        hogbom_iteration_mode: options.hogbom_iteration_mode,
         mask_boxes: options.mask_boxes.clone(),
         mask_image: options.mask_image.clone(),
         w_term_mode: options.w_term_mode,
@@ -374,6 +376,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut cyclefactor = 1.0f32;
     let mut min_psf_fraction = 0.1f32;
     let mut max_psf_fraction = 0.8f32;
+    let mut hogbom_iteration_mode = HogbomIterationMode::Strict;
     let mut mask_boxes = Vec::<[usize; 4]>::new();
     let mut mask_image = None::<PathBuf>;
     let mut w_term_mode = WTermMode::None;
@@ -433,6 +436,13 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--cyclefactor" => cyclefactor = parse_next(&mut args, "--cyclefactor")?,
             "--minpsffraction" => min_psf_fraction = parse_next(&mut args, "--minpsffraction")?,
             "--maxpsffraction" => max_psf_fraction = parse_next(&mut args, "--maxpsffraction")?,
+            "--hogbom-iteration-mode" => {
+                hogbom_iteration_mode =
+                    parse_hogbom_iteration_mode(&next_value(&mut args, "--hogbom-iteration-mode")?)?
+            }
+            "--casa-hogbom-iterations" => {
+                hogbom_iteration_mode = HogbomIterationMode::CasaInclusive
+            }
             "--mask-box" => mask_boxes.push(parse_mask_box(&next_value(&mut args, "--mask-box")?)?),
             "--mask-image" => {
                 mask_image = Some(PathBuf::from(next_value(&mut args, "--mask-image")?))
@@ -488,6 +498,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         cyclefactor,
         min_psf_fraction,
         max_psf_fraction,
+        hogbom_iteration_mode,
         mask_boxes,
         mask_image,
         w_term_mode,
@@ -565,6 +576,16 @@ fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
     }
 }
 
+fn parse_hogbom_iteration_mode(text: &str) -> Result<HogbomIterationMode, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "strict" => Ok(HogbomIterationMode::Strict),
+        "casa" | "casa-inclusive" | "inclusive" => Ok(HogbomIterationMode::CasaInclusive),
+        _ => Err(format!(
+            "unsupported --hogbom-iteration-mode value {text:?}; expected strict or casa"
+        )),
+    }
+}
+
 fn parse_multiscale_scales(text: &str) -> Result<Vec<f32>, String> {
     if text.trim().is_empty() {
         return Ok(Vec::new());
@@ -634,6 +655,8 @@ Options:
   --cyclefactor VALUE
   --minpsffraction VALUE
   --maxpsffraction VALUE
+  --hogbom-iteration-mode strict|casa
+  --casa-hogbom-iterations
   --mask-box X0,Y0,X1,Y1
   --mask-image PATH
   --wterm none|direct|wproject

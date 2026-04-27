@@ -9,8 +9,9 @@ use std::sync::{Mutex, OnceLock};
 use casa_images::PagedImage;
 use casa_images::beam::{GaussianBeam, ImageBeamSet};
 use casa_imaging::{
-    CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode, UvTaperSize, WTermMode,
-    WeightingMode, estimate_psf_sidelobe_from_psf, fit_restoring_beam_from_psf,
+    CleanStopReason, Deconvolver, GaussianUvTaper, HogbomIterationMode, RestoringBeamMode,
+    UvTaperSize, WTermMode, WeightingMode, estimate_psf_sidelobe_from_psf,
+    fit_restoring_beam_from_psf,
 };
 use casa_test_support::{
     casa_source_root, casacore_source_root, casatestdata_path, discover_casa_python,
@@ -5109,6 +5110,7 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
         cyclefactor: clean.cyclefactor,
         min_psf_fraction: clean.min_psf_fraction,
         max_psf_fraction: clean.max_psf_fraction,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -5335,6 +5337,7 @@ fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
         cyclefactor: clean.cyclefactor,
         min_psf_fraction: clean.min_psf_fraction,
         max_psf_fraction: clean.max_psf_fraction,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -5456,6 +5459,7 @@ fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
         cyclefactor: clean.cyclefactor,
         min_psf_fraction: clean.min_psf_fraction,
         max_psf_fraction: clean.max_psf_fraction,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -5596,6 +5600,7 @@ fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
         cyclefactor: clean.cyclefactor,
         min_psf_fraction: clean.min_psf_fraction,
         max_psf_fraction: clean.max_psf_fraction,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -5822,6 +5827,7 @@ fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
             cyclefactor: clean.cyclefactor,
             min_psf_fraction: clean.min_psf_fraction,
             max_psf_fraction: clean.max_psf_fraction,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -5975,6 +5981,7 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
         cyclefactor: clean.cyclefactor,
         min_psf_fraction: clean.min_psf_fraction,
         max_psf_fraction: clean.max_psf_fraction,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -8367,6 +8374,7 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -8495,6 +8503,7 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode,
@@ -8551,6 +8560,7 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode,
@@ -8604,6 +8614,7 @@ fn run_rust_imager_case_with_mtmfs(
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -8732,6 +8743,7 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         cyclefactor: clean.cyclefactor,
         min_psf_fraction: clean.min_psf_fraction,
         max_psf_fraction: clean.max_psf_fraction,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -8835,6 +8847,7 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode,
@@ -8988,6 +9001,7 @@ fn run_rust_imager_spectral_cube_case_with_options_and_weighting(
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -9640,6 +9654,7 @@ struct CubeCleanControls {
     cyclefactor: f32,
     min_psf_fraction: f32,
     max_psf_fraction: f32,
+    hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
 }
 
 impl Default for CubeCleanControls {
@@ -9652,6 +9667,7 @@ impl Default for CubeCleanControls {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         }
     }
 }
@@ -10949,9 +10965,7 @@ fn replay_rust_hogbom_minor_cycle_2d(
     let [nx, ny] = shape;
     let mut residual = residual.to_vec();
     let mut cycle_component_updates = 0usize;
-    // Keep the replay helper aligned with casa-rs production semantics, not
-    // CASA's known Hogbom off-by-one bug. `niter` is a hard cap here.
-    let cycle_component_budget = cycle_reported_niter;
+    let cycle_component_budget = cycle_reported_niter.saturating_add(1);
     while cycle_component_updates < cycle_component_budget {
         let Some((peak_index, peak_value)) = peak_location_flat_xy(&residual, [nx, ny]) else {
             break;

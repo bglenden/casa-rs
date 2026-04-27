@@ -125,6 +125,8 @@ pub struct GainSolveRequest {
     pub parang: bool,
     /// Visibility model source.
     pub model_source: GainSolveModelSource,
+    /// Whether to normalize average solution amplitudes to unity.
+    pub normalize_average_amplitude: bool,
     /// Point-source Stokes model used when `model_source` is `PointSource`.
     pub smodel: [f32; 4],
 }
@@ -323,15 +325,59 @@ pub fn solve_gain(
 
     let mut solution_rows = Vec::new();
     for group in groups.into_values() {
-        solution_rows.extend(solve_group(
+        let mut group_rows = solve_group(
             group,
             &available_antennas,
             request.gain_type,
             request.solve_mode,
             refant_id,
-        )?);
+        )?;
+        if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
+            && request.normalize_average_amplitude
+        {
+            normalize_gain_solution_amplitudes(&mut group_rows);
+        }
+        solution_rows.extend(group_rows);
     }
     write_gain_caltable(ms, request, refant_id, &solution_rows)
+}
+
+fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {
+    let receptor_count = rows
+        .iter()
+        .map(|row| row.gains.len())
+        .max()
+        .unwrap_or_default();
+    for receptor in 0..receptor_count {
+        let mut power_sum = 0.0_f32;
+        let mut good_count = 0usize;
+        for row in rows.iter() {
+            if row.flags.get(receptor).copied().unwrap_or(true) {
+                continue;
+            }
+            let Some(gain) = row.gains.get(receptor) else {
+                continue;
+            };
+            let amplitude = gain.norm();
+            if amplitude <= f32::EPSILON {
+                continue;
+            }
+            power_sum += amplitude * amplitude;
+            good_count += 1;
+        }
+        if good_count <= 1 {
+            continue;
+        }
+        let amplitude_factor = (power_sum / good_count as f32).sqrt();
+        if amplitude_factor <= f32::EPSILON {
+            continue;
+        }
+        for row in rows.iter_mut() {
+            if let Some(gain) = row.gains.get_mut(receptor) {
+                *gain /= casa_types::Complex32::new(amplitude_factor, 0.0);
+            }
+        }
+    }
 }
 
 pub(crate) fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, GainSolveError> {

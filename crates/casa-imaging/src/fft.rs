@@ -2,7 +2,7 @@
 //! Internal centered 2-D FFT helpers.
 
 use ndarray::{Array2, Axis};
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 use rustfft::FftPlanner;
 
 pub(crate) fn fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
@@ -28,9 +28,46 @@ pub(crate) fn centered_ifft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     fftshift2(&shifted)
 }
 
+pub(crate) fn centered_ifft2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
+    let mut shifted = ifftshift2_f64(input);
+    transform_axis_f64(&mut shifted, Axis(0), true);
+    transform_axis_f64(&mut shifted, Axis(1), true);
+    let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f64;
+    shifted.mapv_inplace(|value| value * scale);
+    fftshift2_f64(&shifted)
+}
+
 fn transform_axis(data: &mut Array2<Complex32>, axis: Axis, inverse: bool) {
     let len = data.len_of(axis);
     let mut planner = FftPlanner::<f32>::new();
+    let fft = if inverse {
+        planner.plan_fft_inverse(len)
+    } else {
+        planner.plan_fft_forward(len)
+    };
+
+    if axis.index() == 0 {
+        for row_index in 0..data.shape()[0] {
+            let mut lane = data.row(row_index).to_vec();
+            fft.process(&mut lane);
+            for (column_index, value) in lane.into_iter().enumerate() {
+                data[(row_index, column_index)] = value;
+            }
+        }
+    } else {
+        for column_index in 0..data.shape()[1] {
+            let mut lane = data.column(column_index).to_vec();
+            fft.process(&mut lane);
+            for (row_index, value) in lane.into_iter().enumerate() {
+                data[(row_index, column_index)] = value;
+            }
+        }
+    }
+}
+
+fn transform_axis_f64(data: &mut Array2<Complex64>, axis: Axis, inverse: bool) {
+    let len = data.len_of(axis);
+    let mut planner = FftPlanner::<f64>::new();
     let fft = if inverse {
         planner.plan_fft_inverse(len)
     } else {
@@ -64,10 +101,36 @@ fn ifftshift2(input: &Array2<Complex32>) -> Array2<Complex32> {
     shift2(input, true)
 }
 
+fn fftshift2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
+    shift2_f64(input, false)
+}
+
+fn ifftshift2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
+    shift2_f64(input, true)
+}
+
 fn shift2(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {
     let nx = input.shape()[0];
     let ny = input.shape()[1];
     let mut output = Array2::<Complex32>::zeros((nx, ny));
+    let x_shift = if inverse { nx.div_ceil(2) } else { nx / 2 };
+    let y_shift = if inverse { ny.div_ceil(2) } else { ny / 2 };
+
+    for x in 0..nx {
+        for y in 0..ny {
+            let new_x = (x + x_shift) % nx;
+            let new_y = (y + y_shift) % ny;
+            output[(x, y)] = input[(new_x, new_y)];
+        }
+    }
+
+    output
+}
+
+fn shift2_f64(input: &Array2<Complex64>, inverse: bool) -> Array2<Complex64> {
+    let nx = input.shape()[0];
+    let ny = input.shape()[1];
+    let mut output = Array2::<Complex64>::zeros((nx, ny));
     let x_shift = if inverse { nx.div_ceil(2) } else { nx / 2 };
     let y_shift = if inverse { ny.div_ceil(2) } else { ny / 2 };
 

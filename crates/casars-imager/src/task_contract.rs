@@ -6,8 +6,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_imaging::{
-    CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode, UvTaperSize, WTermMode,
-    WeightingMode,
+    CleanStopReason, Deconvolver, GaussianUvTaper, HogbomIterationMode, RestoringBeamMode,
+    UvTaperSize, WTermMode, WeightingMode,
 };
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
@@ -346,6 +346,35 @@ impl From<ImagerDeconvolver> for Deconvolver {
             ImagerDeconvolver::Mtmfs => Self::Mtmfs,
             ImagerDeconvolver::Clark => Self::Clark,
             ImagerDeconvolver::Multiscale => Self::Multiscale,
+        }
+    }
+}
+
+/// Hogbom minor-cycle iteration accounting policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagerHogbomIterationMode {
+    /// Treat `niter` and `cycleniter` as strict caps on committed components.
+    #[default]
+    Strict,
+    /// Mirror CASA's inclusive `hclean` iteration loop for parity checks.
+    CasaInclusive,
+}
+
+impl From<HogbomIterationMode> for ImagerHogbomIterationMode {
+    fn from(value: HogbomIterationMode) -> Self {
+        match value {
+            HogbomIterationMode::Strict => Self::Strict,
+            HogbomIterationMode::CasaInclusive => Self::CasaInclusive,
+        }
+    }
+}
+
+impl From<ImagerHogbomIterationMode> for HogbomIterationMode {
+    fn from(value: ImagerHogbomIterationMode) -> Self {
+        match value {
+            ImagerHogbomIterationMode::Strict => Self::Strict,
+            ImagerHogbomIterationMode::CasaInclusive => Self::CasaInclusive,
         }
     }
 }
@@ -718,6 +747,9 @@ pub struct ImagerRunTaskRequest {
     /// Upper clamp for the PSF fraction used to derive cycle thresholds.
     #[serde(default = "default_max_psf_fraction")]
     pub max_psf_fraction: f32,
+    /// Hogbom minor-cycle iteration accounting policy.
+    #[serde(default)]
+    pub hogbom_iteration_mode: ImagerHogbomIterationMode,
     /// Optional inclusive pixel-space clean boxes `(x0, y0, x1, y1)`.
     #[serde(default)]
     pub mask_boxes: Vec<[usize; 4]>,
@@ -781,6 +813,7 @@ impl ImagerRunTaskRequest {
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode.into(),
             mask_boxes: config.mask_boxes.clone(),
             mask_image: config.mask_image.clone(),
             w_term_mode: config.w_term_mode.into(),
@@ -854,6 +887,7 @@ impl ImagerRunTaskRequest {
             cyclefactor: self.cyclefactor,
             min_psf_fraction: self.min_psf_fraction,
             max_psf_fraction: self.max_psf_fraction,
+            hogbom_iteration_mode: self.hogbom_iteration_mode.into(),
             mask_boxes: self.mask_boxes.clone(),
             mask_image: self.mask_image.clone(),
             w_term_mode: self.w_term_mode.into(),
@@ -989,7 +1023,7 @@ pub struct ImagerRunReport {
     pub gridded_samples: usize,
     /// Total major-cycle count reported by the run.
     pub major_cycles: usize,
-    /// Total minor-cycle component updates reported by the run.
+    /// Total minor-cycle component updates executed by the run.
     pub minor_iterations: usize,
     /// Final CLEAN stop reason when deconvolution ran.
     pub clean_stop_reason: Option<ImagerCleanStopReason>,
@@ -1316,9 +1350,10 @@ mod tests {
     use super::{
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
         ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
-        ImagerDeconvolver, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunTaskRequest,
-        ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle,
-        ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        ImagerDeconvolver, ImagerHogbomIterationMode, ImagerPlaneSelection,
+        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
+        ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
+        ImagerWTermMode, ImagerWeighting,
     };
     use crate::{CliConfig, SaveModelMode, SpectralMode};
 
@@ -1487,6 +1522,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1538,6 +1574,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1756,6 +1793,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1907,6 +1945,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),

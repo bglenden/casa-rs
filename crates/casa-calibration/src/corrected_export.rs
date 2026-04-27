@@ -140,12 +140,11 @@ pub fn export_corrected_data(
     }
 
     prepare_output_root(&request.output_ms)?;
-    ms.save_as(&request.output_ms).map_err(|source| {
-        ExportCorrectedDataError::SaveMeasurementSet {
+    ms.save_as_assuming_valid(&request.output_ms)
+        .map_err(|source| ExportCorrectedDataError::SaveMeasurementSet {
             path: request.output_ms.display().to_string(),
             source,
-        }
-    })?;
+        })?;
 
     Ok(ExportCorrectedDataReport {
         input_ms: request.input_ms.clone(),

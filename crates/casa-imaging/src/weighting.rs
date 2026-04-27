@@ -91,6 +91,16 @@ pub(crate) fn apply_weighting_with_density_source(
             } else {
                 0.0
             } as f32;
+            if std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some() {
+                let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
+                let density_max = density
+                    .iter()
+                    .copied()
+                    .fold(0.0f32, |acc, value| acc.max(value));
+                eprintln!(
+                    "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={total_density_weight:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
+                );
+            }
             Ok(apply_optional_uv_taper(
                 target_batches
                     .iter()
@@ -156,16 +166,12 @@ pub(crate) fn trace_weighting_with_density_source(
                 && output_weight > 0.0
                 && sumwt_factor.is_finite()
                 && sumwt_factor > 0.0;
-            let normalization_contribution = if contributes {
-                2.0 * output_weight
-            } else {
-                0.0
-            };
             let reported_contribution = if contributes {
                 output_weight * sumwt_factor
             } else {
                 0.0
             };
+            let normalization_contribution = reported_contribution;
             if contributes {
                 gridded_samples += 1;
                 normalization_sumwt += normalization_contribution;

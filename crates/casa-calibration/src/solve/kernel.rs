@@ -148,9 +148,7 @@ pub(crate) fn solve_graph(
     for _ in 0..512 {
         let mut changed = false;
         for antenna_id in antenna_ids.iter().copied() {
-            if !reachable.contains(&antenna_id)
-                || (matches!(solve_mode, GainSolveMode::Phase) && antenna_id == refant_id)
-            {
+            if !reachable.contains(&antenna_id) || antenna_id == refant_id {
                 continue;
             }
             let mut accumulator = Complex32::new(0.0, 0.0);
@@ -172,21 +170,11 @@ pub(crate) fn solve_graph(
                 continue;
             }
             let candidate = accumulator / Complex32::new(total_weight, 0.0);
-            let updated = match solve_mode {
-                GainSolveMode::Phase => {
-                    let norm = candidate.norm();
-                    if norm <= f32::EPSILON {
-                        continue;
-                    }
-                    candidate / Complex32::new(norm, 0.0)
-                }
-                GainSolveMode::AmplitudePhase => {
-                    if candidate.norm() <= f32::EPSILON {
-                        continue;
-                    }
-                    candidate
-                }
-            };
+            let norm = candidate.norm();
+            if norm <= f32::EPSILON {
+                continue;
+            }
+            let updated = candidate / Complex32::new(norm, 0.0);
             let delta = updated * gains[&antenna_id].conj();
             let delta_complex = f64::from((updated - gains[&antenna_id]).norm());
             let delta_phase = f64::from(delta.im).atan2(f64::from(delta.re)).abs();
@@ -201,7 +189,78 @@ pub(crate) fn solve_graph(
         }
     }
 
+    if matches!(solve_mode, GainSolveMode::AmplitudePhase) {
+        let amplitudes = solve_log_amplitudes(graph, weights, &antenna_ids, &reachable);
+        for antenna_id in antenna_ids.iter().copied() {
+            if let (Some(gain), Some(amplitude)) =
+                (gains.get_mut(&antenna_id), amplitudes.get(&antenna_id))
+            {
+                *gain *= Complex32::new(*amplitude, 0.0);
+            }
+        }
+        rereference_gains(&mut gains, refant_id, solve_mode);
+    }
+
     Ok(SolvedPhaseGraph { gains, reachable })
+}
+
+fn solve_log_amplitudes(
+    graph: &HashMap<(i32, i32), Complex32>,
+    weights: &HashMap<(i32, i32), f32>,
+    antenna_ids: &BTreeSet<i32>,
+    reachable: &BTreeSet<i32>,
+) -> HashMap<i32, f32> {
+    let mut log_amplitudes = antenna_ids
+        .iter()
+        .copied()
+        .map(|antenna_id| (antenna_id, 0.0_f32))
+        .collect::<HashMap<_, _>>();
+
+    for _ in 0..256 {
+        let mut max_delta = 0.0_f32;
+        for antenna_id in antenna_ids.iter().copied() {
+            if !reachable.contains(&antenna_id) {
+                continue;
+            }
+            let mut numerator = 0.0_f32;
+            let mut denominator = 0.0_f32;
+            for other_id in antenna_ids.iter().copied() {
+                if antenna_id == other_id || !reachable.contains(&other_id) {
+                    continue;
+                }
+                let weight = weights
+                    .get(&(antenna_id, other_id))
+                    .copied()
+                    .unwrap_or_default();
+                if weight <= f32::EPSILON {
+                    continue;
+                }
+                let Some(edge) = graph.get(&(antenna_id, other_id)) else {
+                    continue;
+                };
+                let edge_amplitude = (*edge / Complex32::new(weight, 0.0)).norm();
+                if edge_amplitude <= f32::EPSILON {
+                    continue;
+                }
+                numerator += weight * (edge_amplitude.ln() - log_amplitudes[&other_id]);
+                denominator += weight;
+            }
+            if denominator <= f32::EPSILON {
+                continue;
+            }
+            let updated = numerator / denominator;
+            max_delta = max_delta.max((updated - log_amplitudes[&antenna_id]).abs());
+            log_amplitudes.insert(antenna_id, updated);
+        }
+        if max_delta <= 1.0e-6 {
+            break;
+        }
+    }
+
+    log_amplitudes
+        .into_iter()
+        .map(|(antenna_id, log_amplitude)| (antenna_id, log_amplitude.exp()))
+        .collect()
 }
 
 fn rereference_gains(

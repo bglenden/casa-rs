@@ -2,7 +2,7 @@
 //! Concrete prolate-spheroidal gridding and degridding helpers.
 
 use ndarray::Array2;
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 
 use crate::{ImageGeometry, ImagingError, fft::fft2};
 
@@ -181,6 +181,24 @@ impl StandardGridder {
         }
     }
 
+    pub(crate) fn grid_sample_product_planned_f64(
+        &self,
+        grid: &mut Array2<Complex64>,
+        taps: &ProductTapSet,
+        value: Complex64,
+    ) {
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+                storage[taps.flat_indices[tap]] += value * f64::from(taps.weights[tap]);
+            }
+            return;
+        }
+        for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+            grid[(taps.x_indices[tap], taps.y_indices[tap])] +=
+                value * f64::from(taps.weights[tap]);
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn degrid_sample_planned(
         &self,
@@ -201,6 +219,7 @@ impl StandardGridder {
         value
     }
 
+    #[cfg(test)]
     pub(crate) fn degrid_sample_product_planned(
         &self,
         grid: &Array2<Complex32>,
@@ -218,6 +237,33 @@ impl StandardGridder {
             value += grid[(taps.x_indices[tap], taps.y_indices[tap])] * taps.weights[tap];
         }
         value
+    }
+
+    pub(crate) fn degrid_sample_product_planned_normalized(
+        &self,
+        grid: &Array2<Complex32>,
+        taps: &ProductTapSet,
+    ) -> Complex32 {
+        let mut value = Complex32::new(0.0, 0.0);
+        let mut norm = 0.0f32;
+        if let Some(storage) = grid.as_slice_memory_order() {
+            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+                let weight = taps.weights[tap];
+                value += storage[taps.flat_indices[tap]] * weight;
+                norm += weight;
+            }
+        } else {
+            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+                let weight = taps.weights[tap];
+                value += grid[(taps.x_indices[tap], taps.y_indices[tap])] * weight;
+                norm += weight;
+            }
+        }
+        if norm > 0.0 && norm.is_finite() {
+            value / norm
+        } else {
+            Complex32::new(0.0, 0.0)
+        }
     }
 
     #[cfg(test)]
@@ -276,6 +322,12 @@ impl StandardGridder {
     pub(crate) fn corrected_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
         self.corrected_complex_image_from_grid(raw)
             .mapv(|value| value.re)
+    }
+
+    pub(crate) fn corrected_image_from_grid_f64(&self, raw: &Array2<Complex64>) -> Array2<f32> {
+        self.corrected_image_from_grid(
+            &raw.mapv(|value| Complex32::new(value.re as f32, value.im as f32)),
+        )
     }
 
     pub(crate) fn corrected_complex_image_from_grid(
@@ -376,10 +428,14 @@ impl StandardGridder {
         let nx = self.geometry.nx() as f64;
         let ny = self.geometry.ny() as f64;
         let (x, y) = match convention {
-            DensityCellConvention::VisImagingWeight => (
-                u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
-                -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
-            ),
+            DensityCellConvention::VisImagingWeight => {
+                let u = f64::from(u_lambda as f32);
+                let v = f64::from(v_lambda as f32);
+                (
+                    -u * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
+                    v * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
+                )
+            }
             DensityCellConvention::CubeBriggsWeightor => (
                 -u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
                 -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
@@ -1388,15 +1444,15 @@ mod tests {
         let dv = 1.0 / (32.0 * 1.0e-4);
         assert_eq!(
             gridder.density_cell_index(0.99 * du, -0.99 * dv),
-            Some((center.0, center.1))
+            Some((center.0 - 1, center.1 - 1))
         );
         assert_eq!(
             gridder.density_cell_index(1.01 * du, -1.01 * dv),
-            Some((center.0 + 1, center.1 + 1))
+            Some((center.0 - 2, center.1 - 2))
         );
         assert_eq!(
             gridder.density_cell_index(-1.01 * du, 1.01 * dv),
-            Some((center.0 - 2, center.1 - 2))
+            Some((center.0 + 1, center.1 + 1))
         );
     }
 

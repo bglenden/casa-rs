@@ -11,6 +11,8 @@ use casa_calibration::{
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
+use casa_tables::{Table, TableOptions};
+use casa_types::ArrayValue;
 
 #[test]
 fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
@@ -32,6 +34,7 @@ fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -83,6 +86,7 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::ModelColumn,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -123,6 +127,7 @@ fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -169,6 +174,7 @@ fn solve_gain_amplitude_phase_g_corrects_synthetic_ms_downstream() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -215,6 +221,7 @@ fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -237,6 +244,60 @@ fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
     .expect("apply solved T table");
 
     common::assert_corrected_rows_are_unit_model(&ms_path);
+}
+
+#[test]
+fn solve_gain_amplitude_phase_t_with_solnorm_normalizes_average_amplitude() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::SyntheticGainFixtureKind::TAmplitudePhase,
+    );
+    let caltable_path = dir.path().join("solved-ap-solnorm.tcal");
+
+    solve_gain_from_path(
+        &ms_path,
+        &GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: caltable_path.clone(),
+            gain_type: GainType::T,
+            solve_mode: GainSolveMode::AmplitudePhase,
+            solve_interval: GainSolveInterval::Infinite,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: true,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve normalized amplitude+phase T gains");
+
+    let table = Table::open(TableOptions::new(&caltable_path)).expect("open gain table");
+    let mut power_sum = 0.0_f32;
+    let mut count = 0usize;
+    for row in 0..table.row_count() {
+        let gains = match table
+            .cell_accessor(row, "CPARAM")
+            .and_then(|cell| cell.array())
+            .expect("CPARAM cell")
+        {
+            ArrayValue::Complex32(values) => values.iter().copied().collect::<Vec<_>>(),
+            other => panic!("unexpected CPARAM value: {other:?}"),
+        };
+        for gain in gains {
+            let amplitude = gain.norm();
+            power_sum += amplitude * amplitude;
+            count += 1;
+        }
+    }
+
+    let rms_amplitude = (power_sum / count as f32).sqrt();
+    assert!(
+        (rms_amplitude - 1.0).abs() <= 1.0e-4,
+        "expected unit RMS amplitude, found {rms_amplitude}"
+    );
 }
 
 #[test]
@@ -310,6 +371,7 @@ fn solve_gain_phase_g_solint_integration_writes_per_integration_solutions() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -400,6 +462,7 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -469,6 +532,7 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -542,6 +606,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             prior_calibration_tables: Vec::new(),
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -659,6 +724,7 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
             prior_calibration_tables: vec![ApplyCalibrationTableSpec::new(&prior_table)],
             parang: false,
             model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )

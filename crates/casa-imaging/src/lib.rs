@@ -46,13 +46,13 @@ use casa_lattices::array_madfm;
 use casa_types::measures::direction::DirectionRef;
 use libm::{erfc, j1};
 use ndarray::{Array2, Array4, Zip, s};
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 
 use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
-use fft::{centered_fft2, centered_ifft2};
+use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{PlannedSample, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector};
 use weighting::{
     apply_weighting, apply_weighting_with_density_source, trace_weighting_with_density_source,
@@ -78,11 +78,11 @@ pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
     CompatibilityMode, CubeChannelRequest, CubeImagingDiagnostics, CubeImagingRequest,
     CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
-    GaussianUvTaper, GridderMode, ImageGeometry, ImagingDiagnostics, ImagingRequest, ImagingResult,
-    ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, MtmfsResult,
-    ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics,
-    ResidualSampleDiagnostics, RestoringBeamMode, UvTaperSize, VisibilityBatch,
-    VisibilityMetadataBatch, WProjectDiagnostics, WProjectKernelDiagnostics,
+    GaussianUvTaper, GridderMode, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
+    ImagingRequest, ImagingResult, ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig,
+    MtmfsRequest, MtmfsResult, ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PsfBeamFitResult,
+    ResidualRefreshDiagnostics, ResidualSampleDiagnostics, RestoringBeamMode, UvTaperSize,
+    VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectKernelDiagnostics,
     WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
     WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
@@ -292,9 +292,9 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
 /// cycle, Cotton-Schwab residual refreshes against the measured visibilities,
 /// and CASA-style `.tt*`, `.alpha`, and `.alpha.error` products.
 ///
-/// This implementation intentionally does not reproduce CASA's historical
-/// Hogbom off-by-one bug. The requested `niter` remains a hard cap on
-/// committed model updates, even under `deconvolver='mtmfs'`.
+/// This implementation mirrors CASA's historical Hogbom off-by-one behavior
+/// for MTMFS minor-cycle budgeting: the reported `niter` remains capped, but a
+/// single minor-cycle call can commit one extra component.
 pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
     let total_started = Instant::now();
     request.validate()?;
@@ -419,8 +419,18 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
         ));
         reported_minor_iterations += outcome.reported_updates;
         final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
+        let mut stop_after_refresh = None::<CleanStopReason>;
         if let Some(reason) = outcome.stop_reason {
-            clean_stop_reason = Some(reason);
+            match reason {
+                CleanStopReason::CycleThresholdReached if outcome.updated_model => {}
+                CleanStopReason::CycleThresholdReached => {
+                    clean_stop_reason = Some(reason);
+                }
+                _ => {
+                    clean_stop_reason = Some(reason);
+                    stop_after_refresh = Some(reason);
+                }
+            }
         }
         if !outcome.updated_model {
             break;
@@ -433,7 +443,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
             minor_peak,
             &mut divergence_warned,
         );
-        if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
+        if reported_minor_iterations >= request.clean.niter {
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
@@ -455,6 +465,9 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
             request.clean_mask.as_ref(),
             request.clean,
         );
+        if stop_after_refresh.is_some() {
+            break;
+        }
         if let Some(stop_reason) = tolerant_clean_stop_reason(
             refreshed_peak,
             request.clean.threshold_jy_per_beam,
@@ -621,8 +634,8 @@ fn run_mosaic_dirty_imaging(
     let model = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_residual_image = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_weight_image = Array2::<f32>::zeros((nx, ny));
-    let mut reported_sumwt = 0.0f32;
-    let mut normalization_sumwt = 0.0f32;
+    let mut reported_sumwt = 0.0f64;
+    let mut normalization_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
 
@@ -716,8 +729,8 @@ fn run_mosaic_dirty_imaging(
                 &weight_plan,
                 Complex32::new(weight, 0.0),
             );
-            normalization_sumwt += 2.0 * weight * plan.normalization;
-            let reported = weight * sumwt_factor;
+            normalization_sumwt += 2.0 * f64::from(weight) * f64::from(plan.normalization);
+            let reported = f64::from(weight) * f64::from(sumwt_factor);
             if plan.center_in_bounds {
                 reported_sumwt += reported;
             }
@@ -809,6 +822,8 @@ fn run_mosaic_dirty_imaging(
             "mosaic totals: gridded={gridded_samples} skipped={skipped_samples} normalization_sumwt={normalization_sumwt:.9e} reported_sumwt={reported_sumwt:.9e}"
         );
     }
+
+    let reported_sumwt = reported_sumwt as f32;
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &accumulated_psf,
         request.geometry.cell_size_rad,
@@ -1347,8 +1362,18 @@ fn run_hogbom_cotton_schwab(
         minor_iterations += outcome.actual_updates;
         reported_minor_iterations += outcome.reported_updates;
         final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
+        let mut stop_after_refresh = None::<CleanStopReason>;
         if let Some(reason) = outcome.stop_reason {
-            clean_stop_reason = Some(reason);
+            match reason {
+                CleanStopReason::CycleThresholdReached if outcome.updated_model => {}
+                CleanStopReason::CycleThresholdReached => {
+                    clean_stop_reason = Some(reason);
+                }
+                _ => {
+                    clean_stop_reason = Some(reason);
+                    stop_after_refresh = Some(reason);
+                }
+            }
         }
         if !outcome.updated_model {
             break;
@@ -1361,7 +1386,7 @@ fn run_hogbom_cotton_schwab(
             minor_peak,
             &mut divergence_warned,
         );
-        if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
+        if reported_minor_iterations >= request.clean.niter {
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
@@ -1380,6 +1405,9 @@ fn run_hogbom_cotton_schwab(
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
         let refreshed_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
+        if stop_after_refresh.is_some() {
+            break;
+        }
         if let Some(stop_reason) = tolerant_clean_stop_reason(
             refreshed_peak,
             request.clean.threshold_jy_per_beam,
@@ -1426,8 +1454,7 @@ fn run_hogbom_minor_cycle(
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
 ) -> HogbomMinorCycleOutcome {
-    let cycle_component_budget =
-        hogbom_component_budget(cycle_reported_niter, request.compatibility);
+    let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
     let mut stop_reason = None;
@@ -2391,15 +2418,15 @@ fn subtract_clark_component_from_active(
     }
 }
 
-fn hogbom_component_budget(reported_cycle_niter: usize, compatibility: CompatibilityMode) -> usize {
-    match compatibility {
-        // Deliberate divergence from CASA's current Hogbom bug:
-        // CASA's `SDAlgorithmHogbomClean` / `hclean` path can commit one extra
-        // component when `siter = 0` meets the kernel's inclusive
-        // `siter..niter` loop, then clamp the reported `iterdone` back to the
-        // requested budget. We do not reproduce that behavior. In casa-rs,
-        // `niter` is a real cap on committed Hogbom updates.
-        CompatibilityMode::CasaStandardMfs => reported_cycle_niter,
+fn hogbom_component_budget(reported_cycle_niter: usize, clean: CleanConfig) -> usize {
+    match clean.hogbom_iteration_mode {
+        // CASA's `SDAlgorithmHogbomClean` passes `siter = 0` and
+        // `cycleNiter` into casacore's Fortran `hclean`, whose
+        // `do iter=siter,niter` loop is inclusive. The kernel can therefore
+        // commit one more component than the reported `iterdone`, which is
+        // clamped back to `cycleNiter` before returning.
+        HogbomIterationMode::CasaInclusive => reported_cycle_niter.saturating_add(1),
+        HogbomIterationMode::Strict => reported_cycle_niter,
     }
 }
 
@@ -2456,8 +2483,8 @@ fn compute_mtmfs_psf_terms(
     let mut psf_grids = (0..term_count)
         .map(|_| Array2::<Complex32>::zeros((nx, ny)))
         .collect::<Vec<_>>();
-    let mut normalization_sumwt = 0.0f32;
-    let mut reported_sumwt_terms = vec![0.0f32; term_count];
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt_terms = vec![0.0f64; term_count];
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
     let mut timings = PsfComputationTimings::default();
@@ -2494,7 +2521,7 @@ fn compute_mtmfs_psf_terms(
                 skipped_samples += 1;
                 continue;
             };
-            normalization_sumwt += 2.0 * weight;
+            normalization_sumwt += 2.0 * f64::from(weight);
             for order in 0..term_count {
                 let factor = mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, order);
                 let psf_weight = Complex32::new(weight * factor, 0.0);
@@ -2508,7 +2535,8 @@ fn compute_mtmfs_psf_terms(
                     &plan.negative,
                     psf_weight,
                 );
-                reported_sumwt_terms[order] += weight * factor * sumwt_factor;
+                reported_sumwt_terms[order] +=
+                    f64::from(weight) * f64::from(factor) * f64::from(sumwt_factor);
             }
             gridded_samples += 1;
         }
@@ -2530,7 +2558,7 @@ fn compute_mtmfs_psf_terms(
         .iter()
         .map(|raw| {
             let mut corrected = gridder.corrected_image_from_grid(raw);
-            corrected.mapv_inplace(|value| value / normalization_sumwt);
+            corrected.mapv_inplace(|value| value / normalization_sumwt as f32);
             corrected
         })
         .collect::<Vec<_>>();
@@ -2550,8 +2578,11 @@ fn compute_mtmfs_psf_terms(
 
     Ok(MtmfsPsfState {
         psf_terms,
-        normalization_sumwt,
-        reported_sumwt_terms,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt_terms: reported_sumwt_terms
+            .into_iter()
+            .map(|value| value as f32)
+            .collect(),
         psf_peak,
         gridded_samples,
         skipped_samples,
@@ -2619,7 +2650,9 @@ fn compute_mtmfs_residual_terms(
             let predicted_visibility_terms = if let Some(model_grids) = model_grids.as_ref() {
                 model_grids
                     .iter()
-                    .map(|grid| gridder.degrid_sample_product_planned(grid, &plan.positive))
+                    .map(|grid| {
+                        gridder.degrid_sample_product_planned_normalized(grid, &plan.positive)
+                    })
                     .collect::<Vec<_>>()
             } else {
                 vec![Complex32::new(0.0, 0.0); request.nterms]
@@ -2836,8 +2869,7 @@ fn run_mtmfs_minor_cycle(
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
 ) -> (HogbomMinorCycleOutcome, MinorCycleProbe) {
-    let cycle_component_budget =
-        hogbom_component_budget(cycle_reported_niter, request.compatibility);
+    let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
     let mut stop_reason = None;
@@ -2994,9 +3026,9 @@ fn compute_psf(
         WTermMode::None => {}
     }
     let [nx, ny] = gridder.grid_shape();
-    let mut psf_grid = Array2::<Complex32>::zeros((nx, ny));
-    let mut normalization_sumwt = 0.0f32;
-    let mut reported_sumwt = 0.0f32;
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
     let mut timings = PsfComputationTimings::default();
@@ -3023,11 +3055,12 @@ fn compute_psf(
                 skipped_samples += 1;
                 continue;
             };
-            let psf_weight = Complex32::new(weight, 0.0);
-            gridder.grid_sample_product_planned(&mut psf_grid, &plan.positive, psf_weight);
-            gridder.grid_sample_product_planned(&mut psf_grid, &plan.negative, psf_weight);
-            normalization_sumwt += 2.0 * weight;
-            reported_sumwt += weight * sumwt_factor;
+            let grid_weight = weight * sumwt_factor;
+            let psf_weight = Complex64::new(f64::from(grid_weight), 0.0);
+            gridder.grid_sample_product_planned_f64(&mut psf_grid, &plan.positive, psf_weight);
+            let sumwt = f64::from(grid_weight);
+            normalization_sumwt += sumwt;
+            reported_sumwt += sumwt;
             gridded_samples += 1;
         }
     }
@@ -3038,11 +3071,11 @@ fn compute_psf(
     }
 
     let fft_started = Instant::now();
-    let raw_psf = centered_ifft2(&psf_grid);
+    let raw_psf = centered_ifft2_f64(&psf_grid);
     timings.fft = fft_started.elapsed();
     let normalize_started = Instant::now();
-    let mut psf = gridder.corrected_image_from_grid(&raw_psf);
-    psf.mapv_inplace(|value| value / normalization_sumwt);
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / normalization_sumwt as f32);
     let psf_peak = peak_abs_value(&psf);
     if !(psf_peak.is_finite() && psf_peak > 0.0) {
         return Err(ImagingError::Normalization(
@@ -3057,8 +3090,8 @@ fn compute_psf(
 
     Ok(PsfState {
         psf,
-        normalization_sumwt,
-        reported_sumwt,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt: reported_sumwt as f32,
         psf_peak,
         gridded_samples,
         skipped_samples,
@@ -3071,10 +3104,10 @@ fn compute_dirty_psf_and_residual_standard(
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<(PsfState, Array2<f32>), ImagingError> {
     let [nx, ny] = gridder.grid_shape();
-    let mut psf_grid = Array2::<Complex32>::zeros((nx, ny));
-    let mut residual_grid = Array2::<Complex32>::zeros((nx, ny));
-    let mut normalization_sumwt = 0.0f32;
-    let mut reported_sumwt = 0.0f32;
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
 
@@ -3100,21 +3133,24 @@ fn compute_dirty_psf_and_residual_standard(
                 skipped_samples += 1;
                 continue;
             };
-            let psf_weight = Complex32::new(weight, 0.0);
-            gridder.grid_sample_product_planned(&mut psf_grid, &plan.positive, psf_weight);
-            gridder.grid_sample_product_planned(&mut psf_grid, &plan.negative, psf_weight);
-            normalization_sumwt += 2.0 * weight;
-            reported_sumwt += weight * sumwt_factor;
+            let grid_weight = weight * sumwt_factor;
+            let psf_weight = Complex64::new(f64::from(grid_weight), 0.0);
+            gridder.grid_sample_product_planned_f64(&mut psf_grid, &plan.positive, psf_weight);
+            let sumwt = f64::from(grid_weight);
+            normalization_sumwt += sumwt;
+            reported_sumwt += sumwt;
             gridded_samples += 1;
 
             let observed_visibility = batch.visibility[index];
             if observed_visibility.re.is_finite() && observed_visibility.im.is_finite() {
-                let residual = observed_visibility * weight;
-                gridder.grid_sample_product_planned(&mut residual_grid, &plan.positive, residual);
-                gridder.grid_sample_product_planned(
+                let residual = Complex64::new(
+                    f64::from(observed_visibility.re) * f64::from(grid_weight),
+                    f64::from(observed_visibility.im) * f64::from(grid_weight),
+                );
+                gridder.grid_sample_product_planned_f64(
                     &mut residual_grid,
-                    &plan.negative,
-                    residual.conj(),
+                    &plan.positive,
+                    residual,
                 );
             }
         }
@@ -3129,11 +3165,11 @@ fn compute_dirty_psf_and_residual_standard(
     }
 
     let psf_fft_started = Instant::now();
-    let raw_psf = centered_ifft2(&psf_grid);
+    let raw_psf = centered_ifft2_f64(&psf_grid);
     stage_timings.psf_fft += psf_fft_started.elapsed();
     let psf_normalize_started = Instant::now();
-    let mut psf = gridder.corrected_image_from_grid(&raw_psf);
-    psf.mapv_inplace(|value| value / normalization_sumwt);
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / normalization_sumwt as f32);
     let psf_peak = peak_abs_value(&psf);
     if !(psf_peak.is_finite() && psf_peak > 0.0) {
         return Err(ImagingError::Normalization(
@@ -3144,18 +3180,18 @@ fn compute_dirty_psf_and_residual_standard(
     stage_timings.psf_normalize += psf_normalize_started.elapsed();
 
     let residual_fft_started = Instant::now();
-    let raw_residual = centered_ifft2(&residual_grid);
+    let raw_residual = centered_ifft2_f64(&residual_grid);
     stage_timings.residual_fft += residual_fft_started.elapsed();
     let residual_normalize_started = Instant::now();
-    let mut residual = gridder.corrected_image_from_grid(&raw_residual);
-    residual.mapv_inplace(|value| value / normalization_sumwt / psf_peak);
+    let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
+    residual.mapv_inplace(|value| value / normalization_sumwt as f32 / psf_peak);
     stage_timings.residual_normalize += residual_normalize_started.elapsed();
 
     Ok((
         PsfState {
             psf,
-            normalization_sumwt,
-            reported_sumwt,
+            normalization_sumwt: normalization_sumwt as f32,
+            reported_sumwt: reported_sumwt as f32,
             psf_peak,
             gridded_samples,
             skipped_samples,
@@ -3201,7 +3237,10 @@ fn compute_residual(
         gridder,
         model,
         psf_state,
-        matches!(request.deconvolver, Deconvolver::Clark),
+        matches!(
+            request.deconvolver,
+            Deconvolver::Hogbom | Deconvolver::Clark
+        ),
         stage_timings,
     )
 }
@@ -3294,7 +3333,7 @@ fn compute_residual_standard_internal(
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<ResidualRefreshTraceInternal, ImagingError> {
     let [nx, ny] = gridder.grid_shape();
-    let mut residual_grid = Array2::<Complex32>::zeros((nx, ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut timings = ResidualComputationTimings::default();
     let mut samples = if capture_samples {
         Vec::with_capacity(batches.iter().map(VisibilityBatch::len).sum())
@@ -3346,7 +3385,9 @@ fn compute_residual_standard_internal(
                 } else {
                     model_grid.as_ref().map_or_else(
                         || Complex32::new(0.0, 0.0),
-                        |grid| gridder.degrid_sample_product_planned(grid, &plan.positive),
+                        |grid| {
+                            gridder.degrid_sample_product_planned_normalized(grid, &plan.positive)
+                        },
                     )
                 }
             } else {
@@ -3370,22 +3411,25 @@ fn compute_residual_standard_internal(
             let Some(plan) = planned_sample.as_ref() else {
                 continue;
             };
-            let residual = residual_visibility * weight;
-            gridder.grid_sample_product_planned(&mut residual_grid, &plan.positive, residual);
-            gridder.grid_sample_product_planned(
-                &mut residual_grid,
-                &plan.negative,
-                residual.conj(),
+            let sumwt_factor = batch.sumwt_factor[index];
+            if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+                continue;
+            }
+            let residual_weight = f64::from(weight * sumwt_factor);
+            let residual = Complex64::new(
+                f64::from(residual_visibility.re) * residual_weight,
+                f64::from(residual_visibility.im) * residual_weight,
             );
+            gridder.grid_sample_product_planned_f64(&mut residual_grid, &plan.positive, residual);
         }
     }
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
-    let raw = centered_ifft2(&residual_grid);
+    let raw = centered_ifft2_f64(&residual_grid);
     timings.fft = fft_started.elapsed();
     let normalize_started = Instant::now();
-    let mut image = gridder.corrected_image_from_grid(&raw);
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
     timings.normalize = normalize_started.elapsed();
     stage_timings.model_fft += timings.model_fft;
@@ -3493,7 +3537,7 @@ fn compute_residual_trace_cube_standard_with_model_grids(
         )));
     }
     let [nx, ny] = gridder.grid_shape();
-    let mut residual_grid = Array2::<Complex32>::zeros((nx, ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut samples = if capture_samples {
         Vec::with_capacity(batches.iter().map(VisibilityBatch::len).sum())
     } else {
@@ -3551,9 +3595,11 @@ fn compute_residual_trace_cube_standard_with_model_grids(
                     };
                     if let Some(model_grid) = model_grid.as_ref() {
                         let contribution_prediction = match prediction_lambda_mode {
-                            CubePredictionLambdaMode::OutputChannel => {
-                                gridder.degrid_sample_product_planned(model_grid, &plan.positive)
-                            }
+                            CubePredictionLambdaMode::OutputChannel => gridder
+                                .degrid_sample_product_planned_normalized(
+                                    model_grid,
+                                    &plan.positive,
+                                ),
                             CubePredictionLambdaMode::ModelChannel => {
                                 let Some(&model_frequency_hz) = model_channel_frequencies_hz
                                     .get(contribution.model_channel_index)
@@ -3578,8 +3624,10 @@ fn compute_residual_trace_cube_standard_with_model_grids(
                                 ) else {
                                     continue;
                                 };
-                                gridder
-                                    .degrid_sample_product_planned(model_grid, &model_plan.positive)
+                                gridder.degrid_sample_product_planned_normalized(
+                                    model_grid,
+                                    &model_plan.positive,
+                                )
                             }
                         };
                         predicted += contribution_prediction * contribution.factor;
@@ -3607,22 +3655,25 @@ fn compute_residual_trace_cube_standard_with_model_grids(
             let Some(plan) = planned_sample.as_ref() else {
                 continue;
             };
-            let residual = residual_visibility * weight;
-            gridder.grid_sample_product_planned(&mut residual_grid, &plan.positive, residual);
-            gridder.grid_sample_product_planned(
-                &mut residual_grid,
-                &plan.negative,
-                residual.conj(),
+            let sumwt_factor = batch.sumwt_factor[index];
+            if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+                continue;
+            }
+            let residual_weight = f64::from(weight * sumwt_factor);
+            let residual = Complex64::new(
+                f64::from(residual_visibility.re) * residual_weight,
+                f64::from(residual_visibility.im) * residual_weight,
             );
+            gridder.grid_sample_product_planned_f64(&mut residual_grid, &plan.positive, residual);
         }
     }
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
-    let raw = centered_ifft2(&residual_grid);
+    let raw = centered_ifft2_f64(&residual_grid);
     timings.fft = fft_started.elapsed();
     let normalize_started = Instant::now();
-    let mut image = gridder.corrected_image_from_grid(&raw);
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
     timings.normalize = normalize_started.elapsed();
     Ok(ResidualRefreshTraceInternal {
@@ -3815,8 +3866,8 @@ fn prepare_w_project_data(
     }
     let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
     let mut samples = Vec::with_capacity(raw_samples.len());
-    let mut normalization_sumwt = 0.0f32;
-    let mut reported_sumwt = 0.0f32;
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
 
     for sample in raw_samples {
@@ -3835,8 +3886,9 @@ fn prepare_w_project_data(
             });
             continue;
         };
-        normalization_sumwt += 2.0 * sample.weight * positive_plan.normalization;
-        reported_sumwt += sample.weight * sample.sumwt_factor;
+        normalization_sumwt +=
+            2.0 * f64::from(sample.weight) * f64::from(positive_plan.normalization);
+        reported_sumwt += f64::from(sample.weight) * f64::from(sample.sumwt_factor);
         gridded_samples += 1;
         samples.push(WProjectPreparedSample {
             batch_index: sample.batch_index,
@@ -3863,8 +3915,8 @@ fn prepare_w_project_data(
         projector,
         samples,
         skipped_samples,
-        normalization_sumwt,
-        reported_sumwt,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt: reported_sumwt as f32,
         gridded_samples,
     })
 }
@@ -3954,8 +4006,8 @@ fn compute_psf_direct(
     let [nx, ny] = geometry.image_shape;
     let pixels = build_direct_pixel_coordinates(geometry);
     let mut psf = Array2::<f32>::zeros((nx, ny));
-    let mut normalization_sumwt = 0.0f32;
-    let mut reported_sumwt = 0.0f32;
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
 
@@ -3976,8 +4028,8 @@ fn compute_psf_direct(
                 skipped_samples += 1;
                 continue;
             }
-            normalization_sumwt += 2.0 * weight;
-            reported_sumwt += weight * sumwt_factor;
+            normalization_sumwt += 2.0 * f64::from(weight);
+            reported_sumwt += f64::from(weight) * f64::from(sumwt_factor);
             gridded_samples += 1;
             accumulate_direct_adjoint(
                 &mut psf,
@@ -3997,7 +4049,7 @@ fn compute_psf_direct(
     }
 
     let normalize_started = Instant::now();
-    psf.mapv_inplace(|value| value / normalization_sumwt);
+    psf.mapv_inplace(|value| value / normalization_sumwt as f32);
     let psf_peak = peak_abs_value(&psf);
     if !(psf_peak.is_finite() && psf_peak > 0.0) {
         return Err(ImagingError::Normalization(
@@ -4009,8 +4061,8 @@ fn compute_psf_direct(
 
     Ok(PsfState {
         psf,
-        normalization_sumwt,
-        reported_sumwt,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt: reported_sumwt as f32,
         psf_peak,
         gridded_samples,
         skipped_samples,
@@ -4511,6 +4563,7 @@ fn dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
         cyclefactor: 1.0,
         min_psf_fraction: 0.05,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::Strict,
     }
 }
 
@@ -4561,10 +4614,10 @@ mod tests {
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
-        ImageGeometry, ImagingRequest, ImagingStageTimings, MtmfsRequest, ParallelHandBatch,
-        PlaneStokes, PsfState, RestoringBeamMode, StandardGridder, VisibilityBatch,
-        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
-        apply_chauvenet_clipping, apply_weighting, build_direct_components,
+        HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings, MtmfsRequest,
+        ParallelHandBatch, PlaneStokes, PsfState, RestoringBeamMode, StandardGridder,
+        VisibilityBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
         build_direct_pixel_coordinates, compute_cycle_threshold,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
@@ -4908,12 +4961,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(diagnostics.samples.len(), 1);
-        assert!((diagnostics.normalization_sumwt - 3.0).abs() < 1.0e-5);
+        assert!((diagnostics.normalization_sumwt - 1.5).abs() < 1.0e-5);
         assert!((diagnostics.reported_sumwt - 1.5).abs() < 1.0e-5);
-        assert!(diagnostics.normalization_sumwt > diagnostics.reported_sumwt);
+        assert!((diagnostics.normalization_sumwt - diagnostics.reported_sumwt).abs() < 1.0e-5);
         let sample = &diagnostics.samples[0];
         assert!((sample.output_weight - 1.5).abs() < 1.0e-6);
-        assert!((sample.normalization_contribution - 3.0).abs() < 1.0e-5);
+        assert!((sample.normalization_contribution - 1.5).abs() < 1.0e-5);
         assert!((sample.reported_contribution - 1.5).abs() < 1.0e-5);
         assert_eq!(sample.density_weight, None);
     }
@@ -6097,6 +6150,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.05,
                 max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             psf_cutoff: 0.35,
@@ -6171,6 +6225,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.05,
                 max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             psf_cutoff: 0.35,
@@ -6235,6 +6290,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 0.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             psf_cutoff: 0.35,
@@ -6309,6 +6365,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.05,
                 max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             psf_cutoff: 0.35,
@@ -6399,6 +6456,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.05,
                 max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             psf_cutoff: 0.35,
@@ -6514,6 +6572,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.05,
                 max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -6599,6 +6658,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.05,
                 max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -6615,7 +6675,7 @@ mod tests {
     }
 
     #[test]
-    fn casa_hogbom_compatibility_keeps_niter_as_a_hard_cap() {
+    fn casa_hogbom_compatibility_matches_hclean_reported_niter() {
         let samples = vec![
             (-140.0, -110.0, 0.0),
             (-80.0, 60.0, 0.0),
@@ -6649,6 +6709,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 0.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -6662,8 +6723,14 @@ mod tests {
             Some(CleanStopReason::IterationLimitReached)
         );
         assert_eq!(result.diagnostics.major_cycles, 1);
-        assert_eq!(result.diagnostics.minor_iterations, 1);
+        assert_eq!(result.diagnostics.minor_iterations, 2);
         assert!(result.model[(32, 32, 0, 0)] > 0.0);
+        let nonzero = result
+            .model
+            .iter()
+            .filter(|value| value.abs() > 0.0)
+            .count();
+        assert_eq!(nonzero, 1);
     }
 
     #[test]
@@ -6701,6 +6768,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 0.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -6729,6 +6797,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 0.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -6778,6 +6847,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 0.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -6873,6 +6943,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 0.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -6930,6 +7001,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.05,
                 max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: Some(mask),
             w_term_mode: WTermMode::None,
@@ -7024,6 +7096,7 @@ mod tests {
                 cyclefactor: 0.5,
                 min_psf_fraction: 0.01,
                 max_psf_fraction: 0.4,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -7052,6 +7125,7 @@ mod tests {
                 cyclefactor: 3.0,
                 min_psf_fraction: 0.4,
                 max_psf_fraction: 0.9,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -7328,7 +7402,7 @@ mod tests {
     }
 
     #[test]
-    fn hogbom_minor_cycle_treats_niter_as_hard_cap() {
+    fn hogbom_minor_cycle_matches_hclean_inclusive_iteration_budget() {
         let request = ImagingRequest {
             geometry: ImageGeometry {
                 image_shape: [6, 6],
@@ -7353,6 +7427,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -7405,9 +7480,9 @@ mod tests {
             &mut stage_timings,
         );
 
-        assert_eq!(outcome.actual_updates, 1);
+        assert_eq!(outcome.actual_updates, 2);
         assert_eq!(outcome.reported_updates, 1);
-        assert_eq!(model[(3, 3)], 0.6);
+        assert!((model[(3, 3)] - 0.9).abs() < 1.0e-6);
     }
 
     #[test]
@@ -7437,6 +7512,7 @@ mod tests {
                 cyclefactor: 1.0,
                 min_psf_fraction: 0.0,
                 max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
             w_term_mode: WTermMode::None,
@@ -7539,6 +7615,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         };
         let cycle_threshold = compute_cycle_threshold(10.0, 0.02, clean);
         assert_eq!(cycle_threshold, 0.5);

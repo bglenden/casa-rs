@@ -224,6 +224,19 @@ impl MeasurementSet {
         self.save()
     }
 
+    /// Save the MS to a new path without re-validating every table row.
+    ///
+    /// This is the rebasing counterpart to [`save_assuming_valid`](Self::save_assuming_valid).
+    /// It is intended for workflows that mutate through schema-aware APIs but
+    /// need to preserve legacy or externally-written cells that are readable by
+    /// the storage layer yet fail strict full-row validation.
+    pub fn save_as_assuming_valid(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
+        let path = path.as_ref().to_path_buf();
+        self.path = Some(path.clone());
+        self.rebase_subtable_paths(&path);
+        self.save_assuming_valid()
+    }
+
     /// Validate the MS structure and required column metadata.
     ///
     /// This mirrors the casacore `MSTableImpl::validate` checks for required
