@@ -151,6 +151,37 @@ pub fn assert_corrected_rows_are_unit_model(ms_path: &Path) {
     }
 }
 
+pub fn assert_corrected_rows_match_model_column(ms_path: &Path) {
+    let ms = MeasurementSet::open(ms_path).expect("reopen measurement set");
+    let corrected = ms
+        .data_column(VisibilityDataColumn::CorrectedData)
+        .expect("corrected data column");
+    let model = ms
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("model data column");
+    for row in 0..ms.row_count() {
+        let ArrayValue::Complex32(corrected_values) = corrected.get(row).expect("corrected row")
+        else {
+            panic!("expected complex corrected data");
+        };
+        let ArrayValue::Complex32(model_values) = model.get(row).expect("model row") else {
+            panic!("expected complex model data");
+        };
+        assert_eq!(corrected_values.shape(), model_values.shape());
+        for (corrected, model) in corrected_values.iter().zip(model_values.iter()) {
+            assert!(
+                (corrected.re - model.re).abs() <= 1.0e-3
+                    && (corrected.im - model.im).abs() <= 1.0e-3,
+                "expected corrected value close to model ({:.6},{:.6}), got ({:.6},{:.6})",
+                model.re,
+                model.im,
+                corrected.re,
+                corrected.im
+            );
+        }
+    }
+}
+
 pub fn create_apply_fixture_ms(root: &Path, include_corrected_data: bool) -> PathBuf {
     create_apply_fixture_ms_with_options(root, include_corrected_data, false)
 }
@@ -867,6 +898,55 @@ pub fn create_gain_solve_fixture_ms_from_clusters(
     ms_path
 }
 
+pub fn create_gain_solve_model_column_fixture_ms(
+    root: &Path,
+    model_values: [Complex32; 4],
+) -> PathBuf {
+    let ms_path = root.join("gain_solve_model_fixture.ms");
+    let builder = MeasurementSetBuilder::new()
+        .with_main_column(OptionalMainColumn::Data)
+        .with_main_column(OptionalMainColumn::ModelData);
+    let mut ms = MeasurementSet::create(&ms_path, builder).expect("create model-column MS");
+
+    populate_gain_solve_subtables(&mut ms);
+    let gains = gains_for_fixture_kind(SyntheticGainFixtureKind::G);
+    for time_seconds in [100.0, 101.0, 102.0] {
+        add_custom_gain_solve_row_with_model(
+            &mut ms,
+            0,
+            1,
+            0,
+            1,
+            time_seconds,
+            &gains,
+            model_values,
+        );
+        add_custom_gain_solve_row_with_model(
+            &mut ms,
+            0,
+            2,
+            0,
+            1,
+            time_seconds,
+            &gains,
+            model_values,
+        );
+        add_custom_gain_solve_row_with_model(
+            &mut ms,
+            1,
+            2,
+            0,
+            1,
+            time_seconds,
+            &gains,
+            model_values,
+        );
+    }
+
+    ms.save().expect("save model-column gain solve MS");
+    ms_path
+}
+
 pub fn append_gain_solve_cluster_for_field(
     ms: &mut MeasurementSet,
     field_id: i32,
@@ -1363,8 +1443,39 @@ fn add_custom_gain_solve_row(
     time: f64,
     gains: &[[Complex32; 2]; 3],
 ) {
+    add_custom_gain_solve_row_with_model(
+        ms,
+        antenna1,
+        antenna2,
+        field_id,
+        scan_number,
+        time,
+        gains,
+        [Complex32::new(1.0, 0.0); 4],
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_custom_gain_solve_row_with_model(
+    ms: &mut MeasurementSet,
+    antenna1: i32,
+    antenna2: i32,
+    field_id: i32,
+    scan_number: i32,
+    time: f64,
+    gains: &[[Complex32; 2]; 3],
+    model_values: [Complex32; 4],
+) {
     let g1 = gains[usize::try_from(antenna1).expect("antenna1 index")];
     let g2 = gains[usize::try_from(antenna2).expect("antenna2 index")];
+    let rr = g1[0] * g2[0].conj();
+    let ll = g1[1] * g2[1].conj();
+    let data_values = [
+        rr * model_values[0],
+        ll * model_values[1],
+        rr * model_values[2],
+        ll * model_values[3],
+    ];
 
     let row = RecordValue::new(
         ms.main_table()
@@ -1428,17 +1539,18 @@ fn add_custom_gain_solve_row(
                         ArrayD::from_shape_vec(vec![2], vec![1.0, 1.0]).unwrap(),
                     )),
                 ),
-                "DATA" => {
-                    let rr = g1[0] * g2[0].conj();
-                    let ll = g1[1] * g2[1].conj();
-                    RecordField::new(
-                        "DATA",
-                        Value::Array(ArrayValue::Complex32(
-                            ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![rr, ll, rr, ll])
-                                .unwrap(),
-                        )),
-                    )
-                }
+                "DATA" => RecordField::new(
+                    "DATA",
+                    Value::Array(ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), data_values.to_vec()).unwrap(),
+                    )),
+                ),
+                "MODEL_DATA" => RecordField::new(
+                    "MODEL_DATA",
+                    Value::Array(ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), model_values.to_vec()).unwrap(),
+                    )),
+                ),
                 name => RecordField::new(
                     name,
                     default_value_for_column_name(

@@ -7,7 +7,7 @@
 //! - `calmode='p|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
-//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`)
+//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`) or `MODEL_DATA`
 //!
 //! The acceptance contract is downstream behavior: the resulting caltable
 //! should be CASA-compatible on disk and should yield corrected visibilities
@@ -30,8 +30,8 @@ use thiserror::Error;
 
 use crate::{ApplyExecutionError, ApplyPlanError};
 use grouping::{
-    all_antenna_ids, build_solve_groups, collect_selected_rows, load_preapplied_rows,
-    resolve_refant, validate_smodel, validate_solve_interval,
+    SolveGroupOptions, all_antenna_ids, build_solve_groups, collect_selected_rows,
+    load_preapplied_rows, resolve_refant, validate_smodel, validate_solve_interval,
 };
 use kernel::solve_group;
 use writer::write_gain_caltable;
@@ -61,6 +61,16 @@ pub enum GainSolveMode {
     Phase,
     /// Amplitude-and-phase solve.
     AmplitudePhase,
+}
+
+/// Visibility model source used by the gain solver.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum GainSolveModelSource {
+    /// Use the point-source Stokes-I model from `smodel`.
+    #[default]
+    PointSource,
+    /// Use per-sample visibilities from the MS `MODEL_DATA` column.
+    ModelColumn,
 }
 
 /// Supported first-wave gain solution intervals.
@@ -113,7 +123,9 @@ pub struct GainSolveRequest {
     pub prior_calibration_tables: Vec<crate::ApplyCalibrationTableSpec>,
     /// Whether to apply parallactic-angle correction before solving.
     pub parang: bool,
-    /// Point-source Stokes model. Only `[I,0,0,0]` is supported in this wave.
+    /// Visibility model source.
+    pub model_source: GainSolveModelSource,
+    /// Point-source Stokes model used when `model_source` is `PointSource`.
     pub smodel: [f32; 4],
 }
 
@@ -157,6 +169,10 @@ pub enum GainSolveError {
         /// Model vector passed by the caller.
         smodel: [f32; 4],
     },
+
+    /// The solve requested `MODEL_DATA`, but the MS does not contain it.
+    #[error("gain solve model_source=ModelColumn requires a MODEL_DATA column")]
+    MissingModelColumn,
 
     /// The requested solve interval is unsupported.
     #[error("unsupported solve interval {solve_interval:?}; seconds values must be > 0")]
@@ -274,7 +290,15 @@ pub fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<GainSolveReport, GainSolveError> {
-    validate_smodel(request.smodel)?;
+    if matches!(request.model_source, GainSolveModelSource::PointSource) {
+        validate_smodel(request.smodel)?;
+    } else if !ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
+    {
+        return Err(GainSolveError::MissingModelColumn);
+    }
     validate_solve_interval(request.solve_interval)?;
     let refant_id = resolve_refant(ms, &request.refant)?;
     let available_antennas = all_antenna_ids(ms)?;
@@ -284,10 +308,13 @@ pub fn solve_gain(
         ms,
         &rows,
         preapplied_rows.as_ref(),
-        request.gain_type,
-        request.smodel[0],
-        request.solve_interval,
-        request.combine,
+        SolveGroupOptions {
+            gain_type: request.gain_type,
+            model_source: request.model_source,
+            stokes_i: request.smodel[0],
+            solve_interval: request.solve_interval,
+            combine: request.combine,
+        },
     )?;
 
     if groups.is_empty() {

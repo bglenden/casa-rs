@@ -6,8 +6,8 @@ use tempfile::TempDir;
 
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, GainSolveCombine, GainSolveInterval,
-    GainSolveMode, GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path,
-    solve_gain_from_path, summarize_table,
+    GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType, RefAntSelector,
+    execute_apply_from_path, solve_gain_from_path, summarize_table,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
@@ -31,6 +31,7 @@ fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -56,6 +57,53 @@ fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
 }
 
 #[test]
+fn solve_gain_phase_g_uses_model_data_column_downstream() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_gain_solve_model_column_fixture_ms(
+        dir.path(),
+        [
+            casa_types::Complex32::new(2.0, 0.0),
+            casa_types::Complex32::new(3.0, 0.0),
+            casa_types::Complex32::new(4.0, 0.0),
+            casa_types::Complex32::new(5.0, 0.0),
+        ],
+    );
+    let caltable_path = dir.path().join("solved-model.gcal");
+
+    let report = solve_gain_from_path(
+        &ms_path,
+        &GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: caltable_path.clone(),
+            gain_type: GainType::G,
+            solve_mode: GainSolveMode::Phase,
+            solve_interval: GainSolveInterval::Infinite,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::ModelColumn,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve synthetic G gains against MODEL_DATA");
+
+    assert_eq!(report.solution_row_count, 3);
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new(),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply model-column solved G table");
+
+    common::assert_corrected_rows_match_model_column(&ms_path);
+}
+
+#[test]
 fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path =
@@ -74,6 +122,7 @@ fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -119,6 +168,7 @@ fn solve_gain_amplitude_phase_g_corrects_synthetic_ms_downstream() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -164,6 +214,7 @@ fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -258,6 +309,7 @@ fn solve_gain_phase_g_solint_integration_writes_per_integration_solutions() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -347,6 +399,7 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -415,6 +468,7 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -487,6 +541,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -603,6 +658,7 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: vec![ApplyCalibrationTableSpec::new(&prior_table)],
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )

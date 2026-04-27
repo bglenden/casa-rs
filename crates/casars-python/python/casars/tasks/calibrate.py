@@ -23,6 +23,7 @@ ApplyMode: TypeAlias = Literal["calflag", "calonly", "trial"]
 InterpolationMode: TypeAlias = Literal["nearest", "linear", "nearest,linear"]
 GainType: TypeAlias = Literal["g", "t"]
 GainSolveMode: TypeAlias = Literal["p", "ap"]
+GainSolveModelSource: TypeAlias = Literal["point", "point_source", "model_column"]
 GainSolveInterval: TypeAlias = Literal["inf", "int"] | float
 BandpassType: TypeAlias = Literal["b", "bpoly"]
 GainFieldValue: TypeAlias = int | str | Literal["nearest"]
@@ -211,6 +212,24 @@ def execute_apply(
     )
 
 
+def export_corrected_data(
+    input_ms: StrPath,
+    output_ms: StrPath,
+    *,
+    binary: StrPath | None = None,
+) -> TaskResult:
+    """Create an imaging-ready MS with ``CORRECTED_DATA`` copied into ``DATA``."""
+
+    return invoke_calibration_task(
+        kind="export_corrected_data",
+        request={
+            "input_ms": os.fspath(input_ms),
+            "output_ms": os.fspath(output_ms),
+        },
+        binary=binary,
+    )
+
+
 def solve_gain(
     measurement_set: StrPath,
     output_table: StrPath,
@@ -223,6 +242,7 @@ def solve_gain(
     combine: SolveCombine = SolveCombine(),
     prior_calibration_tables: Sequence[CalibrationTableSpec | StrPath] = (),
     parang: bool = False,
+    model_source: GainSolveModelSource = "point",
     smodel: Sequence[float] = (1.0, 0.0, 0.0, 0.0),
     binary: StrPath | None = None,
 ) -> TaskResult:
@@ -241,6 +261,7 @@ def solve_gain(
             "refant": _encode_refant(refant),
             "prior_calibration_tables": _table_specs_request(prior_calibration_tables),
             "parang": parang,
+            "model_source": _encode_gain_solve_model_source(model_source),
             "smodel": _encode_smodel(smodel),
         },
         binary=binary,
@@ -398,6 +419,15 @@ def _encode_gain_solve_mode(value: GainSolveMode) -> str:
     return {"p": "Phase", "ap": "AmplitudePhase"}[value]
 
 
+def _encode_gain_solve_model_source(value: GainSolveModelSource) -> str:
+    normalized = str(value).lower()
+    if normalized in {"point", "point_source", "point-source", "smodel"}:
+        return "PointSource"
+    if normalized in {"model", "model_column", "model-column", "model_data", "model-data"}:
+        return "ModelColumn"
+    raise ValueError(f"unsupported gain solve model source: {value!r}")
+
+
 def _encode_gain_solve_interval(value: GainSolveInterval) -> Any:
     if value == "inf":
         return "Infinite"
@@ -473,6 +503,12 @@ _WRAPPER_CONTRACTS: dict[str, dict[str, Any]] = {
             "binary": None,
         },
     },
+    "export_corrected_data": {
+        "schema": "ExportCorrectedDataTaskRequest",
+        "request_fields": ["input_ms", "output_ms"],
+        "signature": ["input_ms", "output_ms", "binary"],
+        "defaults": {"binary": None},
+    },
     "solve_gain": {
         "schema": "SolveGainTaskRequest",
         "request_fields": [
@@ -486,6 +522,7 @@ _WRAPPER_CONTRACTS: dict[str, dict[str, Any]] = {
             "refant",
             "prior_calibration_tables",
             "parang",
+            "model_source",
             "smodel",
         ],
         "signature": [
@@ -499,6 +536,7 @@ _WRAPPER_CONTRACTS: dict[str, dict[str, Any]] = {
             "combine",
             "prior_calibration_tables",
             "parang",
+            "model_source",
             "smodel",
             "binary",
         ],
@@ -510,6 +548,7 @@ _WRAPPER_CONTRACTS: dict[str, dict[str, Any]] = {
             "combine": SolveCombine(),
             "prior_calibration_tables": (),
             "parang": False,
+            "model_source": "point",
             "smodel": (1.0, 0.0, 0.0, 0.0),
             "binary": None,
         },
@@ -597,6 +636,7 @@ __all__ = [
     "GainFieldValue",
     "GainSolveInterval",
     "GainSolveMode",
+    "GainSolveModelSource",
     "GainType",
     "InterpolationMode",
     "ProtocolInfo",
@@ -607,6 +647,7 @@ __all__ = [
     "TaskResult",
     "configure",
     "execute_apply",
+    "export_corrected_data",
     "fluxscale",
     "plan_apply",
     "protocol_info",

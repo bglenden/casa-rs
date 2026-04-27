@@ -16,8 +16,9 @@ use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyInterpolationMode, ApplyMode, ApplyPlan,
     BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationProtocolInfo,
     CalibrationStatsAxis, CalibrationStatsReport, CalibrationTableSummary, CalibrationTaskRequest,
-    CalibrationTaskResult, CalibrationTaskSchemaBundle, ExecuteApplyTaskRequest, FluxScaleReport,
-    FluxScaleRequest, GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode,
+    CalibrationTaskResult, CalibrationTaskSchemaBundle, ExecuteApplyTaskRequest,
+    ExportCorrectedDataReport, ExportCorrectedDataTaskRequest, FluxScaleReport, FluxScaleRequest,
+    GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
     GainSolveReport, GainType, PlanApplyTaskRequest, RefAntSelector, SolveBandpassTaskRequest,
     SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest, load_apply_specs_from_callib,
 };
@@ -89,10 +90,20 @@ struct SolveGainOptions {
     refant: RefAntSelector,
     prior_calibration_tables: Vec<ApplyCalibrationTableSpec>,
     parang: bool,
+    model_source: GainSolveModelSource,
     format: OutputFormat,
     output: Option<PathBuf>,
     overwrite: bool,
     selection: SelectionOptions,
+}
+
+#[derive(Debug)]
+struct ExportCorrectedDataOptions {
+    input_ms: PathBuf,
+    output_ms: PathBuf,
+    format: OutputFormat,
+    output: Option<PathBuf>,
+    overwrite: bool,
 }
 
 #[derive(Debug)]
@@ -133,6 +144,7 @@ enum Command {
     Summarize(SummaryOptions),
     PlanApply(ApplyPlanOptions),
     Stats(StatsOptions),
+    ExportCorrectedData(ExportCorrectedDataOptions),
     SolveGain(SolveGainOptions),
     SolveBandpass(SolveBandpassOptions),
     FluxScale(FluxScaleOptions),
@@ -145,6 +157,7 @@ impl Command {
             Self::Summarize(options) => options.format,
             Self::PlanApply(options) => options.format,
             Self::Stats(options) => options.format,
+            Self::ExportCorrectedData(options) => options.format,
             Self::SolveGain(options) => options.format,
             Self::SolveBandpass(options) => options.format,
             Self::FluxScale(options) => options.format,
@@ -157,6 +170,7 @@ impl Command {
             Self::Summarize(options) => options.output.as_deref(),
             Self::PlanApply(options) => options.output.as_deref(),
             Self::Stats(options) => options.output.as_deref(),
+            Self::ExportCorrectedData(options) => options.output.as_deref(),
             Self::SolveGain(options) => options.output.as_deref(),
             Self::SolveBandpass(options) => options.output.as_deref(),
             Self::FluxScale(options) => options.output.as_deref(),
@@ -169,6 +183,7 @@ impl Command {
             Self::Summarize(options) => options.overwrite,
             Self::PlanApply(options) => options.overwrite,
             Self::Stats(options) => options.overwrite,
+            Self::ExportCorrectedData(options) => options.overwrite,
             Self::SolveGain(options) => options.overwrite,
             Self::SolveBandpass(options) => options.overwrite,
             Self::FluxScale(options) => options.overwrite,
@@ -199,6 +214,12 @@ impl Command {
                 datacolumn: options.datacolumn,
                 use_flags: options.use_flags,
             }),
+            Self::ExportCorrectedData(options) => {
+                CalibrationTaskRequest::ExportCorrectedData(ExportCorrectedDataTaskRequest {
+                    input_ms: options.input_ms,
+                    output_ms: options.output_ms,
+                })
+            }
             Self::SolveGain(options) => CalibrationTaskRequest::SolveGain(SolveGainTaskRequest {
                 measurement_set: options.measurement_set,
                 selection: options.selection,
@@ -210,6 +231,7 @@ impl Command {
                 refant: options.refant,
                 prior_calibration_tables: options.prior_calibration_tables,
                 parang: options.parang,
+                model_source: options.model_source,
                 smodel: [1.0, 0.0, 0.0, 0.0],
             }),
             Self::SolveBandpass(options) => {
@@ -371,6 +393,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                     "apply",
                     "summary",
                     "stats",
+                    "export_corrected_data",
                     "solve_gain",
                     "solve_bandpass",
                     "fluxscale",
@@ -395,9 +418,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "output_measurement_set",
+                label: "Output MeasurementSet",
+                order: 2,
+                flags: &["--output-ms"],
+                metavar: "PATH",
+                value_kind: UiValueKind::Path,
+                default: None,
+                choices: &[],
+                help: "Output MeasurementSet path for corrected-data export",
+                group: "Input",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "summary_paths",
                 label: "Summary Tables",
-                order: 2,
+                order: 3,
                 flags: &["--summary-paths"],
                 metavar: "PATH[,PATH...]",
                 value_kind: UiValueKind::String,
@@ -411,7 +448,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "table_path",
                 label: "Table Path",
-                order: 3,
+                order: 4,
                 flags: &["--table"],
                 metavar: "PATH",
                 value_kind: UiValueKind::Path,
@@ -694,9 +731,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "gain_model_source",
+                label: "Gain Model Source",
+                order: 21,
+                flags: &["--model-source"],
+                metavar: "SOURCE",
+                value_kind: UiValueKind::Choice,
+                default: Some("point"),
+                choices: &["point", "model-column"],
+                help: "Visibility model source for solve-gain mode",
+                group: "Solve Gain",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "bandpass_combine",
                 label: "Bandpass Combine",
-                order: 21,
+                order: 22,
                 flags: &["--combine-bandpass"],
                 metavar: "AXES",
                 value_kind: UiValueKind::Choice,
@@ -710,7 +761,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "bandtype",
                 label: "Bandpass Type",
-                order: 22,
+                order: 23,
                 flags: &["--bandtype"],
                 metavar: "TYPE",
                 value_kind: UiValueKind::Choice,
@@ -724,7 +775,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(ToggleArgumentConfig {
                 id: "solnorm",
                 label: "Normalize Bandpass",
-                order: 23,
+                order: 24,
                 help: "Normalize solved bandpass rows to unity average amplitude",
                 true_flags: &["--solnorm"],
                 false_flags: &["--no-solnorm"],
@@ -735,7 +786,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "fluxscale_input",
                 label: "Fluxscale Input Table",
-                order: 24,
+                order: 25,
                 flags: &["--in"],
                 metavar: "PATH",
                 value_kind: UiValueKind::Path,
@@ -749,7 +800,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "reference_fields",
                 label: "Reference Fields",
-                order: 25,
+                order: 26,
                 flags: &["--reference"],
                 metavar: "FIELD[,FIELD...]",
                 value_kind: UiValueKind::String,
@@ -1031,6 +1082,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         Some("summary") => parse_summary_args(&args[1..], managed_output),
         Some("plan-apply") => parse_apply_plan_args(&args[1..], managed_output),
         Some("stats") => parse_stats_args(&args[1..], managed_output),
+        Some("export-corrected") => parse_export_corrected_data_args(&args[1..], managed_output),
         Some("solve-gain") => parse_solve_gain_args(&args[1..], managed_output),
         Some("solve-bandpass") => parse_solve_bandpass_args(&args[1..], managed_output),
         Some("fluxscale") => parse_fluxscale_args(&args[1..], managed_output),
@@ -1041,13 +1093,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 Some("apply") => parse_apply_args(&remaining_args, managed_output),
                 Some("summary") => parse_summary_args(&remaining_args, managed_output),
                 Some("stats") => parse_stats_args(&remaining_args, managed_output),
+                Some("export_corrected_data") => {
+                    parse_export_corrected_data_args(&remaining_args, managed_output)
+                }
                 Some("solve_gain") => parse_solve_gain_args(&remaining_args, managed_output),
                 Some("solve_bandpass") => {
                     parse_solve_bandpass_args(&remaining_args, managed_output)
                 }
                 Some("fluxscale") => parse_fluxscale_args(&remaining_args, managed_output),
                 Some(other) => Err(format!(
-                    "unsupported --mode {other:?}; expected apply, summary, stats, solve_gain, solve_bandpass, or fluxscale"
+                    "unsupported --mode {other:?}; expected apply, summary, stats, export_corrected_data, solve_gain, solve_bandpass, or fluxscale"
                 )),
                 None => parse_apply_args(&args, managed_output),
             }
@@ -1474,6 +1529,71 @@ fn parse_stats_args(args: &[OsString], managed_output: bool) -> Result<CliAction
     })))
 }
 
+fn parse_export_corrected_data_args(
+    args: &[OsString],
+    managed_output: bool,
+) -> Result<CliAction, String> {
+    let mut input_ms = None;
+    let mut output_ms = None;
+    let mut format = OutputFormat::Text;
+    let mut output = None;
+    let mut overwrite = false;
+
+    let mut index = 0;
+    while index < args.len() {
+        let raw = args[index]
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_string())?;
+        match raw {
+            "--ms" => {
+                index += 1;
+                input_ms = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "missing value for --ms".to_string())?,
+                ));
+            }
+            "--out" | "--output-ms" => {
+                index += 1;
+                output_ms = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| format!("missing value for {raw}"))?,
+                ));
+            }
+            "--format" => {
+                index += 1;
+                format = parse_output_format(raw, &take_string_value(index, args, raw)?)?;
+            }
+            "-o" | "--output" => {
+                index += 1;
+                output = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "missing value for --output".to_string())?,
+                ));
+            }
+            "--overwrite" => overwrite = true,
+            _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
+            _ => return Err(format!("unexpected positional argument {raw:?}")),
+        }
+        index += 1;
+    }
+
+    let input_ms =
+        input_ms.ok_or_else(|| "export-corrected requires --ms <measurement-set>".to_string())?;
+    let output_ms = output_ms
+        .ok_or_else(|| "export-corrected requires --out <output-measurement-set>".to_string())?;
+
+    Ok(CliAction::Run(Box::new(RunRequest {
+        managed_output,
+        command: Command::ExportCorrectedData(ExportCorrectedDataOptions {
+            input_ms,
+            output_ms,
+            format,
+            output,
+            overwrite,
+        }),
+    })))
+}
+
 fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliAction, String> {
     let mut measurement_set = None;
     let mut output_table = None;
@@ -1488,6 +1608,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut combine = GainSolveCombine::default();
     let mut refant = None;
     let mut parang = false;
+    let mut model_source = GainSolveModelSource::PointSource;
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
@@ -1560,6 +1681,13 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
                 index += 1;
                 combine = parse_gain_solve_combine(&take_string_value(index, args, raw)?)?;
             }
+            "--model-source" => {
+                index += 1;
+                model_source =
+                    parse_gain_solve_model_source(&take_string_value(index, args, raw)?)?;
+            }
+            "--model-column" => model_source = GainSolveModelSource::ModelColumn,
+            "--point-model" => model_source = GainSolveModelSource::PointSource,
             "--refant" => {
                 index += 1;
                 refant = Some(parse_refant_selector(&take_string_value(
@@ -1646,6 +1774,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             refant,
             prior_calibration_tables,
             parang,
+            model_source,
             format,
             output,
             overwrite,
@@ -1987,6 +2116,18 @@ fn parse_gain_solve_mode(value: &str) -> Result<GainSolveMode, String> {
         "p" => Ok(GainSolveMode::Phase),
         "ap" => Ok(GainSolveMode::AmplitudePhase),
         other => Err(format!("unsupported --mode {other:?}; expected p or ap")),
+    }
+}
+
+fn parse_gain_solve_model_source(value: &str) -> Result<GainSolveModelSource, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "point" | "point-source" | "smodel" => Ok(GainSolveModelSource::PointSource),
+        "model" | "model-column" | "model_data" | "model-data" => {
+            Ok(GainSolveModelSource::ModelColumn)
+        }
+        other => Err(format!(
+            "unsupported --model-source {other:?}; expected point or model-column"
+        )),
     }
 }
 
@@ -2708,6 +2849,25 @@ fn render_gain_solve_report_text(report: &GainSolveReport) -> String {
     out
 }
 
+fn render_export_corrected_data_report_text(report: &ExportCorrectedDataReport) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "Export Corrected Data Report: {}",
+        report.output_ms.display()
+    );
+    let _ = writeln!(out, "  input_ms={}", report.input_ms.display());
+    let _ = writeln!(out, "  rows={}", report.row_count);
+    let _ = writeln!(
+        out,
+        "  copied {} -> {}",
+        report.source_column, report.output_column
+    );
+    out
+}
+
 fn render_bandpass_solve_report_text(report: &BandpassSolveReport) -> String {
     use std::fmt::Write;
 
@@ -2804,6 +2964,10 @@ fn render_json_task_result(
         match result {
             CalibrationTaskResult::Apply(report) => serde_json::to_string_pretty(report)
                 .map_err(|error| format!("serialize apply report: {error}")),
+            CalibrationTaskResult::ExportCorrectedData(report) => {
+                serde_json::to_string_pretty(report)
+                    .map_err(|error| format!("serialize corrected-data export report: {error}"))
+            }
             CalibrationTaskResult::Summary(report) => serde_json::to_string_pretty(report)
                 .map_err(|error| format!("serialize summary report: {error}")),
             CalibrationTaskResult::PlanApply(report) => serde_json::to_string_pretty(report)
@@ -2823,6 +2987,9 @@ fn render_json_task_result(
 fn render_text_task_result(result: &CalibrationTaskResult) -> String {
     match result {
         CalibrationTaskResult::Apply(report) => render_apply_report_text(report),
+        CalibrationTaskResult::ExportCorrectedData(report) => {
+            render_export_corrected_data_report_text(report)
+        }
         CalibrationTaskResult::Summary(report) => render_summary_text(report),
         CalibrationTaskResult::PlanApply(report) => render_apply_plan_text(report),
         CalibrationTaskResult::Stats(report) => render_stats_text(report),
@@ -2934,8 +3101,8 @@ mod tests {
         CalibrationSubtableSummary, CalibrationTableSummary, CalibrationTaskRequest,
         CalibrationValidationIssue, CalibrationValueStats, ExecuteApplyTaskRequest,
         FluxScaleFieldResult, FluxScaleReport, FluxScaleSpwResult, GainFieldSelector,
-        GainSolveInterval, GainSolveMode, GainSolveReport, GainType, RefAntSelector,
-        ResolvedGainField, ResolvedNearestGainField, TimeCoverageSummary,
+        GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveReport, GainType,
+        RefAntSelector, ResolvedGainField, ResolvedNearestGainField, TimeCoverageSummary,
     };
 
     fn sample_keywords() -> CalibrationKeywordSummary {
@@ -3479,6 +3646,7 @@ mod tests {
             "30s".into(),
             "--combine".into(),
             "scan,field".into(),
+            "--model-column".into(),
             "--gaintables".into(),
             "prior.gcal".into(),
             "--format".into(),
@@ -3499,6 +3667,7 @@ mod tests {
                 assert_eq!(options.solve_interval, GainSolveInterval::Seconds(30.0));
                 assert!(options.combine.scans);
                 assert!(options.combine.fields);
+                assert_eq!(options.model_source, GainSolveModelSource::ModelColumn);
                 assert_eq!(
                     options.refant,
                     RefAntSelector::AntennaName("VA15".to_string())
@@ -3538,6 +3707,31 @@ mod tests {
                 assert!(options.combine.fields);
             }
             _ => panic!("expected solve-gain action"),
+        }
+    }
+
+    #[test]
+    fn parse_args_accepts_export_corrected_data_command() {
+        let action = parse_args([
+            "export-corrected".into(),
+            "--ms".into(),
+            "calibrated.ms".into(),
+            "--out".into(),
+            "selfcal.ms".into(),
+            "--format".into(),
+            "json".into(),
+        ])
+        .expect("parse succeeds");
+        match action {
+            CliAction::Run(request) => {
+                let Command::ExportCorrectedData(options) = request.command else {
+                    panic!("expected export-corrected action");
+                };
+                assert_eq!(options.input_ms, PathBuf::from("calibrated.ms"));
+                assert_eq!(options.output_ms, PathBuf::from("selfcal.ms"));
+                assert_eq!(options.format, OutputFormat::Json);
+            }
+            _ => panic!("expected export-corrected action"),
         }
     }
 

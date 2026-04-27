@@ -5,8 +5,8 @@ mod common;
 use tempfile::TempDir;
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, ApplyTableSelection, GainFieldSelector,
-    execute_apply_from_path,
+    ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, ApplyTableSelection,
+    ExportCorrectedDataRequest, GainFieldSelector, execute_apply_from_path, export_corrected_data,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
@@ -125,6 +125,74 @@ fn execute_apply_creates_corrected_data_and_writes_corrected_visibilities() {
     assert_eq!(corrected[[1, 0]], casa_types::Complex32::new(0.0, 0.025));
     assert_eq!(corrected[[0, 1]], casa_types::Complex32::new(0.2, 0.0));
     assert_eq!(corrected[[1, 1]], casa_types::Complex32::new(0.0, 0.05));
+}
+
+#[test]
+fn export_corrected_data_writes_imaging_ready_data_column() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_apply_fixture_ms(dir.path(), false);
+    let caltable_path = common::create_apply_gain_caltable(
+        &dir.path().join("phase.gcal"),
+        &["TARGET0"],
+        &[
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 0,
+                gains: vec![
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 1,
+                gains: vec![
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+        ],
+    );
+
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply calibration");
+
+    let output_ms = dir.path().join("corrected-output.ms");
+    let report = export_corrected_data(&ExportCorrectedDataRequest {
+        input_ms: ms_path.clone(),
+        output_ms: output_ms.clone(),
+    })
+    .expect("export corrected data");
+    assert_eq!(report.row_count, 2);
+
+    let input = MeasurementSet::open(&ms_path).expect("reopen input measurement set");
+    let output = MeasurementSet::open(&output_ms).expect("reopen output measurement set");
+    let input_corrected = input
+        .data_column(VisibilityDataColumn::CorrectedData)
+        .expect("input corrected column");
+    let output_data = output
+        .data_column(VisibilityDataColumn::Data)
+        .expect("output data column");
+    for row in 0..input.row_count() {
+        assert_eq!(
+            input_corrected.get(row).expect("input corrected row"),
+            output_data.get(row).expect("output data row")
+        );
+    }
 }
 
 #[test]

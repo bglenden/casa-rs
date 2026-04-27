@@ -602,6 +602,7 @@ mod tests {
                 "apply",
                 "summary",
                 "stats",
+                "export_corrected_data",
                 "solve_gain",
                 "solve_bandpass",
                 "fluxscale",

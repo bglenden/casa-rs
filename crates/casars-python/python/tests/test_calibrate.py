@@ -93,6 +93,16 @@ def test_protocol_info_subprocess_failures_raise_calibration_invocation_error(
 def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     binary = _write_stub_binary(tmp_path / "ok" / "calibrate", version="ok")
 
+    export_result = calibrate.export_corrected_data(
+        "calibrated.ms",
+        "selfcal.ms",
+        binary=binary,
+    )
+    export_request = export_result["report"]["request"]
+    assert export_result["kind"] == "export_corrected_data"
+    assert export_request["input_ms"] == "calibrated.ms"
+    assert export_request["output_ms"] == "selfcal.ms"
+
     result = calibrate.solve_gain(
         "dataset.ms",
         "gain.gcal",
@@ -106,6 +116,7 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
             calibrate.CalibrationTableSpec("phase.gcal", gainfield="nearest", calwt=True)
         ],
         parang=True,
+        model_source="model_column",
         smodel=(1.0, 0.0, 0.0, 0.0),
         binary=binary,
     )
@@ -123,6 +134,7 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["selection"]["spw"] == "0,1"
     assert request["prior_calibration_tables"][0]["gainfield"] == "Nearest"
     assert request["prior_calibration_tables"][0]["calwt"] is True
+    assert request["model_source"] == "ModelColumn"
 
 
 def test_signature_parity_against_rust_schema() -> None:

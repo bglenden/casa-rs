@@ -9,8 +9,8 @@ use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
 
 use super::{
-    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveRequest, GainType,
-    RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
+    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveModelSource, GainSolveRequest,
+    GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
 };
 use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
@@ -63,10 +63,7 @@ pub(crate) fn build_solve_groups(
     ms: &MeasurementSet,
     rows: &[SelectedSolveRow],
     preapplied_rows: Option<&HashMap<usize, EvaluatedApplyRow>>,
-    gain_type: GainType,
-    stokes_i: f32,
-    solve_interval: GainSolveInterval,
-    combine: GainSolveCombine,
+    options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut sorted_rows = rows.to_vec();
     sorted_rows.sort_by_key(|row| {
@@ -89,12 +86,20 @@ pub(crate) fn build_solve_groups(
             continue;
         }
         let base_key = SolveBaseKey {
-            field_id: if combine.fields { 0 } else { row.field_id },
+            field_id: if options.combine.fields {
+                0
+            } else {
+                row.field_id
+            },
             spw_id: row.data_spw_id,
             observation_id: row.observation_id,
-            scan_number: if combine.scans { 0 } else { row.scan_number },
+            scan_number: if options.combine.scans {
+                0
+            } else {
+                row.scan_number
+            },
         };
-        let bucket_key = match solve_interval {
+        let bucket_key = match options.solve_interval {
             GainSolveInterval::Infinite => SolveBucketKey::Infinite,
             GainSolveInterval::Integration => SolveBucketKey::Integration {
                 time_bits: row.time_seconds.to_bits(),
@@ -113,7 +118,14 @@ pub(crate) fn build_solve_groups(
             SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
         });
         let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
-        group.observe(ms, &row, preapplied, gain_type, stokes_i)?;
+        group.observe(
+            ms,
+            &row,
+            preapplied,
+            options.gain_type,
+            options.model_source,
+            options.stokes_i,
+        )?;
     }
 
     Ok(groups)
@@ -277,6 +289,15 @@ pub(crate) fn correlation_types_for_ddid(
         })
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SolveGroupOptions {
+    pub(crate) gain_type: GainType,
+    pub(crate) model_source: GainSolveModelSource,
+    pub(crate) stokes_i: f32,
+    pub(crate) solve_interval: GainSolveInterval,
+    pub(crate) combine: GainSolveCombine,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SelectedSolveRow {
     pub(crate) row_index: usize,
@@ -344,6 +365,7 @@ impl SolveAccumulator {
         row: &SelectedSolveRow,
         preapplied_row: Option<&EvaluatedApplyRow>,
         gain_type: GainType,
+        model_source: GainSolveModelSource,
         stokes_i: f32,
     ) -> Result<(), GainSolveError> {
         let (data, flags) = match preapplied_row {
@@ -385,6 +407,22 @@ impl SolveAccumulator {
                     .unwrap_or_else(|| "<in-memory>".to_string()),
                 source: MsError::from(source),
             })?;
+        let model_data = if matches!(model_source, GainSolveModelSource::ModelColumn) {
+            Some(
+                ms.main_table()
+                    .cell_accessor(row.row_index, "MODEL_DATA")
+                    .and_then(|cell| cell.array())
+                    .map_err(|source| GainSolveError::OpenMeasurementSet {
+                        path: ms
+                            .path()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "<in-memory>".to_string()),
+                        source: MsError::from(source),
+                    })?,
+            )
+        } else {
+            None
+        };
         let correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)?;
 
         let ArrayValue::Complex32(data) = data else {
@@ -405,10 +443,28 @@ impl SolveAccumulator {
                 shape: weights.shape().to_vec(),
             });
         };
+        let model_data = match model_data {
+            Some(ArrayValue::Complex32(model_data)) => Some(model_data),
+            Some(other) => {
+                return Err(GainSolveError::UnsupportedParameterShape {
+                    path: "<measurement-set MODEL_DATA>".to_string(),
+                    shape: other.shape().to_vec(),
+                });
+            }
+            None => None,
+        };
         if data.ndim() != 2 || flags.ndim() != 2 || data.shape() != flags.shape() {
             return Err(GainSolveError::UnsupportedParameterShape {
                 path: "<measurement-set row>".to_string(),
                 shape: data.shape().to_vec(),
+            });
+        }
+        if let Some(model_data) = model_data.as_ref()
+            && (model_data.ndim() != 2 || model_data.shape() != data.shape())
+        {
+            return Err(GainSolveError::UnsupportedParameterShape {
+                path: "<measurement-set MODEL_DATA>".to_string(),
+                shape: model_data.shape().to_vec(),
             });
         }
         if weights.ndim() != 1 || weights.shape()[0] != data.shape()[0] {
@@ -460,7 +516,14 @@ impl SolveAccumulator {
                 if flags[[corr_index, chan_index]] {
                     continue;
                 }
-                let sample = data[[corr_index, chan_index]] / Complex32::new(stokes_i, 0.0);
+                let model = model_data
+                    .as_ref()
+                    .map(|model_data| model_data[[corr_index, chan_index]])
+                    .unwrap_or_else(|| Complex32::new(stokes_i, 0.0));
+                if model.norm() <= f32::EPSILON {
+                    continue;
+                }
+                let sample = data[[corr_index, chan_index]] / model;
                 if sample.norm() <= f32::EPSILON {
                     continue;
                 }

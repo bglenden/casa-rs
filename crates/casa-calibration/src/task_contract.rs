@@ -17,10 +17,10 @@ use crate::managed_output::CalibrationTaskResult;
 use crate::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
     BandpassSolveRequest, BandpassType, CalibrationStatsAxis, CalibrationStatsRequest,
-    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveRequest,
-    GainType, RefAntSelector, calibration_stats, command_schema, execute_apply_from_path,
-    fluxscale, plan_apply_from_path, solve_bandpass_from_path, solve_gain_from_path,
-    summarize_tables,
+    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainSolveRequest, GainType, RefAntSelector, calibration_stats, command_schema,
+    execute_apply_from_path, export_corrected_data, fluxscale, plan_apply_from_path,
+    solve_bandpass_from_path, solve_gain_from_path, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -141,6 +141,11 @@ fn calibration_task_operations() -> Vec<TaskOperationDescriptor> {
             result_kind: Some("apply".to_string()),
         },
         TaskOperationDescriptor {
+            name: "export_corrected_data".to_string(),
+            request_kind: "export_corrected_data".to_string(),
+            result_kind: Some("export_corrected_data".to_string()),
+        },
+        TaskOperationDescriptor {
             name: "solve_gain".to_string(),
             request_kind: "solve_gain".to_string(),
             result_kind: Some("solve_gain".to_string()),
@@ -210,6 +215,15 @@ pub struct ExecuteApplyTaskRequest {
     pub parang: bool,
 }
 
+/// Request for exporting corrected visibilities into an imaging-ready MS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExportCorrectedDataTaskRequest {
+    /// Input MeasurementSet root path.
+    pub input_ms: PathBuf,
+    /// Output MeasurementSet root path.
+    pub output_ms: PathBuf,
+}
+
 /// Request for solving antenna gains.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SolveGainTaskRequest {
@@ -237,6 +251,9 @@ pub struct SolveGainTaskRequest {
     /// Whether to apply parallactic-angle correction.
     #[serde(default)]
     pub parang: bool,
+    /// Visibility model source used while solving.
+    #[serde(default)]
+    pub model_source: GainSolveModelSource,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -291,6 +308,8 @@ pub enum CalibrationTaskRequest {
     PlanApply(PlanApplyTaskRequest),
     /// Execute an `applycal`-class operation.
     ExecuteApply(ExecuteApplyTaskRequest),
+    /// Export `CORRECTED_DATA` into `DATA` in a new MS.
+    ExportCorrectedData(ExportCorrectedDataTaskRequest),
     /// Solve antenna gains.
     SolveGain(SolveGainTaskRequest),
     /// Solve bandpass terms.
@@ -348,6 +367,14 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::Apply)
             .map_err(|error| error.to_string()),
+            Self::ExportCorrectedData(request) => {
+                export_corrected_data(&crate::ExportCorrectedDataRequest {
+                    input_ms: request.input_ms.clone(),
+                    output_ms: request.output_ms.clone(),
+                })
+                .map(CalibrationTaskResult::ExportCorrectedData)
+                .map_err(|error| error.to_string())
+            }
             Self::SolveGain(request) => solve_gain_from_path(
                 &request.measurement_set,
                 &GainSolveRequest {
@@ -360,6 +387,7 @@ impl CalibrationTaskRequest {
                     refant: request.refant.clone(),
                     prior_calibration_tables: request.prior_calibration_tables.clone(),
                     parang: request.parang,
+                    model_source: request.model_source,
                     smodel: request.smodel,
                 },
             )
@@ -593,7 +621,7 @@ mod tests {
             CALIBRATION_TASK_PROTOCOL_VERSION
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
-        assert_eq!(bundle.semantic.operations.len(), 7);
+        assert_eq!(bundle.semantic.operations.len(), 8);
         assert!(
             bundle
                 .semantic
