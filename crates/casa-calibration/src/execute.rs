@@ -820,9 +820,12 @@ fn execute_apply_plan(
         row_fetch_ns += row_fetch_started_at.elapsed().as_nanos() as u64;
         row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
         let mut prefetched_inputs = Vec::with_capacity(plan.selected_rows.len());
+        let mut data_values = data_values.into_iter();
+        let mut flag_values = flag_values.into_iter();
+        let mut weight_values = weight_values.map(Vec::into_iter);
 
-        for (prefetch_idx, row) in plan.selected_rows.iter().enumerate() {
-            let data = data_values[prefetch_idx].clone().ok_or_else(|| {
+        for row in &plan.selected_rows {
+            let data = data_values.next().flatten().ok_or_else(|| {
                 ApplyExecutionError::MutateMeasurementSet {
                     path: ms_path.clone(),
                     source: MsError::from(TableError::ColumnNotFound {
@@ -831,7 +834,7 @@ fn execute_apply_plan(
                     }),
                 }
             })?;
-            let original_flags = flag_values[prefetch_idx].clone().ok_or_else(|| {
+            let original_flags = flag_values.next().flatten().ok_or_else(|| {
                 ApplyExecutionError::MutateMeasurementSet {
                     path: ms_path.clone(),
                     source: MsError::from(TableError::ColumnNotFound {
@@ -841,9 +844,9 @@ fn execute_apply_plan(
                 }
             })?;
             let original_weight = weight_values
-                .as_ref()
+                .as_mut()
                 .map(|weights| {
-                    weights[prefetch_idx].clone().ok_or_else(|| {
+                    weights.next().flatten().ok_or_else(|| {
                         ApplyExecutionError::MutateMeasurementSet {
                             path: ms_path.clone(),
                             source: MsError::from(TableError::ColumnNotFound {

@@ -56,8 +56,8 @@ use crate::derived::engine::MsCalEngine;
 use crate::listobs::{self, ListObsOptions, ListObsSummary, ListObsUvCoverage};
 use crate::plot::{
     ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
-    ListObsPlotSpec, ListObsPlotTheme, VisibilityScatterPlotPayload, VisibilityScatterSeries,
-    build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, export_listobs_plot,
+    ListObsPlotSpec, ListObsPlotTheme, build_listobs_plot_payload_from_summary,
+    build_listobs_uv_plot_payload, export_listobs_plot,
 };
 use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
@@ -3167,73 +3167,6 @@ pub fn build_msexplore_plot_payload_from_path(
         }
     })?;
     build_msexplore_plot_payload(&ms, selection, spec)
-}
-
-/// Lower one `listobs` raw-visibility preset into the generic scatter engine.
-pub(crate) fn build_listobs_compat_visibility_payload(
-    ms: &MeasurementSet,
-    options: &ListObsOptions,
-    spec: &ListObsPlotSpec,
-) -> Result<ListObsPlotPayload, String> {
-    let preset = MsPlotPreset::from_listobs_kind(spec.kind);
-    let color_by = MsColorAxis::parse(spec.option("color_by").unwrap_or(match spec.kind {
-        ListObsPlotKind::AmplitudeVsUvDistance => "spw",
-        _ => "field",
-    }))?;
-    let data_column = MsDataColumn::parse(spec.option("data_column").unwrap_or("data"))?;
-    let plot_spec = MsPlotSpec {
-        preset: Some(preset),
-        x_axis: MsPlotSpec::from_preset(preset).x_axis,
-        y_axes: MsPlotSpec::from_preset(preset).y_axes,
-        data_column,
-        color_by,
-        averaging: MsAverageSpec::default(),
-        transforms: MsTransformSpec::default(),
-        layout: MsLayoutSpec::default(),
-        iteration: MsIterationSpec::default(),
-        style: MsPlotStyleSpec::default(),
-        flag_edit: None,
-    };
-    let selection = MsSelectionSpec {
-        selectdata: options.selectdata,
-        field: options.field.clone(),
-        spw: options.spw.clone(),
-        timerange: options.timerange.clone(),
-        uvrange: options.uvrange.clone(),
-        antenna: options.antenna.clone(),
-        scan: options.scan.clone(),
-        correlation: options.correlation.clone(),
-        array: options.array.clone(),
-        observation: options.observation.clone(),
-        intent: options.intent.clone(),
-        feed: options.feed.clone(),
-        msselect: options.msselect.clone(),
-    };
-    match build_msexplore_plot_payload(ms, &selection, &plot_spec)? {
-        MsPlotPayload::Scatter(payload) => Ok(ListObsPlotPayload::VisibilityScatter(
-            VisibilityScatterPlotPayload {
-                kind: spec.kind,
-                x_label: payload.x_label,
-                y_label: payload.y_label,
-                fixed_y_bounds: payload.fixed_y_bounds,
-                series: payload
-                    .series
-                    .into_iter()
-                    .map(|series| VisibilityScatterSeries {
-                        label: series.label,
-                        color_group: series.color_group,
-                        points: series.points,
-                    })
-                    .collect(),
-                summary: payload.summary,
-            },
-        )),
-        MsPlotPayload::ListObs(_)
-        | MsPlotPayload::ScatterGrid(_)
-        | MsPlotPayload::ScatterPage(_) => {
-            Err("internal error: raw listobs preset lowered to a metadata payload".to_string())
-        }
-    }
 }
 
 /// Render one plot payload into an in-memory bitmap.
@@ -9085,17 +9018,17 @@ mod tests {
     }
 
     #[test]
-    fn listobs_visibility_lowering_rejects_metadata_presets() {
+    fn listobs_visibility_seam_rejects_metadata_presets() {
         let ms = MeasurementSet::create_memory(MeasurementSetBuilder::new())
             .expect("create in-memory MS");
         assert!(
-            build_listobs_compat_visibility_payload(
+            crate::plot_visibility::build_listobs_visibility_plot_payload(
                 &ms,
                 &ListObsOptions::default(),
                 &ListObsPlotSpec::new(ListObsPlotKind::UvCoverage),
             )
             .unwrap_err()
-            .contains("metadata payload")
+            .contains("not a raw visibility")
         );
     }
 
