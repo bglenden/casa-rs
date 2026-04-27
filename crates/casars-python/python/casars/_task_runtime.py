@@ -24,10 +24,22 @@ IMPORTVLA_PROTOCOL_VERSION = 1
 IMPORTVLA_BINARY_NAME = "casars-importvla"
 IMPORTVLA_BINARY_ENVVAR = "CASARS_IMPORTVLA_BIN"
 
+MSEXPLORE_PROTOCOL_NAME = "casa_msexplore_task"
+MSEXPLORE_PROTOCOL_VERSION = 1
+MSEXPLORE_BINARY_NAME = "msexplore"
+MSEXPLORE_BINARY_ENVVAR = "CASARS_MSEXPLORE_BIN"
+
+IMAGER_PROTOCOL_NAME = "casa_imager_task"
+IMAGER_PROTOCOL_VERSION = 1
+IMAGER_BINARY_NAME = "casars-imager"
+IMAGER_BINARY_ENVVAR = "CASARS_IMAGER_BIN"
+
 CASARS_SUITE_ROOT_ENVVAR = "CASARS_SUITE_ROOT"
 
 _configured_calibrate_binary: str | None = None
 _configured_importvla_binary: str | None = None
+_configured_msexplore_binary: str | None = None
+_configured_imager_binary: str | None = None
 
 
 class CalibrationBinaryNotFoundError(FileNotFoundError):
@@ -54,6 +66,30 @@ class ImportVlaInvocationError(RuntimeError):
     """Raised when the ``casars-importvla`` subprocess returns a non-zero status."""
 
 
+class MsExploreBinaryNotFoundError(FileNotFoundError):
+    """Raised when the ``msexplore`` binary cannot be resolved."""
+
+
+class MsExploreProtocolMismatchError(RuntimeError):
+    """Raised when the Python wrapper and ``msexplore`` protocol versions diverge."""
+
+
+class MsExploreInvocationError(RuntimeError):
+    """Raised when the ``msexplore`` subprocess returns a non-zero status."""
+
+
+class ImagerBinaryNotFoundError(FileNotFoundError):
+    """Raised when the ``casars-imager`` binary cannot be resolved."""
+
+
+class ImagerProtocolMismatchError(RuntimeError):
+    """Raised when the Python wrapper and ``casars-imager`` protocol versions diverge."""
+
+
+class ImagerInvocationError(RuntimeError):
+    """Raised when the ``casars-imager`` subprocess returns a non-zero status."""
+
+
 @dataclass(frozen=True, slots=True)
 class ProtocolInfo:
     """Compatibility descriptor advertised by a task provider binary."""
@@ -76,6 +112,20 @@ def configure_importvla_binary(binary: StrPath | None) -> None:
 
     global _configured_importvla_binary
     _configured_importvla_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_msexplore_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default msexplore binary override."""
+
+    global _configured_msexplore_binary
+    _configured_msexplore_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_imager_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default imager binary override."""
+
+    global _configured_imager_binary
+    _configured_imager_binary = None if binary is None else os.fspath(binary)
 
 
 def resolve_calibrate_binary(binary: StrPath | None = None) -> str:
@@ -101,6 +151,32 @@ def resolve_importvla_binary(binary: StrPath | None = None) -> str:
         binary_name=IMPORTVLA_BINARY_NAME,
         missing_error_cls=ImportVlaBinaryNotFoundError,
         description="casars-importvla",
+    )
+
+
+def resolve_msexplore_binary(binary: StrPath | None = None) -> str:
+    """Resolve the msexplore binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_msexplore_binary,
+        envvar=MSEXPLORE_BINARY_ENVVAR,
+        binary_name=MSEXPLORE_BINARY_NAME,
+        missing_error_cls=MsExploreBinaryNotFoundError,
+        description="msexplore",
+    )
+
+
+def resolve_imager_binary(binary: StrPath | None = None) -> str:
+    """Resolve the imager binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_imager_binary,
+        envvar=IMAGER_BINARY_ENVVAR,
+        binary_name=IMAGER_BINARY_NAME,
+        missing_error_cls=ImagerBinaryNotFoundError,
+        description="casars-imager",
     )
 
 
@@ -130,6 +206,32 @@ def get_importvla_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     )
 
 
+def get_msexplore_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected msexplore binary."""
+
+    resolved = resolve_msexplore_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=MSEXPLORE_PROTOCOL_NAME,
+        protocol_version=MSEXPLORE_PROTOCOL_VERSION,
+        mismatch_error_cls=MsExploreProtocolMismatchError,
+        invocation_error_cls=MsExploreInvocationError,
+    )
+
+
+def get_imager_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected imager binary."""
+
+    resolved = resolve_imager_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGER_PROTOCOL_NAME,
+        protocol_version=IMAGER_PROTOCOL_VERSION,
+        mismatch_error_cls=ImagerProtocolMismatchError,
+        invocation_error_cls=ImagerInvocationError,
+    )
+
+
 def fetch_calibration_schema(binary: StrPath | None = None) -> dict[str, Any]:
     """Fetch the JSON schema bundle advertised by the calibrate binary."""
 
@@ -143,6 +245,22 @@ def fetch_importvla_schema(binary: StrPath | None = None) -> dict[str, Any]:
 
     resolved = resolve_importvla_binary(binary)
     stdout = _run_process([resolved, "--json-schema"], error_cls=ImportVlaInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_msexplore_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the msexplore binary."""
+
+    resolved = resolve_msexplore_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=MsExploreInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_imager_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the imager binary."""
+
+    resolved = resolve_imager_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImagerInvocationError)
     return json.loads(stdout)
 
 
@@ -192,6 +310,56 @@ def invoke_importvla_task(
         [resolved, "--json-run", "-"],
         stdin=payload,
         error_cls=ImportVlaInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_msexplore_task(
+    *,
+    kind: str,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one msexplore task request through ``msexplore --json-run -``."""
+
+    resolved = resolve_msexplore_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=MSEXPLORE_PROTOCOL_NAME,
+        protocol_version=MSEXPLORE_PROTOCOL_VERSION,
+        mismatch_error_cls=MsExploreProtocolMismatchError,
+        invocation_error_cls=MsExploreInvocationError,
+    )
+    payload = json.dumps({"kind": kind, "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=MsExploreInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_imager_task(
+    *,
+    kind: str,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one imager task request through ``casars-imager --json-run -``."""
+
+    resolved = resolve_imager_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGER_PROTOCOL_NAME,
+        protocol_version=IMAGER_PROTOCOL_VERSION,
+        mismatch_error_cls=ImagerProtocolMismatchError,
+        invocation_error_cls=ImagerInvocationError,
+    )
+    payload = json.dumps({"kind": kind, "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImagerInvocationError,
     )
     return json.loads(stdout)
 

@@ -33,8 +33,6 @@ use casa_imaging::{
     trace_w_project_plan,
 };
 use casa_ms::MeasurementSet;
-use casa_ms::columns::flag_columns::FlagRowColumn;
-use casa_ms::columns::main_ids;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::columns::weight_columns::WeightSpectrumColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
@@ -53,8 +51,8 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
-use ndarray::{Array2, Array4, IxDyn, s};
-use num_complex::Complex32;
+use ndarray::{Array2, Array4, ArrayD, IxDyn, s};
+use num_complex::{Complex32, Complex64};
 
 pub use managed_output::{
     ManagedImagingArtifact, ManagedImagingChannelRun, ManagedImagingOutput, ManagedImagingRequest,
@@ -83,7 +81,7 @@ pub use task_contract::{
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
-const DEFAULT_BATCH_SIZE: usize = 4096;
+const DEFAULT_BATCH_SIZE: usize = 65_536;
 
 /// Spectral imaging mode for the CLI frontend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -655,6 +653,7 @@ pub fn build_prepare_geometry_trace_from_config(
         &selection.selected_rows,
         &selection.phase_center,
         derived_engine.as_ref(),
+        config.use_pointing,
     )?;
     Ok(PreparedGeometryTraceBundle {
         schema_version: ORACLE_SCHEMA_VERSION,
@@ -1497,6 +1496,8 @@ pub struct CliConfig {
     pub weighting: WeightingMode,
     /// CASA-style `perchanweightdensity` toggle for spectral cubes.
     pub per_channel_weight_density: bool,
+    /// CASA-style `usepointing` toggle for POINTING-table direction corrections.
+    pub use_pointing: bool,
     /// Optional CASA-style Gaussian UV taper.
     pub uv_taper: Option<GaussianUvTaper>,
     /// Restoring-beam policy for restored products.
@@ -1562,6 +1563,7 @@ impl CliConfig {
         let mut cube_axis = CubeAxisConfig::default();
         let mut weighting_name = String::from("natural");
         let mut per_channel_weight_density = false;
+        let mut use_pointing = false;
         let mut deconvolver_name = String::from("hogbom");
         let mut nterms = 1usize;
         let mut uv_taper = None::<GaussianUvTaper>;
@@ -1719,6 +1721,10 @@ impl CliConfig {
                 }
                 "--perchanweightdensity" => {
                     per_channel_weight_density = true;
+                    continue;
+                }
+                "--usepointing" | "--use-pointing" => {
+                    use_pointing = true;
                     continue;
                 }
                 "--deconvolver" => {
@@ -1895,6 +1901,7 @@ impl CliConfig {
             cube_axis,
             weighting,
             per_channel_weight_density,
+            use_pointing,
             uv_taper,
             restoring_beam_mode,
             deconvolver,
@@ -2480,24 +2487,23 @@ fn select_main_rows(
     config: &CliConfig,
     ddid_info: &[Option<(usize, usize)>],
 ) -> Result<SelectedRowsContext, String> {
-    let needs_pointing_times = ms
-        .pointing()
-        .map(|pointing| pointing.row_count() > 0)
-        .unwrap_or(false);
+    let select_started_at = Instant::now();
+    let needs_pointing_times = config.use_pointing
+        && ms
+            .pointing()
+            .map(|pointing| pointing.row_count() > 0)
+            .unwrap_or(false);
     let needs_row_times = config.spectral_mode.is_cube_like()
         || config.w_term_mode != WTermMode::None
         || selection_may_require_phase_reprojection(config)
         || needs_pointing_times;
-    let field_column = ms
-        .main_table()
-        .column_accessor("FIELD_ID")
-        .and_then(|column| column.iter())
-        .map_err(|error| format!("open FIELD_ID column: {error}"))?;
-    let ddid_column = ms
-        .main_table()
-        .column_accessor("DATA_DESC_ID")
-        .and_then(|column| column.iter())
-        .map_err(|error| format!("open DATA_DESC_ID column: {error}"))?;
+    let field_values = load_i32_main_column_owned(ms, "FIELD_ID")?;
+    let ddid_values = load_i32_main_column_owned(ms, "DATA_DESC_ID")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows/load_scalar_columns",
+        select_started_at.elapsed(),
+        select_started_at.elapsed(),
+    );
     let allowed_ddids = allowed_ddids(config, ddid_info)?;
     let time_column = TimeColumn::new(ms.main_table());
     let allowed_field_ids = config
@@ -2510,28 +2516,7 @@ fn select_main_rows(
     let mut reference_row_time_mjd_sec = None::<f64>;
     let mut time_bounds_mjd_sec = None::<[f64; 2]>;
 
-    for (field_cell, ddid_cell) in field_column.zip(ddid_column) {
-        let row = field_cell.row_index;
-        let field_id = match field_cell.value {
-            Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
-            Some(other) => {
-                return Err(format!(
-                    "FIELD_ID row {row} must be Int32, found {:?}",
-                    other.kind()
-                ));
-            }
-            None => return Err(format!("FIELD_ID row {row} is missing")),
-        };
-        let ddid = match ddid_cell.value {
-            Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
-            Some(other) => {
-                return Err(format!(
-                    "DATA_DESC_ID row {row} must be Int32, found {:?}",
-                    other.kind()
-                ));
-            }
-            None => return Err(format!("DATA_DESC_ID row {row} is missing")),
-        };
+    for (row, (&field_id, &ddid)) in field_values.iter().zip(ddid_values.iter()).enumerate() {
         if ddid < 0 {
             continue;
         }
@@ -2586,6 +2571,11 @@ fn select_main_rows(
             time_mjd_seconds: row_time_mjd_sec,
         });
     }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows/scan_rows",
+        select_started_at.elapsed(),
+        select_started_at.elapsed(),
+    );
 
     if selected_fields.is_empty() {
         return Err("selection resolved to no field".to_string());
@@ -2600,6 +2590,11 @@ fn select_main_rows(
         );
     }
     let phase_center = resolve_phase_center(ms, &selected_fields, config)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows/resolve_phase_center",
+        select_started_at.elapsed(),
+        select_started_at.elapsed(),
+    );
     let selected_ddid = selected_ddid.ok_or_else(|| "selection resolved to no DDID".to_string())?;
     let needs_geometry_engine = config.spectral_mode.is_cube_like()
         || config.w_term_mode != WTermMode::None
@@ -2617,6 +2612,66 @@ fn select_main_rows(
         time_bounds_mjd_sec,
         needs_geometry_engine,
     })
+}
+
+fn load_i32_main_column_owned(
+    ms: &MeasurementSet,
+    column_name: &'static str,
+) -> Result<Vec<i32>, String> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)
+        .and_then(|column| column.scalar_cells_owned())
+        .map_err(|error| format!("load {column_name} column: {error}"))?;
+    if values.len() != ms.main_table().row_count() {
+        return Err(format!(
+            "{column_name} length {} does not match MAIN row count {}",
+            values.len(),
+            ms.main_table().row_count()
+        ));
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(ScalarValue::Int32(value)) => Ok(value),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Int32, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
+}
+
+fn load_bool_main_column_owned(
+    ms: &MeasurementSet,
+    column_name: &'static str,
+) -> Result<Vec<bool>, String> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)
+        .and_then(|column| column.scalar_cells_owned())
+        .map_err(|error| format!("load {column_name} column: {error}"))?;
+    if values.len() != ms.main_table().row_count() {
+        return Err(format!(
+            "{column_name} length {} does not match MAIN row count {}",
+            values.len(),
+            ms.main_table().row_count()
+        ));
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(ScalarValue::Bool(value)) => Ok(value),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Bool, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
 }
 
 fn load_optional_i32_main_column(
@@ -2696,10 +2751,16 @@ fn build_prepared_geometry_rows(
     selected_rows: &[SelectedMainRow],
     phase_center: &PhaseCenter,
     derived_engine: Option<&MsCalEngine>,
+    use_pointing: bool,
 ) -> Result<Vec<PreparedGeometryRow>, String> {
     let geometry_started_at = Instant::now();
-    let antenna1 = main_ids::antenna1(ms.main_table());
-    let antenna2 = main_ids::antenna2(ms.main_table());
+    let antenna1 = load_i32_main_column_owned(ms, "ANTENNA1")?;
+    let antenna2 = load_i32_main_column_owned(ms, "ANTENNA2")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows/load_antenna_ids",
+        geometry_started_at.elapsed(),
+        geometry_started_at.elapsed(),
+    );
     let selected_row_indices = selected_rows
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -2710,13 +2771,21 @@ fn build_prepared_geometry_rows(
         geometry_started_at.elapsed(),
         geometry_started_at.elapsed(),
     );
-    let pointing_ids = load_optional_i32_main_column(ms, "POINTING_ID")?;
+    let pointing_ids = if use_pointing {
+        load_optional_i32_main_column(ms, "POINTING_ID")?
+    } else {
+        None
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows/load_pointing_ids",
         geometry_started_at.elapsed(),
         geometry_started_at.elapsed(),
     );
-    let pointing_resolver = PointingDirectionResolver::new(ms)?;
+    let pointing_resolver = if use_pointing {
+        PointingDirectionResolver::new(ms)?
+    } else {
+        None
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
         geometry_started_at.elapsed(),
@@ -2726,12 +2795,12 @@ fn build_prepared_geometry_rows(
     let mut rows = Vec::with_capacity(selected_rows.len());
     for (row_slot, selected_row) in selected_rows.iter().enumerate() {
         let row = selected_row.row_index;
-        let antenna1_id = antenna1
+        let antenna1_id = *antenna1
             .get(row)
-            .map_err(|error| format!("read ANTENNA1 row {row}: {error}"))?;
-        let antenna2_id = antenna2
+            .ok_or_else(|| format!("read ANTENNA1 row {row}: row is out of bounds"))?;
+        let antenna2_id = *antenna2
             .get(row)
-            .map_err(|error| format!("read ANTENNA2 row {row}: {error}"))?;
+            .ok_or_else(|| format!("read ANTENNA2 row {row}: row is out of bounds"))?;
         let is_cross = antenna1_id != antenna2_id;
         let raw_uvw_m = extract_uvw_from_array(selected_uvw.get(row_slot)?, row)?;
         let transform = row_imaging_transform(
@@ -2832,7 +2901,7 @@ fn prepare_plane_input(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
 ) -> Result<PreparedInput, String> {
-    prepare_plane_input_with_trace(ms, config, data_column_kind).map(|(prepared, _)| prepared)
+    prepare_plane_input_inner(ms, config, data_column_kind, false).map(|(prepared, _)| prepared)
 }
 
 fn prepare_plane_input_with_trace(
@@ -2840,6 +2909,18 @@ fn prepare_plane_input_with_trace(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
 ) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
+    let (prepared, trace) = prepare_plane_input_inner(ms, config, data_column_kind, true)?;
+    trace
+        .map(|trace| (prepared, trace))
+        .ok_or_else(|| "internal error: requested prepare trace was not built".to_string())
+}
+
+fn prepare_plane_input_inner(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    force_trace: bool,
+) -> Result<(PreparedInput, Option<PreparedVisibilityTraceBundle>), String> {
     let prepare_started_at = Instant::now();
     let data_description = ms
         .data_description()
@@ -2857,33 +2938,92 @@ fn prepare_plane_input_with_trace(
         prepare_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
-    let selected_row_indices = selection
+    let stage_started_at = Instant::now();
+    let flag_row = load_bool_main_column_owned(ms, "FLAG_ROW")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_row_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let rows_skipped_by_flag_row = selection
         .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .unwrap_or(false)
+        })
+        .count();
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_row_indices = active_selected_rows
         .iter()
         .map(|selected_row| selected_row.row_index)
         .collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
     let data_column = SelectedMainDataSource::load(ms, data_column_kind, &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_data_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let flag_column = SelectedMainArrayColumn::load(ms, "FLAG", &selected_row_indices)?;
-    let flag_row = ms.flag_row_column();
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let weight_column = SelectedMainArrayColumn::load(ms, "WEIGHT", &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
         .ok()
         .map(|_| SelectedMainArrayColumn::load(ms, "WEIGHT_SPECTRUM", &selected_row_indices))
         .transpose()?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_spectrum_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let derived_engine = if selection.needs_geometry_engine {
         Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
     } else {
         None
     };
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_derived_engine",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let geometry_rows = build_prepared_geometry_rows(
         ms,
-        &selection.selected_rows,
+        &active_selected_rows,
         &selection.phase_center,
         derived_engine.as_ref(),
+        config.use_pointing,
     )?;
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows",
-        prepare_started_at.elapsed(),
+        stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
     let cube_context = if config.spectral_mode.is_cube_like() {
@@ -2904,6 +3044,8 @@ fn prepare_plane_input_with_trace(
     } else {
         None
     };
+    let fast_standard_mfs =
+        !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
     let mut prepared = PreparedSelection::new(
         config,
         selection.selected_ddid,
@@ -2912,15 +3054,16 @@ fn prepare_plane_input_with_trace(
         &polarization,
         selection.phase_center.clone(),
         cube_context,
+        !fast_standard_mfs,
     );
     if let Some(init_error) = prepared.initialization_error.take() {
         return Err(init_error);
     }
-    let selected_row_traces = selection
-        .selected_rows
-        .iter()
-        .map(SelectedMainRow::trace)
-        .collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row,
+        ..Default::default()
+    };
     for (row_slot, row) in geometry_rows.iter().enumerate() {
         prepared.accumulate_row(
             row,
@@ -2931,25 +3074,58 @@ fn prepare_plane_input_with_trace(
             weight_spectrum.as_ref(),
             derived_engine.as_ref(),
             row_slot,
+            &mut accumulate_timings,
         )?;
     }
+    accumulate_timings.log(prepare_started_at.elapsed());
     maybe_log_frontend_progress(
         "prepare_plane_input/accumulate_rows",
-        prepare_started_at.elapsed(),
+        stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
-    prepared.finish_with_trace(
-        ms,
-        config.ms.display().to_string(),
-        canonical_data_column_name(data_column_kind).to_string(),
-        config.spectral_mode,
-        PhaseCenterTrace {
-            field_id: selection.phase_center.field_id,
-            reference: selection.phase_center.reference.as_str().to_string(),
-            angles_rad: selection.phase_center.angles_rad,
-        },
-        selected_row_traces,
-    )
+    if fast_standard_mfs {
+        let stage_started_at = Instant::now();
+        let prepared_input = prepared.finish_standard_mfs_without_trace()?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/finish_standard_mfs_without_trace",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        return Ok((prepared_input, None));
+    }
+    let selected_row_traces = selection
+        .selected_rows
+        .iter()
+        .map(SelectedMainRow::trace)
+        .collect::<Vec<_>>();
+    prepared
+        .finish_with_trace(
+            ms,
+            config.ms.display().to_string(),
+            canonical_data_column_name(data_column_kind).to_string(),
+            config.spectral_mode,
+            PhaseCenterTrace {
+                field_id: selection.phase_center.field_id,
+                reference: selection.phase_center.reference.as_str().to_string(),
+                angles_rad: selection.phase_center.angles_rad,
+            },
+            selected_row_traces,
+        )
+        .map(|(prepared, trace)| (prepared, Some(trace)))
+}
+
+fn can_prepare_standard_mfs_without_trace(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+) -> bool {
+    matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && selection.phase_center.field_id.is_some()
+        && selection
+            .selected_rows
+            .iter()
+            .all(|row| Some(row.field_id) == selection.phase_center.field_id)
 }
 
 fn data_description_index(
@@ -3304,6 +3480,40 @@ struct PreparedSelection {
     phase_center: PhaseCenter,
     state: PreparedState,
     trace_state: PreparedTraceState,
+    trace_enabled: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct AccumulateRowTimings {
+    flag_row: Duration,
+    data_column: Duration,
+    flag_column: Duration,
+    weight_column: Duration,
+    weight_spectrum: Duration,
+    adapt_samples: Duration,
+    rows_seen: usize,
+    rows_flagged: usize,
+    rows_skipped_by_flag_row: usize,
+}
+
+impl AccumulateRowTimings {
+    fn log(self, total_elapsed: Duration) {
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen={} rows_flagged={} rows_skipped_by_flag_row={} flag_row_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} adapt_samples_ms={:.3} total_elapsed_s={:.3}",
+                self.rows_seen,
+                self.rows_flagged,
+                self.rows_skipped_by_flag_row,
+                self.flag_row.as_secs_f64() * 1_000.0,
+                self.data_column.as_secs_f64() * 1_000.0,
+                self.flag_column.as_secs_f64() * 1_000.0,
+                self.weight_column.as_secs_f64() * 1_000.0,
+                self.weight_spectrum.as_secs_f64() * 1_000.0,
+                self.adapt_samples.as_secs_f64() * 1_000.0,
+                total_elapsed.as_secs_f64(),
+            );
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3345,6 +3555,12 @@ enum PreparedState {
         transform: PairCollapseTransform,
         paired: ParallelHandBatch,
         pair: (usize, usize),
+    },
+    CollapsedMfs {
+        plane_stokes: PlaneStokes,
+        transform: PairCollapseTransform,
+        pair: (usize, usize),
+        batch: VisibilityBatch,
     },
     PairedCube {
         plane_stokes: PlaneStokes,
@@ -3439,6 +3655,7 @@ fn phase_rotate_visibility(
 }
 
 impl PreparedSelection {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: &CliConfig,
         ddid: usize,
@@ -3447,6 +3664,7 @@ impl PreparedSelection {
         polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
         phase_center: PhaseCenter,
         cube_context: Option<CubeSetupContext<'_>>,
+        trace_enabled: bool,
     ) -> Self {
         let result = (|| -> Result<Self, String> {
             let (spw_id, polarization_id) = ddid_info
@@ -3599,11 +3817,17 @@ impl PreparedSelection {
                     let (pair, transform) =
                         derive_stokes_pair_selection(plane_stokes, &corr_types)?;
                     match config.spectral_mode {
-                        SpectralMode::Mfs => PreparedState::PairedMfs {
+                        SpectralMode::Mfs if trace_enabled => PreparedState::PairedMfs {
                             plane_stokes,
                             transform,
                             pair,
                             paired: empty_parallel_hand_batch(max_samples),
+                        },
+                        SpectralMode::Mfs => PreparedState::CollapsedMfs {
+                            plane_stokes,
+                            transform,
+                            pair,
+                            batch: empty_visibility_batch(max_samples),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata => PreparedState::PairedCube {
                             plane_stokes,
@@ -3623,11 +3847,17 @@ impl PreparedSelection {
             } else {
                 let (pair, transform) = derive_stokes_pair_selection(PlaneStokes::I, &corr_types)?;
                 match config.spectral_mode {
-                    SpectralMode::Mfs => PreparedState::PairedMfs {
+                    SpectralMode::Mfs if trace_enabled => PreparedState::PairedMfs {
                         plane_stokes: PlaneStokes::I,
                         transform,
                         pair,
                         paired: empty_parallel_hand_batch(max_samples),
+                    },
+                    SpectralMode::Mfs => PreparedState::CollapsedMfs {
+                        plane_stokes: PlaneStokes::I,
+                        transform,
+                        pair,
+                        batch: empty_visibility_batch(max_samples),
                     },
                     SpectralMode::Cube | SpectralMode::Cubedata => PreparedState::PairedCube {
                         plane_stokes: PlaneStokes::I,
@@ -3684,6 +3914,7 @@ impl PreparedSelection {
                 phase_center,
                 state,
                 trace_state,
+                trace_enabled,
             })
         })();
         match result {
@@ -3711,6 +3942,7 @@ impl PreparedSelection {
                 trace_state: PreparedTraceState::ExplicitMfs {
                     samples: Vec::new(),
                 },
+                trace_enabled,
             },
         }
     }
@@ -3721,33 +3953,51 @@ impl PreparedSelection {
         geometry_row: &PreparedGeometryRow,
         data_column: &SelectedMainDataSource,
         flag_column: &SelectedMainArrayColumn,
-        flag_row: &FlagRowColumn<'_>,
+        flag_row: &[bool],
         weight_column: &SelectedMainArrayColumn,
         weight_spectrum: Option<&SelectedMainArrayColumn>,
         derived_engine: Option<&MsCalEngine>,
         row_slot: usize,
+        timings: &mut AccumulateRowTimings,
     ) -> Result<(), String> {
+        timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
-        if flag_row
+        let stage_started_at = Instant::now();
+        if *flag_row
             .get(row)
-            .map_err(|error| format!("read FLAG_ROW row {row}: {error}"))?
+            .ok_or_else(|| format!("read FLAG_ROW row {row}: row is out of bounds"))?
         {
+            timings.flag_row += stage_started_at.elapsed();
+            timings.rows_flagged += 1;
             return Ok(());
         }
+        timings.flag_row += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let data = data_column
             .get(row_slot)
             .map_err(|error| format!("read data row {row}: {error}"))?;
+        timings.data_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let flags = flag_column
             .get(row_slot)
             .map_err(|error| format!("read FLAG row {row}: {error}"))?;
+        timings.flag_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let row_weights = weight_column
             .get(row_slot)
             .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
+        timings.weight_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let weight_spectrum_row = weight_spectrum
             .map(|column| column.get(row_slot))
             .transpose()
             .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
+        timings.weight_spectrum += stage_started_at.elapsed();
+        let adapt_started_at = Instant::now();
+        let data_2d = ComplexRow2d::new(data)?;
+        let flags_2d = BoolRow2d::new(flags)?;
+        let weights = WeightRow::new(row_weights, weight_spectrum_row)?;
         let antenna1_id = geometry_row.antenna1_id;
         let antenna2_id = geometry_row.antenna2_id;
         let is_cross = geometry_row.is_cross;
@@ -3798,6 +4048,7 @@ impl PreparedSelection {
         } else {
             None
         };
+        let trace_enabled = self.trace_enabled;
 
         match (&mut self.state, &mut self.trace_state) {
             (
@@ -3827,7 +4078,9 @@ impl PreparedSelection {
                 batch
                     .visibility
                     .reserve(self.source_channel_frequencies_hz.len());
-                samples.reserve(self.source_channel_frequencies_hz.len());
+                if trace_enabled {
+                    samples.reserve(self.source_channel_frequencies_hz.len());
+                }
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -3835,20 +4088,15 @@ impl PreparedSelection {
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                     .enumerate()
                 {
-                    if bool_at_2d(flags, *corr_index, channel_index)? {
+                    if flags_2d.get(*corr_index, channel_index)? {
                         continue;
                     }
                     let visibility = phase_rotate_visibility(
-                        complex32_at_2d(data, *corr_index, channel_index)?,
+                        data_2d.get(*corr_index, channel_index)?,
                         transform.phase_shift_m,
                         frequency_hz,
                     );
-                    let (weight, weight_source) = resolve_weight_with_source(
-                        row_weights,
-                        weight_spectrum_row,
-                        *corr_index,
-                        channel_index,
-                    )?;
+                    let (weight, weight_source) = weights.get(*corr_index, channel_index)?;
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
@@ -3860,38 +4108,40 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(1.0);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
-                    samples.push(PreparedVisibilitySampleTrace {
-                        row_index: selected_row.row_index,
-                        input_field_id: selected_row.field_id,
-                        phase_center_field_id: self.phase_center.field_id,
-                        ddid: selected_row.ddid,
-                        spw_id: selected_row.spw_id,
-                        polarization_id: selected_row.polarization_id,
-                        antenna1_id,
-                        antenna2_id,
-                        is_cross,
-                        raw_uvw_m,
-                        imaging_uvw_m: uvw_m,
-                        phase_shift_m: transform.phase_shift_m,
-                        correlation_indices: vec![*corr_index],
-                        output_channel_index: None,
-                        output_frequency_hz: frequency_hz,
-                        field_phase_center_direction_rad: geometry_row
-                            .field_phase_center_direction_rad,
-                        pointing_direction_rad: baseline_pointing_direction_rad,
-                        visibility_re: visibility.re,
-                        visibility_im: visibility.im,
-                        weight,
-                        weight_source,
-                        sumwt_factor: 1.0,
-                        gridable: is_cross,
-                        source_contributions: vec![ChannelContributionTrace {
-                            source_channel_slot: channel_slot,
-                            source_channel_index: channel_index,
-                            source_frequency_hz: frequency_hz,
-                            factor: 1.0,
-                        }],
-                    });
+                    if trace_enabled {
+                        samples.push(PreparedVisibilitySampleTrace {
+                            row_index: selected_row.row_index,
+                            input_field_id: selected_row.field_id,
+                            phase_center_field_id: self.phase_center.field_id,
+                            ddid: selected_row.ddid,
+                            spw_id: selected_row.spw_id,
+                            polarization_id: selected_row.polarization_id,
+                            antenna1_id,
+                            antenna2_id,
+                            is_cross,
+                            raw_uvw_m,
+                            imaging_uvw_m: uvw_m,
+                            phase_shift_m: transform.phase_shift_m,
+                            correlation_indices: vec![*corr_index],
+                            output_channel_index: None,
+                            output_frequency_hz: frequency_hz,
+                            field_phase_center_direction_rad: geometry_row
+                                .field_phase_center_direction_rad,
+                            pointing_direction_rad: baseline_pointing_direction_rad,
+                            visibility_re: visibility.re,
+                            visibility_im: visibility.im,
+                            weight,
+                            weight_source,
+                            sumwt_factor: 1.0,
+                            gridable: is_cross,
+                            source_contributions: vec![ChannelContributionTrace {
+                                source_channel_slot: channel_slot,
+                                source_channel_index: channel_index,
+                                source_frequency_hz: frequency_hz,
+                                factor: 1.0,
+                            }],
+                        });
+                    }
                 }
             }
             (
@@ -3982,6 +4232,89 @@ impl PreparedSelection {
                 }
             }
             (
+                PreparedState::CollapsedMfs {
+                    plane_stokes,
+                    transform: pair_transform,
+                    pair,
+                    batch,
+                },
+                PreparedTraceState::PairedMfs { .. },
+            ) => {
+                batch
+                    .u_lambda
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .v_lambda
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .w_lambda
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .weight
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .sumwt_factor
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .gridable
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .visibility
+                    .reserve(self.source_channel_frequencies_hz.len());
+                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let first_visibility = phase_rotate_visibility(
+                        data_2d.get(pair.0, channel_index)?,
+                        transform.phase_shift_m,
+                        frequency_hz,
+                    );
+                    let second_visibility = phase_rotate_visibility(
+                        data_2d.get(pair.1, channel_index)?,
+                        transform.phase_shift_m,
+                        frequency_hz,
+                    );
+                    let (first_weight, _) = weights.get(pair.0, channel_index)?;
+                    let (second_weight, _) = weights.get(pair.1, channel_index)?;
+                    let first_flagged = flags_2d.get(pair.0, channel_index)?;
+                    let second_flagged = flags_2d.get(pair.1, channel_index)?;
+                    if first_flagged || second_flagged {
+                        continue;
+                    }
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        continue;
+                    }
+                    let visibility = collapse_paired_visibility(
+                        first_visibility,
+                        second_visibility,
+                        *pair_transform,
+                    );
+                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                        continue;
+                    }
+                    let combined_weight = 0.5 * (first_weight + second_weight);
+                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                        continue;
+                    }
+                    batch.u_lambda.push(uvw_m[0] * lambda_scale);
+                    batch.v_lambda.push(uvw_m[1] * lambda_scale);
+                    batch.w_lambda.push(uvw_m[2] * lambda_scale);
+                    batch.weight.push(combined_weight);
+                    batch.sumwt_factor.push(sumwt_factor);
+                    batch.gridable.push(is_cross);
+                    batch.visibility.push(visibility);
+                }
+            }
+            (
                 PreparedState::PairedMfs { paired, pair, .. },
                 PreparedTraceState::PairedMfs { samples },
             ) => {
@@ -4015,7 +4348,9 @@ impl PreparedSelection {
                 paired
                     .gridable
                     .reserve(self.source_channel_frequencies_hz.len());
-                samples.reserve(self.source_channel_frequencies_hz.len());
+                if trace_enabled {
+                    samples.reserve(self.source_channel_frequencies_hz.len());
+                }
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -4025,29 +4360,20 @@ impl PreparedSelection {
                 {
                     let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
                     let first_visibility = phase_rotate_visibility(
-                        complex32_at_2d(data, pair.0, channel_index)?,
+                        data_2d.get(pair.0, channel_index)?,
                         transform.phase_shift_m,
                         frequency_hz,
                     );
                     let second_visibility = phase_rotate_visibility(
-                        complex32_at_2d(data, pair.1, channel_index)?,
+                        data_2d.get(pair.1, channel_index)?,
                         transform.phase_shift_m,
                         frequency_hz,
                     );
-                    let (first_weight, first_weight_source) = resolve_weight_with_source(
-                        row_weights,
-                        weight_spectrum_row,
-                        pair.0,
-                        channel_index,
-                    )?;
-                    let (second_weight, second_weight_source) = resolve_weight_with_source(
-                        row_weights,
-                        weight_spectrum_row,
-                        pair.1,
-                        channel_index,
-                    )?;
-                    let first_flagged = bool_at_2d(flags, pair.0, channel_index)?;
-                    let second_flagged = bool_at_2d(flags, pair.1, channel_index)?;
+                    let (first_weight, first_weight_source) = weights.get(pair.0, channel_index)?;
+                    let (second_weight, second_weight_source) =
+                        weights.get(pair.1, channel_index)?;
+                    let first_flagged = flags_2d.get(pair.0, channel_index)?;
+                    let second_flagged = flags_2d.get(pair.1, channel_index)?;
                     paired.u_lambda.push(uvw_m[0] * lambda_scale);
                     paired.v_lambda.push(uvw_m[1] * lambda_scale);
                     paired.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -4058,43 +4384,45 @@ impl PreparedSelection {
                     paired.first_flagged.push(first_flagged);
                     paired.second_flagged.push(second_flagged);
                     paired.gridable.push(is_cross);
-                    samples.push(PendingPairedSampleTrace {
-                        common: TraceSampleCommon {
-                            row_index: selected_row.row_index,
-                            input_field_id: selected_row.field_id,
-                            phase_center_field_id: self.phase_center.field_id,
-                            ddid: selected_row.ddid,
-                            spw_id: selected_row.spw_id,
-                            polarization_id: selected_row.polarization_id,
-                            antenna1_id,
-                            antenna2_id,
-                            is_cross,
-                            raw_uvw_m,
-                            imaging_uvw_m: uvw_m,
-                            phase_shift_m: transform.phase_shift_m,
-                            output_channel_index: None,
-                            output_frequency_hz: frequency_hz,
-                            field_phase_center_direction_rad: geometry_row
-                                .field_phase_center_direction_rad,
-                            pointing_direction_rad: baseline_pointing_direction_rad,
-                            source_contributions: vec![ChannelContributionTrace {
-                                source_channel_slot: channel_slot,
-                                source_channel_index: channel_index,
-                                source_frequency_hz: frequency_hz,
-                                factor: 1.0,
-                            }],
-                            gridable: is_cross,
-                        },
-                        correlation_indices: [pair.0, pair.1],
-                        first_visibility,
-                        second_visibility,
-                        first_weight,
-                        second_weight,
-                        first_weight_source,
-                        second_weight_source,
-                        first_flagged,
-                        second_flagged,
-                    });
+                    if trace_enabled {
+                        samples.push(PendingPairedSampleTrace {
+                            common: TraceSampleCommon {
+                                row_index: selected_row.row_index,
+                                input_field_id: selected_row.field_id,
+                                phase_center_field_id: self.phase_center.field_id,
+                                ddid: selected_row.ddid,
+                                spw_id: selected_row.spw_id,
+                                polarization_id: selected_row.polarization_id,
+                                antenna1_id,
+                                antenna2_id,
+                                is_cross,
+                                raw_uvw_m,
+                                imaging_uvw_m: uvw_m,
+                                phase_shift_m: transform.phase_shift_m,
+                                output_channel_index: None,
+                                output_frequency_hz: frequency_hz,
+                                field_phase_center_direction_rad: geometry_row
+                                    .field_phase_center_direction_rad,
+                                pointing_direction_rad: baseline_pointing_direction_rad,
+                                source_contributions: vec![ChannelContributionTrace {
+                                    source_channel_slot: channel_slot,
+                                    source_channel_index: channel_index,
+                                    source_frequency_hz: frequency_hz,
+                                    factor: 1.0,
+                                }],
+                                gridable: is_cross,
+                            },
+                            correlation_indices: [pair.0, pair.1],
+                            first_visibility,
+                            second_visibility,
+                            first_weight,
+                            second_weight,
+                            first_weight_source,
+                            second_weight_source,
+                            first_flagged,
+                            second_flagged,
+                        });
+                    }
                 }
             }
             (
@@ -4199,7 +4527,76 @@ impl PreparedSelection {
                 );
             }
         }
+        timings.adapt_samples += adapt_started_at.elapsed();
         Ok(())
+    }
+
+    fn finish_standard_mfs_without_trace(self) -> Result<PreparedInput, String> {
+        let PreparedSelection {
+            initialization_error: _,
+            source_channel_indices: _,
+            source_channel_frequencies_hz: _,
+            source_channel_widths_hz: _,
+            selected_frequency_range_hz,
+            reffreq_hz,
+            freq_ref,
+            cube_spectral_setup: _,
+            cube_row_spectral_cache: _,
+            phase_center,
+            state,
+            trace_state: _,
+            trace_enabled: _,
+        } = self;
+        match state {
+            PreparedState::ExplicitMfs {
+                plane_stokes,
+                batch,
+                ..
+            } => Ok(PreparedInput::Mfs(PlaneInput {
+                phase_center,
+                freq_ref,
+                reffreq_hz,
+                selected_frequency_range_hz,
+                plane_stokes,
+                batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                sample_frequency_batches_hz: Vec::new(),
+                gridder_mode: GridderMode::Standard,
+            })),
+            PreparedState::PairedMfs {
+                plane_stokes,
+                paired,
+                transform,
+                ..
+            } => {
+                let collapsed = collapse_paired_visibility_batch(&paired, transform, plane_stokes)
+                    .map_err(|error| error.to_string())?;
+                Ok(PreparedInput::Mfs(PlaneInput {
+                    phase_center,
+                    freq_ref,
+                    reffreq_hz,
+                    selected_frequency_range_hz,
+                    plane_stokes,
+                    batches: chunk_visibility_batch(collapsed, DEFAULT_BATCH_SIZE),
+                    sample_frequency_batches_hz: Vec::new(),
+                    gridder_mode: GridderMode::Standard,
+                }))
+            }
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                batch,
+                ..
+            } => Ok(PreparedInput::Mfs(PlaneInput {
+                phase_center,
+                freq_ref,
+                reffreq_hz,
+                selected_frequency_range_hz,
+                plane_stokes,
+                batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                sample_frequency_batches_hz: Vec::new(),
+                gridder_mode: GridderMode::Standard,
+            })),
+            _ => Err("internal error: fast trace-free prepare requires MFS state".to_string()),
+        }
     }
 
     fn finish_with_trace(
@@ -4224,6 +4621,7 @@ impl PreparedSelection {
             phase_center: prepared_phase_center,
             state,
             trace_state,
+            trace_enabled: _,
         } = self;
         let output_channel_frequencies_hz = cube_spectral_setup
             .as_ref()
@@ -5486,6 +5884,248 @@ fn chunk_model_interpolation_batches(
     batches
 }
 
+enum ComplexRow2d<'a> {
+    Complex32Slice {
+        values: &'a [Complex32],
+        channels: usize,
+    },
+    Complex64Slice {
+        values: &'a [Complex64],
+        channels: usize,
+    },
+    Complex32Array(&'a ArrayD<Complex32>),
+    Complex64Array(&'a ArrayD<Complex64>),
+}
+
+impl<'a> ComplexRow2d<'a> {
+    fn new(data: &'a ArrayValue) -> Result<Self, String> {
+        match data {
+            ArrayValue::Complex32(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Complex32Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Complex32Array(values)),
+                (shape, _) => Err(format!(
+                    "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
+                )),
+            },
+            ArrayValue::Complex64(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Complex64Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Complex64Array(values)),
+                (shape, _) => Err(format!(
+                    "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
+                )),
+            },
+            other => Err(format!(
+                "visibility data must be Complex32/Complex64, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, chan: usize) -> Result<Complex32, String> {
+        match self {
+            Self::Complex32Slice { values, channels } => {
+                values.get(corr * *channels + chan).copied().ok_or_else(|| {
+                    format!("complex32 visibility index [{corr}, {chan}] out of bounds")
+                })
+            }
+            Self::Complex64Slice { values, channels } => values
+                .get(corr * *channels + chan)
+                .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                .ok_or_else(|| {
+                    format!("complex64 visibility index [{corr}, {chan}] out of bounds")
+                }),
+            Self::Complex32Array(values) => {
+                values.get(IxDyn(&[corr, chan])).copied().ok_or_else(|| {
+                    format!("complex32 visibility index [{corr}, {chan}] out of bounds")
+                })
+            }
+            Self::Complex64Array(values) => values
+                .get(IxDyn(&[corr, chan]))
+                .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                .ok_or_else(|| {
+                    format!("complex64 visibility index [{corr}, {chan}] out of bounds")
+                }),
+        }
+    }
+}
+
+enum BoolRow2d<'a> {
+    Slice { values: &'a [bool], channels: usize },
+    Array(&'a ArrayD<bool>),
+}
+
+impl<'a> BoolRow2d<'a> {
+    fn new(data: &'a ArrayValue) -> Result<Self, String> {
+        match data {
+            ArrayValue::Bool(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Array(values)),
+                (shape, _) => Err(format!("FLAG must be 2-D Bool, found shape {shape:?}")),
+            },
+            other => Err(format!(
+                "FLAG must be Bool, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, chan: usize) -> Result<bool, String> {
+        match self {
+            Self::Slice { values, channels } => values
+                .get(corr * *channels + chan)
+                .copied()
+                .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds")),
+            Self::Array(values) => values
+                .get(IxDyn(&[corr, chan]))
+                .copied()
+                .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds")),
+        }
+    }
+}
+
+enum FloatRow1d<'a> {
+    Float32Slice(&'a [f32]),
+    Float64Slice(&'a [f64]),
+    Float32Array(&'a ArrayD<f32>),
+    Float64Array(&'a ArrayD<f64>),
+}
+
+impl<'a> FloatRow1d<'a> {
+    fn new(data: &'a ArrayValue, label: &str) -> Result<Self, String> {
+        match data {
+            ArrayValue::Float32(values) => match (values.shape(), values.as_slice()) {
+                ([_], Some(slice)) => Ok(Self::Float32Slice(slice)),
+                ([_], None) => Ok(Self::Float32Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 1-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            ArrayValue::Float64(values) => match (values.shape(), values.as_slice()) {
+                ([_], Some(slice)) => Ok(Self::Float64Slice(slice)),
+                ([_], None) => Ok(Self::Float64Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 1-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            other => Err(format!(
+                "{label} must be Float32/Float64, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, label: &str) -> Result<f32, String> {
+        match self {
+            Self::Float32Slice(values) => values
+                .get(corr)
+                .copied()
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+            Self::Float64Slice(values) => values
+                .get(corr)
+                .map(|value| *value as f32)
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+            Self::Float32Array(values) => values
+                .get(IxDyn(&[corr]))
+                .copied()
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+            Self::Float64Array(values) => values
+                .get(IxDyn(&[corr]))
+                .map(|value| *value as f32)
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+        }
+    }
+}
+
+enum FloatRow2d<'a> {
+    Float32Slice { values: &'a [f32], channels: usize },
+    Float64Slice { values: &'a [f64], channels: usize },
+    Float32Array(&'a ArrayD<f32>),
+    Float64Array(&'a ArrayD<f64>),
+}
+
+impl<'a> FloatRow2d<'a> {
+    fn new(data: &'a ArrayValue, label: &str) -> Result<Self, String> {
+        match data {
+            ArrayValue::Float32(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Float32Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Float32Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 2-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            ArrayValue::Float64(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Float64Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Float64Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 2-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            other => Err(format!(
+                "{label} must be Float32/Float64, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, chan: usize, _label: &str) -> Option<f32> {
+        match self {
+            Self::Float32Slice { values, channels } => values.get(corr * *channels + chan).copied(),
+            Self::Float64Slice { values, channels } => values
+                .get(corr * *channels + chan)
+                .map(|value| *value as f32),
+            Self::Float32Array(values) => values.get(IxDyn(&[corr, chan])).copied(),
+            Self::Float64Array(values) => {
+                values.get(IxDyn(&[corr, chan])).map(|value| *value as f32)
+            }
+        }
+    }
+}
+
+struct WeightRow<'a> {
+    weights: FloatRow1d<'a>,
+    spectrum: Option<FloatRow2d<'a>>,
+}
+
+impl<'a> WeightRow<'a> {
+    fn new(
+        weight_row: &'a ArrayValue,
+        weight_spectrum_row: Option<&'a ArrayValue>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            weights: FloatRow1d::new(weight_row, "WEIGHT")?,
+            spectrum: weight_spectrum_row
+                .map(|row| FloatRow2d::new(row, "WEIGHT_SPECTRUM"))
+                .transpose()?,
+        })
+    }
+
+    fn get(&self, corr: usize, chan: usize) -> Result<(f32, WeightSourceKind), String> {
+        if let Some(spectrum) = &self.spectrum
+            && let Some(weight) = spectrum.get(corr, chan, "WEIGHT_SPECTRUM")
+        {
+            return Ok((weight, WeightSourceKind::WeightSpectrum));
+        }
+        self.weights
+            .get(corr, "WEIGHT")
+            .map(|weight| (weight, WeightSourceKind::Weight))
+    }
+}
+
 fn complex32_at_2d(data: &ArrayValue, corr: usize, chan: usize) -> Result<Complex32, String> {
     match data {
         ArrayValue::Complex32(values) => values
@@ -6151,6 +6791,7 @@ Options:
   --specmode MODE           mfs, cube, or cubedata
   --weighting MODE          natural, uniform, or briggs
   --perchanweightdensity    cube uniform/briggs density per output channel
+  --usepointing             use POINTING-table directions instead of FIELD phase centers
   --uvtaper SPEC            gaussian taper: MAJOR[,MINOR[,PA]] with arcsec/deg/lambda units
   --restoringbeam MODE      common
   --deconvolver MODE        hogbom, mtmfs, clark, or multiscale
@@ -6397,6 +7038,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6441,6 +7083,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6501,6 +7144,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6553,6 +7197,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6608,6 +7253,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6660,6 +7306,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6704,6 +7351,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6746,6 +7394,7 @@ mod tests {
         assert_eq!(config.weighting, WeightingMode::Natural);
         assert_eq!(config.deconvolver, Deconvolver::Hogbom);
         assert!(config.multiscale_scales.is_empty());
+        assert!(!config.use_pointing);
         assert_eq!(config.w_term_mode, WTermMode::None);
         assert!(config.write_preview_pngs);
     }
@@ -6780,6 +7429,7 @@ mod tests {
             OsString::from("4,5,6,7"),
             OsString::from("--mask-image"),
             OsString::from("demo.mask"),
+            OsString::from("--usepointing"),
             OsString::from("--wterm"),
             OsString::from("direct"),
         ])
@@ -6787,6 +7437,7 @@ mod tests {
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: -1.0 });
         assert_eq!(config.mask_boxes, vec![[1, 2, 10, 20], [4, 5, 6, 7]]);
         assert_eq!(config.mask_image, Some(PathBuf::from("demo.mask")));
+        assert!(config.use_pointing);
         assert_eq!(config.w_term_mode, WTermMode::Direct);
     }
 
@@ -7771,6 +8422,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -7860,6 +8512,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -7945,6 +8598,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8060,6 +8714,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8168,6 +8823,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8238,6 +8894,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Uniform,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8340,6 +8997,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8437,6 +9095,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: true,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8469,6 +9128,88 @@ mod tests {
         assert!(!trace.rows[0].antenna2_pointing_used_fallback);
         assert_eq!(trace.rows[0].antenna1_pointing_direction_rad, [1.2, 0.4]);
         assert_eq!(trace.rows[0].antenna2_pointing_direction_rad, [1.3, 0.45]);
+    }
+
+    #[test]
+    fn prepare_geometry_trace_ignores_pointing_rows_by_default() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("geometry_pointing_default.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        add_pointing_row(&mut ms, 0, [1.2, 0.4], TEST_TIME_MJD_SEC, 5.0);
+        add_pointing_row(&mut ms, 1, [1.3, 0.45], TEST_TIME_MJD_SEC, 5.0);
+        ms.save().unwrap();
+
+        let config = CliConfig {
+            ms: ms_path,
+            imagename: PathBuf::from("unused"),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            correlation: Some("XX".to_string()),
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        };
+
+        let trace = build_prepare_geometry_trace_from_config(&config).unwrap();
+
+        assert_eq!(trace.rows.len(), 1);
+        assert_eq!(trace.rows[0].pointing_id, None);
+        assert_eq!(trace.rows[0].antenna1_pointing_row, None);
+        assert_eq!(trace.rows[0].antenna2_pointing_row, None);
+        assert!(trace.rows[0].antenna1_pointing_used_fallback);
+        assert!(trace.rows[0].antenna2_pointing_used_fallback);
+        assert_eq!(trace.rows[0].field_phase_center_direction_rad, [1.0, 0.5]);
+        assert_eq!(trace.rows[0].antenna1_pointing_direction_rad, [1.0, 0.5]);
+        assert_eq!(trace.rows[0].antenna2_pointing_direction_rad, [1.0, 0.5]);
     }
 
     #[test]
@@ -8568,6 +9309,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8653,6 +9395,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8739,6 +9482,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8820,6 +9564,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8917,6 +9662,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9022,6 +9768,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9104,6 +9851,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9329,6 +10077,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9424,6 +10173,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9536,6 +10286,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9646,6 +10397,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9742,6 +10494,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9838,6 +10591,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Mtmfs,
@@ -9968,6 +10722,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Clark,
@@ -10076,6 +10831,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Multiscale,
@@ -10183,6 +10939,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10268,6 +11025,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10347,6 +11105,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10427,6 +11186,7 @@ mod tests {
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10530,6 +11290,7 @@ mod tests {
                 time_bounds_mjd_sec: bounds.unwrap(),
                 derived_engine: &engine,
             }),
+            true,
         );
         assert!(
             prepared.initialization_error.is_none(),
@@ -12030,6 +12791,7 @@ mod tests {
                 time_bounds_mjd_sec: bounds.unwrap(),
                 derived_engine: &engine,
             }),
+            true,
         );
         assert!(
             prepared.initialization_error.is_none(),
@@ -12212,6 +12974,7 @@ mod tests {
                 time_bounds_mjd_sec: bounds.unwrap(),
                 derived_engine: &engine,
             }),
+            true,
         );
         assert!(
             prepared.initialization_error.is_none(),

@@ -31,6 +31,7 @@ struct Options {
     spectral_mode: SpectralMode,
     interpolation: CubeInterpolation,
     weighting: WeightingMode,
+    use_pointing: bool,
     deconvolver: Deconvolver,
     nterms: usize,
     multiscale_scales: Vec<f32>,
@@ -103,7 +104,7 @@ fn run() -> Result<(), String> {
     }
 
     println!(
-        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} interpolation={:?} weighting={:?} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
+        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} interpolation={:?} weighting={:?} use_pointing={} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
         options.ms.display(),
         options.field_ids,
         options.phasecenter_field,
@@ -114,6 +115,7 @@ fn run() -> Result<(), String> {
         options.correlation,
         options.interpolation,
         options.weighting,
+        options.use_pointing,
         options.deconvolver,
         options.nterms,
         options.multiscale_scales,
@@ -296,6 +298,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         },
         weighting: options.weighting,
         per_channel_weight_density: false,
+        use_pointing: options.use_pointing,
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
         deconvolver: options.deconvolver,
@@ -354,6 +357,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut interpolation = CubeInterpolation::Linear;
     let mut weighting_name = String::from("natural");
     let mut robust = 0.5f32;
+    let mut use_pointing = false;
     let mut deconvolver = Deconvolver::Hogbom;
     let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
@@ -405,6 +409,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             }
             "--weighting" => weighting_name = next_value(&mut args, "--weighting")?,
             "--robust" => robust = parse_next(&mut args, "--robust")?,
+            "--usepointing" | "--use-pointing" => use_pointing = true,
             "--deconvolver" => {
                 deconvolver = parse_deconvolver(&next_value(&mut args, "--deconvolver")?)?
             }
@@ -466,6 +471,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         spectral_mode,
         interpolation,
         weighting,
+        use_pointing,
         deconvolver,
         nterms,
         multiscale_scales,
@@ -610,6 +616,7 @@ Options:
   --interpolation nearest|linear
   --weighting natural|uniform|briggs
   --robust VALUE
+  --usepointing
   --deconvolver hogbom|clark|multiscale|mtmfs
   --nterms N
   --scales PIXELS

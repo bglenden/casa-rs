@@ -143,17 +143,24 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     let weighting_started = Instant::now();
     let weighted_batches = apply_weighting(request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
-    let psf_state = compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?;
     let [nx, ny] = request.geometry.image_shape;
     let mut model = Array2::<f32>::zeros((nx, ny));
-    let mut residual = compute_residual(
-        request,
-        &weighted_batches,
-        &gridder,
-        &model,
-        &psf_state,
-        &mut stage_timings,
-    )?;
+    let (psf_state, mut residual) = if request.clean.niter == 0
+        && matches!(request.w_term_mode, WTermMode::None)
+    {
+        compute_dirty_psf_and_residual_standard(&weighted_batches, &gridder, &mut stage_timings)?
+    } else {
+        let psf_state = compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?;
+        let residual = compute_residual(
+            request,
+            &weighted_batches,
+            &gridder,
+            &model,
+            &psf_state,
+            &mut stage_timings,
+        )?;
+        (psf_state, residual)
+    };
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf,
         request.geometry.cell_size_rad,
@@ -3058,6 +3065,105 @@ fn compute_psf(
     })
 }
 
+fn compute_dirty_psf_and_residual_standard(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((nx, ny));
+    let mut residual_grid = Array2::<Complex32>::zeros((nx, ny));
+    let mut normalization_sumwt = 0.0f32;
+    let mut reported_sumwt = 0.0f32;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+
+    let grid_started = Instant::now();
+    for batch in batches {
+        for index in 0..batch.len() {
+            if !batch.gridable[index] {
+                skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[index];
+            let sumwt_factor = batch.sumwt_factor[index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0)
+            {
+                skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) = gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            else {
+                skipped_samples += 1;
+                continue;
+            };
+            let psf_weight = Complex32::new(weight, 0.0);
+            gridder.grid_sample_product_planned(&mut psf_grid, &plan.positive, psf_weight);
+            gridder.grid_sample_product_planned(&mut psf_grid, &plan.negative, psf_weight);
+            normalization_sumwt += 2.0 * weight;
+            reported_sumwt += weight * sumwt_factor;
+            gridded_samples += 1;
+
+            let observed_visibility = batch.visibility[index];
+            if observed_visibility.re.is_finite() && observed_visibility.im.is_finite() {
+                let residual = observed_visibility * weight;
+                gridder.grid_sample_product_planned(&mut residual_grid, &plan.positive, residual);
+                gridder.grid_sample_product_planned(
+                    &mut residual_grid,
+                    &plan.negative,
+                    residual.conj(),
+                );
+            }
+        }
+    }
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    if normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let psf_fft_started = Instant::now();
+    let raw_psf = centered_ifft2(&psf_grid);
+    stage_timings.psf_fft += psf_fft_started.elapsed();
+    let psf_normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid(&raw_psf);
+    psf.mapv_inplace(|value| value / normalization_sumwt);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual = gridder.corrected_image_from_grid(&raw_residual);
+    residual.mapv_inplace(|value| value / normalization_sumwt / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt,
+            reported_sumwt,
+            psf_peak,
+            gridded_samples,
+            skipped_samples,
+        },
+        residual,
+    ))
+}
+
 fn compute_residual(
     request: &ImagingRequest,
     batches: &[VisibilityBatch],
@@ -4459,8 +4565,9 @@ mod tests {
         PlaneStokes, PsfState, RestoringBeamMode, StandardGridder, VisibilityBatch,
         WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
         apply_chauvenet_clipping, apply_weighting, build_direct_components,
-        build_direct_pixel_coordinates, compute_cycle_threshold, compute_psf, compute_psf_direct,
-        compute_residual, compute_residual_direct, direct_predict_visibility, dirty_clean_config,
+        build_direct_pixel_coordinates, compute_cycle_threshold,
+        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
+        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason, peak_abs_value,
         peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
         run_mtmfs, tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
@@ -4682,6 +4789,88 @@ mod tests {
         .unwrap();
 
         assert!((result.sumwt[(0, 0, 0, 0)] - 1.5).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn combined_dirty_standard_path_matches_separate_psf_and_residual_passes() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let batch = point_source_visibilities(
+            &[
+                (10.0, 5.0, 0.0),
+                (25.5, -3.25, 0.0),
+                (-16.0, 11.0, 0.0),
+                (32.0, -18.0, 0.0),
+            ],
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (37.0, 29.0),
+            2.0,
+        );
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![batch],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: dirty_clean_config(0.35),
+            clean_mask: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let weighted_batches = apply_weighting(&request, &gridder).unwrap();
+        let mut separate_timings = ImagingStageTimings::default();
+        let separate_psf =
+            compute_psf(&request, &weighted_batches, &gridder, &mut separate_timings).unwrap();
+        let model = Array2::<f32>::zeros((geometry.image_shape[0], geometry.image_shape[1]));
+        let separate_residual = compute_residual(
+            &request,
+            &weighted_batches,
+            &gridder,
+            &model,
+            &separate_psf,
+            &mut separate_timings,
+        )
+        .unwrap();
+
+        let mut combined_timings = ImagingStageTimings::default();
+        let (combined_psf, combined_residual) = compute_dirty_psf_and_residual_standard(
+            &weighted_batches,
+            &gridder,
+            &mut combined_timings,
+        )
+        .unwrap();
+
+        assert_close_f32(
+            combined_psf.normalization_sumwt,
+            separate_psf.normalization_sumwt,
+            1.0e-6,
+        );
+        assert_close_f32(
+            combined_psf.reported_sumwt,
+            separate_psf.reported_sumwt,
+            1.0e-6,
+        );
+        assert_close_f32(combined_psf.psf_peak, separate_psf.psf_peak, 1.0e-6);
+        assert_eq!(combined_psf.gridded_samples, separate_psf.gridded_samples);
+        assert_eq!(combined_psf.skipped_samples, separate_psf.skipped_samples);
+        assert!(
+            rms_difference(&combined_psf.psf, &separate_psf.psf) < 1.0e-6,
+            "combined PSF should match separate PSF pass"
+        );
+        assert!(
+            rms_difference(&combined_residual, &separate_residual) < 1.0e-6,
+            "combined residual should match separate residual pass"
+        );
     }
 
     #[test]

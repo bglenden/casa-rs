@@ -91,6 +91,7 @@ struct ScatterPanelPresentation<'a> {
     legend_position: MsLegendPosition,
     showmajorgrid: bool,
     showminorgrid: bool,
+    symbol_size_px: Option<u32>,
 }
 
 struct ScatterPanelRenderContext<'a> {
@@ -1116,6 +1117,9 @@ pub struct MsPlotStyleSpec {
     pub xlabel: Option<String>,
     /// Optional Y label override.
     pub ylabel: Option<String>,
+    /// Optional scatter marker radius in rendered pixels.
+    #[serde(default, alias = "symbolsize", alias = "marker_size")]
+    pub symbol_size: Option<u32>,
     /// Show a legend when multiple series are present.
     pub showlegend: bool,
     /// Legend placement.
@@ -1132,6 +1136,7 @@ impl Default for MsPlotStyleSpec {
             title: None,
             xlabel: None,
             ylabel: None,
+            symbol_size: None,
             showlegend: false,
             legendposition: MsLegendPosition::UpperRight,
             showmajorgrid: false,
@@ -1645,6 +1650,9 @@ impl MsPlotSpec {
         if self.layout.gridrows == 0 || self.layout.gridcols == 0 {
             return Err("msexplore gridrows/gridcols must be positive integers".to_string());
         }
+        if self.style.symbol_size.is_some_and(|size| size == 0) {
+            return Err("msexplore symbolsize must be a positive integer".to_string());
+        }
         let iterated = self.iteration.iteraxis.is_some();
         if iterated && self.y_axes.len() > 1 {
             return Err(
@@ -2018,6 +2026,8 @@ pub struct MsScatterPlotPayload {
     pub showmajorgrid: bool,
     /// Show minor grid lines.
     pub showminorgrid: bool,
+    /// Optional scatter marker radius in rendered pixels.
+    pub symbol_size_px: Option<u32>,
     /// Grouped scatter series.
     pub series: Vec<MsScatterSeries>,
     /// Resolved page header lines.
@@ -2092,6 +2102,8 @@ pub struct MsScatterGridPayload {
     pub showmajorgrid: bool,
     /// Show minor grid lines.
     pub showminorgrid: bool,
+    /// Optional scatter marker radius in rendered pixels.
+    pub symbol_size_px: Option<u32>,
     /// Iteration axis used to build the page.
     pub iteraxis: MsIterationAxis,
     /// Resolved page grid row count.
@@ -3982,6 +3994,7 @@ fn build_generic_visibility_scatter(
             legend_position: spec.style.legendposition,
             showmajorgrid: spec.style.showmajorgrid,
             showminorgrid: spec.style.showminorgrid,
+            symbol_size_px: spec.style.symbol_size,
             iteraxis,
             gridrows,
             gridcols,
@@ -4019,6 +4032,7 @@ fn build_generic_visibility_scatter(
         legend_position: spec.style.legendposition,
         showmajorgrid: spec.style.showmajorgrid,
         showminorgrid: spec.style.showminorgrid,
+        symbol_size_px: spec.style.symbol_size,
         header_lines: Vec::new(),
         summary: format!(
             "{}. Rows={} Points={} Data column={}",
@@ -4906,6 +4920,7 @@ fn build_generic_visibility_scatter_with_averaging(
             legend_position: spec.style.legendposition,
             showmajorgrid: spec.style.showmajorgrid,
             showminorgrid: spec.style.showminorgrid,
+            symbol_size_px: spec.style.symbol_size,
             iteraxis,
             gridrows,
             gridcols,
@@ -4944,6 +4959,7 @@ fn build_generic_visibility_scatter_with_averaging(
         legend_position: spec.style.legendposition,
         showmajorgrid: spec.style.showmajorgrid,
         showminorgrid: spec.style.showminorgrid,
+        symbol_size_px: spec.style.symbol_size,
         header_lines: Vec::new(),
         summary: format!(
             "{}. Rows={} Points={} Data column={}",
@@ -6436,6 +6452,7 @@ fn render_scatter_image(
                 legend_position: payload.legend_position,
                 showmajorgrid: payload.showmajorgrid,
                 showminorgrid: payload.showminorgrid,
+                symbol_size_px: payload.symbol_size_px,
             },
             theme,
             style,
@@ -6542,6 +6559,7 @@ fn render_scatter_grid_image(
                     legend_position: payload.legend_position,
                     showmajorgrid: payload.showmajorgrid,
                     showminorgrid: payload.showminorgrid,
+                    symbol_size_px: payload.symbol_size_px,
                 },
                 theme,
                 style,
@@ -6574,6 +6592,7 @@ struct ScatterPageCellRender {
     legend_position: MsLegendPosition,
     showmajorgrid: bool,
     showminorgrid: bool,
+    symbol_size_px: Option<u32>,
     title: String,
     series: Vec<MsScatterSeries>,
 }
@@ -6625,6 +6644,7 @@ fn resolve_scatter_page_cells(
         let showlegend = items.iter().any(|item| item.plot.showlegend);
         let showmajorgrid = items.iter().any(|item| item.plot.showmajorgrid);
         let showminorgrid = items.iter().any(|item| item.plot.showminorgrid);
+        let symbol_size_px = first.symbol_size_px;
 
         for item in items {
             let item_title = if item.plot.title.trim().is_empty() {
@@ -6679,6 +6699,7 @@ fn resolve_scatter_page_cells(
             legend_position,
             showmajorgrid,
             showminorgrid,
+            symbol_size_px,
             title: title_parts.join(", "),
             series,
         });
@@ -6760,6 +6781,7 @@ fn render_scatter_page_image(
                     legend_position: cell.legend_position,
                     showmajorgrid: cell.showmajorgrid,
                     showminorgrid: cell.showminorgrid,
+                    symbol_size_px: cell.symbol_size_px,
                 },
                 theme,
                 style,
@@ -6841,6 +6863,7 @@ fn render_scatter_panel(
         legend_position,
         showmajorgrid,
         showminorgrid,
+        symbol_size_px,
     } = presentation;
 
     let legend_entries = collect_scatter_legend_entries(series, y_axis, secondary_y_axis, theme);
@@ -6862,7 +6885,9 @@ fn render_scatter_panel(
     if let Some(panel_title) = panel_title {
         chart_builder.caption(panel_title, ("sans-serif", style.axis_desc_font_px()));
     }
-    let point_radius = style.point_radius_px().saturating_sub(1).max(3);
+    let point_radius = symbol_size_px
+        .map(|size| i32::try_from(size).unwrap_or(i32::MAX).max(1))
+        .unwrap_or_else(|| style.point_radius_px().saturating_sub(1).max(3));
     if let Some(secondary_y_axis) = secondary_y_axis {
         let primary_axis_label_color =
             scatter_axis_color(y_axis, y_axis, Some(secondary_y_axis), theme);
@@ -7436,6 +7461,7 @@ mod tests {
             legend_position,
             showmajorgrid: true,
             showminorgrid: true,
+            symbol_size_px: None,
             series,
             header_lines: vec!["Synthetic header".to_string()],
             summary: "Synthetic scatter payload".to_string(),
@@ -8446,6 +8472,7 @@ mod tests {
             legend_position: MsLegendPosition::UpperRight,
             showmajorgrid: true,
             showminorgrid: false,
+            symbol_size_px: None,
             series: vec![
                 MsScatterSeries {
                     label: "A".to_string(),
@@ -8677,6 +8704,7 @@ mod tests {
             legend_position: MsLegendPosition::ExteriorBottom,
             showmajorgrid: true,
             showminorgrid: false,
+            symbol_size_px: None,
             iteraxis: MsIterationAxis::Field,
             gridrows: 1,
             gridcols: 2,
@@ -8814,6 +8842,7 @@ mod tests {
             legend_position: MsLegendPosition::UpperRight,
             showmajorgrid: true,
             showminorgrid: false,
+            symbol_size_px: None,
             iteraxis: MsIterationAxis::Field,
             gridrows: 1,
             gridcols: 1,
@@ -9141,6 +9170,7 @@ mod tests {
             legend_position: MsLegendPosition::ExteriorBottom,
             showmajorgrid: true,
             showminorgrid: false,
+            symbol_size_px: None,
             iteraxis: MsIterationAxis::Field,
             gridrows: 1,
             gridcols: 2,

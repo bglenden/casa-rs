@@ -638,6 +638,9 @@ pub struct ImagerRunTaskRequest {
     /// CASA-style `perchanweightdensity` toggle for spectral cubes.
     #[serde(default)]
     pub per_channel_weight_density: bool,
+    /// CASA-style `usepointing` toggle for POINTING-table direction corrections.
+    #[serde(default)]
+    pub use_pointing: bool,
     /// Optional CASA-style Gaussian UV taper.
     #[serde(default)]
     pub uv_taper: Option<ImagerUvTaper>,
@@ -729,6 +732,7 @@ impl ImagerRunTaskRequest {
             cube_axis: (&config.cube_axis).into(),
             weighting: config.weighting.into(),
             per_channel_weight_density: config.per_channel_weight_density,
+            use_pointing: config.use_pointing,
             uv_taper: config.uv_taper.map(Into::into),
             restoring_beam_mode: config.restoring_beam_mode.into(),
             deconvolver: config.deconvolver.into(),
@@ -800,6 +804,7 @@ impl ImagerRunTaskRequest {
             cube_axis: self.cube_axis.clone().into_runtime(spectral_mode)?,
             weighting: self.weighting.clone().into(),
             per_channel_weight_density: self.per_channel_weight_density,
+            use_pointing: self.use_pointing,
             uv_taper: self.uv_taper.map(Into::into),
             restoring_beam_mode: self.restoring_beam_mode.into(),
             deconvolver,
@@ -1344,6 +1349,7 @@ mod tests {
             OsString::from("--robust"),
             OsString::from("-1.0"),
             OsString::from("--perchanweightdensity"),
+            OsString::from("--usepointing"),
             OsString::from("--uvtaper"),
             OsString::from("10arcsec,8arcsec,45deg"),
             OsString::from("--restoringbeam"),
@@ -1398,6 +1404,7 @@ mod tests {
         assert_eq!(restored.spectral_mode, SpectralMode::Cube);
         assert_eq!(restored.weighting, WeightingMode::Briggs { robust: -1.0 });
         assert!(restored.per_channel_weight_density);
+        assert!(restored.use_pointing);
         assert_eq!(restored.restoring_beam_mode, RestoringBeamMode::Common);
         assert_eq!(restored.deconvolver, Deconvolver::Multiscale);
         assert_eq!(restored.w_term_mode, WTermMode::WProject);
@@ -1426,6 +1433,7 @@ mod tests {
             cube_axis: Default::default(),
             weighting: Default::default(),
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -1452,6 +1460,7 @@ mod tests {
         assert_eq!(config.weighting, WeightingMode::Natural);
         assert_eq!(config.deconvolver, Deconvolver::Hogbom);
         assert_eq!(config.spectral_mode, SpectralMode::Mfs);
+        assert!(!config.use_pointing);
     }
 
     #[test]
@@ -1474,6 +1483,7 @@ mod tests {
             cube_axis: Default::default(),
             weighting: ImagerWeighting::Briggs { robust: 0.5 },
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -1690,6 +1700,7 @@ mod tests {
             cube_axis: Default::default(),
             weighting: Default::default(),
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -1839,6 +1850,7 @@ mod tests {
             cube_axis: Default::default(),
             weighting: Default::default(),
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
