@@ -630,11 +630,11 @@ Verification: just docs-check</p>
 <p>Wave issue: #137
 Child issue: #115</p>
 <p>This inventory records the current CASA Guide tutorial surface that drives the
-first tutorial-parity waves. It does not download datasets or implement the
-dataset registry.</p>
-<p>Registry keys are proposed stable logical keys for the later #97 resolver and
-manifest work. Local path policies are expressed relative to
-<code>CASA_RS_TESTDATA_ROOT</code>; actual local paths should be populated by the dataset
+first tutorial-parity waves. It does not download datasets; the first registry
+entries are implemented in <code>casa-test-support</code> for resolver/preflight use.</p>
+<p>Registry keys are stable logical keys for the #97 resolver and manifest work.
+Local path policies are expressed relative to
+<code>CASA_RS_TUTORIAL_DATA_ROOT</code>; actual local paths should be populated by the dataset
 registry when artifacts are mirrored into shared tutorial storage.</p>
 <h2 id="inventory-policy">Inventory Policy<a class="headerlink" href="#inventory-policy" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1211,10 +1211,10 @@ inventory issue download every artifact.</p>
 <td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Imaging</a></td>
 <td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar</a></td>
 <td><code>twhya_calibrated.ms.tar</code></td>
-<td style="text-align: right;">not advertised</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td style="text-align: right;">435742720 bytes</td>
+<td>SHA-256 <code>f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2</code></td>
 <td>tutorial-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar</code></td>
 <td>#140</td>
 </tr>
 <tr>
@@ -1222,10 +1222,10 @@ inventory issue download every artifact.</p>
 <td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Imaging</a></td>
 <td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar</a></td>
 <td><code>twhya_uncalibrated.ms.tar</code></td>
-<td style="text-align: right;">not advertised</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td style="text-align: right;">765388800 bytes</td>
+<td>SHA-256 <code>4eb09a74e9be71fea9761a54884869dce361fee83c0b9d636ffa4b2bdc882835</code></td>
 <td>slow-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_uncalibrated.ms.tar</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_uncalibrated.ms.tar</code></td>
 <td>#140</td>
 </tr>
 <tr>
@@ -1233,10 +1233,10 @@ inventory issue download every artifact.</p>
 <td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Imaging</a></td>
 <td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar</a></td>
 <td><code>twhya_calibrated_unflagged.ms.tar</code></td>
-<td style="text-align: right;">not advertised</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td style="text-align: right;">623800320 bytes</td>
+<td>SHA-256 <code>3d2c460c126957d02025ec842c4279718a7a58b2147980d84ce0523e4cf1309d</code></td>
 <td>tutorial-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated_unflagged.ms.tar</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated_unflagged.ms.tar</code></td>
 <td>#140</td>
 </tr>
 <tr>
@@ -1244,10 +1244,10 @@ inventory issue download every artifact.</p>
 <td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging">https://casaguides.nrao.edu/index.php/First_Look_at_Line_Imaging</a></td>
 <td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz</a></td>
 <td><code>twhya_selfcal.ms.tgz</code></td>
-<td style="text-align: right;">not advertised</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td style="text-align: right;">392786323 bytes</td>
+<td>SHA-256 <code>6d720b89a7b433fbc9b0cc04cde973c03bde1b63945a3f40f6e59816ae6769fc</code></td>
 <td>tutorial-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_selfcal.ms.tgz</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_selfcal.ms.tgz</code></td>
 <td>#140</td>
 </tr>
 <tr>
@@ -1255,10 +1255,10 @@ inventory issue download every artifact.</p>
 <td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis">https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis</a></td>
 <td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image</a></td>
 <td><code>twhya_cont.image</code></td>
-<td style="text-align: right;">not advertised</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td style="text-align: right;">369373 bytes</td>
+<td>directory SHA-256 manifest in local mirror</td>
 <td>tutorial-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_cont.image</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_cont.image</code></td>
 <td>#140</td>
 </tr>
 <tr>
@@ -1266,10 +1266,10 @@ inventory issue download every artifact.</p>
 <td><a href="https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis">https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis</a></td>
 <td><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image">https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image</a></td>
 <td><code>twhya_n2hp.image</code></td>
-<td style="text-align: right;">not advertised</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td style="text-align: right;">3859246 bytes</td>
+<td>directory SHA-256 manifest in local mirror</td>
 <td>tutorial-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_n2hp.image</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_n2hp.image</code></td>
 <td>#140</td>
 </tr>
 <tr>
@@ -1278,9 +1278,9 @@ inventory issue download every artifact.</p>
 <td><a href="http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz">http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz</a></td>
 <td><code>TDRW0001_10s.ms.tgz</code></td>
 <td style="text-align: right;">1068298240 bytes</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td>SHA-256 <code>96292e62103b51a456e9a6620ffab54ca00785448935122eaf714aa5b21308cb</code></td>
 <td>slow-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/vla/irc10216/TDRW0001_10s.ms.tgz</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/vla/irc10216/TDRW0001_10s.ms.tgz</code></td>
 <td>#141</td>
 </tr>
 <tr>
@@ -1289,9 +1289,9 @@ inventory issue download every artifact.</p>
 <td><a href="http://casa.nrao.edu/Data/EVLA/IRC10216/irc_fors1_dec_header.fits">http://casa.nrao.edu/Data/EVLA/IRC10216/irc_fors1_dec_header.fits</a></td>
 <td><code>irc_fors1_dec_header.fits</code></td>
 <td style="text-align: right;">16784640 bytes</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td>SHA-256 <code>9e476e1f98f63d9d870dfa1d72f6705ca40aed3c006115742a0bb2922cbd8071</code></td>
 <td>tutorial-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/vla/irc10216/irc_fors1_dec_header.fits</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/vla/irc10216/irc_fors1_dec_header.fits</code></td>
 <td>#141</td>
 </tr>
 <tr>
@@ -1300,9 +1300,9 @@ inventory issue download every artifact.</p>
 <td><a href="https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits">https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits</a></td>
 <td><code>ppdisk672_GHz_50pc.fits</code></td>
 <td style="text-align: right;">276480 bytes</td>
-<td>not advertised; compute SHA-256 after mirror</td>
+<td>SHA-256 <code>e4416bfa0732251d5a7fef48e6c6f9cf8426de264626b63e7ad42fa76faef70e</code></td>
 <td>tutorial-parity</td>
-<td><code>${CASA_RS_TESTDATA_ROOT}/tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits</code></td>
+<td><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits</code></td>
 <td>#142</td>
 </tr>
 </tbody>
@@ -1317,7 +1317,7 @@ inventory issue download every artifact.</p>
 <li>checksum and size once mirrored;</li>
 <li>dataset tier (<code>default-fixture</code>, <code>tutorial-parity</code>, <code>slow-parity</code>,
   <code>performance</code>);</li>
-<li>local path under <code>CASA_RS_TESTDATA_ROOT</code>;</li>
+<li>local path under <code>CASA_RS_TUTORIAL_DATA_ROOT</code>;</li>
 <li>optional local staging root for removable/NAS-backed mirrors;</li>
 <li>first owning wave and downstream dependent waves.</li>
 </ul>
