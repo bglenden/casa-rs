@@ -9894,6 +9894,12 @@ fn shared_ngc5921_ms_path() -> Option<PathBuf> {
 }
 
 fn shared_importvla_archive_path() -> Option<PathBuf> {
+    shared_importvla_archive_candidates()
+        .into_iter()
+        .find(|path| path.exists())
+}
+
+fn shared_importvla_archive_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(root) = env::var_os("CASA_RS_IMPORTVLA_ARCHIVE") {
         candidates.push(PathBuf::from(root));
@@ -9906,12 +9912,84 @@ fn shared_importvla_archive_path() -> Option<PathBuf> {
                 .join("AS758_C030425.xp1"),
         );
     }
-    candidates.extend([
-        PathBuf::from("/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1"),
-        PathBuf::from("/Users/brianglendenning/SoftwareProjects/casatestdata/unittest/importvla/AS758_C030425.xp1"),
-        PathBuf::from("/Volumes/home/casatestdata/other/AS758_C030425.xp1"),
-    ]);
-    candidates.into_iter().find(|path| path.exists())
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("casatestdata")
+            .join("unittest")
+            .join("importvla")
+            .join("AS758_C030425.xp1"),
+    );
+    if let Some(home) = env::var_os("HOME") {
+        candidates.push(
+            PathBuf::from(home)
+                .join("SoftwareProjects")
+                .join("casatestdata")
+                .join("unittest")
+                .join("importvla")
+                .join("AS758_C030425.xp1"),
+        );
+    }
+    candidates
+}
+
+#[test]
+fn importvla_archive_candidates_keep_shared_volume_explicit_only() {
+    with_test_env_lock(|| {
+        let previous_archive = env::var_os("CASA_RS_IMPORTVLA_ARCHIVE");
+        let previous_testdata = env::var_os("CASA_RS_TESTDATA_ROOT");
+        let previous_home = env::var_os("HOME");
+        let temp = tempdir().expect("tempdir");
+
+        unsafe {
+            env::remove_var("CASA_RS_IMPORTVLA_ARCHIVE");
+            env::remove_var("CASA_RS_TESTDATA_ROOT");
+            env::set_var("HOME", temp.path());
+        }
+
+        let candidates = shared_importvla_archive_candidates();
+        assert!(
+            candidates
+                .iter()
+                .all(|path| !path.starts_with("/Volumes/home/casatestdata")),
+            "default importvla archive candidates must not depend on /Volumes: {candidates:?}"
+        );
+        assert!(
+            candidates.iter().any(|path| {
+                path.ends_with("casatestdata/unittest/importvla/AS758_C030425.xp1")
+            })
+        );
+
+        unsafe {
+            env::set_var(
+                "CASA_RS_IMPORTVLA_ARCHIVE",
+                "/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1",
+            );
+        }
+        let explicit_candidates = shared_importvla_archive_candidates();
+        assert_eq!(
+            explicit_candidates.first(),
+            Some(&PathBuf::from(
+                "/Volumes/home/casatestdata/unittest/importvla/AS758_C030425.xp1"
+            ))
+        );
+
+        unsafe {
+            match previous_archive {
+                Some(value) => env::set_var("CASA_RS_IMPORTVLA_ARCHIVE", value),
+                None => env::remove_var("CASA_RS_IMPORTVLA_ARCHIVE"),
+            }
+            match previous_testdata {
+                Some(value) => env::set_var("CASA_RS_TESTDATA_ROOT", value),
+                None => env::remove_var("CASA_RS_TESTDATA_ROOT"),
+            }
+            match previous_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+        }
+    });
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> io::Result<()> {
