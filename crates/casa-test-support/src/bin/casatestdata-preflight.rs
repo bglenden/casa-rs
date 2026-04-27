@@ -4,8 +4,8 @@ use std::env;
 use std::path::Path;
 
 use casa_test_support::{
-    CasaTestDataTier, TUTORIAL_DATASETS, casatestdata_path_for_tier, casatestdata_root_for_tier,
-    tutorial_dataset,
+    CasaTestDataTier, TUTORIAL_DATASETS, casa_tutorial_data_root, casatestdata_root_for_tier,
+    tutorial_dataset, tutorial_dataset_path,
 };
 
 fn main() {
@@ -54,21 +54,39 @@ fn main() {
         return;
     }
 
-    let Some(root) = casatestdata_root_for_tier(tier) else {
+    let root = casatestdata_root_for_tier(tier);
+    if root.is_none() && required_registry_keys.is_empty() {
         eprintln!(
             "casatestdata preflight failed: no {} root found; set CASA_RS_TESTDATA_ROOT or stage ../casatestdata",
             tier.as_str()
         );
         std::process::exit(1);
     };
-    println!(
-        "casatestdata preflight: tier={} root={}",
-        tier.as_str(),
-        root.display()
-    );
+    if let Some(root) = &root {
+        println!(
+            "casatestdata preflight: tier={} root={}",
+            tier.as_str(),
+            root.display()
+        );
+    }
+    if !required_registry_keys.is_empty() {
+        match casa_tutorial_data_root() {
+            Some(root) => println!("casatestdata preflight: tutorial root={}", root.display()),
+            None => eprintln!(
+                "casatestdata preflight: no tutorial root found; set CASA_RS_TUTORIAL_DATA_ROOT"
+            ),
+        }
+    }
 
     let mut missing = Vec::new();
     for relative in &required_paths {
+        let Some(root) = &root else {
+            eprintln!(
+                "casatestdata preflight failed: no {} root found for required path {relative}",
+                tier.as_str()
+            );
+            std::process::exit(1);
+        };
         let path = root.join(relative);
         if !path.exists() {
             missing.push(path);
@@ -79,8 +97,11 @@ fn main() {
             eprintln!("casatestdata preflight failed: unknown registry key {key}");
             std::process::exit(2);
         };
-        let Some(path) = casatestdata_path_for_tier(dataset.tier, dataset.relative_path) else {
-            missing.push(root.join(dataset.relative_path));
+        let Some(path) = tutorial_dataset_path(key) else {
+            let fallback_root = casa_tutorial_data_root()
+                .or_else(|| root.clone())
+                .unwrap_or_else(|| Path::new("casa-tutorial-data").to_path_buf());
+            missing.push(fallback_root.join(dataset.relative_path));
             continue;
         };
         if !Path::new(&path).exists() {

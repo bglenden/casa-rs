@@ -1685,8 +1685,16 @@ fn convert_frequency_to_frame_with_frames(
     if source_freq_ref == target_freq_ref {
         return Ok(frequency_hz);
     }
-    let source_frame = source_frame.expect("source frame required for cross-frame conversion");
-    let target_frame = target_frame.expect("target frame required for cross-frame conversion");
+    let source_frame = source_frame.ok_or_else(|| {
+        MsError::VersionError(format!(
+            "source frame required for cross-frame frequency conversion from {source_freq_ref} to {target_freq_ref}"
+        ))
+    })?;
+    let target_frame = target_frame.ok_or_else(|| {
+        MsError::VersionError(format!(
+            "target frame required for cross-frame frequency conversion from {source_freq_ref} to {target_freq_ref}"
+        ))
+    })?;
     let mut current_frequency_hz = frequency_hz;
     let mut current_ref = source_freq_ref;
     for next_ref in direct_frequency_hop_path(source_freq_ref, target_freq_ref)? {
@@ -2846,6 +2854,49 @@ mod tests {
 
         assert!((converted - manual).abs() < 1.0e-6);
         assert!((converted - source_only).abs() > 1.0e-6);
+    }
+
+    #[test]
+    fn cross_frame_frequency_conversion_requires_structured_frame_context() {
+        let missing_source = convert_frequency_to_frame_with_frames(
+            FrequencyRef::TOPO,
+            FrequencyRef::LSRK,
+            6.667_582_296e9,
+            None,
+            Some(&MeasFrame::new()),
+        )
+        .unwrap_err();
+        assert!(
+            missing_source
+                .to_string()
+                .contains("source frame required for cross-frame frequency conversion")
+        );
+
+        let missing_target = convert_frequency_to_frame_with_frames(
+            FrequencyRef::TOPO,
+            FrequencyRef::LSRK,
+            6.667_582_296e9,
+            Some(&MeasFrame::new()),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            missing_target
+                .to_string()
+                .contains("target frame required for cross-frame frequency conversion")
+        );
+
+        assert_eq!(
+            convert_frequency_to_frame_with_frames(
+                FrequencyRef::LSRK,
+                FrequencyRef::LSRK,
+                6.667_582_296e9,
+                None,
+                None,
+            )
+            .unwrap(),
+            6.667_582_296e9
+        );
     }
 
     #[test]

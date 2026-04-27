@@ -140,7 +140,7 @@ impl CasaTestDataTier {
     }
 }
 
-/// One tutorial or long-gate dataset that can be staged under `CASA_RS_TESTDATA_ROOT`.
+/// One tutorial or long-gate dataset that can be staged under `CASA_RS_TUTORIAL_DATA_ROOT`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TutorialDataset {
     /// Stable registry key.
@@ -159,7 +159,7 @@ pub struct TutorialDataset {
     pub expected_sha256: Option<&'static str>,
     /// Dataset gate tier.
     pub tier: CasaTestDataTier,
-    /// Path relative to `CASA_RS_TESTDATA_ROOT`.
+    /// Path relative to `CASA_RS_TUTORIAL_DATA_ROOT`.
     pub relative_path: &'static str,
 }
 
@@ -171,8 +171,8 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar",
         expected_filename: "twhya_calibrated.ms.tar",
         casa_guide_version: Some("6.6.1"),
-        expected_size_bytes: None,
-        expected_sha256: None,
+        expected_size_bytes: Some(435_742_720),
+        expected_sha256: Some("f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2"),
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar",
     },
@@ -182,8 +182,8 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_uncalibrated.ms.tar",
         expected_filename: "twhya_uncalibrated.ms.tar",
         casa_guide_version: Some("6.6.6"),
-        expected_size_bytes: None,
-        expected_sha256: None,
+        expected_size_bytes: Some(765_388_800),
+        expected_sha256: Some("4eb09a74e9be71fea9761a54884869dce361fee83c0b9d636ffa4b2bdc882835"),
         tier: CasaTestDataTier::SlowParity,
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_uncalibrated.ms.tar",
     },
@@ -193,8 +193,8 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_calibrated_unflagged.ms.tar",
         expected_filename: "twhya_calibrated_unflagged.ms.tar",
         casa_guide_version: Some("6.6.6"),
-        expected_size_bytes: None,
-        expected_sha256: None,
+        expected_size_bytes: Some(623_800_320),
+        expected_sha256: Some("3d2c460c126957d02025ec842c4279718a7a58b2147980d84ce0523e4cf1309d"),
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_calibrated_unflagged.ms.tar",
     },
@@ -204,8 +204,8 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_selfcal.ms.tgz",
         expected_filename: "twhya_selfcal.ms.tgz",
         casa_guide_version: Some("6.6.6"),
-        expected_size_bytes: None,
-        expected_sha256: None,
+        expected_size_bytes: Some(392_786_323),
+        expected_sha256: Some("6d720b89a7b433fbc9b0cc04cde973c03bde1b63945a3f40f6e59816ae6769fc"),
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_selfcal.ms.tgz",
     },
@@ -215,7 +215,7 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image",
         expected_filename: "twhya_cont.image",
         casa_guide_version: Some("6.6.6"),
-        expected_size_bytes: None,
+        expected_size_bytes: Some(369_373),
         expected_sha256: None,
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_cont.image",
@@ -226,7 +226,7 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image",
         expected_filename: "twhya_n2hp.image",
         casa_guide_version: Some("6.6.6"),
-        expected_size_bytes: None,
+        expected_size_bytes: Some(3_859_246),
         expected_sha256: None,
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_n2hp.image",
@@ -238,7 +238,7 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         expected_filename: "TDRW0001_10s.ms.tgz",
         casa_guide_version: None,
         expected_size_bytes: Some(1_068_298_240),
-        expected_sha256: None,
+        expected_sha256: Some("96292e62103b51a456e9a6620ffab54ca00785448935122eaf714aa5b21308cb"),
         tier: CasaTestDataTier::SlowParity,
         relative_path: "tutorial-parity/vla/irc10216/TDRW0001_10s.ms.tgz",
     },
@@ -249,7 +249,7 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         expected_filename: "irc_fors1_dec_header.fits",
         casa_guide_version: None,
         expected_size_bytes: Some(16_784_640),
-        expected_sha256: None,
+        expected_sha256: Some("9e476e1f98f63d9d870dfa1d72f6705ca40aed3c006115742a0bb2922cbd8071"),
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/vla/irc10216/irc_fors1_dec_header.fits",
     },
@@ -260,7 +260,7 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         expected_filename: "ppdisk672_GHz_50pc.fits",
         casa_guide_version: Some("6.7.2"),
         expected_size_bytes: Some(276_480),
-        expected_sha256: None,
+        expected_sha256: Some("e4416bfa0732251d5a7fef48e6c6f9cf8426de264626b63e7ad42fa76faef70e"),
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits",
     },
@@ -304,15 +304,44 @@ pub fn casatestdata_path_for_tier(
     casatestdata_root_for_tier(tier).map(|root| root.join(relative.as_ref()))
 }
 
+/// Resolve the local CASA tutorial data mirror used by tutorial-registry keys.
+///
+/// This stays separate from the external C++ `casatestdata` checkout.
+pub fn casa_tutorial_data_root() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("CASA_RS_TUTORIAL_DATA_ROOT") {
+        let path = PathBuf::from(root);
+        if path.exists() {
+            return Some(normalize_existing_path(&path));
+        }
+    }
+
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let candidate = home.join("SoftwareProjects/casa-tutorial-data");
+    if candidate.exists() {
+        Some(normalize_existing_path(&candidate))
+    } else {
+        None
+    }
+}
+
 /// Resolve a tutorial registry entry by key.
 pub fn tutorial_dataset(key: &str) -> Option<&'static TutorialDataset> {
     TUTORIAL_DATASETS.iter().find(|dataset| dataset.key == key)
 }
 
+/// Iterate tutorial registry entries that belong to a gate tier.
+pub fn tutorial_datasets_for_tier(
+    tier: CasaTestDataTier,
+) -> impl Iterator<Item = &'static TutorialDataset> {
+    TUTORIAL_DATASETS
+        .iter()
+        .filter(move |dataset| dataset.tier == tier)
+}
+
 /// Resolve a tutorial registry entry to its expected local path.
 pub fn tutorial_dataset_path(key: &str) -> Option<PathBuf> {
     let dataset = tutorial_dataset(key)?;
-    casatestdata_path_for_tier(dataset.tier, dataset.relative_path)
+    casa_tutorial_data_root().map(|root| root.join(dataset.relative_path))
 }
 
 /// Resolved local CASA Python environment used by opt-in parity tests.
@@ -2659,15 +2688,43 @@ mod tests {
     }
 
     #[test]
+    fn tutorial_dataset_path_uses_separate_tutorial_root() {
+        let dir = tempdir().unwrap();
+        let tutorial_root = dir.path().join("casa-tutorial-data");
+        std::fs::create_dir(&tutorial_root).unwrap();
+
+        unsafe { std::env::set_var("CASA_RS_TUTORIAL_DATA_ROOT", &tutorial_root) };
+        let path = tutorial_dataset_path("alma/first-look/twhya/calibrated-ms").unwrap();
+        assert_eq!(
+            path,
+            normalize_existing_path(&tutorial_root)
+                .join("tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar")
+        );
+        unsafe { std::env::remove_var("CASA_RS_TUTORIAL_DATA_ROOT") };
+    }
+
+    #[test]
     fn tutorial_dataset_registry_contains_first_wave_candidates() {
         let twhya = tutorial_dataset("alma/first-look/twhya/calibrated-ms").unwrap();
         assert_eq!(twhya.expected_filename, "twhya_calibrated.ms.tar");
+        assert_eq!(twhya.expected_size_bytes, Some(435_742_720));
+        assert_eq!(
+            twhya.expected_sha256,
+            Some("f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2")
+        );
         assert_eq!(twhya.tier, CasaTestDataTier::TutorialParity);
         assert!(twhya.relative_path.starts_with("tutorial-parity/"));
 
         let irc10216 = tutorial_dataset("vla/irc10216/ms-10s").unwrap();
         assert_eq!(irc10216.expected_size_bytes, Some(1_068_298_240));
         assert_eq!(irc10216.tier, CasaTestDataTier::SlowParity);
+
+        let tutorial_keys = tutorial_datasets_for_tier(CasaTestDataTier::TutorialParity)
+            .map(|dataset| dataset.key)
+            .collect::<Vec<_>>();
+        assert!(tutorial_keys.contains(&"alma/first-look/twhya/calibrated-ms"));
+        assert!(tutorial_keys.contains(&"vla/irc10216/fors1-fits"));
+        assert!(!tutorial_keys.contains(&"vla/irc10216/ms-10s"));
 
         let ppdisk = tutorial_dataset("simulation/vla-ppdisk/model-fits").unwrap();
         assert_eq!(ppdisk.casa_guide_version, Some("6.7.2"));
